@@ -19,11 +19,13 @@ interface UpsertCall {
 
 function buildAdminMock(
   opts: {
+    deleteError?: { message: string } | null;
     linearSecret?: { encrypted_value: string } | null;
     linearSecretError?: { message: string } | null;
     upsertError?: { message: string };
   } = {},
 ) {
+  const deletes: Array<Record<string, unknown>> = [];
   const upserts: UpsertCall[] = [];
   return {
     admin: {
@@ -41,6 +43,20 @@ function buildAdminMock(
         }
         if (name === "session_pull_requests") {
           return {
+            delete: () => {
+              const filters: Record<string, unknown> = {};
+              const chain = {
+                eq: (column: string, value: unknown) => {
+                  filters[column] = value;
+                  return chain;
+                },
+                then: (resolve: (value: { error: { message: string } | null }) => void) => {
+                  deletes.push(filters);
+                  resolve({ error: opts.deleteError ?? null });
+                },
+              };
+              return chain;
+            },
             upsert: async (
               row: Record<string, unknown>,
               options: Record<string, unknown> | undefined,
@@ -53,6 +69,7 @@ function buildAdminMock(
         throw new Error(`Unexpected table: ${name}`);
       },
     },
+    deletes,
     upserts,
   };
 }
@@ -138,7 +155,7 @@ describe("openSessionPullRequest", () => {
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
     // pulls.list (find existing) returns Wallie's PR.
-    const octokit = makeOctokitWithSequence([[openPr]]);
+    const octokit = makeOctokitWithSequence([[openPr], openPr]);
     const { admin, upserts } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
@@ -189,11 +206,17 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.options).toEqual({ onConflict: "workspace_id,branch_name" });
   });
 
-  it("does not push when reusing a PR but the branch is not ahead of base", async () => {
-    // e.g. base advanced past the branch; force-pushing would reset the PR head.
+  it("opens a replacement when a reused PR closes after the retry push", async () => {
     const sandbox = new FakeSandbox();
-    scriptCommitsAhead(sandbox, "NONE");
-    const octokit = makeOctokitWithSequence([[openPr]]);
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const closedDuringRefresh = { ...openPr, merged_at: null, state: "closed" as const };
+    const replacement = {
+      ...openPr,
+      html_url: "https://github.com/acme/app/pull/43",
+      number: 43,
+    };
+    const octokit = makeOctokitWithSequence([[openPr], closedDuringRefresh, replacement]);
     const { admin, upserts } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
@@ -203,9 +226,63 @@ describe("openSessionPullRequest", () => {
       sandbox,
     });
 
-    expect(outcome.kind).toBe("success");
+    expect(outcome).toMatchObject({ kind: "success", prNumber: 43, prState: "open" });
+    expect(octokit.calls.map((call) => call.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls",
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+      "POST /repos/{owner}/{repo}/pulls",
+    ]);
+    expect(upserts[0]?.row.pull_request_number).toBe(43);
+  });
+
+  it("does not reuse rejected PR commits when a retry produces no commits", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const octokit = makeOctokitWithSequence([[openPr], { ...openPr, state: "closed" }]);
+    const { admin, deletes, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("no_commits");
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push"))).toBe(false);
-    expect(upserts[0]!.row.pull_request_number).toBe(42);
+    expect(octokit.calls.map((call) => call.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls",
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+    ]);
+    expect(octokit.calls[1]?.params).toMatchObject({ pull_number: 42, state: "closed" });
+    expect(deletes).toEqual([
+      {
+        branch_name: "wallie/product-sess-1",
+        pull_request_number: 42,
+        session_id: "sess-1",
+        workspace_id: "ws-1",
+      },
+    ]);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("keeps a closed rejected PR detached on a later no-commit retry", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const closed = { ...openPr, merged_at: null, state: "closed" as const };
+    const octokit = makeOctokitWithSequence([[closed], closed]);
+    const { admin, deletes, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("no_commits");
+    expect(deletes).toHaveLength(1);
+    expect(upserts).toHaveLength(0);
   });
 
   it("retries only publication when refreshing an existing PR fails after push", async () => {
@@ -236,7 +313,7 @@ describe("openSessionPullRequest", () => {
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
     const closed = { ...openPr, number: 40, state: "closed" as const, merged_at: null };
-    const octokit = makeOctokitWithSequence([[closed, openPr]]);
+    const octokit = makeOctokitWithSequence([[closed, openPr], openPr]);
     const { admin, upserts } = buildAdminMock();
 
     await openSessionPullRequest({
@@ -314,6 +391,28 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.row.pull_request_number).toBe(42);
   });
 
+  it("normalizes and bounds generated pull request titles", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const octokit = makeOctokitWithSequence([[], openPr]);
+    const { admin } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+      title: `Build:\n${"x".repeat(300)}`,
+    });
+
+    expect(outcome.kind).toBe("success");
+    const title = octokit.calls[1]?.params?.title;
+    expect(title).toBeTypeOf("string");
+    expect(Array.from(title as string)).toHaveLength(256);
+    expect(title).not.toContain("\n");
+  });
+
   it("returns no_commits without pushing when no PR exists and the branch is not ahead", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "NONE");
@@ -339,10 +438,12 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
+    const recoveredPr = { ...openPr, number: 41, draft: true };
     const octokit = makeOctokitWithSequence([
       [], // initial lookup: none
       github422("A pull request already exists for acme:wallie/product-sess-1"),
-      [{ ...openPr, number: 41, draft: true }], // recovery lookup
+      [recoveredPr], // recovery lookup
+      recoveredPr, // refresh result
     ]);
     const { admin, upserts } = buildAdminMock();
 
@@ -438,7 +539,7 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
-    const octokit = makeOctokitWithSequence([[openPr]]);
+    const octokit = makeOctokitWithSequence([[openPr], openPr]);
     const { admin, upserts } = buildAdminMock({ upsertError: { message: "db down" } });
 
     const outcome = await openSessionPullRequest({
@@ -512,7 +613,7 @@ describe("openSessionPullRequest", () => {
   it("resumes durable publication without a sandbox or branch push", async () => {
     const octokit = makeOctokitWithSequence([
       openPr,
-      undefined, // refresh title/body
+      openPr, // refresh title/body
     ]);
     const { admin, upserts } = buildAdminMock({
       linearSecret: { encrypted_value: "encrypted-linear-key" },

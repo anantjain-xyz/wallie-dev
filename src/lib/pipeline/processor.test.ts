@@ -1411,6 +1411,42 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("error");
   });
 
+  it("does not reject the session when a stale publication attempt loses job ownership", async () => {
+    const session = baseSession({ current_artifact_version: 1 });
+    const retryState = {
+      artifactVersion: 1,
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+      repositoryFullName: "acme/original",
+      repositoryId: "repo-original",
+    };
+    const { admin, updatedSessions } = buildAdminMock({
+      githubRepositories: [
+        {
+          default_branch: "main",
+          full_name: "acme/fallback",
+          github_installation_id: "ghi-1",
+          id: "repo-fallback",
+        },
+      ],
+      onboardingRepositoryId: "repo-fallback",
+      pendingArtifact: { artifact_json: "Preserved build artifact" },
+      session,
+      terminalJobUpdateMiss: true,
+    });
+
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({
+        attempt_count: 3,
+        last_error: `Wallie pull request publication pending: ${JSON.stringify(retryState)}`,
+      }),
+    });
+
+    expect(updatedSessions).toEqual([{ phase_status: "in_progress" }]);
+    expect(result.result).toBe("error");
+  });
+
   it("does not resume pending publication after cancellation wins", async () => {
     const session = baseSession({ current_artifact_version: 1, phase_status: "rejected" });
     const retryState = {

@@ -97,6 +97,8 @@ type PublicationRetryState = {
   repositoryId: string;
 };
 
+type PipelineJobErrorResult = "ownership_lost" | "retry_scheduled" | "terminalized";
+
 const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
 const REDACTED_RUN_DIAGNOSTIC_VALUE = "[redacted]";
 const RUN_FAILURE_SECRET_KEY_SOURCE = String.raw`(?:access[_-]?key|access[_-]?token|api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)`;
@@ -566,7 +568,7 @@ async function runStage(input: {
           repositoryId: error.repositoryId,
         };
         const serializedRetryState = serializePublicationRetryState(retryState);
-        const retryScheduled = runId
+        const jobErrorResult = runId
           ? await finalizePublicationRetryAttempt(admin, {
               errorMessage: serializedRetryState,
               job,
@@ -574,7 +576,7 @@ async function runStage(input: {
               usage,
             })
           : await markPipelineJobError(admin, job, serializedRetryState);
-        if (!retryScheduled) {
+        if (jobErrorResult === "terminalized") {
           await updateSessionStatus(admin, session.id, "rejected");
         }
         return { jobId: job.id, processed: true, result: "error", runId };
@@ -643,12 +645,12 @@ async function resumeStagePublication(input: {
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, publicationRetry, session, stage } = input;
   const fail = async (reason: string) => {
-    const retryScheduled = await markPipelineJobError(
+    const jobErrorResult = await markPipelineJobError(
       admin,
       job,
       serializePublicationRetryState({ ...publicationRetry, reason }),
     );
-    if (!retryScheduled) {
+    if (jobErrorResult === "terminalized") {
       await updateSessionStatus(admin, session.id, "rejected");
     }
     return {
@@ -1844,7 +1846,7 @@ async function finalizePublicationRetryAttempt(
     runId: string;
     usage?: { inputTokens: number; outputTokens: number };
   },
-): Promise<boolean> {
+): Promise<PipelineJobErrorResult> {
   const maxRetries = await loadMaxRetries(admin, input.job.workspace_id);
   const { data, error } = await admin.rpc("finalize_publication_retry_attempt", {
     target_job_id: input.job.id,
@@ -1861,11 +1863,15 @@ async function finalizePublicationRetryAttempt(
     // If the all-in-one RPC itself is unavailable, persist the structured
     // checkpoint before terminalizing the successful coding run. A subsequent
     // claim can then resume publication instead of rerunning the agent.
-    const retryScheduled = await markPipelineJobError(admin, input.job, input.errorMessage);
+    const jobErrorResult = await markPipelineJobError(admin, input.job, input.errorMessage, {
+      markRunsError: false,
+    });
     await markRunSuccess(admin, input.runId, input.usage);
-    return retryScheduled;
+    return jobErrorResult;
   }
-  return data[0]?.status === "queued";
+  if (data[0]?.status === "queued") return "retry_scheduled";
+  if (data[0]?.status === "error") return "terminalized";
+  return "ownership_lost";
 }
 
 async function completePublicationRetryAttempt(
@@ -1894,8 +1900,8 @@ async function markPipelineJobError(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
-  options: { retry?: boolean } = {},
-): Promise<boolean> {
+  options: { markRunsError?: boolean; retry?: boolean } = {},
+): Promise<PipelineJobErrorResult> {
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
   if (options.retry !== false && job.attempt_count < maxRetries) {
@@ -1911,7 +1917,7 @@ async function markPipelineJobError(
     );
 
     if (!retryError && retriedJobs.length > 0) {
-      return true;
+      return "retry_scheduled";
     }
   }
 
@@ -1927,7 +1933,10 @@ async function markPipelineJobError(
     .eq("attempt_count", job.attempt_count)
     .select("id");
   if ((erroredJobs?.length ?? 0) > 0) {
-    await markActiveRunsForJobError(admin, job.id);
+    if (options.markRunsError !== false) {
+      await markActiveRunsForJobError(admin, job.id);
+    }
+    return "terminalized";
   }
-  return false;
+  return "ownership_lost";
 }

@@ -20,6 +20,8 @@ type GitHubAppLike = {
 
 type MaybePromise<T> = T | Promise<T>;
 
+const GITHUB_PULL_REQUEST_TITLE_MAX_LENGTH = 256;
+
 interface SessionPullRequestPublicationInput {
   admin: AdminClient;
   baseBranch: string;
@@ -101,6 +103,7 @@ export async function openSessionPullRequest(
 
   const app = await (input.githubAppFactory ?? defaultAppFactory)();
   const octokit = await app.getInstallationOctokit(input.installationId);
+  const title = normalizePullRequestTitle(input.title);
 
   let pr: GitHubPullRequestResponse;
   try {
@@ -115,32 +118,71 @@ export async function openSessionPullRequest(
     const reusable = existing && existing.state === "open" && !existing.merged_at;
 
     if (reusable) {
+      // A retry starts from base in a fresh sandbox. If it produced no commits,
+      // the existing PR still contains only the rejected attempt's head; do not
+      // refresh or re-record that stale implementation as this attempt's work.
+      if (ahead === "no") {
+        await discardStaleSessionPullRequest({
+          admin: input.admin,
+          branch: input.branch,
+          octokit,
+          owner,
+          prNumber: existing.number,
+          repo,
+          sessionId: input.sessionId,
+          workspaceId: input.workspaceId,
+        });
+        return { kind: "no_commits" };
+      }
+
       // Refresh the open PR with this run's commits (a stage retry gets a fresh
       // sandbox branch). Never push a not-ahead branch — that would force-reset
       // the remote (and the PR) back to base.
-      if (ahead !== "no") {
-        const pushError = await pushSandboxBranch(input.sandbox, input.branch);
-        if (pushError) {
-          return { kind: "push_failed", reason: pushError };
-        }
+      const pushError = await pushSandboxBranch(input.sandbox, input.branch);
+      if (pushError) {
+        return { kind: "push_failed", reason: pushError };
       }
       try {
-        await updatePullRequest({
+        const refreshed = await updatePullRequest({
           body: input.body,
           octokit,
           owner,
           prNumber: existing.number,
           repo,
-          title: input.title,
+          title,
         });
+        pr =
+          refreshed.state === "open" && !refreshed.merged_at
+            ? refreshed
+            : await openReplacementPullRequest({
+                base: input.baseBranch,
+                body: input.body,
+                head: input.branch,
+                octokit,
+                owner,
+                repo,
+                title,
+              });
       } catch (error) {
         return publicationFailure(existing.number, error);
       }
-      pr = existing;
     } else if (ahead === "no") {
-      // Nothing new to propose. Preserve the link to the most recent PR if one
-      // exists (e.g. already merged); otherwise there's simply nothing to do.
+      // Nothing new to propose. Preserve a merged PR because its work is now
+      // in base, but discard a closed-unmerged PR left by a rejected attempt.
       if (!existing) {
+        return { kind: "no_commits" };
+      }
+      if (!existing.merged_at) {
+        await discardStaleSessionPullRequest({
+          admin: input.admin,
+          branch: input.branch,
+          octokit,
+          owner,
+          prNumber: existing.number,
+          repo,
+          sessionId: input.sessionId,
+          workspaceId: input.workspaceId,
+        });
         return { kind: "no_commits" };
       }
       pr = existing;
@@ -160,7 +202,7 @@ export async function openSessionPullRequest(
           octokit,
           owner,
           repo,
-          title: input.title,
+          title,
         });
       } catch (error) {
         if (isNoCommitsError(error)) {
@@ -182,18 +224,29 @@ export async function openSessionPullRequest(
           );
         }
         try {
-          await updatePullRequest({
+          const refreshed = await updatePullRequest({
             body: input.body,
             octokit,
             owner,
             prNumber: recovered.number,
             repo,
-            title: input.title,
+            title,
           });
+          pr =
+            refreshed.state === "open" && !refreshed.merged_at
+              ? refreshed
+              : await openReplacementPullRequest({
+                  base: input.baseBranch,
+                  body: input.body,
+                  head: input.branch,
+                  octokit,
+                  owner,
+                  repo,
+                  title,
+                });
         } catch (updateError) {
           return publicationFailure(recovered.number, updateError);
         }
-        pr = recovered;
       }
     }
   } catch (error) {
@@ -203,7 +256,7 @@ export async function openSessionPullRequest(
     };
   }
 
-  return finalizeSessionPullRequestPublication(input, pr);
+  return finalizeSessionPullRequestPublication({ ...input, title }, pr);
 }
 
 function publicationFailure(
@@ -233,6 +286,7 @@ export async function resumeSessionPullRequestPublication(
   try {
     const app = await (input.githubAppFactory ?? defaultAppFactory)();
     const octokit = await app.getInstallationOctokit(input.installationId);
+    const title = normalizePullRequestTitle(input.title);
     const { data: checkpointedPr } = await octokit.request<GitHubPullRequestResponse>(
       "GET /repos/{owner}/{repo}/pulls/{pull_number}",
       {
@@ -244,14 +298,25 @@ export async function resumeSessionPullRequestPublication(
 
     let pr = checkpointedPr;
     if (pr.state === "open" && !pr.merged_at) {
-      await updatePullRequest({
+      pr = await updatePullRequest({
         body: input.body,
         octokit,
         owner,
         prNumber: pr.number,
         repo,
-        title: input.title,
+        title,
       });
+      if (pr.state === "closed" && !pr.merged_at) {
+        pr = await openReplacementPullRequest({
+          base: input.baseBranch,
+          body: input.body,
+          head: input.branch,
+          octokit,
+          owner,
+          repo,
+          title,
+        });
+      }
     } else if (!pr.merged_at) {
       // The checkpoint points to a closed, unmerged PR. The branch is already
       // durable, so publish it again without starting another sandbox/agent.
@@ -264,7 +329,7 @@ export async function resumeSessionPullRequestPublication(
           octokit,
           owner,
           repo,
-          title: input.title,
+          title,
         });
       } catch (error) {
         if (!isAlreadyExistsError(error)) throw error;
@@ -283,7 +348,7 @@ export async function resumeSessionPullRequestPublication(
       }
     }
 
-    return finalizeSessionPullRequestPublication(input, pr);
+    return finalizeSessionPullRequestPublication({ ...input, title }, pr);
   } catch (error) {
     return {
       kind: "publication_failed",
@@ -478,6 +543,56 @@ async function openPullRequest(input: {
   return data;
 }
 
+async function openReplacementPullRequest(input: {
+  base: string;
+  body: string;
+  head: string;
+  octokit: InstallationOctokit;
+  owner: string;
+  repo: string;
+  title: string;
+}): Promise<GitHubPullRequestResponse> {
+  try {
+    return await openPullRequest(input);
+  } catch (error) {
+    if (!isAlreadyExistsError(error)) throw error;
+    const recovered = await findPullRequestForHead(input);
+    if (!recovered || recovered.state !== "open" || recovered.merged_at) {
+      throw new Error(
+        `pulls.create returned 422 already_exists for ${input.head} but no open PR was found`,
+      );
+    }
+    return recovered;
+  }
+}
+
+async function discardStaleSessionPullRequest(input: {
+  admin: AdminClient;
+  branch: string;
+  octokit: InstallationOctokit;
+  owner: string;
+  prNumber: number;
+  repo: string;
+  sessionId: string;
+  workspaceId: string;
+}): Promise<void> {
+  await input.octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+    owner: input.owner,
+    pull_number: input.prNumber,
+    repo: input.repo,
+    state: "closed",
+  });
+
+  const { error } = await input.admin
+    .from("session_pull_requests")
+    .delete()
+    .eq("workspace_id", input.workspaceId)
+    .eq("session_id", input.sessionId)
+    .eq("branch_name", input.branch)
+    .eq("pull_request_number", input.prNumber);
+  if (error) throw error;
+}
+
 async function updatePullRequest(input: {
   body: string;
   octokit: InstallationOctokit;
@@ -485,14 +600,27 @@ async function updatePullRequest(input: {
   prNumber: number;
   repo: string;
   title: string;
-}): Promise<void> {
-  await input.octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
-    body: input.body,
-    owner: input.owner,
-    pull_number: input.prNumber,
-    repo: input.repo,
-    title: input.title,
-  });
+}): Promise<GitHubPullRequestResponse> {
+  const { data } = await input.octokit.request<GitHubPullRequestResponse>(
+    "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+    {
+      body: input.body,
+      owner: input.owner,
+      pull_number: input.prNumber,
+      repo: input.repo,
+      title: input.title,
+    },
+  );
+  return data;
+}
+
+function normalizePullRequestTitle(value: string): string {
+  const singleLine = value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalized = singleLine || "Wallie change";
+  return Array.from(normalized).slice(0, GITHUB_PULL_REQUEST_TITLE_MAX_LENGTH).join("");
 }
 
 async function loadLinearApiKey(admin: AdminClient, workspaceId: string): Promise<string> {
