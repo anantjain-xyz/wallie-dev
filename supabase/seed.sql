@@ -257,10 +257,10 @@ BEGIN
   -- -------------------------------------------------------------------------
   -- 5a. Default pipeline + seeded stages.
   --
-  -- The shipped default is plan → build → land (see
-  -- 20260606000000_pipeline_symphony_alignment.sql). This demo workspace
-  -- customizes it with an explicit Review stage between Build and Land so the
-  -- seeded board below can show review-stage sessions.
+  -- The shipped default is plan → build (see
+  -- 20260811040456_merge_default_build_workflow.sql). This demo workspace
+  -- customizes it with explicit Review and Land stages so the seeded board
+  -- below can show every supported stage shape.
   -- -------------------------------------------------------------------------
   INSERT INTO public.pipelines (id, workspace_id, name, is_default)
   VALUES (default_pipeline_id, ws_id, 'Default', true);
@@ -271,20 +271,22 @@ BEGIN
   SELECT default_pipeline_id, ws_id, s.stage_position, s.slug, s.name, s.description, s.prompt_template_md
   FROM internal.default_pipeline_stages() s;
 
-  -- Make room at position 3 and insert the demo-only Review stage (plan=1,
-  -- build=2, review=3, land=4).
-  UPDATE public.pipeline_stages
-    SET position = 4
-    WHERE pipeline_id = default_pipeline_id AND slug = 'land';
-
+  -- Insert the demo-only Review and Land stages (plan=1, build=2, review=3,
+  -- land=4).
   INSERT INTO public.pipeline_stages (
     pipeline_id, workspace_id, position, slug, name, description, prompt_template_md
   )
-  VALUES (
-    default_pipeline_id, ws_id, 3, 'review', 'Review',
-    'Run a review-and-fix loop: verify the change, address PR feedback from bots and humans, and prepare it for human sign-off.',
-    E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nRun this as a review-and-fix loop for the existing implementation. Do not expand scope or introduce unrelated feature work. Code changes are allowed when they directly resolve review findings, PR feedback, failing checks, or plan gaps.\n\n- **Verify against the plan.** Confirm every acceptance-criteria and validation item is met; call out and fix any gap that is in scope.\n- **PR feedback sweep.** Gather every existing actionable item from bot and human feedback, including top-level PR comments, inline review comments or threads, review states such as changes requested, and failing check annotations. Resolve each with a code change or an explicit, justified response on the same thread or comment where appropriate.\n- **Loop until clear.** Rerun validation, push fixes, re-check CI and PR feedback, and repeat until no actionable feedback remains and no required checks are failing. Pending human-gated checks are fine; do not wait on them.\n- **Checks & evidence.** Confirm CI is green on the latest commit, user-facing changes include the required screenshots, and validation test data has been cleaned up.\n- **Findings.** Report risks, correctness concerns, what feedback was addressed, and a clear recommendation. The change should not advance until findings are resolved and a human approves.'
-  );
+  VALUES
+    (
+      default_pipeline_id, ws_id, 3, 'review', 'Review',
+      'Run a review-and-fix loop: verify the change, address PR feedback from bots and humans, and prepare it for human sign-off.',
+      E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nRun this as a review-and-fix loop for the existing implementation. Do not expand scope or introduce unrelated feature work. Code changes are allowed when they directly resolve review findings, PR feedback, failing checks, or plan gaps.\n\n- **Verify against the plan.** Confirm every acceptance-criteria and validation item is met; call out and fix any gap that is in scope.\n- **PR feedback sweep.** Gather every existing actionable item from bot and human feedback, including top-level PR comments, inline review comments or threads, review states such as changes requested, and failing check annotations. Resolve each with a code change or an explicit, justified response on the same thread or comment where appropriate.\n- **Loop until clear.** Rerun validation, push fixes, re-check CI and PR feedback, and repeat until no actionable feedback remains and no required checks are failing. Pending human-gated checks are fine; do not wait on them.\n- **Checks & evidence.** Confirm CI is green on the latest commit, user-facing changes include the required screenshots, and validation test data has been cleaned up.\n- **Findings.** Report risks, correctness concerns, what feedback was addressed, and a clear recommendation. The change should not advance until findings are resolved and a human approves.'
+    ),
+    (
+      default_pipeline_id, ws_id, 4, 'land', 'Land',
+      'Merge the approved change once CI is green, and capture the rollout.',
+      E'Land the approved change for "{{session.title}}".\n\n## Instructions\n\nConfirm the PR is approved and all required checks are green, squash-merge it, and record the rollout.'
+    );
 
   SELECT id INTO stage_plan_id   FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'plan';
   SELECT id INTO stage_build_id  FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'build';
@@ -328,9 +330,9 @@ BEGIN
   -- 7. Workspace setup state
   -- -------------------------------------------------------------------------
   INSERT INTO public.workspace_linear_routing
-    (id, workspace_id, created_at)
+    (id, workspace_id, land_stage_slug, created_at)
   VALUES
-    (routing_id, ws_id, now() - interval '13 days');
+    (routing_id, ws_id, 'land', now() - interval '13 days');
 
   INSERT INTO public.workspace_repository_profiles
     (id, workspace_id, github_repository_id, is_primary, package_manager,

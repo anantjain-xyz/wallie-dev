@@ -52,11 +52,20 @@ describe("Linear routing editor", () => {
         },
         stages.map((stage) => stage.slug),
       ),
-    ).toBe("Land stage must match a current default pipeline stage.");
+    ).toBe("Automated land stage must match a current default pipeline stage.");
     expect(
       validateLinearRoutingDraftStages(
         {
           landStageSlug: "land",
+          reworkStageSlug: "build",
+        },
+        stages.map((stage) => stage.slug),
+      ),
+    ).toBeNull();
+    expect(
+      validateLinearRoutingDraftStages(
+        {
+          landStageSlug: "",
           reworkStageSlug: "build",
         },
         stages.map((stage) => stage.slug),
@@ -75,7 +84,7 @@ describe("Linear routing editor", () => {
     );
 
     expect(html).toContain("Rework stage");
-    expect(html).toContain("Land stage");
+    expect(html).toContain("Automated land stage");
     expect(html).toContain("Status mappings");
     expect(html).toContain("Stage routing");
     expect(html).toContain("Linear status names");
@@ -85,7 +94,9 @@ describe("Linear routing editor", () => {
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).toContain('<select aria-hidden="true"');
     expect(html).toContain("Restart at build stage");
-    expect(html).toContain("Route to land stage");
+    expect(html).toContain("Pause for manual merge");
+    expect(html).toContain("Archive session");
+    expect(html).toContain("Manual merge (no agent stage)");
     expect(html).toContain("Save routing");
     expect(html).toContain("build");
     expect(html).toContain("land");
@@ -105,5 +116,18 @@ describe("Linear routing editor", () => {
     );
 
     expect(html.match(/renamed-stage/g)).toHaveLength(2);
+  });
+
+  it("shows configured automated landing behavior", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinearRoutingEditor, {
+        canManage: true,
+        routing: { ...DEFAULT_LINEAR_ROUTING_CONFIG, landStageSlug: "land" },
+        stages,
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+
+    expect(html).toContain("Route to land stage");
   });
 });

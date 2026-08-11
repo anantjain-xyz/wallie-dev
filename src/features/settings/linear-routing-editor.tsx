@@ -67,7 +67,7 @@ export function validateLinearRoutingDraftStages(
   const available = new Set(stageOptions);
   const requiredRoutes = [
     ["Rework stage", draft.reworkStageSlug],
-    ["Land stage", draft.landStageSlug],
+    ...(draft.landStageSlug ? ([["Automated land stage", draft.landStageSlug]] as const) : []),
   ] as const;
 
   for (const [label, slug] of requiredRoutes) {
@@ -81,7 +81,7 @@ export function validateLinearRoutingDraftStages(
 
 function routingDraftFromConfig(routing: LinearRoutingConfig): LinearRoutingDraft {
   return {
-    landStageSlug: routing.landStageSlug,
+    landStageSlug: routing.landStageSlug ?? "",
     reworkStageSlug: routing.reworkStageSlug,
     statusMappings: Object.fromEntries(
       LINEAR_ROUTE_KEYS.map((key) => [key, joinStatuses(routing.statusMappings[key])]),
@@ -91,7 +91,7 @@ function routingDraftFromConfig(routing: LinearRoutingConfig): LinearRoutingDraf
 
 function buildRoutingPayload(draft: LinearRoutingDraft) {
   return {
-    landStageSlug: draft.landStageSlug,
+    landStageSlug: draft.landStageSlug || null,
     reworkStageSlug: draft.reworkStageSlug,
     statusMappings: Object.fromEntries(
       LINEAR_ROUTE_KEYS.map((key) => [key, splitStatuses(draft.statusMappings[key])]),
@@ -102,8 +102,11 @@ function buildRoutingPayload(draft: LinearRoutingDraft) {
 function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
   switch (key) {
     case "merging":
+      return draft.landStageSlug
+        ? `Route to ${draft.landStageSlug} stage`
+        : "Pause for manual merge";
     case "done":
-      return `Route to ${draft.landStageSlug} stage`;
+      return draft.landStageSlug ? `Route to ${draft.landStageSlug} stage` : "Archive session";
     case "rework":
       return `Restart at ${draft.reworkStageSlug} stage`;
     default:
@@ -251,7 +254,8 @@ export function LinearRoutingControls({
           <h3 className="text-[14px] font-semibold text-foreground">Stage routing</h3>
           <p className="text-[13px] leading-5 text-muted">
             Choose the pipeline stages Wallie should use when Linear moves a session into rework or
-            land.
+            an optional automated landing flow. Leave landing manual to pause at Merging and archive
+            at Done.
           </p>
         </div>
 
@@ -267,7 +271,8 @@ export function LinearRoutingControls({
           />
           <SelectField
             disabled={!canManage}
-            label="Land stage"
+            emptyOption={{ label: "Manual merge (no agent stage)", value: "" }}
+            label="Automated land stage"
             onValueChange={(value) =>
               updateDraft((current) => ({ ...current, landStageSlug: value }))
             }

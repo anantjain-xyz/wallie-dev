@@ -40,7 +40,7 @@ Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Wi
 
 Wallie turns Linear issues into **sessions** that move through a user-configurable **pipeline** of **stages**, each producing a versioned markdown **artifact** that a human approves or rejects from the dashboard. See the README for the full walkthrough; the essentials:
 
-**Stages are data, not code.** Each stage is a row in `pipeline_stages` (slug, position, prompt template, approver list). Nothing in code distinguishes one stage from another — a single generic runner drives all of them. New workspaces are seeded with `plan → build → land`, but workspaces can edit, add, remove, or reorder stages. Sessions are pinned to a pipeline ID at create time, but stage rows are shared rather than snapshotted: edits to existing stages can change the prompts or ordering observed by pinned sessions.
+**Stages are data, not code.** Each stage is a row in `pipeline_stages` (slug, position, prompt template, approver list). Nothing in code distinguishes one stage from another — a single generic runner drives all of them. New workspaces are seeded with `plan → build`, but workspaces can edit, add, remove, or reorder stages. Sessions are pinned to a pipeline ID at create time, but stage rows are shared rather than snapshotted: edits to existing stages can change the prompts or ordering observed by pinned sessions.
 
 **The core loop:** a job is enqueued (active duplicates are prevented per dedupe key) → the worker claims a ready job through `claim_next_agent_job` → `processPipelineJob()` separately claims the eligible session, renders the stage's prompt template against session context, spins up the configured sandbox with the workspace's GitHub repo, runs the configured agent CLI (Codex or Claude Code) inside it, and writes the output as a versioned artifact → a guarded update flips the session to `awaiting_review` → approval calls the `approve_session_stage` RPC to advance by position, then TypeScript enqueues the next job after the transaction; rejection saves feedback on the artifact and re-runs the same stage with `{{attempt.feedback}}` injected.
 
@@ -82,7 +82,7 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 
 - **Session** — top-level entity representing one end-to-end Wallie workflow. Replaces the legacy "issue" framing.
 - **Pipeline** — an ordered, workspace-owned list of stages. Sessions are pinned to a pipeline at create time.
-- **Stage** — a row in `pipeline_stages` (slug, position, name, prompt template, approver list). User-configurable; new workspaces are seeded with `plan → build → land`. The legacy term "phase" survives in column names like `phase_status`.
+- **Stage** — a row in `pipeline_stages` (slug, position, name, prompt template, approver list). User-configurable; new workspaces are seeded with `plan → build`. The legacy term "phase" survives in column names like `phase_status`.
 - **Artifact** — versioned markdown output per stage. Stored in `session_artifacts`, keyed on `(session_id, stage_slug, version)`.
 - **Run** — one agent execution within a stage. A rejected artifact triggers a new run of the same stage.
 
