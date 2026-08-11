@@ -798,49 +798,51 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      <ActiveRunSummary
-        actionPending={summaryRun ? pendingActionId === summaryRun.id : false}
-        cancelLocked={pendingActionId !== null}
-        connectionState={connectionState}
-        lastActivityAt={summaryLastActivity}
-        onCancel={handleCancelRun}
-        onRetry={handleRetryRun}
-        operation={summaryOperation}
-        renderNow={renderNow}
-        retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-        run={summaryRun}
-        stalled={summaryStalled}
-      />
-
       <div className="min-w-0 divide-y divide-border border-y border-border">
-        {runs.length === 0 ? (
-          <div className="py-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
-        ) : (
-          runs.map((run) => (
-            <WallieRunCard
-              key={run.id}
-              actionPending={pendingActionId === run.id}
-              branchName={
-                run.sandboxId && run.stageSlug
-                  ? buildStageBranchName(session.id, run.stageSlug)
-                  : null
-              }
-              cancelLocked={pendingActionId !== null}
-              connectionState={connectionState}
-              isExpanded={expandedRunId === run.id}
-              messagesLoaded={loadedMessageRunIds.has(run.id)}
-              messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
-              nowMs={nowMs}
-              onCancel={handleCancelRun}
-              onRetry={handleRetryRun}
-              onToggle={handleToggleRun}
-              renderNow={renderNow}
-              retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-              run={run}
-              stallTimeoutMs={initialData.stallTimeoutMs}
-            />
-          ))
-        )}
+        <ActiveRunSummary
+          actionPending={summaryRun ? pendingActionId === summaryRun.id : false}
+          cancelLocked={pendingActionId !== null}
+          connectionState={connectionState}
+          lastActivityAt={summaryLastActivity}
+          onCancel={handleCancelRun}
+          onRetry={handleRetryRun}
+          operation={summaryOperation}
+          renderNow={renderNow}
+          retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+          run={summaryRun}
+          stalled={summaryStalled}
+        />
+
+        <div className="min-w-0 divide-y divide-border">
+          {runs.length === 0 ? (
+            <div className="py-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
+          ) : (
+            runs.map((run) => (
+              <WallieRunCard
+                key={run.id}
+                actionPending={pendingActionId === run.id}
+                branchName={
+                  run.sandboxId && run.stageSlug
+                    ? buildStageBranchName(session.id, run.stageSlug)
+                    : null
+                }
+                cancelLocked={pendingActionId !== null}
+                connectionState={connectionState}
+                isExpanded={expandedRunId === run.id}
+                messagesLoaded={loadedMessageRunIds.has(run.id)}
+                messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+                nowMs={nowMs}
+                onCancel={handleCancelRun}
+                onRetry={handleRetryRun}
+                onToggle={handleToggleRun}
+                renderNow={renderNow}
+                retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+                run={run}
+                stallTimeoutMs={initialData.stallTimeoutMs}
+              />
+            ))
+          )}
+        </div>
       </div>
 
       {olderRunsError ? (
@@ -894,7 +896,7 @@ function ActiveRunSummary({
     return (
       <section
         aria-label="Current Wallie activity"
-        className="min-w-0 border-y border-border py-4 text-sm leading-7 text-muted"
+        className="min-w-0 py-4 text-sm leading-7 text-muted"
       >
         No active Wallie run.
       </section>
@@ -905,11 +907,7 @@ function ActiveRunSummary({
   const showRetryRecovery = stalled && !run.isActive && run.canRetry;
 
   return (
-    <section
-      aria-label="Current Wallie activity"
-      className="min-w-0 border-y border-border py-4"
-      data-wallie-summary=""
-    >
+    <section aria-label="Current Wallie activity" className="min-w-0 py-4" data-wallie-summary="">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
           <p className="ui-label">Current activity</p>

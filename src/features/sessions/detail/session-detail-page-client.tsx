@@ -868,7 +868,7 @@ export function SessionDetailPageClient({
         />
       </div>
 
-      {/* Review workbench: 70/30 on lg+, stacked below 1024px with inspector after artifact. */}
+      {/* Review workbench: 70/30 on lg+, stacked below 1024px with context after artifact. */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0">
         <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
           <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -912,17 +912,30 @@ export function SessionDetailPageClient({
         </section>
 
         <aside className="ui-sheet p-4 lg:rounded-l-none">
-          <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
-            <SessionInspector
-              activity={activity}
-              creatorDisplayName={creatorDisplayName}
-              initialNow={renderNow}
-              repository={repository}
-              session={session}
-            />
-          </SessionActivityArchivedAtProvider>
+          <SessionInspector
+            creatorDisplayName={creatorDisplayName}
+            initialNow={renderNow}
+            repository={repository}
+            session={session}
+          />
         </aside>
       </div>
+
+      <section aria-labelledby="session-runs-heading" className="ui-sheet mt-6">
+        <div className="border-b border-border px-4 py-3">
+          <h2 id="session-runs-heading" className="text-[13px] font-semibold text-foreground">
+            Runs
+          </h2>
+          <p className="mt-0.5 type-annotation text-muted">
+            Review agent run history, status, and messages for this session.
+          </p>
+        </div>
+        <div className="p-4">
+          <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+            {activity}
+          </SessionActivityArchivedAtProvider>
+        </div>
+      </section>
 
       <SessionReviewBar
         approveLabel={approveLabel}
