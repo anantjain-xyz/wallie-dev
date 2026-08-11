@@ -35,6 +35,15 @@ describe("merged default build workflow migration", () => {
     expect(definition).not.toContain("Sweep PR feedback");
   });
 
+  it("uses the established screenshot proof commit-link workflow", () => {
+    const definition = defaultStageDefinition();
+    expect(definition).toContain("create a screenshot-only commit");
+    expect(definition).toContain("add one screenshot proof commit link");
+    expect(definition).toContain("git revert <screenshot-commit-sha>");
+    expect(definition).toContain("screenshots must never be part of the final PR diff");
+    expect(definition).not.toContain("embed them in the PR description at stable URLs");
+  });
+
   it("defaults new routing rows to manual merge without backfilling existing rows", () => {
     expect(migration).toContain("alter column land_stage_slug drop not null");
     expect(migration).toContain("alter column land_stage_slug drop default");
@@ -45,5 +54,9 @@ describe("merged default build workflow migration", () => {
     expect(seed).toContain("3, 'review', 'Review'");
     expect(seed).toContain("4, 'land', 'Land'");
     expect(seed).toContain("(routing_id, ws_id, 'land'");
+  });
+
+  it("keeps linked manual-merge terminal approvals open for Linear reconciliation", () => {
+    expect(migration).toMatch(/s\.linear_issue_id is null[\s\S]*routing\.land_stage_slug is null/);
   });
 });

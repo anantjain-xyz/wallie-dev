@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(4);
+select plan(5);
 set local "request.jwt.claim.role" = 'service_role';
 
 select results_eq(
@@ -49,6 +49,56 @@ select is(
   ),
   null::text,
   'workspace routing trigger creates a manual-merge route'
+);
+
+update public.workspace_linear_routing
+set land_stage_slug = null
+where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001';
+
+create temp table manual_merge_session as
+select *
+from public.create_session_with_first_job(
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-0001-4000-8000-000000000001',
+  'Manual merge approval proof',
+  'Keep the approved Build session open until Linear Done.',
+  'codex',
+  'gpt-5.5',
+  'linear-manual-merge-proof',
+  'https://linear.app/example/issue/OP-TEST',
+  null,
+  'd1b2c3d4-0001-4000-8000-000000000001',
+  array[
+    (
+      select id
+      from public.pipeline_stages
+      where pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
+        and slug = 'build'
+    )
+  ]
+);
+
+update public.sessions session
+set phase_status = 'awaiting_review', current_artifact_version = 1
+from manual_merge_session created
+where session.id = created.session_id;
+
+create temp table manual_merge_approval as
+select approved.*
+from manual_merge_session created
+cross join lateral public.approve_session_stage(
+  created.session_id,
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  1,
+  'c1b2c3d4-0001-4000-8000-000000000001'
+) approved;
+
+select ok(
+  (
+    select phase_status = 'approved' and archived_at is null
+    from manual_merge_approval
+  ),
+  'linked terminal approval stays open while waiting for a manual merge'
 );
 
 select * from finish();
