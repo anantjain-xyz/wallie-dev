@@ -208,6 +208,21 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain(">Prompt<");
   });
 
+  it("renders runs as a full-width section below the artifact workbench", () => {
+    const html = renderDetail({ activity: createElement("div", null, "Run history") });
+    const workbenchIndex = html.indexOf("lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]");
+    const runsSectionIndex = html.indexOf('aria-labelledby="session-runs-heading"');
+
+    expect(workbenchIndex).toBeGreaterThan(-1);
+    expect(runsSectionIndex).toBeGreaterThan(workbenchIndex);
+    expect(html).toContain('class="ui-sheet mt-6"');
+    expect(html).toContain('id="session-runs-heading"');
+    expect(html).toContain(">Runs</h2>");
+    expect(html).toContain("Run history");
+    expect(html).not.toContain('aria-label="Inspector"');
+    expect(html).not.toContain('id="activity-tab"');
+  });
+
   it("keeps the review surface rendered when activity is deferred", () => {
     const data = makeSessionDetailData();
     data.session.artifacts = [

@@ -189,6 +189,15 @@ describe("SessionWalliePanel", () => {
     expect(html).toContain("animate-spin");
   });
 
+  it("uses one shared divider between current activity and run history", () => {
+    const html = renderPanel(data());
+
+    expect(html).toMatch(
+      /<div class="min-w-0 divide-y divide-border border-y border-border"><section aria-label="Current Wallie activity" class="min-w-0 py-4"/,
+    );
+    expect(html).not.toMatch(/aria-label="Current Wallie activity" class="[^"]*border-y[^"]*"/);
+  });
+
   it("expands the latest run by default and keeps older runs collapsed", () => {
     const html = renderPanel(
       data({
