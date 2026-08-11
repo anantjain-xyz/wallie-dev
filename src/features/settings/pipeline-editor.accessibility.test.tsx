@@ -8,11 +8,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
-import type { SessionPipeline } from "@/features/sessions/types";
+import type { PipelineConfiguration } from "@/features/sessions/types";
 
 const memberId = "00000000-0000-4000-8000-000000000021";
 
-const pipeline: SessionPipeline = {
+const pipeline: PipelineConfiguration = {
+  archivedStages: [],
   id: "00000000-0000-4000-8000-000000000001",
   isDefault: true,
   name: "Default",
@@ -88,14 +89,17 @@ afterEach(() => {
   document.body.removeAttribute("style");
 });
 
-function renderEditor(onPipelineSaved?: (pipeline: SessionPipeline) => void) {
+function renderEditor(
+  onPipelineSaved?: (pipeline: PipelineConfiguration) => void,
+  pipelineValue: PipelineConfiguration = pipeline,
+) {
   return render(
     <OverlayProvider>
       <main>
         <PipelineEditor
           canManage
           onPipelineSaved={onPipelineSaved}
-          pipeline={pipeline}
+          pipeline={pipelineValue}
           workspaceId="00000000-0000-4000-8000-000000000002"
           workspaceMembers={workspaceMembers}
         />
@@ -215,14 +219,13 @@ describe("PipelineEditor accessibility", () => {
       screen.getByRole("button", { name: /Drag to reorder Intake, currently position 2 of 3/ }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Remove Build from position 3 of 3" }));
-    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Remove Build?");
-    expect(
-      screen.getByText(/Sessions currently on this stage will block the save/),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Remove Build" }));
+    await user.click(screen.getByRole("button", { name: "Archive Build from position 3 of 3" }));
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Archive Build?");
+    expect(screen.getByText(/Existing sessions keep the stage/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Archive Build" }));
     expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(2);
     expect(screen.getByDisplayValue("Intake")).toBeInTheDocument();
+    expect(screen.getByText("Archived stages (1)")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Save pipeline" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -265,6 +268,46 @@ describe("PipelineEditor accessibility", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
+  it("restores an archived stage with its durable id and saves it as active", async () => {
+    const user = userEvent.setup();
+    const reviewStage = {
+      ...pipeline.stages[0]!,
+      archivedAt: "2026-08-10T12:00:00.000Z",
+      id: "00000000-0000-4000-8000-000000000013",
+      name: "Review",
+      position: 3,
+      slug: "review",
+    };
+    const pipelineWithArchive: PipelineConfiguration = {
+      ...pipeline,
+      archivedStages: [reviewStage],
+    };
+    const savedPipeline: PipelineConfiguration = {
+      ...pipeline,
+      archivedStages: [],
+      stages: [...pipeline.stages, reviewStage],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ pipeline: savedPipeline, success: true }),
+      ok: true,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderEditor(undefined, pipelineWithArchive);
+    await user.click(screen.getByText("Archived stages (1)"));
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(screen.getByDisplayValue("Review")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save pipeline" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as {
+      stages: Array<{ id?: string; slug: string }>;
+    };
+    expect(body.stages.at(-1)).toMatchObject({ id: reviewStage.id, slug: "review" });
+  });
+
   it("locks editing while save is in flight and restores focus after canceling remove", async () => {
     const user = userEvent.setup();
     let resolveFetch: ((value: { json: () => Promise<object>; ok: boolean }) => void) | undefined;
@@ -294,7 +337,7 @@ describe("PipelineEditor accessibility", () => {
     await waitFor(() => expect(nameField).not.toBeDisabled());
 
     const removeBuild = screen.getByRole("button", {
-      name: "Remove Build from position 2 of 2",
+      name: "Archive Build from position 2 of 2",
     });
     removeBuild.focus();
     await user.click(removeBuild);
@@ -307,9 +350,9 @@ describe("PipelineEditor accessibility", () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(screen.getByRole("button", { name: "Remove Plan from position 1 of 2" }));
-    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Remove Plan?");
-    await user.click(screen.getByRole("button", { name: "Remove Plan" }));
+    await user.click(screen.getByRole("button", { name: "Archive Plan from position 1 of 2" }));
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Archive Plan?");
+    await user.click(screen.getByRole("button", { name: "Archive Plan" }));
 
     await waitFor(() => {
       expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(1);

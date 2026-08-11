@@ -60,6 +60,7 @@ export async function validateLinearRoutingStages(input: {
     .from("pipeline_stages")
     .select("slug")
     .eq("pipeline_id", data.id)
+    .is("archived_at", null)
     .in("slug", uniqueSlugs);
 
   if (stageError) throw stageError;

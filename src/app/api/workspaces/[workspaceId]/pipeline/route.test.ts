@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
-  loadDefaultPipelineForWorkspace: vi.fn(),
+  loadDefaultPipelineConfigurationForWorkspace: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   rpc: vi.fn(),
 }));
@@ -16,7 +16,7 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 vi.mock("@/lib/pipeline/stages", () => ({
-  loadDefaultPipelineForWorkspace: mocked.loadDefaultPipelineForWorkspace,
+  loadDefaultPipelineConfigurationForWorkspace: mocked.loadDefaultPipelineConfigurationForWorkspace,
 }));
 
 import { PUT } from "./route";
@@ -62,7 +62,8 @@ function setupRpc(result: { data?: unknown; error?: { message: string } } = {}) 
   mocked.createSupabaseAdminClient.mockReturnValue({
     rpc: mocked.rpc,
   });
-  mocked.loadDefaultPipelineForWorkspace.mockResolvedValue({
+  mocked.loadDefaultPipelineConfigurationForWorkspace.mockResolvedValue({
+    archivedStages: [],
     id: "pipeline-1",
     isDefault: true,
     name: "Default",
@@ -154,7 +155,7 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
       ],
       target_workspace_id: WORKSPACE_ID,
     });
-    expect(mocked.loadDefaultPipelineForWorkspace).toHaveBeenCalledWith(
+    expect(mocked.loadDefaultPipelineConfigurationForWorkspace).toHaveBeenCalledWith(
       mocked.createSupabaseAdminClient.mock.results[0]?.value,
       WORKSPACE_ID,
     );
@@ -295,12 +296,12 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     ]);
   });
 
-  it("maps active-session deletion blocks from the RPC to 409", async () => {
+  it("maps archived slug conflicts from the RPC to 409", async () => {
     grantAccess();
     setupRpc({
       data: {
-        blocking_session_numbers: [17, 18],
-        error_code: "stage_delete_blocked",
+        archived_stage_slugs: ["review", "land"],
+        error_code: "archived_stage_slug_conflict",
         ok: false,
       },
     });
@@ -312,7 +313,8 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
 
     expect(response.status).toBe(409);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain("#17, #18");
+    expect(body.error).toContain("review, land");
+    expect(body).toMatchObject({ archivedStageSlugs: ["review", "land"] });
   });
 
   it("returns 400 with invalid approver member IDs instead of dropping them", async () => {

@@ -24,6 +24,7 @@ vi.mock("@/lib/server-timing", () => ({
 
 import {
   decodePipelineDashboardCursor,
+  filterArchivedPipelineDashboardLanes,
   loadPipelineDashboardData,
   normalizePipelineDashboardRpcPayload,
 } from "@/features/pipeline/data";
@@ -44,7 +45,9 @@ function card(index: number, stageId = PLAN_STAGE_ID, pipelineId = DEFAULT_PIPEL
     linearIssueId: null,
     linearIssueUrl: null,
     number: index,
-    phaseStatus: index % 2 === 0 ? "awaiting_review" : "in_progress",
+    phaseStatus: (index % 2 === 0 ? "awaiting_review" : "in_progress") as
+      | "awaiting_review"
+      | "in_progress",
     pipelineId,
     pullRequests: [],
     rejectionCount: 0,
@@ -145,6 +148,27 @@ describe("Pipeline dashboard data", () => {
     expect(normalized.lanes[0]?.totalCount).toBe(30);
     const decoded = decodePipelineDashboardCursor(normalized.lanes[0]?.cursor ?? null);
     expect(decoded).toEqual(cursor());
+  });
+
+  it("hides empty archived lanes while retaining one occupied by an active session", () => {
+    const [active, emptyArchived, occupiedArchived] = normalizePipelineDashboardRpcPayload({
+      lanes: [
+        lane(),
+        lane({ cards: [], id: VERIFY_STAGE_ID }),
+        lane({
+          cards: [card(1, VERIFY_STAGE_ID)],
+          id: VERIFY_STAGE_ID,
+          totalCount: 1,
+        }),
+      ],
+    }).lanes;
+
+    expect(
+      filterArchivedPipelineDashboardLanes(
+        [active!, emptyArchived!, occupiedArchived!],
+        new Set([VERIFY_STAGE_ID]),
+      ),
+    ).toEqual([active, occupiedArchived]);
   });
 
   it("starts onboarding, board, and session-history queries concurrently after auth", async () => {

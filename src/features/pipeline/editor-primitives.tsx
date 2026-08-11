@@ -752,7 +752,7 @@ export function StageRowEditor({
                       if (stage.id) onRemoveRequest();
                       else onRemove();
                     }}
-                    aria-label={`Remove ${displayName} from ${positionLabel}`}
+                    aria-label={`${stage.id ? "Archive" : "Remove"} ${displayName} from ${positionLabel}`}
                   >
                     ×
                   </button>
@@ -921,21 +921,20 @@ export function RemoveStageDialog({
 }) {
   return (
     <DestructiveConfirmationDialog
-      actionLabel={`Remove ${stageLabel}`}
+      actionLabel={`Archive ${stageLabel}`}
       description={
         <>
-          Remove <strong>{stageLabel}</strong> from this pipeline? Existing artifacts stay
-          unchanged. Sessions currently on this stage will block the save; other in-progress
-          sessions may skip it when they advance.
+          Archive <strong>{stageLabel}</strong>? New sessions will no longer include it. Existing
+          sessions keep the stage and continue normally, and you can restore it later from Settings.
         </>
       }
       onConfirm={onConfirm}
       onOpenChange={onOpenChange}
       open={open}
       pending={false}
-      pendingLabel="Removing…"
+      pendingLabel="Archiving…"
       restoreFocusRef={restoreFocusRef}
-      title={`Remove ${stageLabel}?`}
+      title={`Archive ${stageLabel}?`}
     />
   );
 }

@@ -13,7 +13,11 @@ import {
   type VerifyBlocker,
 } from "@/features/onboarding/runtime-readiness";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
-import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
+import type {
+  ArchivedPipelineStage,
+  PipelineConfiguration,
+  PipelineStage,
+} from "@/features/sessions/types";
 import {
   coerceLinearRoutingConfig,
   DEFAULT_LINEAR_ROUTING_CONFIG,
@@ -65,7 +69,7 @@ export type WorkspaceOnboardingData = {
   linearRouting: LinearRoutingConfig;
   linearSecret: WorkspaceSecretPreview | null;
   onboarding: WorkspaceOnboardingState;
-  pipeline: SessionPipeline | null;
+  pipeline: PipelineConfiguration | null;
   setupHealth: OnboardingSetupHealth;
   sandboxSettings?: SandboxSettingsResponse;
   vercelSandboxConnection: VercelSandboxConnectionPreview | null;
@@ -305,6 +309,7 @@ type PipelineStageRow = Pick<
   Tables<"pipeline_stages">,
   | "approver_member_ids"
   | "anyone_can_approve"
+  | "archived_at"
   | "description"
   | "id"
   | "name"
@@ -440,7 +445,7 @@ function createOnboardingSnapshot(
         context.supabase
           .from("pipeline_stages")
           .select(
-            "id, pipeline_id, position, slug, name, description, prompt_template_md, anyone_can_approve, approver_member_ids",
+            "id, pipeline_id, position, slug, name, description, prompt_template_md, anyone_can_approve, approver_member_ids, archived_at",
           )
           .eq("workspace_id", workspaceId)
           .eq("pipeline_id", pipelineId)
@@ -585,23 +590,32 @@ const loadOnboardingSnapshot = cache(
   },
 );
 
-function derivePipeline(snapshot: OnboardingSnapshot): SessionPipeline | null {
+function derivePipeline(snapshot: OnboardingSnapshot): PipelineConfiguration | null {
   if (!snapshot.pipelineRow) return null;
-  const stages: PipelineStage[] = snapshot.stageRows
-    .filter((stage) => stage.pipeline_id === snapshot.pipelineRow?.id)
-    .map((stage) => ({
-      approverMemberIds: stage.approver_member_ids ?? [],
-      anyoneCanApprove: stage.anyone_can_approve,
-      description: stage.description,
-      id: stage.id,
-      name: stage.name,
-      pipelineId: stage.pipeline_id,
-      position: stage.position,
-      promptTemplateMd: stage.prompt_template_md,
-      slug: stage.slug,
-    }));
+  const pipelineStages = snapshot.stageRows.filter(
+    (stage) => stage.pipeline_id === snapshot.pipelineRow?.id,
+  );
+  const mapStage = (stage: PipelineStageRow): PipelineStage => ({
+    approverMemberIds: stage.approver_member_ids ?? [],
+    anyoneCanApprove: stage.anyone_can_approve,
+    description: stage.description,
+    id: stage.id,
+    name: stage.name,
+    pipelineId: stage.pipeline_id,
+    position: stage.position,
+    promptTemplateMd: stage.prompt_template_md,
+    slug: stage.slug,
+  });
+  const stages = pipelineStages.filter((stage) => stage.archived_at == null).map(mapStage);
+  const archivedStages: ArchivedPipelineStage[] = pipelineStages
+    .filter((stage): stage is PipelineStageRow & { archived_at: string } =>
+      Boolean(stage.archived_at),
+    )
+    .sort((left, right) => right.archived_at.localeCompare(left.archived_at))
+    .map((stage) => ({ ...mapStage(stage), archivedAt: stage.archived_at }));
 
   return {
+    archivedStages,
     id: snapshot.pipelineRow.id,
     isDefault: snapshot.pipelineRow.is_default,
     name: snapshot.pipelineRow.name,
