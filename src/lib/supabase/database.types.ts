@@ -466,6 +466,7 @@ export type Database = {
         Row: {
           anyone_can_approve: boolean
           approver_member_ids: string[]
+          archived_at: string | null
           created_at: string
           description: string
           id: string
@@ -480,6 +481,7 @@ export type Database = {
         Insert: {
           anyone_can_approve?: boolean
           approver_member_ids?: string[]
+          archived_at?: string | null
           created_at?: string
           description?: string
           id?: string
@@ -494,6 +496,7 @@ export type Database = {
         Update: {
           anyone_can_approve?: boolean
           approver_member_ids?: string[]
+          archived_at?: string | null
           created_at?: string
           description?: string
           id?: string

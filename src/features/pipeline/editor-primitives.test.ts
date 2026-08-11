@@ -289,7 +289,7 @@ describe("pipeline editor primitives", () => {
     expect(html).toContain("Prompt template");
     expect(html).toContain("Anyone can approve");
     expect(html).toContain("Move Product down to position 2 of 2");
-    expect(html).toContain("Remove Product from position 1 of 2");
+    expect(html).toContain("Archive Product from position 1 of 2");
     expect(html).toContain("Drag to reorder Product");
     expect(html).toContain("Locked after save");
     // Saved slugs stay focusable (readOnly) so keyboard users can copy them.

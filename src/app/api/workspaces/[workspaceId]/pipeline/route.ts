@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { loadDefaultPipelineForWorkspace } from "@/lib/pipeline/stages";
+import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -10,7 +10,7 @@ type RouteContext = {
 };
 
 type PipelineRewriteRpcResult = {
-  blocking_session_numbers?: number[];
+  archived_stage_slugs?: string[];
   duplicate_stage_ids?: string[];
   duplicate_stage_slugs?: string[];
   error_code?: string;
@@ -112,11 +112,12 @@ export async function PUT(request: Request, context: RouteContext) {
           { status: 400 },
         );
       }
-      case "stage_delete_blocked": {
-        const numbers = (result.blocking_session_numbers ?? []).map((number) => `#${number}`);
+      case "archived_stage_slug_conflict": {
+        const slugs = result.archived_stage_slugs ?? [];
         return NextResponse.json(
           {
-            error: `Cannot remove a stage that is the current stage of active sessions (${numbers.join(", ")}). Approve or archive them first.`,
+            archivedStageSlugs: slugs,
+            error: `Archived pipeline stage slug${slugs.length === 1 ? "" : "s"} must be restored instead: ${slugs.join(", ")}`,
           },
           { status: 409 },
         );
@@ -128,7 +129,7 @@ export async function PUT(request: Request, context: RouteContext) {
     }
   }
 
-  const pipeline = await loadDefaultPipelineForWorkspace(admin, workspaceId);
+  const pipeline = await loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId);
   if (!pipeline) {
     return NextResponse.json({ error: "Workspace has no default pipeline." }, { status: 404 });
   }

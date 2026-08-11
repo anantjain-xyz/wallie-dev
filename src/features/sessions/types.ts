@@ -27,6 +27,15 @@ export type SessionPipeline = {
   stages: PipelineStage[];
 };
 
+export type ArchivedPipelineStage = PipelineStage & {
+  archivedAt: string;
+};
+
+export type PipelineConfiguration = SessionPipeline & {
+  /** Present on current Settings/API payloads; optional for persisted legacy clients. */
+  archivedStages?: ArchivedPipelineStage[];
+};
+
 export type SessionPullRequest = {
   branchName: string;
   id: string;

@@ -31,23 +31,38 @@ import {
   type PipelineDraftValidationResult,
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
-import type { SessionPipeline } from "@/features/sessions/types";
+import type { PipelineConfiguration } from "@/features/sessions/types";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 
 type PipelineEditorProps = {
   canManage: boolean;
   onDirtyChange?: (dirty: boolean) => void;
-  onPipelineSaved?: (pipeline: SessionPipeline) => void;
-  pipeline: SessionPipeline | null;
+  onPipelineSaved?: (pipeline: PipelineConfiguration) => void;
+  pipeline: PipelineConfiguration | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 };
 
 function draftsFromPipeline(
-  pipeline: SessionPipeline,
+  pipeline: PipelineConfiguration,
   workspaceMembers: WorkspaceMemberSummary[],
 ): DraftPipelineStage[] {
   return keepKnownApproverIds(pipeline.stages.map(stageToDraft), workspaceMembers);
+}
+
+type ArchivedStageDraft = {
+  archivedAt: string | null;
+  stage: DraftPipelineStage;
+};
+
+function archivedDraftsFromPipeline(
+  pipeline: PipelineConfiguration,
+  workspaceMembers: WorkspaceMemberSummary[],
+): ArchivedStageDraft[] {
+  const archivedStages = pipeline.archivedStages ?? [];
+  return keepKnownApproverIds(archivedStages.map(stageToDraft), workspaceMembers).map(
+    (stage, index) => ({ archivedAt: archivedStages[index]?.archivedAt ?? null, stage }),
+  );
 }
 
 export function PipelineEditor({
@@ -63,6 +78,9 @@ export function PipelineEditor({
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
     pipeline ? draftsFromPipeline(pipeline, workspaceMembers) : [],
+  );
+  const [archivedStages, setArchivedStages] = useState<ArchivedStageDraft[]>(() =>
+    pipeline ? archivedDraftsFromPipeline(pipeline, workspaceMembers) : [],
   );
   const [baseline, setBaseline] = useState(() =>
     serializePipelineDraft({
@@ -137,9 +155,25 @@ export function PipelineEditor({
   }
 
   function handleRemoveAt(index: number) {
-    const label = stageDisplayName(stages[index]!, index);
+    const stage = stages[index]!;
+    const label = stageDisplayName(stage, index);
     setStages(removeDraftStage(stages, index));
-    announce(`Removed ${label}.`);
+    if (stage.id) {
+      setArchivedStages((current) => [{ archivedAt: null, stage }, ...current]);
+      announce(`${label} will be archived when the pipeline is saved.`);
+    } else {
+      announce(`Discarded unsaved ${label}.`);
+    }
+  }
+
+  function handleRestoreAt(index: number) {
+    const archived = archivedStages[index];
+    if (!archived) return;
+    setArchivedStages((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    setStages((current) => [...current, archived.stage]);
+    announce(
+      `${stageDisplayName(archived.stage, stages.length)} restored at position ${stages.length + 1}. Save the pipeline to apply this change.`,
+    );
   }
 
   async function savePipeline(stagesToSave: DraftPipelineStage[]) {
@@ -157,7 +191,7 @@ export function PipelineEditor({
     }
 
     const body = (await response.json().catch(() => null)) as {
-      pipeline?: SessionPipeline;
+      pipeline?: PipelineConfiguration;
     } | null;
     const savedPipeline = body?.pipeline;
     const nextStages = savedPipeline
@@ -169,6 +203,9 @@ export function PipelineEditor({
     setName(nextName);
     setOperatingRules(nextRules);
     setStages(nextStages);
+    if (savedPipeline) {
+      setArchivedStages(archivedDraftsFromPipeline(savedPipeline, workspaceMembers));
+    }
     setBaseline(
       serializePipelineDraft({
         name: nextName,
@@ -191,6 +228,17 @@ export function PipelineEditor({
 
     setError(null);
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
+    const archivedSlugConflict = archivedStages.find(({ stage: archived }) =>
+      stagesToSave.some(
+        (stage) => stage.slug === archived.slug && (!stage.id || stage.id !== archived.id),
+      ),
+    );
+    if (archivedSlugConflict) {
+      setError(
+        `The slug “${archivedSlugConflict.stage.slug}” belongs to an archived stage. Restore that stage instead.`,
+      );
+      return;
+    }
     const nextValidation = validatePipelineDraft({ name, stages: stagesToSave });
     if (!nextValidation.ok) {
       setHasAttemptedSave(true);
@@ -321,6 +369,42 @@ export function PipelineEditor({
           />
         ))}
       </ol>
+
+      {archivedStages.length > 0 ? (
+        <details className="rounded-[6px] border border-border bg-sheet">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
+            Archived stages ({archivedStages.length})
+          </summary>
+          <ul className="divide-y divide-border border-t border-border">
+            {archivedStages.map(({ archivedAt, stage }, index) => (
+              <li
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                key={stage.key}
+              >
+                <div>
+                  <p className="text-sm font-medium text-foreground">{stage.name || stage.slug}</p>
+                  <p className="type-annotation text-muted">
+                    <span className="font-mono">{stage.slug}</span>
+                    {archivedAt
+                      ? ` · Archived ${new Date(archivedAt).toLocaleDateString()}`
+                      : " · Pending save"}
+                  </p>
+                </div>
+                {canManage ? (
+                  <button
+                    className="ui-button"
+                    disabled={isPending}
+                    onClick={() => handleRestoreAt(index)}
+                    type="button"
+                  >
+                    Restore
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       <PipelineEditorControls
         canManage={canManage}

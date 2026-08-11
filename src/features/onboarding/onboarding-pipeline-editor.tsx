@@ -108,9 +108,10 @@ export function OnboardingPipelineEditor({
   }
 
   function handleRemoveAt(index: number) {
-    const label = stageDisplayName(stages[index]!, index);
+    const stage = stages[index]!;
+    const label = stageDisplayName(stage, index);
     setStages(removeDraftStage(stages, index));
-    announce(`Removed ${label}.`);
+    announce(stage.id ? `${label} will be archived when saved.` : `Discarded unsaved ${label}.`);
   }
 
   async function savePipeline() {
