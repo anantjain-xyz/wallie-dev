@@ -59,11 +59,6 @@ function maintenanceResult() {
       stoppedSandboxIds: ["sandbox-stalled"],
       terminalErroredJobIds: [],
     },
-    processing: {
-      processedJobIds: [],
-      result: "delegated",
-      runId: null,
-    },
     reconciliation: {
       canceled: 1,
       checked: 3,

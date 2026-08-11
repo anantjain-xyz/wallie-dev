@@ -22,26 +22,16 @@ function countChanged(payload: MaintenanceTickResponse): number {
     payload.cleanup.terminalErroredJobIds.length +
     payload.cleanup.stoppedSandboxIds.length +
     payload.cleanup.reapedSandboxIds.length +
-    payload.reconciliation.canceled +
-    payload.processing.processedJobIds.length
+    payload.reconciliation.canceled
   );
 }
 
 function successText(payload: MaintenanceTickResponse): string {
   const changed = countChanged(payload);
-  if (payload.processing.result === "delegated") {
-    if (changed === 0) {
-      return "Maintenance complete. No stuck work was found; queued jobs remain with the worker.";
-    }
-    return `Maintenance complete. ${changed} item${changed === 1 ? "" : "s"} recovered or checked; queued jobs remain with the worker.`;
+  if (changed === 0) {
+    return "Maintenance complete. No stuck work was found; queued jobs remain with the worker.";
   }
-  if (changed === 0 && payload.processing.result === "idle") {
-    return "Maintenance complete. No stuck work was found.";
-  }
-  if (payload.processing.result === "budget_exhausted") {
-    return "Maintenance cleanup completed. Queue processing was skipped because the time budget was nearly exhausted.";
-  }
-  return `Maintenance complete. ${changed} item${changed === 1 ? "" : "s"} recovered or checked.`;
+  return `Maintenance complete. ${changed} item${changed === 1 ? "" : "s"} recovered or checked; queued jobs remain with the worker.`;
 }
 
 function SummaryCell({ label, value }: { label: string; value: string }) {
@@ -125,7 +115,6 @@ export function MaintenancePanel({
               lastResult.reconciliation.rateLimited ? " rate limited" : ""
             }`}
           />
-          <SummaryCell label="Processing" value={lastResult.processing.result} />
         </div>
       ) : null}
     </div>

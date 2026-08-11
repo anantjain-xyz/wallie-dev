@@ -22,7 +22,7 @@ vi.mock("@/features/settings/verify-setup-section", () => ({
   ),
 }));
 
-const delegatedResult: MaintenanceTickResponse = {
+const maintenanceResult: MaintenanceTickResponse = {
   cleanup: {
     activeProviderSandboxCount: 0,
     reapedSandboxIds: [],
@@ -30,11 +30,6 @@ const delegatedResult: MaintenanceTickResponse = {
     stalledRunIds: [],
     stoppedSandboxIds: [],
     terminalErroredJobIds: [],
-  },
-  processing: {
-    processedJobIds: [],
-    result: "delegated",
-    runId: null,
   },
   reconciliation: {
     canceled: 0,
@@ -49,7 +44,7 @@ describe("MaintenanceIsland", () => {
   });
 
   it("keeps the maintenance result separated from the usage summary", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(delegatedResult)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(maintenanceResult)));
 
     const { container } = render(<MaintenanceIsland canManage workspaceId="workspace-1" />);
 
@@ -59,6 +54,7 @@ describe("MaintenanceIsland", () => {
     expect(result).toHaveTextContent(
       "Maintenance complete. No stuck work was found; queued jobs remain with the worker.",
     );
+    expect(screen.queryByText("Processing")).not.toBeInTheDocument();
 
     const island = container.firstElementChild;
     expect(island).toHaveAttribute("id", "maintenance");
