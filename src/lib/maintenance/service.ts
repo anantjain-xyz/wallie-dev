@@ -20,11 +20,6 @@ export type MaintenanceTickResponse = {
     reapedSandboxIds: string[];
     activeProviderSandboxCount: number;
   };
-  processing: {
-    processedJobIds: string[];
-    result: "budget_exhausted" | "delegated" | "error" | "idle" | "success";
-    runId: string | null;
-  };
   reconciliation: {
     canceled: number;
     checked: number;
@@ -34,7 +29,6 @@ export type MaintenanceTickResponse = {
 
 export async function runMaintenanceTick(input: {
   admin: AdminClient;
-  tickBudgetMs?: number;
   workspaceId: string;
 }): Promise<MaintenanceTickResponse> {
   const [stalled, reaped] = await Promise.all([
@@ -45,12 +39,6 @@ export async function runMaintenanceTick(input: {
   const reconciliation = await reconcileLinearState(input.admin, {
     workspaceId: input.workspaceId,
   });
-  const processing: MaintenanceTickResponse["processing"] = {
-    processedJobIds: [],
-    result: "delegated",
-    runId: null,
-  };
-
   return {
     cleanup: {
       activeProviderSandboxCount: reaped.activeProviderCount,
@@ -60,7 +48,6 @@ export async function runMaintenanceTick(input: {
       stoppedSandboxIds: stalled.stoppedSandboxIds,
       terminalErroredJobIds: stalled.stalledJobIds,
     },
-    processing,
     reconciliation,
   };
 }
