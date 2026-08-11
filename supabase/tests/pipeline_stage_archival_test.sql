@@ -6,7 +6,7 @@ commit;
 
 begin;
 
-select plan(22);
+select plan(26);
 set local "request.jwt.claim.role" = 'service_role';
 
 -- Hold the same pipeline-row lock used by Settings after archiving Review,
@@ -201,6 +201,12 @@ set last_issue_number = (
 )
 where counter.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001';
 
+update public.workspace_linear_routing
+set
+  rework_stage_slug = 'review',
+  land_stage_slug = 'land'
+where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001';
+
 select has_column(
   'public', 'pipeline_stages', 'archived_at',
   'pipeline stages expose a durable archive timestamp'
@@ -265,6 +271,24 @@ select is(
      and archived_at is null),
   'plan,build,land',
   'active stage order skips the reserved archive slot'
+);
+select is(
+  (
+    select rework_stage_slug
+    from public.workspace_linear_routing
+    where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  'build',
+  'archiving a Linear rework target moves the route to the nearest active predecessor'
+);
+select is(
+  (
+    select land_stage_slug
+    from public.workspace_linear_routing
+    where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  'land',
+  'archiving another stage preserves an active Linear land target'
 );
 select is(
   (select count(*)::integer
@@ -437,6 +461,41 @@ select is(
      and archived_at is null),
   'plan,review,build,land',
   'restoration applies the requested active order'
+);
+
+create temp table archive_land_result as
+select public.rewrite_default_pipeline_with_approval_policy(
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'Default',
+  (
+    select jsonb_agg(
+      jsonb_build_object(
+        'id', stage.id,
+        'slug', stage.slug,
+        'name', stage.name,
+        'description', stage.description,
+        'promptTemplateMd', stage.prompt_template_md,
+        'anyoneCanApprove', stage.anyone_can_approve,
+        'approverMemberIds', to_jsonb(stage.approver_member_ids)
+      ) order by stage.position
+    )
+    from public.pipeline_stages stage
+    where stage.pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
+      and stage.slug <> 'land'
+  ),
+  null
+) as result;
+
+select is((select result ->> 'ok' from archive_land_result), 'true',
+  'a configured Linear land stage can still be archived');
+select is(
+  (
+    select land_stage_slug
+    from public.workspace_linear_routing
+    where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  'build',
+  'archiving the Linear land target moves the route to the nearest active predecessor'
 );
 
 select * from finish();

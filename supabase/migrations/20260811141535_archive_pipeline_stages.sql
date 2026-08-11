@@ -317,6 +317,65 @@ begin
   join available_slots slots on slots.input_index = active.input_index
   where ps.id = active.id;
 
+  -- Linear routes are stored by slug rather than stage id. If an archived
+  -- stage was a route target, move that route to the nearest surviving stage,
+  -- preferring the previous stage when candidates are equally distant. This
+  -- keeps the routing update atomic with archival and preserves unaffected
+  -- route targets.
+  update public.workspace_linear_routing routing
+  set rework_stage_slug = coalesce(
+    (
+      select candidate.slug
+      from public.pipeline_stages candidate
+      left join public.pipeline_stages referenced
+        on referenced.pipeline_id = target_pipeline_id
+       and referenced.slug = routing.rework_stage_slug
+      where candidate.pipeline_id = target_pipeline_id
+        and candidate.archived_at is null
+      order by
+        abs(candidate.position - coalesce(referenced.position, candidate.position)),
+        case when candidate.position < referenced.position then 0 else 1 end,
+        candidate.position
+      limit 1
+    ),
+    routing.rework_stage_slug
+  )
+  where routing.workspace_id = target_workspace_id
+    and not exists (
+      select 1
+      from public.pipeline_stages active
+      where active.pipeline_id = target_pipeline_id
+        and active.archived_at is null
+        and active.slug = routing.rework_stage_slug
+    );
+
+  update public.workspace_linear_routing routing
+  set land_stage_slug = coalesce(
+    (
+      select candidate.slug
+      from public.pipeline_stages candidate
+      left join public.pipeline_stages referenced
+        on referenced.pipeline_id = target_pipeline_id
+       and referenced.slug = routing.land_stage_slug
+      where candidate.pipeline_id = target_pipeline_id
+        and candidate.archived_at is null
+      order by
+        abs(candidate.position - coalesce(referenced.position, candidate.position)),
+        case when candidate.position < referenced.position then 0 else 1 end,
+        candidate.position
+      limit 1
+    ),
+    routing.land_stage_slug
+  )
+  where routing.workspace_id = target_workspace_id
+    and not exists (
+      select 1
+      from public.pipeline_stages active
+      where active.pipeline_id = target_pipeline_id
+        and active.archived_at is null
+        and active.slug = routing.land_stage_slug
+    );
+
   return jsonb_build_object('ok', true);
 end;
 $$;
