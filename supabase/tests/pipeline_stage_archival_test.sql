@@ -1,8 +1,194 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+create extension if not exists dblink with schema extensions;
+commit;
+
+begin;
+
+select plan(22);
 set local "request.jwt.claim.role" = 'service_role';
+
+-- Hold the same pipeline-row lock used by Settings after archiving Review,
+-- then start session creation on another connection. The create must wait for
+-- the rewrite transaction and select stages from the post-archive snapshot.
+select extensions.dblink_connect(
+  'archive_rewrite',
+  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres application_name=pipeline_archive_rewrite'
+);
+select extensions.dblink_connect(
+  'archive_session_create',
+  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres application_name=pipeline_archive_session_create'
+);
+select extensions.dblink_exec('archive_rewrite', 'begin');
+
+create temp table concurrent_archive_result as
+select rewritten.result
+from extensions.dblink(
+  'archive_rewrite',
+  $query$
+    select public.rewrite_default_pipeline(
+      'b1b2c3d4-0001-4000-8000-000000000001',
+      'Default' || left(config.role, 0),
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', stage.id,
+            'slug', stage.slug,
+            'name', stage.name,
+            'description', stage.description,
+            'promptTemplateMd', stage.prompt_template_md,
+            'approverMemberIds', to_jsonb(stage.approver_member_ids)
+          ) order by stage.position
+        )
+        from public.pipeline_stages stage
+        where stage.pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
+          and stage.slug <> 'review'
+      ),
+      null
+    ) as result
+    from (
+      select set_config('request.jwt.claim.role', 'service_role', false) as role
+    ) config
+  $query$
+) as rewritten(result jsonb);
+
+select is(
+  (select result ->> 'ok' from concurrent_archive_result),
+  'true',
+  'the concurrent rewrite archives Review while retaining its pipeline lock'
+);
+
+select extensions.dblink_send_query(
+  'archive_session_create',
+  $query$
+    select created.session_id
+    from (
+      select set_config('request.jwt.claim.role', 'service_role', false) as role
+    ) config
+    cross join lateral public.create_session_with_first_job(
+      'b1b2c3d4-0001-4000-8000-000000000001',
+      'c1b2c3d4-0001-4000-8000-000000000001',
+      'Archive serialization proof' || left(config.role, 0),
+      'Select stages after the concurrent Settings rewrite.',
+      'codex',
+      'gpt-5.5',
+      null,
+      null,
+      '12b2c3d4-0001-4000-8000-000000000001',
+      null,
+      null
+    ) created
+  $query$
+);
+
+do $$
+begin
+  for attempt in 1..50 loop
+    exit when exists (
+      select 1
+      from pg_catalog.pg_stat_activity activity
+      where activity.application_name = 'pipeline_archive_session_create'
+        and activity.wait_event_type = 'Lock'
+    );
+    perform pg_catalog.pg_sleep(0.02);
+  end loop;
+end;
+$$;
+
+select ok(
+  exists (
+    select 1
+    from pg_catalog.pg_stat_activity activity
+    where activity.application_name = 'pipeline_archive_session_create'
+      and activity.wait_event_type = 'Lock'
+  ),
+  'session creation waits for a concurrent pipeline rewrite'
+);
+
+select extensions.dblink_exec('archive_rewrite', 'commit');
+
+create temp table concurrent_archive_session as
+select created.session_id
+from extensions.dblink_get_result('archive_session_create') as created(session_id uuid);
+
+select is(
+  (
+    select count(*)::integer
+    from public.session_selected_stages selection
+    join concurrent_archive_session created on created.session_id = selection.session_id
+  ),
+  3,
+  'the serialized session selects the post-archive active stage set'
+);
+select ok(
+  not exists (
+    select 1
+    from public.session_selected_stages selection
+    join concurrent_archive_session created on created.session_id = selection.session_id
+    join public.pipeline_stages stage on stage.id = selection.stage_id
+    where stage.slug = 'review'
+  ),
+  'the serialized session cannot inherit the concurrently archived stage'
+);
+
+create temp table concurrent_restore_result as
+select rewritten.result
+from extensions.dblink(
+  'archive_rewrite',
+  $query$
+    select public.rewrite_default_pipeline(
+      'b1b2c3d4-0001-4000-8000-000000000001',
+      'Default' || left(config.role, 0),
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', stage.id,
+            'slug', stage.slug,
+            'name', stage.name,
+            'description', stage.description,
+            'promptTemplateMd', stage.prompt_template_md,
+            'approverMemberIds', to_jsonb(stage.approver_member_ids)
+          ) order by stage.position
+        )
+        from public.pipeline_stages stage
+        where stage.pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
+      ),
+      null
+    ) as result
+    from (
+      select set_config('request.jwt.claim.role', 'service_role', false) as role
+    ) config
+  $query$
+) as rewritten(result jsonb);
+
+select is(
+  (select result ->> 'ok' from concurrent_restore_result),
+  'true',
+  'the concurrency fixture restores Review before the remaining archive tests'
+);
+
+select extensions.dblink_exec(
+  'archive_rewrite',
+  format(
+    'delete from public.sessions where id = %L',
+    (select session_id::text from concurrent_archive_session)
+  )
+);
+select extensions.dblink_exec(
+  'archive_rewrite',
+  $cleanup$
+    update internal.workspace_issue_counters counter
+    set last_issue_number = (
+      select coalesce(max(session.number), 0)
+      from public.sessions session
+      where session.workspace_id = counter.workspace_id
+    )
+    where counter.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  $cleanup$
+);
+select extensions.dblink_disconnect('archive_session_create');
+select extensions.dblink_disconnect('archive_rewrite');
 
 -- The concurrency proof in create_session_with_first_job.sql commits through
 -- dblink, so make this test independent of that file's externally committed

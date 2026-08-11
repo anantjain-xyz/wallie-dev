@@ -398,18 +398,23 @@ begin
       using errcode = '42501';
   end if;
 
+  -- Serialize active-stage selection with Settings rewrites. Without the same
+  -- pipeline-row lock used by rewrite_default_pipeline, a concurrent create
+  -- could snapshot a stage immediately before that stage is archived.
   if selected_pipeline_id is null then
     select pipeline.id
     into pinned_pipeline_id
     from public.pipelines pipeline
     where pipeline.workspace_id = target_workspace_id
-      and pipeline.is_default = true;
+      and pipeline.is_default = true
+    for update;
   else
     select pipeline.id
     into pinned_pipeline_id
     from public.pipelines pipeline
     where pipeline.id = selected_pipeline_id
-      and pipeline.workspace_id = target_workspace_id;
+      and pipeline.workspace_id = target_workspace_id
+    for update;
   end if;
 
   if pinned_pipeline_id is null then
