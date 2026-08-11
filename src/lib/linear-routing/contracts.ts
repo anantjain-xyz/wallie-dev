@@ -36,7 +36,7 @@ export const DEFAULT_LINEAR_STATUS_MAPPINGS: Record<LinearRouteKey, string[]> = 
 };
 
 export const DEFAULT_LINEAR_ROUTING_CONFIG = {
-  landStageSlug: "land",
+  landStageSlug: null,
   reworkStageSlug: "build",
   statusMappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
 };
@@ -66,7 +66,7 @@ export const linearStatusMappingsSchema = z.object({
 });
 
 export const linearRoutingUpdateSchema = z.object({
-  landStageSlug: stageSlugSchema,
+  landStageSlug: stageSlugSchema.nullable(),
   reworkStageSlug: stageSlugSchema,
   statusMappings: linearStatusMappingsSchema,
 });
@@ -75,7 +75,7 @@ export type LinearStatusMappings = z.infer<typeof linearStatusMappingsSchema>;
 export type LinearRoutingUpdateInput = z.infer<typeof linearRoutingUpdateSchema>;
 
 export type LinearRoutingConfig = {
-  landStageSlug: string;
+  landStageSlug: string | null;
   reworkStageSlug: string;
   statusMappings: LinearStatusMappings;
 };
@@ -83,10 +83,10 @@ export type LinearRoutingConfig = {
 export type LinearRouteClassification =
   | { action: "ignore"; route: "backlog"; statusName: string }
   | { action: "start_or_continue"; route: "todo" | "in_progress"; statusName: string }
-  | { action: "pause"; route: "in_review"; statusName: string }
+  | { action: "pause"; route: "in_review" | "merging"; statusName: string }
   | { action: "rework"; route: "rework"; stageSlug: string; statusName: string }
   | { action: "land"; route: "merging" | "done"; stageSlug: string; statusName: string }
-  | { action: "archive"; route: "canceled"; statusName: string }
+  | { action: "archive"; route: "canceled" | "done"; statusName: string }
   | { action: "unmapped"; route: null; statusName: string };
 
 export function normalizeLinearStatusName(statusName: string): string {
@@ -146,9 +146,13 @@ export function classifyLinearStatus(
       case "rework":
         return { action: "rework", route, stageSlug: config.reworkStageSlug, statusName };
       case "merging":
-        return { action: "land", route, stageSlug: config.landStageSlug, statusName };
+        return config.landStageSlug
+          ? { action: "land", route, stageSlug: config.landStageSlug, statusName }
+          : { action: "pause", route, statusName };
       case "done":
-        return { action: "land", route, stageSlug: config.landStageSlug, statusName };
+        return config.landStageSlug
+          ? { action: "land", route, stageSlug: config.landStageSlug, statusName }
+          : { action: "archive", route, statusName };
       case "canceled":
         return { action: "archive", route, statusName };
     }

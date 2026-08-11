@@ -1498,7 +1498,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          land_stage_slug: string
+          land_stage_slug: string | null
           rework_stage_slug: string
           status_mappings: Json
           updated_at: string
@@ -1507,7 +1507,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
-          land_stage_slug?: string
+          land_stage_slug?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
@@ -1516,7 +1516,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
-          land_stage_slug?: string
+          land_stage_slug?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string

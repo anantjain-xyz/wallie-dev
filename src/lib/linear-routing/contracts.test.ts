@@ -21,12 +21,12 @@ describe("linear routing contracts", () => {
       stageSlug: "build",
     });
     expect(classifyLinearStatus("Merging")).toMatchObject({
-      action: "land",
-      stageSlug: "land",
+      action: "pause",
+      route: "merging",
     });
     expect(classifyLinearStatus("Done")).toMatchObject({
-      action: "land",
-      stageSlug: "land",
+      action: "archive",
+      route: "done",
     });
     expect(classifyLinearStatus("Canceled").action).toBe("archive");
     expect(classifyLinearStatus("Cancelled").action).toBe("archive");
@@ -61,11 +61,16 @@ describe("linear routing contracts", () => {
     });
   });
 
-  it("routes done statuses to land", () => {
-    expect(classifyLinearStatus("Done")).toMatchObject({
-      action: "land",
+  it("uses manual merge semantics when no land stage is configured", () => {
+    expect(classifyLinearStatus("Merging")).toEqual({
+      action: "pause",
+      route: "merging",
+      statusName: "Merging",
+    });
+    expect(classifyLinearStatus("Done")).toEqual({
+      action: "archive",
       route: "done",
-      stageSlug: "land",
+      statusName: "Done",
     });
   });
 

@@ -79,6 +79,18 @@ describe("loadLinearRoutingConfig", () => {
       },
     });
   });
+
+  it("loads manual merge routing when no land stage is configured", async () => {
+    const { admin } = buildAdmin({
+      land_stage_slug: null,
+      rework_stage_slug: "build",
+      status_mappings: DEFAULT_LINEAR_ROUTING_CONFIG.statusMappings,
+    });
+
+    await expect(loadLinearRoutingConfig(admin as never, "workspace-1")).resolves.toEqual(
+      DEFAULT_LINEAR_ROUTING_CONFIG,
+    );
+  });
 });
 
 describe("upsertLinearRoutingConfig", () => {
@@ -130,5 +142,22 @@ describe("upsertLinearRoutingConfig", () => {
         },
       },
     ]);
+  });
+
+  it("persists a null land stage for manual merge routing", async () => {
+    const { admin, upserts } = buildAdmin(null);
+
+    await expect(
+      upsertLinearRoutingConfig({
+        admin: admin as never,
+        config: DEFAULT_LINEAR_ROUTING_CONFIG,
+        workspaceId: "workspace-1",
+      }),
+    ).resolves.toEqual(DEFAULT_LINEAR_ROUTING_CONFIG);
+
+    expect(upserts[0]?.values).toMatchObject({
+      land_stage_slug: null,
+      rework_stage_slug: "build",
+    });
   });
 });

@@ -26,7 +26,7 @@ type SecretRow = { workspace_id: string; encrypted_value: string };
 type AgentJobRow = { id: string; job_type?: string; session_id: string; status?: string };
 type PipelineStageRow = { id: string; pipeline_id: string; position: number; slug: string };
 type RoutingRow = {
-  land_stage_slug: string;
+  land_stage_slug: string | null;
   rework_stage_slug: string;
   status_mappings: unknown;
   workspace_id: string;
@@ -546,6 +546,84 @@ describe("reconcileLinearState", () => {
       );
       expect(sessionRejection).toBeUndefined();
     }
+  });
+
+  it("leaves a manual-merge session paused when Linear moves to Merging", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
+      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sManualMerge",
+          current_stage_id: "stage-build",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iManualMerge",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iManualMerge", state: { name: "Merging" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
+    expect(calls.filter((call) => call.op !== "select")).toEqual([]);
+  });
+
+  it("archives a manual-merge session when Linear moves to Done", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
+      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sManualDone",
+          current_stage_id: "stage-build",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iManualDone",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iManualDone", state: { name: "Done" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result).toEqual({ canceled: 1, checked: 1, rateLimited: false });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({ "eq.id": "sManualDone" }),
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({
+          archived_at: expect.any(String),
+          phase_status: "rejected",
+        }),
+      }),
+    );
+    expect(calls).not.toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+      }),
+    );
   });
 
   it("routes custom done statuses to the configured land stage", async () => {
