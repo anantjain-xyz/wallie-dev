@@ -61,16 +61,6 @@ export function ConfigState({ missingKeys, title }: { missingKeys: string[]; tit
   );
 }
 
-export function AvatarFallback({ name }: { name: string }) {
-  const initial = name.trim().charAt(0).toUpperCase() || "W";
-
-  return (
-    <div className="flex h-16 w-16 items-center justify-center rounded-[6px] border border-border bg-control-hover text-xl font-semibold text-foreground">
-      {initial}
-    </div>
-  );
-}
-
 function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
