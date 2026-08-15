@@ -121,7 +121,7 @@ describe("buildRuntimeReadiness", () => {
   it("resolves missing and legacy-empty agent_provider values to Codex", () => {
     expect(resolveAgentConfigValue("agent_provider", {})).toBe("codex");
     expect(resolveAgentConfigValue("agent_provider", { agent_provider: "" })).toBe("codex");
-    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "   " })).toBe("codex");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "   " })).toBe("   ");
     expect(resolveAgentConfigValue("agent_provider", { agent_provider: "claude-code" })).toBe(
       "claude-code",
     );

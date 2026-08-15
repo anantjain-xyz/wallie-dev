@@ -25,7 +25,7 @@ describe("agentConfigValueToDraft", () => {
     expect(agentConfigValueToDraft("agent_provider", undefined)).toBe("codex");
     expect(agentConfigValueToDraft("agent_provider", null)).toBe("codex");
     expect(agentConfigValueToDraft("agent_provider", "")).toBe("codex");
-    expect(agentConfigValueToDraft("agent_provider", "   ")).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "   ")).toBe("   ");
     expect(agentConfigValueToDraft("agent_provider", "codex")).toBe("codex");
     expect(agentConfigValueToDraft("agent_provider", "claude-code")).toBe("claude-code");
     expect(agentConfigValueToDraft("agent_provider", "claude_code")).toBe("claude-code");
@@ -96,7 +96,7 @@ describe("pendingAgentProviderPersistValue", () => {
   it("returns Codex only for missing or legacy-empty stored providers", () => {
     expect(pendingAgentProviderPersistValue(undefined, "codex")).toBe("codex");
     expect(pendingAgentProviderPersistValue("", "codex")).toBe("codex");
-    expect(pendingAgentProviderPersistValue("   ", "codex")).toBe("codex");
+    expect(pendingAgentProviderPersistValue("   ", "codex")).toBeUndefined();
     expect(pendingAgentProviderPersistValue("codex", "codex")).toBeUndefined();
     expect(pendingAgentProviderPersistValue("claude-code", "codex")).toBeUndefined();
   });
@@ -107,10 +107,11 @@ describe("pendingAgentProviderPersistValue", () => {
 });
 
 describe("isMissingOrEmptyAgentProvider", () => {
-  it("treats null, undefined, and blank strings as unset", () => {
+  it("treats null, undefined, and empty strings as unset, not whitespace", () => {
     expect(isMissingOrEmptyAgentProvider(undefined)).toBe(true);
     expect(isMissingOrEmptyAgentProvider(null)).toBe(true);
     expect(isMissingOrEmptyAgentProvider("")).toBe(true);
+    expect(isMissingOrEmptyAgentProvider("   ")).toBe(false);
     expect(isMissingOrEmptyAgentProvider("codex")).toBe(false);
   });
 });

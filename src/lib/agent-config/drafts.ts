@@ -29,7 +29,9 @@ function configValueToString(value: unknown): string {
 }
 
 export function isMissingOrEmptyAgentProvider(value: unknown): boolean {
-  return typeof value !== "string" || value.trim() === "";
+  // Match loadWorkspaceAgentConfig: only non-strings and "" are unset. A
+  // whitespace-only string is truthy there and must not look like Codex here.
+  return typeof value !== "string" || value === "";
 }
 
 /**
@@ -61,8 +63,8 @@ export function agentConfigValueToDraft(key: AgentConfigKey, value: unknown): st
     if (isMissingOrEmptyAgentProvider(value)) {
       return RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
     }
-    const trimmed = (value as string).trim();
-    return normalizeAgentProviderName(trimmed) ?? trimmed;
+    const stored = value as string;
+    return normalizeAgentProviderName(stored) ?? stored;
   }
   return configValueToString(value);
 }
