@@ -55,18 +55,13 @@ function RepositoryProperty({
   value: string;
 }) {
   return (
-    <div
-      aria-label={`${label}: ${value}`}
-      className="grid min-w-0 flex-1 content-start grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 border-t border-border/70 px-3 py-2.5 first:border-t-0 sm:border-l sm:border-t-0 sm:first:border-l-0"
-    >
-      <dt className="col-span-2 grid grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 text-xs font-semibold uppercase leading-4 tracking-[0.08em] text-muted">
-        <span>
-          <RepoPropertyIcon type={icon} />
-        </span>
-        <span>{label}</span>
-      </dt>
+    <div aria-label={`${label}: ${value}`} className="inline-flex min-w-0 items-center gap-1.5">
+      <dt className="sr-only">{label}</dt>
+      <span aria-hidden="true">
+        <RepoPropertyIcon type={icon} />
+      </span>
       <dd
-        className={`col-start-2 min-w-0 break-words text-[13px] font-medium leading-5 text-foreground${monospace ? " font-mono" : ""}`}
+        className={`min-w-0 break-words text-[13px] font-medium leading-5 text-foreground${monospace ? " font-mono" : ""}`}
       >
         {value}
       </dd>
@@ -76,7 +71,7 @@ function RepositoryProperty({
 
 export function RepositoryMetadata({ repository }: { repository: WorkspaceGitHubRepository }) {
   return (
-    <dl className="flex flex-col overflow-hidden rounded-[6px] border border-border/70 bg-canvas/40 sm:flex-row">
+    <dl className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {repository.defaultProgrammingLanguage ? (
         <RepositoryProperty
           icon="language"
@@ -124,6 +119,7 @@ export function hasCurrentWallieSkills(onboarding: RepositoryOnboardingState): b
 }
 
 export function RepositorySetupStatus({ status }: { status: RepositoryOnboardingStatus }) {
+  if (status === "ready") return null;
   const definition = repositoryOnboardingStatuses[status];
   return <Status label={definition?.label} value={definition?.value as StatusValue} />;
 }

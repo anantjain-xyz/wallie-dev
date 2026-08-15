@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 
-import { Status } from "@/components/ui/status";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
@@ -188,7 +187,6 @@ export default function RepositoryAnalysisStep({
                 >
                   {repository.fullName}
                 </a>
-                {selected ? <Status label="Selected" value="approved" /> : null}
                 <RepositorySetupStatus status={repository.onboarding.status} />
               </div>
               <RepositoryMetadata repository={repository} />
