@@ -43,13 +43,13 @@ async function renderStream(element: ReactElement) {
   return new Response(stream).text();
 }
 
-function renderSettingsCategory(category: SettingsCategory) {
+function renderSettingsCategory(category: SettingsCategory, canManage = true) {
   return renderStream(
     createElement(SettingsServerShell, {
       category,
       initialData: {
-        canManage: true,
-        currentMember: { id: "member-1", role: "owner" },
+        canManage,
+        currentMember: { id: "member-1", role: canManage ? "owner" : "member" },
         github: null,
         workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
       } as never,
@@ -107,10 +107,27 @@ describe("Settings server shell", () => {
 
     expect(html).toContain("Total runs");
     expect(html).toContain(">3<");
+    expect(html).toContain('id="maintenance"');
+    expect(html).toContain(">Maintenance<");
+    expect(html).toContain(
+      "Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.",
+    );
     expect(html).toContain("Maintenance island");
     expect(html).not.toContain("Verify setup island");
     expect(html).not.toContain("GitHub integration island");
     expect(html).not.toContain("Workspace identity island");
+  });
+
+  it("omits the Maintenance section when the member cannot manage the workspace", async () => {
+    const html = await renderSettingsCategory("advanced", false);
+
+    expect(html).toContain("Total runs");
+    expect(html).not.toContain('id="maintenance"');
+    expect(html).not.toContain(">Maintenance<");
+    expect(html).not.toContain(
+      "Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.",
+    );
+    expect(html).not.toContain("Maintenance island");
   });
 
   it("uses geometry-stable section loading and error states", () => {

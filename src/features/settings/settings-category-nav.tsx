@@ -110,6 +110,7 @@ export function SettingsCategoryNav({
       const hash = window.location.hash.replace(/^#/u, "");
       const route = resolveSettingsHashRoute(hash);
       if (!route) return;
+      if (route.anchor === "maintenance" && !canManage) return;
 
       const needsCategoryChange = route.category !== activeCategory;
       const needsAnchorRewrite = route.anchor !== hash;
@@ -124,7 +125,7 @@ export function SettingsCategoryNav({
     routeHash();
     window.addEventListener("hashchange", routeHash);
     return () => window.removeEventListener("hashchange", routeHash);
-  }, [activeCategory, pathname, router, search]);
+  }, [activeCategory, canManage, pathname, router, search]);
 
   useEffect(() => {
     const submenu = settingsCategorySubmenu(activeCategory, canManage);

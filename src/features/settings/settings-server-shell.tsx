@@ -191,10 +191,15 @@ function AdvancedCategory(props: SettingsServerShellProps) {
       <Suspense fallback={<SettingsSectionFallback label="usage" />}>
         <UsageSection usage={props.usage} />
       </Suspense>
-      <MaintenanceIsland
-        canManage={props.initialData.canManage}
-        workspaceId={props.initialData.workspace.id}
-      />
+      {props.initialData.canManage ? (
+        <Section
+          anchorId="maintenance"
+          tagline="Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes."
+          title="Maintenance"
+        >
+          <MaintenanceIsland canManage workspaceId={props.initialData.workspace.id} />
+        </Section>
+      ) : null}
       <Suspense fallback={<SettingsSectionFallback label="rate limits" minHeight="min-h-96" />}>
         <AdvancedDetails {...props} />
       </Suspense>
