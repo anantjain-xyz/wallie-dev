@@ -11,9 +11,7 @@ import {
   moveDraftStage,
   OperatingRulesField,
   PipelineEditorControls,
-  PipelineStageOrderPreview,
   PipelineValidationSummary,
-  PipelineVariableHelp,
   pipelineValidationTargetId,
   RemoveStageDialog,
   reorderDraftStage,
@@ -25,7 +23,6 @@ import {
   stageToDraft,
   updateDraftStage,
   updateDraftStageName,
-  updateDraftStageSlug,
   validatePipelineDraft,
   type DraftPipelineStage,
   type PipelineDraftValidationResult,
@@ -321,7 +318,6 @@ export function PipelineEditor({
             </p>
           ) : null}
         </div>
-        <PipelineVariableHelp />
       </div>
 
       <OperatingRulesField
@@ -329,8 +325,6 @@ export function PipelineEditor({
         onChange={setOperatingRules}
         value={operatingRules}
       />
-
-      <PipelineStageOrderPreview stages={stages} />
 
       <ol className="space-y-3">
         {stages.map((stage, index) => (
@@ -346,9 +340,6 @@ export function PipelineEditor({
             onChangeName={(nextName) =>
               setStages((current) => updateDraftStageName(current, index, nextName))
             }
-            onChangeSlug={(nextSlug) =>
-              setStages((current) => updateDraftStageSlug(current, index, nextSlug))
-            }
             onDragEnd={() => setDragIndex(null)}
             onDragOver={(event: DragEvent<HTMLLIElement>) => {
               event.preventDefault();
@@ -363,6 +354,7 @@ export function PipelineEditor({
               removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
               setRemoveIndex(index);
             }}
+            priorStages={stages.slice(0, index).map((prior) => ({ slug: prior.slug }))}
             stage={stage}
             totalStages={stages.length}
             workspaceMembers={workspaceMembers}
@@ -382,12 +374,13 @@ export function PipelineEditor({
                 key={stage.key}
               >
                 <div>
-                  <p className="text-sm font-medium text-foreground">{stage.name || stage.slug}</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {stage.name || "Untitled stage"}
+                  </p>
                   <p className="type-annotation text-muted">
-                    <span className="font-mono">{stage.slug}</span>
                     {archivedAt
-                      ? ` · Archived ${new Date(archivedAt).toLocaleDateString()}`
-                      : " · Pending save"}
+                      ? `Archived ${new Date(archivedAt).toLocaleDateString()}`
+                      : "Pending save"}
                   </p>
                 </div>
                 {canManage ? (

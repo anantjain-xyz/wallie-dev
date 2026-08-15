@@ -2,7 +2,6 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-import { Status } from "@/components/ui/status";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
@@ -364,7 +363,6 @@ export function RepositoryAnalysisSection({
                       >
                         {repository.fullName}
                       </a>
-                      {selected ? <Status label="Selected" value="approved" /> : null}
                       <RepositorySetupStatus status={repository.onboarding.status} />
                     </div>
                     <RepositoryMetadata repository={repository} />

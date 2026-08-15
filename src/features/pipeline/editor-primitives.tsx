@@ -2,15 +2,17 @@
 
 import {
   useId,
+  useLayoutEffect,
+  useRef,
   type DragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
+  type TextareaHTMLAttributes,
 } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { MultiSelectField } from "@/components/ui/multi-select-field";
-import { Status } from "@/components/ui/status";
 import type { PipelineStage } from "@/features/sessions/types";
 
 export type WorkspaceMemberSummary = {
@@ -29,7 +31,10 @@ export type DraftPipelineStage = {
   key: string;
   name: string;
   promptTemplateMd: string;
-  /** When true, Name changes no longer auto-update Slug. */
+  /**
+   * Retained for draft identity. Saved stages never follow name into slug;
+   * unsaved stages always do. Users cannot override the derived slug.
+   */
   slugManual: boolean;
   slug: string;
 };
@@ -72,13 +77,38 @@ export const STAGE_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** Matches `stageInputSchema.slug.max(64)` on the pipeline API. */
 export const STAGE_SLUG_MAX_LENGTH = 64;
 
-export const PIPELINE_VARIABLE_HELP = [
+export const PIPELINE_TEXTAREA_MIN_HEIGHT_PX = 160;
+export const PIPELINE_TEXTAREA_MAX_HEIGHT_PX = 640;
+
+export const PIPELINE_SESSION_VARIABLE_HELP = [
   "{{session.title}}",
   "{{session.prompt}}",
   "{{attempt.number}}",
   "{{attempt.feedback}}",
-  "{{artifact.previousStages.<slug>}}",
 ] as const;
+
+export function previousStageArtifactVariable(slug: string): string {
+  return `{{artifact.previousStages.${slug}}}`;
+}
+
+export function pipelineVariableHelpItems(priorStages: readonly { slug: string }[]): string[] {
+  return [
+    ...PIPELINE_SESSION_VARIABLE_HELP,
+    ...priorStages.map((stage) => previousStageArtifactVariable(stage.slug)),
+  ];
+}
+
+export function pipelineTextareaSize(
+  scrollHeight: number,
+  minHeight = PIPELINE_TEXTAREA_MIN_HEIGHT_PX,
+  maxHeight = PIPELINE_TEXTAREA_MAX_HEIGHT_PX,
+): { height: number; overflowY: "auto" | "hidden" } {
+  const height = Math.min(Math.max(scrollHeight, minHeight), maxHeight);
+  return {
+    height,
+    overflowY: scrollHeight > maxHeight ? "auto" : "hidden",
+  };
+}
 
 export function slugifyStageName(value: string): string {
   const slug = value
@@ -167,7 +197,7 @@ export function updateDraftStage(
   return next;
 }
 
-/** Apply a name change; for unlocked new stages, keep slug following name until manual edit. */
+/** Apply a name change; unsaved stages always derive slug from name. Saved slugs stay put. */
 export function updateDraftStageName(
   stages: DraftPipelineStage[],
   index: number,
@@ -175,7 +205,7 @@ export function updateDraftStageName(
 ): DraftPipelineStage[] {
   const stage = stages[index];
   if (!stage) return stages;
-  if (stage.id !== null || stage.slugManual) {
+  if (stage.id !== null) {
     return updateDraftStage(stages, index, { name });
   }
   const others = stages.filter((_, currentIndex) => currentIndex !== index);
@@ -183,16 +213,6 @@ export function updateDraftStageName(
     name,
     slug: nextUniqueSlug(slugifyStageName(name), others),
   });
-}
-
-export function updateDraftStageSlug(
-  stages: DraftPipelineStage[],
-  index: number,
-  slug: string,
-): DraftPipelineStage[] {
-  const stage = stages[index];
-  if (!stage || stage.id !== null) return stages;
-  return updateDraftStage(stages, index, { slug, slugManual: true });
 }
 
 export function moveDraftStage(
@@ -379,7 +399,7 @@ export function isPipelineDraftValid(input: {
 }
 
 export type StageFieldErrors = Partial<
-  Record<"approvers" | "description" | "name" | "prompt" | "slug", string>
+  Record<"approvers" | "description" | "name" | "prompt", string>
 >;
 
 export function pipelineValidationTargetId(issue: PipelineDraftValidationIssue): string | null {
@@ -391,15 +411,13 @@ export function pipelineValidationTargetId(issue: PipelineDraftValidationIssue):
   }
   if (issue.stageIndex === undefined) return null;
   const fieldSuffix =
-    issue.field === "stage-name"
+    issue.field === "stage-name" || issue.field === "stage-slug"
       ? "name"
-      : issue.field === "stage-slug"
-        ? "slug"
-        : issue.field === "stage-prompt"
-          ? "prompt"
-          : issue.field === "stage-approvers"
-            ? "approvers"
-            : "name";
+      : issue.field === "stage-prompt"
+        ? "prompt"
+        : issue.field === "stage-approvers"
+          ? "approvers"
+          : "name";
   return `pipeline-stage-${issue.stageIndex}-${fieldSuffix}`;
 }
 
@@ -412,9 +430,10 @@ export function fieldErrorsForStage(
   if (forStage.length === 0) return undefined;
   return {
     approvers: forStage.find((issue) => issue.field === "stage-approvers")?.message,
-    name: forStage.find((issue) => issue.field === "stage-name")?.message,
+    name:
+      forStage.find((issue) => issue.field === "stage-name")?.message ??
+      forStage.find((issue) => issue.field === "stage-slug")?.message,
     prompt: forStage.find((issue) => issue.field === "stage-prompt")?.message,
-    slug: forStage.find((issue) => issue.field === "stage-slug")?.message,
   };
 }
 
@@ -482,27 +501,71 @@ export function PipelineValidationSummary({
   );
 }
 
-export function PipelineVariableHelp() {
+export function PipelineVariableHelp({
+  priorStages,
+}: {
+  priorStages: readonly { slug: string }[];
+}) {
+  const variables = pipelineVariableHelpItems(priorStages);
   return (
-    <details className="ml-auto rounded-[6px] border border-border bg-control-hover px-3 py-2 text-xs text-muted">
+    <details className="rounded-[6px] border border-border bg-control-hover px-3 py-2 text-xs text-muted">
       <summary className="cursor-pointer text-foreground">Template variables</summary>
       <ul className="mt-2 space-y-0.5 font-mono">
-        {PIPELINE_VARIABLE_HELP.map((variable) => (
+        {variables.map((variable) => (
           <li key={variable}>{variable}</li>
         ))}
       </ul>
       <p className="mt-2 leading-5">
         Use Mustache-style syntax: <code>{"{{var}}"}</code> for substitution and{" "}
-        <code>{"{{#if var}}…{{/if}}"}</code> for conditional blocks. Replace{" "}
-        <code>&lt;slug&gt;</code> with an earlier stage&apos;s slug to reference its artifact.
+        <code>{"{{#if var}}…{{/if}}"}</code> for conditional blocks.
+        {priorStages.length > 0
+          ? " Prior-stage artifacts are listed with each earlier stage’s slug."
+          : null}
       </p>
     </details>
   );
 }
 
+function AutoSizeTextarea({
+  className,
+  value,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    function syncSize() {
+      if (!el) return;
+      el.style.height = "auto";
+      const { height, overflowY } = pipelineTextareaSize(el.scrollHeight);
+      el.style.height = `${height}px`;
+      el.style.overflowY = overflowY;
+    }
+
+    syncSize();
+    window.addEventListener("resize", syncSize);
+    return () => window.removeEventListener("resize", syncSize);
+  }, [value]);
+
+  return (
+    <textarea
+      {...props}
+      className={`min-h-[160px] max-h-[640px] resize-none ${className ?? ""}`}
+      ref={ref}
+      style={{
+        maxHeight: PIPELINE_TEXTAREA_MAX_HEIGHT_PX,
+        minHeight: PIPELINE_TEXTAREA_MIN_HEIGHT_PX,
+      }}
+      value={value}
+    />
+  );
+}
+
 export function OperatingRulesField({
   canManage,
-  compact = false,
   onChange,
   value,
 }: {
@@ -518,68 +581,21 @@ export function OperatingRulesField({
       <label className="text-[13px] font-medium text-foreground" htmlFor={fieldId}>
         Operating rules
       </label>
-      <textarea
+      <AutoSizeTextarea
         aria-describedby={descriptionId}
-        id={fieldId}
-        value={value}
+        className="ui-textarea font-mono text-xs"
         disabled={!canManage}
-        onChange={(event) => onChange(event.target.value)}
-        className={`ui-textarea font-mono text-xs ${compact ? "min-h-[120px]" : "min-h-[160px]"}`}
-        placeholder="Shared rules prepended to every stage prompt. Use {{session.title}} etc."
+        id={fieldId}
         maxLength={20000}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Shared rules prepended to every stage prompt. Use {{session.title}} etc."
+        value={value}
       />
       <p className="type-annotation text-muted" id={descriptionId}>
         Prepended to every stage prompt in this pipeline — cross-cutting rules like autonomy, git
         safety, cleanup, and honest reporting.
       </p>
     </div>
-  );
-}
-
-export function PipelineStageOrderPreview({ stages }: { stages: DraftPipelineStage[] }) {
-  if (stages.length === 0) {
-    return (
-      <p className="text-sm text-muted">
-        Add stages to preview pipeline order and status treatment.
-      </p>
-    );
-  }
-
-  return (
-    <nav
-      aria-label="Pipeline order preview"
-      className="rounded-[6px] border border-border bg-sheet p-3"
-    >
-      <p className="mb-2 text-[13px] font-medium text-foreground">Order preview</p>
-      <ol className="flex flex-wrap gap-2">
-        {stages.map((stage, index) => {
-          const label = stageDisplayName(stage, index);
-          const previewStatus =
-            stages.length === 1
-              ? { label: "Current", value: "awaiting_review" as const }
-              : index === 0
-                ? { label: "Complete", value: "complete" as const }
-                : index === 1
-                  ? { label: "Current", value: "awaiting_review" as const }
-                  : { label: "Upcoming", value: "upcoming" as const };
-          return (
-            <li key={`${stage.id ?? "new"}-${index}`}>
-              <span className="inline-flex items-center gap-2 rounded-[6px] border border-border bg-background px-2.5 py-1.5 text-xs">
-                <span className="font-medium text-foreground">
-                  {index + 1}. {label}
-                </span>
-                <Status
-                  compact
-                  description={`Preview status for ${label} in position ${index + 1} of ${stages.length}.`}
-                  label={previewStatus.label}
-                  value={previewStatus.value}
-                />
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
   );
 }
 
@@ -592,7 +608,6 @@ export function StageRowEditor({
   isFirst,
   isLast,
   onChangeName,
-  onChangeSlug,
   onChange,
   onDragEnd,
   onDragOver,
@@ -602,6 +617,7 @@ export function StageRowEditor({
   onMoveUp,
   onRemove,
   onRemoveRequest,
+  priorStages,
   stage,
   totalStages,
   workspaceMembers,
@@ -615,7 +631,6 @@ export function StageRowEditor({
   isLast: boolean;
   onChange: (patch: Partial<DraftPipelineStage>) => void;
   onChangeName: (name: string) => void;
-  onChangeSlug: (slug: string) => void;
   onDragEnd: () => void;
   onDragOver: (event: DragEvent<HTMLLIElement>) => void;
   onDragStart: (index: number) => void;
@@ -624,6 +639,7 @@ export function StageRowEditor({
   onMoveUp: () => void;
   onRemove: () => void;
   onRemoveRequest: () => void;
+  priorStages: readonly { slug: string }[];
   stage: DraftPipelineStage;
   totalStages: number;
   workspaceMembers: WorkspaceMemberSummary[];
@@ -631,11 +647,10 @@ export function StageRowEditor({
   const fieldPrefix = `pipeline-stage-${index}`;
   const displayName = stageDisplayName(stage, index);
   const positionLabel = `position ${index + 1} of ${totalStages}`;
-  const slugReadOnly = stage.id !== null;
   const isDragging = dragIndex === index;
-  const approverPreview = stage.anyoneCanApprove
-    ? "Anyone in the workspace"
-    : stage.approverMemberIds.length === 0
+  const approvalPolicyName = `${fieldPrefix}-approval-policy`;
+  const approverPreview =
+    stage.approverMemberIds.length === 0
       ? "Select at least one approver"
       : `${stage.approverMemberIds.length} member${stage.approverMemberIds.length === 1 ? "" : "s"}`;
   const approverOptions = workspaceMembers.map((member) => ({
@@ -694,7 +709,7 @@ export function StageRowEditor({
           </div>
           <div className="min-w-0 flex-1 space-y-4">
             <div className="flex items-start justify-between gap-3">
-              <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[minmax(200px,1fr)_minmax(160px,0.45fr)]">
+              <div className="min-w-0 flex-1">
                 <PipelineTextField
                   description="Shown anywhere this stage appears in the pipeline."
                   disabled={!canManage}
@@ -705,23 +720,6 @@ export function StageRowEditor({
                   onChange={onChangeName}
                   placeholder="Plan"
                   value={stage.name}
-                />
-                <PipelineTextField
-                  className="font-mono text-xs"
-                  description={
-                    slugReadOnly
-                      ? "Locked after save so historical artifacts keep a stable identity. Focus to copy for prompt references."
-                      : "Follows Name until you edit it. Use lowercase letters, numbers, and single hyphens."
-                  }
-                  disabled={!canManage}
-                  error={errors.slug}
-                  id={`${fieldPrefix}-slug`}
-                  label="Slug"
-                  maxLength={STAGE_SLUG_MAX_LENGTH}
-                  onChange={onChangeSlug}
-                  placeholder="plan"
-                  readOnly={slugReadOnly}
-                  value={stage.slug}
                 />
               </div>
               {canManage ? (
@@ -777,25 +775,28 @@ export function StageRowEditor({
             />
 
             <div className="block space-y-1.5">
-              <label
-                className="text-[13px] font-medium text-foreground"
-                htmlFor={`${fieldPrefix}-prompt`}
-              >
-                Prompt template
-              </label>
-              <textarea
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label
+                  className="text-[13px] font-medium text-foreground"
+                  htmlFor={`${fieldPrefix}-prompt`}
+                >
+                  Prompt template
+                </label>
+                <PipelineVariableHelp priorStages={priorStages} />
+              </div>
+              <AutoSizeTextarea
                 aria-describedby={`${fieldPrefix}-prompt-description${errors.prompt ? ` ${fieldPrefix}-prompt-error` : ""}`}
                 aria-invalid={errors.prompt ? true : undefined}
-                id={`${fieldPrefix}-prompt`}
-                value={stage.promptTemplateMd}
+                className={`ui-textarea font-mono text-xs ${errors.prompt ? "border-danger" : ""}`}
                 disabled={!canManage}
-                onChange={(event) => onChange({ promptTemplateMd: event.target.value })}
-                className={`ui-textarea font-mono text-xs ${compact ? "min-h-[120px]" : "min-h-[160px]"} ${errors.prompt ? "border-danger" : ""}`}
-                placeholder="The prompt to run for this stage. Use {{session.title}} etc."
+                id={`${fieldPrefix}-prompt`}
                 maxLength={20000}
+                onChange={(event) => onChange({ promptTemplateMd: event.target.value })}
+                placeholder="The prompt to run for this stage. Use {{session.title}} etc."
+                value={stage.promptTemplateMd}
               />
               <p className="type-annotation text-muted" id={`${fieldPrefix}-prompt-description`}>
-                Tell the agent what to produce; template variables are available above.
+                Tell the agent what to produce; template variables are listed above.
               </p>
               {errors.prompt ? (
                 <p className="text-xs font-medium text-danger" id={`${fieldPrefix}-prompt-error`}>
@@ -804,43 +805,49 @@ export function StageRowEditor({
               ) : null}
             </div>
 
-            <div className="space-y-3">
-              <label
-                className="flex items-start gap-2 text-[13px] text-foreground"
-                htmlFor={`${fieldPrefix}-anyone-can-approve`}
-              >
-                <input
-                  checked={stage.anyoneCanApprove}
-                  className="mt-0.5 size-4 accent-accent"
+            <fieldset className="space-y-3">
+              <legend className="text-[13px] font-medium text-foreground">Who can approve?</legend>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 text-[13px] text-foreground">
+                  <input
+                    checked={stage.anyoneCanApprove}
+                    className="mt-0.5 size-4 accent-accent"
+                    disabled={!canManage}
+                    name={approvalPolicyName}
+                    onChange={() => onChange({ anyoneCanApprove: true })}
+                    type="radio"
+                    value="anyone"
+                  />
+                  <span>Anyone in the workspace</span>
+                </label>
+                <label className="flex items-start gap-2 text-[13px] text-foreground">
+                  <input
+                    checked={!stage.anyoneCanApprove}
+                    className="mt-0.5 size-4 accent-accent"
+                    disabled={!canManage}
+                    name={approvalPolicyName}
+                    onChange={() => onChange({ anyoneCanApprove: false })}
+                    type="radio"
+                    value="specific"
+                  />
+                  <span>Specific members</span>
+                </label>
+              </div>
+              {!stage.anyoneCanApprove ? (
+                <MultiSelectField
+                  description="Choose who can approve this stage before the session advances."
                   disabled={!canManage}
-                  id={`${fieldPrefix}-anyone-can-approve`}
-                  onChange={(event) => onChange({ anyoneCanApprove: event.target.checked })}
-                  type="checkbox"
+                  emptyMessage="No human members are available."
+                  error={errors.approvers}
+                  id={`${fieldPrefix}-approvers`}
+                  label="Approvers"
+                  onValuesChange={(approverMemberIds) => onChange({ approverMemberIds })}
+                  options={approverOptions}
+                  summary={approverPreview}
+                  values={stage.approverMemberIds}
                 />
-                <span>
-                  <span className="font-medium">Anyone can approve</span>
-                  <span className="mt-0.5 block type-annotation text-muted">
-                    Any active member of this workspace can approve this stage.
-                  </span>
-                </span>
-              </label>
-              <MultiSelectField
-                description={
-                  stage.anyoneCanApprove
-                    ? "Turn off Anyone can approve to restrict approval to selected members."
-                    : "Choose who can approve this stage before the session advances."
-                }
-                disabled={!canManage || stage.anyoneCanApprove}
-                emptyMessage="No human members are available."
-                error={errors.approvers}
-                id={`${fieldPrefix}-approvers`}
-                label="Approvers"
-                onValuesChange={(approverMemberIds) => onChange({ approverMemberIds })}
-                options={approverOptions}
-                summary={approverPreview}
-                values={stage.approverMemberIds}
-              />
-            </div>
+              ) : null}
+            </fieldset>
           </div>
         </div>
       </fieldset>

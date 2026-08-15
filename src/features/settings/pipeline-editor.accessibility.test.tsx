@@ -117,10 +117,29 @@ describe("PipelineEditor accessibility", () => {
       "Identifies this pipeline throughout the workspace.",
     );
     expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(2);
-    expect(screen.getAllByRole("textbox", { name: "Slug" })).toHaveLength(2);
+    expect(screen.queryAllByRole("textbox", { name: "Slug" })).toHaveLength(0);
     expect(screen.getAllByRole("textbox", { name: "Description" })).toHaveLength(2);
     expect(screen.getAllByRole("textbox", { name: "Prompt template" })).toHaveLength(2);
-    expect(screen.getAllByRole("textbox", { name: "Slug" })[0]).toHaveAttribute("readonly");
+    expect(
+      screen.queryByRole("navigation", { name: "Pipeline order preview" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("Who can approve?")).toHaveLength(2);
+    expect(screen.getAllByRole("radio", { name: "Anyone in the workspace" })).toHaveLength(2);
+    expect(screen.getAllByRole("radio", { name: "Specific members" })).toHaveLength(2);
+    expect(screen.getAllByRole("radio", { name: "Specific members" })[0]).toBeChecked();
+
+    const operatingRules = screen.getByRole("textbox", { name: "Operating rules" });
+    expect(operatingRules).toHaveStyle({ minHeight: "160px", maxHeight: "640px" });
+    expect(operatingRules).toHaveAttribute("maxLength", "20000");
+    expect(screen.getAllByRole("textbox", { name: "Prompt template" })[0]).toHaveStyle({
+      minHeight: "160px",
+      maxHeight: "640px",
+    });
+
+    const templateHelp = screen.getAllByText("Template variables");
+    await user.click(templateHelp[1]!);
+    expect(screen.getByText("{{artifact.previousStages.plan}}")).toBeInTheDocument();
+    expect(screen.queryByText("{{artifact.previousStages.<slug>}}")).not.toBeInTheDocument();
 
     const approver = screen.getAllByRole("button", {
       name: "Approvers 1 member",
@@ -203,7 +222,12 @@ describe("PipelineEditor accessibility", () => {
     const newName = names[2]!;
     await user.clear(newName);
     await user.type(newName, "Intake");
-    expect(screen.getAllByRole("textbox", { name: "Slug" })[2]).toHaveValue("intake");
+    expect(screen.queryAllByRole("textbox", { name: "Slug" })).toHaveLength(0);
+
+    const intakeHelp = screen.getAllByText("Template variables")[2]!;
+    await user.click(intakeHelp);
+    expect(screen.getAllByText("{{artifact.previousStages.plan}}").length).toBeGreaterThan(0);
+    expect(screen.getByText("{{artifact.previousStages.build}}")).toBeInTheDocument();
 
     const prompts = screen.getAllByRole("textbox", { name: "Prompt template" });
     await user.type(prompts[2]!, "Intake prompt");
@@ -230,6 +254,13 @@ describe("PipelineEditor accessibility", () => {
     await user.click(screen.getByRole("button", { name: "Save pipeline" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PUT" });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as {
+      stages: Array<{ name: string; slug: string }>;
+    };
+    expect(body.stages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "Intake", slug: "intake" })]),
+    );
     await waitFor(() => expect(screen.getByText(/Saved at/)).toBeInTheDocument());
     expect(onPipelineSaved).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -360,5 +391,90 @@ describe("PipelineEditor accessibility", () => {
     const survivingName = screen.getByRole("textbox", { name: "Name" });
     expect(survivingName).toHaveValue("Build");
     await waitFor(() => expect(survivingName).toHaveFocus());
+  });
+
+  it("toggles approval policy, shows members only for Specific members, and preserves selections", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const anyone = screen.getAllByRole("radio", { name: "Anyone in the workspace" })[0]!;
+    const specific = screen.getAllByRole("radio", { name: "Specific members" })[0]!;
+    expect(specific).toBeChecked();
+    expect(screen.getAllByRole("button", { name: "Approvers 1 member" })).toHaveLength(2);
+
+    await user.click(anyone);
+    expect(anyone).toBeChecked();
+    expect(screen.getAllByRole("button", { name: /Approvers/ })).toHaveLength(1);
+
+    await user.click(specific);
+    expect(specific).toBeChecked();
+    expect(screen.getAllByRole("button", { name: "Approvers 1 member" })).toHaveLength(2);
+
+    const results = await axe.run(document.body, axeOptions);
+    expect(results.violations).toEqual([]);
+  });
+
+  it("rejects Specific members with no approver using the inline error pattern", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const approver = screen.getAllByRole("button", { name: "Approvers 1 member" })[0]!;
+    await user.click(approver);
+    await user.click(screen.getByRole("checkbox", { name: "Avery Owner (owner)" }));
+    await user.click(screen.getByRole("button", { name: "Save pipeline" }));
+
+    const summary = await screen.findByRole("alert", { name: "Fix this field before saving" });
+    expect(
+      within(summary).getByRole("link", { name: "Plan needs at least one approver." }),
+    ).toHaveAttribute("href", "#pipeline-stage-0-approvers");
+    expect(document.getElementById("pipeline-stage-0-approvers-error")).toHaveTextContent(
+      "Plan needs at least one approver.",
+    );
+
+    const results = await axe.run(document.body, axeOptions);
+    expect(results.violations).toEqual([]);
+  });
+
+  it("keeps a saved stage slug unchanged when the name is edited", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ pipeline, success: true }),
+      ok: true,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderEditor();
+    const planName = screen.getAllByRole("textbox", { name: "Name" })[0]!;
+    await user.clear(planName);
+    await user.type(planName, "Planning");
+    await user.click(screen.getByRole("button", { name: "Save pipeline" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as {
+      stages: Array<{ id: string; name: string; slug: string }>;
+    };
+    expect(body.stages[0]).toMatchObject({
+      id: pipeline.stages[0]?.id,
+      name: "Planning",
+      slug: "plan",
+    });
+  });
+
+  it("omits slug text from the archived stage list", async () => {
+    const user = userEvent.setup();
+    const reviewStage = {
+      ...pipeline.stages[0]!,
+      archivedAt: "2026-08-10T12:00:00.000Z",
+      id: "00000000-0000-4000-8000-000000000013",
+      name: "Review",
+      position: 3,
+      slug: "review",
+    };
+    renderEditor(undefined, { ...pipeline, archivedStages: [reviewStage] });
+
+    await user.click(screen.getByText("Archived stages (1)"));
+    expect(screen.getByText("Review")).toBeInTheDocument();
+    expect(screen.queryByText("review")).not.toBeInTheDocument();
   });
 });
