@@ -434,7 +434,7 @@ function SavedConnectionSummary({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h3 className="text-[13px] font-semibold text-foreground">
-            {providerLabel(provider)} connected
+            {providerLabel(provider)} {status.connected ? "connected" : "saved"}
           </h3>
           <p className="font-mono text-xs text-muted">{secretPreview(provider, connection)}</p>
           <p className="text-xs text-muted">
@@ -657,10 +657,17 @@ function secretPreview(
   provider: SandboxProvider,
   connection: NonNullable<SandboxConnectionPreviews[SandboxProvider]>,
 ) {
-  if (provider === "vercel") {
-    return (connection as VercelSandboxConnectionPreview).tokenPreview ?? "preview unavailable";
-  }
-  return (connection as E2BSandboxConnectionPreview).apiKeyPreview ?? "preview unavailable";
+  const preview =
+    provider === "vercel"
+      ? (connection as VercelSandboxConnectionPreview).tokenPreview
+      : (connection as E2BSandboxConnectionPreview).apiKeyPreview;
+  return displaySecretPreview(preview);
+}
+
+function displaySecretPreview(preview: string | null) {
+  if (!preview) return "preview unavailable";
+  if (preview.includes("...") || preview.includes("…")) return preview;
+  return "••••";
 }
 
 function providerLabel(provider: SandboxProvider) {
