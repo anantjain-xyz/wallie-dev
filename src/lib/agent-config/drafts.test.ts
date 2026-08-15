@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   agentConfigValueToDraft,
   applyAgentConfigDraftChange,
+  isMissingOrEmptyAgentProvider,
   parseAgentConfigDraft,
+  pendingAgentProviderPersistValue,
 } from "./drafts";
 
 describe("agentConfigValueToDraft", () => {
@@ -17,6 +19,16 @@ describe("agentConfigValueToDraft", () => {
     expect(agentConfigValueToDraft("concurrency_limit", 1)).toBe("1");
     expect(agentConfigValueToDraft("agent_model", "gpt-5.5")).toBe("gpt-5.5");
     expect(agentConfigValueToDraft("max_retries", undefined)).toBe("");
+  });
+
+  it("resolves missing and legacy-empty agent_provider values to Codex", () => {
+    expect(agentConfigValueToDraft("agent_provider", undefined)).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", null)).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "")).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "   ")).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "codex")).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "claude-code")).toBe("claude-code");
+    expect(agentConfigValueToDraft("agent_provider", "claude_code")).toBe("claude-code");
   });
 });
 
@@ -77,5 +89,28 @@ describe("applyAgentConfigDraftChange", () => {
       agent_provider: "claude-code",
       agent_model: "claude-opus-4-8[1m]",
     });
+  });
+});
+
+describe("pendingAgentProviderPersistValue", () => {
+  it("returns Codex only for missing or legacy-empty stored providers", () => {
+    expect(pendingAgentProviderPersistValue(undefined, "codex")).toBe("codex");
+    expect(pendingAgentProviderPersistValue("", "codex")).toBe("codex");
+    expect(pendingAgentProviderPersistValue("   ", "codex")).toBe("codex");
+    expect(pendingAgentProviderPersistValue("codex", "codex")).toBeUndefined();
+    expect(pendingAgentProviderPersistValue("claude-code", "codex")).toBeUndefined();
+  });
+
+  it("persists a user-selected provider when the stored value is empty", () => {
+    expect(pendingAgentProviderPersistValue("", "claude-code")).toBe("claude-code");
+  });
+});
+
+describe("isMissingOrEmptyAgentProvider", () => {
+  it("treats null, undefined, and blank strings as unset", () => {
+    expect(isMissingOrEmptyAgentProvider(undefined)).toBe(true);
+    expect(isMissingOrEmptyAgentProvider(null)).toBe(true);
+    expect(isMissingOrEmptyAgentProvider("")).toBe(true);
+    expect(isMissingOrEmptyAgentProvider("codex")).toBe(false);
   });
 });

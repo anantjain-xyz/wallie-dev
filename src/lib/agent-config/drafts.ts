@@ -1,5 +1,6 @@
 import {
   type AgentConfigKey,
+  RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   formatStallTimeoutMinutes,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
@@ -27,14 +28,41 @@ function configValueToString(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
+export function isMissingOrEmptyAgentProvider(value: unknown): boolean {
+  return typeof value !== "string" || value.trim() === "";
+}
+
+/**
+ * Persist the displayed Codex fallback for a missing/legacy-empty provider on
+ * the next explicit save. Rendering already shows Codex without marking dirty.
+ */
+export function pendingAgentProviderPersistValue(
+  storedProvider: unknown,
+  draftProvider: string,
+): unknown | undefined {
+  if (!isMissingOrEmptyAgentProvider(storedProvider)) return undefined;
+  const parsed = parseAgentConfigDraft("agent_provider", "select", draftProvider);
+  return parsed.ok ? parsed.value : undefined;
+}
+
 /**
  * Convert a stored agent-config value into its editable draft string. Most keys
  * map 1:1, but stall_timeout_ms is stored in milliseconds and edited in minutes,
  * so this is the single conversion point on the read path.
+ *
+ * Missing or legacy-empty agent_provider values resolve to the runtime Codex
+ * fallback for display only — this does not write storage.
  */
 export function agentConfigValueToDraft(key: AgentConfigKey, value: unknown): string {
   if (key === "stall_timeout_ms" && typeof value === "number") {
     return formatStallTimeoutMinutes(value);
+  }
+  if (key === "agent_provider") {
+    if (isMissingOrEmptyAgentProvider(value)) {
+      return RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
+    }
+    const trimmed = (value as string).trim();
+    return normalizeAgentProviderName(trimmed) ?? trimmed;
   }
   return configValueToString(value);
 }

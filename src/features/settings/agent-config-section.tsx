@@ -11,9 +11,9 @@ import type {
   BatchUpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import {
+  AGENT_CONFIG_VISIBLE_FIELDS,
   AGENT_EFFORT_EMPTY_OPTION,
   AGENT_EFFORT_SELECT_OPTIONS,
-  AGENT_PROVIDER_EMPTY_OPTION,
   AGENT_PROVIDER_SELECT_OPTIONS,
 } from "@/components/shared/agent-provider-options";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -37,6 +37,7 @@ import {
   agentConfigValueToDraft,
   applyAgentConfigDraftChange,
   parseAgentConfigDraft,
+  pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
@@ -183,24 +184,23 @@ export function AgentConfigSection({
     () => [
       {
         configKey: "agent_provider",
-        description: "Which agent CLI to use for coding tasks.",
-        emptyOption: AGENT_PROVIDER_EMPTY_OPTION,
-        label: "Agent provider",
+        description: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.description,
+        label: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.label,
         options: AGENT_PROVIDER_SELECT_OPTIONS,
         type: "select",
       },
       {
         configKey: "agent_model",
-        description: "Model identifier passed to the selected agent provider.",
-        label: "Agent model",
+        description: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.description,
+        label: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.label,
         placeholder: getRecommendedAgentModel(selectedAgentProvider),
         type: "text",
       },
       {
         configKey: "agent_effort",
-        description: "Reasoning effort passed to the selected agent provider.",
+        description: AGENT_CONFIG_VISIBLE_FIELDS.agent_effort.description,
         emptyOption: AGENT_EFFORT_EMPTY_OPTION,
-        label: "Agent effort",
+        label: AGENT_CONFIG_VISIBLE_FIELDS.agent_effort.label,
         options: AGENT_EFFORT_SELECT_OPTIONS,
         type: "select",
       },
@@ -289,6 +289,13 @@ export function AgentConfigSection({
       if (status.validation?.ok) {
         config[status.field.configKey] = status.validation.value;
       }
+    }
+    const pendingProvider = pendingAgentProviderPersistValue(
+      agentConfig.agent_provider,
+      drafts.agent_provider,
+    );
+    if (pendingProvider !== undefined) {
+      config.agent_provider = pendingProvider;
     }
 
     try {
