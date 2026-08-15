@@ -42,6 +42,30 @@ describe("renderStagePrompt", () => {
     expect(result).toContain("Stage: build");
   });
 
+  it("substitutes hyphenated previous-stage slugs listed in template help", () => {
+    const result = renderStagePrompt(
+      {
+        ...stage,
+        promptTemplateMd: trustedPromptValue(
+          "stage.promptTemplate",
+          "{{artifact.previousStages.code-review}}",
+        ),
+      },
+      {
+        ...baseInput,
+        previousStages: {
+          "code-review": untrustedPromptValue(
+            "artifact.previousStages.code-review",
+            "Approved review",
+          ),
+        },
+      },
+    );
+
+    expect(result).toContain("Source: artifact.previousStages.code-review");
+    expect(result).not.toContain("{{artifact.previousStages.code-review}}");
+  });
+
   it("prepends trusted operating rules above the stage prompt", () => {
     const result = renderStagePrompt(stage, {
       ...baseInput,

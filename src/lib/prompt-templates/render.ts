@@ -21,7 +21,7 @@ export function renderTemplate(template: string, variables: TemplateVariables): 
 
   // Process conditional blocks: {{#if var}}...{{/if}}
   result = result.replace(
-    /\{\{#if\s+([a-zA-Z0-9_.]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    /\{\{#if\s+([a-zA-Z0-9_.-]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
     (_match, key: string, body: string) => {
       const value = resolveVariable(key, variables);
       if (isTruthy(value)) {
@@ -35,7 +35,7 @@ export function renderTemplate(template: string, variables: TemplateVariables): 
   );
 
   // Replace {{variable}} and {{object.property}} placeholders.
-  result = result.replace(/\{\{([a-zA-Z0-9_.]+)\}\}/g, (_match, key: string) => {
+  result = result.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_match, key: string) => {
     const value = resolveVariable(key, variables);
     if (value === undefined || value === null) return "";
     if (Array.isArray(value)) return value.join("\n");
