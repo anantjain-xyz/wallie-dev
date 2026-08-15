@@ -11,7 +11,6 @@ import {
   OperatingRulesField,
   PipelineEditorControls,
   PipelineValidationSummary,
-  PipelineVariableHelp,
   pipelineValidationTargetId,
   RemoveStageDialog,
   reorderDraftStage,
@@ -22,7 +21,6 @@ import {
   stageToDraft,
   updateDraftStage,
   updateDraftStageName,
-  updateDraftStageSlug,
   validatePipelineDraft,
   type DraftPipelineStage,
   type PipelineDraftValidationResult,
@@ -200,7 +198,6 @@ export function OnboardingPipelineEditor({
             </p>
           ) : null}
         </div>
-        <PipelineVariableHelp />
       </div>
 
       <OperatingRulesField
@@ -225,9 +222,6 @@ export function OnboardingPipelineEditor({
             onChangeName={(nextName) =>
               setStages((current) => updateDraftStageName(current, index, nextName))
             }
-            onChangeSlug={(nextSlug) =>
-              setStages((current) => updateDraftStageSlug(current, index, nextSlug))
-            }
             onDragEnd={() => setDragIndex(null)}
             onDragOver={(event: DragEvent<HTMLLIElement>) => {
               event.preventDefault();
@@ -242,6 +236,7 @@ export function OnboardingPipelineEditor({
               removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
               setRemoveIndex(index);
             }}
+            priorStages={stages.slice(0, index).map((prior) => ({ slug: prior.slug }))}
             stage={stage}
             totalStages={stages.length}
             workspaceMembers={workspaceMembers}

@@ -8,6 +8,12 @@ import {
   keepKnownApproverIds,
   moveDraftStage,
   nextUniqueSlug,
+  PIPELINE_TEXTAREA_MAX_HEIGHT_PX,
+  PIPELINE_TEXTAREA_MIN_HEIGHT_PX,
+  pipelineTextareaSize,
+  pipelineValidationTargetId,
+  pipelineVariableHelpItems,
+  previousStageArtifactVariable,
   reorderDraftStage,
   removeDraftStage,
   slugifyStageName,
@@ -16,7 +22,6 @@ import {
   StageRowEditor,
   updateDraftStage,
   updateDraftStageName,
-  updateDraftStageSlug,
   validatePipelineDraft,
   type DraftPipelineStage,
 } from "@/features/pipeline/editor-primitives";
@@ -167,33 +172,28 @@ describe("pipeline editor primitives", () => {
     ).toEqual({ ok: true });
   });
 
-  it("follows name into slug until the slug is edited manually", () => {
+  it("derives unsaved slugs from the name and never changes a saved slug", () => {
     expect(slugifyStageName("Review Gate")).toBe("review-gate");
 
-    const initial = [
-      stage({ id: null, key: "draft-1", name: "New stage", slug: "new-stage", slugManual: false }),
+    const unsaved = [
+      stage({ id: null, key: "draft-1", name: "New stage", slug: "new-stage", slugManual: true }),
     ];
-    const renamed = updateDraftStageName(initial, 0, "Review Gate");
-    expect(renamed[0]).toMatchObject({
+    expect(updateDraftStageName(unsaved, 0, "Review Gate")[0]).toMatchObject({
       name: "Review Gate",
       slug: "review-gate",
-      slugManual: false,
     });
 
-    const lockedSlug = updateDraftStageSlug(renamed, 0, "custom-slug");
-    expect(lockedSlug[0]).toMatchObject({ slug: "custom-slug", slugManual: true });
-    expect(updateDraftStageName(lockedSlug, 0, "Something Else")[0]).toMatchObject({
-      name: "Something Else",
-      slug: "custom-slug",
-      slugManual: true,
-    });
+    const collision = [
+      stage({ slug: "review-gate" }),
+      stage({ id: null, key: "draft-2", name: "New stage", slug: "new-stage", slugManual: false }),
+    ];
+    expect(updateDraftStageName(collision, 1, "Review Gate")[1]?.slug).toBe("review-gate-2");
 
     const saved = [stage({ id: "stage-1", name: "Plan", slug: "plan", slugManual: true })];
     expect(updateDraftStageName(saved, 0, "Planning")[0]).toMatchObject({
       name: "Planning",
       slug: "plan",
     });
-    expect(updateDraftStageSlug(saved, 0, "planning")).toBe(saved);
   });
 
   it("updates, appends, moves, reorders, and removes draft stages immutably", () => {
@@ -250,18 +250,17 @@ describe("pipeline editor primitives", () => {
     ]);
   });
 
-  it("renders the compact stage row with labelled fields and named reorder controls", () => {
+  it("renders the compact stage row with labelled fields, approval radios, and concrete prior-stage variables", () => {
     const html = renderToStaticMarkup(
       createElement(StageRowEditor, {
         canManage: true,
         compact: true,
         dragIndex: null,
-        index: 0,
-        isFirst: true,
+        index: 1,
+        isFirst: false,
         isLast: false,
         onChange: vi.fn(),
         onChangeName: vi.fn(),
-        onChangeSlug: vi.fn(),
         onDragEnd: vi.fn(),
         onDragOver: vi.fn(),
         onDragStart: vi.fn(),
@@ -270,6 +269,7 @@ describe("pipeline editor primitives", () => {
         onMoveUp: vi.fn(),
         onRemove: vi.fn(),
         onRemoveRequest: vi.fn(),
+        priorStages: [{ slug: "plan" }],
         stage: stage(),
         totalStages: 2,
         workspaceMembers: [
@@ -284,17 +284,61 @@ describe("pipeline editor primitives", () => {
     );
 
     expect(html).toContain("Product");
-    expect(html).toContain("product");
     expect(html).toContain("Product requirements");
     expect(html).toContain("Prompt template");
-    expect(html).toContain("Anyone can approve");
-    expect(html).toContain("Move Product down to position 2 of 2");
-    expect(html).toContain("Archive Product from position 1 of 2");
+    expect(html).toContain("Who can approve?");
+    expect(html).toContain("Anyone in the workspace");
+    expect(html).toContain("Specific members");
+    expect(html).toContain("Approvers");
+    expect(html).toContain("{{artifact.previousStages.plan}}");
+    expect(html).not.toContain("{{artifact.previousStages.&lt;slug&gt;}}");
+    expect(html).not.toContain("{{artifact.previousStages.<slug>}}");
+    expect(html).not.toContain(">Slug<");
+    expect(html).not.toContain("Order preview");
+    expect(html).toContain("Move Product down to position 3 of 2");
+    expect(html).toContain("Archive Product from position 2 of 2");
     expect(html).toContain("Drag to reorder Product");
-    expect(html).toContain("Locked after save");
-    // Saved slugs stay focusable (readOnly) so keyboard users can copy them.
-    expect(html).toMatch(/id="pipeline-stage-0-slug"[^>]*readOnly/);
-    expect(html).not.toMatch(/id="pipeline-stage-0-slug"[^>]*disabled/);
+    expect(html).toContain("min-h-[160px]");
+    expect(html).toContain("max-h-[640px]");
+  });
+
+  it("hides the member picker when Anyone in the workspace is selected", () => {
+    const html = renderToStaticMarkup(
+      createElement(StageRowEditor, {
+        canManage: true,
+        dragIndex: null,
+        index: 0,
+        isFirst: true,
+        isLast: true,
+        onChange: vi.fn(),
+        onChangeName: vi.fn(),
+        onDragEnd: vi.fn(),
+        onDragOver: vi.fn(),
+        onDragStart: vi.fn(),
+        onDrop: vi.fn(),
+        onMoveDown: vi.fn(),
+        onMoveUp: vi.fn(),
+        onRemove: vi.fn(),
+        onRemoveRequest: vi.fn(),
+        priorStages: [],
+        stage: stage({ anyoneCanApprove: true, approverMemberIds: ["member-1"] }),
+        totalStages: 1,
+        workspaceMembers: [
+          {
+            email: "owner@example.com",
+            fullName: "Owner",
+            id: "member-1",
+            role: "owner",
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("Anyone in the workspace");
+    expect(html).toContain("Specific members");
+    expect(html).not.toContain(">Approvers<");
+    expect(html).toContain('value="anyone"');
+    expect(html).toContain("checked");
   });
 
   it("bounds auto-generated slugs to the API max length and validates oversize slugs", () => {
@@ -326,5 +370,42 @@ describe("pipeline editor primitives", () => {
       ok: false,
       stageIndex: 0,
     });
+    expect(
+      pipelineValidationTargetId({
+        code: "invalid-stage-slug",
+        field: "stage-slug",
+        message: "Product slug must use lowercase letters, numbers, and single hyphens.",
+        stageIndex: 0,
+      }),
+    ).toBe("pipeline-stage-0-name");
+  });
+
+  it("clamps autosized textarea height between 160px and 640px", () => {
+    expect(pipelineTextareaSize(80)).toEqual({
+      height: PIPELINE_TEXTAREA_MIN_HEIGHT_PX,
+      overflowY: "hidden",
+    });
+    expect(pipelineTextareaSize(240)).toEqual({ height: 240, overflowY: "hidden" });
+    expect(pipelineTextareaSize(PIPELINE_TEXTAREA_MAX_HEIGHT_PX)).toEqual({
+      height: PIPELINE_TEXTAREA_MAX_HEIGHT_PX,
+      overflowY: "hidden",
+    });
+    expect(pipelineTextareaSize(PIPELINE_TEXTAREA_MAX_HEIGHT_PX + 80)).toEqual({
+      height: PIPELINE_TEXTAREA_MAX_HEIGHT_PX,
+      overflowY: "auto",
+    });
+  });
+
+  it("lists concrete prior-stage artifact variables instead of a slug placeholder", () => {
+    expect(previousStageArtifactVariable("plan")).toBe("{{artifact.previousStages.plan}}");
+    expect(pipelineVariableHelpItems([{ slug: "plan" }, { slug: "build" }])).toEqual([
+      "{{session.title}}",
+      "{{session.prompt}}",
+      "{{attempt.number}}",
+      "{{attempt.feedback}}",
+      "{{artifact.previousStages.plan}}",
+      "{{artifact.previousStages.build}}",
+    ]);
+    expect(pipelineVariableHelpItems([])).not.toContain("{{artifact.previousStages.<slug>}}");
   });
 });
