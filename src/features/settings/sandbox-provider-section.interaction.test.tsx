@@ -4,10 +4,12 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
+import { useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SandboxProviderSection } from "@/features/settings/sandbox-provider-section";
+import { dateFormatter } from "@/features/settings/settings-ui";
 import type {
   SandboxConnectionPreviews,
   SandboxSettingsResponse,
@@ -65,27 +67,43 @@ function sandboxSettings(
   };
 }
 
+const updatedLabel = `Updated ${dateFormatter.format(new Date(timestamp))}`;
+
 function renderSection({
+  canManage = true,
   settings = sandboxSettings(),
+  stateful = false,
   variant,
 }: {
+  canManage?: boolean;
   settings?: SandboxSettingsResponse;
+  stateful?: boolean;
   variant?: "onboarding" | "settings";
 } = {}) {
   const onSettingsChange = vi.fn();
   const setFlashMessage = vi.fn();
 
-  render(
-    <OverlayProvider>
+  function Harness() {
+    const [currentSettings, setCurrentSettings] = useState(settings);
+    return (
       <SandboxProviderSection
-        canManage
-        onSettingsChange={onSettingsChange}
+        canManage={canManage}
+        onSettingsChange={(next) => {
+          onSettingsChange(next);
+          if (stateful) setCurrentSettings(next);
+        }}
         setFlashMessage={setFlashMessage}
-        settings={settings}
+        settings={currentSettings}
         variant={variant}
-        vercelConnection={settings.connections.vercel}
+        vercelConnection={currentSettings.connections.vercel}
         workspaceId={workspaceId}
       />
+    );
+  }
+
+  render(
+    <OverlayProvider>
+      <Harness />
     </OverlayProvider>,
   );
 
@@ -165,7 +183,10 @@ describe("SandboxProviderSection provider selection", () => {
     renderSection({ settings: sandboxSettings({ vercel: vercelConnection }) });
 
     expect(screen.getByRole("radio", { name: /Vercel Sandbox/ })).toBeChecked();
-    expect(screen.getByRole("heading", { name: "Connect Vercel Sandbox" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Connect Vercel Sandbox" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Connect E2B" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Connect Daytona" })).not.toBeInTheDocument();
   });
@@ -361,5 +382,225 @@ describe("SandboxProviderSection disconnect confirmation", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(onSettingsChange).toHaveBeenCalledOnce();
+  });
+});
+
+describe("SandboxProviderSection saved connections", () => {
+  it("shows masked previews, dates, and provider metadata without secret inputs", async () => {
+    const user = userEvent.setup();
+    renderSection({
+      settings: sandboxSettings({
+        daytona: daytonaConnection,
+        e2b: e2bConnection,
+        vercel: vercelConnection,
+      }),
+    });
+
+    expect(screen.getByRole("heading", { level: 2, name: "Sandbox" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+    expect(screen.getByText("vca_…1234")).toBeVisible();
+    expect(screen.getByText(updatedLabel)).toBeVisible();
+    expect(screen.getByText("Team ID")).toBeVisible();
+    expect(screen.getByText("team_123")).toBeVisible();
+    expect(screen.getByText("Project ID")).toBeVisible();
+    expect(screen.getByText("prj_123")).toBeVisible();
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Switch to another connected provider before disconnecting this one."),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Test capabilities" })).toHaveAttribute(
+      "href",
+      "#verify",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Disconnect Vercel Sandbox" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use this provider" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /E2B/ }));
+    expect(screen.getByRole("heading", { name: "E2B connected" })).toBeVisible();
+    expect(screen.getByText("e2b_…1234")).toBeVisible();
+    expect(screen.getAllByText(updatedLabel).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Team ID")).not.toBeInTheDocument();
+    expect(screen.queryByText("API URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use this provider" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Disconnect E2B" })).toBeEnabled();
+    expect(screen.queryByRole("link", { name: "Test capabilities" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Switch to another connected provider before disconnecting this one."),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Daytona/ }));
+    expect(screen.getByRole("heading", { name: "Daytona connected" })).toBeVisible();
+    expect(screen.getByText("daytona_…1234")).toBeVisible();
+    expect(screen.getByText("API URL")).toBeVisible();
+    expect(screen.getByText("https://app.daytona.io/api")).toBeVisible();
+    expect(screen.getByText("Target")).toBeVisible();
+    expect(screen.getByText("us")).toBeVisible();
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use this provider" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Disconnect Daytona" })).toBeEnabled();
+  });
+
+  it("keeps an unconfigured provider on its initial connection form", async () => {
+    const user = userEvent.setup();
+    renderSection({ settings: sandboxSettings({ vercel: vercelConnection }) });
+
+    await user.click(screen.getByRole("radio", { name: /E2B/ }));
+    expect(screen.getByRole("heading", { name: "Configure E2B" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Connect E2B" })).toBeVisible();
+    expect(screen.getByLabelText("API key")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save connection" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Replace connection" })).not.toBeInTheDocument();
+  });
+
+  it("replaces a saved connection in place and can cancel without mutation", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    renderSection({ settings: sandboxSettings({ vercel: vercelConnection }) });
+
+    await user.click(screen.getByRole("button", { name: "Replace connection" }));
+    expect(screen.getByRole("heading", { name: "Connect Vercel Sandbox" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Vercel Sandbox connected" }),
+    ).not.toBeInTheDocument();
+    const token = screen.getByLabelText("Token");
+    expect(token).toHaveValue("");
+    expect(screen.getByLabelText("Team id")).toHaveValue("team_123");
+    expect(screen.getByLabelText("Project id")).toHaveValue("prj_123");
+    expect(screen.getByRole("button", { name: "Save connection" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+    await user.type(token, "secret-should-not-leak");
+    await user.clear(screen.getByLabelText("Team id"));
+    await user.type(screen.getByLabelText("Team id"), "team_draft");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+    expect(screen.getByText("vca_…1234")).toBeVisible();
+    expect(screen.getByText("team_123")).toBeVisible();
+    expect(screen.queryByText("team_draft")).not.toBeInTheDocument();
+    expect(screen.queryByText("secret-should-not-leak")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Replace connection" }));
+    expect(screen.getByLabelText("Token")).toHaveValue("");
+    expect(screen.getByLabelText("Team id")).toHaveValue("team_123");
+  });
+
+  it("returns to an updated summary after a successful replacement", async () => {
+    const user = userEvent.setup();
+    const updatedConnection = {
+      ...vercelConnection,
+      projectId: "prj_new",
+      teamId: "team_new",
+      tokenPreview: "vca_…9999",
+      updatedAt: "2026-08-15T18:00:00.000Z",
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ connection: updatedConnection }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+    renderSection({ settings: sandboxSettings({ vercel: vercelConnection }), stateful: true });
+
+    await user.click(screen.getByRole("button", { name: "Replace connection" }));
+    await user.type(screen.getByLabelText("Token"), "vca_new");
+    await user.clear(screen.getByLabelText("Team id"));
+    await user.type(screen.getByLabelText("Team id"), "team_new");
+    await user.clear(screen.getByLabelText("Project id"));
+    await user.type(screen.getByLabelText("Project id"), "prj_new");
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
+
+    expect(await screen.findByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+    expect(screen.getByText("vca_…9999")).toBeVisible();
+    expect(screen.getByText("team_new")).toBeVisible();
+    expect(screen.getByText("prj_new")).toBeVisible();
+    expect(
+      screen.getByText(`Updated ${dateFormatter.format(new Date(updatedConnection.updatedAt))}`),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
+    expect(screen.queryByText("vca_new")).not.toBeInTheDocument();
+  });
+
+  it("activates a connected non-active provider without a reload", async () => {
+    const user = userEvent.setup();
+    const settings = sandboxSettings({ e2b: e2bConnection, vercel: vercelConnection });
+    const activated: SandboxSettingsResponse = {
+      ...settings,
+      activeProvider: "e2b",
+      revision: 2,
+      updatedAt: timestamp,
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(activated), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+    const { onSettingsChange, setFlashMessage } = renderSection({ settings, stateful: true });
+
+    await user.click(screen.getByRole("radio", { name: /E2B/ }));
+    await user.click(screen.getByRole("button", { name: "Use this provider" }));
+
+    await waitFor(() => expect(onSettingsChange).toHaveBeenCalledWith(activated));
+    expect(setFlashMessage).toHaveBeenCalledWith({
+      kind: "success",
+      text: "E2B is now active.",
+    });
+    expect(screen.getByRole("link", { name: "Test capabilities" })).toHaveAttribute(
+      "href",
+      "#verify",
+    );
+    expect(
+      screen.getByText("Switch to another connected provider before disconnecting this one."),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Disconnect E2B" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use this provider" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Vercel Sandbox/ }));
+    expect(screen.getByRole("button", { name: "Use this provider" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Disconnect Vercel Sandbox" })).toBeEnabled();
+  });
+
+  it("clears a disconnected provider back to the unconfigured form", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ connection: null }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+    renderSection({
+      settings: sandboxSettings({ e2b: e2bConnection, vercel: vercelConnection }),
+      stateful: true,
+    });
+
+    await user.click(screen.getByRole("radio", { name: /E2B/ }));
+    await user.click(screen.getByRole("button", { name: "Disconnect E2B" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Disconnect E2B?" });
+    await user.click(within(dialog).getByRole("button", { name: "Disconnect E2B" }));
+
+    expect(await screen.findByRole("heading", { name: "Connect E2B" })).toBeVisible();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.queryByRole("heading", { name: "E2B connected" })).not.toBeInTheDocument();
+    expect(screen.queryByText("e2b_…1234")).not.toBeInTheDocument();
+  });
+
+  it("hides management actions when the viewer cannot manage the workspace", () => {
+    renderSection({
+      canManage: false,
+      settings: sandboxSettings({ e2b: e2bConnection, vercel: vercelConnection }),
+    });
+
+    expect(screen.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+    expect(screen.getByText("vca_…1234")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Replace connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use this provider" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
   });
 });

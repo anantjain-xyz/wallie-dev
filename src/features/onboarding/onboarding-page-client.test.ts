@@ -1408,8 +1408,9 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain('id="sandbox"');
     expect(html).toContain("Sandbox provider");
     expect(html).toContain("Choose a provider");
-    expect(html).toContain("Configure Vercel Sandbox");
-    expect(html).toContain("Connect Vercel Sandbox");
+    expect(html).toContain("Vercel Sandbox connected");
+    expect(html).toContain("vca_...123");
+    expect(html).not.toContain("Connect Vercel Sandbox");
     expect(html).not.toContain("Connect E2B");
     expect(html).not.toContain("Connect Daytona");
     // Active providers cannot be disconnected until the workspace switches providers.
