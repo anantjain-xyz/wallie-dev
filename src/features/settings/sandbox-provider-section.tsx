@@ -8,10 +8,20 @@ import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import type {
+  DaytonaSandboxConnectionPreview,
+  E2BSandboxConnectionPreview,
   SandboxConnectionPreviews,
   SandboxSettingsResponse,
 } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox";
+import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
+
+const connectionUpdatedAtFormatter = new Intl.DateTimeFormat("en-US", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+  year: "numeric",
+});
 
 const PROVIDERS: Array<{ description: string; id: SandboxProvider; label: string }> = [
   {
@@ -72,6 +82,7 @@ export function SandboxProviderSection({
       ? settings.activeProvider
       : (settings.enabledProviders[0] ?? null);
   });
+  const [replacingProvider, setReplacingProvider] = useState<SandboxProvider | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [disconnectProvider, setDisconnectProvider] = useState<SandboxProvider | null>(null);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
@@ -84,6 +95,35 @@ export function SandboxProviderSection({
     const body = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
     if (!response.ok) throw new Error(body?.error ?? "Sandbox provider request failed.");
     return body as T;
+  }
+
+  function clearSecretDraft(provider: SandboxProvider) {
+    if (provider === "vercel") setVercelToken("");
+    else setApiKeys((current) => ({ ...current, [provider]: "" }));
+  }
+
+  function restoreNonSecretFields(provider: SandboxProvider) {
+    if (provider === "vercel") {
+      setVercelTeamId(settings.connections.vercel?.teamId ?? "");
+      setVercelProjectId(settings.connections.vercel?.projectId ?? "");
+      return;
+    }
+    if (provider === "daytona") {
+      setDaytonaApiUrl(settings.connections.daytona?.apiUrl ?? "");
+      setDaytonaTarget(settings.connections.daytona?.target ?? "");
+    }
+  }
+
+  function startReplace(provider: SandboxProvider) {
+    restoreNonSecretFields(provider);
+    clearSecretDraft(provider);
+    setReplacingProvider(provider);
+  }
+
+  function cancelReplace(provider: SandboxProvider) {
+    clearSecretDraft(provider);
+    restoreNonSecretFields(provider);
+    setReplacingProvider(null);
   }
 
   async function save(provider: SandboxProvider) {
@@ -111,8 +151,8 @@ export function SandboxProviderSection({
         ...settings,
         connections: { ...settings.connections, [provider]: result.connection },
       });
-      if (provider === "vercel") setVercelToken("");
-      else setApiKeys((current) => ({ ...current, [provider]: "" }));
+      clearSecretDraft(provider);
+      setReplacingProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} connection saved.` });
     } catch (error) {
       setFlashMessage({
@@ -136,6 +176,7 @@ export function SandboxProviderSection({
         ...settings,
         connections: { ...settings.connections, [provider]: null },
       });
+      setReplacingProvider((current) => (current === provider ? null : current));
       setDisconnectProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} disconnected.` });
     } catch (error) {
@@ -188,18 +229,25 @@ export function SandboxProviderSection({
   }
 
   function selectProvider(provider: SandboxProvider) {
+    if (selectedProvider) clearSecretDraft(selectedProvider);
     setSelectedProvider(provider);
+    setReplacingProvider(null);
     setDisconnectProvider(null);
     setDisconnectError(null);
   }
 
-  function providerForm(provider: SandboxProvider) {
+  function providerForm(provider: SandboxProvider, cancellable: boolean) {
+    const onCancel = cancellable ? () => cancelReplace(provider) : undefined;
     return provider === "vercel" ? (
       <ProviderForm title="Vercel Sandbox">
         <SecretInput label="Token" onChange={setVercelToken} value={vercelToken} />
         <TextInput label="Team id" onChange={setVercelTeamId} value={vercelTeamId} />
         <TextInput label="Project id" onChange={setVercelProjectId} value={vercelProjectId} />
-        <SaveButton disabled={pending !== null} onClick={() => void save("vercel")} />
+        <FormActions
+          disabled={pending !== null}
+          onCancel={onCancel}
+          onSave={() => void save("vercel")}
+        />
       </ProviderForm>
     ) : provider === "e2b" ? (
       <ProviderForm title="E2B">
@@ -208,7 +256,11 @@ export function SandboxProviderSection({
           onChange={(value) => setApiKeys((current) => ({ ...current, e2b: value }))}
           value={apiKeys.e2b}
         />
-        <SaveButton disabled={pending !== null} onClick={() => void save("e2b")} />
+        <FormActions
+          disabled={pending !== null}
+          onCancel={onCancel}
+          onSave={() => void save("e2b")}
+        />
       </ProviderForm>
     ) : (
       <ProviderForm title="Daytona">
@@ -219,16 +271,25 @@ export function SandboxProviderSection({
         />
         <TextInput label="API URL (optional)" onChange={setDaytonaApiUrl} value={daytonaApiUrl} />
         <TextInput label="Target (optional)" onChange={setDaytonaTarget} value={daytonaTarget} />
-        <SaveButton disabled={pending !== null} onClick={() => void save("daytona")} />
+        <FormActions
+          disabled={pending !== null}
+          onCancel={onCancel}
+          onSave={() => void save("daytona")}
+        />
       </ProviderForm>
     );
   }
+
+  const selectedStatus = selectedProvider ? connectionStatus(selectedProvider) : null;
+  const selectedConfigured = Boolean(selectedStatus?.connection);
+  const selectedReplacing =
+    selectedConfigured && selectedProvider !== null && replacingProvider === selectedProvider;
 
   return (
     <Section
       anchorId="sandbox"
       tagline="Choose where Wallie executes agents. Connections are retained when you switch; jobs never fall back to another provider."
-      title="Sandbox provider"
+      title="Sandbox"
     >
       <div className="space-y-5">
         <div className="space-y-6">
@@ -273,40 +334,62 @@ export function SandboxProviderSection({
             </div>
           </fieldset>
 
-          {selectedProvider ? (
+          {selectedProvider && selectedStatus ? (
             <div className="w-full space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-[13px] font-semibold text-foreground">
-                    Configure {providerLabel(selectedProvider)}
-                  </h3>
-                  <p className="mt-1 text-xs text-muted">
-                    Enter the connection details for the provider you selected.
-                  </p>
-                </div>
-                <ProviderActions
+              {selectedStatus.connection?.lastValidationError ? (
+                <p className="text-xs text-danger">
+                  {selectedStatus.connection.lastValidationError}
+                </p>
+              ) : null}
+              {selectedConfigured && !selectedReplacing ? (
+                <SavedConnectionSummary
                   canManage={canManage}
                   disabled={pending !== null}
                   disconnectError={disconnectError}
                   disconnectOpen={disconnectProvider === selectedProvider}
                   disconnectPending={pending === `delete:${selectedProvider}`}
+                  onActivate={() => void activate(selectedProvider)}
+                  onDisconnect={() => void disconnect(selectedProvider)}
                   onDisconnectOpenChange={(open) => {
                     setDisconnectError(null);
                     setDisconnectProvider(open ? selectedProvider : null);
                   }}
-                  onActivate={() => void activate(selectedProvider)}
-                  onDisconnect={() => void disconnect(selectedProvider)}
+                  onReplace={() => startReplace(selectedProvider)}
                   provider={selectedProvider}
                   activeProvider={settings.activeProvider}
-                  status={connectionStatus(selectedProvider)}
+                  status={selectedStatus}
                 />
-              </div>
-              {connectionStatus(selectedProvider).connection?.lastValidationError ? (
-                <p className="text-xs text-danger">
-                  {connectionStatus(selectedProvider).connection?.lastValidationError}
-                </p>
-              ) : null}
-              {canManage ? providerForm(selectedProvider) : null}
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-[13px] font-semibold text-foreground">
+                        Configure {providerLabel(selectedProvider)}
+                      </h3>
+                      <p className="mt-1 text-xs text-muted">
+                        Enter the connection details for the provider you selected.
+                      </p>
+                    </div>
+                    <ProviderActions
+                      canManage={canManage}
+                      disabled={pending !== null}
+                      disconnectError={disconnectError}
+                      disconnectOpen={disconnectProvider === selectedProvider}
+                      disconnectPending={pending === `delete:${selectedProvider}`}
+                      onDisconnectOpenChange={(open) => {
+                        setDisconnectError(null);
+                        setDisconnectProvider(open ? selectedProvider : null);
+                      }}
+                      onActivate={() => void activate(selectedProvider)}
+                      onDisconnect={() => void disconnect(selectedProvider)}
+                      provider={selectedProvider}
+                      activeProvider={settings.activeProvider}
+                      status={selectedStatus}
+                    />
+                  </div>
+                  {canManage ? providerForm(selectedProvider, selectedReplacing) : null}
+                </>
+              )}
             </div>
           ) : (
             <div className="rounded-[6px] border border-dashed border-border bg-sheet px-4 py-5 text-[13px] text-muted">
@@ -316,6 +399,115 @@ export function SandboxProviderSection({
         </div>
       </div>
     </Section>
+  );
+}
+
+function SavedConnectionSummary({
+  activeProvider,
+  canManage,
+  disabled,
+  disconnectError,
+  disconnectOpen,
+  disconnectPending,
+  onActivate,
+  onDisconnect,
+  onDisconnectOpenChange,
+  onReplace,
+  provider,
+  status,
+}: {
+  activeProvider: SandboxProvider;
+  canManage: boolean;
+  disabled: boolean;
+  disconnectError: string | null;
+  disconnectOpen: boolean;
+  disconnectPending: boolean;
+  onActivate: () => void;
+  onDisconnect: () => void;
+  onDisconnectOpenChange: (open: boolean) => void;
+  onReplace: () => void;
+  provider: SandboxProvider;
+  status: {
+    active: boolean;
+    connected: boolean;
+    connection: SandboxConnectionPreviews[SandboxProvider];
+  };
+}) {
+  const connection = status.connection;
+  if (!connection) return null;
+
+  return (
+    <div className="space-y-3 rounded-[6px] border border-border bg-sheet p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h3 className="text-[13px] font-semibold text-foreground">
+            {providerLabel(provider)} {status.connected ? "connected" : "saved"}
+          </h3>
+          <p className="font-mono text-xs text-muted">{secretPreview(provider, connection)}</p>
+          <p className="text-xs text-muted">
+            Updated {connectionUpdatedAtFormatter.format(new Date(connection.updatedAt))}
+          </p>
+        </div>
+        <ProviderActions
+          activeProvider={activeProvider}
+          canManage={canManage}
+          disabled={disabled}
+          disconnectError={disconnectError}
+          disconnectOpen={disconnectOpen}
+          disconnectPending={disconnectPending}
+          onActivate={onActivate}
+          onDisconnect={onDisconnect}
+          onDisconnectOpenChange={onDisconnectOpenChange}
+          onReplace={canManage ? onReplace : undefined}
+          provider={provider}
+          status={status}
+        />
+      </div>
+      <ConnectionMetadata connection={connection} provider={provider} />
+    </div>
+  );
+}
+
+function ConnectionMetadata({
+  connection,
+  provider,
+}: {
+  connection: NonNullable<SandboxConnectionPreviews[SandboxProvider]>;
+  provider: SandboxProvider;
+}) {
+  if (provider === "vercel") {
+    const vercel = connection as VercelSandboxConnectionPreview;
+    return (
+      <dl className="grid gap-1 text-xs">
+        <MetadataRow label="Team ID" value={vercel.teamId} />
+        <MetadataRow label="Project ID" value={vercel.projectId} />
+      </dl>
+    );
+  }
+  if (provider === "daytona") {
+    const daytona = connection as DaytonaSandboxConnectionPreview;
+    const rows = [
+      daytona.apiUrl ? { label: "API URL", value: daytona.apiUrl } : null,
+      daytona.target ? { label: "Target", value: daytona.target } : null,
+    ].filter((row): row is { label: string; value: string } => row !== null);
+    if (rows.length === 0) return null;
+    return (
+      <dl className="grid gap-1 text-xs">
+        {rows.map((row) => (
+          <MetadataRow key={row.label} label={row.label} value={row.value} />
+        ))}
+      </dl>
+    );
+  }
+  return null;
+}
+
+function MetadataRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-wrap gap-x-2">
+      <dt className="text-muted">{label}</dt>
+      <dd className="font-mono text-foreground">{value}</dd>
+    </div>
   );
 }
 
@@ -329,6 +521,7 @@ function ProviderActions({
   onActivate,
   onDisconnect,
   onDisconnectOpenChange,
+  onReplace,
   provider,
   status,
 }: {
@@ -341,6 +534,7 @@ function ProviderActions({
   onActivate: () => void;
   onDisconnect: () => void;
   onDisconnectOpenChange: (open: boolean) => void;
+  onReplace?: () => void;
   provider: SandboxProvider;
   status: {
     active: boolean;
@@ -349,44 +543,56 @@ function ProviderActions({
   };
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {canManage && status.connected && !status.active ? (
-        <button
-          className="ui-button-primary"
-          disabled={disabled}
-          onClick={onActivate}
-          type="button"
-        >
-          Use this provider
-        </button>
-      ) : null}
-      {canManage && status.connection && !status.active ? (
-        <DestructiveConfirmationDialog
-          actionLabel={`Disconnect ${providerLabel(provider)}`}
-          description={`Disconnecting ${providerLabel(provider)} removes its saved connection from this workspace. Wallie will continue using ${providerLabel(activeProvider)}.`}
-          errorMessage={disconnectError}
-          onConfirm={onDisconnect}
-          onOpenChange={onDisconnectOpenChange}
-          open={disconnectOpen}
-          pending={disconnectPending}
-          pendingLabel="Disconnecting…"
-          title={`Disconnect ${providerLabel(provider)}?`}
-          trigger={
-            <button
-              aria-label={`Disconnect ${providerLabel(provider)}`}
-              className="ui-button-danger"
-              disabled={disabled}
-              type="button"
-            >
-              Disconnect
-            </button>
-          }
-        />
-      ) : null}
-      {status.active && status.connected ? (
-        <a className="ui-button" href="#verify">
-          Test capabilities
-        </a>
+    <div className="flex max-w-md flex-col items-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
+        {canManage && status.connected && !status.active ? (
+          <button
+            className="ui-button-primary"
+            disabled={disabled}
+            onClick={onActivate}
+            type="button"
+          >
+            Use this provider
+          </button>
+        ) : null}
+        {canManage && status.connection && !status.active ? (
+          <DestructiveConfirmationDialog
+            actionLabel={`Disconnect ${providerLabel(provider)}`}
+            description={`Disconnecting ${providerLabel(provider)} removes its saved connection from this workspace. Wallie will continue using ${providerLabel(activeProvider)}.`}
+            errorMessage={disconnectError}
+            onConfirm={onDisconnect}
+            onOpenChange={onDisconnectOpenChange}
+            open={disconnectOpen}
+            pending={disconnectPending}
+            pendingLabel="Disconnecting…"
+            title={`Disconnect ${providerLabel(provider)}?`}
+            trigger={
+              <button
+                aria-label={`Disconnect ${providerLabel(provider)}`}
+                className="ui-button-danger"
+                disabled={disabled}
+                type="button"
+              >
+                Disconnect
+              </button>
+            }
+          />
+        ) : null}
+        {status.active && status.connected ? (
+          <a className="ui-button" href="#verify">
+            Test capabilities
+          </a>
+        ) : null}
+        {onReplace ? (
+          <button className="ui-button" disabled={disabled} onClick={onReplace} type="button">
+            Replace connection
+          </button>
+        ) : null}
+      </div>
+      {status.active && status.connection ? (
+        <p className="text-right text-xs leading-5 text-muted">
+          Switch to another connected provider before disconnecting this one.
+        </p>
       ) : null}
     </div>
   );
@@ -431,12 +637,45 @@ function SecretInput(props: Parameters<typeof TextInput>[0]) {
   return <TextInput {...props} type="password" />;
 }
 
-function SaveButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+function FormActions({
+  disabled,
+  onCancel,
+  onSave,
+}: {
+  disabled: boolean;
+  onCancel?: () => void;
+  onSave: () => void;
+}) {
   return (
-    <button className="ui-button-primary" disabled={disabled} onClick={onClick} type="button">
-      Save connection
-    </button>
+    <div className="flex flex-wrap gap-2">
+      <button className="ui-button-primary" disabled={disabled} onClick={onSave} type="button">
+        Save connection
+      </button>
+      {onCancel ? (
+        <button className="ui-button" disabled={disabled} onClick={onCancel} type="button">
+          Cancel
+        </button>
+      ) : null}
+    </div>
   );
+}
+
+function secretPreview(
+  provider: SandboxProvider,
+  connection: NonNullable<SandboxConnectionPreviews[SandboxProvider]>,
+) {
+  const preview =
+    provider === "vercel"
+      ? (connection as VercelSandboxConnectionPreview).tokenPreview
+      : (connection as E2BSandboxConnectionPreview).apiKeyPreview;
+  return displaySecretPreview(preview);
+}
+
+function displaySecretPreview(preview: string | null) {
+  if (!preview) return "preview unavailable";
+  // `buildSecretPreview` only returns the complete secret when length <= 6.
+  if (preview.length <= 6) return "••••";
+  return preview;
 }
 
 function providerLabel(provider: SandboxProvider) {
