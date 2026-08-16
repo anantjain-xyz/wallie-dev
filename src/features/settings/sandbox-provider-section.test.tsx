@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -74,6 +76,27 @@ describe("SandboxProviderSection", () => {
     expect(html).toContain("Switch to another connected provider before disconnecting this one.");
     expect(html).not.toContain("Connect Vercel Sandbox");
     expect(html).not.toContain('type="password"');
+
+    const summary = document.createElement("div");
+    summary.innerHTML = html;
+    const heading = [...summary.querySelectorAll("h3")].find(
+      (element) => element.textContent === "Vercel Sandbox connected",
+    );
+    const header = heading?.parentElement?.parentElement;
+    const actions = [...summary.querySelectorAll("a, button")];
+    const testCapabilities = actions.find((element) => element.textContent === "Test capabilities");
+    const replaceConnection = actions.find(
+      (element) => element.textContent === "Replace connection",
+    );
+    const disconnectGuidance = [...summary.querySelectorAll("p")].find(
+      (element) =>
+        element.textContent ===
+        "Switch to another connected provider before disconnecting this one.",
+    );
+
+    expect(header?.contains(testCapabilities ?? null)).toBe(true);
+    expect(header?.contains(replaceConnection ?? null)).toBe(true);
+    expect(header?.contains(disconnectGuidance ?? null)).toBe(false);
   });
 
   it("labels an error-status connection as saved instead of connected", () => {

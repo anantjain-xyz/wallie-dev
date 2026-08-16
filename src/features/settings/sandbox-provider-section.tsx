@@ -361,8 +361,8 @@ export function SandboxProviderSection({
                 />
               ) : (
                 <>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
+                  <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
+                    <div className="min-w-0">
                       <h3 className="text-[13px] font-semibold text-foreground">
                         Configure {providerLabel(selectedProvider)}
                       </h3>
@@ -387,6 +387,9 @@ export function SandboxProviderSection({
                       status={selectedStatus}
                     />
                   </div>
+                  <ProviderDisconnectGuidance
+                    visible={selectedStatus.active && Boolean(selectedStatus.connection)}
+                  />
                   {canManage ? providerForm(selectedProvider, selectedReplacing) : null}
                 </>
               )}
@@ -438,8 +441,8 @@ function SavedConnectionSummary({
 
   return (
     <div className="space-y-3 rounded-[6px] border border-border bg-sheet p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
+        <div className="min-w-0 space-y-1">
           <h3 className="text-[13px] font-semibold text-foreground">
             {providerLabel(provider)} {status.connected ? "connected" : "saved"}
           </h3>
@@ -463,6 +466,7 @@ function SavedConnectionSummary({
           status={status}
         />
       </div>
+      <ProviderDisconnectGuidance visible={status.active && Boolean(status.connection)} />
       <ConnectionMetadata connection={connection} provider={provider} />
     </div>
   );
@@ -543,58 +547,61 @@ function ProviderActions({
   };
 }) {
   return (
-    <div className="flex max-w-md flex-col items-end gap-2">
-      <div className="flex flex-wrap justify-end gap-2">
-        {canManage && status.connected && !status.active ? (
-          <button
-            className="ui-button-primary"
-            disabled={disabled}
-            onClick={onActivate}
-            type="button"
-          >
-            Use this provider
-          </button>
-        ) : null}
-        {canManage && status.connection && !status.active ? (
-          <DestructiveConfirmationDialog
-            actionLabel={`Disconnect ${providerLabel(provider)}`}
-            description={`Disconnecting ${providerLabel(provider)} removes its saved connection from this workspace. Wallie will continue using ${providerLabel(activeProvider)}.`}
-            errorMessage={disconnectError}
-            onConfirm={onDisconnect}
-            onOpenChange={onDisconnectOpenChange}
-            open={disconnectOpen}
-            pending={disconnectPending}
-            pendingLabel="Disconnecting…"
-            title={`Disconnect ${providerLabel(provider)}?`}
-            trigger={
-              <button
-                aria-label={`Disconnect ${providerLabel(provider)}`}
-                className="ui-button-danger"
-                disabled={disabled}
-                type="button"
-              >
-                Disconnect
-              </button>
-            }
-          />
-        ) : null}
-        {status.active && status.connected ? (
-          <a className="ui-button" href="#verify">
-            Test capabilities
-          </a>
-        ) : null}
-        {onReplace ? (
-          <button className="ui-button" disabled={disabled} onClick={onReplace} type="button">
-            Replace connection
-          </button>
-        ) : null}
-      </div>
-      {status.active && status.connection ? (
-        <p className="text-right text-xs leading-5 text-muted">
-          Switch to another connected provider before disconnecting this one.
-        </p>
+    <div className="flex flex-wrap gap-2 sm:justify-end">
+      {canManage && status.connected && !status.active ? (
+        <button
+          className="ui-button-primary"
+          disabled={disabled}
+          onClick={onActivate}
+          type="button"
+        >
+          Use this provider
+        </button>
+      ) : null}
+      {canManage && status.connection && !status.active ? (
+        <DestructiveConfirmationDialog
+          actionLabel={`Disconnect ${providerLabel(provider)}`}
+          description={`Disconnecting ${providerLabel(provider)} removes its saved connection from this workspace. Wallie will continue using ${providerLabel(activeProvider)}.`}
+          errorMessage={disconnectError}
+          onConfirm={onDisconnect}
+          onOpenChange={onDisconnectOpenChange}
+          open={disconnectOpen}
+          pending={disconnectPending}
+          pendingLabel="Disconnecting…"
+          title={`Disconnect ${providerLabel(provider)}?`}
+          trigger={
+            <button
+              aria-label={`Disconnect ${providerLabel(provider)}`}
+              className="ui-button-danger"
+              disabled={disabled}
+              type="button"
+            >
+              Disconnect
+            </button>
+          }
+        />
+      ) : null}
+      {status.active && status.connected ? (
+        <a className="ui-button" href="#verify">
+          Test capabilities
+        </a>
+      ) : null}
+      {onReplace ? (
+        <button className="ui-button" disabled={disabled} onClick={onReplace} type="button">
+          Replace connection
+        </button>
       ) : null}
     </div>
+  );
+}
+
+function ProviderDisconnectGuidance({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+
+  return (
+    <p className="text-xs leading-5 text-muted">
+      Switch to another connected provider before disconnecting this one.
+    </p>
   );
 }
 
