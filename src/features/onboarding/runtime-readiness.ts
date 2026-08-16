@@ -9,6 +9,7 @@ import {
   normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
+import { isMissingOrEmptyAgentProvider } from "@/lib/agent-config/drafts";
 import { canSkipOnboardingStep } from "@/features/onboarding/flow";
 import type {
   OnboardingSetupHealth,
@@ -79,7 +80,11 @@ export function configuredAgentConfigKeys(config: AgentConfigMap): AgentConfigKe
 }
 
 export function resolveAgentConfigValue(key: AgentConfigKey, config: AgentConfigMap) {
-  return config[key] ?? getRecommendedAgentConfigDefault(key, resolveProvider(config));
+  const value = config[key];
+  if (key === "agent_provider" && isMissingOrEmptyAgentProvider(value)) {
+    return getRecommendedAgentConfigDefault(key, resolveProvider(config));
+  }
+  return value ?? getRecommendedAgentConfigDefault(key, resolveProvider(config));
 }
 
 function resolveProvider(config: AgentConfigMap): AgentProvider {

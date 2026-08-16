@@ -46,11 +46,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderSection(setFlashMessage = vi.fn(), withOverlays = false) {
+function renderSection(
+  setFlashMessage = vi.fn(),
+  withOverlays = false,
+  agentConfig: Record<string, unknown> = initialAgentConfig,
+) {
   const section = (
     <AgentConfigSection
       canManage
-      initialAgentConfig={initialAgentConfig}
+      initialAgentConfig={agentConfig as typeof initialAgentConfig}
       initialClaudeCodeStatus={{ checkedAt, connected: false }}
       initialCodexStatus={{ checkedAt, connected: false }}
       setFlashMessage={setFlashMessage}
@@ -75,7 +79,7 @@ describe("AgentConfigSection batch save", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderSection(vi.fn(), true);
 
-    await user.click(screen.getByRole("combobox", { name: "Agent effort" }));
+    await user.click(screen.getByRole("combobox", { name: "Effort" }));
     await user.click(screen.getByRole("option", { name: "Max" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -165,8 +169,93 @@ describe("AgentConfigSection batch save", () => {
     await user.clear(retriesInput);
     await user.type(retriesInput, "4");
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Agent model is required.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Model is required.");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentConfigSection provider options and copy", () => {
+  it("renders Provider, Model, and Effort with the contracted help copy", () => {
+    renderSection();
+
+    expect(screen.getByRole("combobox", { name: "Provider" })).toBeInTheDocument();
+    expect(screen.getByText("Choose the coding agent Wallie uses for runs.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Model identifier passed to the selected provider."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Reasoning effort passed to the selected provider."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Agent provider")).not.toBeInTheDocument();
+    expect(screen.queryByText("Agent model")).not.toBeInTheDocument();
+    expect(screen.queryByText("Agent effort")).not.toBeInTheDocument();
+    expect(screen.queryByText(/agent CLI/i)).not.toBeInTheDocument();
+  });
+
+  it("offers only Codex and Claude Code in the Provider select", async () => {
+    const user = userEvent.setup();
+    renderSection(vi.fn(), true);
+
+    await user.click(screen.getByRole("combobox", { name: "Provider" }));
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["Codex", "Claude Code"]);
+    expect(screen.queryByRole("option", { name: "Not configured" })).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentConfigSection missing provider fallback", () => {
+  it("displays Codex for a missing provider without writing or marking dirty", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderSection(vi.fn(), false, { ...initialAgentConfig, agent_provider: undefined });
+
+    expect(screen.getByRole("combobox", { name: "Provider" })).toHaveTextContent("Codex");
+    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("displays Codex for a legacy-empty provider without writing or marking dirty", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderSection(vi.fn(), false, { ...initialAgentConfig, agent_provider: "" });
+
+    expect(screen.getByRole("combobox", { name: "Provider" })).toHaveTextContent("Codex");
+    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("persists Codex on the next explicit save when the stored provider is empty", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((input: RequestInfo | URL, request?: RequestInit) => {
+      void input;
+      void request;
+      return Promise.resolve({
+        json: () =>
+          Promise.resolve({
+            entries: [
+              { key: "agent_provider", value: "codex" },
+              { key: "max_retries", value: 4 },
+            ],
+          }),
+        ok: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSection(vi.fn(), false, { ...initialAgentConfig, agent_provider: "" });
+
+    const retriesInput = screen.getByDisplayValue("3");
+    await user.clear(retriesInput);
+    await user.type(retriesInput, "4");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, request] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(request?.body))).toEqual({
+      config: { agent_provider: "codex", max_retries: 4 },
+      workspaceId: "00000000-0000-4000-8000-000000000001",
+    });
   });
 });

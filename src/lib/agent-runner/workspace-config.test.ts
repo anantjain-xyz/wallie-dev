@@ -52,6 +52,14 @@ describe("loadWorkspaceAgentConfig", () => {
     expect(config.maxTurns).toBeUndefined();
   });
 
+  it("falls back to Codex when agent_provider is a legacy empty string", async () => {
+    const admin = buildAdmin([{ key: "agent_provider", value_json: "" }]);
+
+    const config = await loadWorkspaceAgentConfig(admin, "ws-1");
+
+    expect(config.provider).toBe("codex");
+  });
+
   it("falls back to the default effort when the configured value is invalid", async () => {
     const admin = buildAdmin([{ key: "agent_effort", value_json: "ultra" }]);
 
