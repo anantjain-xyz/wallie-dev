@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useRef, useState } from "react";
 
 import { useOptionalLiveRegion } from "@/components/ui/live-region";
 import {
@@ -13,7 +13,6 @@ import {
   PipelineValidationSummary,
   pipelineValidationTargetId,
   RemoveStageDialog,
-  reorderDraftStage,
   removeDraftStage,
   resolveFocusAfterStageRemoval,
   StageRowEditor,
@@ -52,7 +51,6 @@ export function OnboardingPipelineEditor({
   const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const removeFocusRef = useRef<HTMLElement | null>(null);
   const validation: PipelineDraftValidationResult = hasAttemptedSave
@@ -82,18 +80,6 @@ export function OnboardingPipelineEditor({
     if (next === stages) return;
     setStages(next);
     announceStagePosition(next, index + direction);
-  }
-
-  function handleDrop(targetIndex: number) {
-    if (dragIndex === null) {
-      setDragIndex(null);
-      return;
-    }
-    const next = reorderDraftStage(stages, dragIndex, targetIndex);
-    setDragIndex(null);
-    if (next === stages) return;
-    setStages(next);
-    announceStagePosition(next, targetIndex);
   }
 
   function handleAddStage() {
@@ -213,7 +199,6 @@ export function OnboardingPipelineEditor({
             compact
             key={stage.key}
             canManage={editable}
-            dragIndex={dragIndex}
             errors={fieldErrorsForStage(validation, index)}
             index={index}
             isFirst={index === 0}
@@ -222,13 +207,6 @@ export function OnboardingPipelineEditor({
             onChangeName={(nextName) =>
               setStages((current) => updateDraftStageName(current, index, nextName))
             }
-            onDragEnd={() => setDragIndex(null)}
-            onDragOver={(event: DragEvent<HTMLLIElement>) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
-            }}
-            onDragStart={setDragIndex}
-            onDrop={handleDrop}
             onMoveDown={() => applyMove(index, 1)}
             onMoveUp={() => applyMove(index, -1)}
             onRemove={() => handleRemoveAt(index)}

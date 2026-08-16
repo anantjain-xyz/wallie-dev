@@ -14,7 +14,6 @@ import {
   pipelineValidationTargetId,
   pipelineVariableHelpItems,
   previousStageArtifactVariable,
-  reorderDraftStage,
   removeDraftStage,
   slugifyStageName,
   STAGE_SLUG_MAX_LENGTH,
@@ -216,10 +215,6 @@ describe("pipeline editor primitives", () => {
       "new-stage",
     ]);
     expect(moveDraftStage(initial, 0, 1).map((item) => item.slug)).toEqual(["design", "product"]);
-    expect(reorderDraftStage(initial, 1, 0).map((item) => item.slug)).toEqual([
-      "design",
-      "product",
-    ]);
     expect(removeDraftStage(initial, 1).map((item) => item.slug)).toEqual(["product"]);
   });
 
@@ -255,16 +250,11 @@ describe("pipeline editor primitives", () => {
       createElement(StageRowEditor, {
         canManage: true,
         compact: true,
-        dragIndex: null,
         index: 1,
         isFirst: false,
         isLast: false,
         onChange: vi.fn(),
         onChangeName: vi.fn(),
-        onDragEnd: vi.fn(),
-        onDragOver: vi.fn(),
-        onDragStart: vi.fn(),
-        onDrop: vi.fn(),
         onMoveDown: vi.fn(),
         onMoveUp: vi.fn(),
         onRemove: vi.fn(),
@@ -297,7 +287,7 @@ describe("pipeline editor primitives", () => {
     expect(html).not.toContain("Order preview");
     expect(html).toContain("Move Product down to position 3 of 2");
     expect(html).toContain("Archive Product from position 2 of 2");
-    expect(html).toContain("Drag to reorder Product");
+    expect(html).not.toContain("Drag to reorder Product");
     expect(html).toContain("min-h-[160px]");
     expect(html).toContain("max-h-[640px]");
   });
@@ -306,16 +296,11 @@ describe("pipeline editor primitives", () => {
     const html = renderToStaticMarkup(
       createElement(StageRowEditor, {
         canManage: true,
-        dragIndex: null,
         index: 0,
         isFirst: true,
         isLast: true,
         onChange: vi.fn(),
         onChangeName: vi.fn(),
-        onDragEnd: vi.fn(),
-        onDragOver: vi.fn(),
-        onDragStart: vi.fn(),
-        onDrop: vi.fn(),
         onMoveDown: vi.fn(),
         onMoveUp: vi.fn(),
         onRemove: vi.fn(),
