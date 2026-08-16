@@ -6,11 +6,9 @@ import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
-import { cn } from "@/lib/utils";
 
 type MaintenancePanelProps = {
   canManage: boolean;
-  className?: string;
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
@@ -45,7 +43,6 @@ function SummaryCell({ label, value }: { label: string; value: string }) {
 
 export function MaintenancePanel({
   canManage,
-  className,
   setFlashMessage,
   workspaceId,
 }: MaintenancePanelProps) {
@@ -66,27 +63,19 @@ export function MaintenancePanel({
   }
 
   return (
-    <div className={cn("mt-6 rounded-[6px] border border-border bg-sheet px-5 py-4", className)}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-[14px] font-semibold text-foreground">Maintenance</h3>
-          <p className="mt-1 text-xs leading-5 text-muted">
-            Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="ui-button-primary shrink-0 gap-1.5"
-          disabled={runMaintenance.isBusy}
-          onClick={() => void runMaintenance.run()}
-        >
-          <ActionButtonLabel
-            idle="Run maintenance"
-            pending={runMaintenance.isBusy}
-            pendingLabel="Running…"
-          />
-        </button>
-      </div>
+    <div className="rounded-[6px] border border-border bg-sheet px-5 py-4">
+      <button
+        type="button"
+        className="ui-button-primary shrink-0 gap-1.5"
+        disabled={runMaintenance.isBusy}
+        onClick={() => void runMaintenance.run()}
+      >
+        <ActionButtonLabel
+          idle="Run maintenance"
+          pending={runMaintenance.isBusy}
+          pendingLabel="Running…"
+        />
+      </button>
 
       {lastResult ? (
         <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

@@ -49,14 +49,9 @@ export function MaintenanceIsland({
   }
 
   return (
-    <section className="scroll-mt-8 space-y-4" id="maintenance">
+    <>
       {feedback}
-      <MaintenancePanel
-        canManage
-        className="mt-0"
-        setFlashMessage={setMessage}
-        workspaceId={workspaceId}
-      />
-    </section>
+      <MaintenancePanel canManage setFlashMessage={setMessage} workspaceId={workspaceId} />
+    </>
   );
 }

@@ -69,6 +69,10 @@ describe("resolveSettingsHashRoute", () => {
       anchor: "github",
       category: "integrations",
     });
+    expect(resolveSettingsHashRoute("#maintenance")).toEqual({
+      anchor: "maintenance",
+      category: "advanced",
+    });
     expect(resolveSettingsHashRoute("#unknown")).toBeNull();
   });
 });
@@ -176,6 +180,38 @@ describe("SettingsCategoryNav hash routing", () => {
     );
 
     expect(queryByRole("link", { name: "Maintenance" })).toBeNull();
+  });
+
+  it("does not route non-managers to the maintenance hash", async () => {
+    searchParams = new URLSearchParams("category=integrations");
+    render(
+      <SettingsCategoryNav activeCategory="integrations" canManage={false} workspaceSlug="acme" />,
+    );
+
+    window.history.replaceState(null, "", "/w/acme/settings?category=integrations#maintenance");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+    await waitFor(() => {
+      expect(replace).not.toHaveBeenCalled();
+    });
+  });
+
+  it("scrolls to the shared Maintenance section heading for managers", async () => {
+    searchParams = new URLSearchParams("category=advanced");
+    window.history.replaceState(null, "", "/w/acme/settings?category=advanced#maintenance");
+    render(<SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />);
+
+    const target = document.createElement("section");
+    target.id = "maintenance";
+    target.scrollIntoView = vi.fn();
+    document.body.appendChild(target);
+
+    await waitFor(() => expect(target.scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
+    expect(document.querySelector('a[href="#maintenance"]')).toHaveAttribute(
+      "aria-current",
+      "location",
+    );
+    target.remove();
   });
 
   it("scrolls to a hash target when a suspended section mounts", async () => {

@@ -46,7 +46,7 @@ describe("MaintenanceIsland", () => {
   it("keeps the maintenance result separated from the usage summary", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(maintenanceResult)));
 
-    const { container } = render(<MaintenanceIsland canManage workspaceId="workspace-1" />);
+    render(<MaintenanceIsland canManage workspaceId="workspace-1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
 
@@ -55,10 +55,13 @@ describe("MaintenanceIsland", () => {
       "Maintenance complete. No stuck work was found; queued jobs remain with the worker.",
     );
     expect(screen.queryByText("Processing")).not.toBeInTheDocument();
-
-    const island = container.firstElementChild;
-    expect(island).toHaveAttribute("id", "maintenance");
-    expect(island).toHaveClass("scroll-mt-8");
+    expect(screen.queryByRole("heading", { name: "Maintenance" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(document.getElementById("maintenance")).toBeNull();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Run maintenance" })).toBeEnabled(),
     );
