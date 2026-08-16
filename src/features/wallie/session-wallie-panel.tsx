@@ -1173,7 +1173,9 @@ function RunMessageTimeline({
           {stalled ? null : <Spinner />}
           <span>
             {stalled
-              ? "No messages recorded yet."
+              ? messages.length > 0
+                ? "No new messages recently."
+                : "No messages recorded yet."
               : disconnected
                 ? messagesDisconnectedCopy()
                 : "Waiting for run messages…"}

@@ -304,6 +304,38 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Wallie is working…");
   });
 
+  it("does not claim a stalled run has no messages when its timeline has activity", () => {
+    const html = renderPanel(
+      data({
+        stallTimeoutMs: 60_000,
+        runs: [
+          run({
+            canCancel: true,
+            createdAt: "2026-05-20T20:00:00.000Z",
+            finishedAt: null,
+            isActive: true,
+            isTerminal: false,
+            lastActivityAt: "2026-05-20T20:00:00.000Z",
+            messages: [
+              {
+                createdAt: "2026-05-20T20:00:30.000Z",
+                id: "msg-progress",
+                kind: "progress",
+                messageMd: "Cloning repository",
+              },
+            ],
+            startedAt: "2026-05-20T20:00:00.000Z",
+            status: "running",
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("Cloning repository");
+    expect(html).toContain("No new messages recently.");
+    expect(html).not.toContain("No messages recorded yet.");
+  });
+
   it("does not include cached error messages before expansion of non-latest runs", () => {
     const html = renderPanel(
       data({
