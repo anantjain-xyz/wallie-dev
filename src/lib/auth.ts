@@ -46,22 +46,20 @@ export function workspaceLoginRedirectPath(workspaceSlug: string) {
   return normalizeNextPath(workspaceBasePath(workspaceSlug));
 }
 
+export function isWorkspaceInvitationPath(path: string) {
+  return path.startsWith("/invite/");
+}
+
 export async function ensureProfileForUser(supabase: SupabaseServerClient, user: User) {
   const metadata = (user.user_metadata ?? {}) as UserMetadata;
   const fullName = metadata.full_name ?? metadata.name ?? null;
   const avatarUrl = metadata.avatar_url ?? metadata.picture ?? null;
 
-  const { error } = await supabase.from("profiles").upsert(
-    {
-      avatar_url: avatarUrl,
-      full_name: fullName,
-      id: user.id,
-      primary_email: user.email ?? null,
-    },
-    {
-      onConflict: "id",
-    },
-  );
+  const { error } = await supabase.rpc("ensure_own_profile", {
+    actor_avatar_url: avatarUrl ?? undefined,
+    actor_email: user.email ?? undefined,
+    actor_full_name: fullName ?? undefined,
+  });
 
   if (error) {
     throw error;

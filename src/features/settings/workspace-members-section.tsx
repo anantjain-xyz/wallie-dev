@@ -25,6 +25,10 @@ const ROLE_OPTIONS = [
   { label: "Admin", value: "admin" },
 ];
 
+type ProfileUpdateResponse = {
+  profile: { fullName: string };
+};
+
 function memberDisplayName(member: WorkspaceMemberSummary) {
   return member.fullName ?? member.email ?? "Unknown member";
 }
@@ -64,6 +68,7 @@ export function WorkspaceMembersSection({
   workspaceMembers: WorkspaceMemberSummary[];
 }) {
   const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
   const [members, setMembers] = useState(workspaceMembers);
   const [invitations, setInvitations] = useState(initialInvitations);
   const [role, setRole] = useState<WorkspaceInvitationRole>("member");
@@ -72,6 +77,10 @@ export function WorkspaceMembersSection({
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState("");
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileTrigger, setProfileTrigger] = useState<HTMLButtonElement | null>(null);
   const [memberRoleTarget, setMemberRoleTarget] = useState<WorkspaceMemberSummary | null>(null);
   const [memberRoleTrigger, setMemberRoleTrigger] = useState<HTMLButtonElement | null>(null);
   const [memberRoleDraft, setMemberRoleDraft] = useState<WorkspaceInvitationRole>("member");
@@ -100,7 +109,7 @@ export function WorkspaceMembersSection({
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/invitations`, {
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify({ email, fullName, role }),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -110,6 +119,7 @@ export function WorkspaceMembersSection({
         upsertInvitation(currentInvitations, payload.invitation),
       );
       setEmail("");
+      setFullName("");
       setRole("member");
       setInviteOpen(false);
       setFlashMessage({
@@ -120,6 +130,38 @@ export function WorkspaceMembersSection({
       const message =
         error instanceof Error ? error.message : "Wallie could not send that invitation.";
       setInviteError(message);
+    } finally {
+      finishAction();
+    }
+  }
+
+  async function updateProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!beginAction("profile")) return;
+    setProfileError(null);
+
+    try {
+      const response = await fetch("/api/profile", {
+        body: JSON.stringify({ fullName: profileDraft }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      });
+      const payload = await readResponseJson<ProfileUpdateResponse>(response);
+
+      setMembers((currentMembers) =>
+        currentMembers.map((member) =>
+          member.id === currentMemberId
+            ? { ...member, fullName: payload.profile.fullName }
+            : member,
+        ),
+      );
+      setProfileDraft(payload.profile.fullName);
+      setProfileOpen(false);
+      setFlashMessage({ kind: "success", text: "Your name was updated across all workspaces." });
+    } catch (error) {
+      setProfileError(
+        error instanceof Error ? error.message : "Wallie could not update your name.",
+      );
     } finally {
       finishAction();
     }
@@ -270,10 +312,24 @@ export function WorkspaceMembersSection({
               >
                 <form className="space-y-4" onSubmit={inviteMember}>
                   <label className="block space-y-1.5">
+                    <span className="text-[13px] font-medium text-foreground">Name</span>
+                    <input
+                      autoComplete="name"
+                      autoFocus
+                      className="ui-input"
+                      disabled={busyAction === "create"}
+                      maxLength={100}
+                      onChange={(event) => setFullName(event.target.value)}
+                      placeholder="Teammate name"
+                      required
+                      type="text"
+                      value={fullName}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
                     <span className="text-[13px] font-medium text-foreground">Email</span>
                     <input
                       autoComplete="email"
-                      autoFocus
                       className="ui-input"
                       disabled={busyAction === "create"}
                       inputMode="email"
@@ -308,7 +364,7 @@ export function WorkspaceMembersSection({
                     </button>
                     <button
                       className="ui-button-primary"
-                      disabled={busyAction === "create" || !email.trim()}
+                      disabled={busyAction === "create" || !email.trim() || !fullName.trim()}
                       type="submit"
                     >
                       <ActionButtonLabel
@@ -401,7 +457,24 @@ export function WorkspaceMembersSection({
                       />
                     </div>
                   ) : (
-                    <Status label={roleLabel(member.role)} value="not_started" />
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {isSelf ? (
+                        <button
+                          className="ui-button min-h-9"
+                          disabled={busyAction !== null}
+                          onClick={(event) => {
+                            setProfileDraft(member.fullName ?? "");
+                            setProfileError(null);
+                            setProfileTrigger(event.currentTarget);
+                            setProfileOpen(true);
+                          }}
+                          type="button"
+                        >
+                          Edit your name
+                        </button>
+                      ) : null}
+                      <Status label={roleLabel(member.role)} value="not_started" />
+                    </div>
                   )}
                 </li>
               );
@@ -430,11 +503,16 @@ export function WorkspaceMembersSection({
                       <div className="min-w-0">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-medium text-foreground">
-                            {invitation.email}
+                            {invitation.fullName ?? invitation.email}
                           </p>
                           <Status label="Pending" value="queued" />
                           <Status label={roleLabel(invitation.role)} value="not_started" />
                         </div>
+                        {invitation.fullName ? (
+                          <p className="truncate text-xs leading-5 text-muted">
+                            {invitation.email}
+                          </p>
+                        ) : null}
                         <p className="mt-1 text-xs leading-5 text-muted">
                           Sent {formatDate(invitation.lastSentAt)}. Expires{" "}
                           {formatDate(invitation.expiresAt)}.
@@ -494,6 +572,68 @@ export function WorkspaceMembersSection({
           </div>
         ) : null}
       </div>
+
+      <Dialog
+        open={profileOpen}
+        onOpenChange={(open) => {
+          if (busyAction === "profile") return;
+          setProfileOpen(open);
+          setProfileError(null);
+        }}
+      >
+        <DialogContent
+          description="This name is shown on sessions and member lists in every workspace you belong to."
+          dismissible={busyAction !== "profile"}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            profileTrigger?.focus();
+          }}
+          title="Edit your name"
+        >
+          <form className="space-y-4" onSubmit={updateProfile}>
+            <label className="block space-y-1.5">
+              <span className="text-[13px] font-medium text-foreground">Name</span>
+              <input
+                autoComplete="name"
+                autoFocus
+                className="ui-input"
+                disabled={busyAction === "profile"}
+                maxLength={100}
+                onChange={(event) => setProfileDraft(event.target.value)}
+                required
+                type="text"
+                value={profileDraft}
+              />
+            </label>
+            {profileError ? (
+              <div className="ui-inline-message ui-inline-message-danger" role="alert">
+                {profileError}
+              </div>
+            ) : null}
+            <DialogFooter>
+              <button
+                className="ui-button"
+                disabled={busyAction === "profile"}
+                onClick={() => setProfileOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="ui-button-primary"
+                disabled={busyAction === "profile" || !profileDraft.trim()}
+                type="submit"
+              >
+                <ActionButtonLabel
+                  idle="Save name"
+                  pending={busyAction === "profile"}
+                  pendingLabel="Saving…"
+                />
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={memberRoleTarget !== null}

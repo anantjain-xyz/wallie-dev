@@ -4,14 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   createSupabaseServerClient: vi.fn(),
-  ensureProfileForUser: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
   hashWorkspaceInvitationToken: vi.fn(),
   rpc: vi.fn(),
-}));
-
-vi.mock("@/lib/auth", () => ({
-  ensureProfileForUser: mocked.ensureProfileForUser,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({

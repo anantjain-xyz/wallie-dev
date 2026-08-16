@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ensureProfileForUser,
   getWorkspaceBySlugForUser,
+  isWorkspaceInvitationPath,
   normalizeNextPath,
   resolveAuthenticatedHomePath,
   workspaceLoginRedirectPath,
@@ -38,6 +40,35 @@ describe("auth helpers", () => {
 
   it("builds the workspace login redirect path", () => {
     expect(workspaceLoginRedirectPath("northwind-labs")).toBe("/w/northwind-labs");
+  });
+
+  it("recognizes redirects that must defer profile seeding until invitation acceptance", () => {
+    expect(isWorkspaceInvitationPath("/invite/raw-token")).toBe(true);
+    expect(isWorkspaceInvitationPath("/invite/raw-token?source=email")).toBe(true);
+    expect(isWorkspaceInvitationPath("/invite")).toBe(false);
+    expect(isWorkspaceInvitationPath("/w/northwind-labs")).toBe(false);
+  });
+
+  it("delegates profile seeding to the conflict-safe profile RPC", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: {}, error: null });
+
+    await ensureProfileForUser(
+      { rpc } as never,
+      {
+        email: "ada@example.com",
+        id: "user-1",
+        user_metadata: {
+          full_name: "Ada Lovelace",
+          picture: "https://example.com/ada.png",
+        },
+      } as never,
+    );
+
+    expect(rpc).toHaveBeenCalledWith("ensure_own_profile", {
+      actor_avatar_url: "https://example.com/ada.png",
+      actor_email: "ada@example.com",
+      actor_full_name: "Ada Lovelace",
+    });
   });
 
   it("loads the authenticated member through the workspace lookup", async () => {

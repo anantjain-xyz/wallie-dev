@@ -74,6 +74,7 @@ function renderSettingsDestructiveFlows() {
             createdAt: timestamp,
             email: "invitee@example.com",
             expiresAt: timestamp,
+            fullName: "Invitee Person",
             id: "invitation-1",
             invitedByMemberId: "owner-1",
             lastSentAt: timestamp,
@@ -142,7 +143,7 @@ describe("destructive settings dialogs", () => {
     const inviteDialog = await screen.findByRole("dialog", {
       name: "Invite a workspace member",
     });
-    await waitFor(() => expect(screen.getByLabelText("Email")).toHaveFocus());
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus());
     expect((await axe.run(document.body, axeOptions)).violations).toEqual([]);
     await user.keyboard("{Escape}");
     await waitFor(() => expect(inviteDialog).not.toBeInTheDocument());
@@ -161,6 +162,83 @@ describe("destructive settings dialogs", () => {
       expect(screen.queryByRole("dialog", { name: "Change role for Ada" })).toBeNull(),
     );
     expect(roleTrigger).toHaveFocus();
+  });
+
+  it("lets the current member update their account-wide name", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        profile: { fullName: "Anant Jain" },
+      }),
+    );
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Edit your name" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit your name" });
+    expect(dialog).toHaveAccessibleDescription(
+      "This name is shown on sessions and member lists in every workspace you belong to.",
+    );
+    const input = within(dialog).getByLabelText("Name");
+    await waitFor(() => expect(input).toHaveFocus());
+    await user.clear(input);
+    await user.type(input, "Anant Jain");
+    await user.click(within(dialog).getByRole("button", { name: "Save name" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(screen.getByText("Anant Jain")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/profile",
+      expect.objectContaining({
+        body: JSON.stringify({ fullName: "Anant Jain" }),
+        method: "PATCH",
+      }),
+    );
+  });
+
+  it("submits and renders the required invitation name", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        invitation: {
+          acceptedAt: null,
+          acceptedByMemberId: null,
+          createdAt: timestamp,
+          email: "new@example.com",
+          expiresAt: timestamp,
+          fullName: "New Person",
+          id: "invitation-2",
+          invitedByMemberId: "owner-1",
+          lastSentAt: timestamp,
+          revokedAt: null,
+          role: "member",
+          status: "pending",
+          updatedAt: timestamp,
+          workspaceId,
+        },
+      }),
+    );
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Invite member" }));
+    const dialog = await screen.findByRole("dialog", { name: "Invite a workspace member" });
+    await user.type(within(dialog).getByLabelText("Name"), "New Person");
+    await user.type(within(dialog).getByLabelText("Email"), "new@example.com");
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(screen.getByText("New Person")).toBeInTheDocument();
+    expect(screen.getByText("new@example.com")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${workspaceId}/invitations`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          email: "new@example.com",
+          fullName: "New Person",
+          role: "member",
+        }),
+        method: "POST",
+      }),
+    );
   });
 
   it.each([

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import {
+  ensureProfileForUser,
+  isWorkspaceInvitationPath,
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
 import {
   emailCodeAuthCookieName,
   emailCodeAuthCookieOptions,
@@ -105,7 +110,7 @@ export async function POST(request: NextRequest) {
 
   const user = await getSupabaseUserOrNull(supabase);
 
-  if (user) {
+  if (user && !isWorkspaceInvitationPath(next)) {
     await ensureProfileForUser(supabase, user);
   }
 

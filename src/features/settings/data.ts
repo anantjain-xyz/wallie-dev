@@ -93,7 +93,7 @@ async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceI
   const { data, error } = await admin
     .from("workspace_invitations")
     .select(
-      "id, workspace_id, email, role, status, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at",
+      "id, workspace_id, email, full_name, role, status, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at",
     )
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")

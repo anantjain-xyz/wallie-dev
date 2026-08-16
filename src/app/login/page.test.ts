@@ -22,6 +22,7 @@ vi.mock("next/headers", () => ({
 
 vi.mock("@/lib/auth", () => ({
   ensureProfileForUser: mocked.ensureProfileForUser,
+  isWorkspaceInvitationPath: (path: string) => path.startsWith("/invite/"),
   normalizeNextPath: (value: string | null | undefined) => value || "/",
   resolveAuthenticatedHomePath: mocked.resolveAuthenticatedHomePath,
 }));
@@ -82,6 +83,7 @@ describe("/login page", () => {
         }),
       }),
     ).rejects.toThrow("redirect:/invite/invite-token");
+    expect(mocked.ensureProfileForUser).not.toHaveBeenCalled();
   });
 
   it("keeps the authenticated home fallback for the default next path", async () => {
@@ -92,6 +94,7 @@ describe("/login page", () => {
         searchParams: Promise.resolve({}),
       }),
     ).rejects.toThrow("redirect:/w/acme");
+    expect(mocked.ensureProfileForUser).toHaveBeenCalledTimes(1);
   });
 
   it("renders the email magic-link form by default", async () => {

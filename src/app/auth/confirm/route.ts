@@ -1,7 +1,12 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
-import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import {
+  ensureProfileForUser,
+  isWorkspaceInvitationPath,
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
 import { emailCodeAuthCookieName, emailCodeAuthCookieOptions } from "@/lib/auth-email-code-cookie";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -73,7 +78,7 @@ export async function GET(request: NextRequest) {
 
   const user = await getSupabaseUserOrNull(supabase);
 
-  if (user) {
+  if (user && !isWorkspaceInvitationPath(next)) {
     await ensureProfileForUser(supabase, user);
   }
 
