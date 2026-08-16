@@ -70,6 +70,73 @@ describe("SessionReviewBar", () => {
     expect(screen.getByLabelText("Feedback for Wallie")).toHaveValue("Please fix the tone.");
   });
 
+  it.each([
+    ["Command+Enter", { metaKey: true }],
+    ["Ctrl+Enter", { ctrlKey: true }],
+  ])("queues a rerun with %s from the feedback field", async (_label, modifier) => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "Address the review feedback." } });
+
+    fireEvent.keyDown(feedback, { key: "Enter", ...modifier });
+
+    await waitFor(() => expect(onReject).toHaveBeenCalledWith("Address the review feedback."));
+  });
+
+  it("leaves bare Enter to the feedback field", async () => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "First line\nSecond line" } });
+
+    expect(fireEvent.keyDown(feedback, { key: "Enter" })).toBe(true);
+    expect(onReject).not.toHaveBeenCalled();
+    expect(feedback).toHaveValue("First line\nSecond line");
+  });
+
+  it("uses the existing validation path for shortcut submission", async () => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "   \n\t  " } });
+
+    fireEvent.keyDown(feedback, { key: "Enter", metaKey: true });
+
+    expect(onReject).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(feedback).toHaveFocus();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("prevents repeated shortcuts from queueing duplicate reruns", async () => {
+    let resolveReject: ((value: boolean) => void) | undefined;
+    const onReject = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveReject = resolve;
+        }),
+    );
+    renderBar({ onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "Address the review feedback." } });
+
+    fireEvent.keyDown(feedback, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(feedback, { key: "Enter", metaKey: true, repeat: true });
+
+    expect(onReject).toHaveBeenCalledTimes(1);
+    resolveReject?.(true);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("exposes the rerun shortcut without changing the button name", async () => {
+    renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const button = await screen.findByRole("button", { name: "Queue rerun" });
+    expect(button).toHaveAttribute("aria-keyshortcuts", "Meta+Enter Control+Enter");
+  });
+
   it("prevents duplicate submit while a phase action is pending", () => {
     const { onApprove } = renderBar({ phaseActionPending: "approve" });
     fireEvent.click(screen.getByRole("button", { name: /Approving/ }));

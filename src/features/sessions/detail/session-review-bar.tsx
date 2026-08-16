@@ -5,6 +5,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import type { ReviewMode } from "@/features/sessions/detail/review-mode";
+import {
+  isSessionSubmitShortcut,
+  SESSION_SUBMIT_KEY_SHORTCUTS,
+} from "@/features/sessions/session-submit-shortcut";
 import { cn } from "@/lib/utils";
 
 const FEEDBACK_MAX = 4_000;
@@ -29,6 +33,7 @@ export function SessionReviewBar({
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const feedbackFieldId = useId();
   const feedbackRef = useRef<HTMLTextAreaElement | null>(null);
+  const rejectInFlightRef = useRef(false);
   const requestChangesTriggerRef = useRef<HTMLButtonElement | null>(null);
   const phaseActionBusy = phaseActionPending !== null;
 
@@ -70,7 +75,7 @@ export function SessionReviewBar({
   }
 
   async function submitReject() {
-    if (phaseActionBusy) return;
+    if (phaseActionBusy || rejectInFlightRef.current) return;
     const trimmed = feedbackDraft.trim();
     if (!trimmed) {
       setFeedbackError("Feedback is required. Whitespace-only notes are not accepted.");
@@ -79,12 +84,17 @@ export function SessionReviewBar({
     }
 
     setFeedbackError(null);
-    const succeeded = await onReject(trimmed);
-    if (succeeded) {
-      setFeedbackDraft("");
-      setDialogOpen(false);
+    rejectInFlightRef.current = true;
+    try {
+      const succeeded = await onReject(trimmed);
+      if (succeeded) {
+        setFeedbackDraft("");
+        setDialogOpen(false);
+      }
+      // On failure, keep the dialog open and preserve the draft.
+    } finally {
+      rejectInFlightRef.current = false;
     }
-    // On failure, keep the dialog open and preserve the draft.
   }
 
   return (
@@ -143,6 +153,11 @@ export function SessionReviewBar({
         <DialogContent
           description="Wallie will rerun the current stage with your feedback injected into the prompt."
           dismissible={!phaseActionBusy}
+          onKeyDown={(event) => {
+            if (!isSessionSubmitShortcut(event)) return;
+            event.preventDefault();
+            void submitReject();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             requestChangesTriggerRef.current?.focus();
@@ -186,6 +201,7 @@ export function SessionReviewBar({
             </button>
             <button
               type="button"
+              aria-keyshortcuts={SESSION_SUBMIT_KEY_SHORTCUTS}
               className="ui-button-primary"
               disabled={phaseActionBusy}
               onClick={() => void submitReject()}

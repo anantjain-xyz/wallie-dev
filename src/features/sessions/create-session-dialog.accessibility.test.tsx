@@ -496,6 +496,60 @@ describe("CreateSessionDialog accessibility", () => {
     expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   });
 
+  it("starts a valid session with Command+Enter and leaves bare Enter to the prompt", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
+      repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    const prompt = await screen.findByLabelText("Prompt");
+    await user.type(prompt, "Build the dashboard{Enter}with keyboard support");
+    expect(prompt).toHaveValue("Build the dashboard\nwith keyboard support");
+    expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Start session" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Meta+Enter Control+Enter",
+    );
+
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+
+    await waitFor(() =>
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          promptMd: "Build the dashboard\nwith keyboard support",
+          workspaceId,
+        }),
+      ),
+    );
+  });
+
   it("blocks keyboard submission while cached repository options are stale", async () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000001";
