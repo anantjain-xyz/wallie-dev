@@ -9,7 +9,6 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SandboxProviderSection } from "@/features/settings/sandbox-provider-section";
-import { dateFormatter } from "@/features/settings/settings-ui";
 import type {
   SandboxConnectionPreviews,
   SandboxSettingsResponse,
@@ -67,7 +66,7 @@ function sandboxSettings(
   };
 }
 
-const updatedLabel = `Updated ${dateFormatter.format(new Date(timestamp))}`;
+const updatedLabel = "Updated Jul 17, 2026";
 
 function renderSection({
   canManage = true,
@@ -520,9 +519,7 @@ describe("SandboxProviderSection saved connections", () => {
     expect(screen.getByText("vca_…9999")).toBeVisible();
     expect(screen.getByText("team_new")).toBeVisible();
     expect(screen.getByText("prj_new")).toBeVisible();
-    expect(
-      screen.getByText(`Updated ${dateFormatter.format(new Date(updatedConnection.updatedAt))}`),
-    ).toBeVisible();
+    expect(screen.getByText("Updated Aug 15, 2026")).toBeVisible();
     expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
     expect(screen.queryByText("vca_new")).not.toBeInTheDocument();
   });

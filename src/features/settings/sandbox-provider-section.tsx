@@ -6,7 +6,7 @@ import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confi
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { dateFormatter, Section } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import type {
   DaytonaSandboxConnectionPreview,
   E2BSandboxConnectionPreview,
@@ -15,6 +15,13 @@ import type {
 } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
+
+const connectionUpdatedAtFormatter = new Intl.DateTimeFormat("en-US", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+  year: "numeric",
+});
 
 const PROVIDERS: Array<{ description: string; id: SandboxProvider; label: string }> = [
   {
@@ -438,7 +445,7 @@ function SavedConnectionSummary({
           </h3>
           <p className="font-mono text-xs text-muted">{secretPreview(provider, connection)}</p>
           <p className="text-xs text-muted">
-            Updated {dateFormatter.format(new Date(connection.updatedAt))}
+            Updated {connectionUpdatedAtFormatter.format(new Date(connection.updatedAt))}
           </p>
         </div>
         <ProviderActions
@@ -666,8 +673,9 @@ function secretPreview(
 
 function displaySecretPreview(preview: string | null) {
   if (!preview) return "preview unavailable";
-  if (preview.includes("...") || preview.includes("…")) return preview;
-  return "••••";
+  // `buildSecretPreview` only returns the complete secret when length <= 6.
+  if (preview.length <= 6) return "••••";
+  return preview;
 }
 
 function providerLabel(provider: SandboxProvider) {

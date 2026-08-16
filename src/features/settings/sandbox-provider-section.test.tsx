@@ -65,6 +65,7 @@ describe("SandboxProviderSection", () => {
 
     expect(html).toContain("Vercel Sandbox connected");
     expect(html).toContain("vca_…1234");
+    expect(html).toContain("Updated Jul 17, 2026");
     expect(html).toContain("Team ID");
     expect(html).toContain("team_123");
     expect(html).toContain("Project ID");
@@ -148,5 +149,42 @@ describe("SandboxProviderSection", () => {
     expect(html).toContain("E2B connected");
     expect(html).toContain("••••");
     expect(html).not.toContain("abcd");
+  });
+
+  it("redacts short credential previews even when they contain ellipsis characters", () => {
+    const html = renderToStaticMarkup(
+      <SandboxProviderSection
+        canManage={false}
+        onSettingsChange={vi.fn()}
+        setFlashMessage={vi.fn()}
+        settings={{
+          activeProvider: "daytona",
+          connections: {
+            daytona: {
+              apiKeyPreview: "a...b",
+              apiUrl: "https://app.daytona.io/api",
+              connectionRevision: "revision-daytona",
+              lastValidatedAt: "2026-07-17T12:00:00.000Z",
+              lastValidationError: null,
+              status: "connected",
+              target: "us",
+              updatedAt: "2026-07-17T12:00:00.000Z",
+              workspaceId: "00000000-0000-4000-8000-000000000001",
+            },
+            e2b: null,
+            vercel: null,
+          },
+          enabledProviders: ["daytona"],
+          revision: 1,
+          updatedAt: null,
+        }}
+        vercelConnection={null}
+        workspaceId="00000000-0000-4000-8000-000000000001"
+      />,
+    );
+
+    expect(html).toContain("Daytona connected");
+    expect(html).toContain("••••");
+    expect(html).not.toContain("a...b");
   });
 });
