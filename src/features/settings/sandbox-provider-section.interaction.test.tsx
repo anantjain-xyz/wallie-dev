@@ -396,7 +396,18 @@ describe("SandboxProviderSection saved connections", () => {
     });
 
     expect(screen.getByRole("heading", { level: 2, name: "Sandbox" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+    const heading = screen.getByRole("heading", { name: "Vercel Sandbox connected" });
+    const testCapabilities = screen.getByRole("link", { name: "Test capabilities" });
+    const replaceConnection = screen.getByRole("button", { name: "Replace connection" });
+    const disconnectGuidance = screen.getByText(
+      "Switch to another connected provider before disconnecting this one.",
+    );
+    const header = heading.parentElement?.parentElement;
+
+    expect(heading).toBeVisible();
+    expect(header).toContainElement(testCapabilities);
+    expect(header).toContainElement(replaceConnection);
+    expect(header).not.toContainElement(disconnectGuidance);
     expect(screen.getByText("vca_…1234")).toBeVisible();
     expect(screen.getByText(updatedLabel)).toBeVisible();
     expect(screen.getByText("Team ID")).toBeVisible();
@@ -404,13 +415,8 @@ describe("SandboxProviderSection saved connections", () => {
     expect(screen.getByText("Project ID")).toBeVisible();
     expect(screen.getByText("prj_123")).toBeVisible();
     expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("Switch to another connected provider before disconnecting this one."),
-    ).toBeVisible();
-    expect(screen.getByRole("link", { name: "Test capabilities" })).toHaveAttribute(
-      "href",
-      "#verify",
-    );
+    expect(disconnectGuidance).toBeVisible();
+    expect(testCapabilities).toHaveAttribute("href", "#verify");
     expect(
       screen.queryByRole("button", { name: "Disconnect Vercel Sandbox" }),
     ).not.toBeInTheDocument();
