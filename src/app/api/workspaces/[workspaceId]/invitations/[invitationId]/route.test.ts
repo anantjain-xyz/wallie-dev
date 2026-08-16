@@ -25,6 +25,7 @@ const revokedInvitation = {
   created_at: "2026-06-05T12:00:00.000Z",
   email: "new@example.com",
   expires_at: "2026-06-12T12:00:00.000Z",
+  full_name: "New Person",
   id: INVITATION_ID,
   invited_by_member_id: "11111111-1111-4111-8111-111111111111",
   last_sent_at: "2026-06-05T12:00:00.000Z",

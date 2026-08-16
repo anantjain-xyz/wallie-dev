@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { Enums, Tables } from "@/lib/supabase/database.types";
+import { workspaceMemberFullNameSchema } from "@/lib/workspace-members/contracts";
 
 export const WORKSPACE_INVITATION_EXPIRES_DAYS = 7;
 
@@ -26,6 +27,7 @@ export const createWorkspaceInvitationSchema = z.object({
     .trim()
     .email("Enter a valid email address.")
     .transform(normalizeWorkspaceInvitationEmail),
+  fullName: workspaceMemberFullNameSchema,
   role: workspaceInvitationRoleSchema.default("member"),
 });
 
@@ -38,6 +40,7 @@ export type WorkspaceInvitation = {
   createdAt: string;
   email: string;
   expiresAt: string;
+  fullName: string | null;
   id: string;
   invitedByMemberId: string | null;
   lastSentAt: string | null;
@@ -55,6 +58,7 @@ export type WorkspaceInvitationRow = Pick<
   | "created_at"
   | "email"
   | "expires_at"
+  | "full_name"
   | "id"
   | "invited_by_member_id"
   | "last_sent_at"
@@ -80,6 +84,7 @@ export function mapWorkspaceInvitationRow(row: WorkspaceInvitationRow): Workspac
     createdAt: row.created_at,
     email: row.email,
     expiresAt: row.expires_at,
+    fullName: row.full_name,
     id: row.id,
     invitedByMemberId: row.invited_by_member_id,
     lastSentAt: row.last_sent_at,

@@ -44,6 +44,7 @@ const pendingInvitation = {
   created_at: "2026-06-05T12:00:00.000Z",
   email: "new@example.com",
   expires_at: "2026-06-12T12:00:00.000Z",
+  full_name: "New Person",
   id: INVITATION_ID,
   invited_by_member_id: MEMBER_ID,
   last_sent_at: "2026-06-05T12:00:00.000Z",
@@ -169,7 +170,7 @@ describe("POST /api/workspaces/[workspaceId]/invitations/[invitationId]/resend",
 
     expect(response.status).toBe(502);
     expect(restoreQuery.update).toHaveBeenCalledWith(
-      expect.objectContaining({ token_hash: "old-hash" }),
+      expect.objectContaining({ full_name: "New Person", token_hash: "old-hash" }),
     );
   });
 });

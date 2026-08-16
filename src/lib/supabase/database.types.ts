@@ -1428,6 +1428,7 @@ export type Database = {
           created_at: string
           email: string
           expires_at: string
+          full_name: string | null
           id: string
           invited_by_member_id: string | null
           last_sent_at: string | null
@@ -1444,6 +1445,7 @@ export type Database = {
           created_at?: string
           email: string
           expires_at: string
+          full_name?: string | null
           id?: string
           invited_by_member_id?: string | null
           last_sent_at?: string | null
@@ -1460,6 +1462,7 @@ export type Database = {
           created_at?: string
           email?: string
           expires_at?: string
+          full_name?: string | null
           id?: string
           invited_by_member_id?: string | null
           last_sent_at?: string | null
@@ -2086,6 +2089,27 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      ensure_own_profile: {
+        Args: {
+          actor_avatar_url?: string
+          actor_email?: string
+          actor_full_name?: string
+        }
+        Returns: {
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          primary_email: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       get_pipeline_dashboard_page: {
         Args: {
           cursor_seen_ids?: string[]
@@ -2298,6 +2322,23 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "sandbox_capability_checks"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      update_user_display_name: {
+        Args: { actor_full_name: string; actor_user_id: string }
+        Returns: {
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          primary_email: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
           isOneToOne: true
           isSetofReturn: false
         }

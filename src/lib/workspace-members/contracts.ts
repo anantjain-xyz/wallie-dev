@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import type { Tables } from "@/lib/supabase/database.types";
 
+export const workspaceMemberFullNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter a name.")
+  .max(100, "Name must be 100 characters or fewer.");
+
 /**
  * Roles a manager is allowed to assign to another member. Ownership transfer is
  * deliberately out of scope, so `owner` is not assignable and the owner row is
@@ -19,6 +25,10 @@ export const workspaceMemberActionParamsSchema = workspaceMemberParamsSchema.ext
 
 export const updateWorkspaceMemberRoleSchema = z.object({
   role: workspaceMemberAssignableRoleSchema,
+});
+
+export const updateOwnProfileSchema = z.object({
+  fullName: workspaceMemberFullNameSchema,
 });
 
 export type WorkspaceMemberAssignableRole = z.infer<typeof workspaceMemberAssignableRoleSchema>;
