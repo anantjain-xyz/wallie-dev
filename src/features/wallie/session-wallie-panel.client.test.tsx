@@ -576,7 +576,11 @@ describe("SessionWalliePanel run history lifecycle", () => {
     const olderArticle = view.container.querySelector('[data-run-id="run-21"]') as HTMLElement;
     fireEvent.click(within(olderArticle).getByRole("button", { name: "Cancel" }));
 
-    await within(olderArticle).findByText("Canceled");
+    await waitFor(() => {
+      const updatedArticle = view.container.querySelector('[data-run-id="run-21"]');
+      expect(updatedArticle).not.toBeNull();
+      expect(within(updatedArticle as HTMLElement).getByText("Canceled")).not.toBeNull();
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/agent-runs/run-21/cancel",
       expect.objectContaining({ method: "POST" }),
@@ -722,7 +726,7 @@ describe("SessionWalliePanel activity states", () => {
     );
 
     expect(screen.getByText("Waiting in queue")).not.toBeNull();
-    expect(screen.getByText("3")).not.toBeNull();
+    expect(screen.getByText("Attempt 3")).not.toBeNull();
     expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
   });
 

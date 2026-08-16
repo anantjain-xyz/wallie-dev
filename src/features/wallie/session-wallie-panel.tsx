@@ -137,18 +137,6 @@ function formatStageRunLabel(run: WallieRun) {
   return "Session run";
 }
 
-function formatStageName(run: WallieRun) {
-  if (run.stageName) return run.stageName;
-  if (run.stageSlug) {
-    const words = run.stageSlug
-      .split(/[-_\s]+/g)
-      .filter(Boolean)
-      .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`);
-    return words.join(" ") || "Session";
-  }
-  return "Session";
-}
-
 function formatRequestedBy(run: WallieRun) {
   if (run.requestedByMember) {
     const fullName = run.requestedByMember.fullName?.trim();
@@ -594,20 +582,10 @@ export function SessionWalliePanel({
   // for archived sessions; mirror that here so the Retry button is disabled
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
-  const summaryStalled = summaryRun
-    ? isRunActivityStalled({
-        createdAt: summaryRun.createdAt,
-        isActive: summaryRun.isActive,
-        lastActivityAt: summaryRun.lastActivityAt,
-        nowMs,
-        stallTimeoutMs: initialData.stallTimeoutMs,
-        status: summaryRun.status,
-      })
-    : false;
-  const summaryOperation = summaryRun
-    ? currentOperationLabel({ run: summaryRun, stalled: summaryStalled })
-    : null;
-  const summaryLastActivity = summaryRun ? lastActivityTimestamp(summaryRun) : null;
+  const historicalRuns = useMemo(
+    () => runs.filter((run) => run.id !== summaryRunId),
+    [runs, summaryRunId],
+  );
 
   const handleRetryRun = useCallback(
     async (runId: string) => {
@@ -798,51 +776,69 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      <div className="min-w-0 divide-y divide-border border-y border-border">
-        <ActiveRunSummary
-          actionPending={summaryRun ? pendingActionId === summaryRun.id : false}
-          cancelLocked={pendingActionId !== null}
-          connectionState={connectionState}
-          lastActivityAt={summaryLastActivity}
-          onCancel={handleCancelRun}
-          onRetry={handleRetryRun}
-          operation={summaryOperation}
-          renderNow={renderNow}
-          retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-          run={summaryRun}
-          stalled={summaryStalled}
-        />
+      <div className="min-w-0 space-y-5">
+        {summaryRun ? (
+          <WallieRunCard
+            actionPending={pendingActionId === summaryRun.id}
+            branchName={
+              summaryRun.sandboxId && summaryRun.stageSlug
+                ? buildStageBranchName(session.id, summaryRun.stageSlug)
+                : null
+            }
+            cancelLocked={pendingActionId !== null}
+            connectionState={connectionState}
+            isExpanded={expandedRunId === summaryRun.id}
+            isPrimary
+            messagesLoaded={loadedMessageRunIds.has(summaryRun.id)}
+            messagesLoadFailed={messageLoadErrorRunIds.has(summaryRun.id)}
+            nowMs={nowMs}
+            onCancel={handleCancelRun}
+            onRetry={handleRetryRun}
+            onToggle={handleToggleRun}
+            renderNow={renderNow}
+            retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+            run={summaryRun}
+            stallTimeoutMs={initialData.stallTimeoutMs}
+          />
+        ) : (
+          <div className="rounded-[6px] border border-dashed border-border px-4 py-8 text-center text-sm leading-7 text-muted">
+            No runs recorded yet.
+          </div>
+        )}
 
-        <div className="min-w-0 divide-y divide-border">
-          {runs.length === 0 ? (
-            <div className="py-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
-          ) : (
-            runs.map((run) => (
-              <WallieRunCard
-                key={run.id}
-                actionPending={pendingActionId === run.id}
-                branchName={
-                  run.sandboxId && run.stageSlug
-                    ? buildStageBranchName(session.id, run.stageSlug)
-                    : null
-                }
-                cancelLocked={pendingActionId !== null}
-                connectionState={connectionState}
-                isExpanded={expandedRunId === run.id}
-                messagesLoaded={loadedMessageRunIds.has(run.id)}
-                messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
-                nowMs={nowMs}
-                onCancel={handleCancelRun}
-                onRetry={handleRetryRun}
-                onToggle={handleToggleRun}
-                renderNow={renderNow}
-                retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-                run={run}
-                stallTimeoutMs={initialData.stallTimeoutMs}
-              />
-            ))
-          )}
-        </div>
+        {historicalRuns.length > 0 ? (
+          <section aria-labelledby="previous-runs-heading" className="min-w-0">
+            <h3 id="previous-runs-heading" className="ui-label">
+              Previous runs
+            </h3>
+            <div className="mt-2 min-w-0 divide-y divide-border border-y border-border">
+              {historicalRuns.map((run) => (
+                <WallieRunCard
+                  key={run.id}
+                  actionPending={pendingActionId === run.id}
+                  branchName={
+                    run.sandboxId && run.stageSlug
+                      ? buildStageBranchName(session.id, run.stageSlug)
+                      : null
+                  }
+                  cancelLocked={pendingActionId !== null}
+                  connectionState={connectionState}
+                  isExpanded={expandedRunId === run.id}
+                  messagesLoaded={loadedMessageRunIds.has(run.id)}
+                  messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+                  nowMs={nowMs}
+                  onCancel={handleCancelRun}
+                  onRetry={handleRetryRun}
+                  onToggle={handleToggleRun}
+                  renderNow={renderNow}
+                  retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+                  run={run}
+                  stallTimeoutMs={initialData.stallTimeoutMs}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
 
       {olderRunsError ? (
@@ -865,148 +861,13 @@ export function SessionWalliePanel({
   );
 }
 
-type ActiveRunSummaryProps = {
-  actionPending: boolean;
-  cancelLocked: boolean;
-  connectionState: WallieRealtimeConnectionState;
-  lastActivityAt: string | null;
-  onCancel: (runId: string) => Promise<void>;
-  onRetry: (runId: string) => Promise<void>;
-  operation: string | null;
-  renderNow: string;
-  retryLocked: boolean;
-  run: WallieRun | null;
-  stalled: boolean;
-};
-
-function ActiveRunSummary({
-  actionPending,
-  cancelLocked,
-  connectionState,
-  lastActivityAt,
-  onCancel,
-  onRetry,
-  operation,
-  renderNow,
-  retryLocked,
-  run,
-  stalled,
-}: ActiveRunSummaryProps) {
-  if (!run) {
-    return (
-      <section
-        aria-label="Current Wallie activity"
-        className="min-w-0 py-4 text-sm leading-7 text-muted"
-      >
-        No active Wallie run.
-      </section>
-    );
-  }
-
-  const showRecovery = stalled && run.isActive && run.canCancel;
-  const showRetryRecovery = stalled && !run.isActive && run.canRetry;
-
-  return (
-    <section aria-label="Current Wallie activity" className="min-w-0 py-4" data-wallie-summary="">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-2">
-          <p className="ui-label">Current activity</p>
-          <p className="text-sm font-semibold text-foreground">{formatStageName(run)}</p>
-          <p className="min-w-0 break-words text-sm text-foreground [overflow-wrap:anywhere]">
-            {operation}
-          </p>
-        </div>
-        <Status value={agentRunStatusValue(run.status)} />
-      </div>
-
-      <dl className="mt-4 grid min-w-0 gap-2 text-sm sm:grid-cols-2">
-        <div className="min-w-0">
-          <dt className="type-annotation text-muted">Elapsed</dt>
-          <dd className="text-foreground">
-            {run.startedAt ? (
-              <TimeDisplay
-                active={run.isActive}
-                endValue={run.finishedAt}
-                initialNow={renderNow}
-                value={run.startedAt}
-                variant="elapsed"
-              />
-            ) : (
-              "—"
-            )}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="type-annotation text-muted">Last event</dt>
-          <dd className="text-foreground">
-            {lastActivityAt ? (
-              <TimeDisplay
-                absoluteStyle="short"
-                initialNow={renderNow}
-                value={lastActivityAt}
-                variant="relative"
-              />
-            ) : (
-              "—"
-            )}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="type-annotation text-muted">Connection</dt>
-          <dd className="text-foreground">{connectionStateCopy(connectionState)}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="type-annotation text-muted">Attempt</dt>
-          <dd className="text-foreground">{run.attemptCount}</dd>
-        </div>
-      </dl>
-
-      {stalled ? (
-        <div
-          aria-live="polite"
-          className="mt-4 border-t border-border pt-3 text-sm text-warning"
-          role="status"
-        >
-          No recent activity
-          {showRecovery || showRetryRecovery ? ". Use the recovery action to continue." : "."}
-        </div>
-      ) : null}
-
-      {showRecovery ? (
-        <div className="mt-3">
-          <button
-            className="ui-button-danger"
-            disabled={cancelLocked}
-            onClick={() => void onCancel(run.id)}
-            type="button"
-          >
-            {actionPending ? "Canceling…" : "Cancel run"}
-          </button>
-        </div>
-      ) : null}
-
-      {showRetryRecovery ? (
-        <div className="mt-3">
-          <button
-            className="ui-button"
-            disabled={retryLocked}
-            onClick={() => void onRetry(run.id)}
-            type="button"
-          >
-            {actionPending ? "Retrying…" : "Retry run"}
-          </button>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 type WallieRunCardProps = {
   actionPending: boolean;
   branchName: string | null;
   cancelLocked: boolean;
   connectionState: WallieRealtimeConnectionState;
   isExpanded: boolean;
+  isPrimary?: boolean;
   messagesLoaded: boolean;
   messagesLoadFailed: boolean;
   nowMs: number;
@@ -1025,6 +886,7 @@ const WallieRunCard = memo(function WallieRunCard({
   cancelLocked,
   connectionState,
   isExpanded,
+  isPrimary = false,
   messagesLoaded,
   messagesLoadFailed,
   nowMs,
@@ -1045,12 +907,20 @@ const WallieRunCard = memo(function WallieRunCard({
     stallTimeoutMs,
     status: run.status,
   });
+  const lastActivityAt = lastActivityTimestamp(run);
+  const operation = run.isActive ? currentOperationLabel({ run, stalled }) : null;
 
   return (
     <article
       aria-busy={run.isActive}
-      className={cn("min-w-0 py-5", !isExpanded && !run.isActive && "run-history-group")}
+      aria-label={isPrimary ? "Current Wallie run" : undefined}
+      className={cn(
+        "min-w-0",
+        isPrimary ? "rounded-[8px] border border-border bg-control-muted/30 p-4 sm:p-5" : "py-5",
+        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
+      )}
       data-run-id={run.id}
+      data-wallie-summary={isPrimary ? "" : undefined}
     >
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
         <button
@@ -1061,27 +931,38 @@ const WallieRunCard = memo(function WallieRunCard({
           type="button"
         >
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-            <Status value={agentRunStatusValue(run.status)} />
+            {isPrimary ? (
+              <p className="text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
+            ) : (
+              <Status value={agentRunStatusValue(run.status)} />
+            )}
+            {isPrimary ? <Status value={agentRunStatusValue(run.status)} /> : null}
             <span className="type-annotation text-muted">Attempt {run.attemptCount}</span>
             <span className="min-w-0 break-all font-mono type-annotation text-foreground">
               {run.modelProvider}/{run.modelName}
             </span>
           </div>
 
-          <p className="mt-3 text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
-          <p className="mt-1 text-sm text-muted">
+          {isPrimary ? null : (
+            <p className="mt-3 text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
+          )}
+          <p className={cn("mt-1 text-sm text-muted", isPrimary && "type-secondary")}>
             {run.startedAt ? (
               <>
                 Started{" "}
                 <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.startedAt} />
-                {" · Duration "}
-                <TimeDisplay
-                  active={run.isActive}
-                  endValue={run.finishedAt}
-                  initialNow={renderNow}
-                  value={run.startedAt}
-                  variant="elapsed"
-                />
+                {isPrimary ? null : (
+                  <>
+                    {" · Duration "}
+                    <TimeDisplay
+                      active={run.isActive}
+                      endValue={run.finishedAt}
+                      initialNow={renderNow}
+                      value={run.startedAt}
+                      variant="elapsed"
+                    />
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -1096,7 +977,9 @@ const WallieRunCard = memo(function WallieRunCard({
               </>
             ) : null}
           </p>
-          <p className="mt-1 text-sm text-muted">Requested by {formatRequestedBy(run)}</p>
+          <p className={cn("mt-1 text-sm text-muted", isPrimary && "type-secondary")}>
+            Requested by {formatRequestedBy(run)}
+          </p>
         </button>
 
         {run.canCancel ? (
@@ -1122,8 +1005,59 @@ const WallieRunCard = memo(function WallieRunCard({
         ) : null}
       </div>
 
+      {isPrimary && operation ? (
+        <p className="mt-4 min-w-0 break-words text-sm font-medium text-foreground [overflow-wrap:anywhere]">
+          {operation}
+        </p>
+      ) : null}
+
+      {isPrimary ? (
+        <dl className="mt-4 grid min-w-0 grid-cols-2 gap-x-5 gap-y-3 border-y border-border/70 py-3 text-sm sm:grid-cols-3">
+          <div className="min-w-0">
+            <dt className="type-annotation text-muted">Elapsed</dt>
+            <dd className="mt-0.5 tabular-nums text-foreground">
+              {run.startedAt ? (
+                <TimeDisplay
+                  active={run.isActive}
+                  endValue={run.finishedAt}
+                  initialNow={renderNow}
+                  value={run.startedAt}
+                  variant="elapsed"
+                />
+              ) : (
+                "—"
+              )}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="type-annotation text-muted">Last event</dt>
+            <dd className="mt-0.5 text-foreground">
+              <TimeDisplay
+                absoluteStyle="short"
+                initialNow={renderNow}
+                value={lastActivityAt}
+                variant="relative"
+              />
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="type-annotation text-muted">Connection</dt>
+            <dd className="mt-0.5 text-foreground">{connectionStateCopy(connectionState)}</dd>
+          </div>
+        </dl>
+      ) : null}
+
+      {isPrimary && stalled ? (
+        <p aria-live="polite" className="mt-3 text-sm text-warning" role="status">
+          This run may be stalled. Cancel it before retrying.
+        </p>
+      ) : null}
+
       {isExpanded ? (
-        <div id={runDetailsId} className="mt-4 min-w-0 space-y-4 border-t border-border/70 pt-4">
+        <div
+          id={runDetailsId}
+          className={cn("mt-4 min-w-0 space-y-4", !isPrimary && "border-t border-border/70 pt-4")}
+        >
           <details className="min-w-0 text-sm">
             <summary className="cursor-pointer type-annotation font-semibold text-muted">
               Run details
@@ -1239,10 +1173,10 @@ function RunMessageTimeline({
           {stalled ? null : <Spinner />}
           <span>
             {stalled
-              ? "No recent activity"
+              ? "No messages recorded yet."
               : disconnected
                 ? messagesDisconnectedCopy()
-                : "Wallie is working…"}
+                : "Waiting for run messages…"}
           </span>
         </div>
       ) : null}
