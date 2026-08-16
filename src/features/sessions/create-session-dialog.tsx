@@ -19,6 +19,10 @@ import {
   type SessionImageDraft,
 } from "@/features/sessions/session-image-attachments";
 import {
+  isSessionSubmitShortcut,
+  SESSION_SUBMIT_KEY_SHORTCUTS,
+} from "@/features/sessions/session-submit-shortcut";
+import {
   invalidateSessionRepositoryCache,
   preloadSessionRepositories as preloadSessionRepositoryCache,
   retrySessionRepositories,
@@ -41,10 +45,6 @@ type CreateSessionDialogProps = {
   workspaceId: string;
   workspaceSlug: string;
 };
-
-export function isSessionSubmitShortcut(event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey">) {
-  return (event.metaKey || event.ctrlKey) && event.key === "Enter";
-}
 
 export function getLinearUrlError(value: string) {
   const trimmed = value.trim();
@@ -599,6 +599,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             </button>
             <button
               type="submit"
+              aria-keyshortcuts={SESSION_SUBMIT_KEY_SHORTCUTS}
               disabled={isCreateSessionSubmitDisabled({
                 hasRepositoryResult: repositorySnapshot.data !== null,
                 hasBlockingAttachments,
