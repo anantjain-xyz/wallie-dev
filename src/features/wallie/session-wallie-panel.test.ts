@@ -161,7 +161,7 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Connect a Vercel Sandbox account");
   });
 
-  it("shows an active summary without requiring message expansion", () => {
+  it("shows one unified active-run card without a duplicate summary", () => {
     const html = renderPanel(
       data({
         runs: [
@@ -179,23 +179,27 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("data-wallie-summary");
-    expect(html).toContain("Current activity");
-    expect(html).toContain("Product");
+    expect(html).not.toContain("Current activity");
+    expect((html.match(/data-run-id="run-1"/g) ?? []).length).toBe(1);
+    expect((html.match(/Product run/g) ?? []).length).toBe(1);
     expect(html).toContain("Wallie is working…");
     expect(html).toContain("Connecting…");
-    expect(html).toContain("Attempt");
-    expect(html).toContain(">2<");
+    expect(html).toContain("Attempt 2");
     expect(html).toContain("Running");
     expect(html).toContain("animate-spin");
   });
 
-  it("uses one shared divider between current activity and run history", () => {
-    const html = renderPanel(data());
-
-    expect(html).toMatch(
-      /<div class="min-w-0 divide-y divide-border border-y border-border"><section aria-label="Current Wallie activity" class="min-w-0 py-4"/,
+  it("places only older records under Previous runs", () => {
+    const html = renderPanel(
+      data({
+        runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
+      }),
     );
-    expect(html).not.toMatch(/aria-label="Current Wallie activity" class="[^"]*border-y[^"]*"/);
+
+    expect(html).toContain("Previous runs");
+    expect((html.match(/data-wallie-summary/g) ?? []).length).toBe(1);
+    expect((html.match(/data-run-id=/g) ?? []).length).toBe(2);
+    expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
   });
 
   it("expands the latest run by default and keeps older runs collapsed", () => {
@@ -295,8 +299,41 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("No recent activity");
-    expect(html).toContain("Cancel run");
+    expect(html).toContain(">Cancel</button>");
+    expect(html).toContain("This run may be stalled. Cancel it before retrying.");
     expect(html).not.toContain("Wallie is working…");
+  });
+
+  it("does not claim a stalled run has no messages when its timeline has activity", () => {
+    const html = renderPanel(
+      data({
+        stallTimeoutMs: 60_000,
+        runs: [
+          run({
+            canCancel: true,
+            createdAt: "2026-05-20T20:00:00.000Z",
+            finishedAt: null,
+            isActive: true,
+            isTerminal: false,
+            lastActivityAt: "2026-05-20T20:00:00.000Z",
+            messages: [
+              {
+                createdAt: "2026-05-20T20:00:30.000Z",
+                id: "msg-progress",
+                kind: "progress",
+                messageMd: "Cloning repository",
+              },
+            ],
+            startedAt: "2026-05-20T20:00:00.000Z",
+            status: "running",
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("Cloning repository");
+    expect(html).toContain("No new messages recently.");
+    expect(html).not.toContain("No messages recorded yet.");
   });
 
   it("does not include cached error messages before expansion of non-latest runs", () => {
