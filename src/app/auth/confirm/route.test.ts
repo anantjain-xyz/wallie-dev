@@ -91,6 +91,8 @@ describe("GET /auth/confirm", () => {
   });
 
   it("verifies invitation token hashes", async () => {
+    const user = { id: "user-123" };
+
     mocked.createSupabaseServerClient.mockResolvedValue({
       auth: {
         exchangeCodeForSession: mocked.exchangeCodeForSession,
@@ -98,7 +100,7 @@ describe("GET /auth/confirm", () => {
       },
     });
     mocked.verifyOtp.mockResolvedValue({ error: null });
-    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+    mocked.getSupabaseUserOrNull.mockResolvedValue(user);
 
     const response = await GET(
       new NextRequest(
@@ -113,6 +115,7 @@ describe("GET /auth/confirm", () => {
     expect(mocked.exchangeCodeForSession).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("http://localhost:3000/invite/raw-token");
+    expect(mocked.ensureProfileForUser).not.toHaveBeenCalled();
   });
 
   it("maps legacy magiclink token-hash callbacks to email verification", async () => {

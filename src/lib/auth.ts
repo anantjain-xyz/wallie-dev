@@ -46,6 +46,10 @@ export function workspaceLoginRedirectPath(workspaceSlug: string) {
   return normalizeNextPath(workspaceBasePath(workspaceSlug));
 }
 
+export function isWorkspaceInvitationPath(path: string) {
+  return path.startsWith("/invite/");
+}
+
 export async function ensureProfileForUser(supabase: SupabaseServerClient, user: User) {
   const metadata = (user.user_metadata ?? {}) as UserMetadata;
   const fullName = metadata.full_name ?? metadata.name ?? null;

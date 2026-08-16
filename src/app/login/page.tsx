@@ -4,7 +4,12 @@ import { cookies } from "next/headers";
 
 import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
 import { SplashShell } from "@/components/auth/splash-shell";
-import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import {
+  ensureProfileForUser,
+  isWorkspaceInvitationPath,
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
 import { emailCodeAuthCookieName, normalizeEmailCodeAddress } from "@/lib/auth-email-code-cookie";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -31,7 +36,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const user = await getSupabaseUserOrNull(supabase);
 
   if (user) {
-    await ensureProfileForUser(supabase, user);
+    if (!isWorkspaceInvitationPath(next)) {
+      await ensureProfileForUser(supabase, user);
+    }
     redirect(next === "/" ? await resolveAuthenticatedHomePath(supabase) : next);
   }
 

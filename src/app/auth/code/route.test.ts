@@ -103,6 +103,30 @@ describe("POST /auth/code", () => {
     expect(response.headers.get("set-cookie")).toContain(`${emailCodeAuthCookieName}=;`);
   });
 
+  it("defers profile seeding when an email code redirects to invitation acceptance", async () => {
+    const user = { id: "user-123" };
+
+    mocked.createSupabaseServerClient.mockResolvedValue({
+      auth: {
+        verifyOtp: mocked.verifyOtp,
+      },
+    });
+    mocked.verifyOtp.mockResolvedValue({ error: null });
+    mocked.getSupabaseUserOrNull.mockResolvedValue(user);
+
+    const response = await POST(
+      createCodeRequest({
+        email: "invitee@example.com",
+        next: "/invite/raw-token",
+        token: "526316",
+      }),
+    );
+
+    expect(mocked.ensureProfileForUser).not.toHaveBeenCalled();
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("http://localhost:3000/invite/raw-token");
+  });
+
   it("accepts pasted codes with spaces", async () => {
     mocked.createSupabaseServerClient.mockResolvedValue({
       auth: {

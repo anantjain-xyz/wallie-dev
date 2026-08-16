@@ -31,16 +31,30 @@ create or replace function public.ensure_own_profile(
 )
 returns public.profiles
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 declare
   actor_user_id uuid := auth.uid();
+  normalized_full_name text := nullif(btrim(actor_full_name), '');
   saved_profile public.profiles%rowtype;
 begin
   if actor_user_id is null then
     raise exception 'Authenticated user required to ensure a profile'
       using errcode = '42501';
+  end if;
+
+  -- All profile-name publishers take the same per-user transaction lock so
+  -- auth seeding, invitation acceptance, and explicit edits cannot interleave.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(actor_user_id::text, 0)
+  );
+
+  -- Invalid provider metadata must not break sign-in or create a name that the
+  -- user could not save through the product's display-name contract.
+  if normalized_full_name is not null
+    and char_length(normalized_full_name) > 100 then
+    normalized_full_name := null;
   end if;
 
   insert into public.profiles as profile (
@@ -52,7 +66,7 @@ begin
   values (
     actor_user_id,
     nullif(btrim(actor_email), ''),
-    nullif(btrim(actor_full_name), ''),
+    normalized_full_name,
     nullif(btrim(actor_avatar_url), '')
   )
   on conflict (id)
@@ -62,6 +76,15 @@ begin
         avatar_url = coalesce(excluded.avatar_url, profile.avatar_url)
   returning * into saved_profile;
 
+  if nullif(btrim(saved_profile.full_name), '') is not null
+    and char_length(btrim(saved_profile.full_name)) <= 100 then
+    update public.workspace_members
+    set full_name = btrim(saved_profile.full_name)
+    where user_id = actor_user_id
+      and kind = 'human'
+      and nullif(btrim(full_name), '') is null;
+  end if;
+
   return saved_profile;
 end;
 $$;
@@ -70,6 +93,11 @@ revoke all on function public.ensure_own_profile(text, text, text)
   from public, anon, authenticated;
 grant execute on function public.ensure_own_profile(text, text, text)
   to authenticated;
+
+-- Profile writes go through the two synchronization functions below. The RLS
+-- policies stay intact, but authenticated PostgREST callers cannot bypass the
+-- validation and workspace-membership updates with direct table mutations.
+revoke insert, update on public.profiles from authenticated;
 
 -- The API authenticates the caller, then invokes this function with the
 -- service role. Keeping both writes in one transaction prevents profiles and
@@ -101,6 +129,10 @@ begin
     raise exception 'actor_full_name must be 100 characters or fewer'
       using errcode = '22023';
   end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(actor_user_id::text, 0)
+  );
 
   insert into public.profiles as profile (id, full_name)
   values (actor_user_id, normalized_full_name)
@@ -138,6 +170,7 @@ set search_path = ''
 as $$
 declare
   normalized_actor_email text;
+  normalized_actor_full_name text := nullif(btrim(actor_full_name), '');
   target_invitation public.workspace_invitations%rowtype;
   target_workspace public.workspaces%rowtype;
   actor_profile public.profiles%rowtype;
@@ -153,6 +186,15 @@ begin
   if actor_user_id is null then
     return jsonb_build_object('ok', false, 'error_code', 'auth_required');
   end if;
+
+  if normalized_actor_full_name is not null
+    and char_length(normalized_actor_full_name) > 100 then
+    normalized_actor_full_name := null;
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(actor_user_id::text, 0)
+  );
 
   normalized_actor_email := lower(btrim(coalesce(actor_email, '')));
   if normalized_actor_email = '' then
@@ -202,7 +244,8 @@ begin
   select *
   into actor_profile
   from public.profiles profile_record
-  where profile_record.id = actor_user_id;
+  where profile_record.id = actor_user_id
+  for update;
 
   select *
   into existing_member
@@ -216,7 +259,34 @@ begin
     nullif(btrim(actor_profile.full_name), ''),
     nullif(btrim(existing_member.full_name), ''),
     nullif(btrim(target_invitation.full_name), ''),
-    nullif(btrim(actor_full_name), '')
+    normalized_actor_full_name
+  );
+
+  -- Invitation acceptance owns first-time profile creation. Auth entrypoints
+  -- defer metadata seeding for invite redirects, so the required invitation
+  -- name stays ahead of provider metadata while existing profile names win.
+  insert into public.profiles as profile (
+    id,
+    primary_email,
+    full_name,
+    avatar_url
+  )
+  values (
+    actor_user_id,
+    normalized_actor_email,
+    effective_full_name,
+    nullif(actor_avatar_url, '')
+  )
+  on conflict (id)
+  do update
+    set primary_email = coalesce(profile.primary_email, excluded.primary_email),
+        full_name = coalesce(nullif(btrim(profile.full_name), ''), excluded.full_name),
+        avatar_url = coalesce(profile.avatar_url, excluded.avatar_url)
+  returning * into actor_profile;
+
+  effective_full_name := coalesce(
+    nullif(btrim(actor_profile.full_name), ''),
+    effective_full_name
   );
 
   if existing_member.id is null then

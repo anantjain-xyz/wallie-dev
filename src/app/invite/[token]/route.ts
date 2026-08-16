@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { ensureProfileForUser } from "@/lib/auth";
 import { loginPath, workspaceBasePath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
@@ -145,8 +144,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (!user) {
     return NextResponse.redirect(new URL(loginPath(next), request.url), { status: 303 });
   }
-
-  await ensureProfileForUser(supabase, user);
 
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.rpc("accept_workspace_invitation", {
