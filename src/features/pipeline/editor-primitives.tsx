@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  useId,
-  useLayoutEffect,
-  useRef,
-  type DragEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type RefObject,
-  type TextareaHTMLAttributes,
-} from "react";
+import { useId, useLayoutEffect, useRef, type RefObject, type TextareaHTMLAttributes } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
@@ -225,26 +217,6 @@ export function moveDraftStage(
   const next = stages.slice();
   const [moved] = next.splice(index, 1);
   next.splice(target, 0, moved!);
-  return next;
-}
-
-export function reorderDraftStage(
-  stages: DraftPipelineStage[],
-  fromIndex: number,
-  toIndex: number,
-): DraftPipelineStage[] {
-  if (
-    fromIndex === toIndex ||
-    fromIndex < 0 ||
-    toIndex < 0 ||
-    fromIndex >= stages.length ||
-    toIndex >= stages.length
-  ) {
-    return stages;
-  }
-  const next = stages.slice();
-  const [moved] = next.splice(fromIndex, 1);
-  next.splice(toIndex, 0, moved!);
   return next;
 }
 
@@ -602,17 +574,12 @@ export function OperatingRulesField({
 export function StageRowEditor({
   canManage,
   compact = false,
-  dragIndex,
   errors = {},
   index,
   isFirst,
   isLast,
   onChangeName,
   onChange,
-  onDragEnd,
-  onDragOver,
-  onDragStart,
-  onDrop,
   onMoveDown,
   onMoveUp,
   onRemove,
@@ -624,17 +591,12 @@ export function StageRowEditor({
 }: {
   canManage: boolean;
   compact?: boolean;
-  dragIndex: number | null;
   errors?: StageFieldErrors;
   index: number;
   isFirst: boolean;
   isLast: boolean;
   onChange: (patch: Partial<DraftPipelineStage>) => void;
   onChangeName: (name: string) => void;
-  onDragEnd: () => void;
-  onDragOver: (event: DragEvent<HTMLLIElement>) => void;
-  onDragStart: (index: number) => void;
-  onDrop: (index: number) => void;
   onMoveDown: () => void;
   onMoveUp: () => void;
   onRemove: () => void;
@@ -647,7 +609,6 @@ export function StageRowEditor({
   const fieldPrefix = `pipeline-stage-${index}`;
   const displayName = stageDisplayName(stage, index);
   const positionLabel = `position ${index + 1} of ${totalStages}`;
-  const isDragging = dragIndex === index;
   const approvalPolicyName = `${fieldPrefix}-approval-policy`;
   const approverPreview =
     stage.approverMemberIds.length === 0
@@ -659,48 +620,13 @@ export function StageRowEditor({
     value: member.id,
   }));
 
-  function handleDragHandleKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      onMoveUp();
-    } else if (event.key === "ArrowDown") {
-      event.preventDefault();
-      onMoveDown();
-    }
-  }
-
   return (
-    <li
-      className={`rounded-[6px] border border-border bg-sheet ${compact ? "p-4" : "p-5"} ${isDragging ? "opacity-60" : ""}`}
-      onDragOver={onDragOver}
-      onDrop={(event) => {
-        event.preventDefault();
-        onDrop(index);
-      }}
-    >
+    <li className={`rounded-[6px] border border-border bg-sheet ${compact ? "p-4" : "p-5"}`}>
       <fieldset className="min-w-0 space-y-4" id={fieldPrefix}>
         <legend className="sr-only">
           {displayName}, {positionLabel}
         </legend>
         <div className="flex items-start gap-3">
-          {canManage ? (
-            <button
-              aria-describedby={`${fieldPrefix}-drag-help`}
-              aria-label={`Drag to reorder ${displayName}, currently ${positionLabel}. Use arrow keys to move.`}
-              className="ui-icon-button mt-7 cursor-grab active:cursor-grabbing"
-              draggable
-              onDragEnd={onDragEnd}
-              onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", String(index));
-                onDragStart(index);
-              }}
-              onKeyDown={handleDragHandleKeyDown}
-              type="button"
-            >
-              ⋮⋮
-            </button>
-          ) : null}
           <div
             aria-hidden="true"
             className="mt-7 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-control-muted type-annotation font-semibold text-muted"
@@ -757,11 +683,6 @@ export function StageRowEditor({
                 </div>
               ) : null}
             </div>
-            <p className="sr-only" id={`${fieldPrefix}-drag-help`}>
-              Drag handle or use Move up and Move down to change stage order. Screen readers hear
-              the new position after each move.
-            </p>
-
             <PipelineTextField
               description="A short explanation shown in the pipeline rail."
               disabled={!canManage}

@@ -240,8 +240,8 @@ describe("PipelineEditor accessibility", () => {
 
     await user.click(screen.getByRole("button", { name: "Move Intake up to position 2 of 3" }));
     expect(
-      screen.getByRole("button", { name: /Drag to reorder Intake, currently position 2 of 3/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Drag to reorder Intake/ }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Archive Build from position 3 of 3" }));
     expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Archive Build?");
