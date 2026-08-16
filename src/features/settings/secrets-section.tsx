@@ -114,7 +114,7 @@ export function WorkspaceSecretsPanel({
             className="ui-input"
             name="secretKey"
             onChange={(event) => setSecretKey(event.target.value)}
-            placeholder="LINEAR_API_KEY…"
+            placeholder="SERVICE_API_KEY…"
             spellCheck={false}
             value={secretKey}
           />

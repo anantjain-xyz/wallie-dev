@@ -1360,6 +1360,17 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("Provider access");
+    expect(html).toContain("Choose the coding agent Wallie uses for runs.");
+    expect(html).toContain("Model identifier passed to the selected provider.");
+    expect(html).toContain("Reasoning effort passed to the selected provider.");
+    expect(html).toContain(">Provider</span>");
+    expect(html).toContain(">Model</span>");
+    expect(html).toContain(">Effort</span>");
+    expect(html).not.toContain("Agent provider");
+    expect(html).not.toContain("Agent model");
+    expect(html).not.toContain("Agent effort");
+    expect(html).not.toContain("agent CLI");
+    expect(html).not.toContain("Not configured");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
     expect(html.indexOf("Concurrency")).toBeLessThan(html.indexOf("Provider access"));
@@ -1852,6 +1863,8 @@ describe("OnboardingPageClient", () => {
     expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "15.0", "15")).toBe(false);
     expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "10", "15")).toBe(true);
     expect(isAgentConfigDraftDirty("max_retries", "number", "2", "3")).toBe(true);
+    expect(isAgentConfigDraftDirty("agent_provider", "select", "codex", "codex")).toBe(false);
+    expect(isAgentConfigDraftDirty("agent_provider", "select", "claude-code", "codex")).toBe(true);
   });
 
   it("pairs Onboarding provider changes with the provider's recommended model", () => {

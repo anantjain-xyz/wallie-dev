@@ -15,6 +15,7 @@ describe("LinearKeyControls", () => {
     );
 
     expect(html).toContain("Linear API Key");
+    expect(html).toContain('placeholder="lin_api_…"');
     expect(html).toContain('type="password"');
     expect(html).toContain("Save key");
     expect(html).not.toContain("Test connection");
@@ -41,6 +42,8 @@ describe("LinearKeyControls", () => {
     expect(html).toContain("••••1234");
     expect(html).not.toContain("Test connection");
     expect(html).not.toContain("lin_api_plaintext");
+    expect(html).not.toContain("SERVICE_API_KEY");
+    expect(html).not.toContain("LINEAR_API_KEY…");
   });
 
   it("can expose a replacement input without returning secret material", () => {
@@ -63,6 +66,7 @@ describe("LinearKeyControls", () => {
     );
 
     expect(html).toContain("Replace Linear API key");
+    expect(html).toContain('placeholder="lin_api_…"');
     expect(html).toContain('type="password"');
     expect(html).toContain("Save key");
     expect(html).not.toContain("Test connection");

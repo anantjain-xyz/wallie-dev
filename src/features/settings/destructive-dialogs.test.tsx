@@ -127,6 +127,12 @@ function renderSettingsDestructiveFlows() {
 }
 
 describe("destructive settings dialogs", () => {
+  it("uses a generic placeholder for workspace secret keys", () => {
+    renderSettingsDestructiveFlows();
+
+    expect(screen.getByPlaceholderText("SERVICE_API_KEY…")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("LINEAR_API_KEY…")).not.toBeInTheDocument();
+  });
   it("uses labelled Dialogs with focused fields for member invitations and role changes", async () => {
     const user = userEvent.setup();
     renderSettingsDestructiveFlows();

@@ -10,6 +10,7 @@ import type {
   BatchUpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import {
+  AGENT_CONFIG_VISIBLE_FIELDS,
   AGENT_EFFORT_SELECT_OPTIONS,
   AGENT_PROVIDER_SELECT_OPTIONS,
 } from "@/components/shared/agent-provider-options";
@@ -45,6 +46,7 @@ import {
   agentConfigValueToDraft,
   applyAgentConfigDraftChange,
   parseAgentConfigDraft,
+  pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
 import type {
   UpsertWorkspaceSecretResponse,
@@ -300,22 +302,22 @@ function updateClaudeCodeConnectionInData(
 const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
   {
     configKey: "agent_provider",
-    description: "Choose the runtime Wallie uses for coding-agent work.",
-    label: "Agent provider",
+    description: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.description,
+    label: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.label,
     options: AGENT_PROVIDER_SELECT_OPTIONS,
     type: "select",
   },
   {
     configKey: "agent_model",
-    description: "Model identifier passed to the selected agent provider.",
-    label: "Agent model",
+    description: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.description,
+    label: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.label,
     placeholder: RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model,
     type: "text",
   },
   {
     configKey: "agent_effort",
-    description: "Reasoning effort passed to the selected agent provider.",
-    label: "Agent effort",
+    description: AGENT_CONFIG_VISIBLE_FIELDS.agent_effort.description,
+    label: AGENT_CONFIG_VISIBLE_FIELDS.agent_effort.label,
     options: AGENT_EFFORT_SELECT_OPTIONS,
     type: "select",
   },
@@ -509,6 +511,13 @@ export default function RuntimeStep({
       for (const status of fieldStatuses) {
         if (!status.isDirty || !status.validation.ok) continue;
         config[status.field.configKey] = status.validation.value;
+      }
+      const pendingProvider = pendingAgentProviderPersistValue(
+        data.agentConfig.agent_provider,
+        drafts.agent_provider,
+      );
+      if (pendingProvider !== undefined) {
+        config.agent_provider = pendingProvider;
       }
 
       const response = await fetch("/api/agent-config", {

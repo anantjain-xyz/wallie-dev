@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRuntimeReadiness,
   buildVerifyChecklist,
+  resolveAgentConfigValue,
   verifyBlockersFromChecklist,
 } from "@/features/onboarding/runtime-readiness";
 import type { OnboardingSetupHealth, WorkspaceOnboardingState } from "@/lib/onboarding/contracts";
@@ -117,6 +118,14 @@ function onboarding(overrides: Partial<WorkspaceOnboardingState> = {}): Workspac
 }
 
 describe("buildRuntimeReadiness", () => {
+  it("resolves missing and legacy-empty agent_provider values to Codex", () => {
+    expect(resolveAgentConfigValue("agent_provider", {})).toBe("codex");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "" })).toBe("codex");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "   " })).toBe("   ");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "claude-code" })).toBe(
+      "claude-code",
+    );
+  });
   it("requires Codex connection for the codex provider", () => {
     expect(
       buildRuntimeReadiness({

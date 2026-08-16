@@ -42,11 +42,20 @@ export const AGENT_PROVIDER_SELECT_OPTIONS = AGENT_PROVIDERS.map(
     }) satisfies SelectOption,
 );
 
-export const AGENT_PROVIDER_EMPTY_OPTION = {
-  icon: <GenericProviderLogoIcon />,
-  label: "Not configured",
-  value: "",
-} satisfies SelectOption;
+export const AGENT_CONFIG_VISIBLE_FIELDS = {
+  agent_effort: {
+    description: "Reasoning effort passed to the selected provider.",
+    label: "Effort",
+  },
+  agent_model: {
+    description: "Model identifier passed to the selected provider.",
+    label: "Model",
+  },
+  agent_provider: {
+    description: "Choose the coding agent Wallie uses for runs.",
+    label: "Provider",
+  },
+} as const;
 
 const AGENT_EFFORT_LABELS = {
   low: "Low",
@@ -70,27 +79,6 @@ export const AGENT_EFFORT_EMPTY_OPTION = {
 } satisfies SelectOption;
 
 type IconProps = SVGProps<SVGSVGElement>;
-
-function GenericProviderLogoIcon({ className, style, ...props }: IconProps) {
-  return (
-    <svg
-      aria-hidden="true"
-      className={cn("h-4 w-4 shrink-0", className)}
-      fill="none"
-      style={{ color: "var(--muted)", ...style }}
-      viewBox="0 0 16 16"
-      {...props}
-    >
-      <circle cx="8" cy="8" r="5.25" stroke="currentColor" strokeWidth="1.3" />
-      <path
-        d="M8 5.25v5.5M5.25 8h5.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.3"
-      />
-    </svg>
-  );
-}
 
 function CodexLogoIcon({ className, ...props }: IconProps) {
   return (
