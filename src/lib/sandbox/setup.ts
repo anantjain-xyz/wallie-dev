@@ -109,7 +109,11 @@ function resolveNodeBootstrap(provider: SandboxProvider): string {
 function resolveGitHubCliBootstrap(provider: SandboxProvider): string {
   const install =
     provider === "vercel"
-      ? "sudo dnf install -y gh"
+      ? `(
+        sudo dnf install -y dnf-plugins-core &&
+        sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo &&
+        sudo dnf install -y gh --repo gh-cli
+      )`
       : `(
         if command -v sudo >/dev/null 2>&1; then
           sudo apt-get update && sudo apt-get install -y gh

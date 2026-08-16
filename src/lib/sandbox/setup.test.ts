@@ -48,7 +48,6 @@ describe("prepareSessionSandbox", () => {
   });
 
   it.each([
-    ["vercel", "sudo dnf install -y gh"],
     ["e2b", "sudo apt-get update && sudo apt-get install -y gh"],
     ["daytona", "sudo apt-get update && sudo apt-get install -y gh"],
   ] as const)("installs and verifies gh for the %s provider", async (provider, installCommand) => {
@@ -91,6 +90,46 @@ describe("prepareSessionSandbox", () => {
       ["-lc", expect.stringContaining("gh --version >/dev/null")],
       expect.anything(),
     );
+  });
+
+  it("adds the official GitHub CLI repository before installing gh on Vercel", async () => {
+    const exec = vi.fn<SandboxHandle["exec"]>(async () => ({
+      exitCode: Promise.resolve(0),
+      kill: vi.fn(),
+      logs: async function* () {},
+      output: async () => ({ stderr: "", stdout: "" }),
+    }));
+    const handle = {
+      exec,
+      id: "sandbox-1",
+      readFile: vi.fn(),
+      repoPath: "/vercel/sandbox",
+      stop: vi.fn(),
+      writeFile: vi.fn(),
+    } satisfies SandboxHandle;
+
+    await prepareSessionSandbox({
+      handle,
+      provider: "vercel",
+      repoAlreadyCloned: true,
+      request: {
+        agentProvider: "codex",
+        baseBranch: "main",
+        branch: "wallie/test",
+        installationToken: "gh-secret",
+        repoFullName: "acme/app",
+        sessionId: "session-1",
+      },
+    });
+
+    const setupScript = exec.mock.calls[0]?.[1]?.[1] ?? "";
+    expect(setupScript).toContain("sudo dnf install -y dnf-plugins-core");
+    expect(setupScript).toContain(
+      "sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo",
+    );
+    expect(setupScript).toContain("sudo dnf install -y gh --repo gh-cli");
+    expect(setupScript).not.toContain("sudo dnf install -y gh &&");
+    expect(setupScript).toContain("gh --version >/dev/null");
   });
 
   it("includes stdout when setup fails without useful stderr", async () => {
