@@ -6,7 +6,7 @@ commit;
 
 begin;
 
-select plan(26);
+select plan(29);
 set local "request.jwt.claim.role" = 'service_role';
 
 -- Hold the same pipeline-row lock used by Settings after archiving Review,
