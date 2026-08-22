@@ -6,7 +6,7 @@ commit;
 
 begin;
 
-select plan(26);
+select plan(29);
 set local "request.jwt.claim.role" = 'service_role';
 
 -- Hold the same pipeline-row lock used by Settings after archiving Review,
@@ -496,6 +496,56 @@ select is(
   ),
   'build',
   'archiving the Linear land target moves the route to the nearest active predecessor'
+);
+
+-- A NULL land_stage_slug means manual merge ("no agent land stage"). The
+-- rewrite must leave it untouched instead of coalescing it to an active stage.
+update public.workspace_linear_routing
+set land_stage_slug = null
+where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001';
+
+create temp table manual_merge_rewrite_result as
+select public.rewrite_default_pipeline_with_approval_policy(
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'Default',
+  (
+    select jsonb_agg(
+      jsonb_build_object(
+        'id', stage.id,
+        'slug', stage.slug,
+        'name', stage.name,
+        'description', stage.description,
+        'promptTemplateMd', stage.prompt_template_md,
+        'anyoneCanApprove', stage.anyone_can_approve,
+        'approverMemberIds', to_jsonb(stage.approver_member_ids)
+      ) order by stage.position
+    )
+    from public.pipeline_stages stage
+    where stage.pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
+      and stage.archived_at is null
+  ),
+  null
+) as result;
+
+select is((select result ->> 'ok' from manual_merge_rewrite_result), 'true',
+  'a manual-merge rewrite succeeds');
+select is(
+  (
+    select land_stage_slug
+    from public.workspace_linear_routing
+    where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  null,
+  'a pipeline rewrite preserves manual-merge landing (NULL land stage)'
+);
+select is(
+  (
+    select rework_stage_slug
+    from public.workspace_linear_routing
+    where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  'build',
+  'a pipeline rewrite leaves an active rework target untouched'
 );
 
 select * from finish();
