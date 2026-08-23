@@ -98,22 +98,9 @@ export async function PATCH(request: Request) {
   const update = parsed.data;
 
   const admin = createSupabaseAdminClient();
-  const { data: currentProfile, error: profileError } = await admin
-    .from("profiles")
-    .select("avatar_path, avatar_url")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profileError) {
-    return NextResponse.json(
-      { error: "Wallie could not load your profile right now." },
-      { status: 500 },
-    );
-  }
-
   let uploadedPath: string | null = null;
-  let nextAvatarPath: string | null = currentProfile?.avatar_path ?? null;
-  let nextAvatarUrl: string | null = currentProfile?.avatar_url ?? null;
+  let nextAvatarPath: string | null = null;
+  let nextAvatarUrl: string | null = null;
 
   if (update.avatarAction === "replace" && update.file) {
     uploadedPath = buildProfileAvatarPath(user.id, update.file);
@@ -139,7 +126,7 @@ export async function PATCH(request: Request) {
   }
 
   const avatarChanged = update.avatarAction !== "keep";
-  const { data: savedProfile, error } = await admin.rpc("update_user_profile", {
+  const { data: savedProfiles, error } = await admin.rpc("update_user_profile", {
     actor_avatar_changed: avatarChanged,
     // PostgREST function arguments are typed as strings even though SQL text
     // accepts null. Empty strings are normalized to null by the RPC for remove.
@@ -160,16 +147,19 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const previousAvatarPath = currentProfile?.avatar_path;
-  if (previousAvatarPath && previousAvatarPath !== nextAvatarPath) {
-    await removeAvatarObject(previousAvatarPath, "failed to remove the previous profile photo");
+  const savedProfile = Array.isArray(savedProfiles) ? savedProfiles[0] : savedProfiles;
+  if (savedProfile?.superseded_avatar_path) {
+    await removeAvatarObject(
+      savedProfile.superseded_avatar_path,
+      "failed to remove the previous profile photo",
+    );
   }
 
   return NextResponse.json(
     {
       profile: {
-        avatarUrl: savedProfile?.avatar_url ?? nextAvatarUrl,
-        fullName: savedProfile?.full_name ?? update.fullName,
+        avatarUrl: savedProfile?.saved_avatar_url ?? nextAvatarUrl,
+        fullName: savedProfile?.saved_full_name ?? update.fullName,
       },
     },
     { status: 200 },

@@ -5,7 +5,6 @@ const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   getPublicUrl: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
-  maybeSingle: vi.fn(),
   remove: vi.fn(),
   rpc: vi.fn(),
   upload: vi.fn(),
@@ -41,12 +40,14 @@ describe("PATCH /api/profile", () => {
   beforeEach(() => {
     mocked.createSupabaseServerClient.mockResolvedValue({});
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
-    mocked.maybeSingle.mockResolvedValue({
-      data: { avatar_path: null, avatar_url: "https://provider.example/avatar.png" },
-      error: null,
-    });
     mocked.rpc.mockResolvedValue({
-      data: { avatar_url: "https://provider.example/avatar.png", full_name: "Anant Jain" },
+      data: [
+        {
+          saved_avatar_url: "https://provider.example/avatar.png",
+          saved_full_name: "Anant Jain",
+          superseded_avatar_path: null,
+        },
+      ],
       error: null,
     });
     mocked.upload.mockResolvedValue({ data: {}, error: null });
@@ -56,9 +57,7 @@ describe("PATCH /api/profile", () => {
         publicUrl: "https://project.supabase.co/storage/v1/object/public/profile-avatars/new.png",
       },
     });
-    const query = { eq: vi.fn().mockReturnValue({ maybeSingle: mocked.maybeSingle }) };
     mocked.createSupabaseAdminClient.mockReturnValue({
-      from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(query) }),
       rpc: mocked.rpc,
       storage: {
         from: vi.fn().mockReturnValue({
@@ -104,15 +103,15 @@ describe("PATCH /api/profile", () => {
   });
 
   it("uploads a unique replacement and removes the previous managed object", async () => {
-    mocked.maybeSingle.mockResolvedValue({
-      data: { avatar_path: "user-1/old.png", avatar_url: "https://project.supabase.co/old.png" },
-      error: null,
-    });
     mocked.rpc.mockResolvedValue({
-      data: {
-        avatar_url: "https://project.supabase.co/storage/v1/object/public/profile-avatars/new.png",
-        full_name: "Anant Jain",
-      },
+      data: [
+        {
+          saved_avatar_url:
+            "https://project.supabase.co/storage/v1/object/public/profile-avatars/new.png",
+          saved_full_name: "Anant Jain",
+          superseded_avatar_path: "user-1/old.png",
+        },
+      ],
       error: null,
     });
     const response = await PATCH(
@@ -143,7 +142,13 @@ describe("PATCH /api/profile", () => {
 
   it("removes a photo without deleting an external provider object", async () => {
     mocked.rpc.mockResolvedValue({
-      data: { avatar_url: null, full_name: "Anant Jain" },
+      data: [
+        {
+          saved_avatar_url: null,
+          saved_full_name: "Anant Jain",
+          superseded_avatar_path: null,
+        },
+      ],
       error: null,
     });
     const response = await PATCH(formRequest("Anant Jain", "remove"));

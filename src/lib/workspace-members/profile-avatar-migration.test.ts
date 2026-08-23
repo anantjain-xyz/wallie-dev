@@ -20,6 +20,11 @@ describe("profile avatar migration", () => {
     expect(migration).toContain("add column avatar_overridden boolean not null default false");
     expect(migration).toContain("when profile.avatar_overridden then profile.avatar_url");
     expect(migration).toContain("workspace_members_preserve_profile_avatar_override");
+    expect(migration).toContain("and avatar_url is distinct from saved_profile.avatar_url");
+    expect(migration).toContain("create or replace function public.accept_workspace_invitation");
+    expect(migration).toContain(
+      "when actor_profile.avatar_overridden then actor_profile.avatar_url",
+    );
   });
 
   it("publishes names and avatars to every human membership transactionally", () => {
@@ -29,6 +34,8 @@ describe("profile avatar migration", () => {
     );
 
     expect(profileFunction).toContain("pg_advisory_xact_lock");
+    expect(profileFunction).toContain("previous_avatar_path");
+    expect(profileFunction).toContain("superseded_avatar_path");
     expect(profileFunction).toContain("update public.workspace_members");
     expect(profileFunction).toContain("avatar_url = saved_profile.avatar_url");
     expect(profileFunction).toContain("and kind = 'human'");

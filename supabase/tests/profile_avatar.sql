@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(12);
+select plan(18);
 set local "request.jwt.claim.role" = 'service_role';
 
 select is(
@@ -113,12 +113,19 @@ select is(
   'new memberships inherit the custom profile avatar instead of provider metadata'
 );
 
-select public.update_user_profile(
-  'a1b2c3d4-0001-4000-8000-000000000001',
-  'Avatar Owner',
-  true,
-  null,
-  null
+select is(
+  (
+    select superseded_avatar_path
+    from public.update_user_profile(
+      'a1b2c3d4-0001-4000-8000-000000000001',
+      'Avatar Owner',
+      true,
+      null,
+      null
+    )
+  ),
+  'a1b2c3d4-0001-4000-8000-000000000001/custom.png',
+  'profile publication returns the exact managed object it superseded'
 );
 
 select ok(
@@ -158,6 +165,61 @@ set local "request.jwt.claim.role" = 'service_role';
 
 insert into public.workspaces (id, slug, name)
 values (
+  'f1b2c3d4-0004-4000-8000-000000000004',
+  'profile-avatar-provider-refresh',
+  'Profile avatar provider refresh'
+);
+update public.profiles
+set full_name = 'Provider Owner',
+    avatar_url = 'https://provider.example/old.png',
+    avatar_path = null,
+    avatar_overridden = false
+where id = 'a1b2c3d4-0002-4000-8000-000000000002';
+insert into public.workspace_members (
+  workspace_id,
+  user_id,
+  kind,
+  role,
+  full_name,
+  avatar_url
+)
+values (
+  'f1b2c3d4-0004-4000-8000-000000000004',
+  'a1b2c3d4-0002-4000-8000-000000000002',
+  'human',
+  'member',
+  'Provider Owner',
+  'https://provider.example/old.png'
+);
+
+set local role authenticated;
+set local "request.jwt.claim.sub" = 'a1b2c3d4-0002-4000-8000-000000000002';
+
+select is(
+  (public.ensure_own_profile(
+    'provider@example.com',
+    'Provider Owner',
+    'https://provider.example/refreshed.png'
+  )).avatar_url,
+  'https://provider.example/refreshed.png',
+  'auth profile seeding accepts a refreshed provider avatar when not overridden'
+);
+select is(
+  (
+    select avatar_url
+    from public.workspace_members
+    where workspace_id = 'f1b2c3d4-0004-4000-8000-000000000004'
+      and user_id = 'a1b2c3d4-0002-4000-8000-000000000002'
+  ),
+  'https://provider.example/refreshed.png',
+  'provider avatar refreshes propagate to existing human memberships'
+);
+
+reset role;
+set local "request.jwt.claim.role" = 'service_role';
+
+insert into public.workspaces (id, slug, name)
+values (
   'f1b2c3d4-0003-4000-8000-000000000003',
   'profile-avatar-removed-membership',
   'Profile avatar removed membership'
@@ -186,6 +248,60 @@ select is(
   ),
   null::text,
   'new memberships preserve an explicit removal'
+);
+
+insert into public.workspaces (id, slug, name)
+values (
+  'f1b2c3d4-0005-4000-8000-000000000005',
+  'profile-avatar-invitation',
+  'Profile avatar invitation'
+);
+insert into public.workspace_invitations (
+  workspace_id,
+  email,
+  role,
+  token_hash,
+  expires_at,
+  full_name
+)
+values (
+  'f1b2c3d4-0005-4000-8000-000000000005',
+  'owner@example.com',
+  'member',
+  'profile-avatar-invitation-token',
+  now() + interval '1 day',
+  'Avatar Owner'
+);
+
+select is(
+  (public.accept_workspace_invitation(
+    'profile-avatar-invitation-token',
+    'a1b2c3d4-0001-4000-8000-000000000001',
+    'owner@example.com',
+    'Provider Name',
+    'https://provider.example/restored-on-accept.png'
+  ) ->> 'ok')::boolean,
+  true,
+  'an invitation can be accepted after an explicit avatar removal'
+);
+select is(
+  (
+    select avatar_url
+    from public.profiles
+    where id = 'a1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  null::text,
+  'invitation acceptance does not restore provider metadata to the profile'
+);
+select is(
+  (
+    select avatar_url
+    from public.workspace_members
+    where workspace_id = 'f1b2c3d4-0005-4000-8000-000000000005'
+      and user_id = 'a1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  null::text,
+  'invitation acceptance preserves initials in the new membership'
 );
 
 select ok(

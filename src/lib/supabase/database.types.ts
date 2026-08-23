@@ -2362,21 +2362,10 @@ export type Database = {
           actor_user_id: string
         }
         Returns: {
-          avatar_overridden: boolean
-          avatar_path: string | null
-          avatar_url: string | null
-          created_at: string
-          full_name: string | null
-          id: string
-          primary_email: string | null
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "profiles"
-          isOneToOne: true
-          isSetofReturn: false
-        }
+          saved_avatar_url: string
+          saved_full_name: string
+          superseded_avatar_path: string
+        }[]
       }
     }
     Enums: {
