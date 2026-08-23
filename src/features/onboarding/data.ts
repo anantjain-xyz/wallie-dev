@@ -320,7 +320,7 @@ type PipelineStageRow = Pick<
 >;
 type WorkspaceMemberRow = Pick<
   Tables<"workspace_members">,
-  "email" | "full_name" | "id" | "is_active" | "kind" | "role" | "user_id"
+  "avatar_url" | "email" | "full_name" | "id" | "is_active" | "kind" | "role" | "user_id"
 >;
 type LinearRoutingRow = Pick<
   Tables<"workspace_linear_routing">,
@@ -524,7 +524,7 @@ function createOnboardingSnapshot(
       timing.segment("snapshot.members", () =>
         context.supabase
           .from("workspace_members")
-          .select("id, user_id, full_name, email, role, kind, is_active")
+          .select("id, user_id, full_name, email, avatar_url, role, kind, is_active")
           .eq("workspace_id", workspaceId)
           .eq("kind", "human")
           .eq("is_active", true)
@@ -785,6 +785,7 @@ function mapWorkspaceOnboardingData(
       slug: context.workspace.slug,
     },
     workspaceMembers: snapshot.workspaceMemberRows.map((member) => ({
+      avatarUrl: member.avatar_url,
       email: member.email,
       fullName: member.full_name,
       id: member.id,

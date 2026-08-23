@@ -562,6 +562,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_overridden: boolean
+          avatar_path: string | null
           avatar_url: string | null
           created_at: string
           full_name: string | null
@@ -570,6 +572,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          avatar_overridden?: boolean
+          avatar_path?: string | null
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
@@ -578,6 +582,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          avatar_overridden?: boolean
+          avatar_path?: string | null
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
@@ -2096,6 +2102,8 @@ export type Database = {
           actor_full_name?: string
         }
         Returns: {
+          avatar_overridden: boolean
+          avatar_path: string | null
           avatar_url: string | null
           created_at: string
           full_name: string | null
@@ -2329,6 +2337,33 @@ export type Database = {
       update_user_display_name: {
         Args: { actor_full_name: string; actor_user_id: string }
         Returns: {
+          avatar_overridden: boolean
+          avatar_path: string | null
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          primary_email: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      update_user_profile: {
+        Args: {
+          actor_avatar_changed?: boolean
+          actor_avatar_path?: string
+          actor_avatar_url?: string
+          actor_full_name: string
+          actor_user_id: string
+        }
+        Returns: {
+          avatar_overridden: boolean
+          avatar_path: string | null
           avatar_url: string | null
           created_at: string
           full_name: string | null

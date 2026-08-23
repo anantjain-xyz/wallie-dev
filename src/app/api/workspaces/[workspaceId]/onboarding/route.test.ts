@@ -181,6 +181,7 @@ const onboardingData: WorkspaceOnboardingData = {
   },
   workspaceMembers: [
     {
+      avatarUrl: null,
       email: "owner@example.com",
       fullName: "Owner",
       id: "member-1",

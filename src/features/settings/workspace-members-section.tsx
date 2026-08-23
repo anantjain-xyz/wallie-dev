@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
@@ -12,7 +12,10 @@ import { SelectField } from "@/components/ui/select";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { dateFormatter, Section } from "@/features/settings/settings-ui";
+import { ProfileAvatar } from "@/features/settings/profile-avatar";
 import { readResponseJson } from "@/features/settings/use-api-action";
+import { validateProfileAvatarFile } from "@/lib/storage/profile-avatar-contracts";
+import type { ProfileAvatarAction } from "@/lib/workspace-members/contracts";
 import type { WorkspaceMemberResponse } from "@/lib/workspace-members/contracts";
 import type {
   WorkspaceInvitation,
@@ -26,10 +29,10 @@ const ROLE_OPTIONS = [
 ];
 
 type ProfileUpdateResponse = {
-  profile: { fullName: string };
+  profile: { avatarUrl: string | null; fullName: string };
 };
 
-function memberDisplayName(member: WorkspaceMemberSummary) {
+function memberDisplayName(member: Pick<WorkspaceMemberSummary, "email" | "fullName">) {
   return member.fullName ?? member.email ?? "Unknown member";
 }
 
@@ -78,9 +81,14 @@ export function WorkspaceMembersSection({
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState("");
+  const [profileAvatarAction, setProfileAvatarAction] = useState<ProfileAvatarAction>("keep");
+  const [profileAvatarFile, setProfileAvatarFile] = useState<File | null>(null);
+  const [profileAvatarPreviewUrl, setProfileAvatarPreviewUrl] = useState<string | null>(null);
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileTrigger, setProfileTrigger] = useState<HTMLButtonElement | null>(null);
+  const profileFileInputRef = useRef<HTMLInputElement>(null);
   const [memberRoleTarget, setMemberRoleTarget] = useState<WorkspaceMemberSummary | null>(null);
   const [memberRoleTrigger, setMemberRoleTrigger] = useState<HTMLButtonElement | null>(null);
   const [memberRoleDraft, setMemberRoleDraft] = useState<WorkspaceInvitationRole>("member");
@@ -100,6 +108,53 @@ export function WorkspaceMembersSection({
   function finishAction() {
     busyActionRef.current = null;
     setBusyAction(null);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (profileAvatarPreviewUrl) URL.revokeObjectURL(profileAvatarPreviewUrl);
+    };
+  }, [profileAvatarPreviewUrl]);
+
+  function clearProfilePhotoDraft() {
+    setProfileAvatarAction("keep");
+    setProfileAvatarFile(null);
+    setProfileAvatarPreviewUrl(null);
+    if (profileFileInputRef.current) profileFileInputRef.current.value = "";
+  }
+
+  function openProfileEditor(member: WorkspaceMemberSummary, trigger: HTMLButtonElement) {
+    setProfileDraft(member.fullName ?? "");
+    setProfileAvatarUrl(member.avatarUrl);
+    clearProfilePhotoDraft();
+    setProfileError(null);
+    setProfileTrigger(trigger);
+    setProfileOpen(true);
+  }
+
+  function handleProfilePhotoChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    try {
+      validateProfileAvatarFile(file);
+      setProfileAvatarFile(file);
+      setProfileAvatarAction("replace");
+      setProfileAvatarPreviewUrl(URL.createObjectURL(file));
+      setProfileError(null);
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : "Profile photo upload is invalid.");
+      input.value = "";
+    }
+  }
+
+  function removeProfilePhoto() {
+    setProfileAvatarAction("remove");
+    setProfileAvatarFile(null);
+    setProfileAvatarPreviewUrl(null);
+    setProfileError(null);
+    if (profileFileInputRef.current) profileFileInputRef.current.value = "";
   }
 
   async function inviteMember(event: FormEvent<HTMLFormElement>) {
@@ -141,9 +196,15 @@ export function WorkspaceMembersSection({
     setProfileError(null);
 
     try {
+      const formData = new FormData();
+      formData.append("avatarAction", profileAvatarAction);
+      formData.append("fullName", profileDraft);
+      if (profileAvatarAction === "replace" && profileAvatarFile) {
+        formData.append("file", profileAvatarFile);
+      }
+
       const response = await fetch("/api/profile", {
-        body: JSON.stringify({ fullName: profileDraft }),
-        headers: { "content-type": "application/json" },
+        body: formData,
         method: "PATCH",
       });
       const payload = await readResponseJson<ProfileUpdateResponse>(response);
@@ -151,16 +212,25 @@ export function WorkspaceMembersSection({
       setMembers((currentMembers) =>
         currentMembers.map((member) =>
           member.id === currentMemberId
-            ? { ...member, fullName: payload.profile.fullName }
+            ? {
+                ...member,
+                avatarUrl: payload.profile.avatarUrl,
+                fullName: payload.profile.fullName,
+              }
             : member,
         ),
       );
       setProfileDraft(payload.profile.fullName);
+      setProfileAvatarUrl(payload.profile.avatarUrl);
+      clearProfilePhotoDraft();
       setProfileOpen(false);
-      setFlashMessage({ kind: "success", text: "Your name was updated across all workspaces." });
+      setFlashMessage({
+        kind: "success",
+        text: "Your profile was updated across all workspaces.",
+      });
     } catch (error) {
       setProfileError(
-        error instanceof Error ? error.message : "Wallie could not update your name.",
+        error instanceof Error ? error.message : "Wallie could not update your profile.",
       );
     } finally {
       finishAction();
@@ -397,14 +467,21 @@ export function WorkspaceMembersSection({
                   className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                   key={member.id}
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {memberDisplayName(member)}
-                      {isSelf ? <span className="ml-2 text-xs text-muted">(you)</span> : null}
-                    </p>
-                    {member.email ? (
-                      <p className="truncate text-xs leading-5 text-muted">{member.email}</p>
-                    ) : null}
+                  <div className="flex min-w-0 items-center gap-3">
+                    <ProfileAvatar
+                      className="h-10 w-10 text-sm"
+                      name={memberDisplayName(member)}
+                      url={member.avatarUrl}
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {memberDisplayName(member)}
+                        {isSelf ? <span className="ml-2 text-xs text-muted">(you)</span> : null}
+                      </p>
+                      {member.email ? (
+                        <p className="truncate text-xs leading-5 text-muted">{member.email}</p>
+                      ) : null}
+                    </div>
                   </div>
                   {canManageRow ? (
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -463,14 +540,11 @@ export function WorkspaceMembersSection({
                           className="ui-button min-h-9"
                           disabled={busyAction !== null}
                           onClick={(event) => {
-                            setProfileDraft(member.fullName ?? "");
-                            setProfileError(null);
-                            setProfileTrigger(event.currentTarget);
-                            setProfileOpen(true);
+                            openProfileEditor(member, event.currentTarget);
                           }}
                           type="button"
                         >
-                          Edit your name
+                          Edit profile
                         </button>
                       ) : null}
                       <Status label={roleLabel(member.role)} value="not_started" />
@@ -579,18 +653,66 @@ export function WorkspaceMembersSection({
           if (busyAction === "profile") return;
           setProfileOpen(open);
           setProfileError(null);
+          if (!open) clearProfilePhotoDraft();
         }}
       >
         <DialogContent
-          description="This name is shown on sessions and member lists in every workspace you belong to."
+          description="Your name and photo are shown on member lists in every workspace you belong to."
           dismissible={busyAction !== "profile"}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             profileTrigger?.focus();
           }}
-          title="Edit your name"
+          title="Edit profile"
         >
           <form className="space-y-4" onSubmit={updateProfile}>
+            <div className="flex items-center gap-4">
+              <ProfileAvatar
+                className="h-16 w-16 text-xl"
+                name={profileDraft}
+                url={
+                  profileAvatarAction === "remove"
+                    ? null
+                    : (profileAvatarPreviewUrl ?? profileAvatarUrl)
+                }
+              />
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <button
+                  className="ui-button"
+                  disabled={busyAction === "profile"}
+                  onClick={() => profileFileInputRef.current?.click()}
+                  type="button"
+                >
+                  {profileAvatarAction !== "remove" && (profileAvatarPreviewUrl || profileAvatarUrl)
+                    ? "Change photo"
+                    : "Add photo"}
+                </button>
+                {profileAvatarAction !== "remove" &&
+                (profileAvatarPreviewUrl || profileAvatarUrl) ? (
+                  <button
+                    className="ui-button"
+                    disabled={busyAction === "profile"}
+                    onClick={removeProfilePhoto}
+                    type="button"
+                  >
+                    Remove photo
+                  </button>
+                ) : null}
+                <input
+                  ref={profileFileInputRef}
+                  accept=".jpg,.jpeg,.png,.webp"
+                  aria-hidden="true"
+                  className="sr-only"
+                  disabled={busyAction === "profile"}
+                  onChange={handleProfilePhotoChange}
+                  tabIndex={-1}
+                  type="file"
+                />
+                <p className="w-full text-xs leading-5 text-muted">
+                  PNG, JPEG, or WebP. Up to 2 MB.
+                </p>
+              </div>
+            </div>
             <label className="block space-y-1.5">
               <span className="text-[13px] font-medium text-foreground">Name</span>
               <input
@@ -614,7 +736,10 @@ export function WorkspaceMembersSection({
               <button
                 className="ui-button"
                 disabled={busyAction === "profile"}
-                onClick={() => setProfileOpen(false)}
+                onClick={() => {
+                  clearProfilePhotoDraft();
+                  setProfileOpen(false);
+                }}
                 type="button"
               >
                 Cancel
@@ -625,7 +750,7 @@ export function WorkspaceMembersSection({
                 type="submit"
               >
                 <ActionButtonLabel
-                  idle="Save name"
+                  idle="Save profile"
                   pending={busyAction === "profile"}
                   pendingLabel="Saving…"
                 />
