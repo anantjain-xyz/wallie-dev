@@ -53,12 +53,14 @@ const fixturePipeline: SessionPipeline = {
 
 const workspaceMembers = [
   {
+    avatarUrl: null,
     email: "owner@example.com",
     fullName: "Avery Owner",
     id: MEMBER_ID,
     role: "owner" as const,
   },
   {
+    avatarUrl: null,
     email: "member@example.com",
     fullName: "Morgan Member",
     id: "00000000-0000-4000-8000-000000000022",

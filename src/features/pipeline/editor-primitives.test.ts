@@ -231,8 +231,20 @@ describe("pipeline editor primitives", () => {
 
     expect(
       keepKnownApproverIds(stages, [
-        { email: "one@example.com", fullName: "One", id: "member-1", role: "owner" },
-        { email: "two@example.com", fullName: "Two", id: "member-2", role: "member" },
+        {
+          avatarUrl: null,
+          email: "one@example.com",
+          fullName: "One",
+          id: "member-1",
+          role: "owner",
+        },
+        {
+          avatarUrl: null,
+          email: "two@example.com",
+          fullName: "Two",
+          id: "member-2",
+          role: "member",
+        },
       ]),
     ).toEqual([
       stage({ approverMemberIds: ["member-1", "member-2"] }),
@@ -264,6 +276,7 @@ describe("pipeline editor primitives", () => {
         totalStages: 2,
         workspaceMembers: [
           {
+            avatarUrl: null,
             email: "owner@example.com",
             fullName: "Owner",
             id: "member-1",
@@ -310,6 +323,7 @@ describe("pipeline editor primitives", () => {
         totalStages: 1,
         workspaceMembers: [
           {
+            avatarUrl: null,
             email: "owner@example.com",
             fullName: "Owner",
             id: "member-1",

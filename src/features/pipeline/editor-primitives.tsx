@@ -8,6 +8,7 @@ import { MultiSelectField } from "@/components/ui/multi-select-field";
 import type { PipelineStage } from "@/features/sessions/types";
 
 export type WorkspaceMemberSummary = {
+  avatarUrl: string | null;
   id: string;
   fullName: string | null;
   email: string | null;
