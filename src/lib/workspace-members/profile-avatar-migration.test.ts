@@ -36,6 +36,8 @@ describe("profile avatar migration", () => {
     expect(profileFunction).toContain("pg_advisory_xact_lock");
     expect(profileFunction).toContain("previous_avatar_path");
     expect(profileFunction).toContain("superseded_avatar_path");
+    expect(profileFunction).toContain("legacy_avatar_url");
+    expect(profileFunction).toContain("if not profile_exists and not actor_avatar_changed");
     expect(profileFunction).toContain("update public.workspace_members");
     expect(profileFunction).toContain("avatar_url = saved_profile.avatar_url");
     expect(profileFunction).toContain("and kind = 'human'");

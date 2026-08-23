@@ -11,6 +11,7 @@ import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
+import { maxProfileAvatarBytes } from "@/lib/storage/profile-avatar-contracts";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const timestamp = "2026-07-17T12:00:00.000Z";
@@ -231,6 +232,40 @@ describe("destructive settings dialogs", () => {
 
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clears a pending replacement when the next selected image is invalid", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        profile: { avatarUrl: "https://provider.example/owner.png", fullName: "Owner" },
+      }),
+    );
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Edit profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit profile" });
+    const fileInput = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(["image"], "valid.png", { type: "image/png" }));
+    expect(dialog.querySelector('img[src="blob:profile-preview"]')).not.toBeNull();
+
+    await user.upload(
+      fileInput,
+      new File([new Uint8Array(maxProfileAvatarBytes + 1)], "oversized.png", {
+        type: "image/png",
+      }),
+    );
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Profile photos must stay under 2 MB.",
+    );
+    expect(dialog.querySelector('img[src="blob:profile-preview"]')).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(body.get("avatarAction")).toBe("keep");
+    expect(body.get("file")).toBeNull();
   });
 
   it("removes the current photo and renders the initials fallback", async () => {

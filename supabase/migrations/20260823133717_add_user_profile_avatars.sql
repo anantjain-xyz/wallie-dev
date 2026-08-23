@@ -169,7 +169,9 @@ declare
   normalized_full_name text := btrim(coalesce(actor_full_name, ''));
   normalized_avatar_url text := nullif(btrim(actor_avatar_url), '');
   normalized_avatar_path text := nullif(btrim(actor_avatar_path), '');
+  legacy_avatar_url text;
   previous_avatar_path text;
+  profile_exists boolean;
   saved_profile public.profiles%rowtype;
 begin
   if actor_user_id is null then
@@ -215,6 +217,19 @@ begin
   where profile.id = actor_user_id
   for update;
 
+  profile_exists := found;
+
+  if not profile_exists and not actor_avatar_changed then
+    select member.avatar_url
+    into legacy_avatar_url
+    from public.workspace_members as member
+    where member.user_id = actor_user_id
+      and member.kind = 'human'
+      and nullif(btrim(member.avatar_url), '') is not null
+    order by member.is_active desc, member.created_at, member.id
+    limit 1;
+  end if;
+
   insert into public.profiles as profile (
     id,
     full_name,
@@ -225,7 +240,7 @@ begin
   values (
     actor_user_id,
     normalized_full_name,
-    case when actor_avatar_changed then normalized_avatar_url else null end,
+    case when actor_avatar_changed then normalized_avatar_url else legacy_avatar_url end,
     case when actor_avatar_changed then normalized_avatar_path else null end,
     actor_avatar_changed
   )

@@ -1,4 +1,20 @@
+"use client";
+
+import { useState } from "react";
+
 import { cn } from "@/lib/utils";
+
+function ProfileAvatarContent({ initial, url }: { initial: string; url: string | null }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!url || failed) return initial;
+
+  return (
+    // Provider metadata can contain remote hosts that are not known at build time.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} src={url} />
+  );
+}
 
 export function ProfileAvatar({
   className,
@@ -19,13 +35,7 @@ export function ProfileAvatar({
         className,
       )}
     >
-      {url ? (
-        // Provider metadata can contain remote hosts that are not known at build time.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img alt="" className="h-full w-full object-cover" src={url} />
-      ) : (
-        initial
-      )}
+      <ProfileAvatarContent key={url ?? "initials"} initial={initial} url={url} />
     </span>
   );
 }

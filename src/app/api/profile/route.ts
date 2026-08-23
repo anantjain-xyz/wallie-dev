@@ -4,6 +4,7 @@ import {
   buildProfileAvatarPath,
   getProfileAvatarUrl,
   profileAvatarBucket,
+  validateProfileAvatarBytes,
   validateProfileAvatarFile,
 } from "@/lib/storage/profile-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -103,10 +104,23 @@ export async function PATCH(request: Request) {
   let nextAvatarUrl: string | null = null;
 
   if (update.avatarAction === "replace" && update.file) {
+    let uploadBytes: Buffer;
+    try {
+      uploadBytes = Buffer.from(await update.file.arrayBuffer());
+      validateProfileAvatarBytes(update.file, uploadBytes);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error: error instanceof Error ? error.message : "Profile photo upload is invalid.",
+        },
+        { status: 400 },
+      );
+    }
+
     uploadedPath = buildProfileAvatarPath(user.id, update.file);
     const uploadResult = await admin.storage
       .from(profileAvatarBucket)
-      .upload(uploadedPath, Buffer.from(await update.file.arrayBuffer()), {
+      .upload(uploadedPath, uploadBytes, {
         contentType: update.file.type,
         upsert: false,
       });

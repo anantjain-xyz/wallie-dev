@@ -144,8 +144,8 @@ export function WorkspaceMembersSection({
       setProfileAvatarPreviewUrl(URL.createObjectURL(file));
       setProfileError(null);
     } catch (error) {
+      clearProfilePhotoDraft();
       setProfileError(error instanceof Error ? error.message : "Profile photo upload is invalid.");
-      input.value = "";
     }
   }
 

@@ -36,6 +36,14 @@ function formRequest(fullName: string, avatarAction: "keep" | "remove" | "replac
   return new Request("http://localhost/api/profile", { body, method: "PATCH" });
 }
 
+function imageFile(name: string, type: "image/png" | "image/webp") {
+  const bytes =
+    type === "image/png"
+      ? [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+      : [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50];
+  return new File([Uint8Array.from(bytes)], name, { type });
+}
+
 describe("PATCH /api/profile", () => {
   beforeEach(() => {
     mocked.createSupabaseServerClient.mockResolvedValue({});
@@ -115,11 +123,7 @@ describe("PATCH /api/profile", () => {
       error: null,
     });
     const response = await PATCH(
-      formRequest(
-        "Anant Jain",
-        "replace",
-        new File(["image"], "avatar.png", { type: "image/png" }),
-      ),
+      formRequest("Anant Jain", "replace", imageFile("avatar.png", "image/png")),
     );
     expect(response.status).toBe(200);
     const uploadedPath = mocked.upload.mock.calls[0]?.[0] as string;
@@ -177,14 +181,26 @@ describe("PATCH /api/profile", () => {
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
-  it("cleans up a new upload when database publication fails", async () => {
-    mocked.rpc.mockResolvedValue({ data: null, error: new Error("database unavailable") });
+  it("rejects uploaded bytes that do not match the declared image type", async () => {
     const response = await PATCH(
       formRequest(
         "Anant Jain",
         "replace",
-        new File(["image"], "avatar.webp", { type: "image/webp" }),
+        new File(["not a png"], "avatar.png", { type: "image/png" }),
       ),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "The file contents do not match the selected image type.",
+    });
+    expect(mocked.upload).not.toHaveBeenCalled();
+    expect(mocked.rpc).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a new upload when database publication fails", async () => {
+    mocked.rpc.mockResolvedValue({ data: null, error: new Error("database unavailable") });
+    const response = await PATCH(
+      formRequest("Anant Jain", "replace", imageFile("avatar.webp", "image/webp")),
     );
     expect(response.status).toBe(500);
     const uploadedPath = mocked.upload.mock.calls[0]?.[0] as string;

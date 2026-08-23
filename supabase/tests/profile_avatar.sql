@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(18);
+select plan(20);
 set local "request.jwt.claim.role" = 'service_role';
 
 select is(
@@ -302,6 +302,68 @@ select is(
   ),
   null::text,
   'invitation acceptance preserves initials in the new membership'
+);
+
+update public.workspace_members
+set avatar_url = null
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002'
+  and kind = 'human';
+delete from public.profiles
+where id = 'a1b2c3d4-0002-4000-8000-000000000002';
+
+insert into public.workspaces (id, slug, name)
+values (
+  'f1b2c3d4-0006-4000-8000-000000000006',
+  'profile-avatar-legacy-membership',
+  'Profile avatar legacy membership'
+);
+insert into public.workspace_members (
+  workspace_id,
+  user_id,
+  kind,
+  role,
+  full_name,
+  avatar_url
+)
+values (
+  'f1b2c3d4-0006-4000-8000-000000000006',
+  'a1b2c3d4-0002-4000-8000-000000000002',
+  'human',
+  'member',
+  'Legacy Owner',
+  'https://provider.example/legacy.png'
+);
+
+select is(
+  (
+    select saved_avatar_url
+    from public.update_user_profile(
+      'a1b2c3d4-0002-4000-8000-000000000002',
+      'Legacy Owner Updated',
+      false,
+      null,
+      null
+    )
+  ),
+  'https://provider.example/legacy.png',
+  'a name-only save seeds a missing profile from a legacy membership avatar'
+);
+select ok(
+  (
+    select not avatar_overridden
+      and avatar_path is null
+      and avatar_url = 'https://provider.example/legacy.png'
+    from public.profiles
+    where id = 'a1b2c3d4-0002-4000-8000-000000000002'
+  )
+  and not exists (
+    select 1
+    from public.workspace_members
+    where user_id = 'a1b2c3d4-0002-4000-8000-000000000002'
+      and kind = 'human'
+      and avatar_url is distinct from 'https://provider.example/legacy.png'
+  ),
+  'the inherited legacy avatar is published account-wide without becoming an override'
 );
 
 select ok(

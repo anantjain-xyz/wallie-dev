@@ -2,11 +2,14 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { validateProfileAvatarFile } from "@/lib/storage/profile-avatar-contracts";
+import {
+  validateProfileAvatarBytes,
+  validateProfileAvatarFile,
+} from "@/lib/storage/profile-avatar-contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const profileAvatarBucket = "profile-avatars";
-export { validateProfileAvatarFile };
+export { validateProfileAvatarBytes, validateProfileAvatarFile };
 
 function getFileExtension(file: File) {
   switch (file.type) {
