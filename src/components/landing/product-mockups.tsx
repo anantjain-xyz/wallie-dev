@@ -1,139 +1,13 @@
-import type { ReactNode } from "react";
-
-function ProductCrop({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <figure className="overflow-hidden rounded-[10px] border border-border bg-sheet shadow-[var(--shadow-elevated)]">
-      <figcaption className="border-b border-border bg-control-hover px-4 py-3 font-mono text-xs font-medium text-muted">
-        {label}
-      </figcaption>
-      <div className="p-4 sm:p-5">{children}</div>
-    </figure>
-  );
-}
-
-type BoardTone = "accent" | "muted" | "success" | "warning";
-
-type BoardLane = {
-  cards: {
-    actor: string;
-    name: string;
-    status: string;
-    tone: BoardTone;
-  }[];
-  name: string;
-};
-
-const boardToneClasses: Record<BoardTone, string> = {
-  accent: "border-accent/70 bg-accent-soft",
-  muted: "border-border/80 bg-canvas",
-  success: "border-success/60 bg-success-soft",
-  warning: "border-warning/60 bg-warning-soft",
-};
-
-const boardStatusClasses: Record<BoardTone, string> = {
-  accent: "text-accent",
-  muted: "text-muted",
-  success: "text-success",
-  warning: "text-warning",
-};
-
-export function PipelineBoardMockup() {
-  const lanes: BoardLane[] = [
-    {
-      name: "Plan",
-      cards: [
-        { actor: "Engineer", name: "Task 1", status: "Reviewing plan", tone: "muted" },
-        { actor: "Codex", name: "Task 5", status: "Drafting plan", tone: "muted" },
-      ],
-    },
-    {
-      name: "Build",
-      cards: [
-        { actor: "Claude Code", name: "Task 2", status: "Agent working", tone: "accent" },
-        { actor: "Codex", name: "Task 6", status: "Agent working", tone: "accent" },
-      ],
-    },
-    {
-      name: "Review",
-      cards: [
-        {
-          actor: "Product designer",
-          name: "Task 3",
-          status: "Ready for approval",
-          tone: "warning",
-        },
-      ],
-    },
-    {
-      name: "Land",
-      cards: [{ actor: "Engineer", name: "Task 4", status: "Approved", tone: "success" }],
-    },
-  ];
-
-  return (
-    <figure className="overflow-hidden rounded-[10px] border border-border bg-sheet p-3 shadow-[var(--shadow-elevated)] sm:p-4">
-      <figcaption className="sr-only">
-        Multiplayer pipeline board with agents working and experts approving tasks
-      </figcaption>
-      <div aria-hidden="true">
-        <div className="mb-4 flex items-center justify-between gap-3 border-b border-border pb-3">
-          <p className="text-[13px] font-semibold text-foreground">Pipeline</p>
-          <div className="flex items-center">
-            {["C", "A", "S", "D"].map((initial, index) => (
-              <span
-                key={initial}
-                className={`flex h-7 w-7 items-center justify-center rounded-full border border-sheet type-annotation font-semibold ${
-                  index < 2
-                    ? "bg-accent-soft text-accent"
-                    : index === 2
-                      ? "bg-success-soft text-success"
-                      : "bg-warning-soft text-warning"
-                } ${index > 0 ? "-ml-1.5" : ""}`}
-              >
-                {initial}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-0">
-          {lanes.map((lane) => (
-            <div
-              key={lane.name}
-              className="min-w-0 border-border/70 sm:border-l sm:px-2.5 sm:first:border-l-0 sm:first:pl-0 sm:last:pr-0 md:px-3"
-            >
-              <p className="mb-2 text-[13px] font-semibold text-foreground">{lane.name}</p>
-              <div className="flex flex-col gap-2">
-                {lane.cards.map((card) => (
-                  <div
-                    key={card.name}
-                    className={`rounded-[6px] border px-2.5 py-2.5 ${boardToneClasses[card.tone]}`}
-                  >
-                    <p className="text-xs font-semibold leading-4 text-foreground">{card.name}</p>
-                    <p
-                      className={`mt-1 type-annotation font-semibold leading-4 ${boardStatusClasses[card.tone]}`}
-                    >
-                      {card.status}
-                    </p>
-                    <p className="mt-1 type-annotation leading-4 text-muted">{card.actor}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </figure>
-  );
-}
+import { Fragment } from "react";
 
 type BrandName = "claude" | "codex" | "cursor" | "daytona" | "e2b" | "linear" | "vercel";
 
 function BrandGlyph({ brand }: { brand: BrandName }) {
   if (brand === "vercel") {
+    // Vercel mark (Simple Icons)
     return (
       <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-        <path d="M12 3 23 21H1L12 3Z" />
+        <path d="m12 1.608 12 20.784H0Z" />
       </svg>
     );
   }
@@ -148,68 +22,88 @@ function BrandGlyph({ brand }: { brand: BrandName }) {
   }
 
   if (brand === "cursor") {
+    // Cursor mark (Simple Icons)
     return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" aria-hidden="true">
-        <path d="m5 4 13.5 8L13 14l-2.5 6L5 4Z" strokeWidth="1.8" strokeLinejoin="round" />
+      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+        <path d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23" />
       </svg>
     );
   }
 
   if (brand === "claude") {
+    // Claude spark mark (Simple Icons)
     return (
       <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-        <path d="M10.8 2h2.4v7.2l5.1-5.1L20 5.8l-5.1 5.1H22v2.4h-7.1l5.1 5.1-1.7 1.7-5.1-5.1V22h-2.4v-7.1l-5.1 5.1L4 18.3l5.1-5.1H2v-2.4h7.1L4 5.7 5.7 4l5.1 5.1V2Z" />
+        <path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z" />
       </svg>
     );
   }
 
   if (brand === "codex") {
+    // OpenAI mark (Simple Icons)
     return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" aria-hidden="true">
-        <path
-          d="M12 3.2 16 5.5l4.1 2.3v8.4L16 18.5 12 20.8 8 18.5l-4.1-2.3V7.8L8 5.5 12 3.2Z"
-          strokeWidth="1.7"
-        />
-        <circle cx="12" cy="12" r="3.3" strokeWidth="1.7" />
+      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+        <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654 2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
       </svg>
     );
   }
 
+  if (brand === "e2b") {
+    // E2B wordmark (e2b.dev)
+    return (
+      <svg viewBox="0 0 65 18" className="h-1.5 w-auto fill-current" aria-hidden="true">
+        <path d="M20.2235 0V4.67645H5.49328C5.04263 4.67661 4.67645 5.0426 4.67645 5.49328V5.84494C4.67645 6.29563 5.04263 6.66161 5.49328 6.66178H20.2235V11.3382H5.49328C5.04263 11.3384 4.67645 11.7044 4.67645 12.1551V12.5067C4.67657 12.9573 5.04271 13.3222 5.49328 13.3223H20.2235V18H3.12668C1.39998 17.9996 1.98414e-05 16.5989 0 14.8721V3.12668C0.000280465 1.40008 1.40013 0.000432767 3.12668 0H20.2235Z" />
+        <path d="M39.2723 0C40.9992 0.000155056 42.399 1.40092 42.399 3.12791V8.36701C42.3989 10.0101 41.0672 11.3417 39.424 11.3419H36.9587C36.9413 11.3408 36.9232 11.3382 36.9057 11.3382H27.6379C27.1873 11.3384 26.8211 11.7044 26.8211 12.1551V12.5067C26.8213 12.9572 27.1874 13.3221 27.6379 13.3223H42.3903V18H22.1446V9.63299C22.1446 7.98998 23.4767 6.65732 25.1195 6.65684H27.5762C27.5967 6.65838 27.6174 6.66174 27.6379 6.66178H36.9057C37.3563 6.66171 37.7225 6.29578 37.7225 5.84494V5.49328C37.7224 5.04255 37.3563 4.67775 36.9057 4.67768H22.1755V0H39.2723Z" />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M61.4379 0C63.1648 3.6786e-05 64.5655 1.39985 64.5658 3.12668V14.8721C64.5658 16.5992 63.1649 18 61.4379 18H44.3386V0H61.4379ZM49.8319 11.3382C49.3813 11.3384 49.0151 11.7044 49.0151 12.1551V12.5067C49.0152 12.9573 49.3813 13.3222 49.8319 13.3223H59.0725C59.523 13.3222 59.888 12.9574 59.8881 12.5067V12.1551C59.8881 11.7043 59.5231 11.3384 59.0725 11.3382H49.8319ZM49.8319 4.67645C49.3813 4.67661 49.0151 5.0426 49.0151 5.49328V5.84494C49.0151 6.29562 49.3813 6.66161 49.8319 6.66178H59.0725C59.5231 6.66162 59.8881 6.29571 59.8881 5.84494V5.49328C59.8881 5.04252 59.5231 4.67661 59.0725 4.67645H49.8319Z"
+        />
+      </svg>
+    );
+  }
+
+  // Daytona mark (daytona.io)
   return (
-    <span className="font-mono type-annotation font-bold tracking-[-0.08em]">
-      {brand === "daytona" ? "D" : "E2B"}
-    </span>
+    <svg viewBox="0 0 275 287" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M14.5584 193.736H114.275V227.925H14.5584V193.736Z" />
+      <path d="M148.464 74.076H262.426V108.265H148.464V74.076Z" />
+      <path d="M88.6338 84.6127L173.246 0L197.422 24.175L112.809 108.788L88.6338 84.6127Z" />
+      <path d="M89.157 170.084L24.175 105.102L0 129.277L64.9819 194.259L89.157 170.084Z" />
+      <path d="M174.629 217.911L106.133 286.407L81.9577 262.232L150.454 193.736L174.629 217.911Z" />
+      <path d="M174.106 132.44L250.66 208.994L274.835 184.819L198.281 108.265L174.106 132.44Z" />
+      <path d="M88.6338 48.434V131.057H54.4451L54.4451 48.434H88.6338Z" />
+      <path d="M208.294 168.094V270.66H174.106V168.094H208.294Z" />
+    </svg>
   );
 }
 
-function BrandMark({ brand, label, status }: { brand: BrandName; label: string; status?: string }) {
+function BrandMark({ brand, label }: { brand: BrandName; label: string }) {
   return (
-    <div className="flex min-w-0 flex-col items-start gap-2 rounded-[6px] border border-border bg-canvas px-2.5 py-2.5 min-[480px]:flex-row min-[480px]:items-center">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[5px] bg-sheet text-foreground shadow-[inset_0_0_0_1px_var(--border)]">
+    <div className="flex min-w-0 flex-col items-start gap-2 rounded-[6px] border border-border/50 bg-canvas px-2.5 py-2.5 min-[480px]:flex-row min-[480px]:items-center">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[5px] bg-sheet text-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--border)_50%,transparent)]">
         <BrandGlyph brand={brand} />
       </span>
-      <span className="min-w-0">
-        <span className="block text-xs font-semibold leading-4 text-foreground">{label}</span>
-        {status ? (
-          <span className="mt-0.5 block type-annotation leading-4 text-muted">{status}</span>
-        ) : null}
-      </span>
+      <span className="min-w-0 text-xs font-semibold leading-4 text-foreground">{label}</span>
     </div>
   );
 }
 
 export function StackWorkflowMockup() {
   return (
-    <ProductCrop label="Your stack · Your workflow">
-      <div aria-hidden="true">
+    <figure className="overflow-hidden rounded-[10px] border border-border/50 bg-sheet shadow-[var(--shadow-elevated)]">
+      <figcaption className="border-b border-border/50 bg-control-hover px-4 py-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-muted">
+        Set up Wallie
+      </figcaption>
+      <div aria-hidden="true" className="p-4 sm:p-5">
         <div>
           <p className="font-mono type-annotation font-semibold uppercase tracking-[0.12em] text-muted">
             Coding agents
           </p>
           <div className="mt-2 grid grid-cols-3 gap-2">
-            <BrandMark brand="codex" label="Codex" status="Use subscription" />
-            <BrandMark brand="claude" label="Claude Code" status="Available" />
-            <BrandMark brand="cursor" label="Cursor" status="Coming soon" />
+            <BrandMark brand="codex" label="Codex" />
+            <BrandMark brand="claude" label="Claude Code" />
+            <BrandMark brand="cursor" label="Cursor" />
           </div>
         </div>
 
@@ -224,234 +118,33 @@ export function StackWorkflowMockup() {
           </div>
         </div>
 
-        <div className="mt-4 rounded-[6px] border border-border bg-canvas p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold text-foreground">Define every handoff</p>
-            <span className="rounded-full bg-accent-soft px-2 py-1 type-annotation font-semibold text-accent">
-              Your pipeline
-            </span>
-          </div>
-          <div className="mt-3 grid grid-cols-4 gap-1.5">
-            {["Plan", "Design", "Build", "Land"].map((stage, index) => (
-              <div key={stage} className="relative">
-                <div
-                  className={`rounded-[5px] border px-1.5 py-2 text-center type-annotation font-semibold ${
-                    index === 3
-                      ? "border-success/60 bg-success-soft text-success"
-                      : "border-border bg-sheet text-foreground"
-                  }`}
-                >
-                  {stage}
-                </div>
-                {index < 3 ? (
-                  <span className="absolute -right-1.5 top-1/2 z-10 -translate-y-1/2 bg-canvas px-0.5 type-annotation text-muted">
-                    →
-                  </span>
-                ) : null}
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className="rounded-full border border-border bg-sheet px-2 py-1 type-annotation font-medium text-muted">
-              Engineer approval
-            </span>
-            <span className="rounded-full border border-border bg-sheet px-2 py-1 type-annotation font-medium text-muted">
-              Designer approval
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 type-annotation font-semibold text-foreground">
-            <span className="flex h-6 w-6 items-center justify-center rounded-[5px] bg-success-soft text-success">
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current">
-                <path d="m6 12 4 4 8-8" strokeWidth="2.2" strokeLinecap="round" />
-              </svg>
-            </span>
-            Open source · MIT licensed
-          </div>
-          <div className="flex items-center gap-1.5 type-annotation text-muted">
-            <span className="flex h-5 w-5 items-center justify-center">
-              <BrandGlyph brand="linear" />
-            </span>
-            Linear issue source
-          </div>
-        </div>
-      </div>
-    </ProductCrop>
-  );
-}
-
-const approvalStages = [
-  {
-    detail: "Approves architecture",
-    name: "Plan",
-    reviewer: "Engineer",
-    tone: "success",
-  },
-  {
-    detail: "Approves experience",
-    name: "Design",
-    reviewer: "Product designer",
-    tone: "warning",
-  },
-  {
-    detail: "Runs verified build",
-    name: "Build",
-    reviewer: "Coding agent + CI",
-    tone: "muted",
-  },
-] as const;
-
-export function ExpertApprovalMockup() {
-  return (
-    <ProductCrop label="Session · Approval routing">
-      <div aria-hidden="true">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="font-mono text-xs font-semibold text-accent">TASK 2</p>
-            <p className="mt-1 text-[13px] font-semibold text-foreground">
-              Improve the workspace setup flow
-            </p>
-          </div>
-          <span className="rounded-full bg-warning-soft px-2.5 py-1 text-xs font-medium text-warning">
-            Expert review
-          </span>
-        </div>
-
-        <div className="relative mt-5 h-12 overflow-hidden rounded-[6px] border border-border bg-canvas">
-          <div className="absolute inset-x-4 top-1/2 h-px -translate-y-1/2 bg-border" />
-          <div className="landing-flow-progress absolute inset-x-4 top-1/2 h-0.5 origin-left -translate-y-1/2 bg-accent" />
-          <span className="absolute left-4 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-accent" />
-          <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-warning" />
-          <span className="absolute right-4 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-success" />
-          <span className="landing-flow-task absolute top-2.5 z-10 rounded-full border border-accent bg-sheet px-2.5 py-1 font-mono type-annotation font-semibold text-accent shadow-[var(--shadow-elevated)]">
-            Task 2
-          </span>
-        </div>
-
-        <ol className="mt-3 grid grid-cols-3 gap-2">
-          {approvalStages.map((stage, index) => (
-            <li
-              key={stage.name}
-              className={`landing-flow-stage-${index + 1} rounded-[6px] border border-border bg-sheet p-2.5`}
-            >
-              <div className="flex items-center justify-between gap-1">
-                <span className="type-annotation font-semibold text-foreground">{stage.name}</span>
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    stage.tone === "success"
-                      ? "bg-success"
-                      : stage.tone === "warning"
-                        ? "bg-warning"
-                        : "bg-control-muted"
-                  }`}
-                />
-              </div>
-              <p className="mt-2 type-annotation font-semibold leading-4 text-foreground">
-                {stage.reviewer}
-              </p>
-              <p className="mt-0.5 type-annotation leading-4 text-muted">{stage.detail}</p>
-            </li>
-          ))}
-        </ol>
-
-        <div className="mt-4 grid gap-2 min-[420px]:grid-cols-2">
-          <div className="landing-flow-event-1 flex items-center gap-2 rounded-[6px] bg-success-soft px-3 py-2 type-annotation font-semibold text-success">
-            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-success type-annotation text-sheet">
-              ✓
-            </span>
-            Engineer approved Plan
-          </div>
-          <div className="landing-flow-event-2 flex items-center gap-2 rounded-[6px] bg-success-soft px-3 py-2 type-annotation font-semibold text-success">
-            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-success type-annotation text-sheet">
-              ✓
-            </span>
-            Designer approved UI
-          </div>
-        </div>
-      </div>
-    </ProductCrop>
-  );
-}
-
-const validationChecks = [
-  ["Tests", "48 passed"],
-  ["Typecheck", "Clean"],
-  ["End-to-end", "3 flows"],
-  ["Visual proof", "4 views"],
-] as const;
-
-function ProofThumbnail({ mobile = false }: { mobile?: boolean }) {
-  return (
-    <div
-      className={`overflow-hidden rounded-[4px] border border-border bg-sheet p-1.5 ${
-        mobile ? "mx-auto w-10" : "w-full"
-      }`}
-    >
-      <div className="h-1 rounded-full bg-control-muted" />
-      <div className="mt-1.5 grid grid-cols-[0.35fr_0.65fr] gap-1">
-        <div className="rounded-[2px] bg-accent-soft" />
-        <div className="space-y-1">
-          <div className="h-1 rounded-full bg-control-muted" />
-          <div className="h-1 w-3/4 rounded-full bg-control-muted" />
-          <div className="h-2 rounded-[2px] bg-success-soft" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function ValidationProofMockup() {
-  return (
-    <ProductCrop label="Pull request · Review ready">
-      <div aria-hidden="true">
-        <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
-          <div>
-            <p className="font-mono text-xs font-semibold text-accent">PR #184</p>
-            <p className="mt-1 text-[13px] font-semibold leading-5 text-foreground">
-              Complete workspace setup flow
-            </p>
-            <p className="mt-1 font-mono type-annotation text-muted">wallie/task-2 → main</p>
-          </div>
-          <span className="shrink-0 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
-            Ready to review
-          </span>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          {validationChecks.map(([name, result]) => (
-            <div
-              key={name}
-              className="flex items-center gap-2 rounded-[6px] border border-border bg-canvas px-3 py-2.5"
-            >
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-success-soft type-annotation font-bold text-success">
-                ✓
-              </span>
-              <div className="min-w-0">
-                <p className="type-annotation font-semibold leading-4 text-foreground">{name}</p>
-                <p className="type-annotation leading-4 text-muted">{result}</p>
-              </div>
+        <div className="mt-4">
+          <p className="font-mono type-annotation font-semibold uppercase tracking-[0.12em] text-muted">
+            Pipeline
+          </p>
+          <div className="mt-2 rounded-[6px] border border-border/50 bg-canvas p-3">
+            <div className="flex items-center gap-1">
+              {["Plan", "Design", "Build", "Land"].map((stage, index) => (
+                <Fragment key={stage}>
+                  {index > 0 ? (
+                    <span className="shrink-0 type-annotation text-muted">→</span>
+                  ) : null}
+                  <div className="min-w-0 flex-1 rounded-[5px] border border-border/50 bg-sheet px-1.5 py-2 text-center type-annotation font-semibold text-foreground">
+                    {stage}
+                  </div>
+                </Fragment>
+              ))}
             </div>
-          ))}
-        </div>
-
-        <div className="mt-4 rounded-[6px] border border-border bg-canvas p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold text-foreground">Evidence attached</p>
-            <span className="type-annotation font-medium text-success">All checks passed</span>
-          </div>
-          <div className="mt-3 grid grid-cols-[1fr_0.36fr] items-stretch gap-2">
-            <ProofThumbnail />
-            <ProofThumbnail mobile />
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
-          <span className="font-mono">Commit 8f41c2a</span>
-          <span>Tests, screenshots, and run notes included</span>
+        <div className="mt-4 flex items-center gap-1.5 type-annotation text-muted">
+          <span className="flex h-5 w-5 items-center justify-center">
+            <BrandGlyph brand="linear" />
+          </span>
+          Issues synced from Linear
         </div>
       </div>
-    </ProductCrop>
+    </figure>
   );
 }

@@ -22,22 +22,19 @@ describe("LandingPage accessibility", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "The Future of Software Factories is Multiplayer",
+      "Run coding agents through your team's workflow",
     );
   });
 
   it("keeps CTA links keyboard-focusable and names their destinations", () => {
     render(<LandingPage />);
 
-    const walkthrough = screen.getByRole("link", { name: "See the product walkthrough" });
-    walkthrough.focus();
-    expect(walkthrough).toHaveFocus();
-    expect(walkthrough).toHaveAttribute("href", "#product-walkthrough");
+    const signIn = screen.getByRole("link", { name: "Sign in to Wallie" });
+    signIn.focus();
+    expect(signIn).toHaveFocus();
+    expect(signIn).toHaveAttribute("href", "/login");
 
-    const signInLinks = screen.getAllByRole("link", { name: "Sign in to Wallie" });
-    expect(signInLinks).toHaveLength(2);
-    for (const link of signInLinks) {
-      expect(link).toHaveAttribute("href", "/login");
-    }
+    const github = screen.getByRole("link", { name: /GitHub/ });
+    expect(github).toHaveAttribute("href", "https://github.com/anantjain-xyz/wallie-dev");
   });
 });
