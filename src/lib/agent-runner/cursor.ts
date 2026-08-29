@@ -1,4 +1,3 @@
-import type { AgentEffort } from "@/lib/agent-config/contracts";
 import type { CursorCredential } from "@/lib/cursor/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 
@@ -9,7 +8,6 @@ const PROMPT_FILE_NAME = ".wallie-cursor-prompt.txt";
 
 export interface CursorRunnerOptions {
   credential: CursorCredential;
-  effort?: AgentEffort;
   model?: string;
   onAuthenticationFailure?: (reason: string) => Promise<void>;
 }

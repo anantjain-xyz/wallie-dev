@@ -987,7 +987,6 @@ async function resolveAgentRunner(input: {
           codex: {
             chatGptAuthStore: createCodexChatGptAuthStore(input.admin),
             credential,
-            effort: input.effort,
             model: input.model,
           },
         }),
@@ -1023,7 +1022,6 @@ async function resolveAgentRunner(input: {
         runner: createAgentRunner("cursor", {
           cursor: {
             credential,
-            effort: input.effort,
             model: input.model,
             onAuthenticationFailure: (reason) =>
               markCursorReconnectRequired(

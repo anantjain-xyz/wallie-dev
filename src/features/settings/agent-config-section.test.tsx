@@ -202,6 +202,17 @@ describe("AgentConfigSection provider options and copy", () => {
     expect(options.map((option) => option.textContent)).toEqual(["Codex", "Claude Code", "Cursor"]);
     expect(screen.queryByRole("option", { name: "Not configured" })).not.toBeInTheDocument();
   });
+
+  it("hides unsupported effort configuration for Cursor", () => {
+    renderSection(vi.fn(), false, {
+      ...initialAgentConfig,
+      agent_model: "auto",
+      agent_provider: "cursor",
+    });
+
+    expect(screen.queryByRole("combobox", { name: "Effort" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Reasoning effort passed to the selected provider.")).toBeNull();
+  });
 });
 
 describe("AgentConfigSection missing provider fallback", () => {

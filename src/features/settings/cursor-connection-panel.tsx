@@ -34,7 +34,7 @@ export function CursorConnectionPanel({
   const [pending, setPending] = useState<"connect" | "disconnect" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const popupRef = useRef<Window | null>(null);
-  const navigatedFlowRef = useRef<string | null>(null);
+  const navigatedTargetRef = useRef<string | null>(null);
   const callbackRef = useRef(onStatusChange);
   const { pushToast } = useOptionalToast();
 
@@ -69,12 +69,12 @@ export function CursorConnectionPanel({
         setFlow(next);
         if (
           next.loginUrl &&
-          navigatedFlowRef.current !== next.flowId &&
+          navigatedTargetRef.current !== `${next.flowId}:${next.loginUrl}` &&
           popupRef.current &&
           !popupRef.current.closed
         ) {
           popupRef.current.location.href = next.loginUrl;
-          navigatedFlowRef.current = next.flowId;
+          navigatedTargetRef.current = `${next.flowId}:${next.loginUrl}`;
         }
         if (next.status === "authenticated") {
           window.clearInterval(timer);
@@ -100,7 +100,7 @@ export function CursorConnectionPanel({
 
   const connect = async () => {
     if (pending) return;
-    navigatedFlowRef.current = null;
+    navigatedTargetRef.current = null;
     popupRef.current = window.open(
       "about:blank",
       "wallie-cursor-login",

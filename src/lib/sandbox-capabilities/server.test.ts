@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   capabilityReportSucceeded: vi.fn(() => true),
   createSessionSandbox: vi.fn(),
+  getClaudeCodeCredentialForUser: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
+  getCursorCredentialForUser: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceAgentConfig: vi.fn(),
   octokitRequest: vi.fn(),
@@ -33,7 +35,11 @@ vi.mock("@/lib/codex/tokens", () => ({
 }));
 
 vi.mock("@/lib/claude-code/tokens", () => ({
-  getClaudeCodeCredentialForUser: vi.fn(),
+  getClaudeCodeCredentialForUser: mocked.getClaudeCodeCredentialForUser,
+}));
+
+vi.mock("@/lib/cursor/tokens", () => ({
+  getCursorCredentialForUser: mocked.getCursorCredentialForUser,
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -183,7 +189,9 @@ beforeEach(() => {
     provider: "vercel",
   });
   mocked.octokitRequest.mockResolvedValue({ data: { token: "gh-token" } });
+  mocked.getClaudeCodeCredentialForUser.mockResolvedValue({ secret: "claude-token" });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
+  mocked.getCursorCredentialForUser.mockResolvedValue({ secret: "cursor-token" });
   mocked.createSessionSandbox.mockImplementation(async (input) => {
     await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
     return {
@@ -198,6 +206,35 @@ beforeEach(() => {
 });
 
 describe("completeSandboxCapabilityCheck", () => {
+  it("validates Cursor credentials for Cursor capability checks", async () => {
+    mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
+      effort: "xhigh",
+      model: "auto",
+      provider: "cursor",
+    });
+    const { admin } = adminMock();
+
+    await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(mocked.getCursorCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
+    expect(mocked.getClaudeCodeCredentialForUser).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "cursor" }),
+    );
+  });
+
   it("creates the probe sandbox with workspace Vercel credentials", async () => {
     const { admin, updates } = adminMock();
 

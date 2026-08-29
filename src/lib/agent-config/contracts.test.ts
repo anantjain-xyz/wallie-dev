@@ -8,6 +8,7 @@ import {
   RECOMMENDED_AGENT_EFFORT,
   RECOMMENDED_AGENT_MODELS,
   STALL_TIMEOUT_MINUTE_LIMITS,
+  agentProviderSupportsEffort,
   formatStallTimeoutMinutes,
   getRecommendedAgentConfigDefault,
   getRecommendedAgentModel,
@@ -230,6 +231,14 @@ describe("parseAgentConfigValue — agent_effort", () => {
       error: "Effort must be one of: low, medium, high, xhigh, max.",
     });
     expect(isAgentEffort("ultra")).toBe(false);
+  });
+});
+
+describe("agentProviderSupportsEffort", () => {
+  it("does not advertise effort for Cursor", () => {
+    expect(agentProviderSupportsEffort("codex")).toBe(true);
+    expect(agentProviderSupportsEffort("claude-code")).toBe(true);
+    expect(agentProviderSupportsEffort("cursor")).toBe(false);
   });
 });
 

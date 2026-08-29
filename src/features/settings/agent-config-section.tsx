@@ -31,6 +31,7 @@ import {
   AGENT_CONFIG_LIMITS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   STALL_TIMEOUT_MINUTE_LIMITS,
+  agentProviderSupportsEffort,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
 } from "@/lib/agent-config/contracts";
@@ -203,8 +204,8 @@ export function AgentConfigSection({
     return () => controller.abort();
   }, [cursorConnected, onCursorStatusChange, selectedAgentProvider]);
 
-  const fields: FieldDescriptor[] = useMemo(
-    () => [
+  const fields: FieldDescriptor[] = useMemo(() => {
+    const allFields: FieldDescriptor[] = [
       {
         configKey: "agent_provider",
         description: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.description,
@@ -253,9 +254,13 @@ export function AgentConfigSection({
         placeholder: "3",
         type: "number",
       },
-    ],
-    [cursorModels, selectedAgentProvider],
-  );
+    ];
+
+    return allFields.filter(
+      (field) =>
+        field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedAgentProvider),
+    );
+  }, [cursorModels, selectedAgentProvider]);
 
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];

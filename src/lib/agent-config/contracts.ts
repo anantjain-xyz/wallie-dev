@@ -45,6 +45,10 @@ export function normalizeAgentProviderName(provider: string | undefined): AgentP
   return AGENT_PROVIDER_ALIASES[provider] ?? null;
 }
 
+export function agentProviderSupportsEffort(provider: AgentProvider): boolean {
+  return provider !== "cursor";
+}
+
 export const AGENT_CONFIG_LIMITS = {
   concurrency_limit: { min: 1, max: 20 },
   stall_timeout_ms: { min: 30_000, max: 1_800_000 },

@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe("CursorConnectionPanel", () => {
-  it("navigates a sign-in popup only once when polls repeat the same login URL", async () => {
+  it("navigates a sign-in popup once per login URL", async () => {
     vi.useFakeTimers();
     const navigate = vi.fn();
     const popupLocation = {} as Location;
@@ -31,13 +31,21 @@ describe("CursorConnectionPanel", () => {
       loginUrl: "https://cursor.com/login/flow-1",
       status: "prompted",
     };
-    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve({
+    let pollCount = 0;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== "POST") pollCount += 1;
+      return Promise.resolve({
         json: async () =>
-          init?.method === "POST" ? { ...flow, loginUrl: undefined, status: "starting" } : flow,
+          init?.method === "POST"
+            ? { ...flow, loginUrl: undefined, status: "starting" }
+            : {
+                ...flow,
+                loginUrl:
+                  pollCount >= 3 ? "https://cursor.com/login/reclaimed-flow-1" : flow.loginUrl,
+              },
         ok: true,
-      }),
-    );
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
     render(
       <CursorConnectionPanel
@@ -56,5 +64,9 @@ describe("CursorConnectionPanel", () => {
       await vi.advanceTimersByTimeAsync(1_000);
     });
     expect(navigate).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(navigate).toHaveBeenCalledTimes(2);
   });
 });

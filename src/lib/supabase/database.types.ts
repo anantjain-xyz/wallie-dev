@@ -2121,6 +2121,7 @@ export type Database = {
         Args: {
           p_account_email?: string
           p_api_key_expires_at: string
+          p_claimed_by: string
           p_completed_at: string
           p_encrypted_api_key: string
           p_flow_id: string

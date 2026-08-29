@@ -10,6 +10,7 @@ type AdminClient = SupabaseClient<Database>;
 
 const POLL_INTERVAL_MS = 1_000;
 const MAX_CONCURRENT_AUTH_FLOWS = 4;
+export const CURSOR_AUTH_FLOW_LEASE_MS = 15_000;
 
 type CursorAuthProcessorOptions = {
   concurrencyLimit?: number;
@@ -61,12 +62,16 @@ export async function processNextCursorAuthFlow(
   workerId: string,
   shutdownSignal?: AbortSignal,
 ): Promise<boolean> {
-  const now = new Date().toISOString();
-  await admin
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const { error: expirationError } = await admin
     .from("cursor_auth_flows")
     .update({ status: "expired" })
     .in("status", ["starting", "processing", "prompted"])
     .lt("expires_at", now);
+  if (expirationError) throw expirationError;
+
+  await reclaimStaleCursorAuthFlows(admin, nowMs);
 
   const { data: pending, error: pendingError } = await admin
     .from("cursor_auth_flows")
@@ -84,7 +89,7 @@ export async function processNextCursorAuthFlow(
     .update({ claimed_at: now, claimed_by: workerId, status: "processing" })
     .eq("id", pending.id)
     .eq("status", "starting")
-    .select("id, user_id, expires_at")
+    .select("id, expires_at")
     .maybeSingle();
   if (claimError) throw claimError;
   if (!claimed) return false;
@@ -92,18 +97,22 @@ export async function processNextCursorAuthFlow(
   const controller = new AbortController();
   const timeoutMs = Math.max(1, Date.parse(claimed.expires_at) - Date.now());
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const cancellationCheck = setInterval(() => {
+  const claimHeartbeat = setInterval(() => {
     void admin
       .from("cursor_auth_flows")
-      .select("status")
+      .update({ claimed_at: new Date().toISOString() })
       .eq("id", claimed.id)
+      .eq("claimed_by", workerId)
+      .in("status", ["processing", "prompted"])
+      .select("id")
       .maybeSingle()
-      .then(({ data }) => {
-        if (data?.status === "canceled") controller.abort();
+      .then(({ data, error }) => {
+        if (!error && !data) controller.abort();
       });
   }, POLL_INTERVAL_MS);
   const onShutdown = () => controller.abort();
-  shutdownSignal?.addEventListener("abort", onShutdown, { once: true });
+  if (shutdownSignal?.aborted) controller.abort();
+  else shutdownSignal?.addEventListener("abort", onShutdown, { once: true });
 
   try {
     const result = await Cursor.auth.login({
@@ -114,6 +123,7 @@ export async function processNextCursorAuthFlow(
           .from("cursor_auth_flows")
           .update({ login_url: loginUrl, status: "prompted" })
           .eq("id", claimed.id)
+          .eq("claimed_by", workerId)
           .in("status", ["processing", "prompted"]);
       },
       openBrowser: false,
@@ -126,24 +136,39 @@ export async function processNextCursorAuthFlow(
     await completeCursorAuthFlow(admin, {
       accountEmail: result.email ?? null,
       apiKeyExpiresAt: expiresAt,
+      claimedBy: workerId,
       completedAt,
       encryptedApiKey: encryptSecretValue(result.apiKey),
       flowId: claimed.id,
     });
   } catch (error) {
     const aborted = controller.signal.aborted;
-    await admin
-      .from("cursor_auth_flows")
-      .update({
-        error_message: aborted
-          ? "Cursor sign-in expired or the worker stopped."
-          : errorMessage(error),
-        status: aborted ? "expired" : "error",
-      })
-      .eq("id", claimed.id)
-      .neq("status", "canceled");
+    if (shutdownSignal?.aborted) {
+      await admin
+        .from("cursor_auth_flows")
+        .update({
+          claimed_at: null,
+          claimed_by: null,
+          error_message: null,
+          login_url: null,
+          status: "starting",
+        })
+        .eq("id", claimed.id)
+        .eq("claimed_by", workerId)
+        .in("status", ["processing", "prompted"]);
+    } else {
+      await admin
+        .from("cursor_auth_flows")
+        .update({
+          error_message: aborted ? "Cursor sign-in expired." : errorMessage(error),
+          status: aborted ? "expired" : "error",
+        })
+        .eq("id", claimed.id)
+        .eq("claimed_by", workerId)
+        .in("status", ["processing", "prompted"]);
+    }
   } finally {
-    clearInterval(cancellationCheck);
+    clearInterval(claimHeartbeat);
     clearTimeout(timeout);
     shutdownSignal?.removeEventListener("abort", onShutdown);
   }
@@ -155,6 +180,7 @@ export async function completeCursorAuthFlow(
   input: {
     accountEmail: string | null;
     apiKeyExpiresAt: string;
+    claimedBy: string;
     completedAt: string;
     encryptedApiKey: string;
     flowId: string;
@@ -163,12 +189,34 @@ export async function completeCursorAuthFlow(
   const { data, error } = await admin.rpc("complete_cursor_auth_flow", {
     p_account_email: input.accountEmail ?? undefined,
     p_api_key_expires_at: input.apiKeyExpiresAt,
+    p_claimed_by: input.claimedBy,
     p_completed_at: input.completedAt,
     p_encrypted_api_key: input.encryptedApiKey,
     p_flow_id: input.flowId,
   });
   if (error) throw error;
   return data;
+}
+
+export async function reclaimStaleCursorAuthFlows(
+  admin: AdminClient,
+  nowMs = Date.now(),
+): Promise<void> {
+  const now = new Date(nowMs).toISOString();
+  const leaseExpiredAt = new Date(nowMs - CURSOR_AUTH_FLOW_LEASE_MS).toISOString();
+  const { error } = await admin
+    .from("cursor_auth_flows")
+    .update({
+      claimed_at: null,
+      claimed_by: null,
+      error_message: null,
+      login_url: null,
+      status: "starting",
+    })
+    .in("status", ["processing", "prompted"])
+    .lt("claimed_at", leaseExpiredAt)
+    .gt("expires_at", now);
+  if (error) throw error;
 }
 
 function errorMessage(error: unknown): string {

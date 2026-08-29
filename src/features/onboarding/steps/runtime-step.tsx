@@ -39,6 +39,7 @@ import {
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   STALL_TIMEOUT_MINUTE_LIMITS,
+  agentProviderSupportsEffort,
   getRecommendedAgentConfigDefault,
   normalizeAgentProviderName,
   stallTimeoutMinutesToMs,
@@ -454,7 +455,10 @@ export default function RuntimeStep({
   ]);
   const fields = useMemo(
     () =>
-      AGENT_CONFIG_FIELDS.map((field) =>
+      AGENT_CONFIG_FIELDS.filter(
+        (field) =>
+          field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedDraftProvider),
+      ).map((field) =>
         field.configKey === "agent_model" &&
         selectedDraftProvider === "cursor" &&
         cursorModels.length > 0
@@ -529,8 +533,12 @@ export default function RuntimeStep({
     const hasValue = Boolean(row.value.trim());
     return hasKey !== hasValue;
   });
+  const visibleConfigKeys = new Set(fields.map((field) => field.configKey));
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
-    (key) => data.agentConfig[key] === undefined && drafts[key] === defaultDraftForKey(key),
+    (key) =>
+      visibleConfigKeys.has(key) &&
+      data.agentConfig[key] === undefined &&
+      drafts[key] === defaultDraftForKey(key),
   );
   const canSaveConfig =
     data.canManage &&
