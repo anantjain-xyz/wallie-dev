@@ -46,6 +46,7 @@ const pipeline: PipelineConfiguration = {
 
 const workspaceMembers = [
   {
+    avatarUrl: null,
     email: "owner@example.com",
     fullName: "Avery Owner",
     id: memberId,

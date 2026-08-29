@@ -31,6 +31,14 @@ export const updateOwnProfileSchema = z.object({
   fullName: workspaceMemberFullNameSchema,
 });
 
+export const profileAvatarActionSchema = z.enum(["keep", "replace", "remove"]);
+
+export const updateOwnProfileFormSchema = updateOwnProfileSchema.extend({
+  avatarAction: profileAvatarActionSchema,
+});
+
+export type ProfileAvatarAction = z.infer<typeof profileAvatarActionSchema>;
+
 export type WorkspaceMemberAssignableRole = z.infer<typeof workspaceMemberAssignableRoleSchema>;
 
 export type WorkspaceMemberSummary = {

@@ -89,6 +89,7 @@ function onboardingRow() {
 
 function member(role: "member" | "owner") {
   return {
+    avatar_url: null,
     email: `${role}@example.com`,
     full_name: role === "owner" ? "Owner" : "Member",
     id: `member-${role}`,

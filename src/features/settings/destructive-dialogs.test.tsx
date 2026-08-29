@@ -11,6 +11,7 @@ import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
+import { maxProfileAvatarBytes } from "@/lib/storage/profile-avatar-contracts";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const timestamp = "2026-07-17T12:00:00.000Z";
@@ -50,6 +51,14 @@ beforeAll(() => {
       removeEventListener: vi.fn(),
     })),
   });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:profile-preview"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -88,8 +97,20 @@ function renderSettingsDestructiveFlows() {
         setFlashMessage={vi.fn()}
         workspaceId={workspaceId}
         workspaceMembers={[
-          { email: "owner@example.com", fullName: "Owner", id: "owner-1", role: "owner" },
-          { email: "ada@example.com", fullName: "Ada", id: "member-1", role: "member" },
+          {
+            avatarUrl: "https://provider.example/owner.png",
+            email: "owner@example.com",
+            fullName: "Owner",
+            id: "owner-1",
+            role: "owner",
+          },
+          {
+            avatarUrl: null,
+            email: "ada@example.com",
+            fullName: "Ada",
+            id: "member-1",
+            role: "member",
+          },
         ]}
       />
       <LinearKeyControls
@@ -164,35 +185,106 @@ describe("destructive settings dialogs", () => {
     expect(roleTrigger).toHaveFocus();
   });
 
-  it("lets the current member update their account-wide name", async () => {
+  it("lets the current member update their account-wide profile", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
-        profile: { fullName: "Anant Jain" },
+        profile: { avatarUrl: "https://provider.example/owner.png", fullName: "Anant Jain" },
       }),
     );
     renderSettingsDestructiveFlows();
 
-    await user.click(screen.getByRole("button", { name: "Edit your name" }));
-    const dialog = await screen.findByRole("dialog", { name: "Edit your name" });
+    await user.click(screen.getByRole("button", { name: "Edit profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit profile" });
     expect(dialog).toHaveAccessibleDescription(
-      "This name is shown on sessions and member lists in every workspace you belong to.",
+      "Your name and photo are shown on member lists in every workspace you belong to.",
     );
     const input = within(dialog).getByLabelText("Name");
     await waitFor(() => expect(input).toHaveFocus());
     await user.clear(input);
     await user.type(input, "Anant Jain");
-    await user.click(within(dialog).getByRole("button", { name: "Save name" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
 
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(screen.getByText("Anant Jain")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/profile",
-      expect.objectContaining({
-        body: JSON.stringify({ fullName: "Anant Jain" }),
-        method: "PATCH",
+    const [, request] = fetchMock.mock.calls[0] ?? [];
+    expect(request).toEqual(
+      expect.objectContaining({ body: expect.any(FormData), method: "PATCH" }),
+    );
+    const body = request?.body as FormData;
+    expect(body.get("avatarAction")).toBe("keep");
+    expect(body.get("fullName")).toBe("Anant Jain");
+  });
+
+  it("previews a replacement locally and cancels without saving", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Edit profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit profile" });
+    const fileInput = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(["image"], "new-avatar.png", { type: "image/png" }));
+
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: "Change photo" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clears a pending replacement when the next selected image is invalid", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        profile: { avatarUrl: "https://provider.example/owner.png", fullName: "Owner" },
       }),
     );
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Edit profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit profile" });
+    const fileInput = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(["image"], "valid.png", { type: "image/png" }));
+    expect(dialog.querySelector('img[src="blob:profile-preview"]')).not.toBeNull();
+
+    await user.upload(
+      fileInput,
+      new File([new Uint8Array(maxProfileAvatarBytes + 1)], "oversized.png", {
+        type: "image/png",
+      }),
+    );
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Profile photos must stay under 2 MB.",
+    );
+    expect(dialog.querySelector('img[src="blob:profile-preview"]')).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(body.get("avatarAction")).toBe("keep");
+    expect(body.get("file")).toBeNull();
+  });
+
+  it("removes the current photo and renders the initials fallback", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ profile: { avatarUrl: null, fullName: "Owner" } }));
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Edit profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit profile" });
+    await user.click(within(dialog).getByRole("button", { name: "Remove photo" }));
+    expect(within(dialog).getByText("O")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = request?.body as FormData;
+    expect(body.get("avatarAction")).toBe("remove");
   });
 
   it("submits and renders the required invitation name", async () => {
