@@ -9,33 +9,49 @@ import type { Database } from "@/lib/supabase/database.types";
 type AdminClient = SupabaseClient<Database>;
 
 const POLL_INTERVAL_MS = 1_000;
+const MAX_CONCURRENT_AUTH_FLOWS = 4;
 
-export function startCursorAuthProcessor(admin: AdminClient, workerId: string) {
-  let active: Promise<void> | null = null;
+type CursorAuthProcessorOptions = {
+  concurrencyLimit?: number;
+  pollIntervalMs?: number;
+  processFlow?: typeof processNextCursorAuthFlow;
+};
+
+export function startCursorAuthProcessor(
+  admin: AdminClient,
+  workerId: string,
+  options: CursorAuthProcessorOptions = {},
+) {
+  const active = new Set<Promise<void>>();
+  const controllers = new Set<AbortController>();
+  const concurrencyLimit = options.concurrencyLimit ?? MAX_CONCURRENT_AUTH_FLOWS;
+  const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const processFlow = options.processFlow ?? processNextCursorAuthFlow;
   let stopped = false;
-  let controller: AbortController | null = null;
 
   const tick = () => {
-    if (stopped || active) return;
-    controller = new AbortController();
-    active = processNextCursorAuthFlow(admin, workerId, controller.signal)
+    if (stopped || active.size >= concurrencyLimit) return;
+    const controller = new AbortController();
+    controllers.add(controller);
+    const task = processFlow(admin, workerId, controller.signal)
       .then(() => undefined)
       .catch((error) => console.error("[cursor-auth] processor failed", { error }))
       .finally(() => {
-        active = null;
-        controller = null;
+        active.delete(task);
+        controllers.delete(controller);
       });
+    active.add(task);
   };
 
-  const timer = setInterval(tick, POLL_INTERVAL_MS);
+  const timer = setInterval(tick, pollIntervalMs);
   tick();
 
   return {
     async stop() {
       stopped = true;
       clearInterval(timer);
-      controller?.abort();
-      await active;
+      for (const controller of controllers) controller.abort();
+      await Promise.all(active);
     },
   };
 }
@@ -105,34 +121,15 @@ export async function processNextCursorAuthFlow(
       store: null,
     });
 
-    const { data: current } = await admin
-      .from("cursor_auth_flows")
-      .select("status")
-      .eq("id", claimed.id)
-      .maybeSingle();
-    if (current?.status === "canceled") return true;
-
     const completedAt = new Date().toISOString();
     const expiresAt = new Date(result.apiKeyExpiresAtMs).toISOString();
-    const { error: credentialError } = await admin.from("user_cursor_credentials").upsert(
-      {
-        account_email: result.email ?? null,
-        api_key_expires_at: expiresAt,
-        encrypted_api_key: encryptSecretValue(result.apiKey),
-        reconnect_reason: null,
-        reconnect_required: false,
-        updated_at: completedAt,
-        user_id: claimed.user_id,
-      },
-      { onConflict: "user_id" },
-    );
-    if (credentialError) throw credentialError;
-
-    const { error: flowError } = await admin
-      .from("cursor_auth_flows")
-      .update({ completed_at: completedAt, status: "authenticated" })
-      .eq("id", claimed.id);
-    if (flowError) throw flowError;
+    await completeCursorAuthFlow(admin, {
+      accountEmail: result.email ?? null,
+      apiKeyExpiresAt: expiresAt,
+      completedAt,
+      encryptedApiKey: encryptSecretValue(result.apiKey),
+      flowId: claimed.id,
+    });
   } catch (error) {
     const aborted = controller.signal.aborted;
     await admin
@@ -151,6 +148,27 @@ export async function processNextCursorAuthFlow(
     shutdownSignal?.removeEventListener("abort", onShutdown);
   }
   return true;
+}
+
+export async function completeCursorAuthFlow(
+  admin: AdminClient,
+  input: {
+    accountEmail: string | null;
+    apiKeyExpiresAt: string;
+    completedAt: string;
+    encryptedApiKey: string;
+    flowId: string;
+  },
+): Promise<boolean> {
+  const { data, error } = await admin.rpc("complete_cursor_auth_flow", {
+    p_account_email: input.accountEmail ?? undefined,
+    p_api_key_expires_at: input.apiKeyExpiresAt,
+    p_completed_at: input.completedAt,
+    p_encrypted_api_key: input.encryptedApiKey,
+    p_flow_id: input.flowId,
+  });
+  if (error) throw error;
+  return data;
 }
 
 function errorMessage(error: unknown): string {

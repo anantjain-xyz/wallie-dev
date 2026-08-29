@@ -33,7 +33,9 @@ export async function getCursorCredentialForUser(
 ): Promise<CursorCredential> {
   const { data, error } = await admin
     .from("user_cursor_credentials")
-    .select("encrypted_api_key, api_key_expires_at, reconnect_required, reconnect_reason")
+    .select(
+      "credential_generation, encrypted_api_key, api_key_expires_at, reconnect_required, reconnect_reason",
+    )
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -56,6 +58,7 @@ export async function getCursorCredentialForUser(
 
   return {
     expiresAt: data.api_key_expires_at,
+    generation: data.credential_generation,
     secret: decryptSecretValue(data.encrypted_api_key),
     userId,
   };
@@ -64,11 +67,13 @@ export async function getCursorCredentialForUser(
 export async function markCursorReconnectRequired(
   admin: AdminClient,
   userId: string,
+  generation: string,
   reason: string,
 ): Promise<void> {
   const { error } = await admin
     .from("user_cursor_credentials")
     .update({ reconnect_reason: reason.slice(0, 500), reconnect_required: true })
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("credential_generation", generation);
   if (error) throw error;
 }

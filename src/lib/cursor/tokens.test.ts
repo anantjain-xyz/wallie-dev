@@ -8,7 +8,11 @@ vi.mock("@/lib/secrets/crypto", () => ({
   decryptSecretValue: mocked.decryptSecretValue,
 }));
 
-import { CursorNotConnectedError, getCursorCredentialForUser } from "@/lib/cursor/tokens";
+import {
+  CursorNotConnectedError,
+  getCursorCredentialForUser,
+  markCursorReconnectRequired,
+} from "@/lib/cursor/tokens";
 
 function adminWithCredential(row: unknown) {
   return {
@@ -30,11 +34,13 @@ describe("getCursorCredentialForUser", () => {
         encrypted_api_key: "encrypted:cursor-key",
         reconnect_reason: null,
         reconnect_required: false,
+        credential_generation: "11111111-1111-4111-8111-111111111111",
       }),
       "user-1",
     );
     expect(credential).toEqual({
       expiresAt: "2099-01-01T00:00:00.000Z",
+      generation: "11111111-1111-4111-8111-111111111111",
       secret: "cursor-key",
       userId: "user-1",
     });
@@ -48,6 +54,7 @@ describe("getCursorCredentialForUser", () => {
           encrypted_api_key: "encrypted:cursor-key",
           reconnect_reason: null,
           reconnect_required: false,
+          credential_generation: "11111111-1111-4111-8111-111111111111",
         }),
         "user-1",
       ),
@@ -60,9 +67,33 @@ describe("getCursorCredentialForUser", () => {
           encrypted_api_key: "encrypted:cursor-key",
           reconnect_reason: "Reconnect Cursor.",
           reconnect_required: true,
+          credential_generation: "11111111-1111-4111-8111-111111111111",
         }),
         "user-1",
       ),
     ).rejects.toThrow("Reconnect Cursor.");
+  });
+});
+
+describe("markCursorReconnectRequired", () => {
+  it("conditions the reconnect flag on the credential generation that failed", async () => {
+    const eq = vi.fn().mockReturnThis();
+    const admin = {
+      from: () => ({
+        update: () => ({ eq }),
+      }),
+    } as never;
+
+    await markCursorReconnectRequired(
+      admin,
+      "user-1",
+      "11111111-1111-4111-8111-111111111111",
+      "Rejected",
+    );
+
+    expect(eq.mock.calls).toEqual([
+      ["user_id", "user-1"],
+      ["credential_generation", "11111111-1111-4111-8111-111111111111"],
+    ]);
   });
 });

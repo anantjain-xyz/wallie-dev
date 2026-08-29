@@ -1312,6 +1312,7 @@ export type Database = {
           account_email: string | null
           api_key_expires_at: string
           created_at: string
+          credential_generation: string
           encrypted_api_key: string
           reconnect_reason: string | null
           reconnect_required: boolean
@@ -1322,6 +1323,7 @@ export type Database = {
           account_email?: string | null
           api_key_expires_at: string
           created_at?: string
+          credential_generation?: string
           encrypted_api_key: string
           reconnect_reason?: string | null
           reconnect_required?: boolean
@@ -1332,6 +1334,7 @@ export type Database = {
           account_email?: string | null
           api_key_expires_at?: string
           created_at?: string
+          credential_generation?: string
           encrypted_api_key?: string
           reconnect_reason?: string | null
           reconnect_required?: boolean
@@ -2113,6 +2116,16 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      complete_cursor_auth_flow: {
+        Args: {
+          p_account_email?: string
+          p_api_key_expires_at: string
+          p_completed_at: string
+          p_encrypted_api_key: string
+          p_flow_id: string
+        }
+        Returns: boolean
       }
       create_session_with_first_job: {
         Args: {

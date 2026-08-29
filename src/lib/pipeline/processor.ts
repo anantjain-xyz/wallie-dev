@@ -1026,7 +1026,12 @@ async function resolveAgentRunner(input: {
             effort: input.effort,
             model: input.model,
             onAuthenticationFailure: (reason) =>
-              markCursorReconnectRequired(input.admin, credential.userId, reason),
+              markCursorReconnectRequired(
+                input.admin,
+                credential.userId,
+                credential.generation,
+                reason,
+              ),
           },
         }),
       };

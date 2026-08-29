@@ -50,6 +50,7 @@ import {
   parseAgentConfigDraft,
   pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
+import { discoverCursorModels } from "@/lib/cursor/client";
 import type {
   UpsertWorkspaceSecretResponse,
   WorkspaceSecretPreview,
@@ -439,14 +440,18 @@ export default function RuntimeStep({
   useEffect(() => {
     if (selectedDraftProvider !== "cursor" || !data.setupHealth.cursorConnection?.connected) return;
     const controller = new AbortController();
-    void fetch("/api/cursor/models", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const payload = (await response.json()) as { models?: SelectOption[] };
-        if (response.ok) setCursorModels(payload.models ?? []);
+    void discoverCursorModels(controller.signal)
+      .then(({ connectionStatus, models }) => {
+        setCursorModels(models);
+        if (connectionStatus) handleCursorStatusChange(connectionStatus);
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [data.setupHealth.cursorConnection?.connected, selectedDraftProvider]);
+  }, [
+    data.setupHealth.cursorConnection?.connected,
+    handleCursorStatusChange,
+    selectedDraftProvider,
+  ]);
   const fields = useMemo(
     () =>
       AGENT_CONFIG_FIELDS.map((field) =>

@@ -40,6 +40,7 @@ import {
   parseAgentConfigDraft,
   pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
+import { discoverCursorModels } from "@/lib/cursor/client";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type AgentConfigSectionProps = {
@@ -190,14 +191,17 @@ export function AgentConfigSection({
   useEffect(() => {
     if (selectedAgentProvider !== "cursor" || !cursorConnected) return;
     const controller = new AbortController();
-    void fetch("/api/cursor/models", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const payload = (await response.json()) as { models?: SelectOption[] };
-        if (response.ok) setCursorModels(payload.models ?? []);
+    void discoverCursorModels(controller.signal)
+      .then(({ connectionStatus, models }) => {
+        setCursorModels(models);
+        if (connectionStatus) {
+          setCursorConnected(connectionStatus.connected);
+          onCursorStatusChange?.(connectionStatus);
+        }
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [cursorConnected, selectedAgentProvider]);
+  }, [cursorConnected, onCursorStatusChange, selectedAgentProvider]);
 
   const fields: FieldDescriptor[] = useMemo(
     () => [

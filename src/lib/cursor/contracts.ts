@@ -1,5 +1,6 @@
 export interface CursorCredential {
   expiresAt: string;
+  generation: string;
   secret: string;
   userId: string;
 }
