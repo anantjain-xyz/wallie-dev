@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Try it free at wallie.dev](https://img.shields.io/badge/Try%20it%20free-wallie.dev-6b46ff.svg)](https://wallie.dev)
 
-AI-powered product development automation. Wallie turns a work prompt -- optionally linked to a Linear issue -- into reviewed, staged work. It runs Codex or Claude Code in a GitHub-backed sandbox, preserves a versioned artifact for every stage, and keeps the human approval loop in the dashboard.
+AI-powered product development automation. Wallie turns a work prompt -- optionally linked to a Linear issue -- into reviewed, staged work. It runs Codex, Claude Code, or Cursor in a GitHub-backed sandbox, preserves a versioned artifact for every stage, and keeps the human approval loop in the dashboard.
 
 > **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance — sign up and start in minutes, no setup required. It's actively maintained, so you can use it for real work.
 >
@@ -19,7 +19,7 @@ A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/proce
 
 1. Render the pipeline operating rules and stage prompt template against the session context (title, prompt, prior stage artifacts, attempt number, and last reviewer feedback).
 2. Spin up a sandbox cloned from the workspace's connected GitHub repo on a per-stage branch.
-3. Run the workspace's configured agent (Codex or Claude Code) inside the sandbox.
+3. Run the workspace's configured agent (Codex, Claude Code, or Cursor) inside the sandbox.
 4. Capture the agent's text output as a markdown artifact, version it as `(session_id, stage_slug, version)`, and best-effort push commits/open or refresh a pull request when the stage changed code.
 5. Flip the session to `awaiting_review` without making pull-request plumbing a prerequisite for artifact review.
 
@@ -429,7 +429,7 @@ Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and Verce
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex, Claude Code, and Cursor. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`; Cursor defaults to `auto` and discovers the models available to the connected account. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key; Cursor users complete **Sign in with Cursor**, which mints an encrypted, expiring user API key through the Cursor SDK. The Wallie worker must be running for Cursor sign-in to progress.
 
 ### 5. Create a GitHub App
 

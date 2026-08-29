@@ -1,7 +1,7 @@
 # Agent Harness
 
 Wallie's agent harness turns a workspace-configured stage into one sandboxed
-Codex or Claude Code execution and one reviewable markdown artifact. This
+Codex, Claude Code, or Cursor execution and one reviewable markdown artifact. This
 document owns the prompt, credential, repository, event, and output contracts
 around that execution.
 
@@ -113,6 +113,7 @@ of containing instructions, delimiters, or unexpectedly large content.
 | ----------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | Codex       | OpenAI API credential or per-user ChatGPT/Codex credential | Runs inside the external sandbox with the configured model and streams normalized events |
 | Claude Code | Per-user Anthropic API credential                          | Runs with permission bypass inside the external sandbox and streams normalized events    |
+| Cursor      | Expiring per-user API key minted by Cursor browser sign-in | Runs Cursor CLI inside the external sandbox and streams normalized events                |
 
 Credentials belong to the session creator, not the current reviewer. ChatGPT
 subscription credentials are written to `.codex/auth.json` with owner-only
