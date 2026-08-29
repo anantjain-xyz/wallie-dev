@@ -54,6 +54,8 @@ revoke all on public.user_cursor_credentials from anon, authenticated;
 revoke all on public.cursor_auth_flows from anon, authenticated;
 
 grant select, delete on public.user_cursor_credentials to authenticated;
+grant select, insert, update, delete on public.user_cursor_credentials to service_role;
+grant select, insert, update, delete on public.cursor_auth_flows to service_role;
 
 create policy user_cursor_credentials_select_self
   on public.user_cursor_credentials
