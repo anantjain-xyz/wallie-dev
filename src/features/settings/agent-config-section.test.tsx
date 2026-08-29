@@ -193,13 +193,13 @@ describe("AgentConfigSection provider options and copy", () => {
     expect(screen.queryByText(/agent CLI/i)).not.toBeInTheDocument();
   });
 
-  it("offers only Codex and Claude Code in the Provider select", async () => {
+  it("offers Codex, Claude Code, and Cursor in the Provider select", async () => {
     const user = userEvent.setup();
     renderSection(vi.fn(), true);
 
     await user.click(screen.getByRole("combobox", { name: "Provider" }));
     const options = screen.getAllByRole("option");
-    expect(options.map((option) => option.textContent)).toEqual(["Codex", "Claude Code"]);
+    expect(options.map((option) => option.textContent)).toEqual(["Codex", "Claude Code", "Cursor"]);
     expect(screen.queryByRole("option", { name: "Not configured" })).not.toBeInTheDocument();
   });
 });

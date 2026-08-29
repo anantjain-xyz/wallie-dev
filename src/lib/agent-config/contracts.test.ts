@@ -184,7 +184,7 @@ describe("parseAgentConfigValue — agent_provider", () => {
   it("rejects unknown providers", () => {
     expect(parseAgentConfigValue("agent_provider", "lol")).toEqual({
       ok: false,
-      error: "Provider must be one of: codex, claude-code.",
+      error: "Provider must be one of: codex, claude-code, cursor.",
     });
   });
 });
@@ -193,9 +193,11 @@ describe("provider-specific recommended defaults", () => {
   it("uses GPT-5.6 Sol for Codex and Opus 4.8 1M for Claude Code", () => {
     expect(getRecommendedAgentModel("codex")).toBe("gpt-5.6-sol");
     expect(getRecommendedAgentModel("claude-code")).toBe("claude-opus-4-8[1m]");
+    expect(getRecommendedAgentModel("cursor")).toBe("auto");
     expect(RECOMMENDED_AGENT_MODELS).toEqual({
       codex: "gpt-5.6-sol",
       "claude-code": "claude-opus-4-8[1m]",
+      cursor: "auto",
     });
   });
 

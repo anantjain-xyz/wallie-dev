@@ -3,6 +3,7 @@ import { buildRepositorySetupHealth } from "@/features/onboarding/repository-hea
 import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readiness";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import type { SettingsPageData } from "@/features/settings/data";
 
 export function updateGithubInSettingsData(
@@ -157,6 +158,32 @@ export function updateClaudeCodeConnectionInSettingsData(
         checkedAt: status.checkedAt,
         connected: status.connected,
         status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+export function updateCursorConnectionInSettingsData(
+  currentData: SettingsPageData,
+  status: CursorConnectionStatus,
+): SettingsPageData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      cursorConnection: {
+        accountEmail: status.accountEmail ?? null,
+        checkedAt: status.checkedAt,
+        connected: status.connected,
+        expiresAt: status.expiresAt ?? null,
+        reconnectReason: status.reconnectReason ?? null,
+        reconnectRequired: status.reconnectRequired ?? false,
+        status: status.connected
+          ? "connected"
+          : status.expired || status.reconnectRequired
+            ? "expired"
+            : "missing",
         updatedAt: status.updatedAt ?? null,
       },
     },

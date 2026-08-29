@@ -6,14 +6,16 @@ import {
 } from "@/components/shared/agent-provider-options";
 
 describe("AGENT_PROVIDER_SELECT_OPTIONS", () => {
-  it("exposes only Codex and Claude Code", () => {
+  it("exposes Codex, Claude Code, and Cursor", () => {
     expect(AGENT_PROVIDER_SELECT_OPTIONS.map((option) => option.value)).toEqual([
       "codex",
       "claude-code",
+      "cursor",
     ]);
     expect(AGENT_PROVIDER_SELECT_OPTIONS.map((option) => option.label)).toEqual([
       "Codex",
       "Claude Code",
+      "Cursor",
     ]);
     expect(AGENT_PROVIDER_SELECT_OPTIONS.map((option) => option.label)).not.toContain(
       "Not configured",

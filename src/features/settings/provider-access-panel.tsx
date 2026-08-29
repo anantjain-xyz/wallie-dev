@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
@@ -11,8 +12,10 @@ type ProviderAccessPanelProps = {
   connectFlash?: string | null;
   initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
   initialCodexStatus?: CodexConnectionStatus;
+  initialCursorStatus?: CursorConnectionStatus;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  onCursorStatusChange?: (status: CursorConnectionStatus) => void;
   onSandboxConnectionSelect?: () => void;
   provider: AgentProvider;
   returnTo?: string;
@@ -43,13 +46,22 @@ const ClaudeCodeConnectionPanel = dynamic(
     ssr: false,
   },
 );
+const CursorConnectionPanel = dynamic(
+  () =>
+    import("@/features/settings/cursor-connection-panel").then(
+      (module) => module.CursorConnectionPanel,
+    ),
+  { loading: () => <p className="text-xs text-muted">Checking connection</p>, ssr: false },
+);
 
 export function ProviderAccessPanel({
   connectFlash,
   initialClaudeCodeStatus,
   initialCodexStatus,
+  initialCursorStatus,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  onCursorStatusChange,
   onSandboxConnectionSelect,
   provider,
   returnTo,
@@ -103,6 +115,22 @@ export function ProviderAccessPanel({
           <ClaudeCodeConnectionPanel
             initialStatus={initialClaudeCodeStatus}
             onStatusChange={onClaudeCodeStatusChange}
+          />
+        </div>
+      );
+    case "cursor":
+      return (
+        <div className={className}>
+          <div className="mb-3 min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Sessions use the connected user&apos;s Cursor plan through an expiring user API key.
+            </p>
+          </div>
+          <CursorConnectionPanel
+            initialStatus={initialCursorStatus}
+            onStatusChange={onCursorStatusChange}
+            workspaceId={workspaceId}
           />
         </div>
       );

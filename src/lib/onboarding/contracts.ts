@@ -129,6 +129,16 @@ export type OnboardingSetupHealth = {
     status: "connected" | "missing";
     updatedAt: string | null;
   };
+  cursorConnection?: {
+    accountEmail: string | null;
+    checkedAt: string;
+    connected: boolean;
+    expiresAt: string | null;
+    reconnectReason: string | null;
+    reconnectRequired: boolean;
+    status: "connected" | "expired" | "missing";
+    updatedAt: string | null;
+  };
   defaultPipeline: {
     configured: boolean;
     pipelineId: string | null;

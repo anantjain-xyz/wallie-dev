@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { startCursorAuthProcessor } from "@/lib/cursor/auth-processor";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 
 import { parseWorkerConfig } from "./config";
@@ -36,6 +37,7 @@ async function main() {
     isShuttingDown: () => shuttingDown,
   });
   const timerTasks = createTimerTaskTracker();
+  const cursorAuthProcessor = startCursorAuthProcessor(admin, config.workerId);
 
   // Stop claiming on a graceful signal. The main flow below keeps heartbeats
   // active while already-claimed jobs drain, then deregisters and exits.
@@ -114,6 +116,8 @@ async function main() {
   // --- Main scheduling loop ---
   console.log("[worker] entering scheduler loop");
   await scheduler.run();
+
+  await cursorAuthProcessor.stop();
 
   await finishWorkerShutdown({
     deregister: () => deregisterWorker(admin, config.workerId),

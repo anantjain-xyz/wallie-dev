@@ -105,6 +105,7 @@ export function buildRuntimeReadiness(input: {
   agentConfig: AgentConfigMap;
   claudeCodeConnection: OnboardingSetupHealth["claudeCodeConnection"];
   codexConnection: OnboardingSetupHealth["codexConnection"];
+  cursorConnection?: OnboardingSetupHealth["cursorConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
 }): RuntimeReadiness {
@@ -125,7 +126,9 @@ export function buildRuntimeReadiness(input: {
       error:
         provider === "codex"
           ? 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.'
-          : 'Model must start with "claude-" for Claude Code.',
+          : provider === "claude-code"
+            ? 'Model must start with "claude-" for Claude Code.'
+            : "Select a model returned by your Cursor account.",
     });
   }
 
@@ -188,6 +191,17 @@ export function buildRuntimeReadiness(input: {
         },
       );
       break;
+    case "cursor":
+      requirements.push({
+        detail: input.cursorConnection?.connected
+          ? "Current user has a connected Cursor account."
+          : "Sign in with Cursor to use the models available on your plan.",
+        id: "cursor-connection",
+        label: "Cursor account",
+        passed: input.cursorConnection?.connected === true,
+        step: "runtime",
+      });
+      break;
   }
 
   return {
@@ -218,6 +232,7 @@ export function capabilityCheckMatchesCurrentSetup(health: OnboardingSetupHealth
     agentConfig: health.agentConfig.values,
     claudeCodeConnection: health.claudeCodeConnection,
     codexConnection: health.codexConnection,
+    cursorConnection: health.cursorConnection,
     primaryRepositoryId: health.primaryRepositoryProfile.repositoryId,
     repositorySetup: health.repositorySetup,
   });
@@ -271,6 +286,7 @@ export function buildVerifyChecklist(input: {
     agentConfig: input.agentConfig,
     claudeCodeConnection: input.health.claudeCodeConnection,
     codexConnection: input.health.codexConnection,
+    cursorConnection: input.health.cursorConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,
   });

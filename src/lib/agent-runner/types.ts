@@ -103,6 +103,7 @@ export interface AgentRunnerConfig {
 
 export const DEFAULT_CODEX_MODEL = getRecommendedAgentModel("codex");
 export const DEFAULT_CLAUDE_CODE_MODEL = getRecommendedAgentModel("claude-code");
+export const DEFAULT_CURSOR_MODEL = getRecommendedAgentModel("cursor");
 export const DEFAULT_AGENT_EFFORT = RECOMMENDED_AGENT_EFFORT;
 export const DEFAULT_CODEX_REASONING_EFFORT = DEFAULT_AGENT_EFFORT;
 export const DEFAULT_CLAUDE_CODE_EFFORT = DEFAULT_AGENT_EFFORT;

@@ -299,6 +299,41 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null, checkedA
   };
 }
 
+function cursorConnectionStatus(
+  row: {
+    account_email: string | null;
+    api_key_expires_at: string;
+    reconnect_reason: string | null;
+    reconnect_required: boolean;
+    updated_at: string;
+  } | null,
+  checkedAt: string,
+) {
+  if (!row) {
+    return {
+      accountEmail: null,
+      checkedAt,
+      connected: false,
+      expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
+      status: "missing" as const,
+      updatedAt: null,
+    };
+  }
+  const expired = Date.parse(row.api_key_expires_at) <= Date.now();
+  return {
+    accountEmail: row.account_email,
+    checkedAt,
+    connected: !expired && !row.reconnect_required,
+    expiresAt: row.api_key_expires_at,
+    reconnectReason: row.reconnect_reason,
+    reconnectRequired: row.reconnect_required,
+    status: expired || row.reconnect_required ? ("expired" as const) : ("connected" as const),
+    updatedAt: row.updated_at,
+  };
+}
+
 type OnboardingSnapshotContext = Pick<
   AuthenticatedWorkspaceContext,
   "currentMember" | "supabase" | "user" | "workspace"
@@ -399,6 +434,14 @@ type OnboardingSnapshot = {
     updated_at: string;
   } | null;
   codexCredentialsCheckedAt: string;
+  cursorCredentials: {
+    account_email: string | null;
+    api_key_expires_at: string;
+    reconnect_reason: string | null;
+    reconnect_required: boolean;
+    updated_at: string;
+  } | null;
+  cursorCredentialsCheckedAt: string;
   github: WorkspaceGitHubData;
   linearRoutingRow: LinearRoutingRow | null;
   onboardingRow: Tables<"workspace_onboarding">;
@@ -513,6 +556,15 @@ function createOnboardingSnapshot(
               .eq("user_id", context.user.id)
               .maybeSingle(),
           ),
+          timestampQueryResult(
+            admin
+              .from("user_cursor_credentials")
+              .select(
+                "account_email, api_key_expires_at, reconnect_reason, reconnect_required, updated_at",
+              )
+              .eq("user_id", context.user.id)
+              .maybeSingle(),
+          ),
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
@@ -532,9 +584,10 @@ function createOnboardingSnapshot(
       ),
     ]);
 
-    const [codexProviderResult, claudeCodeProviderResult] = providerResults;
+    const [codexProviderResult, claudeCodeProviderResult, cursorProviderResult] = providerResults;
     const codexResult = codexProviderResult.result;
     const claudeCodeResult = claudeCodeProviderResult.result;
+    const cursorResult = cursorProviderResult.result;
     for (const error of [
       pipelineResult.error,
       stageResult.error,
@@ -543,6 +596,7 @@ function createOnboardingSnapshot(
       agentConfigResult.error,
       codexResult.error,
       claudeCodeResult.error,
+      cursorResult.error,
       sandboxResult.error,
       memberResult.error,
     ]) {
@@ -555,6 +609,8 @@ function createOnboardingSnapshot(
       claudeCodeCredentialsCheckedAt: claudeCodeProviderResult.checkedAt,
       codexCredentials: codexResult.data,
       codexCredentialsCheckedAt: codexProviderResult.checkedAt,
+      cursorCredentials: cursorResult.data,
+      cursorCredentialsCheckedAt: cursorProviderResult.checkedAt,
       github,
       linearRoutingRow: routingResult.data as LinearRoutingRow | null,
       onboardingRow,
@@ -692,6 +748,10 @@ function deriveSetupHealth(
     codexConnection: codexConnectionStatus(
       snapshot.codexCredentials,
       snapshot.codexCredentialsCheckedAt,
+    ),
+    cursorConnection: cursorConnectionStatus(
+      snapshot.cursorCredentials,
+      snapshot.cursorCredentialsCheckedAt,
     ),
     defaultPipeline: {
       configured: Boolean(pipeline && pipeline.stages.length > 0),

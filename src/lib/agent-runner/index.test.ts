@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ClaudeCodeRunner,
   CodexRunner,
+  CursorRunner,
   createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG,
   DEFAULT_AGENT_EFFORT,
@@ -43,6 +44,20 @@ describe("createAgentRunner", () => {
 
   it("throws when claude-code is selected without credentials", () => {
     expect(() => createAgentRunner("claude-code")).toThrow(/Anthropic API key/);
+  });
+
+  it("creates a CursorRunner when Cursor credentials are provided", () => {
+    const runner = createAgentRunner("cursor", {
+      cursor: {
+        credential: {
+          expiresAt: "2026-11-27T00:00:00.000Z",
+          secret: "cursor-key",
+          userId: "user-1",
+        },
+      },
+    });
+    expect(runner).toBeInstanceOf(CursorRunner);
+    expect(runner.provider).toBe("cursor");
   });
 
   it("throws for unknown provider", () => {
