@@ -12,6 +12,7 @@ describe("LandingPage", () => {
     expect(html.match(/<section(?:\s|>)/g)).toHaveLength(1);
     expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
     expect(html).not.toMatch(/<h2(?:\s|>)/);
+    expect(html).toContain("data-wallie-mark");
     expect(html).toContain("Run coding agents through your team");
     expect(html).toContain("isolated sandboxes");
   });

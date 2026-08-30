@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { StackWorkflowMockup } from "@/components/landing/product-mockups";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
+import { WallieMark } from "@/components/shared/wallie-mark";
 
 const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
 const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";
@@ -15,8 +16,9 @@ export function LandingPage() {
           <Link
             href="/"
             aria-label="Wallie home"
-            className="flex min-h-11 items-center rounded-[6px] px-1 text-[20px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            className="flex min-h-11 items-center gap-2 rounded-[6px] px-1 text-[20px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
+            <WallieMark className="size-7 shrink-0" />
             Wallie
           </Link>
           <a
