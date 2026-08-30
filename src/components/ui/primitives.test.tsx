@@ -15,6 +15,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { ActionMenu } from "@/components/ui/action-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -153,6 +154,33 @@ describe("accessible overlay primitives", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(trigger).toHaveFocus();
+  });
+
+  it("does not inert the application when an ActionMenu is open", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <div data-testid="application">
+        <p>Settings remain visible</p>
+        <ActionMenu label="Row actions">
+          <DropdownMenuItem>Disconnect</DropdownMenuItem>
+        </ActionMenu>
+      </div>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Row actions" }));
+    expect(await screen.findByRole("menu", { name: "Row actions" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Disconnect" })).toHaveFocus();
+
+    const application = screen.getByTestId("application");
+    expect(application.closest("[aria-hidden='true']")).toBeNull();
+    expect(application.closest("[inert]")).toBeNull();
+    expect(application).not.toHaveAttribute("inert");
+    expect(screen.getByText("Settings remain visible")).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "Row actions" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Row actions" })).toHaveFocus();
   });
 
   it("supports menu arrows, Home/End, typeahead, and Escape", async () => {
