@@ -629,9 +629,9 @@ function makeRunner(
   return {
     provider: opts.provider ?? "claude-code",
     requiresSandbox: opts.requiresSandbox ?? true,
-    async *start() {
+    start: vi.fn(async function* () {
       for (const event of events) yield event;
-    },
+    }),
   };
 }
 
@@ -736,6 +736,10 @@ describe("processPipelineJob (generic stage runner)", () => {
           revision: "revision-1",
         },
       }),
+    );
+    const runner = mocked.createAgentRunner.mock.results[0]?.value as AgentRunner;
+    expect(vi.mocked(runner.start)).toHaveBeenCalledWith(
+      expect.objectContaining({ secrets: ["gh-token"] }),
     );
     expect(insertedArtifacts).toHaveLength(1);
     const artifact = insertedArtifacts[0]!;

@@ -63,6 +63,12 @@ export interface AgentRunnerStartInput {
   continueSessionId?: string;
   /** Agent run row id, when the provider needs to associate work with a persisted run. */
   runId?: string;
+  /**
+   * Extra secret values to strip from streamed events before persistence.
+   * The sandbox GitHub installation token (`GH_TOKEN`) belongs here so tool
+   * stdout cannot leak a repository-capable credential into run history.
+   */
+  secrets?: Array<string | undefined>;
   /** Max output tokens for the agent (optional, provider-specific). */
   maxTokens?: number;
   /** Optional deadline signal used by bounded route handlers. */
