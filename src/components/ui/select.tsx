@@ -27,7 +27,13 @@ export type SelectFieldProps = {
   value: string;
 };
 
-export const Select = SelectPrimitive.Root;
+/**
+ * Non-modal so a portaled listbox does not hideOthers/inert the app tree.
+ * `@radix-ui/react-select` 2.3.3 has no modal API; the repo patch adds it.
+ */
+export function Select(props: ComponentProps<typeof SelectPrimitive.Root>) {
+  return <SelectPrimitive.Root {...props} modal={false} />;
+}
 
 export function SelectTrigger({
   accessibleLabel,
@@ -125,7 +131,7 @@ export function SelectField({
       <span className="text-[13px] font-medium text-foreground" id={labelId}>
         {label}
       </span>
-      <SelectPrimitive.Root
+      <Select
         disabled={disabled}
         onValueChange={(nextValue) =>
           onValueChange(nextValue === RADIX_EMPTY_VALUE ? "" : nextValue)
@@ -181,7 +187,7 @@ export function SelectField({
             </SelectPrimitive.Item>
           ))}
         </SelectContent>
-      </SelectPrimitive.Root>
+      </Select>
     </div>
   );
 }

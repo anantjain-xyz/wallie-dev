@@ -1,0 +1,140 @@
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index 26a8c023243afdfa203c5e317cbaf3f7baea1ee7..40da24fcfdf8421507ad4b69ae4a003505484d4e 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -24,6 +24,7 @@ interface SelectSharedProps {
+     disabled?: boolean;
+     required?: boolean;
+     form?: string;
++    modal?: boolean;
+ }
+ type SelectProps = SelectSharedProps & {
+     value?: string;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 26a8c023243afdfa203c5e317cbaf3f7baea1ee7..40da24fcfdf8421507ad4b69ae4a003505484d4e 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -24,6 +24,7 @@ interface SelectSharedProps {
+     disabled?: boolean;
+     required?: boolean;
+     form?: string;
++    modal?: boolean;
+ }
+ type SelectProps = SelectSharedProps & {
+     value?: string;
+diff --git a/dist/index.js b/dist/index.js
+index 6a7ca02270af7fd67d016e72a63bf6dde6d53fa2..c3a855eee99acd2d2c4e9c3a64707107a37a7eec 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -126,6 +126,7 @@ function SelectProvider(props) {
+     disabled,
+     required,
+     form,
++    modal = true,
+     // @ts-expect-error internal render prop used by `Select` to compose its default parts
+     internal_do_not_use_render
+   } = props;
+@@ -191,7 +192,8 @@ function SelectProvider(props) {
+     form,
+     nativeOptions: nativeOptionsSet,
+     nativeSelectKey,
+-    isFormControl
++    isFormControl,
++    modal
+   };
+   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PopperPrimitive.Root, { ...popperScope, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectProviderImpl, { scope: __scopeSelect, ...context, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Collection.Provider, { scope: __scopeSelect, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+     SelectNativeOptionsProvider,
+@@ -405,9 +407,10 @@ var SelectContentImpl = React.forwardRef(
+     const getItems = useCollection(__scopeSelect);
+     const [isPositioned, setIsPositioned] = React.useState(false);
+     const firstValidItemFoundRef = React.useRef(false);
++    const modal = context.modal !== false;
+     React.useEffect(() => {
+-      if (content) return (0, import_aria_hidden.hideOthers)(content);
+-    }, [content]);
++      if (modal && content) return (0, import_aria_hidden.hideOthers)(content);
++    }, [content, modal]);
+     (0, import_react_focus_guards.useFocusGuards)();
+     const focusFirst = React.useCallback(
+       (candidates) => {
+@@ -533,11 +536,11 @@ var SelectContentImpl = React.forwardRef(
+         position,
+         isPositioned,
+         searchRef,
+-        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_react_remove_scroll.RemoveScroll, { as: Slot, allowPinchZoom: true, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
++        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_react_remove_scroll.RemoveScroll, { as: Slot, allowPinchZoom: true, enabled: modal, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+           import_react_focus_scope.FocusScope,
+           {
+             asChild: true,
+-            trapped: context.open,
++            trapped: modal && context.open,
+             onMountAutoFocus: (event) => {
+               event.preventDefault();
+             },
+@@ -549,7 +552,7 @@ var SelectContentImpl = React.forwardRef(
+               import_react_dismissable_layer.DismissableLayer,
+               {
+                 asChild: true,
+-                disableOutsidePointerEvents: true,
++                disableOutsidePointerEvents: modal,
+                 onEscapeKeyDown,
+                 onPointerDownOutside,
+                 onFocusOutside: (event) => event.preventDefault(),
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 0eefe0f11bdfe8a4679a1aefd76e0dbaaf1c3370..431a71629a29d5552928e6959ac051ca747e30af 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -55,6 +55,7 @@ function SelectProvider(props) {
+     disabled,
+     required,
+     form,
++    modal = true,
+     // @ts-expect-error internal render prop used by `Select` to compose its default parts
+     internal_do_not_use_render
+   } = props;
+@@ -120,7 +121,8 @@ function SelectProvider(props) {
+     form,
+     nativeOptions: nativeOptionsSet,
+     nativeSelectKey,
+-    isFormControl
++    isFormControl,
++    modal
+   };
+   return /* @__PURE__ */ jsx(PopperPrimitive.Root, { ...popperScope, children: /* @__PURE__ */ jsx(SelectProviderImpl, { scope: __scopeSelect, ...context, children: /* @__PURE__ */ jsx(Collection.Provider, { scope: __scopeSelect, children: /* @__PURE__ */ jsx(
+     SelectNativeOptionsProvider,
+@@ -334,9 +336,10 @@ var SelectContentImpl = React.forwardRef(
+     const getItems = useCollection(__scopeSelect);
+     const [isPositioned, setIsPositioned] = React.useState(false);
+     const firstValidItemFoundRef = React.useRef(false);
++    const modal = context.modal !== false;
+     React.useEffect(() => {
+-      if (content) return hideOthers(content);
+-    }, [content]);
++      if (modal && content) return hideOthers(content);
++    }, [content, modal]);
+     useFocusGuards();
+     const focusFirst = React.useCallback(
+       (candidates) => {
+@@ -462,11 +465,11 @@ var SelectContentImpl = React.forwardRef(
+         position,
+         isPositioned,
+         searchRef,
+-        children: /* @__PURE__ */ jsx(RemoveScroll, { as: Slot, allowPinchZoom: true, children: /* @__PURE__ */ jsx(
++        children: /* @__PURE__ */ jsx(RemoveScroll, { as: Slot, allowPinchZoom: true, enabled: modal, children: /* @__PURE__ */ jsx(
+           FocusScope,
+           {
+             asChild: true,
+-            trapped: context.open,
++            trapped: modal && context.open,
+             onMountAutoFocus: (event) => {
+               event.preventDefault();
+             },
+@@ -478,7 +481,7 @@ var SelectContentImpl = React.forwardRef(
+               DismissableLayer,
+               {
+                 asChild: true,
+-                disableOutsidePointerEvents: true,
++                disableOutsidePointerEvents: modal,
+                 onEscapeKeyDown,
+                 onPointerDownOutside,
+                 onFocusOutside: (event) => event.preventDefault(),

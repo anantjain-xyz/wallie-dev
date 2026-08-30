@@ -8,7 +8,14 @@ import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
-export const DropdownMenu = DropdownMenuPrimitive.Root;
+/** Defaults to non-modal so a portaled menu does not hideOthers/inert the app tree. */
+export function DropdownMenu({
+  modal = false,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  return <DropdownMenuPrimitive.Root modal={modal} {...props} />;
+}
+
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;

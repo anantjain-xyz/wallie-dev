@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+import { SelectField } from "@/components/ui/select";
 import { ClaudeCodeConnectionPanel } from "@/features/settings/claude-code-connection-panel";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 import { CursorConnectionPanel } from "@/features/settings/cursor-connection-panel";
@@ -18,6 +19,23 @@ beforeEach(() => {
     unobserve() {}
   }
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  vi.stubGlobal("PointerEvent", MouseEvent);
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: () => false,
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: () => undefined,
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: () => undefined,
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => undefined,
+  });
 });
 
 afterEach(() => {
@@ -40,6 +58,50 @@ function SurroundingSettings({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+describe("settings selects", () => {
+  it("does not hide Settings when the Agent provider SelectField is open", async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+    render(
+      <OverlayProvider>
+        <SurroundingSettings>
+          <SelectField
+            label="Agent provider"
+            onValueChange={onValueChange}
+            options={[
+              { label: "Codex", value: "codex" },
+              { label: "Claude Code", value: "claude_code" },
+            ]}
+            value="codex"
+          />
+        </SurroundingSettings>
+      </OverlayProvider>,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Agent provider" }));
+    expect(await screen.findByRole("listbox")).toBeVisible();
+    expect(screen.getByRole("option", { name: "Claude Code" })).toBeVisible();
+
+    expectNotIsolated(screen.getByTestId("application"));
+    expectNotIsolated(screen.getByRole("heading", { name: "Agent" }));
+    expectNotIsolated(screen.getByText("Provider"));
+    expectNotIsolated(screen.getByText("Concurrency"));
+    expect(screen.getByText("Provider")).toBeVisible();
+    expect(screen.getByText("Concurrency")).toBeVisible();
+
+    await user.click(screen.getByText("Concurrency"));
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(onValueChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("combobox", { name: "Agent provider" }));
+    await user.click(await screen.findByRole("option", { name: "Claude Code" }));
+    expect(onValueChange).toHaveBeenCalledWith("claude_code");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
+    expectNotIsolated(screen.getByTestId("application"));
+  });
+});
 
 describe("provider action menus", () => {
   const providers = [
