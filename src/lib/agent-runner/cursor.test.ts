@@ -66,10 +66,81 @@ describe("CursorRunner", () => {
       expect.objectContaining({ message: expect.stringContaining("401"), type: "error" }),
     ]);
   });
+
+  it("redacts the Cursor API key from CLI error output", async () => {
+    const secret = "sk-cursor-live-secret-value-12345";
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [{ data: `401 invalid api key ${secret}`, stream: "stderr" }], {
+      exitCode: 1,
+    });
+    const onAuthenticationFailure = vi.fn();
+    const runner = new CursorRunner({
+      credential: { ...credential, secret },
+      onAuthenticationFailure,
+    });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+      events.push(event);
+    }
+
+    expect(onAuthenticationFailure).toHaveBeenCalledOnce();
+    expect(onAuthenticationFailure.mock.calls[0]?.[0]).not.toContain(secret);
+    expect(events).toEqual([
+      expect.objectContaining({
+        message: expect.stringMatching(/401 invalid api key \[REDACTED\]/),
+        type: "error",
+      }),
+    ]);
+    expect(events[0]).toMatchObject({ type: "error" });
+    if (events[0]?.type === "error") {
+      expect(events[0].message).not.toContain(secret);
+    }
+  });
+
+  it("redacts the Cursor API key from completed tool stdout before yielding", async () => {
+    const secret = "sk-cursor-live-secret-value-12345";
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data: `${JSON.stringify({
+          subtype: "completed",
+          tool_call: {
+            shellToolCall: {
+              args: { command: "printenv CURSOR_API_KEY" },
+              result: { success: { exitCode: 0, stderr: "", stdout: secret } },
+            },
+          },
+          type: "tool_call",
+        })}\n`,
+        stream: "stdout",
+      },
+      {
+        data: '{"type":"result","result":"done"}\n',
+        stream: "stdout",
+      },
+    ]);
+    const runner = new CursorRunner({ credential: { ...credential, secret } });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+      events.push(event);
+    }
+
+    const toolUse = events.find((event) => event.type === "tool_use");
+    expect(toolUse).toMatchObject({ tool: "shell", type: "tool_use" });
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("expected tool_use event");
+    }
+    expect(toolUse.input).not.toContain(secret);
+    expect(toolUse.input).toContain("[REDACTED]");
+    expect(JSON.parse(toolUse.input)).toMatchObject({
+      command: "printenv CURSOR_API_KEY",
+      result: { exitCode: 0, stdout: "[REDACTED]" },
+    });
+  });
 });
 
-function parseToolUse(line: string) {
-  const event = parseCursorStreamJsonLine(line).event;
+function parseToolUse(line: string, secrets: Array<string | undefined> = []) {
+  const event = parseCursorStreamJsonLine(line, secrets).event;
   expect(event).toMatchObject({ type: "tool_use" });
   if (!event || event.type !== "tool_use") {
     throw new Error("expected tool_use event");
@@ -178,6 +249,35 @@ describe("parseCursorStreamJsonLine", () => {
         totalLines: 54,
       },
     });
+  });
+
+  it("redacts known secrets from tool results before truncation", () => {
+    const secret = "sk-cursor-live-secret-value-12345";
+    const completed = parseToolUse(
+      JSON.stringify({
+        subtype: "completed",
+        tool_call: {
+          shellToolCall: {
+            args: { command: "printenv CURSOR_API_KEY" },
+            result: {
+              success: {
+                exitCode: 0,
+                stderr: "",
+                stdout: `${secret}\n${"x".repeat(4000)}`,
+              },
+            },
+          },
+        },
+        type: "tool_call",
+      }),
+      [secret],
+    );
+
+    expect(completed.event.tool).toBe("shell");
+    expect(completed.event.input).not.toContain(secret);
+    expect((completed.input.result as { stdout: string }).stdout).toBe(
+      `[REDACTED]\n${"x".repeat(489)}…`,
+    );
   });
 
   it("never uses subtype as the tool name", () => {
