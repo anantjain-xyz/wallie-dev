@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { Cursor, DEFAULT_LOGIN_API_KEY_TTL_MS } from "@cursor/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -11,6 +13,10 @@ type AdminClient = SupabaseClient<Database>;
 const POLL_INTERVAL_MS = 1_000;
 const MAX_CONCURRENT_AUTH_FLOWS = 4;
 export const CURSOR_AUTH_FLOW_LEASE_MS = 15_000;
+
+export function createCursorAuthClaimToken(workerId: string): string {
+  return `${workerId}:${randomUUID()}`;
+}
 
 type CursorAuthProcessorOptions = {
   concurrencyLimit?: number;
@@ -64,6 +70,7 @@ export async function processNextCursorAuthFlow(
 ): Promise<boolean> {
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
+  const claimToken = createCursorAuthClaimToken(workerId);
   const { error: expirationError } = await admin
     .from("cursor_auth_flows")
     .update({ status: "expired" })
@@ -86,7 +93,7 @@ export async function processNextCursorAuthFlow(
 
   const { data: claimed, error: claimError } = await admin
     .from("cursor_auth_flows")
-    .update({ claimed_at: now, claimed_by: workerId, status: "processing" })
+    .update({ claimed_at: now, claimed_by: claimToken, status: "processing" })
     .eq("id", pending.id)
     .eq("status", "starting")
     .select("id, expires_at")
@@ -102,7 +109,7 @@ export async function processNextCursorAuthFlow(
       .from("cursor_auth_flows")
       .update({ claimed_at: new Date().toISOString() })
       .eq("id", claimed.id)
-      .eq("claimed_by", workerId)
+      .eq("claimed_by", claimToken)
       .in("status", ["processing", "prompted"])
       .select("id")
       .maybeSingle()
@@ -123,7 +130,7 @@ export async function processNextCursorAuthFlow(
           .from("cursor_auth_flows")
           .update({ login_url: loginUrl, status: "prompted" })
           .eq("id", claimed.id)
-          .eq("claimed_by", workerId)
+          .eq("claimed_by", claimToken)
           .in("status", ["processing", "prompted"]);
       },
       openBrowser: false,
@@ -136,7 +143,7 @@ export async function processNextCursorAuthFlow(
     await completeCursorAuthFlow(admin, {
       accountEmail: result.email ?? null,
       apiKeyExpiresAt: expiresAt,
-      claimedBy: workerId,
+      claimedBy: claimToken,
       completedAt,
       encryptedApiKey: encryptSecretValue(result.apiKey),
       flowId: claimed.id,
@@ -154,7 +161,7 @@ export async function processNextCursorAuthFlow(
           status: "starting",
         })
         .eq("id", claimed.id)
-        .eq("claimed_by", workerId)
+        .eq("claimed_by", claimToken)
         .in("status", ["processing", "prompted"]);
     } else {
       await admin
@@ -164,7 +171,7 @@ export async function processNextCursorAuthFlow(
           status: aborted ? "expired" : "error",
         })
         .eq("id", claimed.id)
-        .eq("claimed_by", workerId)
+        .eq("claimed_by", claimToken)
         .in("status", ["processing", "prompted"]);
     }
   } finally {

@@ -14,6 +14,35 @@ afterEach(() => {
 });
 
 describe("CursorConnectionPanel", () => {
+  it("synchronizes externally refreshed connection status", () => {
+    const { rerender } = render(
+      <CursorConnectionPanel
+        initialStatus={{
+          accountEmail: "person@example.com",
+          checkedAt: "2026-08-29T22:00:00.000Z",
+          connected: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Connected")).toBeInTheDocument();
+
+    rerender(
+      <CursorConnectionPanel
+        initialStatus={{
+          checkedAt: "2026-08-29T22:01:00.000Z",
+          connected: false,
+          reconnectReason: "Cursor rejected the saved credential.",
+          reconnectRequired: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Reconnect required")).toBeInTheDocument();
+    expect(screen.getByText("Cursor rejected the saved credential.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconnect Cursor" })).toBeInTheDocument();
+  });
+
   it("navigates a sign-in popup once per login URL", async () => {
     vi.useFakeTimers();
     const navigate = vi.fn();

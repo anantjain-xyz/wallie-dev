@@ -42,6 +42,10 @@ export function CursorConnectionPanel({
     callbackRef.current = onStatusChange;
   }, [onStatusChange]);
 
+  useEffect(() => {
+    if (initialStatus) setStatus(initialStatus);
+  }, [initialStatus]);
+
   const refresh = useCallback(async () => {
     const response = await fetch("/api/cursor/connection", { cache: "no-store" });
     const data = (await response.json().catch(() => null)) as

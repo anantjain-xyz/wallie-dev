@@ -987,6 +987,7 @@ async function resolveAgentRunner(input: {
           codex: {
             chatGptAuthStore: createCodexChatGptAuthStore(input.admin),
             credential,
+            effort: input.effort,
             model: input.model,
           },
         }),

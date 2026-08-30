@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CURSOR_AUTH_FLOW_LEASE_MS,
   completeCursorAuthFlow,
+  createCursorAuthClaimToken,
   reclaimStaleCursorAuthFlows,
   startCursorAuthProcessor,
 } from "@/lib/cursor/auth-processor";
@@ -58,6 +59,17 @@ describe("completeCursorAuthFlow", () => {
       p_encrypted_api_key: "encrypted-key",
       p_flow_id: "00000000-0000-4000-8000-000000000001",
     });
+  });
+});
+
+describe("createCursorAuthClaimToken", () => {
+  it("mints a unique token for every claim made by the same worker", () => {
+    const first = createCursorAuthClaimToken("worker-1");
+    const second = createCursorAuthClaimToken("worker-1");
+
+    expect(first).toMatch(/^worker-1:/);
+    expect(second).toMatch(/^worker-1:/);
+    expect(second).not.toBe(first);
   });
 });
 
