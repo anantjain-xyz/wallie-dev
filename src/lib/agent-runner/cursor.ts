@@ -51,7 +51,7 @@ export class CursorRunner implements AgentRunner {
       signal: input.signal,
     });
 
-    const secrets = [this.options.credential.secret];
+    const secrets = [this.options.credential.secret, ...(input.secrets ?? [])];
     let stdout = "";
     let stderr = "";
     let sessionId: string | undefined;

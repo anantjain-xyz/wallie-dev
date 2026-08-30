@@ -137,6 +137,80 @@ describe("CursorRunner", () => {
       result: { exitCode: 0, stdout: "[REDACTED]" },
     });
   });
+
+  it("redacts the sandbox GitHub token from completed tool stdout before yielding", async () => {
+    const installationToken = "ghs_sandbox-installation-token-12345";
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data: `${JSON.stringify({
+          subtype: "completed",
+          tool_call: {
+            shellToolCall: {
+              args: { command: "printenv GH_TOKEN" },
+              result: { success: { exitCode: 0, stderr: "", stdout: installationToken } },
+            },
+          },
+          type: "tool_call",
+        })}\n`,
+        stream: "stdout",
+      },
+      {
+        data: '{"type":"result","result":"done"}\n',
+        stream: "stdout",
+      },
+    ]);
+    const runner = new CursorRunner({ credential });
+    const events = [];
+    for await (const event of runner.start({
+      prompt: "p",
+      sandbox,
+      secrets: [installationToken],
+      sessionId: "s",
+    })) {
+      events.push(event);
+    }
+
+    const toolUse = events.find((event) => event.type === "tool_use");
+    expect(toolUse).toMatchObject({ tool: "shell", type: "tool_use" });
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("expected tool_use event");
+    }
+    expect(toolUse.input).not.toContain(installationToken);
+    expect(toolUse.input).toContain("[REDACTED]");
+    expect(JSON.parse(toolUse.input)).toMatchObject({
+      command: "printenv GH_TOKEN",
+      result: { exitCode: 0, stdout: "[REDACTED]" },
+    });
+  });
+
+  it("redacts the sandbox GitHub token from CLI error output", async () => {
+    const installationToken = "ghs_sandbox-installation-token-12345";
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [{ data: `fatal: ${installationToken}`, stream: "stderr" }], {
+      exitCode: 1,
+    });
+    const runner = new CursorRunner({ credential });
+    const events = [];
+    for await (const event of runner.start({
+      prompt: "p",
+      sandbox,
+      secrets: [installationToken],
+      sessionId: "s",
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        message: expect.stringMatching(/fatal: \[REDACTED\]/),
+        type: "error",
+      }),
+    ]);
+    if (events[0]?.type === "error") {
+      expect(events[0].message).not.toContain(installationToken);
+    }
+  });
 });
 
 function parseToolUse(line: string, secrets: Array<string | undefined> = []) {
@@ -275,6 +349,35 @@ describe("parseCursorStreamJsonLine", () => {
 
     expect(completed.event.tool).toBe("shell");
     expect(completed.event.input).not.toContain(secret);
+    expect((completed.input.result as { stdout: string }).stdout).toBe(
+      `[REDACTED]\n${"x".repeat(489)}…`,
+    );
+  });
+
+  it("redacts a sandbox GitHub token from tool results before truncation", () => {
+    const installationToken = "ghs_sandbox-installation-token-12345";
+    const completed = parseToolUse(
+      JSON.stringify({
+        subtype: "completed",
+        tool_call: {
+          shellToolCall: {
+            args: { command: "printenv GH_TOKEN" },
+            result: {
+              success: {
+                exitCode: 0,
+                stderr: "",
+                stdout: `${installationToken}\n${"x".repeat(4000)}`,
+              },
+            },
+          },
+        },
+        type: "tool_call",
+      }),
+      [installationToken],
+    );
+
+    expect(completed.event.tool).toBe("shell");
+    expect(completed.event.input).not.toContain(installationToken);
     expect((completed.input.result as { stdout: string }).stdout).toBe(
       `[REDACTED]\n${"x".repeat(489)}…`,
     );

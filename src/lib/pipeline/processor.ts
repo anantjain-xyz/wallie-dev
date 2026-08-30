@@ -195,6 +195,7 @@ async function runStage(input: {
     repo: { default_branch: string | null; full_name: string; id: string };
   } | null = null;
   let branch: string | null = null;
+  let installationToken: string | undefined;
   const collectedText: string[] = [];
   let artifactInserted = false;
   let runFailureMessageRecorded = false;
@@ -267,7 +268,7 @@ async function runStage(input: {
           workspaceId: session.workspace_id,
         });
       }
-      const installationToken = await mintInstallationToken(github.installationId);
+      installationToken = await mintInstallationToken(github.installationId);
       branch = buildStageBranchName(session.id, stage.slug);
       throwIfAborted(signal);
       sandbox = await createSessionSandbox({
@@ -361,6 +362,7 @@ async function runStage(input: {
       prompt,
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
+      secrets: installationToken ? [installationToken] : undefined,
       signal,
       sessionId: session.id,
     })) {
