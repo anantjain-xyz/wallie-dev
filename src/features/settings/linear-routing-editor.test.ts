@@ -92,7 +92,6 @@ describe("Linear routing editor", () => {
     expect(html).toContain("→");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
-    expect(html).toContain('<select aria-hidden="true"');
     expect(html).toContain("Restart at build stage");
     expect(html).toContain("Pause for manual merge");
     expect(html).toContain("Archive session");

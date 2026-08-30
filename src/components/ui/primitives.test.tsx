@@ -271,6 +271,87 @@ describe("accessible overlay primitives", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("does not inert the application when a Select is open", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <div data-testid="application">
+        <p>Settings remain visible</p>
+        <Select defaultValue="codex">
+          <SelectTrigger accessibleLabel="Agent provider" />
+          <SelectContent>
+            <SelectItem value="codex">Codex</SelectItem>
+            <SelectItem value="claude_code">Claude Code</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Agent provider" }));
+    expect(await screen.findByRole("listbox", { name: "Agent provider" })).toBeVisible();
+
+    const application = screen.getByTestId("application");
+    expect(application.closest("[aria-hidden='true']")).toBeNull();
+    expect(application.closest("[inert]")).toBeNull();
+    expect(application).not.toHaveAttribute("inert");
+    expect(screen.getByText("Settings remain visible")).toBeVisible();
+  });
+
+  it("does not inert the application when a SelectField is open", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <div data-testid="application">
+        <p>Settings remain visible</p>
+        <SelectField
+          label="Agent provider"
+          onValueChange={() => undefined}
+          options={[
+            { label: "Codex", value: "codex" },
+            { label: "Claude Code", value: "claude_code" },
+          ]}
+          value="codex"
+        />
+      </div>,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Agent provider" }));
+    expect(await screen.findByRole("listbox", { name: "Agent provider" })).toBeVisible();
+
+    const application = screen.getByTestId("application");
+    expect(application.closest("[aria-hidden='true']")).toBeNull();
+    expect(application.closest("[inert]")).toBeNull();
+    expect(application).not.toHaveAttribute("inert");
+    expect(screen.getByText("Settings remain visible")).toBeVisible();
+  });
+
+  it("does not inert the application when a DropdownMenu is open", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <div data-testid="application">
+        <p>Settings remain visible</p>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button">Account</button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent label="Account">
+            <DropdownMenuItem>Sign out</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Account" }));
+    expect(await screen.findByRole("menu", { name: "Account" })).toBeVisible();
+
+    const application = screen.getByTestId("application");
+    expect(application.closest("[aria-hidden='true']")).toBeNull();
+    expect(application.closest("[inert]")).toBeNull();
+    expect(application).not.toHaveAttribute("inert");
+    expect(screen.getByText("Settings remain visible")).toBeVisible();
+  });
+
   it("supports Select arrows, Home/End, typeahead, selection, and Escape", async () => {
     const user = userEvent.setup();
     const onValueChange = vi.fn();
@@ -289,7 +370,7 @@ describe("accessible overlay primitives", () => {
     const trigger = screen.getByRole("combobox", { name: "Stage" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
-    expect(await screen.findByRole("listbox")).toBeTruthy();
+    expect(await screen.findByRole("listbox", { name: "Stage" })).toBeTruthy();
     await user.keyboard("{End}");
     expect(screen.getByRole("option", { name: "Land" })).toHaveFocus();
     await user.keyboard("{Home}");
@@ -302,7 +383,7 @@ describe("accessible overlay primitives", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("preserves SelectField empty-string options behind the Radix boundary", async () => {
+  it("preserves SelectField empty-string options", async () => {
     const user = userEvent.setup();
     const onValueChange = vi.fn();
 
@@ -322,29 +403,172 @@ describe("accessible overlay primitives", () => {
     expect(onValueChange).toHaveBeenCalledWith("");
   });
 
-  it("keeps a modal select inside the dialog within the shared overlay root", async () => {
+  it("keeps select content inside the dialog subtree without hiding dialog chrome", async () => {
     const user = userEvent.setup();
 
     renderWithOverlays(
+      <div data-testid="application">
+        <Dialog defaultOpen>
+          <DialogContent description="Choose the workspace access." title="Configure runtime">
+            <SelectField
+              label="Agent provider"
+              onValueChange={() => undefined}
+              options={[
+                { label: "Codex", value: "codex" },
+                { label: "Claude Code", value: "claude_code" },
+              ]}
+              value="codex"
+            />
+          </DialogContent>
+        </Dialog>
+      </div>,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Configure runtime" });
+    expect(dialog).toBeVisible();
+    expect(screen.getByText("Choose the workspace access.")).toBeVisible();
+
+    await user.click(await screen.findByRole("combobox", { name: "Agent provider" }));
+    const listbox = await screen.findByRole("listbox", { name: "Agent provider" });
+    const overlayRoot = document.querySelector("[data-wallie-overlay-root]");
+    expect(document.querySelectorAll("[data-wallie-overlay-root]")).toHaveLength(1);
+    expect(overlayRoot).toContainElement(dialog);
+    expect(overlayRoot).toContainElement(listbox);
+    expect(dialog).toContainElement(listbox);
+    expect(dialog.closest("[aria-hidden='true']")).toBeNull();
+    expect(dialog.closest("[inert]")).toBeNull();
+    expect(dialog).toBeVisible();
+    expect(screen.getByText("Choose the workspace access.")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
+  });
+
+  it("positions a SelectField listbox in the dialog containing-block space", async () => {
+    const user = userEvent.setup();
+
+    function stubRect(
+      element: Element,
+      rect: { height: number; left: number; top: number; width: number },
+    ) {
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+        bottom: rect.top + rect.height,
+        height: rect.height,
+        left: rect.left,
+        right: rect.left + rect.width,
+        toJSON() {
+          return this;
+        },
+        top: rect.top,
+        width: rect.width,
+        x: rect.left,
+        y: rect.top,
+      } as DOMRect);
+    }
+
+    renderWithOverlays(
       <Dialog defaultOpen>
-        <DialogContent title="Configure runtime">
+        <DialogContent description="Choose a role." title="Invite member">
           <SelectField
-            label="Agent provider"
+            label="Role"
             onValueChange={() => undefined}
-            options={[{ label: "Codex", value: "codex" }]}
-            value="codex"
+            options={[
+              { label: "Admin", value: "admin" },
+              { label: "Member", value: "member" },
+            ]}
+            value="member"
           />
         </DialogContent>
       </Dialog>,
     );
 
-    await user.click(await screen.findByRole("combobox", { name: "Agent provider" }));
-    const listbox = await screen.findByRole("listbox");
-    const overlayRoot = document.querySelector("[data-wallie-overlay-root]");
-    expect(document.querySelectorAll("[data-wallie-overlay-root]")).toHaveLength(1);
-    expect(overlayRoot).toContainElement(screen.getByRole("dialog", { hidden: true }));
-    expect(overlayRoot).toContainElement(listbox);
-    expect(screen.getByRole("dialog", { hidden: true })).toContainElement(listbox);
+    const dialog = await screen.findByRole("dialog", { name: "Invite member" });
+    const trigger = screen.getByRole("combobox", { name: "Role" });
+    dialog.style.transform = "translateX(-50%)";
+    stubRect(dialog, { height: 360, left: 200, top: 80, width: 400 });
+    stubRect(trigger, { height: 40, left: 220, top: 200, width: 360 });
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(600);
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(800);
+
+    await user.click(trigger);
+    const listbox = await screen.findByRole("listbox", { name: "Role" });
+    expect(dialog).toContainElement(listbox);
+    expect(listbox.style.left).toBe("20px");
+    expect(listbox.style.top).toBe("166px");
+    expect(listbox.style.position).toBe("fixed");
+  });
+
+  it("closes the listbox when keyboard focus tabs away", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <>
+        <button type="button">Previous field</button>
+        <Select defaultValue="plan">
+          <SelectTrigger accessibleLabel="Stage" />
+          <SelectContent>
+            <SelectItem value="plan">Plan</SelectItem>
+            <SelectItem value="build">Build</SelectItem>
+          </SelectContent>
+        </Select>
+        <button type="button">Next field</button>
+      </>,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Stage" }));
+    expect(await screen.findByRole("listbox", { name: "Stage" })).toBeVisible();
+
+    await user.tab();
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(screen.getByRole("button", { name: "Next field" })).toHaveFocus();
+  });
+
+  it("selects a matching option by typeahead while the Select is closed", async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+
+    renderWithOverlays(
+      <Select defaultValue="plan" onValueChange={onValueChange}>
+        <SelectTrigger accessibleLabel="Stage" />
+        <SelectContent>
+          <SelectItem value="plan">Plan</SelectItem>
+          <SelectItem value="build">Build</SelectItem>
+          <SelectItem value="land">Land</SelectItem>
+        </SelectContent>
+      </Select>,
+    );
+
+    screen.getByRole("combobox", { name: "Stage" }).focus();
+    await user.keyboard("b");
+    expect(onValueChange).toHaveBeenCalledWith("build");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("keeps SelectField option icons on the same row as their labels", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <SelectField
+        label="Agent provider"
+        onValueChange={() => undefined}
+        options={[
+          { icon: <span data-testid="codex-icon">C</span>, label: "Codex", value: "codex" },
+          {
+            icon: <span data-testid="claude-icon">A</span>,
+            label: "Claude Code",
+            value: "claude_code",
+          },
+        ]}
+        value="codex"
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Agent provider" }));
+    const option = await screen.findByRole("option", { name: "Codex" });
+    const icon = option.querySelector('[data-testid="codex-icon"]');
+    const label = option.querySelector(".truncate");
+    expect(icon).not.toBeNull();
+    expect(option).toContainElement(icon as HTMLElement);
+    expect(label).toHaveTextContent("Codex");
+    expect(label?.contains(icon)).toBe(false);
   });
 
   it("reveals supplementary tooltip content on keyboard focus without title attributes", async () => {
