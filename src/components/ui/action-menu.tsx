@@ -21,6 +21,7 @@ type ActionMenuProps = {
 
 /**
  * The single overflow-menu trigger used by feature rows and provider cards.
+ * Non-modal so a portaled menu does not hideOthers/inert the app tree.
  * Its visible tooltip supplements the button's accessible name.
  */
 export const ActionMenu = forwardRef<HTMLButtonElement, ActionMenuProps>(function ActionMenu(
@@ -28,7 +29,7 @@ export const ActionMenu = forwardRef<HTMLButtonElement, ActionMenuProps>(functio
   ref,
 ) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <Tooltip content={label}>
         <DropdownMenuTrigger asChild>
           <button
