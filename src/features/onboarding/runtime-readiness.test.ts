@@ -208,6 +208,28 @@ describe("buildRuntimeReadiness", () => {
       }).model,
     ).toBe("claude-opus-4-8[1m]");
   });
+
+  it("does not fail the agent-config requirement for Cursor Auto catalog ids", () => {
+    const readiness = buildRuntimeReadiness({
+      agentConfig: { agent_model: "auto-smart", agent_provider: "cursor" },
+      claudeCodeConnection: health().claudeCodeConnection,
+      codexConnection: health().codexConnection,
+      cursorConnection: {
+        accountEmail: null,
+        checkedAt: "2026-05-16T18:00:01.000Z",
+        connected: true,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        status: "connected",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      primaryRepositoryId: repositoryId,
+      repositorySetup: health().repositorySetup,
+    });
+
+    expect(readiness.requirements.find((item) => item.id === "agent-config")?.passed).toBe(true);
+  });
 });
 
 describe("buildVerifyChecklist", () => {
