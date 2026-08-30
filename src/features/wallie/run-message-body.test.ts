@@ -47,4 +47,22 @@ describe("parseToolUseMessage", () => {
     expect(parseToolUseMessage("**Tool:** read")).toBeNull();
     expect(parseToolUseMessage("**Error:** boom")).toBeNull();
   });
+
+  it("pretty-prints JSON without rounding integers outside the JS safe range", () => {
+    const parsed = parseToolUseMessage(
+      '**Tool:** read\n\n```\n{"id":9007199254740993,"ok":true}\n```',
+    );
+
+    expect(parsed).toEqual({
+      payload: '{\n  "id": 9007199254740993,\n  "ok": true\n}',
+      tool: "read",
+    });
+    expect(parsed?.payload).not.toContain("9007199254740992");
+  });
+
+  it("preserves original number tokens that JSON.parse would canonicalize", () => {
+    const parsed = parseToolUseMessage('**Tool:** read\n\n```\n{"n":1.0,"exp":1e2}\n```');
+
+    expect(parsed?.payload).toBe('{\n  "n": 1.0,\n  "exp": 1e2\n}');
+  });
 });
