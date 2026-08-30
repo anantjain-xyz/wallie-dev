@@ -13,13 +13,18 @@ export const ALLOWED_AGENT_CONFIG_KEYS = [
 
 export type AgentConfigKey = (typeof ALLOWED_AGENT_CONFIG_KEYS)[number];
 
-export const AGENT_PROVIDERS = ["codex", "claude-code"] as const satisfies readonly AgentProvider[];
+export const AGENT_PROVIDERS = [
+  "codex",
+  "claude-code",
+  "cursor",
+] as const satisfies readonly AgentProvider[];
 
 export type { AgentProvider };
 
 export const RECOMMENDED_AGENT_MODELS = {
   codex: "gpt-5.6-sol",
   "claude-code": "claude-opus-4-8[1m]",
+  cursor: "auto",
 } as const satisfies Record<AgentProvider, string>;
 
 export const AGENT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -32,11 +37,16 @@ const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
   claude_code: "claude-code",
   "claude-code": "claude-code",
   codex: "codex",
+  cursor: "cursor",
 };
 
 export function normalizeAgentProviderName(provider: string | undefined): AgentProvider | null {
   if (!provider) return null;
   return AGENT_PROVIDER_ALIASES[provider] ?? null;
+}
+
+export function agentProviderSupportsEffort(provider: AgentProvider): boolean {
+  return provider !== "cursor";
 }
 
 export const AGENT_CONFIG_LIMITS = {
@@ -107,6 +117,19 @@ export function getRecommendedAgentConfigDefault(
  */
 const CLAUDE_MODEL_PREFIX = "claude-";
 const CODEX_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"] as const;
+const CURSOR_MODEL_PREFIXES = [
+  "claude-",
+  "composer-",
+  "cursor-",
+  "deepseek-",
+  "gemini-",
+  "gpt-",
+  "grok-",
+  "kimi-",
+  "o1",
+  "o3",
+  "o4",
+] as const;
 const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
@@ -205,7 +228,7 @@ function modelMatchesAnyProvider(model: string): boolean {
   if (!modelHasSupportedSyntax(trimmed)) return false;
   if (trimmed.startsWith(CLAUDE_MODEL_PREFIX)) return true;
   if (modelHasExtendedContextSuffix(trimmed)) return false;
-  return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+  return trimmed === "auto" || CURSOR_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
 function modelHasSupportedSyntax(model: string): boolean {
@@ -282,5 +305,7 @@ export function modelMatchesProvider(provider: AgentProvider, model: string): bo
         !modelHasExtendedContextSuffix(trimmed) &&
         CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
       );
+    case "cursor":
+      return !modelHasExtendedContextSuffix(trimmed) && AGENT_MODEL_BODY_PATTERN.test(trimmed);
   }
 }

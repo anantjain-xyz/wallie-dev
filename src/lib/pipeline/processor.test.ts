@@ -1008,6 +1008,33 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
   });
 
+  it("preserves the configured effort for Codex runs", async () => {
+    const session = baseSession();
+    const { admin } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_effort", value_json: "max" },
+        { key: "agent_provider", value_json: "codex" },
+        { key: "agent_model", value_json: "gpt-5.5" },
+      ],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("codex", {
+      codex: {
+        chatGptAuthStore: expect.any(Object),
+        credential: {
+          expiresAt: null,
+          secret: "codex-token",
+          type: "codex_access_token",
+        },
+        effort: "max",
+        model: "gpt-5.5",
+      },
+    });
+  });
+
   it("materializes session images and appends typed attachment context to the task", async () => {
     const attachment = {
       contentType: "image/png",

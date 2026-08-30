@@ -15,10 +15,12 @@ export {
   DEFAULT_CLAUDE_CODE_EFFORT,
   DEFAULT_CLAUDE_CODE_MODEL,
   DEFAULT_CODEX_MODEL,
+  DEFAULT_CURSOR_MODEL,
   DEFAULT_CODEX_REASONING_EFFORT,
 } from "./types";
 export { ClaudeCodeRunner } from "./claude-code";
 export { CodexRunner } from "./codex";
+export { CursorRunner } from "./cursor";
 export { loadWorkspaceAgentConfig, type ResolvedWorkspaceAgentConfig } from "./workspace-config";
 
 import type { AgentRunner } from "./types";
@@ -29,12 +31,15 @@ import {
 } from "@/lib/agent-config/contracts";
 import { ClaudeCodeRunner, type ClaudeCodeRunnerOptions } from "./claude-code";
 import { CodexRunner, type CodexRunnerOptions } from "./codex";
+import { CursorRunner, type CursorRunnerOptions } from "./cursor";
 
 export interface CreateAgentRunnerOptions {
   /** Required when provider resolves to "claude-code". */
   claudeCode?: ClaudeCodeRunnerOptions;
   /** Required when provider resolves to "codex". */
   codex?: CodexRunnerOptions;
+  /** Required when provider resolves to "cursor". */
+  cursor?: CursorRunnerOptions;
 }
 
 type AgentProviderName = AgentProvider | "claude_code";
@@ -67,6 +72,13 @@ export function createAgentRunner(
         );
       }
       return new CodexRunner(opts.codex);
+    case "cursor":
+      if (!opts.cursor) {
+        throw new Error(
+          "cursor provider requires Cursor credentials (pass opts.cursor to createAgentRunner).",
+        );
+      }
+      return new CursorRunner(opts.cursor);
     default:
       throw new Error(
         `Unknown agent provider: "${provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,

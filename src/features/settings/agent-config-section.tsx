@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AgentConfigEntry,
@@ -21,6 +21,7 @@ import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -30,6 +31,7 @@ import {
   AGENT_CONFIG_LIMITS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   STALL_TIMEOUT_MINUTE_LIMITS,
+  agentProviderSupportsEffort,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
 } from "@/lib/agent-config/contracts";
@@ -39,6 +41,7 @@ import {
   parseAgentConfigDraft,
   pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
+import { discoverCursorModels } from "@/lib/cursor/client";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type AgentConfigSectionProps = {
@@ -49,9 +52,11 @@ type AgentConfigSectionProps = {
   initialAgentConfig: AgentConfigMap;
   initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
   initialCodexStatus?: CodexConnectionStatus;
+  initialCursorStatus?: CursorConnectionStatus;
   onAgentConfigSaved?: (entries: AgentConfigEntry[]) => void;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  onCursorStatusChange?: (status: CursorConnectionStatus) => void;
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
@@ -146,9 +151,11 @@ export function AgentConfigSection({
   initialAgentConfig,
   initialClaudeCodeStatus,
   initialCodexStatus,
+  initialCursorStatus,
   onAgentConfigSaved,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  onCursorStatusChange,
   sandboxConnectionHref,
   sandboxConnectionLabel,
   sandboxConnectionReady,
@@ -176,12 +183,29 @@ export function AgentConfigSection({
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
   const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
+  const [cursorModels, setCursorModels] = useState<SelectOption[]>([]);
+  const [cursorConnected, setCursorConnected] = useState(initialCursorStatus?.connected ?? false);
 
   const selectedAgentProvider: AgentProvider =
     normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
 
-  const fields: FieldDescriptor[] = useMemo(
-    () => [
+  useEffect(() => {
+    if (selectedAgentProvider !== "cursor" || !cursorConnected) return;
+    const controller = new AbortController();
+    void discoverCursorModels(controller.signal)
+      .then(({ connectionStatus, models }) => {
+        setCursorModels(models);
+        if (connectionStatus) {
+          setCursorConnected(connectionStatus.connected);
+          onCursorStatusChange?.(connectionStatus);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [cursorConnected, onCursorStatusChange, selectedAgentProvider]);
+
+  const fields: FieldDescriptor[] = useMemo(() => {
+    const allFields: FieldDescriptor[] = [
       {
         configKey: "agent_provider",
         description: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.description,
@@ -194,7 +218,9 @@ export function AgentConfigSection({
         description: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.description,
         label: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.label,
         placeholder: getRecommendedAgentModel(selectedAgentProvider),
-        type: "text",
+        options:
+          selectedAgentProvider === "cursor" && cursorModels.length > 0 ? cursorModels : undefined,
+        type: selectedAgentProvider === "cursor" && cursorModels.length > 0 ? "select" : "text",
       },
       {
         configKey: "agent_effort",
@@ -228,9 +254,13 @@ export function AgentConfigSection({
         placeholder: "3",
         type: "number",
       },
-    ],
-    [selectedAgentProvider],
-  );
+    ];
+
+    return allFields.filter(
+      (field) =>
+        field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedAgentProvider),
+    );
+  }, [cursorModels, selectedAgentProvider]);
 
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];
@@ -373,8 +403,13 @@ export function AgentConfigSection({
             connectFlash={codexConnectFlash}
             initialClaudeCodeStatus={initialClaudeCodeStatus}
             initialCodexStatus={initialCodexStatus}
+            initialCursorStatus={initialCursorStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
+            onCursorStatusChange={(status) => {
+              setCursorConnected(status.connected);
+              onCursorStatusChange?.(status);
+            }}
             provider={selectedAgentProvider}
             sandboxConnectionHref={sandboxConnectionHref}
             sandboxConnectionLabel={sandboxConnectionLabel}
@@ -428,8 +463,13 @@ export function AgentConfigSection({
             connectFlash={codexConnectFlash}
             initialClaudeCodeStatus={initialClaudeCodeStatus}
             initialCodexStatus={initialCodexStatus}
+            initialCursorStatus={initialCursorStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
+            onCursorStatusChange={(status) => {
+              setCursorConnected(status.connected);
+              onCursorStatusChange?.(status);
+            }}
             provider={selectedAgentProvider}
             sandboxConnectionHref={sandboxConnectionHref}
             sandboxConnectionLabel={sandboxConnectionLabel}

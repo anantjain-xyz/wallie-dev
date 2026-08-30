@@ -25,6 +25,11 @@ import {
   CodexNotConnectedError,
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
+import {
+  CursorNotConnectedError,
+  getCursorCredentialForSession,
+  markCursorReconnectRequired,
+} from "@/lib/cursor/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
@@ -1007,6 +1012,30 @@ async function resolveAgentRunner(input: {
       if (error instanceof ClaudeCodeNotConnectedError) {
         throw new Error(error.message);
       }
+      throw error;
+    }
+  }
+
+  if (input.provider === "cursor") {
+    try {
+      const credential = await getCursorCredentialForSession(input.admin, input.session);
+      return {
+        runner: createAgentRunner("cursor", {
+          cursor: {
+            credential,
+            model: input.model,
+            onAuthenticationFailure: (reason) =>
+              markCursorReconnectRequired(
+                input.admin,
+                credential.userId,
+                credential.generation,
+                reason,
+              ),
+          },
+        }),
+      };
+    } catch (error) {
+      if (error instanceof CursorNotConnectedError) throw new Error(error.message);
       throw error;
     }
   }

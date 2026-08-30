@@ -30,6 +30,7 @@ import {
 } from "@/features/onboarding/runtime-readiness";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import {
@@ -38,7 +39,9 @@ import {
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   STALL_TIMEOUT_MINUTE_LIMITS,
+  agentProviderSupportsEffort,
   getRecommendedAgentConfigDefault,
+  normalizeAgentProviderName,
   stallTimeoutMinutesToMs,
 } from "@/lib/agent-config/contracts";
 import {
@@ -48,6 +51,7 @@ import {
   parseAgentConfigDraft,
   pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
+import { discoverCursorModels } from "@/lib/cursor/client";
 import type {
   UpsertWorkspaceSecretResponse,
   WorkspaceSecretPreview,
@@ -197,6 +201,7 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = d
     agentConfig,
     claudeCodeConnection: data.setupHealth.claudeCodeConnection,
     codexConnection: data.setupHealth.codexConnection,
+    cursorConnection: data.setupHealth.cursorConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
   });
@@ -293,6 +298,32 @@ function updateClaudeCodeConnectionInData(
         checkedAt: status.checkedAt,
         connected: status.connected,
         status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+function updateCursorConnectionInData(
+  currentData: WorkspaceOnboardingData,
+  status: CursorConnectionStatus,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      cursorConnection: {
+        accountEmail: status.accountEmail ?? null,
+        checkedAt: status.checkedAt,
+        connected: status.connected,
+        expiresAt: status.expiresAt ?? null,
+        reconnectReason: status.reconnectReason ?? null,
+        reconnectRequired: status.reconnectRequired ?? false,
+        status: status.connected
+          ? "connected"
+          : status.expired || status.reconnectRequired
+            ? "expired"
+            : "missing",
         updatedAt: status.updatedAt ?? null,
       },
     },
@@ -400,7 +431,42 @@ export default function RuntimeStep({
       onDataChange((current) => updateClaudeCodeConnectionInData(current, status)),
     [onDataChange],
   );
-  const fields = AGENT_CONFIG_FIELDS;
+  const handleCursorStatusChange = useCallback(
+    (status: CursorConnectionStatus) =>
+      onDataChange((current) => updateCursorConnectionInData(current, status)),
+    [onDataChange],
+  );
+  const selectedDraftProvider = normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
+  const [cursorModels, setCursorModels] = useState<SelectOption[]>([]);
+  useEffect(() => {
+    if (selectedDraftProvider !== "cursor" || !data.setupHealth.cursorConnection?.connected) return;
+    const controller = new AbortController();
+    void discoverCursorModels(controller.signal)
+      .then(({ connectionStatus, models }) => {
+        setCursorModels(models);
+        if (connectionStatus) handleCursorStatusChange(connectionStatus);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [
+    data.setupHealth.cursorConnection?.connected,
+    handleCursorStatusChange,
+    selectedDraftProvider,
+  ]);
+  const fields = useMemo(
+    () =>
+      AGENT_CONFIG_FIELDS.filter(
+        (field) =>
+          field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedDraftProvider),
+      ).map((field) =>
+        field.configKey === "agent_model" &&
+        selectedDraftProvider === "cursor" &&
+        cursorModels.length > 0
+          ? ({ ...field, options: cursorModels, type: "select" } satisfies FieldDescriptor)
+          : field,
+      ),
+    [cursorModels, selectedDraftProvider],
+  );
   const savedDrafts = buildAgentConfigDrafts(data.agentConfig);
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];
@@ -467,8 +533,12 @@ export default function RuntimeStep({
     const hasValue = Boolean(row.value.trim());
     return hasKey !== hasValue;
   });
+  const visibleConfigKeys = new Set(fields.map((field) => field.configKey));
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
-    (key) => data.agentConfig[key] === undefined && drafts[key] === defaultDraftForKey(key),
+    (key) =>
+      visibleConfigKeys.has(key) &&
+      data.agentConfig[key] === undefined &&
+      drafts[key] === defaultDraftForKey(key),
   );
   const canSaveConfig =
     data.canManage &&
@@ -842,8 +912,23 @@ export default function RuntimeStep({
               reconnectRequired: data.setupHealth.codexConnection.reconnectRequired,
               updatedAt: data.setupHealth.codexConnection.updatedAt,
             }}
+            initialCursorStatus={
+              data.setupHealth.cursorConnection
+                ? {
+                    accountEmail: data.setupHealth.cursorConnection.accountEmail,
+                    checkedAt: data.setupHealth.cursorConnection.checkedAt,
+                    connected: data.setupHealth.cursorConnection.connected,
+                    expired: data.setupHealth.cursorConnection.status === "expired",
+                    expiresAt: data.setupHealth.cursorConnection.expiresAt,
+                    reconnectReason: data.setupHealth.cursorConnection.reconnectReason,
+                    reconnectRequired: data.setupHealth.cursorConnection.reconnectRequired,
+                    updatedAt: data.setupHealth.cursorConnection.updatedAt,
+                  }
+                : undefined
+            }
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
             onCodexStatusChange={handleCodexStatusChange}
+            onCursorStatusChange={handleCursorStatusChange}
             onSandboxConnectionSelect={() => onSelectStep("sandbox")}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}

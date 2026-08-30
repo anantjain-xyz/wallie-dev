@@ -193,14 +193,25 @@ describe("AgentConfigSection provider options and copy", () => {
     expect(screen.queryByText(/agent CLI/i)).not.toBeInTheDocument();
   });
 
-  it("offers only Codex and Claude Code in the Provider select", async () => {
+  it("offers Codex, Claude Code, and Cursor in the Provider select", async () => {
     const user = userEvent.setup();
     renderSection(vi.fn(), true);
 
     await user.click(screen.getByRole("combobox", { name: "Provider" }));
     const options = screen.getAllByRole("option");
-    expect(options.map((option) => option.textContent)).toEqual(["Codex", "Claude Code"]);
+    expect(options.map((option) => option.textContent)).toEqual(["Codex", "Claude Code", "Cursor"]);
     expect(screen.queryByRole("option", { name: "Not configured" })).not.toBeInTheDocument();
+  });
+
+  it("hides unsupported effort configuration for Cursor", () => {
+    renderSection(vi.fn(), false, {
+      ...initialAgentConfig,
+      agent_model: "auto",
+      agent_provider: "cursor",
+    });
+
+    expect(screen.queryByRole("combobox", { name: "Effort" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Reasoning effort passed to the selected provider.")).toBeNull();
   });
 });
 

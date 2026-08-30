@@ -129,6 +129,7 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData) {
     agentConfig: data.agentConfig,
     claudeCodeConnection: data.setupHealth.claudeCodeConnection,
     codexConnection: data.setupHealth.codexConnection,
+    cursorConnection: data.setupHealth.cursorConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
   });
@@ -193,14 +194,21 @@ export function setupHealthItems(
           expired: false,
           updatedAt: health.claudeCodeConnection.updatedAt,
         }
-      : {
-          connected: health.codexConnection.connected,
-          credentialLabel: health.codexConnection.credentialType
-            ? codexCredentialTypeLabel(health.codexConnection.credentialType)
-            : null,
-          expired: health.codexConnection.status === "expired",
-          updatedAt: health.codexConnection.updatedAt,
-        };
+      : selectedProvider === "cursor"
+        ? {
+            connected: health.cursorConnection?.connected === true,
+            credentialLabel: health.cursorConnection?.connected ? "Cursor account" : null,
+            expired: health.cursorConnection?.status === "expired",
+            updatedAt: health.cursorConnection?.updatedAt ?? null,
+          }
+        : {
+            connected: health.codexConnection.connected,
+            credentialLabel: health.codexConnection.credentialType
+              ? codexCredentialTypeLabel(health.codexConnection.credentialType)
+              : null,
+            expired: health.codexConnection.status === "expired",
+            updatedAt: health.codexConnection.updatedAt,
+          };
   const providerCredentialBadge = providerCredential.connected
     ? { tone: "success" as const, value: "Connected" }
     : providerCredential.expired

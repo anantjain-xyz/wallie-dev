@@ -343,6 +343,62 @@ export type Database = {
           },
         ]
       }
+      cursor_auth_flows: {
+        Row: {
+          canceled_at: string | null
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          expires_at: string
+          id: string
+          login_url: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          workspace_id: string | null
+        }
+        Insert: {
+          canceled_at?: string | null
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          expires_at?: string
+          id?: string
+          login_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          workspace_id?: string | null
+        }
+        Update: {
+          canceled_at?: string | null
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          expires_at?: string
+          id?: string
+          login_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cursor_auth_flows_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       github_installations: {
         Row: {
           app_id: number
@@ -1251,6 +1307,42 @@ export type Database = {
         }
         Relationships: []
       }
+      user_cursor_credentials: {
+        Row: {
+          account_email: string | null
+          api_key_expires_at: string
+          created_at: string
+          credential_generation: string
+          encrypted_api_key: string
+          reconnect_reason: string | null
+          reconnect_required: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_email?: string | null
+          api_key_expires_at: string
+          created_at?: string
+          credential_generation?: string
+          encrypted_api_key: string
+          reconnect_reason?: string | null
+          reconnect_required?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_email?: string | null
+          api_key_expires_at?: string
+          created_at?: string
+          credential_generation?: string
+          encrypted_api_key?: string
+          reconnect_reason?: string | null
+          reconnect_required?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       worker_heartbeats: {
         Row: {
           active_job_ids: string[]
@@ -2024,6 +2116,17 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      complete_cursor_auth_flow: {
+        Args: {
+          p_account_email?: string
+          p_api_key_expires_at: string
+          p_claimed_by: string
+          p_completed_at: string
+          p_encrypted_api_key: string
+          p_flow_id: string
+        }
+        Returns: boolean
       }
       create_session_with_first_job: {
         Args: {

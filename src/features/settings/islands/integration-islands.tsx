@@ -18,6 +18,7 @@ import {
   updateAgentConfigInSettingsData,
   updateClaudeCodeConnectionInSettingsData,
   updateCodexConnectionInSettingsData,
+  updateCursorConnectionInSettingsData,
   updateGithubInSettingsData,
   updateLinearRoutingInSettingsData,
   updateSecretsInSettingsData,
@@ -41,6 +42,8 @@ import type { AgentProvider } from "@/lib/agent-config/contracts";
 export function preloadProviderIsland(provider: AgentProvider) {
   if (provider === "claude-code") {
     void import("@/features/settings/claude-code-connection-panel");
+  } else if (provider === "cursor") {
+    void import("@/features/settings/cursor-connection-panel");
   } else {
     void import("@/features/settings/codex-connection-panel");
   }
@@ -299,6 +302,20 @@ export function RuntimeIntegrationIsland({
           reconnectRequired: initialData.setupHealth.codexConnection.reconnectRequired,
           updatedAt: initialData.setupHealth.codexConnection.updatedAt,
         }}
+        initialCursorStatus={
+          initialData.setupHealth.cursorConnection
+            ? {
+                accountEmail: initialData.setupHealth.cursorConnection.accountEmail,
+                checkedAt: initialData.setupHealth.cursorConnection.checkedAt,
+                connected: initialData.setupHealth.cursorConnection.connected,
+                expired: initialData.setupHealth.cursorConnection.status === "expired",
+                expiresAt: initialData.setupHealth.cursorConnection.expiresAt,
+                reconnectReason: initialData.setupHealth.cursorConnection.reconnectReason,
+                reconnectRequired: initialData.setupHealth.cursorConnection.reconnectRequired,
+                updatedAt: initialData.setupHealth.cursorConnection.updatedAt,
+              }
+            : undefined
+        }
         onAgentConfigSaved={(entries) =>
           dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateAgentConfigInSettingsData(current, entries),
@@ -312,6 +329,11 @@ export function RuntimeIntegrationIsland({
         onCodexStatusChange={(status) =>
           dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateCodexConnectionInSettingsData(current, status),
+          )
+        }
+        onCursorStatusChange={(status) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+            updateCursorConnectionInSettingsData(current, status),
           )
         }
         sandboxConnectionHref="#sandbox"

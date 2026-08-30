@@ -92,6 +92,7 @@ describe("sandbox provider contract verifier", () => {
       expect(SANDBOX_PROVIDER_CONTRACTS[provider].capabilityProbes.requiredByAgent).toEqual({
         "claude-code": [],
         codex: ["codexExternalSandbox"],
+        cursor: [],
       });
     },
   );

@@ -157,5 +157,7 @@ function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvid
       return "npm install -g @openai/codex";
     case "claude-code":
       return "npm install -g @anthropic-ai/claude-code";
+    case "cursor":
+      return 'curl -fsS https://cursor.com/install | bash && if [ -x "$HOME/.local/bin/cursor-agent" ]; then ln -sf "$HOME/.local/bin/cursor-agent" /usr/local/bin/cursor-agent 2>/dev/null || true; fi';
   }
 }
