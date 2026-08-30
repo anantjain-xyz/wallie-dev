@@ -415,10 +415,15 @@ describe("SessionWalliePanel", () => {
 
     expect(html).toContain("Tool use");
     expect(html).not.toContain("Tool_use");
-    expect(html).toContain("**Tool:** read");
-    expect(html).toContain("&quot;path&quot;:&quot;src/lib/agent-runner/cursor.ts&quot;");
-    expect(html).toContain("**Tool:** shell");
-    expect(html).toContain("&quot;exitCode&quot;:0");
+    expect(html).not.toContain("**Tool:**");
+    expect(html).not.toContain("```");
+    expect(html).toContain('<strong class="font-semibold text-foreground">Tool:</strong> read');
+    expect(html).toContain('<strong class="font-semibold text-foreground">Tool:</strong> shell');
+    expect(html).toContain("artifact-pre");
+    expect(html).toContain("artifact-code-block");
+    expect(html).toContain('aria-label="Code block"');
+    expect(html).toContain("src/lib/agent-runner/cursor.ts");
+    expect(html).toContain("&quot;exitCode&quot;: 0");
   });
 
   it("keeps Codex tool-use rows on the existing Tool name plus input JSON format", () => {
@@ -440,8 +445,36 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("Tool use");
-    expect(html).toContain("**Tool:** bash");
-    expect(html).toContain("&quot;cmd&quot;:&quot;ls&quot;");
+    expect(html).not.toContain("**Tool:**");
+    expect(html).not.toContain("```");
+    expect(html).toContain('<strong class="font-semibold text-foreground">Tool:</strong> bash');
+    expect(html).toContain("artifact-pre");
+    expect(html).toContain("artifact-code-block");
+    expect(html).toContain("&quot;cmd&quot;: &quot;ls&quot;");
+  });
+
+  it("falls back to pre-wrap text when a tool-use body is not the persisted template", () => {
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            messages: [
+              {
+                createdAt: "2026-05-20T20:05:00.000Z",
+                id: "msg-malformed",
+                kind: "tool_use",
+                messageMd: "read src/lib/agent-runner/cursor.ts",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("Tool use");
+    expect(html).toContain("read src/lib/agent-runner/cursor.ts");
+    expect(html).not.toContain("artifact-pre");
+    expect(html).toContain("whitespace-pre-wrap");
   });
 
   it("keeps long log bodies from introducing unconstrained width", () => {

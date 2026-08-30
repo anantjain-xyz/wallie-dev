@@ -35,7 +35,8 @@ import {
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
+import { parseToolUseMessage } from "@/features/wallie/run-message-body";
+import type { WallieRun, WallieRunMessage, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
@@ -1135,14 +1136,7 @@ function RunMessageTimeline({
                   value={message.createdAt}
                 />
               </div>
-              <p
-                className={cn(
-                  "mt-2 min-w-0 whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]",
-                  message.kind === "error" ? "text-danger" : "text-foreground",
-                )}
-              >
-                {message.messageMd}
-              </p>
+              <RunMessageBody message={message} />
             </li>
           ))}
         </ol>
@@ -1186,5 +1180,38 @@ function RunMessageTimeline({
         <p className="mt-3 text-sm text-muted">{messagesDisconnectedCopy()}</p>
       ) : null}
     </div>
+  );
+}
+
+function RunMessageBody({ message }: { message: WallieRunMessage }) {
+  const parsed = message.kind === "tool_use" ? parseToolUseMessage(message.messageMd) : null;
+
+  if (parsed) {
+    return (
+      <div className="mt-2 min-w-0 break-words text-sm leading-7 text-foreground [overflow-wrap:anywhere]">
+        <p>
+          <strong className="font-semibold text-foreground">Tool:</strong> {parsed.tool}
+        </p>
+        <pre
+          aria-label="Code block"
+          className="artifact-pre first:mt-0 last:mb-0"
+          role="group"
+          tabIndex={0}
+        >
+          <code className="artifact-code-block">{parsed.payload}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <p
+      className={cn(
+        "mt-2 min-w-0 whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]",
+        message.kind === "error" ? "text-danger" : "text-foreground",
+      )}
+    >
+      {message.messageMd}
+    </p>
   );
 }
