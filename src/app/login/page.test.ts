@@ -108,6 +108,7 @@ describe("/login page", () => {
     expect(html).toContain('name="email"');
     expect(html).toContain("you@company.com");
     expect(html).toContain("Sign in to Wallie");
+    expect(html).toContain("data-wallie-mark");
     expect(html).not.toContain("wallie-logo-minimal.png");
     expect(html).not.toContain('aria-label="Wallie home"');
     expect((metadata.title as { absolute: string }).absolute).toBe("Sign in · Wallie");

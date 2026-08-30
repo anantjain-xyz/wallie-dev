@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
+import { WallieMark } from "@/components/shared/wallie-mark";
 import { PageHeader } from "@/components/ui/page-shell";
 import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
@@ -32,8 +33,9 @@ export default async function WorkspaceOnboardingPage() {
           <Link
             href="/"
             aria-label="Wallie home"
-            className="flex min-h-11 items-center rounded-[6px] px-1 text-[22px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            className="flex min-h-11 items-center gap-2 rounded-[6px] px-1 text-[22px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
+            <WallieMark className="size-7 shrink-0" />
             Wallie
           </Link>
           <AccountMenu email={user.email ?? null} />

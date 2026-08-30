@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AuthForm } from "@/components/auth/auth-form";
 import { EmailMagicLinkForm } from "@/components/auth/email-magic-link-form";
 import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
+import { WallieMark } from "@/components/shared/wallie-mark";
 import { loginPath } from "@/lib/routes";
 
 const authErrorMessages = {
@@ -58,6 +59,7 @@ export function AuthEntryPanel({
   return (
     <div className="w-full max-w-[400px]">
       <div className="mb-6 text-center">
+        <WallieMark className="mx-auto mb-4 size-14 text-foreground" />
         <h1 className="text-balance text-2xl font-semibold tracking-tight text-foreground">
           Sign in to Wallie
         </h1>
