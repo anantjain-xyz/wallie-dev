@@ -50,6 +50,7 @@ function renderSection(
   setFlashMessage = vi.fn(),
   withOverlays = false,
   agentConfig: Record<string, unknown> = initialAgentConfig,
+  initialCursorStatus?: { checkedAt: string; connected: boolean },
 ) {
   const section = (
     <AgentConfigSection
@@ -57,6 +58,7 @@ function renderSection(
       initialAgentConfig={agentConfig as typeof initialAgentConfig}
       initialClaudeCodeStatus={{ checkedAt, connected: false }}
       initialCodexStatus={{ checkedAt, connected: false }}
+      initialCursorStatus={initialCursorStatus}
       setFlashMessage={setFlashMessage}
       workspaceId="00000000-0000-4000-8000-000000000001"
     />
@@ -212,6 +214,64 @@ describe("AgentConfigSection provider options and copy", () => {
 
     expect(screen.queryByRole("combobox", { name: "Effort" })).not.toBeInTheDocument();
     expect(screen.queryByText("Reasoning effort passed to the selected provider.")).toBeNull();
+  });
+
+  it("accepts catalog Auto and saves the auto-smart id", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((input: RequestInfo | URL, request?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/cursor/models")) {
+        return Promise.resolve({
+          json: () =>
+            Promise.resolve({
+              models: [
+                { label: "Auto", value: "auto-smart" },
+                { label: "Composer 2", value: "composer-2" },
+              ],
+            }),
+          ok: true,
+        });
+      }
+      void request;
+      return Promise.resolve({
+        json: () => Promise.resolve({ entries: [{ key: "agent_model", value: "auto-smart" }] }),
+        ok: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSection(
+      vi.fn(),
+      true,
+      {
+        ...initialAgentConfig,
+        agent_model: "auto",
+        agent_provider: "cursor",
+      },
+      { checkedAt, connected: true },
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
+    await user.click(screen.getByRole("option", { name: "Auto" }));
+
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Auto");
+    expect(screen.queryByText(/must start with/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Model identifier passed to the selected provider."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, request]) => request?.method === "POST")).toBe(true),
+    );
+    const saveCall = fetchMock.mock.calls.find(([, request]) => request?.method === "POST");
+    expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
+      config: { agent_model: "auto-smart" },
+      workspaceId: "00000000-0000-4000-8000-000000000001",
+    });
   });
 });
 

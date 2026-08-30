@@ -118,6 +118,7 @@ export function getRecommendedAgentConfigDefault(
 const CLAUDE_MODEL_PREFIX = "claude-";
 const CODEX_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"] as const;
 const CURSOR_MODEL_PREFIXES = [
+  "auto",
   "claude-",
   "composer-",
   "cursor-",
@@ -130,6 +131,7 @@ const CURSOR_MODEL_PREFIXES = [
   "o3",
   "o4",
 ] as const;
+const AGENT_MODEL_FAMILY_HINT = `${CLAUDE_MODEL_PREFIX}, ${CODEX_MODEL_PREFIXES.join(", ")}, composer-, or auto`;
 const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
@@ -214,7 +216,7 @@ const agentModelSchema = z
   )
   .refine(
     (model) => modelMatchesAnyProvider(model),
-    `Model must start with "${CLAUDE_MODEL_PREFIX}" or one of: ${CODEX_MODEL_PREFIXES.join(", ")}.`,
+    `Model must start with a known family prefix such as ${AGENT_MODEL_FAMILY_HINT}.`,
   );
 
 const agentEffortSchema = z.enum(AGENT_EFFORT_LEVELS, {
@@ -228,7 +230,7 @@ function modelMatchesAnyProvider(model: string): boolean {
   if (!modelHasSupportedSyntax(trimmed)) return false;
   if (trimmed.startsWith(CLAUDE_MODEL_PREFIX)) return true;
   if (modelHasExtendedContextSuffix(trimmed)) return false;
-  return trimmed === "auto" || CURSOR_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+  return CURSOR_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
 function modelHasSupportedSyntax(model: string): boolean {

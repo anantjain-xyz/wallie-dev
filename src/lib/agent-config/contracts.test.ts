@@ -265,6 +265,21 @@ describe("parseAgentConfigValue — agent_model", () => {
     });
   });
 
+  it("accepts Cursor Auto catalog ids and existing Cursor-prefixed models", () => {
+    expect(parseAgentConfigValue("agent_model", "auto")).toEqual({
+      ok: true,
+      value: "auto",
+    });
+    expect(parseAgentConfigValue("agent_model", "auto-smart")).toEqual({
+      ok: true,
+      value: "auto-smart",
+    });
+    expect(parseAgentConfigValue("agent_model", "composer-2")).toEqual({
+      ok: true,
+      value: "composer-2",
+    });
+  });
+
   it("rejects garbage values like the ticket regression", () => {
     expect(parseAgentConfigValue("agent_model", "lol")).toEqual({
       ok: false,
@@ -337,6 +352,12 @@ describe("modelMatchesProvider", () => {
   it("does not match uppercase-prefixed model ids — schema and DB CHECK both require lowercase", () => {
     expect(modelMatchesProvider("claude-code", "Claude-Sonnet-4-5")).toBe(false);
     expect(modelMatchesProvider("codex", "GPT-5-codex")).toBe(false);
+  });
+
+  it("matches Cursor Auto catalog ids", () => {
+    expect(modelMatchesProvider("cursor", "auto")).toBe(true);
+    expect(modelMatchesProvider("cursor", "auto-smart")).toBe(true);
+    expect(modelMatchesProvider("cursor", "composer-2")).toBe(true);
   });
 });
 
