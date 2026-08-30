@@ -49,6 +49,7 @@ type SelectItemDescriptor = {
 };
 
 type SelectContextValue = {
+  applyTypeahead: (key: string, mode: "highlight" | "select") => void;
   disabled: boolean;
   highlightedValue: string | null;
   items: readonly SelectItemDescriptor[];
@@ -119,6 +120,59 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
   if (ref) ref.current = value;
 }
 
+const TABBABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
+
+function isTabbable(element: HTMLElement) {
+  if (element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true") {
+    return false;
+  }
+  if (element.tabIndex < 0) return false;
+  return !element.hidden && !element.closest("[hidden]");
+}
+
+function focusAdjacentTabbable(from: HTMLElement, shiftKey: boolean, exclude: Element | null) {
+  const candidates = [...document.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)].filter(
+    (element) => isTabbable(element) && !exclude?.contains(element),
+  );
+  const index = candidates.indexOf(from);
+  candidates[index + (shiftKey ? -1 : 1)]?.focus();
+}
+
+function isNonNoneCss(value: string) {
+  return Boolean(value) && value !== "none";
+}
+
+/** Viewport offset when the portal target is a `position: fixed` containing block. */
+function portalFixedContainingBlock(container: HTMLElement) {
+  const style = getComputedStyle(container);
+  const willChangeTokens = style.willChange.split(",").map((token) => token.trim());
+  const createsContainingBlock =
+    isNonNoneCss(style.transform) ||
+    isNonNoneCss(style.filter) ||
+    isNonNoneCss(style.perspective) ||
+    style.contain === "paint" ||
+    style.contain === "layout" ||
+    style.contain === "strict" ||
+    style.contain === "content" ||
+    willChangeTokens.includes("transform") ||
+    willChangeTokens.includes("filter") ||
+    willChangeTokens.includes("perspective");
+
+  if (!createsContainingBlock) {
+    return { bottom: window.innerHeight, left: 0, top: 0 };
+  }
+
+  const rect = container.getBoundingClientRect();
+  return { bottom: rect.bottom, left: rect.left, top: rect.top };
+}
+
 /**
  * Non-modal listbox so a portaled dropdown does not hideOthers/inert the app tree.
  * Implemented here rather than via `@radix-ui/react-select`, which has no modal API.
@@ -159,11 +213,41 @@ export function Select({
     [listboxId],
   );
 
-  const close = useCallback(() => {
-    setOpen(false);
-    setHighlightedValue(null);
-    trigger?.focus();
-  }, [trigger]);
+  const close = useCallback(
+    (options?: { restoreFocus?: boolean }) => {
+      setOpen(false);
+      setHighlightedValue(null);
+      if (options?.restoreFocus !== false) trigger?.focus();
+    },
+    [trigger],
+  );
+
+  const applyTypeahead = useCallback(
+    (key: string, mode: "highlight" | "select") => {
+      window.clearTimeout(typeaheadRef.current.timeout);
+      const nextBuffer = `${typeaheadRef.current.buffer}${key}`.toLowerCase();
+      typeaheadRef.current.buffer = nextBuffer;
+      typeaheadRef.current.timeout = window.setTimeout(() => {
+        typeaheadRef.current.buffer = "";
+      }, 500);
+
+      const currentValue = mode === "highlight" ? highlightedValue : value;
+      const currentIndex = Math.max(
+        0,
+        enabledItems.findIndex((item) => item.value === currentValue),
+      );
+      const skipCurrent = nextBuffer.length === 1;
+      const rotated = [
+        ...enabledItems.slice(currentIndex + (skipCurrent ? 1 : 0)),
+        ...enabledItems.slice(0, currentIndex + (skipCurrent ? 1 : 0)),
+      ];
+      const match = rotated.find((item) => item.label.toLowerCase().startsWith(nextBuffer));
+      if (!match) return;
+      if (mode === "highlight") setHighlightedValue(match.value);
+      else commitValue(match.value);
+    },
+    [commitValue, enabledItems, highlightedValue, value],
+  );
 
   const openList = useCallback(() => {
     if (disabled) return;
@@ -213,6 +297,13 @@ export function Select({
         close();
         return;
       }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const listbox = document.getElementById(listboxId);
+        close({ restoreFocus: false });
+        if (trigger) focusAdjacentTabbable(trigger, event.shiftKey, listbox);
+        return;
+      }
       if (event.key === "ArrowDown") {
         event.preventDefault();
         moveHighlight(1);
@@ -241,24 +332,7 @@ export function Select({
       if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
 
       event.preventDefault();
-      window.clearTimeout(typeaheadRef.current.timeout);
-      const nextBuffer = `${typeaheadRef.current.buffer}${event.key}`.toLowerCase();
-      typeaheadRef.current.buffer = nextBuffer;
-      typeaheadRef.current.timeout = window.setTimeout(() => {
-        typeaheadRef.current.buffer = "";
-      }, 500);
-
-      const currentIndex = Math.max(
-        0,
-        enabledItems.findIndex((item) => item.value === highlightedValue),
-      );
-      const skipCurrent = nextBuffer.length === 1;
-      const rotated = [
-        ...enabledItems.slice(currentIndex + (skipCurrent ? 1 : 0)),
-        ...enabledItems.slice(0, currentIndex + (skipCurrent ? 1 : 0)),
-      ];
-      const match = rotated.find((item) => item.label.toLowerCase().startsWith(nextBuffer));
-      if (match) setHighlightedValue(match.value);
+      applyTypeahead(event.key, "highlight");
     }
 
     document.addEventListener("pointerdown", onPointerDown);
@@ -268,9 +342,9 @@ export function Select({
       document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [
+    applyTypeahead,
     close,
     enabledItems,
-    highlightedValue,
     listboxId,
     moveHighlight,
     open,
@@ -285,6 +359,7 @@ export function Select({
 
   const context = useMemo<SelectContextValue>(
     () => ({
+      applyTypeahead,
       disabled,
       highlightedValue,
       items,
@@ -305,6 +380,7 @@ export function Select({
       value,
     }),
     [
+      applyTypeahead,
       close,
       commitValue,
       disabled,
@@ -349,7 +425,11 @@ export function SelectTrigger({
     ) {
       event.preventDefault();
       context.setOpen(true);
+      return;
     }
+    if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    context.applyTypeahead(event.key, "select");
   }
 
   return (
@@ -399,11 +479,12 @@ export function SelectContent({
   useLayoutEffect(() => {
     if (!open) return;
     const listbox = listboxRef.current;
-    if (!trigger || !listbox) return;
+    if (!trigger || !listbox || !container) return;
 
     function place() {
-      if (!trigger || !listbox) return;
+      if (!trigger || !listbox || !container) return;
       const rect = trigger.getBoundingClientRect();
+      const origin = portalFixedContainingBlock(container);
       const gutter = 8;
       const sideOffset = 6;
       const spaceBelow = window.innerHeight - rect.bottom - sideOffset - gutter;
@@ -420,10 +501,10 @@ export function SelectContent({
         placeAbove ? "bottom left" : "top left",
       );
       setPosition({
-        bottom: placeAbove ? window.innerHeight - rect.top + sideOffset : undefined,
-        left: rect.left,
+        bottom: placeAbove ? origin.bottom - rect.top + sideOffset : undefined,
+        left: rect.left - origin.left,
         position: "fixed",
-        top: placeAbove ? undefined : rect.bottom + sideOffset,
+        top: placeAbove ? undefined : rect.bottom + sideOffset - origin.top,
       });
     }
 
@@ -434,7 +515,7 @@ export function SelectContent({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open, trigger]);
+  }, [container, open, trigger]);
 
   useLayoutEffect(() => {
     if (!open || highlightedValue == null) return;
@@ -445,6 +526,8 @@ export function SelectContent({
 
   return createPortal(
     <div
+      aria-label={trigger?.getAttribute("aria-label") ?? undefined}
+      aria-labelledby={trigger?.getAttribute("aria-labelledby") ?? undefined}
       className={cn("ui-select-content p-1", className)}
       id={listboxId}
       ref={listboxRef}
@@ -462,10 +545,17 @@ type SelectItemProps = {
   children: ReactNode;
   className?: string;
   disabled?: boolean;
+  leading?: ReactNode;
   value: string;
 };
 
-export function SelectItem({ children, className, disabled = false, value }: SelectItemProps) {
+export function SelectItem({
+  children,
+  className,
+  disabled = false,
+  leading,
+  value,
+}: SelectItemProps) {
   const context = useSelectContext();
   const highlighted = context.highlightedValue === value;
   const selected = context.value === value;
@@ -493,6 +583,7 @@ export function SelectItem({ children, className, disabled = false, value }: Sel
           <CheckIcon />
         </span>
       ) : null}
+      {leading}
       <span className="min-w-0 truncate">{children}</span>
     </div>
   );
@@ -541,15 +632,20 @@ export function SelectField({
           container={triggerElement?.closest<HTMLElement>('[aria-modal="true"]') ?? undefined}
         >
           {selectOptions.map((option) => (
-            <SelectItem key={option.value || "__empty__"} value={option.value}>
-              {hasOptionIcons ? (
-                <span
-                  aria-hidden="true"
-                  className="flex h-5 w-5 shrink-0 items-center justify-center"
-                >
-                  {option.icon}
-                </span>
-              ) : null}
+            <SelectItem
+              key={option.value || "__empty__"}
+              leading={
+                hasOptionIcons ? (
+                  <span
+                    aria-hidden="true"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center"
+                  >
+                    {option.icon}
+                  </span>
+                ) : undefined
+              }
+              value={option.value}
+            >
               {option.label}
             </SelectItem>
           ))}

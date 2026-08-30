@@ -80,7 +80,7 @@ describe("settings selects", () => {
     );
 
     await user.click(screen.getByRole("combobox", { name: "Agent provider" }));
-    expect(await screen.findByRole("listbox")).toBeVisible();
+    expect(await screen.findByRole("listbox", { name: "Agent provider" })).toBeVisible();
     expect(screen.getByRole("option", { name: "Claude Code" })).toBeVisible();
 
     expectNotIsolated(screen.getByTestId("application"));
