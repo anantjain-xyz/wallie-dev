@@ -383,7 +383,7 @@ describe("accessible overlay primitives", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("preserves SelectField empty-string options behind the Radix boundary", async () => {
+  it("preserves SelectField empty-string options", async () => {
     const user = userEvent.setup();
     const onValueChange = vi.fn();
 

@@ -27,8 +27,7 @@ label, while the lower-level `SelectTrigger` requires `accessibleLabel`.
 `Dialog` and `AlertDialog` remain modal. `Select`, `SelectField`, `DropdownMenu`, and `ActionMenu` are
 non-modal: their content still portals to `#wallie-overlay-root` (or into an open `[aria-modal="true"]`
 dialog), but opening a listbox or menu does not `hideOthers` / `inert` the application tree. `Select`
-hardcodes `modal={false}` (honored via the `@radix-ui/react-select` patch); `DropdownMenu` defaults to
-`modal={false}`.
+is a first-party listbox (Radix Select has no `modal` API). `DropdownMenu` defaults to `modal={false}`.
 
 The development-only `/dev/ui-primitives` route exercises all six patterns in light, dark, and a
 reduced-motion override. The override exists only for deterministic visual testing; the production

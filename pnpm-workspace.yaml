@@ -1,2 +1,0 @@
-patchedDependencies:
-  "@radix-ui/react-select": patches/@radix-ui__react-select.patch
