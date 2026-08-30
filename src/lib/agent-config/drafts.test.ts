@@ -89,6 +89,21 @@ describe("applyAgentConfigDraftChange", () => {
       agent_provider: "claude-code",
       agent_model: "claude-opus-4-8[1m]",
     });
+    expect(applyAgentConfigDraftChange(drafts, "agent_provider", "cursor")).toMatchObject({
+      agent_provider: "cursor",
+      agent_model: "auto",
+    });
+  });
+
+  it("parses the recommended Cursor default and the catalog Auto id", () => {
+    expect(parseAgentConfigDraft("agent_model", "select", "auto")).toEqual({
+      ok: true,
+      value: "auto",
+    });
+    expect(parseAgentConfigDraft("agent_model", "select", "auto-smart")).toEqual({
+      ok: true,
+      value: "auto-smart",
+    });
   });
 });
 
