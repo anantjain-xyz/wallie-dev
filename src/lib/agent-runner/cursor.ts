@@ -107,16 +107,7 @@ export function parseCursorStreamJsonLine(line: string): {
       return { event: text ? { text, type: "text" } : null, sessionId };
     }
     if (value.type === "tool_call") {
-      const toolCall = (value.tool_call ?? value) as Record<string, unknown>;
-      const tool = String(toolCall.name ?? toolCall.type ?? value.subtype ?? "tool");
-      return {
-        event: {
-          input: JSON.stringify(toolCall.input ?? toolCall.args ?? {}),
-          tool,
-          type: "tool_use",
-        },
-        sessionId,
-      };
+      return { event: parseCursorToolCallEvent(value), sessionId };
     }
     if (value.type === "result") {
       return {
@@ -132,6 +123,121 @@ export function parseCursorStreamJsonLine(line: string): {
   } catch {
     return { event: { text: trimmed, type: "text" } };
   }
+}
+
+const TOOL_CALL_KEY_SUFFIX = "ToolCall";
+const MAX_TOOL_INPUT_CHARS = 4096;
+const MAX_TOOL_TEXT_CHARS = 500;
+const BULKY_TOOL_FIELDS = new Set([
+  "afterFullFileContent",
+  "content",
+  "diffString",
+  "directoryTreeRoot",
+  "fileText",
+  "parsingResult",
+]);
+
+function parseCursorToolCallEvent(value: Record<string, unknown>): AgentEvent {
+  const toolCall = isRecord(value.tool_call) ? value.tool_call : value;
+  const nested = findNestedToolCall(toolCall);
+  const functionCall = isRecord(toolCall.function) ? toolCall.function : null;
+  const tool =
+    nested?.name ??
+    (typeof functionCall?.name === "string" ? functionCall.name : null) ??
+    (typeof toolCall.name === "string" ? toolCall.name : null) ??
+    "tool";
+  const args =
+    nested?.body.args ??
+    parseFunctionArguments(functionCall?.arguments) ??
+    toolCall.input ??
+    toolCall.args ??
+    {};
+  const completed = value.subtype === "completed";
+  const result = completed
+    ? (nested?.body.result ?? functionCall?.result ?? toolCall.result)
+    : undefined;
+
+  return {
+    input: serializeToolInput(args, completed ? result : undefined),
+    tool,
+    type: "tool_use",
+  };
+}
+
+function findNestedToolCall(toolCall: Record<string, unknown>): {
+  body: Record<string, unknown>;
+  name: string;
+} | null {
+  for (const [key, nested] of Object.entries(toolCall)) {
+    if (!key.endsWith(TOOL_CALL_KEY_SUFFIX) || key.length <= TOOL_CALL_KEY_SUFFIX.length) continue;
+    if (!isRecord(nested)) continue;
+    return { body: nested, name: toolCallKeyToName(key) };
+  }
+  return null;
+}
+
+function toolCallKeyToName(key: string): string {
+  return key
+    .slice(0, -TOOL_CALL_KEY_SUFFIX.length)
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase();
+}
+
+function parseFunctionArguments(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function serializeToolInput(args: unknown, result: unknown): string {
+  const compactArgs = compactToolValue(args);
+  const payload =
+    result === undefined
+      ? compactArgs
+      : isRecord(compactArgs)
+        ? { ...compactArgs, result: compactToolResult(result) }
+        : { args: compactArgs, result: compactToolResult(result) };
+  const json = JSON.stringify(payload ?? {});
+  if (json.length <= MAX_TOOL_INPUT_CHARS) return json;
+  return `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`;
+}
+
+function compactToolResult(result: unknown): unknown {
+  if (!isRecord(result)) return compactToolValue(result);
+  if (isRecord(result.success)) return compactToolValue(result.success);
+  if (isRecord(result.error)) return { error: compactToolValue(result.error) };
+  if (isRecord(result.rejected)) return { rejected: compactToolValue(result.rejected) };
+  return compactToolValue(result);
+}
+
+function compactToolValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return truncateToolText(value);
+  if (Array.isArray(value)) {
+    if (depth > 4) return value;
+    return value.slice(0, 20).map((item) => compactToolValue(item, depth + 1));
+  }
+  if (!isRecord(value) || depth > 4) return value;
+
+  const compacted: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (BULKY_TOOL_FIELDS.has(key)) continue;
+    compacted[key] = compactToolValue(nested, depth + 1);
+  }
+  return compacted;
+}
+
+function truncateToolText(value: string): string {
+  if (value.length <= MAX_TOOL_TEXT_CHARS) return value;
+  return `${value.slice(0, MAX_TOOL_TEXT_CHARS)}…`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function extractText(value: unknown): string {

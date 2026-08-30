@@ -383,6 +383,67 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("unavailable member");
   });
 
+  it("labels tool-use rows as Tool use and shows the parsed tool payload", () => {
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            id: "run-cursor",
+            messages: [
+              {
+                createdAt: "2026-05-20T20:05:00.000Z",
+                id: "msg-read",
+                kind: "tool_use",
+                messageMd: '**Tool:** read\n\n```\n{"path":"src/lib/agent-runner/cursor.ts"}\n```',
+              },
+              {
+                createdAt: "2026-05-20T20:05:01.000Z",
+                id: "msg-shell",
+                kind: "tool_use",
+                messageMd:
+                  '**Tool:** shell\n\n```\n{"command":"ls","result":{"exitCode":0,"stdout":"cursor.ts"}}\n```',
+              },
+            ],
+            modelName: "cursor/grok-4.6",
+            modelProvider: "cursor",
+            stageName: "Build",
+            stageSlug: "build",
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("Tool use");
+    expect(html).not.toContain("Tool_use");
+    expect(html).toContain("**Tool:** read");
+    expect(html).toContain("&quot;path&quot;:&quot;src/lib/agent-runner/cursor.ts&quot;");
+    expect(html).toContain("**Tool:** shell");
+    expect(html).toContain("&quot;exitCode&quot;:0");
+  });
+
+  it("keeps Codex tool-use rows on the existing Tool name plus input JSON format", () => {
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            messages: [
+              {
+                createdAt: "2026-05-20T20:05:00.000Z",
+                id: "msg-codex-tool",
+                kind: "tool_use",
+                messageMd: '**Tool:** bash\n\n```\n{"cmd":"ls"}\n```',
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("Tool use");
+    expect(html).toContain("**Tool:** bash");
+    expect(html).toContain("&quot;cmd&quot;:&quot;ls&quot;");
+  });
+
   it("keeps long log bodies from introducing unconstrained width", () => {
     const longLog = `path/${"segment/".repeat(40)}file.ts:${"x".repeat(200)}`;
     const html = renderPanel(

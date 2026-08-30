@@ -84,6 +84,7 @@ describe("activity-summary helpers", () => {
     expect(currentOperationLabel({ run: run(), stalled: false })).toBe("Wallie is working…");
     expect(formatMessageSourceLabel("progress")).toBe("Progress");
     expect(formatMessageSourceLabel("error")).toBe("Error");
+    expect(formatMessageSourceLabel("tool_use")).toBe("Tool use");
     expect(messagesLoadingCopy()).toBe("Loading run messages…");
     expect(messagesEmptyCopy()).toContain("No messages");
     expect(messagesFailedCopy()).toContain("Collapse and expand");

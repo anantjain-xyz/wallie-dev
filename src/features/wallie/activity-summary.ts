@@ -44,6 +44,8 @@ export function formatMessageSourceLabel(kind: string) {
       return "Status";
     case "log":
       return "Log";
+    case "tool_use":
+      return "Tool use";
     default: {
       if (!normalized) return "Message";
       return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;

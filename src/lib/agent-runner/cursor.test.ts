@@ -68,6 +68,15 @@ describe("CursorRunner", () => {
   });
 });
 
+function parseToolUse(line: string) {
+  const event = parseCursorStreamJsonLine(line).event;
+  expect(event).toMatchObject({ type: "tool_use" });
+  if (!event || event.type !== "tool_use") {
+    throw new Error("expected tool_use event");
+  }
+  return { event, input: JSON.parse(event.input) as Record<string, unknown> };
+}
+
 describe("parseCursorStreamJsonLine", () => {
   it("parses assistant, tool, and result records", () => {
     expect(
@@ -84,6 +93,101 @@ describe("parseCursorStreamJsonLine", () => {
       summary: "done",
       taskComplete: true,
       type: "completion",
+    });
+  });
+
+  it("extracts nested *ToolCall names and args from official stream-json", () => {
+    expect(
+      parseCursorStreamJsonLine(
+        JSON.stringify({
+          call_id: "toolu_read",
+          subtype: "started",
+          tool_call: { readToolCall: { args: { path: "file.txt" } } },
+          type: "tool_call",
+        }),
+      ).event,
+    ).toEqual({ input: '{"path":"file.txt"}', tool: "read", type: "tool_use" });
+
+    const glob = parseToolUse(
+      JSON.stringify({
+        subtype: "started",
+        tool_call: {
+          globToolCall: { args: { globPattern: "**/*.ts", targetDirectory: "src" } },
+        },
+        type: "tool_call",
+      }),
+    );
+    expect(glob.event.tool).toBe("glob");
+    expect(glob.input).toEqual({
+      globPattern: "**/*.ts",
+      targetDirectory: "src",
+    });
+  });
+
+  it("summarizes completed tool results without dumping file or stdout contents", () => {
+    const stdout = "x".repeat(4000);
+    const completed = parseToolUse(
+      JSON.stringify({
+        call_id: "toolu_shell",
+        subtype: "completed",
+        tool_call: {
+          shellToolCall: {
+            args: { command: "cat huge.log" },
+            result: { success: { exitCode: 0, stderr: "", stdout } },
+          },
+        },
+        type: "tool_call",
+      }),
+    );
+
+    expect(completed.event.tool).toBe("shell");
+    expect(completed.input).toMatchObject({
+      command: "cat huge.log",
+      result: { exitCode: 0, stderr: "" },
+    });
+    expect((completed.input.result as { stdout: string }).stdout).toBe(`${"x".repeat(500)}…`);
+    expect(completed.event.input).not.toContain(stdout);
+
+    const readCompleted = parseToolUse(
+      JSON.stringify({
+        subtype: "completed",
+        tool_call: {
+          readToolCall: {
+            args: { path: "README.md" },
+            result: {
+              success: {
+                content: "# Project\n\nThis is a sample project...",
+                exceededLimit: false,
+                isEmpty: false,
+                totalChars: 1254,
+                totalLines: 54,
+              },
+            },
+          },
+        },
+        type: "tool_call",
+      }),
+    );
+    expect(readCompleted.event.tool).toBe("read");
+    expect(readCompleted.input).toEqual({
+      path: "README.md",
+      result: {
+        exceededLimit: false,
+        isEmpty: false,
+        totalChars: 1254,
+        totalLines: 54,
+      },
+    });
+  });
+
+  it("never uses subtype as the tool name", () => {
+    expect(
+      parseCursorStreamJsonLine('{"type":"tool_call","subtype":"started","tool_call":{}}').event,
+    ).toEqual({ input: "{}", tool: "tool", type: "tool_use" });
+    expect(parseCursorStreamJsonLine('{"type":"tool_call","subtype":"completed"}').event).toEqual({
+      input: "{}",
+      tool: "tool",
+      type: "tool_use",
     });
   });
 });
