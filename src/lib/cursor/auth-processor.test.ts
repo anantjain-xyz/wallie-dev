@@ -4,6 +4,7 @@ import {
   CURSOR_AUTH_FLOW_LEASE_MS,
   completeCursorAuthFlow,
   createCursorAuthClaimToken,
+  publishCursorLoginUrl,
   reclaimStaleCursorAuthFlows,
   startCursorAuthProcessor,
 } from "@/lib/cursor/auth-processor";
@@ -70,6 +71,47 @@ describe("createCursorAuthClaimToken", () => {
     expect(first).toMatch(/^worker-1:/);
     expect(second).toMatch(/^worker-1:/);
     expect(second).not.toBe(first);
+  });
+});
+
+describe("publishCursorLoginUrl", () => {
+  it("executes the guarded update and reports whether the claim still exists", async () => {
+    const calls: Array<[string, unknown[]]> = [];
+    const builder = {
+      eq: (...args: unknown[]) => {
+        calls.push(["eq", args]);
+        return builder;
+      },
+      in: (...args: unknown[]) => {
+        calls.push(["in", args]);
+        return builder;
+      },
+      maybeSingle: vi.fn().mockResolvedValue({ data: { id: "flow-1" }, error: null }),
+      select: (...args: unknown[]) => {
+        calls.push(["select", args]);
+        return builder;
+      },
+    };
+    const update = vi.fn(() => builder);
+
+    const published = await publishCursorLoginUrl({ from: () => ({ update }) } as never, {
+      claimToken: "worker-1:claim-1",
+      flowId: "flow-1",
+      loginUrl: "https://cursor.com/login/flow-1",
+    });
+
+    expect(published).toBe(true);
+    expect(update).toHaveBeenCalledWith({
+      login_url: "https://cursor.com/login/flow-1",
+      status: "prompted",
+    });
+    expect(calls).toEqual([
+      ["eq", ["id", "flow-1"]],
+      ["eq", ["claimed_by", "worker-1:claim-1"]],
+      ["in", ["status", ["processing", "prompted"]]],
+      ["select", ["id"]],
+    ]);
+    expect(builder.maybeSingle).toHaveBeenCalledTimes(1);
   });
 });
 

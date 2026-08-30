@@ -117,6 +117,15 @@ export async function processNextCursorAuthFlow(
         if (!error && !data) controller.abort();
       });
   }, POLL_INTERVAL_MS);
+  let loginUrlPublicationError: unknown = null;
+  const failLoginUrlPublication = (error: unknown) => {
+    loginUrlPublicationError = error;
+    console.error("[cursor-auth] failed to publish login URL", {
+      error: errorMessage(error),
+      flowId: claimed.id,
+    });
+    controller.abort(error);
+  };
   const onShutdown = () => controller.abort();
   if (shutdownSignal?.aborted) controller.abort();
   else shutdownSignal?.addEventListener("abort", onShutdown, { once: true });
@@ -126,12 +135,17 @@ export async function processNextCursorAuthFlow(
       apiKeyName: "Wallie",
       apiKeyTtlMs: DEFAULT_LOGIN_API_KEY_TTL_MS,
       onLoginUrl: (loginUrl) => {
-        void admin
-          .from("cursor_auth_flows")
-          .update({ login_url: loginUrl, status: "prompted" })
-          .eq("id", claimed.id)
-          .eq("claimed_by", claimToken)
-          .in("status", ["processing", "prompted"]);
+        void publishCursorLoginUrl(admin, {
+          claimToken,
+          flowId: claimed.id,
+          loginUrl,
+        }).then((published) => {
+          if (!published) {
+            failLoginUrlPublication(
+              new Error("Cursor auth flow claim was lost before publishing the login URL."),
+            );
+          }
+        }, failLoginUrlPublication);
       },
       openBrowser: false,
       signal: controller.signal,
@@ -150,6 +164,8 @@ export async function processNextCursorAuthFlow(
     });
   } catch (error) {
     const aborted = controller.signal.aborted;
+    const effectiveError = loginUrlPublicationError ?? error;
+    const shouldExpire = aborted && loginUrlPublicationError === null;
     if (shutdownSignal?.aborted) {
       await admin
         .from("cursor_auth_flows")
@@ -167,8 +183,8 @@ export async function processNextCursorAuthFlow(
       await admin
         .from("cursor_auth_flows")
         .update({
-          error_message: aborted ? "Cursor sign-in expired." : errorMessage(error),
-          status: aborted ? "expired" : "error",
+          error_message: shouldExpire ? "Cursor sign-in expired." : errorMessage(effectiveError),
+          status: shouldExpire ? "expired" : "error",
         })
         .eq("id", claimed.id)
         .eq("claimed_by", claimToken)
@@ -180,6 +196,22 @@ export async function processNextCursorAuthFlow(
     shutdownSignal?.removeEventListener("abort", onShutdown);
   }
   return true;
+}
+
+export async function publishCursorLoginUrl(
+  admin: AdminClient,
+  input: { claimToken: string; flowId: string; loginUrl: string },
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("cursor_auth_flows")
+    .update({ login_url: input.loginUrl, status: "prompted" })
+    .eq("id", input.flowId)
+    .eq("claimed_by", input.claimToken)
+    .in("status", ["processing", "prompted"])
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
 }
 
 export async function completeCursorAuthFlow(
