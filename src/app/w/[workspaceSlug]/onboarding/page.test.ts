@@ -93,6 +93,11 @@ const onboardingData = {
       status: "missing",
       updatedAt: null,
     },
+    openCodeConnection: {
+      connected: false,
+      status: "missing",
+      updatedAt: null,
+    },
     defaultPipeline: {
       configured: true,
       pipelineId: "pipeline-1",

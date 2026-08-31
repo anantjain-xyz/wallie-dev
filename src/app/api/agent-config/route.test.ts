@@ -117,6 +117,44 @@ describe("POST /api/agent-config — value validation", () => {
     });
   });
 
+  it("accepts an OpenCode provider and fully qualified model", async () => {
+    grantAccess();
+    const upsert = setupSuccessfulUpsert();
+
+    const providerResponse = await POST(
+      postWith({ key: "agent_provider", value: "opencode", workspaceId: WORKSPACE_ID }),
+    );
+    grantAccess();
+    const modelResponse = await POST(
+      postWith({
+        key: "agent_model",
+        value: "opencode/gpt-5.6-sol",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(providerResponse.status).toBe(200);
+    expect(modelResponse.status).toBe(200);
+    expect(upsert).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ key: "agent_provider", value_json: "opencode" }),
+      { onConflict: "workspace_id,key" },
+    );
+    expect(upsert).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ key: "agent_model", value_json: "opencode/gpt-5.6-sol" }),
+      { onConflict: "workspace_id,key" },
+    );
+  });
+
+  it("rejects uppercase OpenCode model ids", async () => {
+    const response = await POST(
+      postWith({ key: "agent_model", value: "opencode/GPT-5.6-sol", workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
   it("accepts a valid integer stall timeout with admin access", async () => {
     grantAccess();
     setupSuccessfulUpsert();
@@ -277,5 +315,34 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
       ]),
       { onConflict: "workspace_id,key" },
     );
+  });
+
+  it("uses OpenCode's recommended model for missing agent_model defaults", async () => {
+    grantAccess();
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ key: "agent_provider", value_json: "opencode" }],
+            error: null,
+          }),
+        }),
+        upsert,
+      }),
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/agent-config", {
+        body: JSON.stringify({ workspaceId: WORKSPACE_ID }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      applied: expect.arrayContaining([{ key: "agent_model", value: "opencode/gpt-5.6-sol" }]),
+    });
   });
 });

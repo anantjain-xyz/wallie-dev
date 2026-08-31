@@ -44,6 +44,8 @@ function agentCliCommand(provider: AgentProvider): string {
       return "command -v codex && codex --version";
     case "claude-code":
       return "command -v claude && claude --version";
+    case "opencode":
+      return "command -v opencode && opencode --version";
   }
 }
 

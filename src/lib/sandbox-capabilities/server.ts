@@ -9,6 +9,7 @@ import { resolveGitHubAppConfig } from "@/features/github/config";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { getClaudeCodeCredentialForUser } from "@/lib/claude-code/tokens";
 import { getCodexCredentialForUser } from "@/lib/codex/tokens";
+import { getOpenCodeCredentialForUser } from "@/lib/opencode/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider } from "@/lib/sandbox/types";
 import { asLooseSupabaseClient } from "@/lib/supabase/loose";
@@ -261,10 +262,16 @@ export async function completeSandboxCapabilityCheck(input: {
       input.workspaceId,
     );
     const installationToken = await mintInstallationToken(input.admin, input.repository);
-    if (provider === "codex") {
-      await getCodexCredentialForUser(input.admin, input.userId);
-    } else {
-      await getClaudeCodeCredentialForUser(input.admin, input.userId);
+    switch (provider) {
+      case "codex":
+        await getCodexCredentialForUser(input.admin, input.userId);
+        break;
+      case "claude-code":
+        await getClaudeCodeCredentialForUser(input.admin, input.userId);
+        break;
+      case "opencode":
+        await getOpenCodeCredentialForUser(input.admin, input.userId);
+        break;
     }
 
     sandbox = await createSessionSandbox({

@@ -12,6 +12,7 @@ import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -41,6 +42,7 @@ type AgentConfigSectionProps = {
   onAgentConfigSaved?: (entry: UpsertAgentConfigResponse["entry"]) => void;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  onOpenCodeStatusChange?: (status: OpenCodeConnectionStatus) => void;
   setFlashMessage: (message: FlashMessage) => void;
   tagline?: ReactNode;
   title?: string;
@@ -130,6 +132,7 @@ export function AgentConfigSection({
   onAgentConfigSaved,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  onOpenCodeStatusChange,
   setFlashMessage,
   tagline = "Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution.",
   title = "Coding agent",
@@ -297,6 +300,7 @@ export function AgentConfigSection({
             connectFlash={codexConnectFlash}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
+            onOpenCodeStatusChange={onOpenCodeStatusChange}
             provider={selectedAgentProvider}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
@@ -346,6 +350,7 @@ export function AgentConfigSection({
             connectFlash={codexConnectFlash}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
+            onOpenCodeStatusChange={onOpenCodeStatusChange}
             provider={selectedAgentProvider}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}

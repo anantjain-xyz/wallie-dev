@@ -1,6 +1,6 @@
 /**
  * Sandbox abstraction — a per-session Linux microVM used to run the coding
- * agent CLI (Codex or Claude Code). Wraps provider-specific SDKs (Vercel
+ * agent CLI (Codex, Claude Code, or OpenCode). Wraps provider-specific SDKs (Vercel
  * Sandbox today; an E2B adapter could slot in later) so the rest of Wallie
  * only depends on this interface.
  */
@@ -74,7 +74,7 @@ export interface SandboxHandle {
 // Factory input
 // ---------------------------------------------------------------------------
 
-export type AgentProvider = "codex" | "claude-code";
+export type AgentProvider = "codex" | "claude-code" | "opencode";
 export type SandboxImplementation = "vercel" | "fake";
 
 export type VercelSandboxCredentials = {

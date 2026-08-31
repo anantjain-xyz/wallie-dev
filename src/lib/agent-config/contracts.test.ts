@@ -183,18 +183,20 @@ describe("parseAgentConfigValue — agent_provider", () => {
   it("rejects unknown providers", () => {
     expect(parseAgentConfigValue("agent_provider", "lol")).toEqual({
       ok: false,
-      error: "Provider must be one of: codex, claude-code.",
+      error: "Provider must be one of: codex, claude-code, opencode.",
     });
   });
 });
 
 describe("provider-specific recommended defaults", () => {
-  it("uses GPT-5.5 for Codex and Opus 4.7 1M for Claude Code", () => {
+  it("uses provider-specific recommended models", () => {
     expect(getRecommendedAgentModel("codex")).toBe("gpt-5.5");
     expect(getRecommendedAgentModel("claude-code")).toBe("claude-opus-4-7[1m]");
+    expect(getRecommendedAgentModel("opencode")).toBe("opencode/gpt-5.6-sol");
     expect(RECOMMENDED_AGENT_MODELS).toEqual({
       codex: "gpt-5.5",
       "claude-code": "claude-opus-4-7[1m]",
+      opencode: "opencode/gpt-5.6-sol",
     });
   });
 
@@ -204,6 +206,9 @@ describe("provider-specific recommended defaults", () => {
     expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms).toBe(900_000);
     expect(getRecommendedAgentConfigDefault("agent_model", "claude-code")).toBe(
       "claude-opus-4-7[1m]",
+    );
+    expect(getRecommendedAgentConfigDefault("agent_model", "opencode")).toBe(
+      "opencode/gpt-5.6-sol",
     );
   });
 
@@ -233,6 +238,13 @@ describe("parseAgentConfigValue — agent_model", () => {
     expect(parseAgentConfigValue("agent_model", "o3-mini")).toEqual({
       ok: true,
       value: "o3-mini",
+    });
+  });
+
+  it("accepts lowercase OpenCode Zen model ids", () => {
+    expect(parseAgentConfigValue("agent_model", "opencode/gpt-5.6-sol")).toEqual({
+      ok: true,
+      value: "opencode/gpt-5.6-sol",
     });
   });
 
@@ -288,6 +300,10 @@ describe("parseAgentConfigValue — agent_model", () => {
       ok: false,
       error: expect.stringContaining("lowercase"),
     });
+    expect(parseAgentConfigValue("agent_model", "opencode/GPT-5.6-sol")).toEqual({
+      ok: false,
+      error: expect.stringContaining("lowercase"),
+    });
   });
 });
 
@@ -309,6 +325,13 @@ describe("modelMatchesProvider", () => {
     expect(modelMatchesProvider("claude-code", "Claude-Sonnet-4-5")).toBe(false);
     expect(modelMatchesProvider("codex", "GPT-5-codex")).toBe(false);
   });
+
+  it("matches OpenCode only to lowercase opencode/* model ids", () => {
+    expect(modelMatchesProvider("opencode", "opencode/gpt-5.6-sol")).toBe(true);
+    expect(modelMatchesProvider("opencode", "gpt-5.6-sol")).toBe(false);
+    expect(modelMatchesProvider("opencode", "opencode/GPT-5.6-sol")).toBe(false);
+    expect(modelMatchesProvider("codex", "opencode/gpt-5.6-sol")).toBe(false);
+  });
 });
 
 describe("normalizeAgentProviderName", () => {
@@ -319,6 +342,7 @@ describe("normalizeAgentProviderName", () => {
   it("passes canonical providers through unchanged", () => {
     expect(normalizeAgentProviderName("codex")).toBe("codex");
     expect(normalizeAgentProviderName("claude-code")).toBe("claude-code");
+    expect(normalizeAgentProviderName("opencode")).toBe("opencode");
   });
 
   it("returns null for unset or unknown providers", () => {
@@ -338,6 +362,7 @@ describe("isAgentConfigKey / isAgentProvider", () => {
     expect(isAgentProvider("codex")).toBe(true);
     expect(isAgentProvider("claude_code")).toBe(true);
     expect(isAgentProvider("claude-code")).toBe(true);
+    expect(isAgentProvider("opencode")).toBe(true);
     expect(isAgentProvider("openai")).toBe(false);
   });
 });

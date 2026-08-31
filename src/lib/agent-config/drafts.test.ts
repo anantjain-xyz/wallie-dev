@@ -76,5 +76,9 @@ describe("applyAgentConfigDraftChange", () => {
       agent_provider: "claude-code",
       agent_model: "claude-opus-4-7[1m]",
     });
+    expect(applyAgentConfigDraftChange(drafts, "agent_provider", "opencode")).toMatchObject({
+      agent_provider: "opencode",
+      agent_model: "opencode/gpt-5.6-sol",
+    });
   });
 });

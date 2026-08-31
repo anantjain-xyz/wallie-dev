@@ -22,6 +22,7 @@ import {
   CodexNotConnectedError,
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
+import { getOpenCodeCredentialForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
@@ -909,6 +910,22 @@ async function resolveAgentRunner(input: {
       };
     } catch (error) {
       if (error instanceof ClaudeCodeNotConnectedError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
+  }
+
+  if (input.provider === "opencode") {
+    try {
+      const credential = await getOpenCodeCredentialForSession(input.admin, input.session);
+      return {
+        runner: createAgentRunner("opencode", {
+          openCode: { credential, model: input.model },
+        }),
+      };
+    } catch (error) {
+      if (error instanceof OpenCodeNotConnectedError) {
         throw new Error(error.message);
       }
       throw error;

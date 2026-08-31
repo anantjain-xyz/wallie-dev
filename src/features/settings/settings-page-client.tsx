@@ -7,6 +7,7 @@ import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import type { SettingsPageData } from "@/features/settings/data";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
@@ -172,6 +173,23 @@ function updateClaudeCodeConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       claudeCodeConnection: {
+        connected: status.connected,
+        status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+function updateOpenCodeConnectionInData(
+  currentData: SettingsPageData,
+  status: OpenCodeConnectionStatus,
+): SettingsPageData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      openCodeConnection: {
         connected: status.connected,
         status: status.connected ? "connected" : "missing",
         updatedAt: status.updatedAt ?? null,
@@ -389,6 +407,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               }
               onCodexStatusChange={(status) =>
                 setData((currentData) => updateCodexConnectionInData(currentData, status))
+              }
+              onOpenCodeStatusChange={(status) =>
+                setData((currentData) => updateOpenCodeConnectionInData(currentData, status))
               }
               setFlashMessage={setFlashMessage}
               tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."

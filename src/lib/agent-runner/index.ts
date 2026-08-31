@@ -15,9 +15,11 @@ export {
   DEFAULT_CLAUDE_CODE_MODEL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_OPENCODE_MODEL,
 } from "./types";
 export { ClaudeCodeRunner } from "./claude-code";
 export { CodexRunner } from "./codex";
+export { OpenCodeRunner } from "./opencode";
 export { loadWorkspaceAgentConfig, type ResolvedWorkspaceAgentConfig } from "./workspace-config";
 
 import type { AgentRunner } from "./types";
@@ -28,12 +30,15 @@ import {
 } from "@/lib/agent-config/contracts";
 import { ClaudeCodeRunner, type ClaudeCodeRunnerOptions } from "./claude-code";
 import { CodexRunner, type CodexRunnerOptions } from "./codex";
+import { OpenCodeRunner, type OpenCodeRunnerOptions } from "./opencode";
 
 export interface CreateAgentRunnerOptions {
   /** Required when provider resolves to "claude-code". */
   claudeCode?: ClaudeCodeRunnerOptions;
   /** Required when provider resolves to "codex". */
   codex?: CodexRunnerOptions;
+  /** Required when provider resolves to "opencode". */
+  openCode?: OpenCodeRunnerOptions;
 }
 
 type AgentProviderName = AgentProvider | "claude_code";
@@ -66,6 +71,13 @@ export function createAgentRunner(
         );
       }
       return new CodexRunner(opts.codex);
+    case "opencode":
+      if (!opts.openCode) {
+        throw new Error(
+          "opencode provider requires an OpenCode Zen API key (pass opts.openCode to createAgentRunner).",
+        );
+      }
+      return new OpenCodeRunner(opts.openCode);
     default:
       throw new Error(
         `Unknown agent provider: "${provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,

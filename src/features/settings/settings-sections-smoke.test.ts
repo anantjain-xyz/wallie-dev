@@ -105,6 +105,11 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
         status: "missing",
         updatedAt: null,
       },
+      openCodeConnection: {
+        connected: false,
+        status: "missing",
+        updatedAt: null,
+      },
       codexConnection: {
         connected: false,
         credentialType: null,
@@ -263,6 +268,31 @@ describe("Settings integration sections", () => {
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).not.toContain("<select");
     expect(html).not.toContain("Connect yours below");
+  });
+
+  it("renders OpenCode provider access and its recommended model", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentConfigSection, {
+        canManage: true,
+        initialAgentConfig: {
+          agent_model: "opencode/gpt-5.6-sol",
+          agent_provider: "opencode",
+          concurrency_limit: 1,
+          max_retries: 3,
+          stall_timeout_ms: 300000,
+        },
+        setFlashMessage: vi.fn(),
+        workspaceId,
+      }),
+    );
+
+    expect(html).toContain("OpenCode");
+    expect(html).toContain("opencode/gpt-5.6-sol");
+    expect(html).toContain("OpenCode Zen API key");
+    expect(html).toContain(
+      "Sessions run with the OpenCode Zen API key saved by the session creator",
+    );
+    expect(html).toContain("Checking connection");
   });
 
   it("blocks ChatGPT subscription sign-in until Vercel Sandbox is connected", () => {

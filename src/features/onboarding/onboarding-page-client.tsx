@@ -42,6 +42,7 @@ import {
 } from "@/features/onboarding/runtime-readiness";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
@@ -320,6 +321,7 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = d
     agentConfig,
     claudeCodeConnection: data.setupHealth.claudeCodeConnection,
     codexConnection: data.setupHealth.codexConnection,
+    openCodeConnection: data.setupHealth.openCodeConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
   });
@@ -417,6 +419,23 @@ function updateClaudeCodeConnectionInData(
   };
 }
 
+function updateOpenCodeConnectionInData(
+  currentData: WorkspaceOnboardingData,
+  status: OpenCodeConnectionStatus,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      openCodeConnection: {
+        connected: status.connected,
+        status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
 export function updateSandboxCapabilityCheckInData(
   currentData: WorkspaceOnboardingData,
   check: SandboxCapabilityCheckState,
@@ -500,15 +519,10 @@ export function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryIt
     typeof health.agentConfig.values.agent_provider === "string"
       ? (normalizeAgentProviderName(health.agentConfig.values.agent_provider) ?? "codex")
       : "codex";
-  const providerCredential =
-    selectedProvider === "claude-code"
-      ? {
-          connected: health.claudeCodeConnection.connected,
-          credentialLabel: health.claudeCodeConnection.connected ? "Anthropic API key" : null,
-          expired: false,
-          updatedAt: health.claudeCodeConnection.updatedAt,
-        }
-      : {
+  const providerCredential = (() => {
+    switch (selectedProvider) {
+      case "codex":
+        return {
           connected: health.codexConnection.connected,
           credentialLabel: health.codexConnection.credentialType
             ? codexCredentialTypeLabel(health.codexConnection.credentialType)
@@ -516,6 +530,22 @@ export function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryIt
           expired: health.codexConnection.status === "expired",
           updatedAt: health.codexConnection.updatedAt,
         };
+      case "claude-code":
+        return {
+          connected: health.claudeCodeConnection.connected,
+          credentialLabel: health.claudeCodeConnection.connected ? "Anthropic API key" : null,
+          expired: false,
+          updatedAt: health.claudeCodeConnection.updatedAt,
+        };
+      case "opencode":
+        return {
+          connected: health.openCodeConnection.connected,
+          credentialLabel: health.openCodeConnection.connected ? "OpenCode Zen API key" : null,
+          expired: false,
+          updatedAt: health.openCodeConnection.updatedAt,
+        };
+    }
+  })();
   const providerCredentialBadge = providerCredential.connected
     ? { tone: "success" as const, value: "Connected" }
     : providerCredential.expired
@@ -971,6 +1001,11 @@ function RuntimeStep({
       onDataChange((current) => updateClaudeCodeConnectionInData(current, status)),
     [onDataChange],
   );
+  const handleOpenCodeStatusChange = useCallback(
+    (status: OpenCodeConnectionStatus) =>
+      onDataChange((current) => updateOpenCodeConnectionInData(current, status)),
+    [onDataChange],
+  );
   const handleVercelConnectionChange = useCallback(
     (connection: VercelSandboxConnectionPreview | null) =>
       onDataChange((current) => updateVercelSandboxConnectionInData(current, connection)),
@@ -1378,6 +1413,7 @@ function RuntimeStep({
           <ProviderAccessPanel
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
             onCodexStatusChange={handleCodexStatusChange}
+            onOpenCodeStatusChange={handleOpenCodeStatusChange}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             vercelConnectionHref="#onboarding-vercel"

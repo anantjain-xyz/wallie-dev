@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSessionSandbox: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
+  getOpenCodeCredentialForUser: vi.fn(),
   loadRequiredVercelSandboxConnection: vi.fn(),
   loadWorkspaceAgentConfig: vi.fn(),
   octokitRequest: vi.fn(),
@@ -33,6 +34,10 @@ vi.mock("@/lib/codex/tokens", () => ({
 
 vi.mock("@/lib/claude-code/tokens", () => ({
   getClaudeCodeCredentialForUser: vi.fn(),
+}));
+
+vi.mock("@/lib/opencode/tokens", () => ({
+  getOpenCodeCredentialForUser: mocked.getOpenCodeCredentialForUser,
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -179,6 +184,7 @@ beforeEach(() => {
   });
   mocked.octokitRequest.mockResolvedValue({ data: { token: "gh-token" } });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
+  mocked.getOpenCodeCredentialForUser.mockResolvedValue({ secret: "zen-token" });
   mocked.createSessionSandbox.mockImplementation(async (input) => {
     await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
     return {
@@ -250,6 +256,33 @@ describe("completeSandboxCapabilityCheck", () => {
         error_text: "Connect a Vercel Sandbox account before starting Wallie runs.",
         status: "error",
       }),
+    );
+  });
+
+  it("requires the current user's Zen key for OpenCode checks", async () => {
+    mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
+      model: "opencode/gpt-5.6-sol",
+      provider: "opencode",
+    });
+    const { admin } = adminMock();
+
+    await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(mocked.getOpenCodeCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "opencode" }),
     );
   });
 });

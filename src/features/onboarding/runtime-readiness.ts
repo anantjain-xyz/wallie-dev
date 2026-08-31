@@ -100,6 +100,7 @@ export function buildRuntimeReadiness(input: {
   agentConfig: AgentConfigMap;
   claudeCodeConnection: OnboardingSetupHealth["claudeCodeConnection"];
   codexConnection: OnboardingSetupHealth["codexConnection"];
+  openCodeConnection: OnboardingSetupHealth["openCodeConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
 }): RuntimeReadiness {
@@ -117,10 +118,7 @@ export function buildRuntimeReadiness(input: {
   if (!providerModelValid) {
     invalidConfig.push({
       key: "agent_model",
-      error:
-        provider === "codex"
-          ? 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.'
-          : 'Model must start with "claude-" for Claude Code.',
+      error: providerModelError(provider),
     });
   }
 
@@ -183,6 +181,41 @@ export function buildRuntimeReadiness(input: {
         },
       );
       break;
+    case "opencode":
+      requirements.push(
+        {
+          detail: input.openCodeConnection.connected
+            ? "Current user has a connected OpenCode Zen API key."
+            : "Connect the current user's OpenCode Zen API key.",
+          id: "opencode-connection",
+          label: "OpenCode Zen API key",
+          passed: input.openCodeConnection.connected,
+          step: "runtime",
+        },
+        {
+          detail: providerModelValid
+            ? "OpenCode model uses an opencode/* id."
+            : "OpenCode requires an opencode/* model id.",
+          id: "opencode-model",
+          label: "OpenCode model",
+          passed: providerModelValid,
+          step: "runtime",
+        },
+        {
+          detail:
+            input.repositorySetup.status === "ready" && input.repositorySetup.repositoryId
+              ? "Selected repository setup is ready for sandboxed CLI runs."
+              : "Selected repository Wallie setup must be ready before OpenCode can run.",
+          id: "opencode-repository",
+          label: "Sandbox repository",
+          passed:
+            input.repositorySetup.status === "ready" &&
+            Boolean(input.primaryRepositoryId) &&
+            input.repositorySetup.repositoryId === input.primaryRepositoryId,
+          step: "repository",
+        },
+      );
+      break;
   }
 
   return {
@@ -193,6 +226,17 @@ export function buildRuntimeReadiness(input: {
     provider,
     requirements,
   };
+}
+
+function providerModelError(provider: AgentProvider): string {
+  switch (provider) {
+    case "codex":
+      return 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.';
+    case "claude-code":
+      return 'Model must start with "claude-" for Claude Code.';
+    case "opencode":
+      return 'Model must start with "opencode/" for OpenCode.';
+  }
 }
 
 function capabilityCheckMatchesVercelConnection(
@@ -228,6 +272,7 @@ export function buildVerifyChecklist(input: {
     agentConfig: input.agentConfig,
     claudeCodeConnection: input.health.claudeCodeConnection,
     codexConnection: input.health.codexConnection,
+    openCodeConnection: input.health.openCodeConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,
   });

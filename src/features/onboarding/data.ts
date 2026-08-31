@@ -225,6 +225,22 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
   };
 }
 
+function openCodeConnectionStatus(row: { updated_at: string } | null) {
+  if (!row) {
+    return {
+      connected: false,
+      status: "missing" as const,
+      updatedAt: null,
+    };
+  }
+
+  return {
+    connected: true,
+    status: "connected" as const,
+    updatedAt: row.updated_at,
+  };
+}
+
 async function loadSetupHealth(
   context: WorkspaceAccessContext,
   github: WorkspaceGitHubData,
@@ -256,6 +272,7 @@ async function loadSetupHealth(
     { data: agentConfigRows, error: agentConfigError },
     { data: codexCredentials, error: codexError },
     { data: claudeCodeCredentials, error: claudeCodeError },
+    { data: openCodeCredentials, error: openCodeError },
     { data: sandboxRows, error: sandboxError },
     vercelSandboxConnection,
   ] = await Promise.all([
@@ -289,6 +306,11 @@ async function loadSetupHealth(
       .select("updated_at")
       .eq("user_id", context.user.id)
       .maybeSingle(),
+    admin
+      .from("user_opencode_credentials")
+      .select("updated_at")
+      .eq("user_id", context.user.id)
+      .maybeSingle(),
     latestSandboxQuery,
     loadVercelSandboxConnectionPreview(admin, workspaceId),
   ]);
@@ -301,6 +323,7 @@ async function loadSetupHealth(
     agentConfigError ??
     codexError ??
     claudeCodeError ??
+    openCodeError ??
     sandboxError;
   if (firstError) throw firstError;
 
@@ -328,6 +351,7 @@ async function loadSetupHealth(
     },
     claudeCodeConnection: claudeCodeConnectionStatus(claudeCodeCredentials),
     codexConnection: codexConnectionStatus(codexCredentials),
+    openCodeConnection: openCodeConnectionStatus(openCodeCredentials),
     defaultPipeline: {
       configured: Boolean(pipelineRow && stageCount > 0),
       pipelineId: pipelineRow?.id ?? null,

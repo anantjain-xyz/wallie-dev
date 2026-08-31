@@ -8,6 +8,10 @@ import {
   CodexConnectionPanel,
   type CodexConnectionStatus,
 } from "@/features/settings/codex-connection-panel";
+import {
+  OpenCodeConnectionPanel,
+  type OpenCodeConnectionStatus,
+} from "@/features/settings/opencode-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
@@ -15,6 +19,7 @@ type ProviderAccessPanelProps = {
   connectFlash?: string | null;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  onOpenCodeStatusChange?: (status: OpenCodeConnectionStatus) => void;
   provider: AgentProvider;
   returnTo?: string;
   variant?: "card" | "embedded";
@@ -27,6 +32,7 @@ export function ProviderAccessPanel({
   connectFlash,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  onOpenCodeStatusChange,
   provider,
   returnTo,
   variant = "card",
@@ -69,6 +75,18 @@ export function ProviderAccessPanel({
             </p>
           </div>
           <ClaudeCodeConnectionPanel onStatusChange={onClaudeCodeStatusChange} />
+        </div>
+      );
+    case "opencode":
+      return (
+        <div className={className}>
+          <div className="mb-3 min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            <p className="mt-1 text-[13px] leading-5 text-muted">
+              Sessions run with the OpenCode Zen API key saved by the session creator.
+            </p>
+          </div>
+          <OpenCodeConnectionPanel onStatusChange={onOpenCodeStatusChange} />
         </div>
       );
   }

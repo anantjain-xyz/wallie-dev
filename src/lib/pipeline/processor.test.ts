@@ -26,6 +26,9 @@ const mocked = vi.hoisted(() => ({
   getClaudeCodeCredentialForSession: vi.fn().mockResolvedValue({
     secret: "sk-ant-test",
   }),
+  getOpenCodeCredentialForSession: vi.fn().mockResolvedValue({
+    secret: "zen-test-key",
+  }),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
@@ -101,6 +104,16 @@ vi.mock("@/lib/claude-code/tokens", () => ({
     }
   },
   getClaudeCodeCredentialForSession: mocked.getClaudeCodeCredentialForSession,
+}));
+
+vi.mock("@/lib/opencode/tokens", () => ({
+  OpenCodeNotConnectedError: class OpenCodeNotConnectedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OpenCodeNotConnectedError";
+    }
+  },
+  getOpenCodeCredentialForSession: mocked.getOpenCodeCredentialForSession,
 }));
 
 vi.mock("@/features/github/config", () => ({
@@ -925,6 +938,61 @@ describe("processPipelineJob (generic stage runner)", () => {
         credential: { secret: "sk-ant-test" },
         model: "claude-sonnet-4-5",
       },
+    });
+  });
+
+  it("resolves the session owner's Zen API key and persists OpenCode metadata", async () => {
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([{ type: "text", text: "Spec body" }], { provider: "opencode" }),
+    );
+    const session = baseSession();
+    const { admin, updatedRuns } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_provider", value_json: "opencode" },
+        { key: "agent_model", value_json: "opencode/gpt-5.6-sol" },
+      ],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.getOpenCodeCredentialForSession).toHaveBeenCalledWith(admin, session);
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
+      openCode: {
+        credential: { secret: "zen-test-key" },
+        model: "opencode/gpt-5.6-sol",
+      },
+    });
+    expect(updatedRuns[0]).toMatchObject({
+      model_name: "opencode/gpt-5.6-sol",
+      model_provider: "opencode",
+    });
+  });
+
+  it("fails clearly when the session owner has no OpenCode key", async () => {
+    mocked.getOpenCodeCredentialForSession.mockRejectedValueOnce(
+      new Error("OpenCode is not connected for the session owner."),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages, updatedJobs } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_provider", value_json: "opencode" },
+        { key: "agent_model", value_json: "opencode/gpt-5.6-sol" },
+      ],
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({
+        message_md: "**Error:** OpenCode is not connected for the session owner.",
+      }),
+    );
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "OpenCode is not connected for the session owner.",
+      status: "error",
     });
   });
 

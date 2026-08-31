@@ -56,7 +56,7 @@ export function LandingPage() {
           </ul>
 
           <p className="mx-auto mt-4 max-w-[640px] text-[14px] leading-7 text-muted">
-            Works with Linear, GitHub, and Codex or Claude Code.{" "}
+            Works with Linear, GitHub, Codex, Claude Code, and OpenCode.{" "}
             <a
               href={selfHostingUrl}
               target="_blank"
@@ -99,7 +99,7 @@ export function LandingPage() {
           index="03"
           layout="stacked"
           title="Bring your favorite agent and sandbox"
-          body="Use Codex, Claude Code, or the agent setup your team already trusts. Wallie keeps credentials, sandbox readiness, and capability checks visible before work starts."
+          body="Use Codex, Claude Code, or OpenCode. Wallie keeps credentials, sandbox readiness, and capability checks visible before work starts."
         >
           <RuntimeChoiceMockup />
         </FeatureSection>

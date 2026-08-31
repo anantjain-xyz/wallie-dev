@@ -82,6 +82,11 @@ export type OnboardingSetupHealth = {
     status: "connected" | "missing";
     updatedAt: string | null;
   };
+  openCodeConnection: {
+    connected: boolean;
+    status: "connected" | "missing";
+    updatedAt: string | null;
+  };
   defaultPipeline: {
     configured: boolean;
     pipelineId: string | null;

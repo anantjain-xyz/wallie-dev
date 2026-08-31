@@ -219,6 +219,8 @@ function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvid
       return "npm install -g @openai/codex";
     case "claude-code":
       return "npm install -g @anthropic-ai/claude-code";
+    case "opencode":
+      return "npm install -g opencode-ai@1";
   }
 }
 

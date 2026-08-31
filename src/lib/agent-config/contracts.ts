@@ -12,13 +12,18 @@ export const ALLOWED_AGENT_CONFIG_KEYS = [
 
 export type AgentConfigKey = (typeof ALLOWED_AGENT_CONFIG_KEYS)[number];
 
-export const AGENT_PROVIDERS = ["codex", "claude-code"] as const satisfies readonly AgentProvider[];
+export const AGENT_PROVIDERS = [
+  "codex",
+  "claude-code",
+  "opencode",
+] as const satisfies readonly AgentProvider[];
 
 export type { AgentProvider };
 
 export const RECOMMENDED_AGENT_MODELS = {
   codex: "gpt-5.5",
   "claude-code": "claude-opus-4-7[1m]",
+  opencode: "opencode/gpt-5.6-sol",
 } as const satisfies Record<AgentProvider, string>;
 
 export const RECOMMENDED_CODEX_REASONING_EFFORT = "xhigh";
@@ -28,6 +33,7 @@ const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
   claude_code: "claude-code",
   "claude-code": "claude-code",
   codex: "codex",
+  opencode: "opencode",
 };
 
 export function normalizeAgentProviderName(provider: string | undefined): AgentProvider | null {
@@ -102,6 +108,7 @@ export function getRecommendedAgentConfigDefault(
  */
 const CLAUDE_MODEL_PREFIX = "claude-";
 const CODEX_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"] as const;
+const OPENCODE_MODEL_PREFIX = "opencode/";
 const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
@@ -182,15 +189,18 @@ const agentModelSchema = z
   .max(100, "Model must be 100 characters or fewer.")
   .refine(
     (model) => modelHasSupportedSyntax(model),
-    "Model may only contain lowercase letters, numbers, dots, dashes, underscores, and an optional Claude [1m] suffix.",
+    "Model must use lowercase provider syntax with letters, numbers, dots, dashes, underscores, and an optional Claude [1m] suffix.",
   )
   .refine(
     (model) => modelMatchesAnyProvider(model),
-    `Model must start with "${CLAUDE_MODEL_PREFIX}" or one of: ${CODEX_MODEL_PREFIXES.join(", ")}.`,
+    `Model must start with "${CLAUDE_MODEL_PREFIX}", "${OPENCODE_MODEL_PREFIX}", or one of: ${CODEX_MODEL_PREFIXES.join(", ")}.`,
   );
 
 function modelMatchesAnyProvider(model: string): boolean {
   const trimmed = model.trim();
+  if (trimmed.startsWith(OPENCODE_MODEL_PREFIX)) {
+    return modelHasOpenCodeSyntax(trimmed);
+  }
   if (!modelHasSupportedSyntax(trimmed)) return false;
   if (trimmed.startsWith(CLAUDE_MODEL_PREFIX)) return true;
   if (modelHasExtendedContextSuffix(trimmed)) return false;
@@ -199,12 +209,20 @@ function modelMatchesAnyProvider(model: string): boolean {
 
 function modelHasSupportedSyntax(model: string): boolean {
   const trimmed = model.trim();
+  if (trimmed.startsWith(OPENCODE_MODEL_PREFIX)) {
+    return modelHasOpenCodeSyntax(trimmed);
+  }
   if (trimmed.endsWith(CLAUDE_EXTENDED_CONTEXT_SUFFIX)) {
     const baseModel = trimmed.slice(0, -CLAUDE_EXTENDED_CONTEXT_SUFFIX.length);
     return baseModel.startsWith(CLAUDE_MODEL_PREFIX) && AGENT_MODEL_BODY_PATTERN.test(baseModel);
   }
   if (modelHasExtendedContextSuffix(trimmed)) return false;
   return AGENT_MODEL_BODY_PATTERN.test(trimmed);
+}
+
+function modelHasOpenCodeSyntax(model: string): boolean {
+  const modelId = model.slice(OPENCODE_MODEL_PREFIX.length);
+  return modelId.length > 0 && AGENT_MODEL_BODY_PATTERN.test(modelId);
 }
 
 function modelHasExtendedContextSuffix(model: string): boolean {
@@ -251,8 +269,9 @@ export function isAgentProvider(value: unknown): value is AgentProvider {
 
 /**
  * Some providers only accept a subset of model identifiers — Claude Code
- * expects `claude-*`, Codex expects OpenAI-family ids. Runtime readiness uses
- * this to surface a helpful inline warning before sessions run.
+ * expects `claude-*`, Codex expects OpenAI-family ids, and OpenCode expects
+ * fully qualified `opencode/*` ids. Runtime readiness uses this to surface a
+ * helpful inline warning before sessions run.
  */
 export function modelMatchesProvider(provider: AgentProvider, model: string): boolean {
   const trimmed = model.trim();
@@ -266,5 +285,7 @@ export function modelMatchesProvider(provider: AgentProvider, model: string): bo
         !modelHasExtendedContextSuffix(trimmed) &&
         CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
       );
+    case "opencode":
+      return trimmed.startsWith(OPENCODE_MODEL_PREFIX) && modelHasOpenCodeSyntax(trimmed);
   }
 }

@@ -187,6 +187,11 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         status: "missing",
         updatedAt: null,
       },
+      openCodeConnection: {
+        connected: false,
+        status: "missing",
+        updatedAt: null,
+      },
       defaultPipeline: pipeline
         ? {
             configured: true,
@@ -1319,6 +1324,44 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Server env");
     expect(html).toContain("Anthropic API key");
     expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
+  });
+
+  it("renders OpenCode Zen access and readiness in the runtime step", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          agentConfig: {
+            agent_model: "opencode/gpt-5.6-sol",
+            agent_provider: "opencode",
+          },
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+          setupHealth: {
+            agentConfig: {
+              configured: true,
+              configuredKeys: ["agent_model", "agent_provider"],
+              status: "present",
+              values: {
+                agent_model: "opencode/gpt-5.6-sol",
+                agent_provider: "opencode",
+              },
+            },
+            openCodeConnection: {
+              connected: false,
+              status: "missing",
+              updatedAt: null,
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("OpenCode");
+    expect(html).toContain("OpenCode Zen API key");
+    expect(html).toContain("Connect the current user&#x27;s OpenCode Zen API key");
+    expect(primaryFooterButton(html)).toContain("disabled");
   });
 
   it("does not render a section-level runtime readiness badge", () => {

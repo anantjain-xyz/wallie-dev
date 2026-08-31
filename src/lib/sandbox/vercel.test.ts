@@ -144,6 +144,18 @@ describe("createVercelSessionSandbox", () => {
       `git -C '/vercel/sandbox' config user.name '${WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name}'`,
     );
   });
+
+  it("installs OpenCode v1 for OpenCode sandboxes", async () => {
+    const runCommand = vi.fn(async () => command());
+    mocked.sandboxCreate.mockResolvedValue(sandbox({ runCommand }));
+
+    await createVercelSessionSandbox(input({ agentProvider: "opencode" }));
+
+    const setupCall = (
+      runCommand.mock.calls[0] as unknown as [{ args?: string[] }] | undefined
+    )?.[0];
+    expect(setupCall?.args?.[1] ?? "").toContain("npm install -g opencode-ai@1");
+  });
 });
 
 describe("stopVercelSandboxById", () => {
