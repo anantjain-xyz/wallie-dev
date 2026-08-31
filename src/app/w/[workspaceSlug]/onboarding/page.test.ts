@@ -99,6 +99,12 @@ const onboardingData = {
       status: "missing",
       updatedAt: null,
     },
+    openCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
+      connected: false,
+      status: "missing",
+      updatedAt: null,
+    },
     defaultPipeline: {
       configured: true,
       pipelineId: "pipeline-1",

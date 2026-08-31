@@ -26,6 +26,16 @@ const mocked = vi.hoisted(() => ({
   getClaudeCodeCredentialForSession: vi.fn().mockResolvedValue({
     secret: "sk-ant-test",
   }),
+  getCursorCredentialForSession: vi.fn().mockResolvedValue({
+    expiresAt: "2026-12-01T00:00:00.000Z",
+    generation: "11111111-1111-4111-8111-111111111111",
+    secret: "cursor-test",
+    userId: "user-1",
+  }),
+  getOpenCodeCredentialForSession: vi.fn().mockResolvedValue({
+    secret: "zen-test",
+  }),
+  markCursorReconnectRequired: vi.fn(),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
@@ -116,6 +126,27 @@ vi.mock("@/lib/claude-code/tokens", () => ({
     }
   },
   getClaudeCodeCredentialForSession: mocked.getClaudeCodeCredentialForSession,
+}));
+
+vi.mock("@/lib/cursor/tokens", () => ({
+  CursorNotConnectedError: class CursorNotConnectedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "CursorNotConnectedError";
+    }
+  },
+  getCursorCredentialForSession: mocked.getCursorCredentialForSession,
+  markCursorReconnectRequired: mocked.markCursorReconnectRequired,
+}));
+
+vi.mock("@/lib/opencode/tokens", () => ({
+  OpenCodeNotConnectedError: class OpenCodeNotConnectedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OpenCodeNotConnectedError";
+    }
+  },
+  getOpenCodeCredentialForSession: mocked.getOpenCodeCredentialForSession,
 }));
 
 vi.mock("@/features/github/config", () => ({
@@ -1036,6 +1067,34 @@ describe("processPipelineJob (generic stage runner)", () => {
         effort: "max",
         model: "gpt-5.5",
       },
+    });
+  });
+
+  it("resolves the session owner's OpenCode Zen key and persists provider metadata", async () => {
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner([{ type: "text", text: "OpenCode artifact" }], { provider: "opencode" }),
+    );
+    const session = baseSession();
+    const { admin, updatedRuns } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_provider", value_json: "opencode" },
+        { key: "agent_model", value_json: "opencode/gpt-5.6-sol" },
+      ],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.getOpenCodeCredentialForSession).toHaveBeenCalledWith(admin, session);
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
+      openCode: {
+        credential: { secret: "zen-test" },
+        model: "opencode/gpt-5.6-sol",
+      },
+    });
+    expect(updatedRuns[0]).toMatchObject({
+      model_name: "opencode/gpt-5.6-sol",
+      model_provider: "opencode",
     });
   });
 

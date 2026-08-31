@@ -132,6 +132,39 @@ describe("prepareSessionSandbox", () => {
     expect(setupScript).toContain("gh --version >/dev/null");
   });
 
+  it("installs OpenCode v1 for OpenCode sessions", async () => {
+    const exec = vi.fn<SandboxHandle["exec"]>(async () => ({
+      exitCode: Promise.resolve(0),
+      kill: vi.fn(),
+      logs: async function* () {},
+      output: async () => ({ stderr: "", stdout: "" }),
+    }));
+    const handle = {
+      exec,
+      id: "sandbox-1",
+      readFile: vi.fn(),
+      repoPath: "/vercel/sandbox",
+      stop: vi.fn(),
+      writeFile: vi.fn(),
+    } satisfies SandboxHandle;
+
+    await prepareSessionSandbox({
+      handle,
+      provider: "vercel",
+      repoAlreadyCloned: true,
+      request: {
+        agentProvider: "opencode",
+        baseBranch: "main",
+        branch: "wallie/test",
+        installationToken: "gh-secret",
+        repoFullName: "acme/app",
+        sessionId: "session-1",
+      },
+    });
+
+    expect(exec.mock.calls[0]?.[1]?.[1]).toContain("npm install -g opencode-ai@1");
+  });
+
   it("includes stdout when setup fails without useful stderr", async () => {
     const exec = vi.fn(async () => ({
       exitCode: Promise.resolve(1),

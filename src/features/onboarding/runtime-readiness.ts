@@ -106,6 +106,7 @@ export function buildRuntimeReadiness(input: {
   claudeCodeConnection: OnboardingSetupHealth["claudeCodeConnection"];
   codexConnection: OnboardingSetupHealth["codexConnection"];
   cursorConnection?: OnboardingSetupHealth["cursorConnection"];
+  openCodeConnection: OnboardingSetupHealth["openCodeConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
 }): RuntimeReadiness {
@@ -128,7 +129,9 @@ export function buildRuntimeReadiness(input: {
           ? 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.'
           : provider === "claude-code"
             ? 'Model must start with "claude-" for Claude Code.'
-            : "Select a model returned by your Cursor account.",
+            : provider === "cursor"
+              ? "Select a model returned by your Cursor account."
+              : 'Model must use a lowercase "opencode/<model-id>" identifier.',
     });
   }
 
@@ -202,6 +205,17 @@ export function buildRuntimeReadiness(input: {
         step: "runtime",
       });
       break;
+    case "opencode":
+      requirements.push({
+        detail: input.openCodeConnection.connected
+          ? "Current user has a connected OpenCode Zen API key."
+          : "Connect the current user's OpenCode Zen API key.",
+        id: "opencode-connection",
+        label: "OpenCode Zen API key",
+        passed: input.openCodeConnection.connected,
+        step: "runtime",
+      });
+      break;
   }
 
   return {
@@ -233,6 +247,7 @@ export function capabilityCheckMatchesCurrentSetup(health: OnboardingSetupHealth
     claudeCodeConnection: health.claudeCodeConnection,
     codexConnection: health.codexConnection,
     cursorConnection: health.cursorConnection,
+    openCodeConnection: health.openCodeConnection,
     primaryRepositoryId: health.primaryRepositoryProfile.repositoryId,
     repositorySetup: health.repositorySetup,
   });
@@ -287,6 +302,7 @@ export function buildVerifyChecklist(input: {
     claudeCodeConnection: input.health.claudeCodeConnection,
     codexConnection: input.health.codexConnection,
     cursorConnection: input.health.cursorConnection,
+    openCodeConnection: input.health.openCodeConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,
   });

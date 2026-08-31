@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Try it free at wallie.dev](https://img.shields.io/badge/Try%20it%20free-wallie.dev-6b46ff.svg)](https://wallie.dev)
 
-AI-powered product development automation. Wallie turns a work prompt -- optionally linked to a Linear issue -- into reviewed, staged work. It runs Codex, Claude Code, or Cursor in a GitHub-backed sandbox, preserves a versioned artifact for every stage, and keeps the human approval loop in the dashboard.
+AI-powered product development automation. Wallie turns a work prompt -- optionally linked to a Linear issue -- into reviewed, staged work. It runs Codex, Claude Code, Cursor, or OpenCode in a GitHub-backed sandbox, preserves a versioned artifact for every stage, and keeps the human approval loop in the dashboard.
 
 > **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance — sign up and start in minutes, no setup required. It's actively maintained, so you can use it for real work.
 >
@@ -19,7 +19,7 @@ A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/proce
 
 1. Render the pipeline operating rules and stage prompt template against the session context (title, prompt, prior stage artifacts, attempt number, and last reviewer feedback).
 2. Spin up a sandbox cloned from the workspace's connected GitHub repo on a per-stage branch.
-3. Run the workspace's configured agent (Codex, Claude Code, or Cursor) inside the sandbox.
+3. Run the workspace's configured agent (Codex, Claude Code, Cursor, or OpenCode) inside the sandbox.
 4. Capture the agent's text output as a markdown artifact, version it as `(session_id, stage_slug, version)`, and best-effort push commits/open or refresh a pull request when the stage changed code.
 5. Flip the session to `awaiting_review` without making pull-request plumbing a prerequisite for artifact review.
 
@@ -110,7 +110,7 @@ Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
            |    * load current stage + prior artifacts
            |    * render prompt_template_md against session
            |    * mint GitHub installation token, spin up sandbox
-           |    * run agent runner (Codex or Claude Code)
+           |    * run the configured agent runner
            |    * stream events into agent_run_messages
            |    * best-effort push/open or refresh the stage PR
            `- Save markdown artifact, status=awaiting_review
@@ -215,10 +215,10 @@ workspaces/[workspaceId]/maintenance/tick/                      <- privileged ma
 - **secrets/** -- [crypto.ts](src/lib/secrets/crypto.ts) AES-256-GCM encrypt/decrypt for stored credentials.
 - **linear/** -- [client.ts](src/lib/linear/client.ts) GraphQL client.
 - **linear-routing/** -- per-workspace rules mapping a Linear issue to a tracked repository.
-- **agent-runner/** -- provider dispatch ([index.ts](src/lib/agent-runner/index.ts)) plus per-provider runners [codex.ts](src/lib/agent-runner/codex.ts) and [claude-code.ts](src/lib/agent-runner/claude-code.ts) that execute the agent CLI through the provider-neutral sandbox handle.
+- **agent-runner/** -- provider dispatch ([index.ts](src/lib/agent-runner/index.ts)) plus per-provider Codex, Claude Code, Cursor, and OpenCode runners that execute the agent CLI through the provider-neutral sandbox handle.
 - **agent-config/** -- contracts + parsing for `workspace_agent_config` (provider, model, recommended defaults).
 - **agent-credentials/** -- resolves which user credential a session run should use.
-- **codex/** and **claude-code/** -- provider-specific token validation, device-auth flow (Codex), and `auth.json` shaping.
+- **codex/**, **claude-code/**, **cursor/**, and **opencode/** -- provider-specific credential validation, delegated auth where supported, and session-owner credential resolution.
 - **sandbox/** -- provider registry and Vercel, E2B, Daytona, and in-process `fake` drivers.
 - **sandbox-connections/** -- encrypted provider connections, active-provider selection, URL policy, and mutation locking.
 - **sandbox-capabilities/** -- probes sandboxes for required tools/runtimes and persists the result.
@@ -281,7 +281,7 @@ Everything else is UI glue or integration plumbing.
 | Auth            | Supabase Auth (email magic link + code)        |
 | Realtime        | Supabase Realtime (live session updates)       |
 | Storage         | Supabase Storage (workspace avatars)           |
-| AI              | Codex CLI or Claude Code CLI                   |
+| AI              | Codex, Claude Code, Cursor, or OpenCode CLI    |
 | Integrations    | GitHub App (Octokit), Linear GraphQL           |
 | Testing         | Vitest, Playwright, ESLint, Prettier           |
 | Package manager | pnpm 10                                        |
@@ -317,7 +317,7 @@ src/
     supabase/                   # DB clients, auth, middleware, generated types
     secrets/                    # AES-256-GCM encryption for stored credentials
     linear/, linear-routing/    # Linear GraphQL client + per-workspace routing rules
-    agent-runner/               # Provider dispatch + Codex/Claude Code runners
+    agent-runner/               # Provider dispatch + coding-agent runners
     agent-config/               # Provider + model parsing for workspace_agent_config
     agent-credentials/          # Picks the user credential for a session run
     codex/, claude-code/        # Provider token validation + auth flows
@@ -356,7 +356,7 @@ supabase/
 - [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
 - A tunnel tool that exposes `localhost:3000` to the public internet. [ngrok](https://ngrok.com/) or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) both work. You only need this if you want to exercise GitHub webhooks; Supabase + Linear + the dev UI work without a tunnel.
 - Accounts/access:
-  - Codex or Claude Code access for agent runs
+  - Codex, Claude Code, Cursor, or OpenCode access for agent runs
   - Optionally, a Linear workspace + personal API key (for linked issue context and reconciliation)
   - A GitHub user or org where you can create a GitHub App (for GitHub integration)
 
@@ -429,7 +429,7 @@ Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and Verce
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex, Claude Code, and Cursor. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`; Cursor defaults to `auto` and discovers the models available to the connected account. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key; Cursor users complete **Sign in with Cursor**, which mints an encrypted, expiring user API key through the Cursor SDK. The Wallie worker must be running for Cursor sign-in to progress.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex, Claude Code, Cursor, and OpenCode. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`; Cursor defaults to `auto` and discovers the models available to the connected account; OpenCode defaults to `opencode/gpt-5.6-sol`. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key; Cursor users complete **Sign in with Cursor**, which mints an encrypted, expiring user API key through the Cursor SDK; OpenCode users save an OpenCode Zen API key. The Wallie worker must be running for Cursor sign-in to progress.
 
 ### 5. Create a GitHub App
 

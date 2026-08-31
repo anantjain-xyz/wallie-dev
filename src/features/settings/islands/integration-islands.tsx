@@ -19,6 +19,7 @@ import {
   updateClaudeCodeConnectionInSettingsData,
   updateCodexConnectionInSettingsData,
   updateCursorConnectionInSettingsData,
+  updateOpenCodeConnectionInSettingsData,
   updateGithubInSettingsData,
   updateLinearRoutingInSettingsData,
   updateSecretsInSettingsData,
@@ -44,6 +45,8 @@ export function preloadProviderIsland(provider: AgentProvider) {
     void import("@/features/settings/claude-code-connection-panel");
   } else if (provider === "cursor") {
     void import("@/features/settings/cursor-connection-panel");
+  } else if (provider === "opencode") {
+    void import("@/features/settings/opencode-connection-panel");
   } else {
     void import("@/features/settings/codex-connection-panel");
   }
@@ -316,6 +319,15 @@ export function RuntimeIntegrationIsland({
               }
             : undefined
         }
+        initialOpenCodeStatus={
+          initialData.setupHealth.openCodeConnection
+            ? {
+                checkedAt: initialData.setupHealth.openCodeConnection.checkedAt,
+                connected: initialData.setupHealth.openCodeConnection.connected,
+                updatedAt: initialData.setupHealth.openCodeConnection.updatedAt,
+              }
+            : undefined
+        }
         onAgentConfigSaved={(entries) =>
           dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateAgentConfigInSettingsData(current, entries),
@@ -334,6 +346,11 @@ export function RuntimeIntegrationIsland({
         onCursorStatusChange={(status) =>
           dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateCursorConnectionInSettingsData(current, status),
+          )
+        }
+        onOpenCodeStatusChange={(status) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+            updateOpenCodeConnectionInSettingsData(current, status),
           )
         }
         sandboxConnectionHref="#sandbox"

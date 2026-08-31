@@ -103,7 +103,7 @@ describe("loadWorkspaceAgentConfig", () => {
     const admin = buildAdmin([{ key: "agent_provider", value_json: "unknown-provider" }]);
 
     await expect(loadWorkspaceAgentConfig(admin, "ws-1")).rejects.toThrow(
-      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code',
+      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, cursor, opencode',
     );
   });
 });

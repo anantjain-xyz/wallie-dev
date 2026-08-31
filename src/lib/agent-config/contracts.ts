@@ -17,6 +17,7 @@ export const AGENT_PROVIDERS = [
   "codex",
   "claude-code",
   "cursor",
+  "opencode",
 ] as const satisfies readonly AgentProvider[];
 
 export type { AgentProvider };
@@ -25,6 +26,7 @@ export const RECOMMENDED_AGENT_MODELS = {
   codex: "gpt-5.6-sol",
   "claude-code": "claude-opus-4-8[1m]",
   cursor: "auto",
+  opencode: "opencode/gpt-5.6-sol",
 } as const satisfies Record<AgentProvider, string>;
 
 export const AGENT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -38,6 +40,7 @@ const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
   "claude-code": "claude-code",
   codex: "codex",
   cursor: "cursor",
+  opencode: "opencode",
 };
 
 export function normalizeAgentProviderName(provider: string | undefined): AgentProvider | null {
@@ -46,7 +49,7 @@ export function normalizeAgentProviderName(provider: string | undefined): AgentP
 }
 
 export function agentProviderSupportsEffort(provider: AgentProvider): boolean {
-  return provider !== "cursor";
+  return provider === "codex" || provider === "claude-code";
 }
 
 export const AGENT_CONFIG_LIMITS = {
@@ -131,7 +134,8 @@ const CURSOR_MODEL_PREFIXES = [
   "o3",
   "o4",
 ] as const;
-const AGENT_MODEL_FAMILY_HINT = `${CLAUDE_MODEL_PREFIX}, ${CODEX_MODEL_PREFIXES.join(", ")}, composer-, or auto`;
+const OPENCODE_MODEL_PREFIX = "opencode/";
+const AGENT_MODEL_FAMILY_HINT = `${CLAUDE_MODEL_PREFIX}, ${CODEX_MODEL_PREFIXES.join(", ")}, composer-, auto, or ${OPENCODE_MODEL_PREFIX}`;
 const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
@@ -212,7 +216,7 @@ const agentModelSchema = z
   .max(100, "Model must be 100 characters or fewer.")
   .refine(
     (model) => modelHasSupportedSyntax(model),
-    "Model may only contain lowercase letters, numbers, dots, dashes, underscores, and an optional Claude [1m] suffix.",
+    "Model may only contain lowercase letters, numbers, dots, dashes, underscores, an OpenCode provider slash, and an optional Claude [1m] suffix.",
   )
   .refine(
     (model) => modelMatchesAnyProvider(model),
@@ -228,6 +232,7 @@ const agentEffortSchema = z.enum(AGENT_EFFORT_LEVELS, {
 function modelMatchesAnyProvider(model: string): boolean {
   const trimmed = model.trim();
   if (!modelHasSupportedSyntax(trimmed)) return false;
+  if (trimmed.startsWith(OPENCODE_MODEL_PREFIX)) return true;
   if (trimmed.startsWith(CLAUDE_MODEL_PREFIX)) return true;
   if (modelHasExtendedContextSuffix(trimmed)) return false;
   return CURSOR_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
@@ -235,6 +240,9 @@ function modelMatchesAnyProvider(model: string): boolean {
 
 function modelHasSupportedSyntax(model: string): boolean {
   const trimmed = model.trim();
+  if (trimmed.startsWith(OPENCODE_MODEL_PREFIX)) {
+    return AGENT_MODEL_BODY_PATTERN.test(trimmed.slice(OPENCODE_MODEL_PREFIX.length));
+  }
   if (trimmed.endsWith(CLAUDE_EXTENDED_CONTEXT_SUFFIX)) {
     const baseModel = trimmed.slice(0, -CLAUDE_EXTENDED_CONTEXT_SUFFIX.length);
     return baseModel.startsWith(CLAUDE_MODEL_PREFIX) && AGENT_MODEL_BODY_PATTERN.test(baseModel);
@@ -309,5 +317,10 @@ export function modelMatchesProvider(provider: AgentProvider, model: string): bo
       );
     case "cursor":
       return !modelHasExtendedContextSuffix(trimmed) && AGENT_MODEL_BODY_PATTERN.test(trimmed);
+    case "opencode":
+      return (
+        trimmed.startsWith(OPENCODE_MODEL_PREFIX) &&
+        AGENT_MODEL_BODY_PATTERN.test(trimmed.slice(OPENCODE_MODEL_PREFIX.length))
+      );
   }
 }

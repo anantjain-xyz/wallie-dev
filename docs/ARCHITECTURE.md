@@ -29,7 +29,7 @@ flowchart LR
   worker -- "Installation token and pull-request API" --> github["GitHub repository and pull request"]
   sandbox -- "Clone and push" --> github
   worker --> linear["Linear API"]
-  worker --> agent["Codex or Claude Code"]
+  worker --> agent["Codex, Claude Code, Cursor, or OpenCode"]
   db -. "Realtime changes" .-> user
 ```
 

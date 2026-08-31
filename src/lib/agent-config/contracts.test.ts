@@ -185,20 +185,22 @@ describe("parseAgentConfigValue — agent_provider", () => {
   it("rejects unknown providers", () => {
     expect(parseAgentConfigValue("agent_provider", "lol")).toEqual({
       ok: false,
-      error: "Provider must be one of: codex, claude-code, cursor.",
+      error: "Provider must be one of: codex, claude-code, cursor, opencode.",
     });
   });
 });
 
 describe("provider-specific recommended defaults", () => {
-  it("uses GPT-5.6 Sol for Codex and Opus 4.8 1M for Claude Code", () => {
+  it("uses provider-specific recommended models", () => {
     expect(getRecommendedAgentModel("codex")).toBe("gpt-5.6-sol");
     expect(getRecommendedAgentModel("claude-code")).toBe("claude-opus-4-8[1m]");
     expect(getRecommendedAgentModel("cursor")).toBe("auto");
+    expect(getRecommendedAgentModel("opencode")).toBe("opencode/gpt-5.6-sol");
     expect(RECOMMENDED_AGENT_MODELS).toEqual({
       codex: "gpt-5.6-sol",
       "claude-code": "claude-opus-4-8[1m]",
       cursor: "auto",
+      opencode: "opencode/gpt-5.6-sol",
     });
   });
 
@@ -235,10 +237,11 @@ describe("parseAgentConfigValue — agent_effort", () => {
 });
 
 describe("agentProviderSupportsEffort", () => {
-  it("does not advertise effort for Cursor", () => {
+  it("advertises effort only for providers that accept it", () => {
     expect(agentProviderSupportsEffort("codex")).toBe(true);
     expect(agentProviderSupportsEffort("claude-code")).toBe(true);
     expect(agentProviderSupportsEffort("cursor")).toBe(false);
+    expect(agentProviderSupportsEffort("opencode")).toBe(false);
   });
 });
 
@@ -277,6 +280,21 @@ describe("parseAgentConfigValue — agent_model", () => {
     expect(parseAgentConfigValue("agent_model", "composer-2")).toEqual({
       ok: true,
       value: "composer-2",
+    });
+  });
+
+  it("accepts lowercase OpenCode Zen model identifiers", () => {
+    expect(parseAgentConfigValue("agent_model", "opencode/gpt-5.6-sol")).toEqual({
+      ok: true,
+      value: "opencode/gpt-5.6-sol",
+    });
+    expect(parseAgentConfigValue("agent_model", "OpenCode/gpt-5.6-sol")).toEqual({
+      ok: false,
+      error: expect.stringContaining("lowercase"),
+    });
+    expect(parseAgentConfigValue("agent_model", "anthropic/claude-sonnet-4-5")).toEqual({
+      ok: false,
+      error: expect.any(String),
     });
   });
 
@@ -359,6 +377,12 @@ describe("modelMatchesProvider", () => {
     expect(modelMatchesProvider("cursor", "auto-smart")).toBe(true);
     expect(modelMatchesProvider("cursor", "composer-2")).toBe(true);
   });
+
+  it("matches OpenCode only to lowercase opencode/* ids", () => {
+    expect(modelMatchesProvider("opencode", "opencode/gpt-5.6-sol")).toBe(true);
+    expect(modelMatchesProvider("opencode", "gpt-5.6-sol")).toBe(false);
+    expect(modelMatchesProvider("opencode", "OpenCode/gpt-5.6-sol")).toBe(false);
+  });
 });
 
 describe("normalizeAgentProviderName", () => {
@@ -369,6 +393,7 @@ describe("normalizeAgentProviderName", () => {
   it("passes canonical providers through unchanged", () => {
     expect(normalizeAgentProviderName("codex")).toBe("codex");
     expect(normalizeAgentProviderName("claude-code")).toBe("claude-code");
+    expect(normalizeAgentProviderName("opencode")).toBe("opencode");
   });
 
   it("returns null for unset or unknown providers", () => {
@@ -388,6 +413,7 @@ describe("isAgentConfigKey / isAgentProvider", () => {
     expect(isAgentProvider("codex")).toBe(true);
     expect(isAgentProvider("claude_code")).toBe(true);
     expect(isAgentProvider("claude-code")).toBe(true);
+    expect(isAgentProvider("opencode")).toBe(true);
     expect(isAgentProvider("openai")).toBe(false);
   });
 });

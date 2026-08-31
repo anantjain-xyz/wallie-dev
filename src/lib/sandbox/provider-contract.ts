@@ -82,6 +82,7 @@ const REQUIRED_AGENT_CAPABILITY_PROBES = {
   "claude-code": [],
   codex: ["codexExternalSandbox"],
   cursor: [],
+  opencode: [],
 } as const satisfies Record<AgentProvider, readonly SandboxCapabilityName[]>;
 
 const DEFAULT_DEADLINES = {

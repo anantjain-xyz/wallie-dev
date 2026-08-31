@@ -38,6 +38,12 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
+    openCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
+      connected: true,
+      status: "connected",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    },
     defaultPipeline: {
       configured: true,
       pipelineId: "pipeline-1",
@@ -132,6 +138,7 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
+        openCodeConnection: health().openCodeConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).canComplete,
@@ -152,6 +159,7 @@ describe("buildRuntimeReadiness", () => {
           status: "missing",
           updatedAt: null,
         },
+        openCodeConnection: health().openCodeConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).canComplete,
@@ -164,6 +172,7 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_model: "gpt-5-codex", agent_provider: "claude-code" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
+        openCodeConnection: health().openCodeConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).canComplete,
@@ -174,6 +183,7 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_model: "claude-opus-4-7[1m]", agent_provider: "claude-code" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
+        openCodeConnection: health().openCodeConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: { configured: false, repositoryId, status: "not_set_up" },
       }).canComplete,
@@ -191,6 +201,7 @@ describe("buildRuntimeReadiness", () => {
           updatedAt: null,
         },
         codexConnection: health().codexConnection,
+        openCodeConnection: health().openCodeConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).canComplete,
@@ -203,6 +214,7 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_provider: "claude-code" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
+        openCodeConnection: health().openCodeConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).model,
@@ -224,11 +236,52 @@ describe("buildRuntimeReadiness", () => {
         status: "connected",
         updatedAt: "2026-05-16T18:00:00.000Z",
       },
+      openCodeConnection: health().openCodeConnection,
       primaryRepositoryId: repositoryId,
       repositorySetup: health().repositorySetup,
     });
 
     expect(readiness.requirements.find((item) => item.id === "agent-config")?.passed).toBe(true);
+  });
+
+  it("requires an OpenCode Zen key, opencode/* model, and ready repository", () => {
+    const ready = buildRuntimeReadiness({
+      agentConfig: { agent_model: "opencode/gpt-5.6-sol", agent_provider: "opencode" },
+      claudeCodeConnection: health().claudeCodeConnection,
+      codexConnection: health().codexConnection,
+      openCodeConnection: health().openCodeConnection,
+      primaryRepositoryId: repositoryId,
+      repositorySetup: health().repositorySetup,
+    });
+    expect(ready.canComplete).toBe(true);
+    expect(ready.model).toBe("opencode/gpt-5.6-sol");
+
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "gpt-5.6-sol", agent_provider: "opencode" },
+        claudeCodeConnection: health().claudeCodeConnection,
+        codexConnection: health().codexConnection,
+        openCodeConnection: health().openCodeConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+      }).canComplete,
+    ).toBe(false);
+
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "opencode/gpt-5.6-sol", agent_provider: "opencode" },
+        claudeCodeConnection: health().claudeCodeConnection,
+        codexConnection: health().codexConnection,
+        openCodeConnection: {
+          checkedAt: "2026-05-16T18:00:01.000Z",
+          connected: false,
+          status: "missing",
+          updatedAt: null,
+        },
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+      }).canComplete,
+    ).toBe(false);
   });
 });
 

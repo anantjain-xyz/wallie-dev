@@ -22,6 +22,7 @@ import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -53,10 +54,12 @@ type AgentConfigSectionProps = {
   initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
   initialCodexStatus?: CodexConnectionStatus;
   initialCursorStatus?: CursorConnectionStatus;
+  initialOpenCodeStatus?: OpenCodeConnectionStatus;
   onAgentConfigSaved?: (entries: AgentConfigEntry[]) => void;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   onCursorStatusChange?: (status: CursorConnectionStatus) => void;
+  onOpenCodeStatusChange?: (status: OpenCodeConnectionStatus) => void;
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
@@ -152,10 +155,12 @@ export function AgentConfigSection({
   initialClaudeCodeStatus,
   initialCodexStatus,
   initialCursorStatus,
+  initialOpenCodeStatus,
   onAgentConfigSaved,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
   onCursorStatusChange,
+  onOpenCodeStatusChange,
   sandboxConnectionHref,
   sandboxConnectionLabel,
   sandboxConnectionReady,
@@ -404,12 +409,14 @@ export function AgentConfigSection({
             initialClaudeCodeStatus={initialClaudeCodeStatus}
             initialCodexStatus={initialCodexStatus}
             initialCursorStatus={initialCursorStatus}
+            initialOpenCodeStatus={initialOpenCodeStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             onCursorStatusChange={(status) => {
               setCursorConnected(status.connected);
               onCursorStatusChange?.(status);
             }}
+            onOpenCodeStatusChange={onOpenCodeStatusChange}
             provider={selectedAgentProvider}
             sandboxConnectionHref={sandboxConnectionHref}
             sandboxConnectionLabel={sandboxConnectionLabel}
@@ -464,12 +471,14 @@ export function AgentConfigSection({
             initialClaudeCodeStatus={initialClaudeCodeStatus}
             initialCodexStatus={initialCodexStatus}
             initialCursorStatus={initialCursorStatus}
+            initialOpenCodeStatus={initialOpenCodeStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             onCursorStatusChange={(status) => {
               setCursorConnected(status.connected);
               onCursorStatusChange?.(status);
             }}
+            onOpenCodeStatusChange={onOpenCodeStatusChange}
             provider={selectedAgentProvider}
             sandboxConnectionHref={sandboxConnectionHref}
             sandboxConnectionLabel={sandboxConnectionLabel}

@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
@@ -13,9 +14,11 @@ type ProviderAccessPanelProps = {
   initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
   initialCodexStatus?: CodexConnectionStatus;
   initialCursorStatus?: CursorConnectionStatus;
+  initialOpenCodeStatus?: OpenCodeConnectionStatus;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   onCursorStatusChange?: (status: CursorConnectionStatus) => void;
+  onOpenCodeStatusChange?: (status: OpenCodeConnectionStatus) => void;
   onSandboxConnectionSelect?: () => void;
   provider: AgentProvider;
   returnTo?: string;
@@ -53,15 +56,24 @@ const CursorConnectionPanel = dynamic(
     ),
   { loading: () => <p className="text-xs text-muted">Checking connection</p>, ssr: false },
 );
+const OpenCodeConnectionPanel = dynamic(
+  () =>
+    import("@/features/settings/opencode-connection-panel").then(
+      (module) => module.OpenCodeConnectionPanel,
+    ),
+  { loading: () => <p className="text-xs text-muted">Checking connection</p>, ssr: false },
+);
 
 export function ProviderAccessPanel({
   connectFlash,
   initialClaudeCodeStatus,
   initialCodexStatus,
   initialCursorStatus,
+  initialOpenCodeStatus,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
   onCursorStatusChange,
+  onOpenCodeStatusChange,
   onSandboxConnectionSelect,
   provider,
   returnTo,
@@ -131,6 +143,21 @@ export function ProviderAccessPanel({
             initialStatus={initialCursorStatus}
             onStatusChange={onCursorStatusChange}
             workspaceId={workspaceId}
+          />
+        </div>
+      );
+    case "opencode":
+      return (
+        <div className={className}>
+          <div className="mb-3 min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Sessions run with the OpenCode Zen API key saved by the session creator.
+            </p>
+          </div>
+          <OpenCodeConnectionPanel
+            initialStatus={initialOpenCodeStatus}
+            onStatusChange={onOpenCodeStatusChange}
           />
         </div>
       );

@@ -14,7 +14,7 @@ Wallie has two long-lived processes plus managed backing services:
 | **Worker**                               | `pnpm worker` — a long-running daemon that drains the job queue and runs agent stages | A host that supports **always-on processes** (Railway, Fly, Render, a VM, etc.). **Not** Vercel serverless. |
 | **Database / Auth / Realtime / Storage** | Supabase                                                                              | Supabase Cloud (or your own Supabase).                                                                      |
 | **Sandboxes**                            | Ephemeral VMs that run the agent per stage                                            | Vercel Sandbox, E2B, or Daytona Cloud/approved self-hosted Daytona.                                         |
-| **Integrations**                         | GitHub App, Linear, model provider (Codex / Claude Code / Cursor)                     | External; configured per-workspace in the app UI.                                                           |
+| **Integrations**                         | GitHub App, Linear, model provider (Codex / Claude Code / Cursor / OpenCode)          | External; configured per-workspace in the app UI.                                                           |
 
 > **Why the worker can't be serverless:** it heartbeats, polls `agent_jobs`, claims work via an atomic compare-and-swap, runs stages that can take minutes, and reaps orphaned sandboxes. It must run continuously. Deploy the web app and the worker as **two separate services from the same repo**, sharing the same environment variables.
 
@@ -25,7 +25,7 @@ Wallie has two long-lived processes plus managed backing services:
 - A host for the worker (e.g. [Railway](https://railway.com) — a `railway.json` is already included).
 - A GitHub account/org where you can create a **GitHub App**.
 - A Vercel, E2B, or Daytona account for Sandbox execution.
-- Agent provider access (Codex, Claude Code, and/or Cursor) — entered per-workspace later, not at deploy time.
+- Agent provider access (Codex, Claude Code, Cursor, and/or OpenCode) — entered per-workspace later, not at deploy time.
 - A domain (recommended) for a stable origin.
 
 ## 1. Create the Supabase project
@@ -115,7 +115,7 @@ After creating it: copy the **App ID** → `GITHUB_APP_ID`, generate a private k
 
 These are entered through the app's **Settings** UI and stored encrypted in your database — they are intentionally **not** environment variables:
 
-- **Agent provider & model** — Codex, Claude Code, or Cursor, plus the provider credential (ChatGPT sign-in / Codex token / OpenAI key, an Anthropic API key, or Cursor browser sign-in). Cursor sign-in is processed by the Wallie worker.
+- **Agent provider & model** — Codex, Claude Code, Cursor, or OpenCode, plus the provider credential (ChatGPT sign-in / Codex token / OpenAI key, an Anthropic API key, Cursor browser sign-in, or an OpenCode Zen API key). Cursor sign-in is processed by the Wallie worker.
 - **Linear API key** — for pulling issue context.
 - **GitHub installation** — install the App onto the repos a workspace should see.
 - **Sandbox provider** — connect Vercel, E2B, and/or Daytona, choose one active provider, then run its repository capability check. Connections are retained when switching.

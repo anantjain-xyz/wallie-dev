@@ -41,6 +41,7 @@ describe("LandingPage", () => {
     expect(html).toContain("Codex");
     expect(html).toContain("Claude Code");
     expect(html).toContain("Cursor");
+    expect(html).toContain("OpenCode");
     expect(html).toContain("Vercel");
     expect(html).toContain("E2B");
     expect(html).toContain("Daytona");

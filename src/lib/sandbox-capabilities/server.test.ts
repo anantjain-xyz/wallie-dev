@@ -6,6 +6,7 @@ const mocked = vi.hoisted(() => ({
   getClaudeCodeCredentialForUser: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
   getCursorCredentialForUser: vi.fn(),
+  getOpenCodeCredentialForUser: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceAgentConfig: vi.fn(),
   octokitRequest: vi.fn(),
@@ -40,6 +41,10 @@ vi.mock("@/lib/claude-code/tokens", () => ({
 
 vi.mock("@/lib/cursor/tokens", () => ({
   getCursorCredentialForUser: mocked.getCursorCredentialForUser,
+}));
+
+vi.mock("@/lib/opencode/tokens", () => ({
+  getOpenCodeCredentialForUser: mocked.getOpenCodeCredentialForUser,
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -192,6 +197,7 @@ beforeEach(() => {
   mocked.getClaudeCodeCredentialForUser.mockResolvedValue({ secret: "claude-token" });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
   mocked.getCursorCredentialForUser.mockResolvedValue({ secret: "cursor-token" });
+  mocked.getOpenCodeCredentialForUser.mockResolvedValue({ secret: "zen-token" });
   mocked.createSessionSandbox.mockImplementation(async (input) => {
     await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
     return {
@@ -232,6 +238,34 @@ describe("completeSandboxCapabilityCheck", () => {
     expect(mocked.getClaudeCodeCredentialForUser).not.toHaveBeenCalled();
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ agentProvider: "cursor" }),
+    );
+  });
+
+  it("validates OpenCode credentials for OpenCode capability checks", async () => {
+    mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
+      effort: "xhigh",
+      model: "opencode/gpt-5.6-sol",
+      provider: "opencode",
+    });
+    const { admin } = adminMock();
+
+    await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(mocked.getOpenCodeCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "opencode" }),
     );
   });
 

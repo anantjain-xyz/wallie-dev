@@ -30,6 +30,7 @@ import {
   getCursorCredentialForSession,
   markCursorReconnectRequired,
 } from "@/lib/cursor/tokens";
+import { getOpenCodeCredentialForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
@@ -1038,6 +1039,20 @@ async function resolveAgentRunner(input: {
       };
     } catch (error) {
       if (error instanceof CursorNotConnectedError) throw new Error(error.message);
+      throw error;
+    }
+  }
+
+  if (input.provider === "opencode") {
+    try {
+      const credential = await getOpenCodeCredentialForSession(input.admin, input.session);
+      return {
+        runner: createAgentRunner("opencode", {
+          openCode: { credential, model: input.model },
+        }),
+      };
+    } catch (error) {
+      if (error instanceof OpenCodeNotConnectedError) throw new Error(error.message);
       throw error;
     }
   }

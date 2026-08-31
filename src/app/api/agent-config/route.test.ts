@@ -151,6 +151,44 @@ describe("POST /api/agent-config — value validation", () => {
     expect(payload.entries).toEqual([{ key: "agent_model", value: "claude-sonnet-4-20250514" }]);
   });
 
+  it("accepts an OpenCode provider and fully qualified model", async () => {
+    grantAccess();
+    const upsert = setupSuccessfulUpsert();
+
+    const response = await POST(
+      postWith({
+        config: {
+          agent_model: "opencode/gpt-5.6-sol",
+          agent_provider: "opencode",
+        },
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(upsert).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          key: "agent_model",
+          value_json: "opencode/gpt-5.6-sol",
+        }),
+        expect.objectContaining({ key: "agent_provider", value_json: "opencode" }),
+      ],
+      { onConflict: "workspace_id,key" },
+    );
+  });
+
+  it("rejects uppercase OpenCode model ids", async () => {
+    const response = await POST(
+      postWith({
+        config: { agent_model: "opencode/GPT-5.6-sol" },
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
   it("accepts a valid integer stall timeout with admin access", async () => {
     grantAccess();
     setupSuccessfulUpsert();
@@ -353,5 +391,34 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
       ]),
       { onConflict: "workspace_id,key" },
     );
+  });
+
+  it("uses OpenCode's recommended model for missing agent_model defaults", async () => {
+    grantAccess();
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ key: "agent_provider", value_json: "opencode" }],
+            error: null,
+          }),
+        }),
+        upsert,
+      }),
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/agent-config", {
+        body: JSON.stringify({ workspaceId: WORKSPACE_ID }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      applied: expect.arrayContaining([{ key: "agent_model", value: "opencode/gpt-5.6-sol" }]),
+    });
   });
 });

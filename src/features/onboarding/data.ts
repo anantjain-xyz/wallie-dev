@@ -299,6 +299,24 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null, checkedA
   };
 }
 
+function openCodeConnectionStatus(row: { updated_at: string } | null, checkedAt: string) {
+  if (!row) {
+    return {
+      checkedAt,
+      connected: false,
+      status: "missing" as const,
+      updatedAt: null,
+    };
+  }
+
+  return {
+    checkedAt,
+    connected: true,
+    status: "connected" as const,
+    updatedAt: row.updated_at,
+  };
+}
+
 function cursorConnectionStatus(
   row: {
     account_email: string | null;
@@ -442,6 +460,8 @@ type OnboardingSnapshot = {
     updated_at: string;
   } | null;
   cursorCredentialsCheckedAt: string;
+  openCodeCredentials: { updated_at: string } | null;
+  openCodeCredentialsCheckedAt: string;
   github: WorkspaceGitHubData;
   linearRoutingRow: LinearRoutingRow | null;
   onboardingRow: Tables<"workspace_onboarding">;
@@ -565,6 +585,13 @@ function createOnboardingSnapshot(
               .eq("user_id", context.user.id)
               .maybeSingle(),
           ),
+          timestampQueryResult(
+            admin
+              .from("user_opencode_credentials")
+              .select("updated_at")
+              .eq("user_id", context.user.id)
+              .maybeSingle(),
+          ),
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
@@ -584,10 +611,16 @@ function createOnboardingSnapshot(
       ),
     ]);
 
-    const [codexProviderResult, claudeCodeProviderResult, cursorProviderResult] = providerResults;
+    const [
+      codexProviderResult,
+      claudeCodeProviderResult,
+      cursorProviderResult,
+      openCodeProviderResult,
+    ] = providerResults;
     const codexResult = codexProviderResult.result;
     const claudeCodeResult = claudeCodeProviderResult.result;
     const cursorResult = cursorProviderResult.result;
+    const openCodeResult = openCodeProviderResult.result;
     for (const error of [
       pipelineResult.error,
       stageResult.error,
@@ -597,6 +630,7 @@ function createOnboardingSnapshot(
       codexResult.error,
       claudeCodeResult.error,
       cursorResult.error,
+      openCodeResult.error,
       sandboxResult.error,
       memberResult.error,
     ]) {
@@ -611,6 +645,8 @@ function createOnboardingSnapshot(
       codexCredentialsCheckedAt: codexProviderResult.checkedAt,
       cursorCredentials: cursorResult.data,
       cursorCredentialsCheckedAt: cursorProviderResult.checkedAt,
+      openCodeCredentials: openCodeResult.data,
+      openCodeCredentialsCheckedAt: openCodeProviderResult.checkedAt,
       github,
       linearRoutingRow: routingResult.data as LinearRoutingRow | null,
       onboardingRow,
@@ -752,6 +788,10 @@ function deriveSetupHealth(
     cursorConnection: cursorConnectionStatus(
       snapshot.cursorCredentials,
       snapshot.cursorCredentialsCheckedAt,
+    ),
+    openCodeConnection: openCodeConnectionStatus(
+      snapshot.openCodeCredentials,
+      snapshot.openCodeCredentialsCheckedAt,
     ),
     defaultPipeline: {
       configured: Boolean(pipeline && pipeline.stages.length > 0),

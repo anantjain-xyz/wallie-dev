@@ -55,7 +55,7 @@ export interface AgentRunnerStartInput {
   /**
    * Sandbox the agent CLI runs inside. Owned by the phase; reused across turns.
    * Optional at the interface boundary; current CLI runners (codex,
-   * claude-code) require it and assert at start.
+   * claude-code, cursor, opencode) require it and assert at start.
    */
   sandbox?: SandboxHandle;
   prompt: string;
@@ -97,7 +97,7 @@ export interface AgentRunner {
 // ---------------------------------------------------------------------------
 
 export interface AgentRunnerConfig {
-  /** Which provider to use: "codex" | "claude-code". */
+  /** Which provider to use. */
   provider: AgentProvider;
   /** Model to use (provider-specific, e.g. "gpt-5.6-sol" or "claude-opus-4-8[1m]"). */
   model?: string;
@@ -110,6 +110,7 @@ export interface AgentRunnerConfig {
 export const DEFAULT_CODEX_MODEL = getRecommendedAgentModel("codex");
 export const DEFAULT_CLAUDE_CODE_MODEL = getRecommendedAgentModel("claude-code");
 export const DEFAULT_CURSOR_MODEL = getRecommendedAgentModel("cursor");
+export const DEFAULT_OPENCODE_MODEL = getRecommendedAgentModel("opencode");
 export const DEFAULT_AGENT_EFFORT = RECOMMENDED_AGENT_EFFORT;
 export const DEFAULT_CODEX_REASONING_EFFORT = DEFAULT_AGENT_EFFORT;
 export const DEFAULT_CLAUDE_CODE_EFFORT = DEFAULT_AGENT_EFFORT;

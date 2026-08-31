@@ -22,7 +22,7 @@ export interface ResolvedWorkspaceAgentConfig {
   effort: AgentEffort;
   /** Workspace-configured model, or the runner default. Always set. */
   model: string;
-  /** Canonical provider id ("codex" | "claude-code"), normalized from the underscore form persisted by the settings UI. Always set. */
+  /** Canonical provider id ("codex" | "claude-code" | "cursor" | "opencode"), normalized from the underscore form persisted by the settings UI. Always set. */
   provider: AgentProvider;
   /** Workspace-configured max turns, or undefined if unset. */
   maxTurns?: number;

@@ -47,7 +47,7 @@ export function LandingPage() {
             </h1>
             <p className="mt-5 max-w-[540px] text-[16px] leading-7 text-muted sm:text-[17px] sm:leading-8">
               Define the stages of your delivery process, gate each one behind the right reviewer,
-              and let agents do the work in isolated sandboxes.
+              and let Codex, Claude Code, Cursor, or OpenCode do the work in isolated sandboxes.
             </p>
             <Link
               href="/login"

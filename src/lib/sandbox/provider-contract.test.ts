@@ -93,6 +93,7 @@ describe("sandbox provider contract verifier", () => {
         "claude-code": [],
         codex: ["codexExternalSandbox"],
         cursor: [],
+        opencode: [],
       });
     },
   );

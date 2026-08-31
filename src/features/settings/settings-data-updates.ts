@@ -4,6 +4,7 @@ import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readine
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import type { SettingsPageData } from "@/features/settings/data";
 
 export function updateGithubInSettingsData(
@@ -184,6 +185,24 @@ export function updateCursorConnectionInSettingsData(
           : status.expired || status.reconnectRequired
             ? "expired"
             : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+export function updateOpenCodeConnectionInSettingsData(
+  currentData: SettingsPageData,
+  status: OpenCodeConnectionStatus,
+): SettingsPageData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      openCodeConnection: {
+        checkedAt: status.checkedAt,
+        connected: status.connected,
+        status: status.connected ? "connected" : "missing",
         updatedAt: status.updatedAt ?? null,
       },
     },

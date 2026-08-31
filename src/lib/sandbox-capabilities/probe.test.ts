@@ -50,6 +50,25 @@ function scriptCodexBaseSuccess(sandbox: FakeSandbox) {
   );
 }
 
+function scriptOpenCodeBaseSuccess(sandbox: FakeSandbox) {
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("git --version"),
+    [{ data: "git version 2.45.0\n", stream: "stdout" }],
+  );
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("node --version"),
+    [{ data: "v22.0.0\n", stream: "stdout" }],
+  );
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("for pm in"),
+    [{ data: "npm 10.0.0\n", stream: "stdout" }],
+  );
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("opencode --version"),
+    [{ data: "1.2.3\n", stream: "stdout" }],
+  );
+}
+
 function scriptCapturedOutput(sandbox: FakeSandbox, matcher: string, output: CapturedOutput) {
   sandbox.scriptExec(
     (call) => call.args.join(" ").includes(matcher),
@@ -172,6 +191,22 @@ describe("probeSandboxCapabilities", () => {
       ok: true,
     });
     expect(sandbox.calls.every((call) => !call.args.join(" ").includes("codex 'exec'"))).toBe(true);
+  });
+
+  it("probes the OpenCode CLI", async () => {
+    const sandbox = new FakeSandbox();
+    scriptOpenCodeBaseSuccess(sandbox);
+
+    const report = await probeSandboxCapabilities({
+      agentProvider: "opencode",
+      bootstrapPlaywright: false,
+      sandbox,
+    });
+
+    expect(report.agentCli.ok).toBe(true);
+    expect(sandbox.calls.some((call) => call.args.join(" ").includes("opencode --version"))).toBe(
+      true,
+    );
   });
 
   it("allows screenshot smoke success without output", async () => {

@@ -4,11 +4,13 @@ import {
   ClaudeCodeRunner,
   CodexRunner,
   CursorRunner,
+  OpenCodeRunner,
   createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG,
   DEFAULT_AGENT_EFFORT,
   DEFAULT_CLAUDE_CODE_MODEL,
   DEFAULT_CODEX_MODEL,
+  DEFAULT_OPENCODE_MODEL,
 } from "./index";
 
 describe("createAgentRunner", () => {
@@ -61,9 +63,21 @@ describe("createAgentRunner", () => {
     expect(runner.provider).toBe("cursor");
   });
 
+  it("creates an OpenCodeRunner when a Zen API key is provided", () => {
+    const runner = createAgentRunner("opencode", {
+      openCode: { credential: { secret: "zen-test-key" } },
+    });
+    expect(runner).toBeInstanceOf(OpenCodeRunner);
+    expect(runner.provider).toBe("opencode");
+  });
+
+  it("throws when OpenCode is selected without credentials", () => {
+    expect(() => createAgentRunner("opencode")).toThrow(/OpenCode Zen API key/);
+  });
+
   it("throws for unknown provider", () => {
     expect(() => createAgentRunner("unknown-provider" as never)).toThrow(
-      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code',
+      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, cursor, opencode',
     );
   });
 });
@@ -75,6 +89,7 @@ describe("DEFAULT_AGENT_RUNNER_CONFIG", () => {
     expect(DEFAULT_AGENT_RUNNER_CONFIG.effort).toBe(DEFAULT_AGENT_EFFORT);
     expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.6-sol");
     expect(DEFAULT_CLAUDE_CODE_MODEL).toBe("claude-opus-4-8[1m]");
+    expect(DEFAULT_OPENCODE_MODEL).toBe("opencode/gpt-5.6-sol");
     expect(DEFAULT_AGENT_RUNNER_CONFIG.maxTurns).toBe(5);
   });
 });

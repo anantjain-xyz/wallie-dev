@@ -31,6 +31,7 @@ import {
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
+import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import {
@@ -202,6 +203,7 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = d
     claudeCodeConnection: data.setupHealth.claudeCodeConnection,
     codexConnection: data.setupHealth.codexConnection,
     cursorConnection: data.setupHealth.cursorConnection,
+    openCodeConnection: data.setupHealth.openCodeConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
   });
@@ -330,6 +332,24 @@ function updateCursorConnectionInData(
   };
 }
 
+function updateOpenCodeConnectionInData(
+  currentData: WorkspaceOnboardingData,
+  status: OpenCodeConnectionStatus,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      openCodeConnection: {
+        checkedAt: status.checkedAt,
+        connected: status.connected,
+        status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
 const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
   {
     configKey: "agent_provider",
@@ -434,6 +454,11 @@ export default function RuntimeStep({
   const handleCursorStatusChange = useCallback(
     (status: CursorConnectionStatus) =>
       onDataChange((current) => updateCursorConnectionInData(current, status)),
+    [onDataChange],
+  );
+  const handleOpenCodeStatusChange = useCallback(
+    (status: OpenCodeConnectionStatus) =>
+      onDataChange((current) => updateOpenCodeConnectionInData(current, status)),
     [onDataChange],
   );
   const selectedDraftProvider = normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
@@ -926,9 +951,15 @@ export default function RuntimeStep({
                   }
                 : undefined
             }
+            initialOpenCodeStatus={{
+              checkedAt: data.setupHealth.openCodeConnection.checkedAt,
+              connected: data.setupHealth.openCodeConnection.connected,
+              updatedAt: data.setupHealth.openCodeConnection.updatedAt,
+            }}
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
             onCodexStatusChange={handleCodexStatusChange}
             onCursorStatusChange={handleCursorStatusChange}
+            onOpenCodeStatusChange={handleOpenCodeStatusChange}
             onSandboxConnectionSelect={() => onSelectStep("sandbox")}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}

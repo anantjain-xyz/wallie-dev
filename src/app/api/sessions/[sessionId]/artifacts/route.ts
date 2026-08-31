@@ -31,6 +31,8 @@ function formatAuthorLabel(provider: string | null | undefined, model: string | 
   if (!provider && !model) return "Agent";
   if (provider === "claude-code") return model ? `Claude Code (${model})` : "Claude Code";
   if (provider === "codex") return model ? `Codex (${model})` : "Codex";
+  if (provider === "cursor") return model ? `Cursor (${model})` : "Cursor";
+  if (provider === "opencode") return model ? `OpenCode (${model})` : "OpenCode";
   if (provider && model) return `${provider} (${model})`;
   return provider ?? model ?? "Agent";
 }

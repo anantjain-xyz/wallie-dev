@@ -52,6 +52,8 @@ function agentCliCommand(provider: AgentProvider): string {
       return "command -v claude && claude --version";
     case "cursor":
       return 'cursor_bin="$(command -v cursor-agent || true)"; [ -n "$cursor_bin" ] || cursor_bin="$HOME/.local/bin/cursor-agent"; "$cursor_bin" --version';
+    case "opencode":
+      return "command -v opencode && opencode --version";
   }
 }
 

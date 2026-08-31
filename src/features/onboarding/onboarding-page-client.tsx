@@ -130,6 +130,7 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData) {
     claudeCodeConnection: data.setupHealth.claudeCodeConnection,
     codexConnection: data.setupHealth.codexConnection,
     cursorConnection: data.setupHealth.cursorConnection,
+    openCodeConnection: data.setupHealth.openCodeConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
   });
@@ -201,14 +202,21 @@ export function setupHealthItems(
             expired: health.cursorConnection?.status === "expired",
             updatedAt: health.cursorConnection?.updatedAt ?? null,
           }
-        : {
-            connected: health.codexConnection.connected,
-            credentialLabel: health.codexConnection.credentialType
-              ? codexCredentialTypeLabel(health.codexConnection.credentialType)
-              : null,
-            expired: health.codexConnection.status === "expired",
-            updatedAt: health.codexConnection.updatedAt,
-          };
+        : selectedProvider === "opencode"
+          ? {
+              connected: health.openCodeConnection.connected,
+              credentialLabel: health.openCodeConnection.connected ? "OpenCode Zen API key" : null,
+              expired: false,
+              updatedAt: health.openCodeConnection.updatedAt,
+            }
+          : {
+              connected: health.codexConnection.connected,
+              credentialLabel: health.codexConnection.credentialType
+                ? codexCredentialTypeLabel(health.codexConnection.credentialType)
+                : null,
+              expired: health.codexConnection.status === "expired",
+              updatedAt: health.codexConnection.updatedAt,
+            };
   const providerCredentialBadge = providerCredential.connected
     ? { tone: "success" as const, value: "Connected" }
     : providerCredential.expired

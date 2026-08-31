@@ -257,6 +257,7 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.codexConnection.status).toBe("connected");
     expect(result.data.setupHealth.codexConnection.accountEmail).toBe("owner@example.com");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
+    expect(result.data.setupHealth.openCodeConnection.status).toBe("missing");
     expect(result.data.setupHealth.codexConnection.checkedAt).toMatch(/Z$/);
     expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toMatch(/Z$/);
 
@@ -269,6 +270,8 @@ describe("canonical onboarding snapshot", () => {
       "workspace_agent_config",
       "user_codex_credentials",
       "user_claude_code_credentials",
+      "user_cursor_credentials",
+      "user_opencode_credentials",
       "load_workspace_onboarding_secret_previews",
       "load_workspace_onboarding_sandbox_checks",
     ]) {
