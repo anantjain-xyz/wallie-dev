@@ -1,6 +1,12 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+
+/**
+ * Precision Console layout vocabulary. Canvas comes from the page, Sheet is
+ * the sole routine content surface, and floating overlay primitives live in
+ * their dedicated modules. Rules and spacing subdivide a Sheet; never nest it.
+ */
 
 type PageContainerProps = {
   children: ReactNode;
@@ -15,11 +21,15 @@ export function PageContainer({ children, className }: PageContainerProps) {
   );
 }
 
-export const PAGE_HEADER_TITLE_CLASS =
-  "break-words text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]";
+export const PAGE_HEADER_TITLE_CLASS = "type-page-title break-words";
 
 type PageHeaderProps = {
   actions?: ReactNode;
+  /**
+   * Keep actions in a dedicated right-hand column instead of allowing them to
+   * wrap beneath long title content.
+   */
+  actionsAlwaysRight?: boolean;
   description?: ReactNode;
   eyebrow?: ReactNode;
   /**
@@ -39,33 +49,121 @@ type PageHeaderProps = {
 
 export function PageHeader({
   actions,
+  actionsAlwaysRight = false,
   description,
   eyebrow,
   eyebrowAsPlain = false,
   title,
   titleAsChild = false,
 }: PageHeaderProps) {
+  const eyebrowContent = eyebrow ? (
+    <div
+      className={cn(
+        eyebrowAsPlain
+          ? "type-label text-muted"
+          : "type-label uppercase tracking-[0.08em] text-muted",
+        actionsAlwaysRight && "col-span-2",
+      )}
+    >
+      {eyebrow}
+    </div>
+  ) : null;
+  const titleContent = (
+    <>
+      {titleAsChild ? title : <h1 className={PAGE_HEADER_TITLE_CLASS}>{title}</h1>}
+      {description ? <p className="type-body max-w-2xl text-muted">{description}</p> : null}
+    </>
+  );
+
   return (
-    <header className="mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sm:mb-10">
-      <div className="min-w-0 space-y-2">
-        {eyebrow ? (
-          <div
-            className={
-              eyebrowAsPlain
-                ? "text-[12px] font-medium text-muted"
-                : "text-[12px] font-medium uppercase tracking-[0.08em] text-muted"
-            }
-          >
-            {eyebrow}
-          </div>
-        ) : null}
-        {titleAsChild ? title : <h1 className={PAGE_HEADER_TITLE_CLASS}>{title}</h1>}
-        {description ? (
-          <p className="max-w-2xl text-[14px] leading-6 text-muted">{description}</p>
-        ) : null}
-      </div>
-      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+    <header
+      className={cn(
+        "mb-8 items-start gap-x-6 gap-y-3 sm:mb-10",
+        actionsAlwaysRight
+          ? "grid grid-cols-[minmax(0,1fr)_auto]"
+          : "flex flex-wrap justify-between",
+      )}
+    >
+      {actionsAlwaysRight ? (
+        <>
+          {eyebrowContent}
+          <div className="min-w-0 space-y-2">{titleContent}</div>
+        </>
+      ) : (
+        <div className="min-w-0 space-y-2">
+          {eyebrowContent}
+          {titleContent}
+        </div>
+      )}
+      {actions ? (
+        <div
+          className={cn(
+            "flex shrink-0 flex-wrap items-center gap-2",
+            actionsAlwaysRight && "justify-self-end",
+          )}
+        >
+          {actions}
+        </div>
+      ) : null}
     </header>
+  );
+}
+
+type CommandBarProps = HTMLAttributes<HTMLDivElement> & {
+  children: ReactNode;
+};
+
+export function CommandBar({ children, className, ...props }: CommandBarProps) {
+  return (
+    <div className={cn("ui-command-bar", className)} {...props}>
+      {children}
+    </div>
+  );
+}
+
+type SheetProps = HTMLAttributes<HTMLElement> & {
+  children: ReactNode;
+};
+
+/** Primary content surface. Do not nest Sheet inside Sheet. */
+export function Sheet({ children, className, ...props }: SheetProps) {
+  return (
+    <section className={cn("ui-sheet", className)} {...props}>
+      {children}
+    </section>
+  );
+}
+
+type MetadataListProps = HTMLAttributes<HTMLDListElement> & {
+  children: ReactNode;
+};
+
+export function MetadataList({ children, className, ...props }: MetadataListProps) {
+  return (
+    <dl className={cn("ui-metadata-list", className)} {...props}>
+      {children}
+    </dl>
+  );
+}
+
+type MetadataItemProps = HTMLAttributes<HTMLDivElement> & {
+  label: ReactNode;
+  monospace?: boolean;
+  value: ReactNode;
+};
+
+export function MetadataItem({
+  className,
+  label,
+  monospace = false,
+  value,
+  ...props
+}: MetadataItemProps) {
+  return (
+    <div className={cn("ui-metadata-item", className)} {...props}>
+      <dt className="ui-metadata-term">{label}</dt>
+      <dd className={cn("ui-metadata-value", monospace && "font-mono")}>{value}</dd>
+    </div>
   );
 }
 
@@ -92,8 +190,8 @@ export function PageSection({
     <section id={anchorId} className={cn("scroll-mt-8", className)}>
       <header className="settings-section-header mb-6">
         <div className="min-w-0 space-y-1">
-          <h2 className="text-[18px] font-semibold tracking-tight text-foreground">{title}</h2>
-          {tagline ? <p className="text-[13px] leading-5 text-muted">{tagline}</p> : null}
+          <h2 className="type-section-title">{title}</h2>
+          {tagline ? <p className="type-secondary text-muted">{tagline}</p> : null}
         </div>
         {statusBadge || actions ? (
           <div className="flex shrink-0 items-center gap-2">

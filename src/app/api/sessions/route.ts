@@ -4,29 +4,26 @@ import {
   createSessionPayloadSchema,
   normalizeCreateSessionPayload,
 } from "@/features/sessions/create";
+import type { WallieSessionRepository } from "@/features/wallie/types";
+import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
-import { enqueueWallieRun } from "@/lib/wallie/service";
+import {
+  assertSessionFirstRunReady,
+  assertSessionSandboxCapabilityReady,
+  createSessionWithFirstJob,
+  loadSessionFirstRunPrerequisites,
+} from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
+import { workspaceSessionDetailPath } from "@/lib/routes";
+
+export const preferredRegion = "home";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
-async function cleanupCreatedSession(input: {
-  admin: AdminClient;
-  sessionId: string;
-}): Promise<string | null> {
-  const { error } = await input.admin.from("sessions").delete().eq("id", input.sessionId);
-
-  if (error) {
-    console.error("Failed to clean up session after enqueue failure", {
-      error,
-      sessionId: input.sessionId,
-    });
-    return error.message;
-  }
-
-  return null;
-}
+const repositoryPreflightSelect =
+  "id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
@@ -43,11 +40,91 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-async function loadDefaultSessionRepositoryId(input: {
+function getErrorCode(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return null;
+}
+
+function mapWallieSessionRepository(row: {
+  default_branch: string | null;
+  default_programming_language: string | null;
+  full_name: string;
+  html_url: string;
+  id: string;
+  is_archived: boolean;
+  private: boolean;
+}): WallieSessionRepository {
+  return {
+    defaultBranch: row.default_branch,
+    defaultProgrammingLanguage: row.default_programming_language,
+    fullName: row.full_name,
+    htmlUrl: row.html_url,
+    id: row.id,
+    isArchived: row.is_archived,
+    isPrivate: row.private,
+  };
+}
+
+async function loadSessionRepositoryById(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  requireActive?: boolean;
+  workspaceId: string;
+}): Promise<WallieSessionRepository | null> {
+  let query = input.admin
+    .from("github_repositories")
+    .select(repositoryPreflightSelect)
+    .eq("id", input.repositoryId)
+    .eq("workspace_id", input.workspaceId);
+
+  if (input.requireActive) {
+    query = query.eq("is_archived", false);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? mapWallieSessionRepository(data) : null;
+}
+
+async function loadFirstAvailableSessionRepository(input: {
+  admin: AdminClient;
+  workspaceId: string;
+}): Promise<WallieSessionRepository | null> {
+  const { data, error } = await input.admin
+    .from("github_repositories")
+    .select(repositoryPreflightSelect)
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_archived", false)
+    .order("full_name", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? mapWallieSessionRepository(data) : null;
+}
+
+async function loadDefaultSessionRepository(input: {
   admin: AdminClient;
   onboardingRepositoryId: string | null;
   workspaceId: string;
-}): Promise<string | null> {
+}): Promise<{
+  configuredRepository: WallieSessionRepository | null;
+  sessionRepository: WallieSessionRepository | null;
+}> {
   const { data: primaryProfileRow, error: primaryProfileError } = await input.admin
     .from("workspace_repository_profiles")
     .select("github_repository_id")
@@ -59,74 +136,63 @@ async function loadDefaultSessionRepositoryId(input: {
     throw primaryProfileError;
   }
 
-  const primaryRepositoryId = primaryProfileRow?.github_repository_id ?? null;
-  if (primaryRepositoryId) {
-    const repositoryId = await loadAvailableSessionRepositoryId({
+  const candidateIds = [
+    primaryProfileRow?.github_repository_id ?? null,
+    input.onboardingRepositoryId,
+  ].filter((repositoryId): repositoryId is string => Boolean(repositoryId));
+
+  let configuredRepository: WallieSessionRepository | null = null;
+
+  for (const repositoryId of candidateIds) {
+    const repository = await loadSessionRepositoryById({
       admin: input.admin,
-      repositoryId: primaryRepositoryId,
+      repositoryId,
       workspaceId: input.workspaceId,
     });
-    if (repositoryId) return repositoryId;
+
+    if (!repository) {
+      continue;
+    }
+
+    configuredRepository ??= repository;
+
+    if (!repository.isArchived) {
+      return {
+        configuredRepository,
+        sessionRepository: repository,
+      };
+    }
   }
 
-  if (input.onboardingRepositoryId) {
-    const repositoryId = await loadAvailableSessionRepositoryId({
-      admin: input.admin,
-      repositoryId: input.onboardingRepositoryId,
-      workspaceId: input.workspaceId,
-    });
-    if (repositoryId) return repositoryId;
-  }
+  const fallbackRepository = await loadFirstAvailableSessionRepository(input);
 
-  return loadFirstAvailableSessionRepositoryId(input);
+  return {
+    configuredRepository: configuredRepository ?? fallbackRepository,
+    sessionRepository: fallbackRepository,
+  };
 }
 
-async function loadAvailableSessionRepositoryId(input: {
+async function loadWorkspaceLinearIssue(input: {
   admin: AdminClient;
-  repositoryId: string;
+  issueIdentifier: string;
   workspaceId: string;
-}): Promise<string | null> {
+}): Promise<LinearIssue> {
   const { data, error } = await input.admin
-    .from("github_repositories")
-    .select("id")
-    .eq("id", input.repositoryId)
+    .from("workspace_secrets")
+    .select("encrypted_value")
     .eq("workspace_id", input.workspaceId)
-    .eq("is_archived", false)
+    .eq("key", "LINEAR_API_KEY")
     .maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  return data?.id ?? null;
-}
-
-async function loadFirstAvailableSessionRepositoryId(input: {
-  admin: AdminClient;
-  workspaceId: string;
-}): Promise<string | null> {
-  const { data, error } = await input.admin
-    .from("github_repositories")
-    .select("id")
-    .eq("workspace_id", input.workspaceId)
-    .eq("is_archived", false)
-    .order("full_name", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
+  if (!data) {
+    throw new Error("Connect Linear before linking an issue to a session.");
   }
 
-  return data?.id ?? null;
-}
-
-async function validateSessionRepositoryId(input: {
-  admin: AdminClient;
-  repositoryId: string;
-  workspaceId: string;
-}): Promise<boolean> {
-  return Boolean(await loadAvailableSessionRepositoryId(input));
+  return fetchLinearIssue(decryptSecretValue(data.encrypted_value), input.issueIdentifier);
 }
 
 export async function POST(request: Request) {
@@ -151,11 +217,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  const { data: onboardingRow, error: onboardingError } = await access.context.supabase
-    .from("workspace_onboarding")
-    .select("status, selected_github_repository_id")
-    .eq("workspace_id", normalized.workspaceId)
-    .maybeSingle();
+  const admin = createSupabaseAdminClient();
+  const [onboardingResult, firstRunPrereqsResult, linearIssueResult] = await Promise.all([
+    access.context.supabase
+      .from("workspace_onboarding")
+      .select("status, selected_github_repository_id")
+      .eq("workspace_id", normalized.workspaceId)
+      .maybeSingle(),
+    loadSessionFirstRunPrerequisites({ admin, workspaceId: normalized.workspaceId }).then(
+      (data) => ({ data, error: null }),
+      (error: unknown) => ({ data: null, error }),
+    ),
+    normalized.linearIssueId
+      ? loadWorkspaceLinearIssue({
+          admin,
+          issueIdentifier: normalized.linearIssueId,
+          workspaceId: normalized.workspaceId,
+        }).then(
+          (data) => ({ data, error: null }),
+          (error: unknown) => ({ data: null, error }),
+        )
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  const { data: onboardingRow, error: onboardingError } = onboardingResult;
   if (onboardingError) {
     return NextResponse.json({ error: onboardingError.message }, { status: 500 });
   }
@@ -166,30 +250,48 @@ export async function POST(request: Request) {
     );
   }
 
-  const admin = createSupabaseAdminClient();
+  if (linearIssueResult.error) {
+    return NextResponse.json(
+      {
+        error: getErrorMessage(linearIssueResult.error, "Wallie could not load that Linear issue."),
+      },
+      { status: 422 },
+    );
+  }
+
+  const linearIssue = linearIssueResult.data;
+
   let githubRepositoryId: string | null = null;
+  let repositoryForPreflight: WallieSessionRepository | null = null;
   try {
     if (normalized.githubRepositoryId) {
-      const repositoryAvailable = await validateSessionRepositoryId({
+      const repository = await loadSessionRepositoryById({
         admin,
         repositoryId: normalized.githubRepositoryId,
+        requireActive: true,
         workspaceId: normalized.workspaceId,
       });
 
-      if (!repositoryAvailable) {
+      if (!repository) {
         return NextResponse.json(
           { error: "Repository is not available for this workspace." },
           { status: 400 },
         );
       }
 
-      githubRepositoryId = normalized.githubRepositoryId;
+      githubRepositoryId = repository.id;
+      repositoryForPreflight = repository;
     } else {
-      githubRepositoryId = await loadDefaultSessionRepositoryId({
+      const { configuredRepository, sessionRepository } = await loadDefaultSessionRepository({
         admin,
         onboardingRepositoryId: onboardingRow.selected_github_repository_id,
         workspaceId: normalized.workspaceId,
       });
+
+      githubRepositoryId = sessionRepository?.id ?? null;
+      // Prefer the session pin when active; otherwise keep the configured
+      // (possibly archived) candidate so first-run preflight can block create.
+      repositoryForPreflight = sessionRepository ?? configuredRepository;
     }
   } catch (error) {
     return NextResponse.json(
@@ -198,91 +300,87 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: number, error: numberError } = await admin.rpc("next_session_number", {
-    actor_user_id: access.context.user.id,
-    target_workspace_id: normalized.workspaceId,
-  });
-  if (numberError) {
-    return NextResponse.json({ error: numberError.message }, { status: 500 });
-  }
+  let agentConfig;
+  try {
+    if (firstRunPrereqsResult.error || !firstRunPrereqsResult.data) {
+      throw firstRunPrereqsResult.error ?? new Error("Wallie is not ready to run.");
+    }
 
-  const { data: pipelineRow, error: pipelineError } = await access.context.supabase
-    .from("pipelines")
-    .select("id")
-    .eq("workspace_id", normalized.workspaceId)
-    .eq("is_default", true)
-    .maybeSingle();
-  if (pipelineError) {
-    return NextResponse.json({ error: pipelineError.message }, { status: 500 });
-  }
-  if (!pipelineRow) {
-    return NextResponse.json(
-      { error: "Workspace has no default pipeline configured." },
-      { status: 409 },
-    );
-  }
-
-  const { data: firstStageRow, error: stageError } = await access.context.supabase
-    .from("pipeline_stages")
-    .select("id")
-    .eq("pipeline_id", pipelineRow.id)
-    .order("position", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (stageError) {
-    return NextResponse.json({ error: stageError.message }, { status: 500 });
-  }
-  if (!firstStageRow) {
-    return NextResponse.json(
-      { error: "Default pipeline has no stages configured." },
-      { status: 409 },
-    );
-  }
-
-  const { data: sessionRow, error: sessionError } = await admin
-    .from("sessions")
-    .insert({
-      creator_member_id: access.context.currentMember.id,
-      current_stage_id: firstStageRow.id,
-      github_repository_id: githubRepositoryId,
-      linear_issue_id: normalized.linearIssueId,
-      linear_issue_url: normalized.linearIssueUrl,
-      number,
-      phase_status: "agent_generating",
-      pipeline_id: pipelineRow.id,
-      prompt_md: normalized.promptMd,
-      title: normalized.title,
-      workspace_id: normalized.workspaceId,
-    })
-    .select("id, number")
-    .single();
-
-  if (sessionError || !sessionRow) {
-    return NextResponse.json(
-      { error: sessionError?.message ?? "Wallie could not create that session." },
-      { status: 500 },
-    );
+    agentConfig = assertSessionFirstRunReady({
+      ...firstRunPrereqsResult.data,
+      repository: repositoryForPreflight,
+    });
+    await assertSessionSandboxCapabilityReady({
+      admin,
+      agentConfig,
+      repository: repositoryForPreflight,
+      sandboxConnection: firstRunPrereqsResult.data.vercelSandboxConnection,
+      workspaceId: normalized.workspaceId,
+    });
+  } catch (error) {
+    try {
+      const response = buildAgentRunActionErrorResponse(error);
+      return NextResponse.json(response.body, { status: response.status });
+    } catch {
+      return NextResponse.json(
+        { error: getErrorMessage(error, "Wallie is not ready to run.") },
+        { status: 500 },
+      );
+    }
   }
 
   try {
-    const result = await enqueueWallieRun({
+    const result = await createSessionWithFirstJob({
       admin,
-      requestedByMemberId: access.context.currentMember.id,
-      sessionId: sessionRow.id,
-      supabase: access.context.supabase,
-      triggerType: "assignment",
-      workspace: access.context.workspace,
+      attachmentIds: normalized.attachmentIds,
+      creatorMemberId: access.context.currentMember.id,
+      githubRepositoryId,
+      linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
+      linearIssueUrl: linearIssue?.url ?? normalized.linearIssueUrl,
+      modelName: agentConfig.model,
+      modelProvider: agentConfig.provider,
+      promptMd: normalized.promptMd || linearIssue?.description.trim() || linearIssue?.title || "",
+      selectedStageIds: normalized.selectedStageIds,
+      title: linearIssue?.title ?? normalized.title,
+      workspaceId: normalized.workspaceId,
     });
 
     return NextResponse.json(
       {
-        number: sessionRow.number,
-        processScheduled: result.created && result.jobId !== null,
+        canonicalUrl: workspaceSessionDetailPath(result.workspaceSlug, result.number),
+        number: result.number,
+        processScheduled: Boolean(result.jobId),
       },
       { status: 201 },
     );
   } catch (error) {
-    const cleanupError = await cleanupCreatedSession({ admin, sessionId: sessionRow.id });
+    if (getErrorCode(error) === "P0002") {
+      return NextResponse.json(
+        { error: getErrorMessage(error, "Workspace pipeline is not configured.") },
+        { status: 409 },
+      );
+    }
+
+    if (getErrorCode(error) === "P0003") {
+      return NextResponse.json(
+        {
+          code: "session_options_changed",
+          error: "The workspace pipeline changed. Refresh the stage options and try again.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (getErrorCode(error) === "P0004") {
+      return NextResponse.json(
+        {
+          code: "session_attachments_changed",
+          error: "One or more session images expired or changed. Remove them and upload again.",
+        },
+        { status: 409 },
+      );
+    }
+
     let response;
     try {
       response = buildAgentRunActionErrorResponse(error);
@@ -295,23 +393,6 @@ export async function POST(request: Request) {
       };
     }
 
-    if (cleanupError) {
-      return NextResponse.json(
-        {
-          ...response.body,
-          error: `Wallie could not queue the first run, and the created session could not be cleaned up: ${cleanupError}`,
-          sessionId: sessionRow.id,
-        },
-        { status: 500 },
-      );
-    }
-
-    return NextResponse.json(
-      {
-        ...response.body,
-        error: `Session was not created because Wallie could not queue the first run: ${response.body.error}`,
-      },
-      { status: response.status },
-    );
+    return NextResponse.json(response.body, { status: response.status });
   }
 }

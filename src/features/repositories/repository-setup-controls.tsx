@@ -1,9 +1,13 @@
 "use client";
 
-import { ArchiveIcon, BranchIcon, CodeIcon, GlobeIcon, LockIcon } from "@/components/shared/icons";
+import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
+import { BranchIcon } from "@/components/shared/icons/branch-icon";
+import { CodeIcon } from "@/components/shared/icons/code-icon";
+import { GlobeIcon } from "@/components/shared/icons/globe-icon";
+import { LockIcon } from "@/components/shared/icons/lock-icon";
+import { Status, type StatusValue } from "@/components/ui/status";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { StatusBadge } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import { CURRENT_WALLIE_SKILL_VERSION } from "@/lib/repo-onboarding/contracts";
 import type {
@@ -39,7 +43,7 @@ function RepoPropertyIcon({
   return <GlobeIcon className={className} />;
 }
 
-export function RepositoryPropertyPill({
+function RepositoryProperty({
   icon,
   label,
   monospace = false,
@@ -51,74 +55,57 @@ export function RepositoryPropertyPill({
   value: string;
 }) {
   return (
-    <span aria-label={`${label}: ${value}`} className="ui-pill" title={`${label}: ${value}`}>
-      <RepoPropertyIcon type={icon} />
-      <span className={monospace ? "font-mono" : undefined}>{value}</span>
-    </span>
+    <div aria-label={`${label}: ${value}`} className="inline-flex min-w-0 items-center gap-1.5">
+      <dt className="sr-only">{label}</dt>
+      <span aria-hidden="true">
+        <RepoPropertyIcon type={icon} />
+      </span>
+      <dd
+        className={`min-w-0 break-words text-[13px] font-medium leading-5 text-foreground${monospace ? " font-mono" : ""}`}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 
-export function RepositoryMetadataPills({ repository }: { repository: WorkspaceGitHubRepository }) {
+export function RepositoryMetadata({ repository }: { repository: WorkspaceGitHubRepository }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <dl className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {repository.defaultProgrammingLanguage ? (
-        <RepositoryPropertyPill
+        <RepositoryProperty
           icon="language"
           label="Language"
           value={repository.defaultProgrammingLanguage}
         />
       ) : null}
       {repository.defaultBranch ? (
-        <RepositoryPropertyPill
+        <RepositoryProperty
           icon="branch"
           label="Default branch"
           monospace
           value={repository.defaultBranch}
         />
       ) : null}
-      <RepositoryPropertyPill
+      <RepositoryProperty
         icon={repository.isPrivate ? "private" : "public"}
         label="Visibility"
         value={repository.isPrivate ? "Private" : "Public"}
       />
       {repository.isArchived ? (
-        <RepositoryPropertyPill icon="archived" label="Status" value="Archived" />
+        <RepositoryProperty icon="archived" label="Status" value="Archived" />
       ) : null}
-    </div>
+    </dl>
   );
 }
 
-export function repositoryOnboardingLabel(status: RepositoryOnboardingStatus): string {
-  switch (status) {
-    case "pr_open":
-      return "Setup PR open";
-    case "ready":
-      return "Ready";
-    case "conflict":
-      return "Conflict";
-    case "error":
-      return "Error";
-    default:
-      return "Not set up";
-  }
-}
-
-export function repositoryOnboardingBadgeTone(
-  status: RepositoryOnboardingStatus,
-): "success" | "warning" | "danger" | "neutral" | "accent" {
-  switch (status) {
-    case "ready":
-      return "success";
-    case "pr_open":
-      return "accent";
-    case "conflict":
-      return "warning";
-    case "error":
-      return "danger";
-    default:
-      return "neutral";
-  }
-}
+const repositoryOnboardingStatuses = {
+  conflict: { label: "Conflict", value: "needs_attention" },
+  error: { label: "Error", value: "blocked" },
+  not_set_up: { label: "Not set up", value: "not_started" },
+  pr_open: { label: "Setup PR open", value: "awaiting_review" },
+  ready: { label: "Ready", value: "healthy" },
+} satisfies Record<RepositoryOnboardingStatus, { label: string; value: StatusValue }>;
 
 export function repositorySetupCanAdvance(status: RepositoryOnboardingStatus | "placeholder") {
   return status === "pr_open" || status === "ready";
@@ -131,12 +118,10 @@ export function hasCurrentWallieSkills(onboarding: RepositoryOnboardingState): b
   );
 }
 
-export function RepositorySetupStatusBadge({ status }: { status: RepositoryOnboardingStatus }) {
-  return (
-    <StatusBadge tone={repositoryOnboardingBadgeTone(status)}>
-      {repositoryOnboardingLabel(status)}
-    </StatusBadge>
-  );
+export function RepositorySetupStatus({ status }: { status: RepositoryOnboardingStatus }) {
+  if (status === "ready") return null;
+  const definition = repositoryOnboardingStatuses[status];
+  return <Status label={definition?.label} value={definition?.value as StatusValue} />;
 }
 
 export function mergeRepositoryOnboardingState(
@@ -153,7 +138,7 @@ export function RepositorySetupMessages({ repository }: { repository: WorkspaceG
   return (
     <>
       {repository.onboarding.status === "conflict" ? (
-        <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] leading-5 text-warning">
+        <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
           <p className="font-semibold">Existing skill files need review.</p>
           <ul className="mt-1 space-y-1">
             {repository.onboarding.conflictReport.map((conflict) => (
@@ -165,7 +150,7 @@ export function RepositorySetupMessages({ repository }: { repository: WorkspaceG
         </div>
       ) : null}
       {repository.onboarding.lastError ? (
-        <p className="text-[12px] leading-5 text-danger">{repository.onboarding.lastError}</p>
+        <p className="text-xs leading-5 text-danger">{repository.onboarding.lastError}</p>
       ) : null}
     </>
   );

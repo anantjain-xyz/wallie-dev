@@ -9,6 +9,7 @@ import {
   normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
+import { isMissingOrEmptyAgentProvider } from "@/lib/agent-config/drafts";
 import { canSkipOnboardingStep } from "@/features/onboarding/flow";
 import type {
   OnboardingSetupHealth,
@@ -79,7 +80,11 @@ export function configuredAgentConfigKeys(config: AgentConfigMap): AgentConfigKe
 }
 
 export function resolveAgentConfigValue(key: AgentConfigKey, config: AgentConfigMap) {
-  return config[key] ?? getRecommendedAgentConfigDefault(key, resolveProvider(config));
+  const value = config[key];
+  if (key === "agent_provider" && isMissingOrEmptyAgentProvider(value)) {
+    return getRecommendedAgentConfigDefault(key, resolveProvider(config));
+  }
+  return value ?? getRecommendedAgentConfigDefault(key, resolveProvider(config));
 }
 
 function resolveProvider(config: AgentConfigMap): AgentProvider {
@@ -100,6 +105,7 @@ export function buildRuntimeReadiness(input: {
   agentConfig: AgentConfigMap;
   claudeCodeConnection: OnboardingSetupHealth["claudeCodeConnection"];
   codexConnection: OnboardingSetupHealth["codexConnection"];
+  cursorConnection?: OnboardingSetupHealth["cursorConnection"];
   openCodeConnection: OnboardingSetupHealth["openCodeConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
@@ -118,7 +124,14 @@ export function buildRuntimeReadiness(input: {
   if (!providerModelValid) {
     invalidConfig.push({
       key: "agent_model",
-      error: providerModelError(provider),
+      error:
+        provider === "codex"
+          ? 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.'
+          : provider === "claude-code"
+            ? 'Model must start with "claude-" for Claude Code.'
+            : provider === "cursor"
+              ? "Select a model returned by your Cursor account."
+              : 'Model must use a lowercase "opencode/<model-id>" identifier.',
     });
   }
 
@@ -181,40 +194,27 @@ export function buildRuntimeReadiness(input: {
         },
       );
       break;
+    case "cursor":
+      requirements.push({
+        detail: input.cursorConnection?.connected
+          ? "Current user has a connected Cursor account."
+          : "Sign in with Cursor to use the models available on your plan.",
+        id: "cursor-connection",
+        label: "Cursor account",
+        passed: input.cursorConnection?.connected === true,
+        step: "runtime",
+      });
+      break;
     case "opencode":
-      requirements.push(
-        {
-          detail: input.openCodeConnection.connected
-            ? "Current user has a connected OpenCode Zen API key."
-            : "Connect the current user's OpenCode Zen API key.",
-          id: "opencode-connection",
-          label: "OpenCode Zen API key",
-          passed: input.openCodeConnection.connected,
-          step: "runtime",
-        },
-        {
-          detail: providerModelValid
-            ? "OpenCode model uses an opencode/* id."
-            : "OpenCode requires an opencode/* model id.",
-          id: "opencode-model",
-          label: "OpenCode model",
-          passed: providerModelValid,
-          step: "runtime",
-        },
-        {
-          detail:
-            input.repositorySetup.status === "ready" && input.repositorySetup.repositoryId
-              ? "Selected repository setup is ready for sandboxed CLI runs."
-              : "Selected repository Wallie setup must be ready before OpenCode can run.",
-          id: "opencode-repository",
-          label: "Sandbox repository",
-          passed:
-            input.repositorySetup.status === "ready" &&
-            Boolean(input.primaryRepositoryId) &&
-            input.repositorySetup.repositoryId === input.primaryRepositoryId,
-          step: "repository",
-        },
-      );
+      requirements.push({
+        detail: input.openCodeConnection.connected
+          ? "Current user has a connected OpenCode Zen API key."
+          : "Connect the current user's OpenCode Zen API key.",
+        id: "opencode-connection",
+        label: "OpenCode Zen API key",
+        passed: input.openCodeConnection.connected,
+        step: "runtime",
+      });
       break;
   }
 
@@ -228,18 +228,47 @@ export function buildRuntimeReadiness(input: {
   };
 }
 
-function providerModelError(provider: AgentProvider): string {
-  switch (provider) {
-    case "codex":
-      return 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.';
-    case "claude-code":
-      return 'Model must start with "claude-" for Claude Code.';
-    case "opencode":
-      return 'Model must start with "opencode/" for OpenCode.';
-  }
+function capabilityCheckMatchesSandboxConnection(
+  check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
+  connection: NonNullable<OnboardingSetupHealth["sandboxConnection"]>,
+) {
+  return (
+    connection.connected &&
+    check.sandboxProvider === connection.provider &&
+    check.sandboxConnectionRevision === connection.connectionRevision
+  );
 }
 
-function capabilityCheckMatchesVercelConnection(
+export function capabilityCheckMatchesCurrentSetup(health: OnboardingSetupHealth): boolean {
+  const latestCheck = health.latestSandboxCapabilityCheck;
+  if (!latestCheck) return false;
+  const runtime = buildRuntimeReadiness({
+    agentConfig: health.agentConfig.values,
+    claudeCodeConnection: health.claudeCodeConnection,
+    codexConnection: health.codexConnection,
+    cursorConnection: health.cursorConnection,
+    openCodeConnection: health.openCodeConnection,
+    primaryRepositoryId: health.primaryRepositoryProfile.repositoryId,
+    repositorySetup: health.repositorySetup,
+  });
+  const primaryRepositoryId = health.primaryRepositoryProfile.repositoryId;
+  const repositoryMatches =
+    Boolean(primaryRepositoryId) && latestCheck.githubRepositoryId === primaryRepositoryId;
+  const pendingWithoutAgentMetadata =
+    latestCheck.status === "running" &&
+    latestCheck.agentProvider == null &&
+    latestCheck.agentModel == null;
+  const agentMatches =
+    pendingWithoutAgentMetadata ||
+    (latestCheck.agentProvider === runtime.provider && latestCheck.agentModel === runtime.model);
+  const connectionMatches = health.sandboxConnection
+    ? capabilityCheckMatchesSandboxConnection(latestCheck, health.sandboxConnection)
+    : capabilityCheckMatchesLegacyVercelConnection(latestCheck, health.vercelSandboxConnection);
+
+  return repositoryMatches && agentMatches && connectionMatches;
+}
+
+function capabilityCheckMatchesLegacyVercelConnection(
   check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
   connection: OnboardingSetupHealth["vercelSandboxConnection"],
 ) {
@@ -272,6 +301,7 @@ export function buildVerifyChecklist(input: {
     agentConfig: input.agentConfig,
     claudeCodeConnection: input.health.claudeCodeConnection,
     codexConnection: input.health.codexConnection,
+    cursorConnection: input.health.cursorConnection,
     openCodeConnection: input.health.openCodeConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,
@@ -280,20 +310,44 @@ export function buildVerifyChecklist(input: {
   const skippedSteps = new Set(input.onboarding.skippedSteps);
   const primaryRepositoryId = input.health.primaryRepositoryProfile.repositoryId;
   const latestCheck = input.health.latestSandboxCapabilityCheck;
-  const vercelSandboxConnection = input.health.vercelSandboxConnection;
+  const sandboxConnection = input.health.sandboxConnection ?? {
+    connected: input.health.vercelSandboxConnection.connected,
+    connectionRevision: null,
+    displayName:
+      input.health.vercelSandboxConnection.projectName ??
+      input.health.vercelSandboxConnection.projectId,
+    lastValidationError: input.health.vercelSandboxConnection.lastValidationError,
+    provider: "vercel" as const,
+    providerLabel: "Vercel Sandbox",
+    status: input.health.vercelSandboxConnection.status,
+    updatedAt: input.health.vercelSandboxConnection.updatedAt,
+  };
   const latestCheckMatchesPrimaryRepository =
     Boolean(primaryRepositoryId) && latestCheck?.githubRepositoryId === primaryRepositoryId;
-  const latestCheckMatchesVercelConnection =
-    latestCheckMatchesPrimaryRepository &&
+  const latestCheckMatchesAgent =
     latestCheck !== null &&
-    (capabilityCheckMatchesVercelConnection(latestCheck, vercelSandboxConnection) ||
+    ((latestCheck.status === "running" &&
+      latestCheck.agentProvider == null &&
+      latestCheck.agentModel == null) ||
+      (latestCheck.agentProvider === runtimeReadiness.provider &&
+        latestCheck.agentModel === runtimeReadiness.model));
+  const latestCheckMatchesSandboxConnection =
+    latestCheckMatchesPrimaryRepository &&
+    latestCheckMatchesAgent &&
+    latestCheck !== null &&
+    ((input.health.sandboxConnection
+      ? capabilityCheckMatchesSandboxConnection(latestCheck, sandboxConnection)
+      : capabilityCheckMatchesLegacyVercelConnection(
+          latestCheck,
+          input.health.vercelSandboxConnection,
+        )) ||
       capabilityCheckIsPendingSandboxMetadata(latestCheck));
   const latestSelectedRepositoryCheckStatus = latestCheckMatchesPrimaryRepository
-    ? latestCheckMatchesVercelConnection
+    ? latestCheckMatchesSandboxConnection
       ? latestCheck?.status
       : "stale"
     : null;
-  const sandboxStatus = !vercelSandboxConnection.connected
+  const sandboxStatus = !sandboxConnection.connected
     ? ({ label: "Blocked", tone: "warning" } as const)
     : latestSelectedRepositoryCheckStatus === "success"
       ? ({ label: "Ready", tone: "success" } as const)
@@ -424,22 +478,22 @@ export function buildVerifyChecklist(input: {
       step: "runtime",
     },
     {
-      detail: vercelSandboxConnection.connected
-        ? `Connected to ${vercelSandboxConnection.projectName ?? vercelSandboxConnection.projectId ?? "Vercel project"}.`
-        : vercelSandboxConnection.status === "error"
-          ? (vercelSandboxConnection.lastValidationError ??
-            "The saved Vercel Sandbox connection is invalid.")
-          : "Connect a Vercel Sandbox account before running Wallie sessions.",
+      detail: sandboxConnection.connected
+        ? `Connected to ${sandboxConnection.displayName ?? sandboxConnection.providerLabel}.`
+        : sandboxConnection.status === "error"
+          ? (sandboxConnection.lastValidationError ??
+            `The saved ${sandboxConnection.providerLabel} connection is invalid.`)
+          : `Connect ${sandboxConnection.providerLabel} before running Wallie sessions.`,
       id: "vercel-sandbox",
-      label: "Vercel Sandbox connected",
-      passed: vercelSandboxConnection.connected,
-      statusLabel: vercelSandboxConnection.connected ? "Ready" : "Blocked",
-      statusTone: vercelSandboxConnection.connected ? "success" : "warning",
-      step: "runtime",
+      label: `${sandboxConnection.providerLabel} connected`,
+      passed: sandboxConnection.connected,
+      statusLabel: sandboxConnection.connected ? "Ready" : "Blocked",
+      statusTone: sandboxConnection.connected ? "success" : "warning",
+      step: "sandbox",
     },
     {
-      detail: !vercelSandboxConnection.connected
-        ? "Connect a Vercel Sandbox account before running a capability check."
+      detail: !sandboxConnection.connected
+        ? "Connect a sandbox provider before running a capability check."
         : latestSelectedRepositoryCheckStatus === "success"
           ? "Latest selected-repository sandbox capability check succeeded."
           : latestSelectedRepositoryCheckStatus === "running"
@@ -447,14 +501,13 @@ export function buildVerifyChecklist(input: {
             : latestSelectedRepositoryCheckStatus === "error"
               ? (latestCheck?.errorText ?? "Latest sandbox capability check failed.")
               : latestSelectedRepositoryCheckStatus === "stale"
-                ? "Run a sandbox capability check for the connected Vercel project."
+                ? `Run a sandbox capability check for the connected ${sandboxConnection.providerLabel} account.`
                 : primaryRepositoryId
                   ? "Run a sandbox capability check for the selected repository."
                   : "Save a repository profile before running a sandbox capability check.",
       id: "sandbox",
       label: "Sandbox capability check",
-      passed:
-        vercelSandboxConnection.connected && latestSelectedRepositoryCheckStatus === "success",
+      passed: sandboxConnection.connected && latestSelectedRepositoryCheckStatus === "success",
       statusLabel: sandboxStatus.label,
       statusTone: sandboxStatus.tone,
       step: "verify",

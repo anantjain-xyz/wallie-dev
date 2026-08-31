@@ -1,4 +1,6 @@
 import type { OpenCodeCredential } from "@/lib/opencode/contracts";
+import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
+import { redactSecrets } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 
@@ -66,10 +68,11 @@ export class OpenCodeRunner implements AgentRunner {
     const shellCmd = `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", XDG_DATA_HOME: dataHome },
+      env: { CI: "1", XDG_DATA_HOME: dataHome, ...WALLIE_GIT_IDENTITY_ENV },
       signal: input.signal,
     });
 
+    const secrets = [this.options.credential.secret, ...(input.secrets ?? [])];
     let stdoutBuf = "";
     let stderrBuf = "";
     let lastSessionId: string | undefined;
@@ -91,25 +94,25 @@ export class OpenCodeRunner implements AgentRunner {
           hadError = true;
           return {
             ...event,
-            message: redactCredential(event.message, this.options.credential.secret),
+            message: redactSecrets(event.message, secrets),
           };
         }
         if (event.type === "text") {
           return {
             ...event,
-            text: redactCredential(event.text, this.options.credential.secret),
+            text: redactSecrets(event.text, secrets),
           };
         }
         if (event.type === "tool_use") {
           return {
             ...event,
-            input: redactCredential(event.input, this.options.credential.secret),
+            input: redactSecrets(event.input, secrets),
           };
         }
         if (event.type === "completion") {
           return {
             ...event,
-            summary: redactCredential(event.summary, this.options.credential.secret),
+            summary: redactSecrets(event.summary, secrets),
           };
         }
         return event;
@@ -138,9 +141,9 @@ export class OpenCodeRunner implements AgentRunner {
     if (code !== 0) {
       yield {
         type: "error",
-        message: redactCredential(
+        message: redactSecrets(
           `opencode CLI exited with code ${code}: ${stderrBuf.trim().slice(0, 500) || "(no stderr)"}`,
-          this.options.credential.secret,
+          secrets,
         ),
       };
       return;
@@ -262,10 +265,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function safePathToken(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 120) || "run";
-}
-
-function redactCredential(message: string, credential: string): string {
-  return credential ? message.split(credential).join("[redacted]") : message;
 }
 
 function shellQuote(value: string): string {

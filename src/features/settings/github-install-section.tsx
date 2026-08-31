@@ -1,9 +1,10 @@
 "use client";
 
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
+import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 
 type GitHubInstallSectionProps = {
   canManage: boolean;
@@ -22,12 +23,12 @@ export function GitHubInstallSection({
 }: GitHubInstallSectionProps) {
   const statusBadge = github.installation ? (
     github.installation.suspended ? (
-      <StatusBadge tone="warning">Suspended</StatusBadge>
+      <Status label="Suspended" value="needs_attention" />
     ) : (
-      <StatusBadge tone="success">Connected</StatusBadge>
+      <Status label="Connected" value="healthy" />
     )
   ) : (
-    <StatusBadge tone="neutral">Not connected</StatusBadge>
+    <Status label="Not connected" value="not_started" />
   );
 
   return (

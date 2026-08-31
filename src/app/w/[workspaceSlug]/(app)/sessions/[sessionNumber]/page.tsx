@@ -1,3 +1,11 @@
+import { Suspense } from "react";
+
+import { MarkdownContent } from "@/components/shared/markdown-content";
+import { renderMarkdown } from "@/components/shared/markdown-content.server";
+import {
+  SessionActivity,
+  SessionActivityFallback,
+} from "@/features/sessions/detail/session-activity";
 import { loadSessionDetailPageData } from "@/features/sessions/detail/data";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
 
@@ -11,6 +19,36 @@ type SessionDetailPageProps = {
 export default async function SessionDetailPage({ params }: SessionDetailPageProps) {
   const { sessionNumber, workspaceSlug } = await params;
   const data = await loadSessionDetailPageData(workspaceSlug, sessionNumber);
+  const initialNow = new Date().toISOString();
+  const latestArtifact = data.review.session.artifacts[0] ?? null;
+  const initialFormattedArtifactKey = latestArtifact
+    ? `${data.review.session.id}:${latestArtifact.stageSlug}:${latestArtifact.version}`
+    : null;
+  const initialFormattedArtifact =
+    latestArtifact && typeof latestArtifact.payload === "string" ? (
+      <MarkdownContent html={renderMarkdown(latestArtifact.payload).bodyHtml} />
+    ) : null;
 
-  return <SessionDetailPageClient initialData={data} />;
+  return (
+    <SessionDetailPageClient
+      activity={
+        <Suspense fallback={<SessionActivityFallback />}>
+          <SessionActivity
+            archivedAt={data.review.session.archivedAt}
+            context={data.activityContext}
+            initialNow={initialNow}
+            workspaceSlug={data.review.workspaceSlug}
+          />
+        </Suspense>
+      }
+      canReview={data.canReview}
+      failedStageSlug={data.failedStageSlug}
+      hasFailedRun={data.hasFailedRun}
+      initialData={data.review}
+      initialNow={initialNow}
+      initialFormattedArtifact={initialFormattedArtifact}
+      initialFormattedArtifactKey={initialFormattedArtifactKey}
+      repository={data.repository}
+    />
+  );
 }

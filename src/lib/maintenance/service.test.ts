@@ -42,11 +42,10 @@ function setupDefaults() {
 
 describe("runMaintenanceTick", () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
-  it("runs workspace-scoped cleanup and reconciliation while delegating queue processing", async () => {
+  it("runs workspace-scoped cleanup and reconciliation", async () => {
     setupDefaults();
     const admin = {};
 
@@ -71,32 +70,11 @@ describe("runMaintenanceTick", () => {
         stoppedSandboxIds: ["sandbox-stalled"],
         terminalErroredJobIds: [],
       },
-      processing: {
-        processedJobIds: [],
-        result: "delegated",
-        runId: null,
-      },
       reconciliation: {
         canceled: 1,
         checked: 3,
         rateLimited: false,
       },
-    });
-  });
-
-  it("does not process queued jobs even when a tick budget is provided", async () => {
-    setupDefaults();
-
-    const result = await runMaintenanceTick({
-      admin: {} as never,
-      tickBudgetMs: 1,
-      workspaceId: WORKSPACE_ID,
-    });
-
-    expect(result.processing).toEqual({
-      processedJobIds: [],
-      result: "delegated",
-      runId: null,
     });
   });
 });

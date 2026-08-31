@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
+import type {
+  WorkspaceOnboardingMutationAction,
+  WorkspaceOnboardingMutationDelta,
+  WorkspaceOnboardingStep,
+} from "@/lib/onboarding/contracts";
 
 const mocked = vi.hoisted(() => ({
   loadWorkspaceOnboardingData: vi.fn(),
@@ -64,6 +69,7 @@ const onboardingData: WorkspaceOnboardingData = {
     operatingRulesMd: "",
     stages: [
       {
+        anyoneCanApprove: false,
         approverMemberIds: [],
         description: "Product",
         id: "stage-1",
@@ -86,18 +92,24 @@ const onboardingData: WorkspaceOnboardingData = {
       },
     },
     codexConnection: {
+      accountEmail: null,
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "codex_access_token",
       expiresAt: "2026-05-16T20:00:00.000Z",
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     claudeCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       status: "missing",
       updatedAt: null,
     },
     openCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       status: "missing",
       updatedAt: null,
@@ -175,6 +187,7 @@ const onboardingData: WorkspaceOnboardingData = {
   },
   workspaceMembers: [
     {
+      avatarUrl: null,
       email: "owner@example.com",
       fullName: "Owner",
       id: "member-1",
@@ -194,15 +207,48 @@ const onboardingData: WorkspaceOnboardingData = {
   ],
 };
 
+const mutationDelta: WorkspaceOnboardingMutationDelta = {
+  action: "continue",
+  kind: "onboarding-mutation",
+  onboarding: {
+    completedAt: null,
+    completedSteps: ["github", "repository"],
+    currentStep: "pipeline",
+    dismissedAt: null,
+    selectedGithubRepositoryId: null,
+    skippedSteps: [],
+    status: "in_progress",
+  },
+  setupHealth: {},
+  step: "repository",
+  updatedAt: "2026-05-16T18:01:00.000Z",
+  validationErrors: [],
+};
+
 function routeContext(workspaceId = WORKSPACE_ID) {
   return {
     params: Promise.resolve({ workspaceId }),
   };
 }
 
-function patchRequest(body: unknown) {
+function patchRequest(
+  changes: unknown,
+  options: {
+    action?: WorkspaceOnboardingMutationAction;
+    expectedUpdatedAt?: string;
+    step?: WorkspaceOnboardingStep;
+  } = {},
+) {
   return new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}/onboarding`, {
-    body: typeof body === "string" ? body : JSON.stringify(body),
+    body:
+      typeof changes === "string"
+        ? changes
+        : JSON.stringify({
+            action: options.action ?? "continue",
+            changes,
+            expectedUpdatedAt: options.expectedUpdatedAt ?? "2026-05-16T18:00:00.000Z",
+            step: options.step ?? "repository",
+          }),
     headers: { "content-type": "application/json" },
     method: "PATCH",
   });
@@ -234,7 +280,7 @@ describe("workspace onboarding route", () => {
   });
 
   it("updates onboarding state with a valid patch", async () => {
-    mocked.updateWorkspaceOnboardingData.mockResolvedValue({ data: onboardingData, ok: true });
+    mocked.updateWorkspaceOnboardingData.mockResolvedValue({ data: mutationDelta, ok: true });
 
     const response = await PATCH(
       patchRequest({
@@ -247,32 +293,85 @@ describe("workspace onboarding route", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual(onboardingData);
+    const payload = await response.json();
+    expect(payload).toEqual(mutationDelta);
     expect(mocked.updateWorkspaceOnboardingData).toHaveBeenCalledWith(WORKSPACE_ID, {
-      completedSteps: ["github", "repository"],
-      currentStep: "pipeline",
-      skippedSteps: [],
-      status: "in_progress",
+      action: "continue",
+      changes: {
+        completedSteps: ["github", "repository"],
+        currentStep: "pipeline",
+        skippedSteps: [],
+        status: "in_progress",
+      },
+      expectedUpdatedAt: "2026-05-16T18:00:00.000Z",
+      step: "repository",
     });
+
+    expect(payload).not.toHaveProperty("github");
+    expect(payload).not.toHaveProperty("linearSecret");
+    expect(payload).not.toHaveProperty("pipeline");
+    expect(payload).not.toHaveProperty("workspaceMembers");
+    expect(payload).not.toHaveProperty("workspaceSecrets");
   });
 
   it("accepts selected repository updates", async () => {
-    mocked.updateWorkspaceOnboardingData.mockResolvedValue({ data: onboardingData, ok: true });
+    const repositoryDelta = {
+      ...mutationDelta,
+      action: "repository-selection" as const,
+      step: "repository" as const,
+    };
+    mocked.updateWorkspaceOnboardingData.mockResolvedValue({ data: repositoryDelta, ok: true });
 
     const repositoryId = "11111111-1111-4111-8111-111111111111";
     const response = await PATCH(
-      patchRequest({
-        selectedGithubRepositoryId: repositoryId,
-        status: "in_progress",
-      }),
+      patchRequest(
+        {
+          selectedGithubRepositoryId: repositoryId,
+          status: "in_progress",
+        },
+        { action: "repository-selection", step: "repository" },
+      ),
       routeContext(),
     );
 
     expect(response.status).toBe(200);
     expect(mocked.updateWorkspaceOnboardingData).toHaveBeenCalledWith(WORKSPACE_ID, {
-      selectedGithubRepositoryId: repositoryId,
-      status: "in_progress",
+      action: "repository-selection",
+      changes: {
+        selectedGithubRepositoryId: repositoryId,
+        status: "in_progress",
+      },
+      expectedUpdatedAt: "2026-05-16T18:00:00.000Z",
+      step: "repository",
     });
+  });
+
+  it("returns the authoritative version and retryable message for stale updates", async () => {
+    const conflict = {
+      action: "continue" as const,
+      authoritative: {
+        onboarding: mutationDelta.onboarding,
+        setupHealth: {},
+        updatedAt: mutationDelta.updatedAt,
+      },
+      error:
+        "Onboarding changed in another session. Latest progress was restored; retry your action.",
+      kind: "onboarding-conflict" as const,
+      retryable: true as const,
+      step: "repository" as const,
+      validationErrors: [],
+    };
+    mocked.updateWorkspaceOnboardingData.mockResolvedValue({
+      conflict,
+      error: conflict.error,
+      ok: false,
+      status: 409,
+    });
+
+    const response = await PATCH(patchRequest({ currentStep: "pipeline" }), routeContext());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual(conflict);
   });
 
   it("rejects malformed workspace ids before updating onboarding state", async () => {
@@ -280,7 +379,12 @@ describe("workspace onboarding route", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
+      action: null,
       error: "Workspace id must be a valid UUID.",
+      kind: "onboarding-mutation-error",
+      retryable: false,
+      step: null,
+      validationErrors: [{ field: "workspaceId", message: "Workspace id must be a valid UUID." }],
     });
     expect(mocked.updateWorkspaceOnboardingData).not.toHaveBeenCalled();
   });
@@ -296,7 +400,12 @@ describe("workspace onboarding route", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
+      action: "continue",
       error: "Workspace admin access is required for this action.",
+      kind: "onboarding-mutation-error",
+      retryable: false,
+      step: "repository",
+      validationErrors: [],
     });
   });
 

@@ -42,7 +42,6 @@ export function canCancelWallieRun(status: Enums<"agent_run_status">) {
 
 export function buildWallieBlockingReasons(input: {
   hasActiveRun: boolean;
-  missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox?: boolean;
@@ -51,7 +50,8 @@ export function buildWallieBlockingReasons(input: {
   const reasons: WallieBlockingReason[] = [];
   const repositoryIsArchived = input.repository ? input.repository.isArchived : false;
   const requiresVercelSandbox = input.requiresVercelSandbox ?? true;
-  const vercelConnection = input.vercelSandboxConnection;
+  const sandboxConnection = input.vercelSandboxConnection;
+  const sandboxLabel = sandboxConnection.providerLabel ?? "Sandbox provider";
 
   if (input.hasActiveRun) {
     reasons.push({
@@ -75,29 +75,23 @@ export function buildWallieBlockingReasons(input: {
     });
   }
 
-  if (input.missingSecretKeys.length > 0) {
-    reasons.push({
-      code: "missing_secret",
-      message: `Wallie is missing required workspace secrets: ${input.missingSecretKeys.join(", ")}.`,
-    });
-  }
-
   if (!requiresVercelSandbox) {
     return reasons;
   }
 
-  if (vercelConnection.status === "missing") {
+  if (sandboxConnection.status === "missing") {
     reasons.push({
-      code: "vercel_sandbox_connection_missing",
-      message:
-        "Connect a Vercel Sandbox account in workspace settings before starting Wallie runs.",
+      code: "sandbox_connection_missing",
+      message: `Connect ${sandboxLabel} in workspace settings before starting Wallie runs.`,
+      provider: sandboxConnection.provider,
     });
-  } else if (!vercelConnection.connected) {
+  } else if (!sandboxConnection.connected) {
     reasons.push({
-      code: "vercel_sandbox_connection_invalid",
+      code: "sandbox_connection_invalid",
       message:
-        vercelConnection.lastValidationError ??
-        "The saved Vercel Sandbox connection is invalid. Reconnect it in workspace settings.",
+        sandboxConnection.lastValidationError ??
+        `The saved ${sandboxLabel} connection is invalid. Reconnect it in workspace settings.`,
+      provider: sandboxConnection.provider,
     });
   }
 

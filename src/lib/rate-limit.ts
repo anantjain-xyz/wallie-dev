@@ -31,12 +31,14 @@ export type RateLimitResult = {
  * above normal interactive use.
  */
 export const RATE_LIMITS = {
-  /** POST /api/agent-runs and /api/agent-runs/:id/retry — sandbox spawn. */
+  /** POST /api/agent-runs/:id/retry — sandbox spawn. */
   agentRuns: { windowMs: 60_000, max: 10 },
   /** POST /api/workspaces/:id/maintenance/tick — manual worker recovery. */
   maintenance: { windowMs: 60_000, max: 3 },
   /** POST /api/sessions/:id/phase-action — approve/reject. */
   phaseAction: { windowMs: 60_000, max: 30 },
+  /** POST /api/workspaces/:id/session-attachments — private image storage. */
+  sessionAttachments: { windowMs: 60_000, max: 10 },
   /** POST /api/workspaces/:id/invitations and resend — email delivery. */
   workspaceInvites: { windowMs: 60_000, max: 10 },
 } as const satisfies Record<string, RateLimitConfig>;
@@ -152,7 +154,7 @@ export function describeRateLimits(): Array<{
 }> {
   return [
     {
-      endpoint: "POST /api/agent-runs",
+      endpoint: "POST /api/agent-runs/:id/retry",
       scope: "agentRuns",
       description: "Per workspace member — caps sandbox spawns.",
       ...RATE_LIMITS.agentRuns,
@@ -168,6 +170,12 @@ export function describeRateLimits(): Array<{
       scope: "phaseAction",
       description: "Per workspace member — caps approve/reject churn.",
       ...RATE_LIMITS.phaseAction,
+    },
+    {
+      endpoint: "POST /api/workspaces/:id/session-attachments",
+      scope: "sessionAttachments",
+      description: "Per workspace member — caps private image storage writes.",
+      ...RATE_LIMITS.sessionAttachments,
     },
     {
       endpoint: "POST /api/workspaces/:id/invitations",

@@ -4,13 +4,16 @@ import Image from "next/image";
 import type { ChangeEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import { CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { AvatarFallback, Section } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type { WorkspaceAvatarUploadResponse } from "@/lib/storage/contracts";
+import { cn } from "@/lib/utils";
 
 type WorkspaceNameUpdateResponse = {
   id: string;
@@ -25,6 +28,9 @@ type WorkspaceAvatarSectionProps = {
   workspace: SettingsPageData["workspace"];
 };
 
+const avatarFrameClassName =
+  "relative h-16 w-16 shrink-0 overflow-hidden rounded-[6px] border border-border";
+
 export function WorkspaceAvatarSection({
   canManage,
   onWorkspaceNameChange,
@@ -33,6 +39,7 @@ export function WorkspaceAvatarSection({
 }: WorkspaceAvatarSectionProps) {
   const [workspaceAvatarUrl, setWorkspaceAvatarUrl] = useState(workspace.avatarUrl);
   const [workspaceName, setWorkspaceName] = useState(workspace.name);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Lift the saved name to the parent settings data too, so sibling sections
   // (e.g. the danger-zone delete confirmation) compare against the current name
@@ -74,6 +81,19 @@ export function WorkspaceAvatarSection({
     });
   }
 
+  function openAvatarPicker() {
+    if (uploadAvatar.isBusy) return;
+    fileInputRef.current?.click();
+  }
+
+  const avatarFace = (
+    <WorkspaceAvatarFace
+      alt={canManage ? "" : `${workspaceName} avatar`}
+      name={workspaceName}
+      url={workspaceAvatarUrl}
+    />
+  );
+
   return (
     <Section
       anchorId="workspace"
@@ -81,16 +101,52 @@ export function WorkspaceAvatarSection({
       title="Workspace"
     >
       <div className="flex flex-wrap items-center gap-4">
-        {workspaceAvatarUrl ? (
-          <Image
-            alt={`${workspaceName} avatar`}
-            className="h-16 w-16 rounded-[10px] border border-border object-cover"
-            height={64}
-            src={workspaceAvatarUrl}
-            width={64}
-          />
+        {canManage ? (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              aria-busy={uploadAvatar.isBusy || undefined}
+              aria-label="Change workspace avatar"
+              className={cn(
+                avatarFrameClassName,
+                "group cursor-pointer bg-transparent p-0 disabled:cursor-wait",
+              )}
+              disabled={uploadAvatar.isBusy}
+              onClick={openAvatarPicker}
+            >
+              {avatarFace}
+              <span
+                aria-hidden={uploadAvatar.isBusy ? undefined : true}
+                className={cn(
+                  "absolute inset-0 flex items-center justify-center bg-foreground/60 px-1 text-center font-semibold text-background type-annotation",
+                  uploadAvatar.isBusy
+                    ? "opacity-100"
+                    : "opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100",
+                )}
+              >
+                {uploadAvatar.isBusy ? (
+                  <span className="flex flex-col items-center gap-1">
+                    <Spinner label="Uploading…" />
+                    <span aria-hidden="true">Uploading…</span>
+                  </span>
+                ) : (
+                  "Change avatar"
+                )}
+              </span>
+            </button>
+            <input
+              ref={fileInputRef}
+              accept=".jpg,.jpeg,.png,.webp"
+              aria-hidden="true"
+              className="sr-only"
+              disabled={uploadAvatar.isBusy}
+              onChange={handleAvatarInputChange}
+              tabIndex={-1}
+              type="file"
+            />
+          </div>
         ) : (
-          <AvatarFallback name={workspaceName} />
+          <div className={avatarFrameClassName}>{avatarFace}</div>
         )}
 
         <div className="min-w-0 flex-1 space-y-1">
@@ -106,27 +162,40 @@ export function WorkspaceAvatarSection({
               {workspaceName}
             </p>
           )}
-          <p className="font-mono text-[12px] text-muted">/w/{workspace.slug}</p>
+          <p className="type-code text-muted">/w/{workspace.slug}</p>
         </div>
 
-        {canManage ? (
-          <label className="ui-button cursor-pointer">
-            <span>{uploadAvatar.isBusy ? "Uploading…" : "Upload avatar"}</span>
-            <input
-              accept=".jpg,.jpeg,.png,.webp"
-              className="sr-only"
-              disabled={uploadAvatar.isBusy}
-              onChange={handleAvatarInputChange}
-              type="file"
-            />
-          </label>
-        ) : (
-          <p className="text-[12px] leading-5 text-muted">
+        {canManage ? null : (
+          <p className="text-xs leading-5 text-muted">
             Workspace admins can change the name and avatar.
           </p>
         )}
       </div>
     </Section>
+  );
+}
+
+function WorkspaceAvatarFace({
+  alt,
+  name,
+  url,
+}: {
+  alt: string;
+  name: string;
+  url: string | null;
+}) {
+  if (url) {
+    return (
+      <Image alt={alt} className="h-full w-full object-cover" height={64} src={url} width={64} />
+    );
+  }
+
+  const initial = name.trim().charAt(0).toUpperCase() || "W";
+
+  return (
+    <span className="flex h-full w-full items-center justify-center bg-control-hover text-xl font-semibold text-foreground">
+      {initial}
+    </span>
   );
 }
 
@@ -144,12 +213,20 @@ function EditableWorkspaceName({
   const [draftName, setDraftName] = useState(name);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const editButtonRef = useRef<HTMLButtonElement | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+  const restoreEditFocusRef = useRef(false);
 
   useEffect(() => {
-    if (!isEditing) return;
-    editInputRef.current?.focus();
-    editInputRef.current?.select();
+    if (isEditing) {
+      editInputRef.current?.focus();
+      editInputRef.current?.select();
+      return;
+    }
+
+    if (!restoreEditFocusRef.current) return;
+    restoreEditFocusRef.current = false;
+    editButtonRef.current?.focus();
   }, [isEditing]);
 
   const saveName = useApiAction<WorkspaceNameUpdateResponse, [string]>({
@@ -166,6 +243,7 @@ function EditableWorkspaceName({
     onSuccess: (payload) => {
       onNameSaved(payload.name);
       setDraftName(payload.name);
+      restoreEditFocusRef.current = true;
       setIsEditing(false);
     },
     setFlashMessage,
@@ -178,10 +256,15 @@ function EditableWorkspaceName({
     setIsEditing(true);
   }
 
+  function returnToReadView() {
+    restoreEditFocusRef.current = true;
+    setIsEditing(false);
+  }
+
   function cancelEditing() {
     setDraftName(name);
     setError(null);
-    setIsEditing(false);
+    returnToReadView();
   }
 
   function submit() {
@@ -196,7 +279,7 @@ function EditableWorkspaceName({
 
     if (normalizedName === name) {
       setError(null);
-      setIsEditing(false);
+      returnToReadView();
       return;
     }
 
@@ -229,33 +312,35 @@ function EditableWorkspaceName({
               }
             }}
           />
-          <button
-            type="button"
-            className="ui-icon-button h-8 w-8 text-accent"
-            aria-label="Save workspace name"
-            title="Save workspace name"
-            disabled={saveName.isBusy}
-            onClick={submit}
-          >
-            {saveName.isBusy ? (
-              <Spinner className="h-4 w-4" label="Saving workspace name" />
-            ) : (
-              <CheckIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            type="button"
-            className="ui-icon-button h-8 w-8"
-            aria-label="Cancel workspace name edit"
-            title="Cancel workspace name edit"
-            disabled={saveName.isBusy}
-            onClick={cancelEditing}
-          >
-            <XIcon className="h-4 w-4" />
-          </button>
+          <Tooltip content="Save workspace name">
+            <button
+              type="button"
+              className="ui-icon-button h-8 w-8 text-accent"
+              aria-label="Save workspace name"
+              disabled={saveName.isBusy}
+              onClick={submit}
+            >
+              {saveName.isBusy ? (
+                <Spinner className="h-4 w-4" label="Saving workspace name" />
+              ) : (
+                <CheckIcon className="h-4 w-4" />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip content="Cancel workspace name edit">
+            <button
+              type="button"
+              className="ui-icon-button h-8 w-8"
+              aria-label="Cancel workspace name edit"
+              disabled={saveName.isBusy}
+              onClick={cancelEditing}
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </div>
         {error ? (
-          <p className="text-[12px] leading-4 text-danger" role="alert">
+          <p className="text-xs leading-4 text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -269,13 +354,13 @@ function EditableWorkspaceName({
         {name}
       </p>
       <button
+        ref={editButtonRef}
         type="button"
-        className="ui-icon-button h-7 w-7 shrink-0"
+        className="shrink-0 rounded-[4px] text-[13px] font-medium text-muted transition-colors duration-150 hover:text-foreground"
         aria-label="Edit workspace name"
-        title="Edit workspace name"
         onClick={startEditing}
       >
-        <PencilIcon className="h-4 w-4" />
+        Edit
       </button>
     </div>
   );

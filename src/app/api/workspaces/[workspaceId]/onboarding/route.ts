@@ -6,13 +6,34 @@ import {
   loadWorkspaceOnboardingData,
   updateWorkspaceOnboardingData,
 } from "@/features/onboarding/data";
-import { workspaceOnboardingUpdatePayloadSchema } from "@/lib/onboarding/contracts";
+import {
+  type OnboardingValidationError,
+  type WorkspaceOnboardingMutationErrorResponse,
+  workspaceOnboardingMutationRequestSchema,
+} from "@/lib/onboarding/contracts";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
 
 const workspaceIdParamSchema = z.string().uuid("Workspace id must be a valid UUID.");
+
+function mutationErrorResponse(input: {
+  action?: WorkspaceOnboardingMutationErrorResponse["action"];
+  error: string;
+  retryable?: boolean;
+  step?: WorkspaceOnboardingMutationErrorResponse["step"];
+  validationErrors?: OnboardingValidationError[];
+}): WorkspaceOnboardingMutationErrorResponse {
+  return {
+    action: input.action ?? null,
+    error: input.error,
+    kind: "onboarding-mutation-error",
+    retryable: input.retryable ?? false,
+    step: input.step ?? null,
+    validationErrors: input.validationErrors ?? [],
+  };
+}
 
 function onboardingResponse(data: WorkspaceOnboardingData) {
   return {
@@ -56,7 +77,13 @@ export async function PATCH(request: Request, context: RouteContext) {
   const parsedWorkspaceId = workspaceIdParamSchema.safeParse(workspaceId);
   if (!parsedWorkspaceId.success) {
     return NextResponse.json(
-      { error: parsedWorkspaceId.error.issues[0]?.message ?? "Invalid workspace id." },
+      mutationErrorResponse({
+        error: parsedWorkspaceId.error.issues[0]?.message ?? "Invalid workspace id.",
+        validationErrors: parsedWorkspaceId.error.issues.map((issue) => ({
+          field: "workspaceId",
+          message: issue.message,
+        })),
+      }),
       { status: 400 },
     );
   }
@@ -65,13 +92,26 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    return NextResponse.json(
+      mutationErrorResponse({
+        error: "Invalid JSON body.",
+        validationErrors: [{ field: "body", message: "Invalid JSON body." }],
+      }),
+      { status: 400 },
+    );
   }
 
-  const parsed = workspaceOnboardingUpdatePayloadSchema.safeParse(body);
+  const parsed = workspaceOnboardingMutationRequestSchema.safeParse(body);
   if (!parsed.success) {
+    const error = parsed.error.issues[0]?.message ?? "Invalid onboarding payload.";
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid onboarding payload." },
+      mutationErrorResponse({
+        error,
+        validationErrors: parsed.error.issues.map((issue) => ({
+          field: issue.path.join(".") || "body",
+          message: issue.message,
+        })),
+      }),
       { status: 400 },
     );
   }
@@ -80,14 +120,33 @@ export async function PATCH(request: Request, context: RouteContext) {
     const result = await updateWorkspaceOnboardingData(parsedWorkspaceId.data, parsed.data);
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status });
+      if ("conflict" in result) {
+        return NextResponse.json(result.conflict, { status: 409 });
+      }
+      return NextResponse.json(
+        mutationErrorResponse({
+          action: parsed.data.action,
+          error: result.error,
+          retryable: result.status >= 500,
+          step: parsed.data.step,
+        }),
+        { status: result.status },
+      );
     }
 
-    return NextResponse.json(onboardingResponse(result.data), { status: 200 });
+    return NextResponse.json(result.data, { status: 200 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: error.issues[0]?.message ?? "Invalid onboarding state." },
+        mutationErrorResponse({
+          action: parsed.data.action,
+          error: error.issues[0]?.message ?? "Invalid onboarding state.",
+          step: parsed.data.step,
+          validationErrors: error.issues.map((issue) => ({
+            field: issue.path.join(".") || "onboarding",
+            message: issue.message,
+          })),
+        }),
         { status: 500 },
       );
     }

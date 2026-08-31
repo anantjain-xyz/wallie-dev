@@ -1,45 +1,108 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
+import { Status } from "@/components/ui/status";
+import { useOptionalLiveRegion } from "@/components/ui/live-region";
 import {
   appendDraftStage,
+  fieldErrorsForStage,
   keepKnownApproverIds,
   moveDraftStage,
   OperatingRulesField,
   PipelineEditorControls,
-  PipelineVariableHelp,
+  PipelineValidationSummary,
+  pipelineValidationTargetId,
+  RemoveStageDialog,
   removeDraftStage,
+  resolveFocusAfterStageRemoval,
+  serializePipelineDraft,
   StageRowEditor,
+  stageDisplayName,
   stageToDraft,
   updateDraftStage,
+  updateDraftStageName,
   validatePipelineDraft,
   type DraftPipelineStage,
+  type PipelineDraftValidationResult,
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
-import type { SessionPipeline } from "@/features/sessions/types";
+import type { PipelineConfiguration } from "@/features/sessions/types";
+import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 
 type PipelineEditorProps = {
   canManage: boolean;
-  pipeline: SessionPipeline | null;
+  onDirtyChange?: (dirty: boolean) => void;
+  onPipelineSaved?: (pipeline: PipelineConfiguration) => void;
+  pipeline: PipelineConfiguration | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 };
 
+function draftsFromPipeline(
+  pipeline: PipelineConfiguration,
+  workspaceMembers: WorkspaceMemberSummary[],
+): DraftPipelineStage[] {
+  return keepKnownApproverIds(pipeline.stages.map(stageToDraft), workspaceMembers);
+}
+
+type ArchivedStageDraft = {
+  archivedAt: string | null;
+  stage: DraftPipelineStage;
+};
+
+function archivedDraftsFromPipeline(
+  pipeline: PipelineConfiguration,
+  workspaceMembers: WorkspaceMemberSummary[],
+): ArchivedStageDraft[] {
+  const archivedStages = pipeline.archivedStages ?? [];
+  return keepKnownApproverIds(archivedStages.map(stageToDraft), workspaceMembers).map(
+    (stage, index) => ({ archivedAt: archivedStages[index]?.archivedAt ?? null, stage }),
+  );
+}
+
 export function PipelineEditor({
   canManage,
+  onDirtyChange,
+  onPipelineSaved,
   pipeline,
   workspaceId,
   workspaceMembers,
 }: PipelineEditorProps) {
+  const { announce } = useOptionalLiveRegion();
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
-    keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
+    pipeline ? draftsFromPipeline(pipeline, workspaceMembers) : [],
   );
+  const [archivedStages, setArchivedStages] = useState<ArchivedStageDraft[]>(() =>
+    pipeline ? archivedDraftsFromPipeline(pipeline, workspaceMembers) : [],
+  );
+  const [baseline, setBaseline] = useState(() =>
+    serializePipelineDraft({
+      name: pipeline?.name ?? "Default",
+      operatingRules: pipeline?.operatingRulesMd ?? "",
+      stages: pipeline ? draftsFromPipeline(pipeline, workspaceMembers) : [],
+    }),
+  );
+  const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
+  const saveInFlightRef = useRef(false);
+  const removeFocusRef = useRef<HTMLElement | null>(null);
+
+  const dirty = serializePipelineDraft({ name, operatingRules, stages }) !== baseline;
+  const validation: PipelineDraftValidationResult = hasAttemptedSave
+    ? validatePipelineDraft({ name, stages })
+    : { ok: true };
+  const removeStage = removeIndex === null ? null : stages[removeIndex];
+  const editable = canManage && !isPending;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   if (!pipeline) {
     return (
@@ -50,10 +113,53 @@ export function PipelineEditor({
     );
   }
 
-  async function savePipeline() {
-    const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
-    setStages(stagesToSave);
+  function announceStagePosition(nextStages: DraftPipelineStage[], index: number) {
+    const stage = nextStages[index];
+    if (!stage) return;
+    announce(
+      `${stageDisplayName(stage, index)} moved to position ${index + 1} of ${nextStages.length}.`,
+    );
+  }
 
+  function applyMove(index: number, direction: -1 | 1) {
+    const next = moveDraftStage(stages, index, direction);
+    if (next === stages) return;
+    setStages(next);
+    announceStagePosition(next, index + direction);
+  }
+
+  function handleAddStage() {
+    const next = appendDraftStage(stages);
+    const added = next[next.length - 1]!;
+    setStages(next);
+    announce(
+      `Added ${stageDisplayName(added, next.length - 1)} at position ${next.length} of ${next.length}.`,
+    );
+  }
+
+  function handleRemoveAt(index: number) {
+    const stage = stages[index]!;
+    const label = stageDisplayName(stage, index);
+    setStages(removeDraftStage(stages, index));
+    if (stage.id) {
+      setArchivedStages((current) => [{ archivedAt: null, stage }, ...current]);
+      announce(`${label} will be archived when the pipeline is saved.`);
+    } else {
+      announce(`Discarded unsaved ${label}.`);
+    }
+  }
+
+  function handleRestoreAt(index: number) {
+    const archived = archivedStages[index];
+    if (!archived) return;
+    setArchivedStages((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    setStages((current) => [...current, archived.stage]);
+    announce(
+      `${stageDisplayName(archived.stage, stages.length)} restored at position ${stages.length + 1}. Save the pipeline to apply this change.`,
+    );
+  }
+
+  async function savePipeline(stagesToSave: DraftPipelineStage[]) {
     const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
       body: JSON.stringify({ name, operatingRulesMd: operatingRules, stages: stagesToSave }),
       headers: { "Content-Type": "application/json" },
@@ -62,65 +168,146 @@ export function PipelineEditor({
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to save pipeline.");
+      setError(body?.error ?? "Failed to save pipeline. Your edits are preserved — try again.");
+      finishInteraction("save_settings", "error");
       return;
     }
 
+    const body = (await response.json().catch(() => null)) as {
+      pipeline?: PipelineConfiguration;
+    } | null;
+    const savedPipeline = body?.pipeline;
+    const nextStages = savedPipeline
+      ? draftsFromPipeline(savedPipeline, workspaceMembers)
+      : stagesToSave.map((stage) => ({ ...stage, slugManual: true }));
+    const nextName = savedPipeline?.name ?? name;
+    const nextRules = savedPipeline?.operatingRulesMd ?? operatingRules;
+
+    setName(nextName);
+    setOperatingRules(nextRules);
+    setStages(nextStages);
+    if (savedPipeline) {
+      setArchivedStages(archivedDraftsFromPipeline(savedPipeline, workspaceMembers));
+    }
+    setBaseline(
+      serializePipelineDraft({
+        name: nextName,
+        operatingRules: nextRules,
+        stages: nextStages,
+      }),
+    );
+    setHasAttemptedSave(false);
+    setError(null);
     setSavedAt(new Date());
+    if (savedPipeline) {
+      onPipelineSaved?.(savedPipeline);
+    }
+    announce("Pipeline saved.");
+    finishInteraction("save_settings", "success");
   }
 
   function handleSave() {
+    if (saveInFlightRef.current) return;
+
     setError(null);
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
-    const validation = validatePipelineDraft({ name, stages: stagesToSave });
-    if (!validation.ok) {
-      setError(validation.message);
+    const archivedSlugConflict = archivedStages.find(({ stage: archived }) =>
+      stagesToSave.some(
+        (stage) => stage.slug === archived.slug && (!stage.id || stage.id !== archived.id),
+      ),
+    );
+    if (archivedSlugConflict) {
+      setError(
+        `The slug “${archivedSlugConflict.stage.slug}” belongs to an archived stage. Restore that stage instead.`,
+      );
+      return;
+    }
+    const nextValidation = validatePipelineDraft({ name, stages: stagesToSave });
+    if (!nextValidation.ok) {
+      setHasAttemptedSave(true);
+      setStages(stagesToSave);
+      const targetId = pipelineValidationTargetId(nextValidation.issues[0]!);
+      if (targetId) {
+        window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
+      }
       return;
     }
 
+    setHasAttemptedSave(false);
     setStages(stagesToSave);
+    saveInFlightRef.current = true;
+    startInteraction("save_settings", "/w/[workspaceSlug]/settings");
 
     startTransition(async () => {
-      await savePipeline().catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
-      });
+      try {
+        await savePipeline(stagesToSave);
+      } catch (caught: unknown) {
+        finishInteraction("save_settings", "error");
+        setError(
+          caught instanceof Error
+            ? `${caught.message} Your edits are preserved — try again.`
+            : "Failed to save pipeline. Your edits are preserved — try again.",
+        );
+      } finally {
+        saveInFlightRef.current = false;
+      }
     });
   }
 
   return (
     <div className="space-y-6">
+      <PipelineValidationSummary validation={validation} />
       {error ? (
         <div
-          role="status"
-          aria-live="polite"
-          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
         >
-          {error}
+          <p>{error}</p>
+          <button
+            className="ui-button shrink-0"
+            disabled={isPending}
+            onClick={handleSave}
+            type="button"
+          >
+            Retry save
+          </button>
         </div>
       ) : null}
-      {savedAt && !error ? (
-        <p className="text-[12px] text-muted">
+      {savedAt && !error && !dirty ? (
+        <p className="text-xs text-muted" role="status">
           Saved at {savedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
         </p>
       ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
-        <label className="block space-y-1.5">
-          <span className="text-[13px] font-medium text-foreground">Pipeline name</span>
+        <div className="block space-y-1.5">
+          <label className="text-[13px] font-medium text-foreground" htmlFor="pipeline-name">
+            Pipeline name
+          </label>
           <input
+            aria-describedby={`pipeline-name-description${!validation.ok && validation.field === "pipeline-name" ? " pipeline-name-error" : ""}`}
+            aria-invalid={!validation.ok && validation.field === "pipeline-name" ? true : undefined}
+            id="pipeline-name"
             type="text"
             value={name}
-            disabled={!canManage}
+            disabled={!editable}
             onChange={(event) => setName(event.target.value)}
-            className="ui-input min-w-[240px]"
+            className={`ui-input min-w-[240px] ${!validation.ok && validation.field === "pipeline-name" ? "border-danger" : ""}`}
             maxLength={80}
           />
-        </label>
-        <PipelineVariableHelp />
+          <p className="type-annotation text-muted" id="pipeline-name-description">
+            Identifies this pipeline throughout the workspace.
+          </p>
+          {!validation.ok && validation.field === "pipeline-name" ? (
+            <p className="text-xs font-medium text-danger" id="pipeline-name-error">
+              {validation.message}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <OperatingRulesField
-        canManage={canManage}
+        canManage={editable}
         onChange={setOperatingRules}
         value={operatingRules}
       />
@@ -128,27 +315,100 @@ export function PipelineEditor({
       <ol className="space-y-3">
         {stages.map((stage, index) => (
           <StageRowEditor
-            key={stage.id ?? `new-${index}`}
-            canManage={canManage}
+            key={stage.key}
+            canManage={editable}
+            errors={fieldErrorsForStage(validation, index)}
             index={index}
             isFirst={index === 0}
             isLast={index === stages.length - 1}
             onChange={(patch) => setStages((current) => updateDraftStage(current, index, patch))}
-            onMoveDown={() => setStages((current) => moveDraftStage(current, index, 1))}
-            onMoveUp={() => setStages((current) => moveDraftStage(current, index, -1))}
-            onRemove={() => setStages((current) => removeDraftStage(current, index))}
+            onChangeName={(nextName) =>
+              setStages((current) => updateDraftStageName(current, index, nextName))
+            }
+            onMoveDown={() => applyMove(index, 1)}
+            onMoveUp={() => applyMove(index, -1)}
+            onRemove={() => handleRemoveAt(index)}
+            onRemoveRequest={() => {
+              removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
+              setRemoveIndex(index);
+            }}
+            priorStages={stages.slice(0, index).map((prior) => ({ slug: prior.slug }))}
             stage={stage}
+            totalStages={stages.length}
             workspaceMembers={workspaceMembers}
           />
         ))}
       </ol>
 
+      {archivedStages.length > 0 ? (
+        <details className="rounded-[6px] border border-border bg-sheet">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
+            Archived stages ({archivedStages.length})
+          </summary>
+          <ul className="divide-y divide-border border-t border-border">
+            {archivedStages.map(({ archivedAt, stage }, index) => (
+              <li
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                key={stage.key}
+              >
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {stage.name || "Untitled stage"}
+                  </p>
+                  <p className="type-annotation text-muted">
+                    {archivedAt
+                      ? `Archived ${new Date(archivedAt).toLocaleDateString()}`
+                      : "Pending save"}
+                  </p>
+                </div>
+                {canManage ? (
+                  <button
+                    className="ui-button"
+                    disabled={isPending}
+                    onClick={() => handleRestoreAt(index)}
+                    type="button"
+                  >
+                    Restore
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
       <PipelineEditorControls
         canManage={canManage}
         isPending={isPending}
-        onAddStage={() => setStages((current) => appendDraftStage(current))}
+        onAddStage={handleAddStage}
         onSave={handleSave}
+        saveDisabled={!dirty && !error}
+        saveLabel="Save pipeline"
+      />
+
+      <RemoveStageDialog
+        onConfirm={() => {
+          if (removeIndex === null) return;
+          const index = removeIndex;
+          // Capture a surviving control before the row unmounts (not the removed row).
+          removeFocusRef.current = resolveFocusAfterStageRemoval(stages.length, index);
+          setRemoveIndex(null);
+          handleRemoveAt(index);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setRemoveIndex(null);
+        }}
+        open={removeIndex !== null && removeStage !== undefined}
+        restoreFocusRef={removeFocusRef}
+        stageLabel={
+          removeStage && removeIndex !== null ? stageDisplayName(removeStage, removeIndex) : "stage"
+        }
       />
     </div>
   );
+}
+
+export function PipelineUnsavedBadge({ dirty }: { dirty: boolean }) {
+  if (!dirty) return null;
+  return <Status label="Unsaved changes" value="needs_attention" />;
 }

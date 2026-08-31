@@ -54,14 +54,6 @@ function makeAppFactory(octokit: { request: unknown }): GithubAppFactory {
     }) as unknown as ReturnType<GithubAppFactory>;
 }
 
-/** A 422 GitHub error shaped like octokit's RequestError (detail in `errors`). */
-function github422(detailMessage: string): Error {
-  return Object.assign(new Error("Validation Failed"), {
-    status: 422,
-    errors: [{ message: detailMessage }],
-  });
-}
-
 /** Script the sandbox commit-ahead probe (`git merge-base --is-ancestor`). */
 function scriptCommitsAhead(sandbox: FakeSandbox, verdict: "NONE" | "AHEAD" | "UNKNOWN") {
   sandbox.scriptExec(
@@ -80,6 +72,14 @@ function scriptPush(sandbox: FakeSandbox, opts: { fail?: boolean } = {}) {
 
 function scriptBranchDelete(sandbox: FakeSandbox) {
   sandbox.scriptExec((call) => call.cmd === "bash" && call.args.join(" ").includes("--delete"), []);
+}
+
+function scriptCreatePr(sandbox: FakeSandbox, error?: string, forwardOnlyLogs = false) {
+  sandbox.scriptExec(
+    (call) => call.cmd === "gh" && call.args[0] === "pr" && call.args[1] === "create",
+    error && !forwardOnlyLogs ? [{ stream: "stderr", data: `${error}\n` }] : [],
+    error ? { exitCode: 1, output: { stderr: `${error}\n`, stdout: "" } } : {},
+  );
 }
 
 const openPr = {
@@ -195,11 +195,12 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
+    scriptCreatePr(sandbox);
     const closed = { ...openPr, number: 40, state: "closed" as const, merged_at: null };
     const reopened = { ...openPr, number: 43 };
     const octokit = makeOctokitWithSequence([
       [closed], // only PR for the branch is closed + unmerged
-      reopened, // create a new one
+      [closed, reopened], // authoritative lookup after `gh pr create`
     ]);
     const { admin, upserts } = buildAdminMock();
 
@@ -214,8 +215,9 @@ describe("openSessionPullRequest", () => {
     // Did not reuse the closed PR — pushed and created a new reviewable one.
     expect(octokit.calls.map((c) => c.route)).toEqual([
       "GET /repos/{owner}/{repo}/pulls",
-      "POST /repos/{owner}/{repo}/pulls",
+      "GET /repos/{owner}/{repo}/pulls",
     ]);
+    expect(sandbox.calls.some((c) => c.cmd === "gh")).toBe(true);
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
     expect(upserts[0]!.row.pull_request_number).toBe(43);
     expect(upserts[0]!.row.pull_request_state).toBe("open");
@@ -225,9 +227,10 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
+    scriptCreatePr(sandbox);
     const octokit = makeOctokitWithSequence([
       [], // no existing PR
-      openPr, // create succeeds
+      [openPr], // authoritative lookup after `gh pr create`
     ]);
     const { admin, upserts } = buildAdminMock();
 
@@ -241,16 +244,20 @@ describe("openSessionPullRequest", () => {
     expect(outcome.kind).toBe("success");
     expect(octokit.calls.map((c) => c.route)).toEqual([
       "GET /repos/{owner}/{repo}/pulls",
-      "POST /repos/{owner}/{repo}/pulls",
+      "GET /repos/{owner}/{repo}/pulls",
     ]);
-    expect(octokit.calls[1]!.params).toEqual({
-      base: "main",
-      body: "spec body",
-      head: "wallie/product-sess-1",
-      owner: "acme",
-      repo: "app",
-      title: "Product: Add SSO",
-    });
+    expect(sandbox.calls.find((c) => c.cmd === "gh")?.args).toEqual([
+      "pr",
+      "create",
+      "--base",
+      "main",
+      "--head",
+      "wallie/product-sess-1",
+      "--title",
+      "Product: Add SSO",
+      "--body",
+      "spec body",
+    ]);
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
     expect(upserts[0]!.row.pull_request_number).toBe(42);
   });
@@ -276,13 +283,13 @@ describe("openSessionPullRequest", () => {
     expect(upserts).toHaveLength(0);
   });
 
-  it("recovers via pulls.list when create races and returns 422 already_exists", async () => {
+  it("recovers via pulls.list when gh create races with another publisher", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
+    scriptCreatePr(sandbox, "a pull request for branch already exists");
     const octokit = makeOctokitWithSequence([
       [], // initial lookup: none
-      github422("A pull request already exists for acme:wallie/product-sess-1"),
       [{ ...openPr, number: 41, draft: true }], // recovery lookup
     ]);
     const { admin, upserts } = buildAdminMock();
@@ -297,7 +304,6 @@ describe("openSessionPullRequest", () => {
     expect(outcome.kind).toBe("success");
     expect(octokit.calls.map((c) => c.route)).toEqual([
       "GET /repos/{owner}/{repo}/pulls",
-      "POST /repos/{owner}/{repo}/pulls",
       "GET /repos/{owner}/{repo}/pulls",
     ]);
     expect(upserts[0]!.row.pull_request_number).toBe(41);
@@ -309,11 +315,9 @@ describe("openSessionPullRequest", () => {
     // commit probe can't decide (shallow boundary) → fall through to GitHub.
     scriptCommitsAhead(sandbox, "UNKNOWN");
     scriptPush(sandbox);
+    scriptCreatePr(sandbox, "GraphQL: No commits between main and wallie/product-sess-1", true);
     scriptBranchDelete(sandbox);
-    const octokit = makeOctokitWithSequence([
-      [], // no existing PR
-      github422("No commits between main and wallie/product-sess-1"),
-    ]);
+    const octokit = makeOctokitWithSequence([[]]); // no existing PR
     const { admin, upserts } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
@@ -325,6 +329,28 @@ describe("openSessionPullRequest", () => {
 
     expect(outcome).toEqual({ kind: "no_commits" });
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("--delete"))).toBe(true);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("returns pr_failed when gh cannot create or discover a pull request", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    scriptCreatePr(sandbox, "HTTP 403: Resource not accessible by integration");
+    const octokit = makeOctokitWithSequence([[], []]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome).toEqual({
+      kind: "pr_failed",
+      reason: "HTTP 403: Resource not accessible by integration",
+    });
     expect(upserts).toHaveLength(0);
   });
 

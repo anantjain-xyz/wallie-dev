@@ -1,0 +1,139 @@
+// @vitest-environment jsdom
+
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  StageTimeline,
+  buildStageTimeline,
+  centerStageTimelineSelection,
+} from "@/features/sessions/detail/stage-timeline";
+import type { SessionReviewSession } from "@/features/sessions/detail/data";
+
+function makeSession(overrides: Partial<SessionReviewSession> = {}): SessionReviewSession {
+  return {
+    archivedAt: null,
+    artifacts: [],
+    attachments: [],
+    createdAt: "2026-06-07T10:00:00.000Z",
+    currentArtifactVersion: 1,
+    currentStageId: "stage-2",
+    currentStageSlug: "build",
+    id: "session-1",
+    linearIssueId: null,
+    linearIssueUrl: null,
+    number: 1,
+    phaseCompletions: [{ completedAt: "2026-06-07T11:00:00.000Z", stageSlug: "plan" }],
+    phaseStatus: "awaiting_review",
+    pipeline: {
+      stages: [
+        { description: "Plan", id: "stage-1", name: "Plan", position: 0, slug: "plan" },
+        { description: "Build", id: "stage-2", name: "Build", position: 1, slug: "build" },
+        { description: "Land", id: "stage-3", name: "Land", position: 2, slug: "land" },
+      ],
+    },
+    promptMd: "prompt",
+    pullRequests: [],
+    title: "Session",
+    updatedAt: "2026-06-07T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("buildStageTimeline", () => {
+  it("marks completed, current, and upcoming stages", () => {
+    const timeline = buildStageTimeline(makeSession());
+    expect(timeline.map((entry) => entry.status)).toEqual(["completed", "current", "upcoming"]);
+  });
+
+  it("marks changes_requested when the current stage is rejected", () => {
+    const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }));
+    expect(timeline[1]?.status).toBe("changes_requested");
+  });
+
+  it("marks failed when a failed stage slug is provided", () => {
+    const timeline = buildStageTimeline(makeSession(), { failedStageSlug: "build" });
+    expect(timeline[1]?.status).toBe("failed");
+  });
+});
+
+describe("centerStageTimelineSelection", () => {
+  it("centers the selected stage with horizontal rail scrolling only", () => {
+    const scrollTo = vi.fn();
+    const rail = {
+      clientWidth: 320,
+      scrollTo,
+      scrollWidth: 900,
+    } as unknown as HTMLOListElement;
+    const selectedButton = {
+      offsetLeft: 480,
+      offsetWidth: 120,
+    } as HTMLButtonElement;
+
+    centerStageTimelineSelection(rail, selectedButton);
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 380 });
+  });
+});
+
+describe("StageTimeline", () => {
+  it("keeps stage selection wired to each stage name", () => {
+    const onSelect = vi.fn();
+    render(
+      createElement(StageTimeline, {
+        onSelect,
+        selectedStageSlug: "build",
+        timeline: buildStageTimeline(makeSession()),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Land" }));
+
+    expect(onSelect).toHaveBeenCalledWith("land");
+  });
+
+  it("renders selectable stage names without status pills", () => {
+    const html = renderToStaticMarkup(
+      createElement(StageTimeline, {
+        onSelect: vi.fn(),
+        selectedStageSlug: "build",
+        timeline: buildStageTimeline(makeSession()),
+      }),
+    );
+
+    expect(html).toContain(">Plan</span>");
+    expect(html).toContain(">Build</span>");
+    expect(html).toContain(">Land</span>");
+    expect(html).toContain('aria-current="step"');
+    expect(html).not.toContain("data-status=");
+    expect(html).not.toMatch(/Complete|Awaiting review|Upcoming/);
+  });
+
+  it("contains long unbroken stage names at narrow widths", () => {
+    const session = makeSession({
+      pipeline: {
+        stages: [
+          {
+            description: "Custom stage",
+            id: "stage-2",
+            name: "ImplementationReviewWithAnExtremelyLongUnbrokenName",
+            position: 0,
+            slug: "build",
+          },
+        ],
+      },
+    });
+    const html = renderToStaticMarkup(
+      createElement(StageTimeline, {
+        onSelect: vi.fn(),
+        selectedStageSlug: "build",
+        timeline: buildStageTimeline(session),
+      }),
+    );
+
+    expect(html).toContain("min-w-0 max-w-full");
+    expect(html).toContain("[overflow-wrap:anywhere]");
+  });
+});

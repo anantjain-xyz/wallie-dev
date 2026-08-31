@@ -9,6 +9,7 @@ import type {
   GitHubRepositorySyncResponse,
 } from "@/features/github/contracts";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
+import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { ConfigState, dateFormatter, interactiveLinkClass } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -179,6 +180,7 @@ export function GitHubConnectionPanel({
         primaryProfile: nextPrimaryProfile,
         repositories: nextRepositories,
       });
+      notifySessionRepositoriesChanged(workspaceId);
     },
     setFlashMessage,
     successText: "GitHub repositories refreshed.",
@@ -188,7 +190,7 @@ export function GitHubConnectionPanel({
     return (
       <div className="space-y-6">
         {hasGitHubAppConfig ? null : (
-          <div className="space-y-3 rounded-[8px] border border-border bg-surface-strong px-5 py-4">
+          <div className="space-y-3 rounded-[6px] border border-border bg-control-hover px-5 py-4">
             <p className="text-[14px] font-semibold text-foreground">
               Wallie needs a GitHub App to read your repositories
             </p>
@@ -262,7 +264,7 @@ export function GitHubConnectionPanel({
               githubInstallation.targetType.slice(1).toLowerCase()}{" "}
             <span className="font-mono">{githubInstallation.targetName}</span>
           </p>
-          <p className="text-[12px] leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted">
             Installation #{githubInstallation.installationId} · last synced{" "}
             {dateFormatter.format(new Date(githubInstallation.updatedAt))}
           </p>

@@ -1,34 +1,125 @@
 import "server-only";
 
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-import type { WorkspaceSummary } from "@/lib/auth";
-import type { Tables } from "@/lib/supabase/database.types";
-import { loadSessionWorkspaceContext } from "@/features/sessions/server";
-import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
-import {
-  type PipelineStage,
-  type SessionArtifactSummary,
-  type SessionDetail,
-  type SessionPhaseCompletion,
-  type SessionPhaseStatus,
-  type SessionPipeline,
-  type SessionPullRequest,
+import type { SessionConnectionPullRequest } from "@/features/sessions/components/session-connections";
+import type {
+  SessionArtifactSummary,
+  SessionPhaseCompletion,
+  SessionPhaseStatus,
 } from "@/features/sessions/types";
-import { loadWallieSessionData } from "@/features/wallie/server";
-import type { WallieSessionData } from "@/features/wallie/types";
-import type { WorkspaceMember } from "@/features/workspace-members/types";
+import type { WallieSessionRepository } from "@/features/wallie/types";
+import { loginPath, onboardingWorkspacePath, workspaceSessionDetailPath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  approximatePayloadSizeBytes,
+  type ServerTimingCollector,
+  withServerTiming,
+} from "@/lib/server-timing";
+import { loadSessionReviewCapabilities } from "@/features/sessions/detail/review-capabilities";
+
+/**
+ * Seeded session #18 was 10,603 bytes at the detail RPC before member and
+ * activity data were added to the client boundary. Keep the critical review
+ * contract below 4.5 KiB on that seed (a 57% reduction from the RPC alone).
+ */
+export const SESSION_REVIEW_PAYLOAD_TARGET_BYTES = 4_500;
+
+export type SessionReviewStage = {
+  description: string;
+  id: string;
+  name: string;
+  position: number;
+  slug: string;
+};
+
+export type SessionReviewPipeline = {
+  stages: SessionReviewStage[];
+};
+
+export type SessionPromptAttachment = {
+  contentType: string;
+  fileName: string;
+  id: string;
+  position: number;
+  sizeBytes: number;
+};
+
+export type SessionReviewSession = {
+  archivedAt: string | null;
+  artifacts: SessionArtifactSummary[];
+  attachments: SessionPromptAttachment[];
+  createdAt: string;
+  currentArtifactVersion: number | null;
+  currentStageId: string;
+  currentStageSlug: string;
+  id: string;
+  linearIssueId: string | null;
+  linearIssueUrl: string | null;
+  number: number;
+  phaseCompletions: SessionPhaseCompletion[];
+  phaseStatus: SessionPhaseStatus;
+  pipeline: SessionReviewPipeline;
+  promptMd: string;
+  pullRequests: SessionConnectionPullRequest[];
+  /** Client-only reconciliation metadata populated by mutation/realtime responses. */
+  rejectionCount?: number;
+  title: string;
+  updatedAt: string;
+};
+
+/** The only session-detail data serialized into the critical client surface. */
+export type SessionReviewData = {
+  creatorDisplayName: string | null;
+  session: SessionReviewSession;
+  workspaceSlug: string;
+};
+
+export type SessionActivityContext = {
+  repository: WallieSessionRepository | null;
+  sessionGithubRepositoryId: string | null;
+  sessionId: string;
+  workspaceId: string;
+};
+
+export type SessionReviewRepository = {
+  defaultBranch: string | null;
+  fullName: string;
+  htmlUrl: string;
+};
 
 export type SessionDetailPageData = {
-  currentMember: WorkspaceMember | null;
-  members: WorkspaceMember[];
-  memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  session: SessionDetail;
-  sessionGithubRepositoryId: string | null;
-  sessionCreator: WorkspaceMember | null;
-  wallie: WallieSessionData;
-  workspace: WorkspaceSummary;
+  activityContext: SessionActivityContext;
+  canReview: boolean;
+  failedStageSlug: string | null;
+  hasFailedRun: boolean;
+  repository: SessionReviewRepository | null;
+  review: SessionReviewData;
 };
+
+type SessionDetailRpcPayload = {
+  activity: SessionActivityContext;
+  creatorDisplayName: string | null;
+  session: Omit<SessionReviewSession, "attachments">;
+  workspaceSlug: string;
+};
+
+type SessionAttachmentRpcRow = {
+  attachment_position: number;
+  content_type: string;
+  id: string;
+  original_filename: string;
+  size_bytes: number;
+};
+
+type SessionDetailRpcAccessMiss = {
+  access: {
+    hasAnyWorkspace: boolean;
+  };
+};
+
+type SessionDetailRpcResult = SessionDetailRpcAccessMiss | SessionDetailRpcPayload;
 
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
@@ -39,270 +130,177 @@ export async function loadSessionDetailPageData(
     notFound();
   }
 
-  const context = await loadSessionWorkspaceContext(workspaceSlug);
+  return withServerTiming(
+    "sessions.detail.review",
+    {
+      sessionNumber,
+      workspaceSlug,
+    },
+    (timing) => loadSessionDetailPageDataWithTiming(workspaceSlug, sessionNumber, timing),
+  );
+}
 
-  const { data: sessionRow, error: sessionError } = await context.supabase
-    .from("sessions")
-    .select(
-      `
-        id,
-        archived_at,
-        created_at,
-        creator_member_id,
-        updated_at,
-        linear_issue_id,
-        linear_issue_url,
-        number,
-        pipeline_id,
-        current_stage_id,
-        phase_status,
-        current_artifact_version,
-        prompt_md,
-        rejection_count,
-        title,
-        workspace_id
-      `,
-    )
-    .eq("workspace_id", context.workspace.id)
-    .eq("number", sessionNumber)
-    .maybeSingle();
+async function loadSessionDetailPageDataWithTiming(
+  workspaceSlug: string,
+  sessionNumber: number,
+  timing: ServerTimingCollector,
+): Promise<SessionDetailPageData> {
+  const supabase = await createSupabaseServerClient();
+  const [
+    user,
+    { data: rpcData, error: rpcError },
+    { data: attachmentData, error: attachmentError },
+  ] = await Promise.all([
+    timing.segment(
+      "auth.get-user",
+      () => getSupabaseUserOrNull(supabase),
+      (resolvedUser) => ({ rows: resolvedUser ? 1 : 0 }),
+    ),
+    timing.segment(
+      "session-detail-rpc",
+      () =>
+        supabase.rpc("get_session_detail_page", {
+          target_session_number: sessionNumber,
+          target_workspace_slug: workspaceSlug,
+        }),
+      (result) => ({
+        payloadBytes: approximatePayloadSizeBytes(result.data),
+        rows: result.data ? 1 : 0,
+      }),
+    ),
+    timing.segment(
+      "session-attachments",
+      () =>
+        supabase.rpc("get_session_prompt_attachments", {
+          target_session_number: sessionNumber,
+          target_workspace_slug: workspaceSlug,
+        }),
+      (result) => ({ rows: result.data?.length ?? 0 }),
+    ),
+  ]);
 
-  if (sessionError) {
-    throw sessionError;
+  if (!user) {
+    redirect(loginPath(workspaceSessionDetailPath(workspaceSlug, sessionNumber)));
   }
-  if (!sessionRow) {
+
+  if (rpcError) throw rpcError;
+  if (attachmentError) throw attachmentError;
+  if (!rpcData) notFound();
+
+  const payload = rpcData as SessionDetailRpcResult;
+  if ("access" in payload) {
+    if (!payload.access.hasAnyWorkspace) {
+      redirect(onboardingWorkspacePath());
+    }
+
     notFound();
   }
 
-  const [
-    { data: pipelineRow, error: pipelineError },
-    { data: stageRows, error: stagesError },
-    { data: artifactRows, error: artifactError },
-    { data: completionRows, error: completionError },
-    { data: prRows, error: prError },
-  ] = await Promise.all([
-    context.supabase
-      .from("pipelines")
-      .select("id, name, is_default, operating_rules_md")
-      .eq("id", sessionRow.pipeline_id)
-      .maybeSingle(),
-    context.supabase
-      .from("pipeline_stages")
-      .select("*")
-      .eq("pipeline_id", sessionRow.pipeline_id)
-      .order("position", { ascending: true }),
-    context.supabase
-      .from("session_artifacts")
-      .select("artifact_json, created_at, stage_slug, version")
-      .eq("session_id", sessionRow.id)
-      .order("version", { ascending: false }),
-    context.supabase
-      .from("session_phase_completions")
-      .select("completed_at, stage_slug")
-      .eq("session_id", sessionRow.id),
-    context.supabase
-      .from("session_pull_requests")
-      .select(
-        "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at, created_at",
-      )
-      .eq("workspace_id", context.workspace.id)
-      .eq("session_id", sessionRow.id)
-      .order("created_at", { ascending: false }),
-  ]);
+  if (!payload.session || !payload.activity) notFound();
 
-  if (pipelineError) throw pipelineError;
-  if (stagesError) throw stagesError;
-  if (artifactError) throw artifactError;
-  if (completionError) throw completionError;
-  if (prError) throw prError;
-  if (!pipelineRow) {
-    throw new Error(
-      `Session ${sessionRow.id} references missing pipeline ${sessionRow.pipeline_id}`,
-    );
-  }
-
-  const pipelineStages: PipelineStage[] = (stageRows ?? []).map((s) => ({
-    approverMemberIds: s.approver_member_ids ?? [],
-    description: s.description,
-    id: s.id,
-    name: s.name,
-    pipelineId: s.pipeline_id,
-    position: s.position,
-    promptTemplateMd: s.prompt_template_md,
-    slug: s.slug,
-  }));
-
-  const pipeline: SessionPipeline = {
-    id: pipelineRow.id,
-    isDefault: pipelineRow.is_default,
-    name: pipelineRow.name,
-    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
-    stages: pipelineStages,
-  };
-
-  const currentStage = pipelineStages.find((s) => s.id === sessionRow.current_stage_id);
-
-  const artifacts: SessionArtifactSummary[] = (artifactRows ?? []).map((row) => ({
-    createdAt: row.created_at,
-    payload: row.artifact_json,
-    stageSlug: row.stage_slug,
-    version: row.version,
-  }));
-
-  const phaseCompletions: SessionPhaseCompletion[] = (completionRows ?? []).map((row) => ({
-    completedAt: row.completed_at,
-    stageSlug: row.stage_slug,
-  }));
-
-  const prRowsTyped = (prRows ?? []) as Array<
-    Pick<
-      Tables<"session_pull_requests">,
-      | "branch_name"
-      | "github_repository_id"
-      | "id"
-      | "is_draft"
-      | "pull_request_number"
-      | "pull_request_state"
-      | "pull_request_url"
-      | "updated_at"
-      | "created_at"
-    >
-  >;
-
-  const repoIds = Array.from(
-    new Set(
-      prRowsTyped.map((row) => row.github_repository_id).filter((id): id is string => Boolean(id)),
-    ),
+  const review = serializeSessionReviewData(
+    payload,
+    (attachmentData ?? []) as SessionAttachmentRpcRow[],
+  );
+  const repository = serializeSessionReviewRepository(payload.activity.repository);
+  const capabilities = await timing.segment("review.authorization", () =>
+    loadSessionReviewCapabilities({
+      memberUserId: user.id,
+      sessionId: payload.session.id,
+      stageId: payload.session.currentStageId,
+      supabase,
+      workspaceId: payload.activity.workspaceId,
+    }),
   );
 
-  let repositoryIndex = new Map<
-    string,
-    {
-      defaultBranch: string | null;
-      defaultProgrammingLanguage: string | null;
-      fullName: string;
-      htmlUrl: string;
-      isArchived: boolean;
-      isPrivate: boolean;
-    }
-  >();
-  if (repoIds.length > 0) {
-    const { data: repoRows, error: repoError } = await context.supabase
-      .from("github_repositories")
-      .select(
-        "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
-      )
-      .in("id", repoIds);
-    if (repoError) {
-      throw repoError;
-    }
-    repositoryIndex = new Map(
-      (
-        (repoRows ?? []) as Array<
-          Pick<
-            Tables<"github_repositories">,
-            | "default_branch"
-            | "default_programming_language"
-            | "full_name"
-            | "html_url"
-            | "id"
-            | "is_archived"
-            | "private"
-          >
-        >
-      ).map((row) => [
-        row.id,
-        {
-          defaultBranch: row.default_branch,
-          defaultProgrammingLanguage: row.default_programming_language,
-          fullName: row.full_name,
-          htmlUrl: row.html_url,
-          isArchived: row.is_archived,
-          isPrivate: row.private,
-        },
-      ]),
-    );
-  }
-
-  const pullRequests: SessionPullRequest[] = prRowsTyped.map((row) => {
-    const repo = row.github_repository_id ? repositoryIndex.get(row.github_repository_id) : null;
-    return {
-      branchName: row.branch_name,
-      id: row.id,
-      isDraft: row.is_draft,
-      pullRequestNumber: row.pull_request_number,
-      pullRequestState: row.pull_request_state,
-      pullRequestUrl: row.pull_request_url,
-      repositoryFullName: repo?.fullName ?? null,
-      repositoryHtmlUrl: repo?.htmlUrl ?? null,
-      updatedAt: row.updated_at,
-    };
+  await timing.segment("review-contract", () => review, {
+    payloadBytes: approximatePayloadSizeBytes(review),
+    targetBytes: SESSION_REVIEW_PAYLOAD_TARGET_BYTES,
   });
-
-  const session: SessionDetail = {
-    archivedAt: sessionRow.archived_at,
-    artifacts,
-    createdAt: sessionRow.created_at,
-    currentArtifactVersion: sessionRow.current_artifact_version,
-    currentStageId: sessionRow.current_stage_id,
-    currentStageName: currentStage?.name ?? "Unknown",
-    currentStagePosition: currentStage?.position ?? Number.MAX_SAFE_INTEGER,
-    currentStageSlug: currentStage?.slug ?? "unknown",
-    id: sessionRow.id,
-    linearIssueId: sessionRow.linear_issue_id,
-    linearIssueUrl: sessionRow.linear_issue_url,
-    number: sessionRow.number,
-    phaseStatus: sessionRow.phase_status as SessionPhaseStatus,
-    phaseCompletions,
-    pipeline,
-    pipelineId: sessionRow.pipeline_id,
-    promptMd: sessionRow.prompt_md,
-    pullRequestCount: pullRequests.length,
-    pullRequests,
-    rejectionCount: sessionRow.rejection_count,
-    title: sessionRow.title,
-    updatedAt: sessionRow.updated_at,
-    workspaceId: sessionRow.workspace_id,
-  };
-
-  const repositoryResolution = await resolveEffectiveSessionRepository({
-    sessionId: sessionRow.id,
-    supabase: context.supabase,
-    workspaceId: context.workspace.id,
-  });
-  const sessionGithubRepositoryId = repositoryResolution.repositoryId;
-  const repository = repositoryResolution.repository;
-
-  const wallie = await loadWallieSessionData({
-    memberIndex: context.memberIndex,
-    repository: repository
-      ? {
-          defaultBranch: repository.defaultBranch,
-          defaultProgrammingLanguage: repository.defaultProgrammingLanguage,
-          fullName: repository.fullName,
-          htmlUrl: repository.htmlUrl,
-          id: repository.id,
-          isArchived: repository.isArchived,
-          isPrivate: repository.isPrivate,
-        }
-      : null,
-    session: { githubRepositoryId: sessionGithubRepositoryId, id: sessionRow.id },
-    supabase: context.supabase,
-    workspaceId: context.workspace.id,
-  });
-
-  const sessionCreator = sessionRow.creator_member_id
-    ? (context.memberIndex.get(sessionRow.creator_member_id) ?? null)
-    : null;
 
   return {
-    currentMember: context.currentMember,
-    memberIndex: context.memberIndex,
-    members: context.members,
-    session,
-    sessionGithubRepositoryId,
-    sessionCreator,
-    wallie,
-    workspace: context.workspace,
+    activityContext: {
+      repository: payload.activity.repository,
+      sessionGithubRepositoryId: payload.activity.sessionGithubRepositoryId,
+      sessionId: payload.activity.sessionId,
+      workspaceId: payload.activity.workspaceId,
+    },
+    canReview: capabilities.canApprove,
+    failedStageSlug: capabilities.failedStageSlug,
+    hasFailedRun: capabilities.hasFailedRun,
+    repository,
+    review,
+  };
+}
+
+export function serializeSessionReviewRepository(
+  repository: WallieSessionRepository | null,
+): SessionReviewRepository | null {
+  if (!repository) return null;
+  return {
+    defaultBranch: repository.defaultBranch,
+    fullName: repository.fullName,
+    htmlUrl: repository.htmlUrl,
+  };
+}
+
+/**
+ * Build every client-bound object explicitly. This deliberately avoids row or
+ * RPC payload spreads so a database field cannot silently re-expand the RSC
+ * contract.
+ */
+export function serializeSessionReviewData(
+  payload: SessionDetailRpcPayload,
+  attachments: SessionAttachmentRpcRow[] = [],
+): SessionReviewData {
+  return {
+    creatorDisplayName: payload.creatorDisplayName,
+    session: {
+      archivedAt: payload.session.archivedAt,
+      artifacts: payload.session.artifacts.map((artifact) => ({
+        createdAt: artifact.createdAt,
+        payload: artifact.payload,
+        stageSlug: artifact.stageSlug,
+        version: artifact.version,
+      })),
+      attachments: attachments.map((attachment) => ({
+        contentType: attachment.content_type,
+        fileName: attachment.original_filename,
+        id: attachment.id,
+        position: attachment.attachment_position,
+        sizeBytes: attachment.size_bytes,
+      })),
+      createdAt: payload.session.createdAt,
+      currentArtifactVersion: payload.session.currentArtifactVersion,
+      currentStageId: payload.session.currentStageId,
+      currentStageSlug: payload.session.currentStageSlug,
+      id: payload.session.id,
+      linearIssueId: payload.session.linearIssueId,
+      linearIssueUrl: payload.session.linearIssueUrl,
+      number: payload.session.number,
+      phaseCompletions: payload.session.phaseCompletions.map((completion) => ({
+        completedAt: completion.completedAt,
+        stageSlug: completion.stageSlug,
+      })),
+      phaseStatus: payload.session.phaseStatus,
+      pipeline: {
+        stages: payload.session.pipeline.stages.map((stage) => ({
+          description: stage.description,
+          id: stage.id,
+          name: stage.name,
+          position: stage.position,
+          slug: stage.slug,
+        })),
+      },
+      promptMd: payload.session.promptMd,
+      pullRequests: payload.session.pullRequests.map((pullRequest) => ({
+        id: pullRequest.id,
+        pullRequestNumber: pullRequest.pullRequestNumber,
+        pullRequestUrl: pullRequest.pullRequestUrl,
+      })),
+      title: payload.session.title,
+      updatedAt: payload.session.updatedAt,
+    },
+    workspaceSlug: payload.workspaceSlug,
   };
 }

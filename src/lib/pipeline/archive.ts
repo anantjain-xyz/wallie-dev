@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -8,6 +9,8 @@ type AdminClient = SupabaseClient<Database>;
 export type SessionArchiveState = {
   archivedAt: string | null;
   id: string;
+  phaseStatus: PipelinePhaseStatus;
+  updatedAt: string;
 };
 
 /**
@@ -18,7 +21,7 @@ export type SessionArchiveState = {
  *
  * It first reuses {@link cancelSessionWork} to stop any in-flight work — flip
  * active jobs/runs to `canceled`, stop their sandboxes, record a cancel message,
- * and park an `agent_generating` session into `rejected`. `awaiting_review`,
+ * and park an `in_progress` session into `rejected`. `awaiting_review`,
  * `approved`, and already-`rejected` sessions keep their phase, so a later
  * {@link unarchiveSession} restores them where they were.
  *
@@ -29,19 +32,17 @@ export async function archiveSession(
   admin: AdminClient,
   input: { reason: string; sessionId: string },
 ): Promise<SessionArchiveState> {
-  // Set the archived marker FIRST, before canceling any work. Order matters:
-  // the run-enqueue/retry path rejects archived sessions, so landing the marker
-  // up front blocks new work before cleanup begins. If we canceled first, a
-  // concurrent request that passed the archived check could insert a fresh
-  // job/run in the window before the marker lands — work this call would never
-  // cancel. The processor's claim CAS is also archive-aware, so anything that
-  // still slips in before the marker cannot execute.
-  const { data, error } = await admin
+  // Set the archived marker before canceling work so later enqueue validations
+  // and processor claims reject the session. This is not atomic with enqueue: a
+  // request that already passed validation can still insert after this
+  // cancellation pass. The work cannot execute while archived, and re-running
+  // archive runs cancellation again to converge on any rows this pass missed.
+  const { error } = await admin
     .from("sessions")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", input.sessionId)
     .is("archived_at", null)
-    .select("id, archived_at")
+    .select("id")
     .maybeSingle();
 
   if (error) {
@@ -60,13 +61,10 @@ export async function archiveSession(
     sessionId: input.sessionId,
   });
 
-  // No row matched ⇒ the session was already archived. Read the current state
-  // so the caller still gets the id + archived_at to echo back.
-  if (!data) {
-    return readSessionArchiveState(admin, input.sessionId);
-  }
-
-  return { archivedAt: data.archived_at, id: data.id };
+  // Cancellation can change phase_status after archived_at is written. Always
+  // reload after it settles so callers receive one authoritative final row,
+  // including updated_at for timestamp-aware client reconciliation.
+  return readSessionArchiveState(admin, input.sessionId);
 }
 
 /**
@@ -78,25 +76,19 @@ export async function archiveSession(
  */
 export async function unarchiveSession(
   admin: AdminClient,
-  input: { sessionId: string },
+  input: { expectedArchivedAt?: string; sessionId: string },
 ): Promise<SessionArchiveState> {
-  const { data, error } = await admin
-    .from("sessions")
-    .update({ archived_at: null })
-    .eq("id", input.sessionId)
-    .not("archived_at", "is", null)
-    .select("id, archived_at")
-    .maybeSingle();
+  let update = admin.from("sessions").update({ archived_at: null }).eq("id", input.sessionId);
+  update = input.expectedArchivedAt
+    ? update.eq("archived_at", input.expectedArchivedAt)
+    : update.not("archived_at", "is", null);
+  const { error } = await update.select("id").maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  if (!data) {
-    return readSessionArchiveState(admin, input.sessionId);
-  }
-
-  return { archivedAt: data.archived_at, id: data.id };
+  return readSessionArchiveState(admin, input.sessionId);
 }
 
 async function readSessionArchiveState(
@@ -105,7 +97,7 @@ async function readSessionArchiveState(
 ): Promise<SessionArchiveState> {
   const { data, error } = await admin
     .from("sessions")
-    .select("id, archived_at")
+    .select("id, archived_at, phase_status, updated_at")
     .eq("id", sessionId)
     .single();
 
@@ -113,5 +105,10 @@ async function readSessionArchiveState(
     throw error;
   }
 
-  return { archivedAt: data.archived_at, id: data.id };
+  return {
+    archivedAt: data.archived_at,
+    id: data.id,
+    phaseStatus: data.phase_status,
+    updatedAt: data.updated_at,
+  };
 }

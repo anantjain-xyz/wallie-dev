@@ -16,7 +16,6 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -36,7 +35,6 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -56,7 +54,6 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -155,6 +152,7 @@ export type Database = {
           model_provider: string
           output_tokens: number | null
           run_type: string
+          sandbox_connection_revision: string | null
           sandbox_id: string | null
           sandbox_provider: string | null
           sandbox_vercel_project_id: string | null
@@ -181,6 +179,7 @@ export type Database = {
           model_provider: string
           output_tokens?: number | null
           run_type: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -207,6 +206,7 @@ export type Database = {
           model_provider?: string
           output_tokens?: number | null
           run_type?: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -275,12 +275,15 @@ export type Database = {
           id: string
           instructions: string | null
           output_tail: string | null
+          sandbox_connection_revision: string | null
           sandbox_id: string
+          sandbox_provider: string | null
           status: string
           updated_at: string
           user_code: string | null
           user_id: string
           verification_uri: string | null
+          workspace_id: string | null
         }
         Insert: {
           account_email?: string | null
@@ -296,12 +299,15 @@ export type Database = {
           id?: string
           instructions?: string | null
           output_tail?: string | null
+          sandbox_connection_revision?: string | null
           sandbox_id: string
+          sandbox_provider?: string | null
           status?: string
           updated_at?: string
           user_code?: string | null
           user_id: string
           verification_uri?: string | null
+          workspace_id?: string | null
         }
         Update: {
           account_email?: string | null
@@ -317,14 +323,81 @@ export type Database = {
           id?: string
           instructions?: string | null
           output_tail?: string | null
+          sandbox_connection_revision?: string | null
           sandbox_id?: string
+          sandbox_provider?: string | null
           status?: string
           updated_at?: string
           user_code?: string | null
           user_id?: string
           verification_uri?: string | null
+          workspace_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "codex_device_auth_flows_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cursor_auth_flows: {
+        Row: {
+          canceled_at: string | null
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          expires_at: string
+          id: string
+          login_url: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          workspace_id: string | null
+        }
+        Insert: {
+          canceled_at?: string | null
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          expires_at?: string
+          id?: string
+          login_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          workspace_id?: string | null
+        }
+        Update: {
+          canceled_at?: string | null
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          expires_at?: string
+          id?: string
+          login_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cursor_auth_flows_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       github_installations: {
         Row: {
@@ -369,70 +442,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "github_installations_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      github_issue_branches: {
-        Row: {
-          branch_name: string
-          created_at: string
-          github_repository_id: string | null
-          id: string
-          is_draft: boolean | null
-          pull_request_number: number | null
-          pull_request_state: string | null
-          pull_request_url: string | null
-          session_id: string
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          branch_name: string
-          created_at?: string
-          github_repository_id?: string | null
-          id?: string
-          is_draft?: boolean | null
-          pull_request_number?: number | null
-          pull_request_state?: string | null
-          pull_request_url?: string | null
-          session_id: string
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          branch_name?: string
-          created_at?: string
-          github_repository_id?: string | null
-          id?: string
-          is_draft?: boolean | null
-          pull_request_number?: number | null
-          pull_request_state?: string | null
-          pull_request_url?: string | null
-          session_id?: string
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "github_issue_branches_github_repository_id_fkey"
-            columns: ["github_repository_id"]
-            isOneToOne: false
-            referencedRelation: "github_repositories"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "github_issue_branches_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "github_issue_branches_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -508,7 +517,9 @@ export type Database = {
       }
       pipeline_stages: {
         Row: {
+          anyone_can_approve: boolean
           approver_member_ids: string[]
+          archived_at: string | null
           created_at: string
           description: string
           id: string
@@ -521,7 +532,9 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          anyone_can_approve?: boolean
           approver_member_ids?: string[]
+          archived_at?: string | null
           created_at?: string
           description?: string
           id?: string
@@ -534,7 +547,9 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          anyone_can_approve?: boolean
           approver_member_ids?: string[]
+          archived_at?: string | null
           created_at?: string
           description?: string
           id?: string
@@ -603,6 +618,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_overridden: boolean
+          avatar_path: string | null
           avatar_url: string | null
           created_at: string
           full_name: string | null
@@ -611,6 +628,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          avatar_overridden?: boolean
+          avatar_path?: string | null
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
@@ -619,6 +638,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          avatar_overridden?: boolean
+          avatar_path?: string | null
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
@@ -693,12 +714,15 @@ export type Database = {
       }
       sandbox_capability_checks: {
         Row: {
+          agent_model: string | null
+          agent_provider: string | null
           capabilities: Json
           checked_at: string
           created_at: string
           error_text: string | null
           github_repository_id: string | null
           id: string
+          sandbox_connection_revision: string | null
           sandbox_id: string | null
           sandbox_provider: string | null
           sandbox_vercel_project_id: string | null
@@ -708,12 +732,15 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          agent_model?: string | null
+          agent_provider?: string | null
           capabilities?: Json
           checked_at?: string
           created_at?: string
           error_text?: string | null
           github_repository_id?: string | null
           id?: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -723,12 +750,15 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          agent_model?: string | null
+          agent_provider?: string | null
           capabilities?: Json
           checked_at?: string
           created_at?: string
           error_text?: string | null
           github_repository_id?: string | null
           id?: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -864,6 +894,79 @@ export type Database = {
           },
         ]
       }
+      session_attachments: {
+        Row: {
+          attached_at: string | null
+          content_type: string
+          created_at: string
+          delete_claimed_at: string | null
+          expires_at: string | null
+          id: string
+          original_filename: string
+          position: number | null
+          session_id: string | null
+          size_bytes: number
+          status: string
+          storage_path: string
+          uploaded_by_member_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          attached_at?: string | null
+          content_type: string
+          created_at?: string
+          delete_claimed_at?: string | null
+          expires_at?: string | null
+          id?: string
+          original_filename: string
+          position?: number | null
+          session_id?: string | null
+          size_bytes: number
+          status?: string
+          storage_path: string
+          uploaded_by_member_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          attached_at?: string | null
+          content_type?: string
+          created_at?: string
+          delete_claimed_at?: string | null
+          expires_at?: string | null
+          id?: string
+          original_filename?: string
+          position?: number | null
+          session_id?: string | null
+          size_bytes?: number
+          status?: string
+          storage_path?: string
+          uploaded_by_member_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_attachments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attachments_uploaded_by_member_id_fkey"
+            columns: ["uploaded_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attachments_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_phase_completions: {
         Row: {
           completed_at: string
@@ -987,6 +1090,49 @@ export type Database = {
           },
         ]
       }
+      session_selected_stages: {
+        Row: {
+          created_at: string
+          session_id: string
+          stage_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          session_id: string
+          stage_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          session_id?: string
+          stage_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_selected_stages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_selected_stages_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_selected_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sessions: {
         Row: {
           archived_at: string | null
@@ -1003,6 +1149,8 @@ export type Database = {
           pipeline_id: string
           prompt_md: string
           rejection_count: number
+          search_document: unknown
+          search_text: string | null
           title: string
           updated_at: string
           workspace_id: string
@@ -1022,6 +1170,8 @@ export type Database = {
           pipeline_id: string
           prompt_md?: string
           rejection_count?: number
+          search_document?: unknown
+          search_text?: string | null
           title: string
           updated_at?: string
           workspace_id: string
@@ -1041,6 +1191,8 @@ export type Database = {
           pipeline_id?: string
           prompt_md?: string
           rejection_count?: number
+          search_document?: unknown
+          search_text?: string | null
           title?: string
           updated_at?: string
           workspace_id?: string
@@ -1110,11 +1262,10 @@ export type Database = {
           account_email: string | null
           account_id: string | null
           auth_cache_last_refresh: string | null
-          auth_lock_expires_at: string | null
-          auth_lock_run_id: string | null
           auth_reconnect_reason: string | null
           auth_reconnect_required: boolean
           created_at: string
+          credential_generation: string
           credential_type: string
           credential_version: number
           encrypted_credential: string
@@ -1127,11 +1278,10 @@ export type Database = {
           account_email?: string | null
           account_id?: string | null
           auth_cache_last_refresh?: string | null
-          auth_lock_expires_at?: string | null
-          auth_lock_run_id?: string | null
           auth_reconnect_reason?: string | null
           auth_reconnect_required?: boolean
           created_at?: string
+          credential_generation?: string
           credential_type?: string
           credential_version?: number
           encrypted_credential: string
@@ -1144,15 +1294,50 @@ export type Database = {
           account_email?: string | null
           account_id?: string | null
           auth_cache_last_refresh?: string | null
-          auth_lock_expires_at?: string | null
-          auth_lock_run_id?: string | null
           auth_reconnect_reason?: string | null
           auth_reconnect_required?: boolean
           created_at?: string
+          credential_generation?: string
           credential_type?: string
           credential_version?: number
           encrypted_credential?: string
           scope?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_cursor_credentials: {
+        Row: {
+          account_email: string | null
+          api_key_expires_at: string
+          created_at: string
+          credential_generation: string
+          encrypted_api_key: string
+          reconnect_reason: string | null
+          reconnect_required: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_email?: string | null
+          api_key_expires_at: string
+          created_at?: string
+          credential_generation?: string
+          encrypted_api_key: string
+          reconnect_reason?: string | null
+          reconnect_required?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_email?: string | null
+          api_key_expires_at?: string
+          created_at?: string
+          credential_generation?: string
+          encrypted_api_key?: string
+          reconnect_reason?: string | null
+          reconnect_required?: boolean
           updated_at?: string
           user_id?: string
         }
@@ -1241,6 +1426,120 @@ export type Database = {
           },
         ]
       }
+      workspace_daytona_sandbox_connections: {
+        Row: {
+          api_key_preview: string | null
+          api_url: string
+          connection_revision: string
+          created_at: string
+          created_by_member_id: string | null
+          encrypted_api_key: string
+          last_validated_at: string | null
+          last_validation_error: string | null
+          status: string
+          target: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          api_key_preview?: string | null
+          api_url?: string
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          target?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          api_key_preview?: string | null
+          api_url?: string
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key?: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          target?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_daytona_sandbox_connections_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_daytona_sandbox_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_e2b_sandbox_connections: {
+        Row: {
+          api_key_preview: string | null
+          connection_revision: string
+          created_at: string
+          created_by_member_id: string | null
+          encrypted_api_key: string
+          last_validated_at: string | null
+          last_validation_error: string | null
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          api_key_preview?: string | null
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          api_key_preview?: string | null
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key?: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_e2b_sandbox_connections_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_e2b_sandbox_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_invitations: {
         Row: {
           accepted_at: string | null
@@ -1248,6 +1547,7 @@ export type Database = {
           created_at: string
           email: string
           expires_at: string
+          full_name: string | null
           id: string
           invited_by_member_id: string | null
           last_sent_at: string | null
@@ -1264,6 +1564,7 @@ export type Database = {
           created_at?: string
           email: string
           expires_at: string
+          full_name?: string | null
           id?: string
           invited_by_member_id?: string | null
           last_sent_at?: string | null
@@ -1280,6 +1581,7 @@ export type Database = {
           created_at?: string
           email?: string
           expires_at?: string
+          full_name?: string | null
           id?: string
           invited_by_member_id?: string | null
           last_sent_at?: string | null
@@ -1318,7 +1620,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          land_stage_slug: string
+          land_stage_slug: string | null
           rework_stage_slug: string
           status_mappings: Json
           updated_at: string
@@ -1327,7 +1629,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
-          land_stage_slug?: string
+          land_stage_slug?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
@@ -1336,7 +1638,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
-          land_stage_slug?: string
+          land_stage_slug?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
@@ -1537,6 +1839,80 @@ export type Database = {
           },
         ]
       }
+      workspace_sandbox_connection_mutations: {
+        Row: {
+          created_at: string
+          expires_at: string
+          lock_id: string
+          provider: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          lock_id?: string
+          provider: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          lock_id?: string
+          provider?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_sandbox_connection_mutations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_sandbox_settings: {
+        Row: {
+          active_provider: string
+          created_at: string
+          revision: number
+          updated_at: string
+          updated_by_member_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          active_provider?: string
+          created_at?: string
+          revision?: number
+          updated_at?: string
+          updated_by_member_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          active_provider?: string
+          created_at?: string
+          revision?: number
+          updated_at?: string
+          updated_by_member_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_sandbox_settings_updated_by_member_id_fkey"
+            columns: ["updated_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_sandbox_settings_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_secrets: {
         Row: {
           created_at: string
@@ -1585,37 +1961,9 @@ export type Database = {
           },
         ]
       }
-      workspace_vercel_sandbox_connection_mutations: {
-        Row: {
-          created_at: string
-          expires_at: string
-          lock_id: string
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          expires_at?: string
-          lock_id?: string
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          expires_at?: string
-          lock_id?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_vercel_sandbox_connection_mutations_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: true
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       workspace_vercel_sandbox_connections: {
         Row: {
+          connection_revision: string
           created_at: string
           created_by_member_id: string | null
           encrypted_token: string
@@ -1630,6 +1978,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          connection_revision?: string
           created_at?: string
           created_by_member_id?: string | null
           encrypted_token: string
@@ -1644,6 +1993,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          connection_revision?: string
           created_at?: string
           created_by_member_id?: string | null
           encrypted_token?: string
@@ -1719,22 +2069,6 @@ export type Database = {
         }
         Returns: Json
       }
-      acquire_codex_auth_lease: {
-        Args: {
-          lease_expires_at: string
-          target_run_id: string
-          target_user_id: string
-        }
-        Returns: {
-          access_token_expires_at: string
-          auth_cache_last_refresh: string
-          auth_reconnect_reason: string
-          auth_reconnect_required: boolean
-          credential_type: string
-          credential_version: number
-          encrypted_credential: string
-        }[]
-      }
       approve_session_stage: {
         Args: {
           approver_member_id?: string
@@ -1753,38 +2087,28 @@ export type Database = {
           workspace_id: string
         }[]
       }
-      begin_vercel_sandbox_connection_mutation: {
-        Args: { target_workspace_id: string }
+      begin_codex_device_auth_flow: {
+        Args: {
+          flow_id: string
+          target_connection_revision: string
+          target_expires_at: string
+          target_provider: string
+          target_user_id: string
+          target_workspace_id: string
+        }
         Returns: string
       }
-      claim_agent_job: {
-        Args: { default_concurrency_limit?: number; target_job_id: string }
+      begin_sandbox_connection_mutation: {
+        Args: { target_provider: string; target_workspace_id: string }
+        Returns: string
+      }
+      claim_expired_session_attachments: {
+        Args: { max_count?: number }
         Returns: {
-          attempt_count: number
-          created_at: string
-          dedupe_key: string | null
-          finished_at: string | null
+          delete_claimed_at: string
           id: string
-          job_type: string
-          last_error: string | null
-          requested_by_member_id: string | null
-          scheduled_at: string | null
-          session_id: string
-          stage_id: string | null
-          stage_name: string | null
-          stage_slug: string | null
-          started_at: string | null
-          status: Database["public"]["Enums"]["agent_job_status"]
-          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
-          updated_at: string
-          workspace_id: string
+          storage_path: string
         }[]
-        SetofOptions: {
-          from: "*"
-          to: "agent_jobs"
-          isOneToOne: false
-          isSetofReturn: true
-        }
       }
       claim_next_agent_job: {
         Args: { default_concurrency_limit?: number }
@@ -1794,7 +2118,6 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -1814,6 +2137,62 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      complete_cursor_auth_flow: {
+        Args: {
+          p_account_email?: string
+          p_api_key_expires_at: string
+          p_claimed_by: string
+          p_completed_at: string
+          p_encrypted_api_key: string
+          p_flow_id: string
+        }
+        Returns: boolean
+      }
+      create_session_with_first_job: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
+      create_session_with_first_job_and_attachments: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
       }
       create_workspace: {
         Args: {
@@ -1840,17 +2219,92 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      ensure_own_profile: {
+        Args: {
+          actor_avatar_url?: string
+          actor_email?: string
+          actor_full_name?: string
+        }
+        Returns: {
+          avatar_overridden: boolean
+          avatar_path: string | null
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          primary_email: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      get_pipeline_dashboard_page: {
+        Args: {
+          cursor_seen_ids?: string[]
+          page_limit?: number
+          target_pipeline_id?: string
+          target_stage_id?: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_session_detail_page: {
+        Args: { target_session_number: number; target_workspace_slug: string }
+        Returns: Json
+      }
+      get_session_list_page: {
+        Args: {
+          cursor_id?: string
+          cursor_number?: number
+          cursor_updated_at?: string
+          page_limit?: number
+          search_query?: string
+          session_scope?: string
+          sort_key?: string
+          stage_filter_slug?: string
+          target_workspace_slug: string
+        }
+        Returns: Json
+      }
+      get_session_prompt_attachments: {
+        Args: { target_session_number: number; target_workspace_slug: string }
+        Returns: {
+          attachment_position: number
+          content_type: string
+          id: string
+          original_filename: string
+          size_bytes: number
+        }[]
+      }
+      get_workspace_usage: {
+        Args: { target_workspace_id: string }
+        Returns: {
+          total_cost_usd: number
+          total_input_tokens: number
+          total_output_tokens: number
+          total_runs: number
+        }[]
+      }
+      load_workspace_onboarding_sandbox_checks: {
+        Args: { target_workspace_id: string }
+        Returns: Json
+      }
+      load_workspace_onboarding_secret_previews: {
+        Args: { target_workspace_id: string }
+        Returns: Json
+      }
       mark_codex_auth_reconnect_required: {
         Args: {
+          previous_credential_generation: string
+          previous_credential_version: number
           reconnect_reason: string
-          target_run_id: string
           target_user_id: string
         }
         Returns: undefined
-      }
-      next_session_number: {
-        Args: { actor_user_id: string; target_workspace_id: string }
-        Returns: number
       }
       persist_codex_auth_json: {
         Args: {
@@ -1858,17 +2312,13 @@ export type Database = {
           new_account_id: string
           new_auth_cache_last_refresh: string
           new_encrypted_credential: string
+          previous_credential_generation: string
           previous_credential_version: number
-          target_run_id: string
           target_user_id: string
         }
         Returns: {
           credential_version: number
         }[]
-      }
-      release_codex_auth_lease: {
-        Args: { target_run_id: string; target_user_id: string }
-        Returns: undefined
       }
       remove_workspace_member: {
         Args: { expected_workspace_id: string; target_member_id: string }
@@ -1880,6 +2330,15 @@ export type Database = {
         }[]
       }
       rewrite_default_pipeline: {
+        Args: {
+          operating_rules_md?: string
+          pipeline_name: string
+          stage_payload: Json
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
+      rewrite_default_pipeline_with_approval_policy: {
         Args: {
           operating_rules_md?: string
           pipeline_name: string
@@ -1940,7 +2399,6 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -1961,18 +2419,30 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      set_active_sandbox_provider: {
+        Args: {
+          actor_member_id: string
+          expected_revision: number
+          target_provider: string
+          target_workspace_id: string
+        }
+        Returns: string
+      }
       start_sandbox_capability_check: {
         Args: {
           target_github_repository_id: string
           target_workspace_id: string
         }
         Returns: {
+          agent_model: string | null
+          agent_provider: string | null
           capabilities: Json
           checked_at: string
           created_at: string
           error_text: string | null
           github_repository_id: string | null
           id: string
+          sandbox_connection_revision: string | null
           sandbox_id: string | null
           sandbox_provider: string | null
           sandbox_vercel_project_id: string | null
@@ -1987,6 +2457,39 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      update_user_display_name: {
+        Args: { actor_full_name: string; actor_user_id: string }
+        Returns: {
+          avatar_overridden: boolean
+          avatar_path: string | null
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          primary_email: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      update_user_profile: {
+        Args: {
+          actor_avatar_changed?: boolean
+          actor_avatar_path?: string
+          actor_avatar_url?: string
+          actor_full_name: string
+          actor_user_id: string
+        }
+        Returns: {
+          saved_avatar_url: string
+          saved_full_name: string
+          superseded_avatar_path: string
+        }[]
       }
     }
     Enums: {
@@ -2012,7 +2515,7 @@ export type Database = {
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
-        | "agent_generating"
+        | "in_progress"
         | "awaiting_review"
         | "approved"
         | "rejected"
@@ -2169,7 +2672,7 @@ export const Constants = {
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
       pipeline_phase_status: [
-        "agent_generating",
+        "in_progress",
         "awaiting_review",
         "approved",
         "rejected",

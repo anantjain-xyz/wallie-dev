@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ensureProfileForUser,
+  getWorkspaceBySlugForUser,
+  isWorkspaceInvitationPath,
   normalizeNextPath,
   resolveAuthenticatedHomePath,
   workspaceLoginRedirectPath,
@@ -37,6 +40,68 @@ describe("auth helpers", () => {
 
   it("builds the workspace login redirect path", () => {
     expect(workspaceLoginRedirectPath("northwind-labs")).toBe("/w/northwind-labs");
+  });
+
+  it("recognizes redirects that must defer profile seeding until invitation acceptance", () => {
+    expect(isWorkspaceInvitationPath("/invite/raw-token")).toBe(true);
+    expect(isWorkspaceInvitationPath("/invite/raw-token?source=email")).toBe(true);
+    expect(isWorkspaceInvitationPath("/invite")).toBe(false);
+    expect(isWorkspaceInvitationPath("/w/northwind-labs")).toBe(false);
+  });
+
+  it("delegates profile seeding to the conflict-safe profile RPC", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: {}, error: null });
+
+    await ensureProfileForUser(
+      { rpc } as never,
+      {
+        email: "ada@example.com",
+        id: "user-1",
+        user_metadata: {
+          full_name: "Ada Lovelace",
+          picture: "https://example.com/ada.png",
+        },
+      } as never,
+    );
+
+    expect(rpc).toHaveBeenCalledWith("ensure_own_profile", {
+      actor_avatar_url: "https://example.com/ada.png",
+      actor_email: "ada@example.com",
+      actor_full_name: "Ada Lovelace",
+    });
+  });
+
+  it("loads the authenticated member through the workspace lookup", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        avatar_path: null,
+        current_member: [{ id: "member-1", is_active: true, kind: "human", role: "member" }],
+        id: "workspace-1",
+        name: "Northwind Labs",
+        slug: "northwind-labs",
+      },
+      error: null,
+    });
+    const query = {
+      eq: vi.fn(() => query),
+      maybeSingle,
+      select: vi.fn(() => query),
+    };
+    const supabase = { from: vi.fn(() => query) };
+
+    await expect(
+      getWorkspaceBySlugForUser(supabase as never, "northwind-labs", "user-1"),
+    ).resolves.toEqual({
+      currentMember: { id: "member-1", is_active: true, kind: "human", role: "member" },
+      workspace: {
+        avatar_path: null,
+        id: "workspace-1",
+        name: "Northwind Labs",
+        slug: "northwind-labs",
+      },
+    });
+    expect(query.eq).toHaveBeenNthCalledWith(1, "slug", "northwind-labs");
+    expect(query.eq).toHaveBeenNthCalledWith(2, "current_member.user_id", "user-1");
   });
 
   it("keeps signed-in home routing on the existing workspace home", async () => {

@@ -7,14 +7,8 @@ import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 
 export type SessionPhaseStatus = PipelinePhaseStatus;
 
-export const SESSION_PHASE_STATUS_LABELS: Record<SessionPhaseStatus, string> = {
-  agent_generating: "Drafting",
-  awaiting_review: "Awaiting review",
-  approved: "Approved",
-  rejected: "Rejected",
-};
-
 export type PipelineStage = {
+  anyoneCanApprove: boolean;
   approverMemberIds: string[];
   description: string;
   id: string;
@@ -31,6 +25,15 @@ export type SessionPipeline = {
   name: string;
   operatingRulesMd: string;
   stages: PipelineStage[];
+};
+
+export type ArchivedPipelineStage = PipelineStage & {
+  archivedAt: string;
+};
+
+export type PipelineConfiguration = SessionPipeline & {
+  /** Present on current Settings/API payloads; optional for persisted legacy clients. */
+  archivedStages?: ArchivedPipelineStage[];
 };
 
 export type SessionPullRequest = {
@@ -50,16 +53,39 @@ export type SessionRepositoryOption = {
   id: string;
 };
 
+export type SessionCreationStageOption = {
+  description: string;
+  id: string;
+  name: string;
+  position: number;
+};
+
 export type SessionPhaseCompletion = {
   completedAt: string;
+  id?: string;
   stageSlug: string;
 };
 
 export type SessionArtifactSummary = {
   createdAt: string;
+  id?: string;
   payload: unknown;
   stageSlug: string;
   version: number;
+};
+
+export type SessionArtifactMetadata = Omit<SessionArtifactSummary, "payload"> & {
+  /** Attempt number within the stage (same as version for that stage). */
+  attempt: number;
+  /** Display label for the producing agent or author. */
+  authorLabel: string;
+  /** True when this version received rejection feedback. */
+  changesRequested: boolean;
+};
+
+export type SessionArtifactBody = SessionArtifactSummary & {
+  /** Sanitized server-rendered markup for Markdown payloads; null for structured payloads. */
+  sanitizedHtml: string | null;
 };
 
 export type SessionSummary = {
@@ -80,10 +106,14 @@ export type SessionSummary = {
   pullRequestCount: number;
   pullRequests: SessionPullRequest[];
   rejectionCount: number;
+  /** Resolved from the session's pinned GitHub repository when present. */
+  repositoryFullName: string | null;
   title: string;
   updatedAt: string;
   workspaceId: string;
 };
+
+export type SessionListItem = Omit<SessionSummary, "promptMd">;
 
 export type SessionDetail = SessionSummary & {
   artifacts: SessionArtifactSummary[];
@@ -92,11 +122,16 @@ export type SessionDetail = SessionSummary & {
   pullRequests: SessionPullRequest[];
 };
 
-export type SessionFilterKey = "all" | "active" | "archived" | "has-pr";
+export type SessionFilterKey = "all" | "active" | "archived";
+
+/** URL-backed Sessions ledger sort. Default (`updated`) is omitted from the query string. */
+export type SessionListSortKey = "updated" | "oldest" | "number";
 
 export type SessionListQueryState = {
+  cursor: string | null;
   query: string;
   scope: SessionFilterKey;
+  sort: SessionListSortKey;
   stageSlug: string | null;
 };
 
@@ -107,22 +142,6 @@ export function stageIndex(pipeline: SessionPipeline, stageSlug: string): number
 export function isTerminalStage(pipeline: SessionPipeline, stageSlug: string): boolean {
   if (pipeline.stages.length === 0) return false;
   return pipeline.stages[pipeline.stages.length - 1]!.slug === stageSlug;
-}
-
-export function sessionPhaseStatusTone(
-  status: SessionPhaseStatus,
-): "attention" | "blocked" | "planned" | "ready" {
-  if (status === "approved") return "ready";
-  // Awaiting review is the one state that needs a human to act, so it gets its
-  // own call-to-action tone rather than sharing the passive "planned" muted
-  // styling with agent_generating ("Drafting").
-  if (status === "awaiting_review") return "attention";
-  if (status === "rejected") return "blocked";
-  return "planned";
-}
-
-export function formatSessionPhaseStatus(status: SessionPhaseStatus): string {
-  return SESSION_PHASE_STATUS_LABELS[status];
 }
 
 export function deriveSessionTitleFromPrompt(prompt: string): string {

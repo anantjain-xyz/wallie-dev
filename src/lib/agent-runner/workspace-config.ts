@@ -4,8 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   AGENT_PROVIDERS,
+  isAgentEffort,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
+  RECOMMENDED_AGENT_EFFORT,
+  type AgentEffort,
   type AgentProvider,
 } from "@/lib/agent-config/contracts";
 import type { Database } from "@/lib/supabase/database.types";
@@ -15,9 +18,11 @@ import { DEFAULT_AGENT_RUNNER_CONFIG } from "./types";
 type AdminClient = SupabaseClient<Database>;
 
 export interface ResolvedWorkspaceAgentConfig {
+  /** Workspace-configured reasoning effort, or the runner default. Always set. */
+  effort: AgentEffort;
   /** Workspace-configured model, or the runner default. Always set. */
   model: string;
-  /** Canonical provider id ("codex" | "claude-code" | "opencode"), normalized from the underscore form persisted by the settings UI. Always set. */
+  /** Canonical provider id ("codex" | "claude-code" | "cursor" | "opencode"), normalized from the underscore form persisted by the settings UI. Always set. */
   provider: AgentProvider;
   /** Workspace-configured max turns, or undefined if unset. */
   maxTurns?: number;
@@ -40,7 +45,7 @@ export async function loadWorkspaceAgentConfig(
     .from("workspace_agent_config")
     .select("key, value_json")
     .eq("workspace_id", workspaceId)
-    .in("key", ["max_turns", "agent_provider", "agent_model"]);
+    .in("key", ["max_turns", "agent_provider", "agent_model", "agent_effort"]);
 
   const lookup: Record<string, unknown> = {};
   for (const row of data ?? []) {
@@ -49,6 +54,7 @@ export async function loadWorkspaceAgentConfig(
 
   const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
   const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
+  const rawEffort = isAgentEffort(lookup.agent_effort) ? lookup.agent_effort : undefined;
   const provider = rawProvider
     ? normalizeAgentProviderName(rawProvider)
     : DEFAULT_AGENT_RUNNER_CONFIG.provider;
@@ -59,6 +65,7 @@ export async function loadWorkspaceAgentConfig(
   }
 
   return {
+    effort: rawEffort ?? RECOMMENDED_AGENT_EFFORT,
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
     model: rawModel ?? getRecommendedAgentModel(provider),
     provider,

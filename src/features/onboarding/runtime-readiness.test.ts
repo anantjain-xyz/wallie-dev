@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRuntimeReadiness,
   buildVerifyChecklist,
+  resolveAgentConfigValue,
   verifyBlockersFromChecklist,
 } from "@/features/onboarding/runtime-readiness";
 import type { OnboardingSetupHealth, WorkspaceOnboardingState } from "@/lib/onboarding/contracts";
@@ -21,18 +22,24 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       },
     },
     codexConnection: {
+      accountEmail: null,
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "codex_access_token",
       expiresAt: "2026-05-16T20:00:00.000Z",
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     claudeCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     openCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
@@ -52,6 +59,8 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     latestSandboxCapabilityCheck: {
+      agentModel: "gpt-5.5",
+      agentProvider: "codex",
       capabilities: {},
       checkedAt: "2026-05-16T18:00:00.000Z",
       errorText: null,
@@ -115,6 +124,14 @@ function onboarding(overrides: Partial<WorkspaceOnboardingState> = {}): Workspac
 }
 
 describe("buildRuntimeReadiness", () => {
+  it("resolves missing and legacy-empty agent_provider values to Codex", () => {
+    expect(resolveAgentConfigValue("agent_provider", {})).toBe("codex");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "" })).toBe("codex");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "   " })).toBe("   ");
+    expect(resolveAgentConfigValue("agent_provider", { agent_provider: "claude-code" })).toBe(
+      "claude-code",
+    );
+  });
   it("requires Codex connection for the codex provider", () => {
     expect(
       buildRuntimeReadiness({
@@ -132,9 +149,13 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: {
+          accountEmail: null,
+          checkedAt: "2026-05-16T18:00:01.000Z",
           connected: false,
           credentialType: null,
           expiresAt: null,
+          reconnectReason: null,
+          reconnectRequired: false,
           status: "missing",
           updatedAt: null,
         },
@@ -174,6 +195,7 @@ describe("buildRuntimeReadiness", () => {
       buildRuntimeReadiness({
         agentConfig: { agent_model: "claude-opus-4-7[1m]", agent_provider: "claude-code" },
         claudeCodeConnection: {
+          checkedAt: "2026-05-16T18:00:01.000Z",
           connected: false,
           status: "missing",
           updatedAt: null,
@@ -196,7 +218,30 @@ describe("buildRuntimeReadiness", () => {
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).model,
-    ).toBe("claude-opus-4-7[1m]");
+    ).toBe("claude-opus-4-8[1m]");
+  });
+
+  it("does not fail the agent-config requirement for Cursor Auto catalog ids", () => {
+    const readiness = buildRuntimeReadiness({
+      agentConfig: { agent_model: "auto-smart", agent_provider: "cursor" },
+      claudeCodeConnection: health().claudeCodeConnection,
+      codexConnection: health().codexConnection,
+      cursorConnection: {
+        accountEmail: null,
+        checkedAt: "2026-05-16T18:00:01.000Z",
+        connected: true,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        status: "connected",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      openCodeConnection: health().openCodeConnection,
+      primaryRepositoryId: repositoryId,
+      repositorySetup: health().repositorySetup,
+    });
+
+    expect(readiness.requirements.find((item) => item.id === "agent-config")?.passed).toBe(true);
   });
 
   it("requires an OpenCode Zen key, opencode/* model, and ready repository", () => {
@@ -227,7 +272,12 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_model: "opencode/gpt-5.6-sol", agent_provider: "opencode" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
-        openCodeConnection: { connected: false, status: "missing", updatedAt: null },
+        openCodeConnection: {
+          checkedAt: "2026-05-16T18:00:01.000Z",
+          connected: false,
+          status: "missing",
+          updatedAt: null,
+        },
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).canComplete,
@@ -244,6 +294,30 @@ describe("buildVerifyChecklist", () => {
     });
 
     expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+  });
+
+  it("uses sandbox-neutral capability guidance when the active provider is disconnected", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        sandboxConnection: {
+          connected: false,
+          connectionRevision: null,
+          displayName: null,
+          lastValidationError: null,
+          provider: "vercel",
+          providerLabel: "Vercel Sandbox",
+          status: "missing",
+          updatedAt: null,
+        },
+      }),
+      onboarding: onboarding(),
+    });
+
+    expect(checklist.find((item) => item.id === "sandbox")).toMatchObject({
+      detail: "Connect a sandbox provider before running a capability check.",
+      passed: false,
+    });
   });
 
   it("links blockers to their owning onboarding steps", () => {
@@ -295,6 +369,8 @@ describe("buildVerifyChecklist", () => {
     expect(
       sandboxItem({
         latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
           errorText: "sandbox failed",
@@ -435,6 +511,8 @@ describe("buildVerifyChecklist", () => {
       agentConfig: health().agentConfig.values,
       health: health({
         latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
           errorText: null,
@@ -461,6 +539,8 @@ describe("buildVerifyChecklist", () => {
       agentConfig: health().agentConfig.values,
       health: health({
         latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
           errorText: null,
@@ -477,7 +557,32 @@ describe("buildVerifyChecklist", () => {
     const sandboxItem = checklist.find((item) => item.id === "sandbox");
 
     expect(sandboxItem).toMatchObject({
-      detail: "Run a sandbox capability check for the connected Vercel project.",
+      detail: "Run a sandbox capability check for the connected Vercel Sandbox account.",
+      passed: false,
+      statusLabel: "Stale",
+      statusTone: "warning",
+    });
+  });
+
+  it("marks a successful check from the previous provider as stale", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        sandboxConnection: {
+          connected: true,
+          connectionRevision: "e2b-revision-1",
+          displayName: "E2B",
+          lastValidationError: null,
+          provider: "e2b",
+          providerLabel: "E2B",
+          status: "connected",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+        },
+      }),
+      onboarding: onboarding(),
+    });
+
+    expect(checklist.find((item) => item.id === "sandbox")).toMatchObject({
       passed: false,
       statusLabel: "Stale",
       statusTone: "warning",

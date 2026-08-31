@@ -11,6 +11,7 @@ import { WallieActionError } from "@/lib/wallie/service";
 const emptyMemberIndex = new Map<string, WorkspaceMember>();
 
 export function buildAgentRunActionResponse(input: {
+  attemptCount?: number;
   created: boolean;
   processScheduled: boolean;
   run: Tables<"agent_runs">;
@@ -19,17 +20,22 @@ export function buildAgentRunActionResponse(input: {
     code: input.created ? undefined : "active_run",
     created: input.created,
     processScheduled: input.processScheduled,
-    run: mapAgentRunRow(input.run, emptyMemberIndex, []),
+    run: mapAgentRunRow(input.run, emptyMemberIndex, [], {
+      attemptCount: input.attemptCount,
+    }),
   } satisfies AgentRunActionResponse;
 }
 
 export function buildAgentRunCancelResponse(input: {
+  attemptCount?: number;
   canceled: boolean;
   run: Tables<"agent_runs">;
 }) {
   return {
     canceled: input.canceled,
-    run: mapAgentRunRow(input.run, emptyMemberIndex, []),
+    run: mapAgentRunRow(input.run, emptyMemberIndex, [], {
+      attemptCount: input.attemptCount,
+    }),
   } satisfies AgentRunCancelResponse;
 }
 
@@ -42,7 +48,7 @@ export function buildAgentRunActionErrorResponse(error: unknown) {
     body: {
       code: error.code,
       error: error.message,
-      missingSecretKeys: error.missingSecretKeys,
+      provider: error.provider,
     } satisfies AgentRunActionErrorResponse,
     status: error.statusCode,
   };

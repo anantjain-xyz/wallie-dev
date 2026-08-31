@@ -21,19 +21,21 @@ export function renderTemplate(template: string, variables: TemplateVariables): 
 
   // Process conditional blocks: {{#if var}}...{{/if}}
   result = result.replace(
-    /\{\{#if\s+([a-zA-Z0-9_.]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    /\{\{#if\s+([a-zA-Z0-9_.-]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
     (_match, key: string, body: string) => {
       const value = resolveVariable(key, variables);
       if (isTruthy(value)) {
-        // Recursively render the body so nested variables are resolved.
-        return renderTemplate(body, variables);
+        // Keep substitutions for the single variable pass below. Recursing
+        // here would let template syntax inside an inserted value be parsed
+        // again by the outer render.
+        return body;
       }
       return "";
     },
   );
 
   // Replace {{variable}} and {{object.property}} placeholders.
-  result = result.replace(/\{\{([a-zA-Z0-9_.]+)\}\}/g, (_match, key: string) => {
+  result = result.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_match, key: string) => {
     const value = resolveVariable(key, variables);
     if (value === undefined || value === null) return "";
     if (Array.isArray(value)) return value.join("\n");

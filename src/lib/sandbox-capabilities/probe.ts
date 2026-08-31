@@ -5,7 +5,8 @@ import {
   CODEX_SANDBOX_MODE,
   codexExecArgs,
 } from "@/lib/agent-runner/codex";
-import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxHandle, SandboxProvider } from "@/lib/sandbox/types";
+import { getSandboxProviderContract, providerLabel } from "@/lib/sandbox/provider-contract";
 import type {
   SandboxCapabilityName,
   SandboxCapabilityReport,
@@ -26,12 +27,17 @@ type ResultOptions = {
 
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
 const { chromium } = require("playwright");
+const deadline = setTimeout(() => {
+  console.error("Playwright screenshot smoke timed out after 60 seconds.");
+  process.exit(124);
+}, 60_000);
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
   await page.setContent("<main style='font-family:sans-serif'><h1>Wallie screenshot smoke</h1></main>");
   await page.screenshot({ path: "/tmp/wallie-playwright-smoke.png", fullPage: true });
   await browser.close();
+  clearTimeout(deadline);
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : String(error));
   process.exit(1);
@@ -44,6 +50,8 @@ function agentCliCommand(provider: AgentProvider): string {
       return "command -v codex && codex --version";
     case "claude-code":
       return "command -v claude && claude --version";
+    case "cursor":
+      return 'cursor_bin="$(command -v cursor-agent || true)"; [ -n "$cursor_bin" ] || cursor_bin="$HOME/.local/bin/cursor-agent"; "$cursor_bin" --version';
     case "opencode":
       return "command -v opencode && opencode --version";
   }
@@ -122,6 +130,7 @@ export async function probeSandboxCapabilities(input: {
   agentProvider: AgentProvider;
   bootstrapPlaywright?: boolean;
   sandbox: SandboxHandle;
+  sandboxProvider?: SandboxProvider;
 }): Promise<SandboxCapabilityReport> {
   const report: Partial<SandboxCapabilityReport> = {};
   const sandbox = input.sandbox;
@@ -144,7 +153,10 @@ export async function probeSandboxCapabilities(input: {
     "agent CLI not found",
   );
   if (input.agentProvider === "codex") {
-    report.codexExternalSandbox = codexExternalSandboxResult(sandbox.repoPath);
+    report.codexExternalSandbox = codexExternalSandboxResult(
+      sandbox.repoPath,
+      input.sandboxProvider,
+    );
   }
 
   const playwrightCheck = await run(
@@ -194,11 +206,23 @@ export async function probeSandboxCapabilities(input: {
   return report as SandboxCapabilityReport;
 }
 
-export function capabilityReportSucceeded(report: Partial<SandboxCapabilityReport>): boolean {
-  return Object.values(report).every((entry) => entry?.ok === true);
+export function capabilityReportSucceeded(
+  report: Partial<SandboxCapabilityReport>,
+  provider: SandboxProvider,
+  agentProvider: AgentProvider,
+): boolean {
+  const capabilityProbes = getSandboxProviderContract(provider).capabilityProbes;
+  const required = [
+    ...capabilityProbes.required,
+    ...capabilityProbes.requiredByAgent[agentProvider],
+  ];
+  return required.every((name) => report[name]?.ok === true);
 }
 
-function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityResult {
+function codexExternalSandboxResult(
+  sandboxRepoPath: string,
+  provider?: SandboxProvider,
+): SandboxCapabilityResult {
   const args = codexExecArgs("gpt-5.5", sandboxRepoPath);
   const usesExternalSandbox = args.includes(CODEX_EXTERNAL_SANDBOX_FLAG);
   const disablesInnerSandbox = args.some(
@@ -209,7 +233,7 @@ function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityR
   );
   if (usesExternalSandbox && disablesInnerSandbox && usesSandboxRepo) {
     return {
-      detail: "Codex command uses Vercel Sandbox as the execution boundary.",
+      detail: `Codex command uses ${providerLabel(provider ?? "vercel")} as the execution boundary.`,
       ok: true,
     };
   }

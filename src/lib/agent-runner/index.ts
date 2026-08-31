@@ -11,14 +11,17 @@ export type {
 
 export {
   DEFAULT_AGENT_RUNNER_CONFIG,
+  DEFAULT_AGENT_EFFORT,
   DEFAULT_CLAUDE_CODE_EFFORT,
   DEFAULT_CLAUDE_CODE_MODEL,
   DEFAULT_CODEX_MODEL,
-  DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_CURSOR_MODEL,
   DEFAULT_OPENCODE_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
 } from "./types";
 export { ClaudeCodeRunner } from "./claude-code";
 export { CodexRunner } from "./codex";
+export { CursorRunner } from "./cursor";
 export { OpenCodeRunner } from "./opencode";
 export { loadWorkspaceAgentConfig, type ResolvedWorkspaceAgentConfig } from "./workspace-config";
 
@@ -30,6 +33,7 @@ import {
 } from "@/lib/agent-config/contracts";
 import { ClaudeCodeRunner, type ClaudeCodeRunnerOptions } from "./claude-code";
 import { CodexRunner, type CodexRunnerOptions } from "./codex";
+import { CursorRunner, type CursorRunnerOptions } from "./cursor";
 import { OpenCodeRunner, type OpenCodeRunnerOptions } from "./opencode";
 
 export interface CreateAgentRunnerOptions {
@@ -37,6 +41,8 @@ export interface CreateAgentRunnerOptions {
   claudeCode?: ClaudeCodeRunnerOptions;
   /** Required when provider resolves to "codex". */
   codex?: CodexRunnerOptions;
+  /** Required when provider resolves to "cursor". */
+  cursor?: CursorRunnerOptions;
   /** Required when provider resolves to "opencode". */
   openCode?: OpenCodeRunnerOptions;
 }
@@ -71,6 +77,13 @@ export function createAgentRunner(
         );
       }
       return new CodexRunner(opts.codex);
+    case "cursor":
+      if (!opts.cursor) {
+        throw new Error(
+          "cursor provider requires Cursor credentials (pass opts.cursor to createAgentRunner).",
+        );
+      }
+      return new CursorRunner(opts.cursor);
     case "opencode":
       if (!opts.openCode) {
         throw new Error(

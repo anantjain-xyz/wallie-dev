@@ -7,7 +7,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
-import { processPipelineJob } from "@/lib/pipeline/processor";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
@@ -22,8 +21,12 @@ import type {
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
-import { buildWallieJobDedupeKey, WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
-import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
+import {
+  assertCurrentSandboxCapabilityCheck,
+  SandboxCapabilityCheckStaleError,
+} from "@/lib/sandbox-capabilities/readiness";
+import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
+import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -47,9 +50,9 @@ type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
 const sessionSelect =
   "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
 const jobSelect =
-  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
+  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 const DEFAULT_RUN_LOOKUP_RETRY = {
   initialDelayMs: 40,
   maxDelayMs: 640,
@@ -65,19 +68,19 @@ export type WallieRunLookupRetryOptions = {
 
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
-  readonly missingSecretKeys?: string[];
+  readonly provider?: "vercel" | "e2b" | "daytona";
   readonly statusCode: number;
 
   constructor(input: {
     code: WallieActionErrorCode;
     message: string;
-    missingSecretKeys?: string[];
+    provider?: "vercel" | "e2b" | "daytona";
     statusCode: number;
   }) {
     super(input.message);
     this.code = input.code;
-    this.missingSecretKeys = input.missingSecretKeys;
     this.name = "WallieActionError";
+    this.provider = input.provider;
     this.statusCode = input.statusCode;
   }
 }
@@ -108,11 +111,12 @@ export type EnqueueWallieRunResult = {
   run: AgentRunRow;
 };
 
-export type ProcessQueuedJobsResult = {
-  jobId: string | null;
-  processed: boolean;
-  result: "error" | "idle" | "success";
-  runId: string | null;
+export type CreateSessionWithFirstJobResult = {
+  jobId: string;
+  number: number;
+  runId: string;
+  sessionId: string;
+  workspaceSlug: string;
 };
 
 function toAbortError(signal: AbortSignal) {
@@ -185,7 +189,7 @@ function isUniqueViolation(error: PostgrestError | null) {
   return error?.code === "23505";
 }
 
-function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKeys: string[]) {
+function toBlockingActionError(reasons: WallieBlockingReason[]) {
   const blockingReason = reasons.find((reason) => reason.code !== "active_run");
 
   if (!blockingReason) {
@@ -195,9 +199,133 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
   return new WallieActionError({
     code: blockingReason.code,
     message: reasons.map((reason) => reason.message).join(" "),
-    missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
+    provider: blockingReason.provider,
     statusCode: 422,
   });
+}
+
+export type SessionFirstRunPrerequisites = {
+  agentConfig: Awaited<ReturnType<typeof loadWorkspaceAgentConfig>>;
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+};
+
+export async function loadSessionFirstRunPrerequisites(input: {
+  admin?: AdminClient;
+  workspaceId: string;
+}): Promise<SessionFirstRunPrerequisites> {
+  const admin = input.admin ?? createSupabaseAdminClient();
+  const [agentConfig, vercelSandboxConnection] = await Promise.all([
+    loadWorkspaceAgentConfig(admin, input.workspaceId),
+    loadWallieVercelSandboxConnection(admin, input.workspaceId),
+  ]);
+
+  return { agentConfig, vercelSandboxConnection };
+}
+
+export function assertSessionFirstRunReady(input: {
+  agentConfig: SessionFirstRunPrerequisites["agentConfig"];
+  repository: WallieSessionRepository | null;
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+}) {
+  const blockingReasons = buildWallieBlockingReasons({
+    hasActiveRun: false,
+    mode: inferWallieRunMode(input.repository?.id ?? null),
+    repository: input.repository,
+    requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
+    vercelSandboxConnection: input.vercelSandboxConnection,
+  });
+  const blockingError = toBlockingActionError(blockingReasons);
+
+  if (blockingError) {
+    throw blockingError;
+  }
+
+  return input.agentConfig;
+}
+
+export async function assertSessionSandboxCapabilityReady(input: {
+  admin?: AdminClient;
+  agentConfig: SessionFirstRunPrerequisites["agentConfig"];
+  repository: WallieSessionRepository | null;
+  sandboxConnection: WallieVercelSandboxConnectionStatus;
+  workspaceId: string;
+}): Promise<void> {
+  if (resolveSandboxImplementation() === "fake" || !input.repository) return;
+
+  const provider = input.sandboxConnection.provider ?? "vercel";
+  const revision = input.sandboxConnection.connectionRevision;
+  if (!revision) {
+    throw new WallieActionError({
+      code: "sandbox_capability_check_stale",
+      message: `Run a successful ${input.sandboxConnection.providerLabel ?? "sandbox provider"} capability check before starting Wallie.`,
+      provider,
+      statusCode: 422,
+    });
+  }
+
+  try {
+    await assertCurrentSandboxCapabilityCheck({
+      admin: input.admin ?? createSupabaseAdminClient(),
+      agent: input.agentConfig,
+      connection: { provider, revision },
+      repositoryId: input.repository.id,
+      workspaceId: input.workspaceId,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCapabilityCheckStaleError)) throw error;
+    throw new WallieActionError({
+      code: "sandbox_capability_check_stale",
+      message: error.message,
+      provider: error.provider,
+      statusCode: 422,
+    });
+  }
+}
+
+export async function createSessionWithFirstJob(input: {
+  admin?: AdminClient;
+  attachmentIds?: string[];
+  creatorMemberId: string;
+  githubRepositoryId: string | null;
+  linearIssueId: string | null;
+  linearIssueUrl: string | null;
+  modelName: string;
+  modelProvider: string;
+  pipelineId?: string | null;
+  promptMd: string;
+  selectedStageIds?: string[];
+  title: string;
+  workspaceId: string;
+}): Promise<CreateSessionWithFirstJobResult> {
+  const admin = input.admin ?? createSupabaseAdminClient();
+  const { data, error } = await admin
+    .rpc("create_session_with_first_job_and_attachments", {
+      agent_model_name: input.modelName,
+      agent_model_provider: input.modelProvider,
+      creator_member_id: input.creatorMemberId,
+      selected_pipeline_id: input.pipelineId ?? undefined,
+      selected_stage_ids: input.selectedStageIds,
+      session_attachment_ids: input.attachmentIds ?? [],
+      session_github_repository_id: input.githubRepositoryId ?? undefined,
+      session_linear_issue_id: input.linearIssueId ?? undefined,
+      session_linear_issue_url: input.linearIssueUrl ?? undefined,
+      session_prompt_md: input.promptMd,
+      session_title: input.title,
+      target_workspace_id: input.workspaceId,
+    })
+    .single();
+
+  if (error || !data) {
+    throw error ?? new Error("Wallie could not create that session.");
+  }
+
+  return {
+    jobId: data.job_id,
+    number: data.session_number,
+    runId: data.run_id,
+    sessionId: data.session_id,
+    workspaceSlug: data.workspace_slug,
+  };
 }
 
 function createRunInsert(input: {
@@ -287,36 +415,37 @@ async function loadStageSnapshot(
   return data as StageSnapshot | null;
 }
 
-async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
-  if (WALLIE_REQUIRED_SECRET_KEYS.length === 0) {
-    return [];
-  }
-
-  const { data, error } = await admin
-    .from("workspace_secrets")
-    .select("key")
-    .eq("workspace_id", workspaceId)
-    .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]);
-
-  if (error) {
-    throw error;
-  }
-
-  const availableKeys = new Set((data ?? []).map((secret) => secret.key));
-
-  return [...WALLIE_REQUIRED_SECRET_KEYS].filter((secretKey) => !availableKeys.has(secretKey));
-}
-
 async function loadWallieVercelSandboxConnection(
   admin: AdminClient,
   workspaceId: string,
 ): Promise<WallieVercelSandboxConnectionStatus> {
-  const connection = await loadVercelSandboxConnectionPreview(admin, workspaceId);
+  const overview = await loadWorkspaceSandboxOverview(admin, workspaceId);
+  const provider = overview.activeProvider;
+  const connection = overview.connections[provider];
+
+  if (!overview.enabledProviders.includes(provider)) {
+    return {
+      connected: false,
+      connectionRevision: connection ? String(connection.connectionRevision) : null,
+      displayName: null,
+      lastValidationError: `${providerLabel(provider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
+      provider,
+      providerLabel: providerLabel(provider),
+      projectId: null,
+      projectName: null,
+      status: "error",
+      teamId: null,
+    };
+  }
 
   if (!connection) {
     return {
       connected: false,
+      connectionRevision: null,
+      displayName: null,
       lastValidationError: null,
+      provider,
+      providerLabel: providerLabel(provider),
       projectId: null,
       projectName: null,
       status: "missing",
@@ -324,13 +453,24 @@ async function loadWallieVercelSandboxConnection(
     };
   }
 
+  const vercel = provider === "vercel" ? overview.connections.vercel : null;
+  const displayName =
+    provider === "vercel"
+      ? (vercel?.projectName ?? vercel?.projectId ?? null)
+      : provider === "e2b"
+        ? (overview.connections.e2b?.apiKeyPreview ?? null)
+        : (overview.connections.daytona?.target ?? overview.connections.daytona?.apiUrl ?? null);
   return {
     connected: connection.status === "connected",
+    connectionRevision: String(connection.connectionRevision),
+    displayName,
     lastValidationError: connection.lastValidationError,
-    projectId: connection.projectId,
-    projectName: connection.projectName,
+    provider,
+    providerLabel: providerLabel(provider),
+    projectId: vercel?.projectId ?? null,
+    projectName: vercel?.projectName ?? null,
     status: connection.status,
-    teamId: connection.teamId,
+    teamId: vercel?.teamId ?? null,
   };
 }
 
@@ -349,20 +489,6 @@ async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
   }
 
   return data as AgentRunRow | null;
-}
-
-async function loadJobById(admin: AdminClient, jobId: string) {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select(jobSelect)
-    .eq("id", jobId)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as AgentJobRow | null;
 }
 
 async function loadActiveJobByDedupeKey(
@@ -496,7 +622,7 @@ async function waitForRunByJobId(
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
   sessionId: string | null;
-  requestedRunType?: WallieRunMode;
+  requestedRunType: WallieRunMode;
   supabase: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
 }) {
@@ -510,9 +636,8 @@ async function validateQueuedRunRequest(input: {
     });
   }
 
-  // An archived session accepts no new work. This guards both the manual run
-  // and the retry-run paths so the run panel cannot resurrect work that archive
-  // just canceled.
+  // An archived session accepts no new work. This keeps the retry path from
+  // resurrecting work that archive just canceled.
   if (session.archived_at) {
     throw new WallieActionError({
       code: "session_archived",
@@ -522,7 +647,7 @@ async function validateQueuedRunRequest(input: {
   }
 
   // A completed session sits in `approved` (terminal-stage approval leaves it
-  // there). The processor only claims agent_generating/awaiting_review/rejected,
+  // there). The processor only claims in_progress/awaiting_review/rejected,
   // so enqueueing here would strand a queued run the worker never finishes.
   // Reject up front — this also covers a completed session that was unarchived.
   if (session.phase_status === "approved") {
@@ -534,17 +659,15 @@ async function validateQueuedRunRequest(input: {
   }
 
   const workspace = input.workspace;
-  const [repositoryResolution, missingSecretKeys, activeRun, vercelSandboxConnection] =
-    await Promise.all([
-      resolveEffectiveSessionRepository({
-        sessionId: session.id,
-        supabase: input.admin,
-        workspaceId: workspace.id,
-      }),
-      loadMissingSecretKeys(input.admin, workspace.id),
-      loadActiveRunForSession(input.admin, session.id),
-      loadWallieVercelSandboxConnection(input.admin, workspace.id),
-    ]);
+  const [repositoryResolution, activeRun, vercelSandboxConnection] = await Promise.all([
+    resolveEffectiveSessionRepository({
+      sessionId: session.id,
+      supabase: input.admin,
+      workspaceId: workspace.id,
+    }),
+    loadActiveRunForSession(input.admin, session.id),
+    loadWallieVercelSandboxConnection(input.admin, workspace.id),
+  ]);
   const repository: WallieSessionRepository | null = repositoryResolution.repository
     ? {
         defaultBranch: repositoryResolution.repository.defaultBranch,
@@ -556,7 +679,7 @@ async function validateQueuedRunRequest(input: {
         isPrivate: repositoryResolution.repository.isPrivate,
       }
     : null;
-  const runType = input.requestedRunType ?? inferWallieRunMode(repositoryResolution.repositoryId);
+  const runType = input.requestedRunType;
 
   if (activeRun) {
     return {
@@ -570,17 +693,25 @@ async function validateQueuedRunRequest(input: {
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: false,
-    missingSecretKeys,
     mode: runType,
     repository,
-    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
+    requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
     vercelSandboxConnection,
   });
-  const blockingError = toBlockingActionError(blockingReasons, missingSecretKeys);
+  const blockingError = toBlockingActionError(blockingReasons);
 
   if (blockingError) {
     throw blockingError;
   }
+
+  const agentConfig = await loadWorkspaceAgentConfig(input.admin, workspace.id);
+  await assertSessionSandboxCapabilityReady({
+    admin: input.admin,
+    agentConfig,
+    repository,
+    sandboxConnection: vercelSandboxConnection,
+    workspaceId: workspace.id,
+  });
 
   return {
     activeRun,
@@ -686,42 +817,6 @@ async function createQueuedRun(input: {
   } satisfies EnqueueWallieRunResult;
 }
 
-export async function enqueueWallieRun(input: {
-  admin?: AdminClient;
-  runLookupRetry?: WallieRunLookupRetryOptions;
-  sessionId: string;
-  requestedByMemberId: string;
-  supabase: SupabaseServerClient;
-  triggerType: Enums<"agent_trigger_type">;
-  workspace: WorkspaceAccessWorkspace;
-}) {
-  const admin = input.admin ?? createSupabaseAdminClient();
-  const validated = await validateQueuedRunRequest({
-    admin,
-    sessionId: input.sessionId,
-    supabase: input.supabase,
-    workspace: input.workspace,
-  });
-
-  if (validated.activeRun) {
-    return {
-      created: false,
-      jobId: validated.activeRun.agent_job_id,
-      run: validated.activeRun,
-    } satisfies EnqueueWallieRunResult;
-  }
-
-  return createQueuedRun({
-    admin,
-    runLookupRetry: input.runLookupRetry,
-    session: validated.session,
-    requestedByMemberId: input.requestedByMemberId,
-    runType: validated.runType,
-    triggerType: input.triggerType,
-    workspace: validated.workspace,
-  });
-}
-
 export async function retryWallieRun(input: {
   admin?: AdminClient;
   requestedByMemberId: string;
@@ -819,131 +914,4 @@ export async function cancelWallieRun(input: {
 
   const updatedRun = (await loadRunById(admin, input.runId)) ?? existingRun;
   return { canceled: true, run: updatedRun } satisfies CancelWallieRunResult;
-}
-
-async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
-  if (job.status === "running") {
-    return job;
-  }
-
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .update({
-      attempt_count: job.attempt_count + 1,
-      last_error: null,
-      started_at: job.started_at ?? new Date().toISOString(),
-      status: "running",
-    })
-    .eq("id", job.id)
-    .eq("status", "queued")
-    .select(jobSelect)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return (data as AgentJobRow | null) ?? null;
-}
-
-export async function claimQueuedJobCandidate<TJob extends { id: string }>(
-  candidates: readonly TJob[],
-  claim: (job: TJob) => Promise<TJob | null>,
-) {
-  for (const candidate of candidates) {
-    const claimed = await claim(candidate);
-
-    if (claimed) {
-      return claimed;
-    }
-  }
-
-  return null;
-}
-
-async function loadProcessTargetJob(input: {
-  admin: AdminClient;
-  requestedJobId?: string;
-  workspaceId?: string;
-}) {
-  if (input.requestedJobId) {
-    const job = await loadJobById(input.admin, input.requestedJobId);
-
-    if (!job || (job.status !== "queued" && job.status !== "running")) {
-      return null;
-    }
-
-    if (input.workspaceId && job.workspace_id !== input.workspaceId) {
-      return null;
-    }
-
-    if (job.status === "running") {
-      // Pipeline jobs are one-shot and not designed to be re-entered
-      // concurrently — the processor would regenerate the artifact. Refuse to
-      // re-dispatch a running job. Stuck rows (processor crash mid-flight) are
-      // recovered manually for now.
-      return null;
-    }
-
-    return claimJobIfQueued(input.admin, job);
-  }
-
-  // Only claim jobs that are either not scheduled or whose scheduled_at is
-  // in the past (exponential backoff — jobs re-queued with a future
-  // scheduled_at must wait until that time elapses).
-  const now = new Date().toISOString();
-  const query = input.admin
-    .from("agent_jobs")
-    .select(jobSelect)
-    .eq("status", "queued")
-    .or(`scheduled_at.is.null,scheduled_at.lte.${now}`)
-    .order("created_at", { ascending: true })
-    .limit(10);
-  const scopedQuery = input.workspaceId ? query.eq("workspace_id", input.workspaceId) : query;
-  const { data, error } = await scopedQuery;
-
-  if (error) {
-    throw error;
-  }
-
-  return claimQueuedJobCandidate((data ?? []) as AgentJobRow[], async (job) =>
-    claimJobIfQueued(input.admin, job),
-  );
-}
-
-async function processClaimedJob(input: {
-  admin: AdminClient;
-  job: AgentJobRow;
-  signal?: AbortSignal;
-}) {
-  return processPipelineJob({ admin: input.admin, job: input.job, signal: input.signal });
-}
-
-export async function processQueuedAgentJobs(input?: {
-  admin?: AdminClient;
-  requestedJobId?: string;
-  signal?: AbortSignal;
-  workspaceId?: string;
-}) {
-  const admin = input?.admin ?? createSupabaseAdminClient();
-  const claimedJob = await loadProcessTargetJob({
-    admin,
-    requestedJobId: input?.requestedJobId,
-    workspaceId: input?.workspaceId,
-  });
-
-  if (!claimedJob) {
-    return {
-      jobId: null,
-      processed: false,
-      result: "idle",
-      runId: null,
-    } satisfies ProcessQueuedJobsResult;
-  }
-
-  return processClaimedJob({
-    admin,
-    job: claimedJob,
-    signal: input?.signal,
-  });
 }

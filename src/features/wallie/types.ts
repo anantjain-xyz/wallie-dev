@@ -7,9 +7,12 @@ export type WallieRunMode = "code" | "project";
 
 export type WallieBlockingCode =
   | "active_run"
-  | "missing_secret"
   | "repository_archived"
   | "repository_unavailable"
+  | "sandbox_connection_invalid"
+  | "sandbox_connection_missing"
+  | "sandbox_capability_check_stale"
+  /** @deprecated Kept while older clients migrate to provider-neutral codes. */
   | "vercel_sandbox_connection_invalid"
   | "vercel_sandbox_connection_missing";
 
@@ -25,11 +28,16 @@ export type WallieActionErrorCode =
 export type WallieBlockingReason = {
   code: WallieBlockingCode;
   message: string;
+  provider?: "vercel" | "e2b" | "daytona";
 };
 
 export type WallieVercelSandboxConnectionStatus = {
   connected: boolean;
+  connectionRevision?: string | null;
+  displayName?: string | null;
   lastValidationError: string | null;
+  provider?: "vercel" | "e2b" | "daytona";
+  providerLabel?: string;
   projectId: string | null;
   projectName: string | null;
   status: "connected" | "error" | "missing";
@@ -54,6 +62,7 @@ export type WallieRunMessage = {
 };
 
 export type WallieRun = {
+  attemptCount: number;
   canCancel: boolean;
   canRetry: boolean;
   createdAt: string;
@@ -61,27 +70,44 @@ export type WallieRun = {
   id: string;
   isActive: boolean;
   isTerminal: boolean;
+  lastActivityAt: string | null;
   messages: WallieRunMessage[];
   modelName: string;
   modelProvider: string;
   requestedByMember: WorkspaceMember | null;
   requestedByMemberId: string | null;
   runType: WallieRunMode;
+  sandboxId: string | null;
+  sandboxProvider: string | null;
   startedAt: string | null;
   stageId: string | null;
   stageName: string | null;
   stageSlug: string | null;
   status: Enums<"agent_run_status">;
+  updatedAt: string;
+};
+
+export type WallieRunCursor = {
+  createdAt: string;
+  id: string;
+};
+
+export type WallieRunPage = {
+  nextCursor: WallieRunCursor | null;
+  runs: WallieRun[];
 };
 
 export type WallieSessionData = {
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
-  missingSecretKeys: string[];
+  loadedMessageRunIds: string[];
   mode: WallieRunMode;
+  nextRunCursor: WallieRunCursor | null;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
-  requiredSecretKeys: string[];
   runs: WallieRun[];
+  /** Workspace stall timeout used by the worker; UI mirrors it for "No recent activity". */
+  stallTimeoutMs: number;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+  workspaceMembers: WorkspaceMember[];
 };

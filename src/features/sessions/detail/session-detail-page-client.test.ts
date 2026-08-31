@@ -1,41 +1,53 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
-import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import {
+  centerStageRailSelection,
+  reconcilePhaseMutationResult,
+  SessionDetailPageClient,
+} from "@/features/sessions/detail/session-detail-page-client";
+import type { SessionReviewData } from "@/features/sessions/detail/data";
 
 const mocked = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/w/acme/sessions/7",
   useRouter: () => ({
     refresh: mocked.refresh,
+    replace: vi.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
-  createSupabaseBrowserClient: () => ({}),
+  createSupabaseBrowserClient: () => ({
+    channel: () => ({
+      on: function on() {
+        return this;
+      },
+      subscribe: () => undefined,
+    }),
+    removeChannel: vi.fn(),
+  }),
 }));
 
 vi.mock("@/features/wallie/session-wallie-panel", () => ({
   SessionWalliePanel: () => null,
 }));
 
-function makeSessionDetailData(): SessionDetailPageData {
+function makeSessionDetailData(): SessionReviewData {
   return {
-    currentMember: null,
-    members: [],
-    memberIndex: new Map(),
+    creatorDisplayName: null,
     session: {
       archivedAt: null,
       artifacts: [],
+      attachments: [],
       createdAt: "2026-06-07T10:00:00.000Z",
       currentArtifactVersion: 1,
       currentStageId: "stage-1",
-      currentStageName: "Product",
-      currentStagePosition: 0,
       currentStageSlug: "product",
       id: "11111111-1111-4111-8111-111111111111",
       linearIssueId: null,
@@ -44,146 +56,279 @@ function makeSessionDetailData(): SessionDetailPageData {
       phaseCompletions: [],
       phaseStatus: "awaiting_review",
       pipeline: {
-        id: "pipeline-1",
-        isDefault: true,
-        name: "Default",
-        operatingRulesMd: "",
         stages: [
           {
-            approverMemberIds: [],
             description: "Define the product",
             id: "stage-1",
             name: "Product",
-            pipelineId: "pipeline-1",
             position: 0,
-            promptTemplateMd: "",
             slug: "product",
           },
         ],
       },
-      pipelineId: "pipeline-1",
       promptMd: "Build the title editor",
-      pullRequestCount: 0,
       pullRequests: [],
-      rejectionCount: 0,
       title: "Editable Session",
       updatedAt: "2026-06-07T11:00:00.000Z",
-      workspaceId: "22222222-2222-4222-8222-222222222222",
     },
-    sessionCreator: null,
-    sessionGithubRepositoryId: null,
-    wallie: {
-      blockingReasons: [],
-      canEnqueue: false,
-      missingSecretKeys: [],
-      mode: "code",
-      repository: null,
-      requiredSecretKeys: [],
-      requiresVercelSandbox: false,
-      runs: [],
-      vercelSandboxConnection: {
-        connected: false,
-        lastValidationError: null,
-        projectId: null,
-        projectName: null,
-        status: "missing",
-        teamId: null,
-      },
-    },
-    workspace: {
-      id: "22222222-2222-4222-8222-222222222222",
-      name: "Acme",
-      slug: "acme",
-    },
+    workspaceSlug: "acme",
   };
 }
 
-describe("SessionDetailPageClient", () => {
-  it("renders an accessible title edit affordance alongside the session title", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionDetailPageClient, {
-        initialData: makeSessionDetailData(),
-      }),
-    );
+function renderDetail(
+  overrides: {
+    activity?: ReactNode;
+    canReview?: boolean;
+    data?: SessionReviewData;
+    initialFormattedArtifact?: ReactNode | null;
+    initialFormattedArtifactKey?: string | null;
+  } = {},
+) {
+  return renderToStaticMarkup(
+    createElement(SessionDetailPageClient, {
+      activity: overrides.activity ?? null,
+      canReview: overrides.canReview ?? true,
+      initialData: overrides.data ?? makeSessionDetailData(),
+      initialFormattedArtifact: overrides.initialFormattedArtifact ?? null,
+      initialFormattedArtifactKey: overrides.initialFormattedArtifactKey ?? null,
+      repository: {
+        defaultBranch: "main",
+        fullName: "acme/app",
+        htmlUrl: "https://github.com/acme/app",
+      },
+    }),
+  );
+}
 
-    expect(html).toContain("Editable Session");
-    expect(html).toContain('aria-label="Edit title for session #7"');
-    expect(html).toContain('title="Edit title"');
-    expect(html).not.toContain('aria-label="Session #7 title"');
+describe("SessionDetailPageClient", () => {
+  it("centers the selected stage with horizontal rail scrolling only", () => {
+    const scrollTo = vi.fn();
+    const rail = {
+      clientWidth: 320,
+      scrollTo,
+      scrollWidth: 900,
+    } as unknown as HTMLOListElement;
+    const selectedButton = {
+      offsetLeft: 480,
+      offsetWidth: 120,
+    } as HTMLButtonElement;
+
+    centerStageRailSelection(rail, selectedButton);
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 380 });
   });
 
-  it("keeps the edit control outside the heading so the heading name is only the title", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionDetailPageClient, {
-        initialData: makeSessionDetailData(),
-      }),
-    );
+  it("merges an authoritative stage snapshot that was absent from the initial pipeline", () => {
+    const data = makeSessionDetailData();
 
+    const next = reconcilePhaseMutationResult(data.session, {
+      archivedAt: null,
+      artifactVersion: 0,
+      currentStage: {
+        description: "A stage added while the detail page was open",
+        id: "stage-2",
+        name: "Build",
+        position: 1,
+        slug: "build",
+      },
+      currentStageId: "stage-2",
+      id: data.session.id,
+      phaseStatus: "in_progress",
+      rejectionCount: 0,
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+
+    expect(next.currentStageId).toBe("stage-2");
+    expect(next.currentStageSlug).toBe("build");
+    expect(next.pipeline.stages).toContainEqual(
+      expect.objectContaining({ id: "stage-2", slug: "build" }),
+    );
+  });
+
+  it("uses the full title itself as the edit affordance", () => {
+    const html = renderDetail();
     const headingMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/);
 
     expect(headingMatch).not.toBeNull();
-    // The heading must contain only the title text — no nested buttons/controls.
-    expect(headingMatch?.[1]).toBe("Editable Session");
+    expect(headingMatch?.[1]).toContain("<button");
+    expect(headingMatch?.[1]).toContain("Editable Session</button>");
+    expect(html).not.toContain('aria-label="Edit title for session #7"');
+    expect(html).not.toContain('aria-label="Session #7 title"');
+    expect(html).not.toContain("Save title");
+    expect(html).not.toContain("Cancel title edit");
+  });
+
+  it("keeps a long title untruncated while actions stay in a right-hand column", () => {
+    const data = makeSessionDetailData();
+    data.session.title =
+      "A deliberately long session title that must wrap in full without displacing archive actions";
+    const html = renderDetail({ data });
+    const headerMatch = html.match(/<header class="([^"]+)">([\s\S]*?)<\/header>/);
+
+    expect(headerMatch).not.toBeNull();
+    expect(headerMatch?.[1]).toContain("grid-cols-[minmax(0,1fr)_auto]");
+    expect(headerMatch?.[2]).toContain("col-span-2");
+    expect(headerMatch?.[2]).toContain(data.session.title);
+    expect(headerMatch?.[2]).toContain("Archive");
+    expect(headerMatch?.[2]).not.toMatch(/line-clamp|overflow-hidden|truncate/);
   });
 
   it("folds the session number into the breadcrumb instead of an orphaned row", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionDetailPageClient, {
-        initialData: makeSessionDetailData(),
-      }),
-    );
-
-    // Session number lives next to the "Sessions" breadcrumb link.
+    const html = renderDetail();
     const breadcrumbMatch = html.match(/← Sessions[\s\S]*?#7/);
     expect(breadcrumbMatch).not.toBeNull();
-    // No standalone `#7` sitting on its own between title and stage tracker.
     expect(html).not.toMatch(/<span class="font-mono">#7<\/span>/);
   });
 
-  it("renders a metadata row with created and updated times", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionDetailPageClient, {
-        initialData: makeSessionDetailData(),
-      }),
-    );
-
-    expect(html).toContain("Created");
-    expect(html).toContain("Updated");
-  });
-
-  it("renders the created date deterministically (UTC) on the server", () => {
-    // The server render must not depend on the host timezone, otherwise it
-    // mismatches the browser on hydration. createdAt is 2026-06-07T10:00:00Z,
-    // so a UTC-pinned formatter yields the 10:00 hour regardless of the
-    // timezone this test runs in (a local formatter would shift the hour/day).
-    const html = renderToStaticMarkup(
-      createElement(SessionDetailPageClient, {
-        initialData: makeSessionDetailData(),
-      }),
-    );
-
-    expect(html).toContain("Created Jun 7, 10:00");
-  });
-
-  it("renders the session creator when present", () => {
+  it("renders creator and created time in the Context inspector", () => {
     const data = makeSessionDetailData();
-    data.sessionCreator = {
-      avatarUrl: null,
-      fullName: "Ada Lovelace",
-      id: "creator-1",
-      isActive: true,
-      kind: "human",
-      role: "member",
-      userId: "user-1",
-      username: "ada",
-    };
-
-    const html = renderToStaticMarkup(
-      createElement(SessionDetailPageClient, {
-        initialData: data,
-      }),
-    );
+    data.creatorDisplayName = "Ada Lovelace";
+    const html = renderDetail({ data });
 
     expect(html).toContain("Ada Lovelace");
+    expect(html).toContain('class="min-w-0 break-all"');
+    expect(html).toContain("Created");
+    expect(html).toContain('dateTime="2026-06-07T10:00:00.000Z"');
+    expect(html).toContain(">2026-06-07 10:00 UTC</time>");
+    expect(html).toContain("Run input");
+    expect(html).toContain("acme/app");
+  });
+
+  it("uses a 70/30 workbench grid with sticky review controls", () => {
+    const html = renderDetail();
+
+    expect(html).toContain("lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]");
+    expect(html).not.toContain("lg:border-l");
+    expect(html).not.toContain("lg:pl-5");
+    expect(html).toContain("sticky bottom-0");
+    expect(html).toContain("Request changes");
+    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain('aria-label="Pipeline stages"');
+    expect(html).not.toContain("max-h-[480px]");
+    expect(html).not.toContain(">Prompt<");
+  });
+
+  it("renders runs as a full-width section below the artifact workbench", () => {
+    const html = renderDetail({ activity: createElement("div", null, "Run history") });
+    const workbenchIndex = html.indexOf("lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]");
+    const runsSectionIndex = html.indexOf('aria-labelledby="session-runs-heading"');
+
+    expect(workbenchIndex).toBeGreaterThan(-1);
+    expect(runsSectionIndex).toBeGreaterThan(workbenchIndex);
+    expect(html).toContain('class="ui-sheet mt-6"');
+    expect(html).toContain('id="session-runs-heading"');
+    expect(html).toContain(">Runs</h2>");
+    expect(html).toContain("Run history");
+    expect(html).not.toContain('aria-label="Inspector"');
+    expect(html).not.toContain('id="activity-tab"');
+  });
+
+  it("keeps the review surface rendered when activity is deferred", () => {
+    const data = makeSessionDetailData();
+    data.session.artifacts = [
+      {
+        createdAt: "2026-06-07T10:30:00.000Z",
+        payload: "# Rendered artifact",
+        stageSlug: "product",
+        version: 1,
+      },
+    ];
+    const html = renderDetail({
+      activity: createElement("div", null, "Run activity is temporarily unavailable"),
+      data,
+      initialFormattedArtifact: createElement("article", null, "Rendered artifact"),
+      initialFormattedArtifactKey: "11111111-1111-4111-8111-111111111111:product:1",
+    });
+
+    expect(html).toContain("Editable Session");
+    expect(html).toContain("Product artifact");
+    expect(html).toContain("Rendered artifact");
+    expect(html).toContain("Request changes");
+    expect(html).toContain("Approve &amp; archive");
+  });
+
+  it("shows reviewable controls when awaiting review", () => {
+    const html = renderDetail();
+    expect(html).toContain("Request changes");
+    expect(html).toContain("Approve &amp; archive");
+  });
+
+  it("shows stop run while generating", () => {
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "in_progress";
+    data.session.pipeline.stages = [
+      {
+        description: "Shape the approach",
+        id: "stage-0",
+        name: "Plan",
+        position: 0,
+        slug: "plan",
+      },
+      ...data.session.pipeline.stages,
+      {
+        description: "Ship the change",
+        id: "stage-2",
+        name: "Land",
+        position: 2,
+        slug: "land",
+      },
+    ];
+    data.session.phaseCompletions = [
+      { completedAt: "2026-06-07T10:30:00.000Z", stageSlug: "plan" },
+    ];
+    const html = renderDetail({ data });
+
+    expect(html).toContain(">Plan</span>");
+    expect(html).toContain(">Product</span>");
+    expect(html).toContain(">Land</span>");
+    expect(html).toContain("Product artifact");
+    expect(html).toContain("Wallie is drafting the artifact for this stage.");
+    expect(html).toContain("Stop run");
+    expect(html.indexOf("Stop run")).toBeLessThan(html.indexOf("Archive"));
+    expect(html).not.toContain("Wallie is generating this stage’s artifact.");
+    expect(html).not.toContain("sticky bottom-0");
+    expect(html).not.toContain("Request changes");
+    expect(html).not.toContain("data-status=");
+    expect(html).not.toMatch(/In progress|Complete|Upcoming/);
+  });
+
+  it("shows an explicit completed reason", () => {
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "approved";
+    const html = renderDetail({ data });
+    expect(html).toContain("This session is complete.");
+    expect(html).not.toContain("Request changes");
+  });
+
+  it("shows an explicit archived reason", () => {
+    const data = makeSessionDetailData();
+    data.session.archivedAt = "2026-07-01T00:00:00.000Z";
+    const html = renderDetail({ data });
+    expect(html).toContain("This session is archived.");
+    expect(html).toContain('data-status="archived"');
+    expect(html).toContain(">Archived</span>");
+    expect(html).not.toContain("Request changes");
+  });
+
+  it("keeps Request changes when the viewer cannot approve", () => {
+    const html = renderDetail({ canReview: false });
+    expect(html).toContain("Request changes");
+    expect(html).toContain("You are not authorized to approve this stage.");
+    expect(html).not.toContain("Approve &amp; archive");
+  });
+
+  it("shows an explicit read-only reason when the stage is not ready for review", () => {
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "rejected";
+    const html = renderDetail({ data });
+    expect(html).toContain("This stage is not ready for review.");
+    expect(html).not.toContain("Request changes");
+  });
+
+  it("keeps Run input collapsed by default in Context", () => {
+    const html = renderDetail();
+    expect(html).toContain("Run input");
+    expect(html).toContain("Collapsed — expand to inspect the original session input");
+    expect(html).not.toContain("Build the title editor");
   });
 });

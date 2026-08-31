@@ -85,7 +85,7 @@ describe("OpenCodeRunner", () => {
     expect(call.args[1]).toContain("'--session' 'native-previous'");
     expect(call.args[1]).toContain(`< '${promptPath}'`);
     expect(call.args.join(" ")).not.toContain(credential.secret);
-    expect(call.opts.env).toEqual({
+    expect(call.opts.env).toMatchObject({
       CI: "1",
       XDG_DATA_HOME: "/tmp/wallie-opencode-run-1/data",
     });
@@ -145,7 +145,7 @@ describe("OpenCodeRunner", () => {
       events.push(event);
     }
 
-    expect(events).toEqual([{ type: "error", message: "bad [redacted]" }]);
+    expect(events).toEqual([{ type: "error", message: "bad [REDACTED]" }]);
   });
 
   it("redacts credentials echoed in text and tool input events", async () => {
@@ -165,13 +165,36 @@ describe("OpenCodeRunner", () => {
       events.push(event);
     }
 
-    expect(events).toContainEqual({ type: "text", text: "[redacted]" });
+    expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
     expect(events).toContainEqual({
       type: "tool_use",
       tool: "echo",
-      input: '{"key":"[redacted]"}',
+      input: '{"key":"[REDACTED]"}',
     });
     expect(JSON.stringify(events)).not.toContain(credential.secret);
+  });
+
+  it("redacts caller-supplied secrets from streamed output", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data: `{"type":"text","part":{"text":"github-secret"}}\n`,
+        stream: "stdout",
+      },
+    ]);
+
+    const runner = new OpenCodeRunner({ credential });
+    const events = [];
+    for await (const event of runner.start({
+      prompt: "p",
+      sandbox,
+      secrets: ["github-secret"],
+      sessionId: "s",
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
   });
 });
 

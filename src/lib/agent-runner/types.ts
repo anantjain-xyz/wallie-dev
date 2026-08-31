@@ -4,11 +4,8 @@
  * to the caller for persistence and real-time UI.
  */
 
-import {
-  RECOMMENDED_CLAUDE_CODE_EFFORT,
-  RECOMMENDED_CODEX_REASONING_EFFORT,
-  getRecommendedAgentModel,
-} from "@/lib/agent-config/contracts";
+import { RECOMMENDED_AGENT_EFFORT, getRecommendedAgentModel } from "@/lib/agent-config/contracts";
+import type { AgentEffort } from "@/lib/agent-config/contracts";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
@@ -58,14 +55,20 @@ export interface AgentRunnerStartInput {
   /**
    * Sandbox the agent CLI runs inside. Owned by the phase; reused across turns.
    * Optional at the interface boundary; current CLI runners (codex,
-   * claude-code, opencode) require it and assert at start.
+   * claude-code, cursor, opencode) require it and assert at start.
    */
   sandbox?: SandboxHandle;
   prompt: string;
   /** Optional session ID from a previous turn for continuation. */
   continueSessionId?: string;
-  /** Agent run row id. Required by runners that need per-run credential leases. */
+  /** Agent run row id, when the provider needs to associate work with a persisted run. */
   runId?: string;
+  /**
+   * Extra secret values to strip from streamed events before persistence.
+   * The sandbox GitHub installation token (`GH_TOKEN`) belongs here so tool
+   * stdout cannot leak a repository-capable credential into run history.
+   */
+  secrets?: Array<string | undefined>;
   /** Max output tokens for the agent (optional, provider-specific). */
   maxTokens?: number;
   /** Optional deadline signal used by bounded route handlers. */
@@ -94,22 +97,27 @@ export interface AgentRunner {
 // ---------------------------------------------------------------------------
 
 export interface AgentRunnerConfig {
-  /** Which provider to use: "codex" | "claude-code" | "opencode". */
+  /** Which provider to use. */
   provider: AgentProvider;
-  /** Model to use (provider-specific, e.g. "gpt-5.5", "claude-opus-4-7[1m]", or "opencode/gpt-5.6-sol"). */
+  /** Model to use (provider-specific, e.g. "gpt-5.6-sol" or "claude-opus-4-8[1m]"). */
   model?: string;
+  /** Reasoning effort passed to the selected agent CLI. */
+  effort?: AgentEffort;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
 export const DEFAULT_CODEX_MODEL = getRecommendedAgentModel("codex");
 export const DEFAULT_CLAUDE_CODE_MODEL = getRecommendedAgentModel("claude-code");
+export const DEFAULT_CURSOR_MODEL = getRecommendedAgentModel("cursor");
 export const DEFAULT_OPENCODE_MODEL = getRecommendedAgentModel("opencode");
-export const DEFAULT_CODEX_REASONING_EFFORT = RECOMMENDED_CODEX_REASONING_EFFORT;
-export const DEFAULT_CLAUDE_CODE_EFFORT = RECOMMENDED_CLAUDE_CODE_EFFORT;
+export const DEFAULT_AGENT_EFFORT = RECOMMENDED_AGENT_EFFORT;
+export const DEFAULT_CODEX_REASONING_EFFORT = DEFAULT_AGENT_EFFORT;
+export const DEFAULT_CLAUDE_CODE_EFFORT = DEFAULT_AGENT_EFFORT;
 
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
   provider: "codex",
   model: DEFAULT_CODEX_MODEL,
+  effort: DEFAULT_AGENT_EFFORT,
   maxTurns: 5,
 };

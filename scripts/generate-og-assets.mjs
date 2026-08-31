@@ -20,22 +20,23 @@ import { siteConfig } from "../src/lib/site-config.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(here, "..", "public");
+const appDir = join(here, "..", "src", "app");
 
 // Palette mirrors src/app/globals.css.
 const COLORS = {
-  background: "#f5f5f5",
+  background: "#f4f5f7",
   surface: "#ffffff",
-  foreground: "#1d1f22",
-  muted: "#5b606b",
-  border: "#e4e4e7",
-  accent: "#5e6ad2",
-  accentBright: "#8b95ff",
+  foreground: "#1d2027",
+  muted: "#5b616b",
+  border: "#eff1f5",
+  accent: "#4f46e5",
+  accentBright: "#a5b4fc",
 };
 
 const h = React.createElement;
 
-const logoBytes = await readFile(join(publicDir, "wallie-logo-minimal.png"));
-const logoSrc = `data:image/png;base64,${logoBytes.toString("base64")}`;
+const logoBytes = await readFile(join(publicDir, "wallie-mark.svg"));
+const logoSrc = `data:image/svg+xml;base64,${logoBytes.toString("base64")}`;
 
 async function render(element, { width, height }) {
   const response = new ImageResponse(element, { width, height });
@@ -193,8 +194,52 @@ function iconElement(size) {
   );
 }
 
+function markElement(size, scale = 1) {
+  const markSize = Math.round(size * scale);
+
+  return h(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "100%",
+        height: "100%",
+      },
+    },
+    h("img", { src: logoSrc, width: markSize, height: markSize }),
+  );
+}
+
+function encodeIco(images) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(images.length, 4);
+
+  const directory = Buffer.alloc(images.length * 16);
+  let offset = header.length + directory.length;
+
+  images.forEach(({ png, size }, index) => {
+    const entryOffset = index * 16;
+    directory.writeUInt8(size >= 256 ? 0 : size, entryOffset);
+    directory.writeUInt8(size >= 256 ? 0 : size, entryOffset + 1);
+    directory.writeUInt8(0, entryOffset + 2);
+    directory.writeUInt8(0, entryOffset + 3);
+    directory.writeUInt16LE(1, entryOffset + 4);
+    directory.writeUInt16LE(32, entryOffset + 6);
+    directory.writeUInt32LE(png.length, entryOffset + 8);
+    directory.writeUInt32LE(offset, entryOffset + 12);
+    offset += png.length;
+  });
+
+  return Buffer.concat([header, directory, ...images.map(({ png }) => png)]);
+}
+
 const assets = [
   { file: "og-image.png", element: ogCard, width: 1200, height: 630 },
+  { file: "wallie-logo-minimal.png", element: markElement(512), width: 512, height: 512 },
   { file: "apple-touch-icon.png", element: iconElement(180), width: 180, height: 180 },
   { file: "icon-192.png", element: iconElement(192), width: 192, height: 192 },
   { file: "icon-512.png", element: iconElement(512), width: 512, height: 512 },
@@ -205,3 +250,13 @@ for (const { file, element, width, height } of assets) {
   await writeFile(join(publicDir, file), png);
   console.log(`wrote public/${file} (${width}x${height}, ${png.length} bytes)`);
 }
+
+const faviconImages = await Promise.all(
+  [16, 32, 48, 64].map(async (size) => ({
+    png: await render(markElement(size, 0.94), { width: size, height: size }),
+    size,
+  })),
+);
+const favicon = encodeIco(faviconImages);
+await writeFile(join(appDir, "favicon.ico"), favicon);
+console.log(`wrote src/app/favicon.ico (16/32/48/64px, ${favicon.length} bytes)`);

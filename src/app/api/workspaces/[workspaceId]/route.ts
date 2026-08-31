@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { resolveAuthenticatedHomePath } from "@/lib/auth";
 import { workspaceAvatarBucket } from "@/lib/storage/workspace-avatar";
+import { removeWorkspaceSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { stopWorkspaceProviderSandboxes } from "@/lib/vercel-sandbox/teardown";
 import {
@@ -108,6 +109,7 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
+  const attachmentPaths = await loadWorkspaceAttachmentPaths(admin, access.context.workspace.id);
 
   // Stop any provider sandbox an active run or capability check still owns
   // BEFORE the delete. The cascade below drops the run records AND the Vercel
@@ -131,7 +133,7 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
     // The teardown above already canceled this workspace's in-flight jobs and
     // runs in anticipation of the cascade. The delete didn't commit, so the
     // workspace and its sessions survive — park any session left mid-generation
-    // out of `agent_generating` so it doesn't show "Drafting" forever with no
+    // out of `in_progress` so it doesn't show "Drafting" forever with no
     // job to advance it. Best-effort; the owner can retry the delete.
     await parkGeneratingSessions(admin, access.context.workspace.id);
     return NextResponse.json({ error: "Failed to delete workspace." }, { status: 500 });
@@ -144,7 +146,12 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   // leave older objects behind, so list rather than relying on avatar_path) so a
   // deleted workspace's avatar isn't left publicly fetchable. Storage failures
   // must not surface as a delete error: the workspace is already gone.
-  await removeWorkspaceAvatars(admin, access.context.workspace.id);
+  await Promise.all([
+    removeWorkspaceAvatars(admin, access.context.workspace.id),
+    removeWorkspaceSessionAttachments(admin, access.context.workspace.id, attachmentPaths).catch(
+      () => undefined,
+    ),
+  ]);
 
   // Resolve where the now-workspaceless (or fewer-workspace) user should land.
   // The RLS-scoped server client no longer sees the deleted workspace, so this
@@ -152,6 +159,21 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   const redirectTo = await resolveAuthenticatedHomePath(access.context.supabase);
 
   return NextResponse.json({ deleted: true, redirectTo }, { status: 200 });
+}
+
+async function loadWorkspaceAttachmentPaths(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+) {
+  try {
+    const { data } = await admin
+      .from("session_attachments")
+      .select("storage_path")
+      .eq("workspace_id", workspaceId);
+    return data?.map((attachment) => attachment.storage_path) ?? [];
+  } catch {
+    return [];
+  }
 }
 
 async function parkGeneratingSessions(
@@ -166,7 +188,7 @@ async function parkGeneratingSessions(
     .from("sessions")
     .update({ phase_status: "rejected" })
     .eq("workspace_id", workspaceId)
-    .eq("phase_status", "agent_generating");
+    .eq("phase_status", "in_progress");
 
   if (error) {
     console.error("[workspace-delete] failed to park sessions after delete error", {

@@ -4,6 +4,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
+import {
+  buildVerifyChecklist,
+  verifyBlockersFromChecklist,
+} from "@/features/onboarding/runtime-readiness";
+import { isAgentConfigDraftDirty } from "@/features/onboarding/steps/runtime-step";
+import VerifyStep, {
+  updateSandboxCapabilityCheckInData,
+} from "@/features/onboarding/steps/verify-step";
+import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
@@ -18,16 +28,52 @@ vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 
+vi.mock("@/features/onboarding/steps/active-step", async () => {
+  const React = await import("react");
+  const [github, repository, pipeline, linear, sandbox, runtime, verify] = await Promise.all([
+    import("@/features/onboarding/steps/github-step"),
+    import("@/features/onboarding/steps/repository-step"),
+    import("@/features/onboarding/steps/pipeline-step"),
+    import("@/features/onboarding/steps/linear-step"),
+    import("@/features/onboarding/steps/sandbox-step"),
+    import("@/features/onboarding/steps/runtime-step"),
+    import("@/features/onboarding/steps/verify-step"),
+  ]);
+  const steps = {
+    github: github.default,
+    repository: repository.default,
+    pipeline: pipeline.default,
+    linear: linear.default,
+    sandbox: sandbox.default,
+    runtime: runtime.default,
+    verify: verify.default,
+  };
+  return {
+    ActiveOnboardingStep: ({
+      items: _items,
+      step,
+      ...props
+    }: {
+      items: unknown;
+      step: keyof typeof steps;
+    }) => {
+      void _items;
+      return React.createElement(
+        steps[step] as React.ComponentType<Record<string, unknown>>,
+        props,
+      );
+    },
+  };
+});
+
 import {
+  applySavedPipelineToData,
   applySavedRepositoryProfileToData,
   buildRepositoryProfileCompletionPatch,
-  isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
-  RepositoryProfileEditor,
   scrollOnboardingSetupToTop,
   setupHealthItems,
-  updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
 const configuredPipeline = {
@@ -37,6 +83,7 @@ const configuredPipeline = {
   operatingRulesMd: "",
   stages: [
     {
+      anyoneCanApprove: false,
       approverMemberIds: [],
       description: "Product",
       id: "stage-product",
@@ -136,7 +183,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
 
   return {
     agentConfig: {
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     },
     canManage: true,
@@ -171,23 +218,29 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         configuredKeys: ["agent_model", "agent_provider"],
         status: "present",
         values: {
-          agent_model: "gpt-5.5",
+          agent_model: "gpt-5.6-sol",
           agent_provider: "codex",
         },
       },
       codexConnection: {
+        accountEmail: null,
+        checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         credentialType: null,
         expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
         status: "missing",
         updatedAt: null,
       },
       claudeCodeConnection: {
+        checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         status: "missing",
         updatedAt: null,
       },
       openCodeConnection: {
+        checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         status: "missing",
         updatedAt: null,
@@ -272,11 +325,29 @@ function primaryFooterButton(html: string) {
   return footerButton;
 }
 
+function renderVerifyStep(data: WorkspaceOnboardingData) {
+  return renderToStaticMarkup(
+    createElement(VerifyStep, {
+      data,
+      isSaving: false,
+      onCompleteStep: async () => undefined,
+      onDataChange: () => undefined,
+      onPipelineCompleted: async () => undefined,
+      onRefresh: async () => undefined,
+      onRepositoryOnboardingChange: () => undefined,
+      onRepositorySetupMessage: () => undefined,
+      onRuntimeStateChange: () => undefined,
+      onSelectGithubRepository: async () => true,
+      onSelectStep: () => undefined,
+    }),
+  );
+}
+
 function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html.match(
     new RegExp(
-      `<button[^>]*>[^]*?<span class="block truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
+      `<button[^>]*>[^]*?<span class="min-w-0 flex-1 truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
     ),
   )?.[0];
   if (!match) {
@@ -362,71 +433,176 @@ function onboardingWithSelectedRepository(
   });
 }
 
+describe("reduceOnboardingMutationData", () => {
+  it("installs step progress immediately without replacing unrelated setup data", () => {
+    const current = onboardingData();
+    const next = reduceOnboardingMutationData(current, {
+      action: "continue",
+      kind: "onboarding-mutation",
+      onboarding: {
+        completedAt: null,
+        completedSteps: ["github", "repository", "pipeline"],
+        currentStep: "linear",
+        dismissedAt: null,
+        selectedGithubRepositoryId: null,
+        skippedSteps: [],
+        status: "in_progress",
+      },
+      setupHealth: {},
+      step: "pipeline",
+      updatedAt: "2026-05-16T18:01:00.000Z",
+      validationErrors: [],
+    });
+
+    expect(next.onboarding).toMatchObject({
+      completedSteps: ["github", "repository", "pipeline"],
+      currentStep: "linear",
+      updatedAt: "2026-05-16T18:01:00.000Z",
+    });
+    expect(next.pipeline).toBe(current.pipeline);
+    expect(next.workspaceSecrets).toBe(current.workspaceSecrets);
+    expect(next.setupHealth).toBe(current.setupHealth);
+  });
+
+  it("restores authoritative repository health for conflicts on any action", () => {
+    const current = onboardingData();
+    const next = reduceOnboardingMutationData(current, {
+      action: "navigate",
+      authoritative: {
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github"],
+          currentStep: "repository",
+          dismissedAt: null,
+          selectedGithubRepositoryId: "repo-a",
+          skippedSteps: [],
+          status: "in_progress",
+        },
+        setupHealth: {
+          latestSandboxCapabilityCheck: {
+            agentModel: "gpt-5.6-sol",
+            agentProvider: "codex",
+            capabilities: {},
+            checkedAt: "2026-05-16T18:01:00.000Z",
+            errorText: null,
+            githubRepositoryId: "repo-a",
+            id: "check-repo-a",
+            sandboxProvider: "vercel",
+            sandboxVercelProjectId: "project-a",
+            sandboxVercelTeamId: "team-a",
+            status: "success",
+          },
+          selectedRepository: {
+            configured: true,
+            fullName: "acme/repo-a",
+            repositoryId: "repo-a",
+            status: "ready",
+          },
+        },
+        updatedAt: "2026-05-16T18:02:00.000Z",
+      },
+      error: "Latest progress was restored; retry your action.",
+      kind: "onboarding-conflict",
+      retryable: true,
+      step: "linear",
+      validationErrors: [],
+    });
+
+    expect(next.onboarding.selectedGithubRepositoryId).toBe("repo-a");
+    expect(next.onboarding.updatedAt).toBe("2026-05-16T18:02:00.000Z");
+    expect(next.setupHealth.selectedRepository).toEqual({
+      configured: true,
+      fullName: "acme/repo-a",
+      repositoryId: "repo-a",
+      status: "ready",
+    });
+    expect(next.setupHealth.latestSandboxCapabilityCheck?.id).toBe("check-repo-a");
+    expect(next.setupHealth.agentConfig).toBe(current.setupHealth.agentConfig);
+  });
+});
+
 describe("OnboardingPageClient", () => {
   it("uses red for health errors and grey for initial health states", () => {
-    const noCheckHtml = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData(),
-      }),
+    const noCheckData = onboardingData();
+    const errorData = onboardingData({
+      setupHealth: {
+        latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.6-sol",
+          agentProvider: "codex",
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: "sandbox failed",
+          githubRepositoryId: "repo-a",
+          id: "check-1",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
+          status: "error",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo-a",
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+      },
+    });
+    const noCheck = setupHealthItems(noCheckData.setupHealth).find(
+      (item) => item.label === "Sandbox",
     );
-    const errorHtml = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          setupHealth: {
-            latestSandboxCapabilityCheck: {
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: "sandbox failed",
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: "vercel",
-              sandboxVercelProjectId: "prj_123",
-              sandboxVercelTeamId: "team_123",
-              status: "error",
-            },
-          },
-        }),
-      }),
-    );
+    const error = setupHealthItems(errorData.setupHealth).find((item) => item.label === "Sandbox");
 
-    expect(noCheckHtml).toMatch(
-      /class="ui-badge whitespace-nowrap ui-badge-neutral"><span class="ui-badge-dot"><\/span>No check/,
-    );
-    expect(errorHtml).toMatch(
-      /class="ui-badge whitespace-nowrap ui-badge-danger"><span class="ui-badge-dot"><\/span>Error/,
-    );
+    expect(noCheck).toMatchObject({ tone: "neutral", value: "No check" });
+    expect(error).toMatchObject({ tone: "danger", value: "Error" });
   });
 
   it("renders sandbox health check times as relative copy", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-16T18:05:00.000Z"));
+    const data = onboardingData({
+      setupHealth: {
+        latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.6-sol",
+          agentProvider: "codex",
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: "repo-a",
+          id: "check-1",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
+          status: "success",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo-a",
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+      },
+    });
+    const sandbox = setupHealthItems(data.setupHealth, "2026-05-16T18:05:00.000Z").find(
+      (item) => item.label === "Sandbox",
+    );
+    const html = renderToStaticMarkup(createElement("div", null, sandbox?.detail));
 
-    try {
-      const html = renderToStaticMarkup(
-        createElement(OnboardingPageClient, {
-          initialData: onboardingData({
-            setupHealth: {
-              latestSandboxCapabilityCheck: {
-                capabilities: {},
-                checkedAt: "2026-05-16T18:00:00.000Z",
-                errorText: null,
-                githubRepositoryId: "repo-a",
-                id: "check-1",
-                sandboxProvider: "vercel",
-                sandboxVercelProjectId: "prj_123",
-                sandboxVercelTeamId: "team_123",
-                status: "success",
-              },
-            },
-          }),
-        }),
-      );
+    expect(html).toMatch(/Checked <time[^>]*>5m ago<\/time>/);
+    expect(html).toContain('dateTime="2026-05-16T18:00:00.000Z"');
+  });
 
-      expect(html).toContain("Checked 5 minutes ago");
-      expect(html).not.toContain("2026-05-16T18:00:00.000Z");
-    } finally {
-      vi.useRealTimers();
-    }
+  it("renders one responsive setup navigation tree without a horizontal rail", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, { initialData: onboardingData() }),
+    );
+    const setupNavigation = html.match(/<nav aria-label="Setup steps"[\s\S]*?<\/nav>/u)?.[0];
+
+    expect(html.match(/aria-label="Setup steps"/gu)).toHaveLength(1);
+    expect(setupNavigation).toBeDefined();
+    expect(setupNavigation).not.toContain("data-status");
+    expect(setupNavigation).not.toContain("Running");
+    expect(setupNavigation).not.toContain("Queued");
+    expect(html).toContain("grid-cols-2");
+    expect(html).not.toContain("overflow-x-auto");
+    expect(html).toContain("env(safe-area-inset-bottom)");
   });
 
   it("merges a saved repository profile into the latest GitHub state", () => {
@@ -445,7 +621,24 @@ describe("OnboardingPageClient", () => {
     });
     const savedProfile = profile("repo-a");
 
-    const nextData = applySavedRepositoryProfileToData(currentData, savedProfile);
+    const latestSandboxCapabilityCheck = {
+      agentModel: "gpt-5.6-sol",
+      agentProvider: "codex",
+      capabilities: {},
+      checkedAt: "2026-05-16T18:30:00.000Z",
+      errorText: null,
+      githubRepositoryId: "repo-a",
+      id: "check-repo-a",
+      sandboxProvider: "vercel" as const,
+      sandboxVercelProjectId: "project-a",
+      sandboxVercelTeamId: "team-a",
+      status: "success" as const,
+    };
+    const nextData = applySavedRepositoryProfileToData(
+      currentData,
+      savedProfile,
+      latestSandboxCapabilityCheck,
+    );
 
     expect(nextData.github.primaryProfile).toBe(savedProfile);
     expect(nextData.github.repositories[0]).toMatchObject({
@@ -456,6 +649,39 @@ describe("OnboardingPageClient", () => {
     expect(nextData.setupHealth.primaryRepositoryProfile).toMatchObject({
       configured: true,
       repositoryId: "repo-a",
+    });
+    expect(nextData.setupHealth.latestSandboxCapabilityCheck).toBe(latestSandboxCapabilityCheck);
+  });
+
+  it("installs saved pipeline stages before advancing to Linear", () => {
+    const currentData = onboardingData();
+    const savedPipeline = {
+      ...configuredPipeline,
+      stages: [
+        ...configuredPipeline.stages,
+        {
+          anyoneCanApprove: false,
+          approverMemberIds: [],
+          description: "Build",
+          id: "stage-build",
+          name: "Build",
+          pipelineId: configuredPipeline.id,
+          position: 2,
+          promptTemplateMd: "Build prompt",
+          slug: "build",
+        },
+      ],
+    };
+
+    const nextData = applySavedPipelineToData(currentData, savedPipeline);
+
+    expect(nextData.pipeline).toBe(savedPipeline);
+    expect(nextData.pipeline?.stages.map((stage) => stage.slug)).toEqual(["product", "build"]);
+    expect(nextData.setupHealth.defaultPipeline).toEqual({
+      configured: true,
+      pipelineId: "pipeline-1",
+      stageCount: 2,
+      status: "ready",
     });
   });
 
@@ -708,8 +934,8 @@ describe("OnboardingPageClient", () => {
     expect(linearHtml).toContain(">Connect Linear</h2>");
     expect(desktopRailButton(runtimeHtml, "Connect Agent")).toContain('aria-current="step"');
     expect(runtimeHtml).toContain(">Connect Agent</h2>");
-    expect(runtimeHtml).toContain('<span class="truncate">Agent</span>');
-    expect(runtimeHtml).not.toContain('<span class="truncate">Runtime</span>');
+    expect(runtimeHtml).toContain('<span class="min-w-0 flex-1 truncate">Connect Agent</span>');
+    expect(runtimeHtml).not.toContain(">Runtime</span>");
   });
 
   it("shows setup actions in Analyze repositories for every synced repository", () => {
@@ -997,9 +1223,9 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html).toContain(">Re-analyze</button>");
-    expect(html).toContain(">Saving…</button>");
-    expect(html).not.toContain(">Analyzing…</button>");
+    expect(html).toContain(">Re-analyze</span>");
+    expect(html).toContain("<span>Saving…</span>");
+    expect(html).not.toContain("<span>Analyzing…</span>");
   });
 
   it("allows fallback progression when the pipeline editor cannot render", () => {
@@ -1011,7 +1237,7 @@ describe("OnboardingPageClient", () => {
 
     const button = primaryFooterButton(html);
     expect(html).toContain("Workspace has no default pipeline.");
-    expect(button).toContain(">Continue</button>");
+    expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1026,7 +1252,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Save pipeline");
     expect(html).not.toContain("Use current pipeline");
     expect(button).toContain("disabled");
-    expect(button).toContain(">Save pipeline to continue</button>");
+    expect(button).toContain(">Save pipeline to continue</span>");
   });
 
   it("allows fallback progression when Linear routing cannot load pipeline stages", () => {
@@ -1051,7 +1277,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(button).toContain(">Continue</button>");
+    expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1076,7 +1302,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(button).toContain(">Continue</button>");
+    expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1140,6 +1366,17 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("Provider access");
+    expect(html).toContain("Choose the coding agent Wallie uses for runs.");
+    expect(html).toContain("Model identifier passed to the selected provider.");
+    expect(html).toContain("Reasoning effort passed to the selected provider.");
+    expect(html).toContain(">Provider</span>");
+    expect(html).toContain(">Model</span>");
+    expect(html).toContain(">Effort</span>");
+    expect(html).not.toContain("Agent provider");
+    expect(html).not.toContain("Agent model");
+    expect(html).not.toContain("Agent effort");
+    expect(html).not.toContain("agent CLI");
+    expect(html).not.toContain("Not configured");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
     expect(html.indexOf("Concurrency")).toBeLessThan(html.indexOf("Provider access"));
@@ -1156,51 +1393,57 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain('type="password"');
     expect(html).not.toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("ui-textarea min-h-20");
-    expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
+    expect(html.match(/>Save config<\/span>/g) ?? []).toHaveLength(2);
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
     expect(html).toContain("Add variable");
     expect(html).not.toContain('aria-label="New variable name"');
-    expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
+    expect(html).not.toContain("border-t border-border bg-control-hover px-4 py-4");
     expect(html).toContain("Not set");
-    expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
+    expect(html).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*Not set/);
     expect(html).not.toContain("Needs value");
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
     expect(html).not.toContain("Workspace secrets");
     expect(html).not.toContain("Runtime checks the current user");
-    expect(html).not.toContain("<select");
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("truncate font-mono");
   });
 
-  it("connects the Vercel Sandbox inline from the Connect Agent step", () => {
+  it("selects the connected sandbox provider inline from the Connect Sandbox step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           onboarding: {
             completedSteps: ["github", "repository", "pipeline", "linear"],
-            currentStep: "runtime",
+            currentStep: "sandbox",
           },
         }),
       }),
     );
 
-    expect(html).toContain('id="onboarding-vercel"');
-    expect(html).toContain("Save Vercel connection");
-    expect(html).toContain('placeholder="vca_…"');
-    expect(html).toContain('placeholder="team_…"');
-    expect(html).toContain('placeholder="prj_…"');
-    // Default data has a connection, so an inline Disconnect control is offered.
-    expect(html).toContain("Disconnect");
+    expect(html).toContain('id="sandbox"');
+    expect(html).toContain("Sandbox provider");
+    expect(html).toContain("Choose a provider");
+    expect(html).toContain("Vercel Sandbox connected");
+    expect(html).toContain("vca_...123");
+    expect(html).not.toContain("Connect Vercel Sandbox");
+    expect(html).not.toContain("Connect E2B");
+    expect(html).not.toContain("Connect Daytona");
+    // Active providers cannot be disconnected until the workspace switches providers.
+    expect(html).not.toContain("Disconnect");
     // The Vercel connection is made in the wizard, not by detouring into Settings.
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
   });
 
-  it("blocks Connect Agent completion until the Vercel Sandbox is connected", () => {
+  it("blocks Connect Agent completion and links back to Connect Sandbox", () => {
     const connectedCodex = {
+      accountEmail: null,
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "platform_api_key" as const,
       expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "connected" as const,
       updatedAt: "2026-05-16T18:00:00.000Z",
     };
@@ -1209,7 +1452,7 @@ describe("OnboardingPageClient", () => {
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           onboarding: {
-            completedSteps: ["github", "repository", "pipeline", "linear"],
+            completedSteps: ["github", "repository", "pipeline", "linear", "sandbox"],
             currentStep: "runtime",
           },
           setupHealth: {
@@ -1229,13 +1472,14 @@ describe("OnboardingPageClient", () => {
       }),
     );
     expect(primaryFooterButton(blockedHtml)).toContain("disabled");
-    expect(blockedHtml).toContain("Connect a Vercel project before running Wallie sessions.");
+    expect(blockedHtml).toContain('data-sandbox-connection-href="#sandbox"');
+    expect(blockedHtml).not.toContain('href="/w/northwind/settings#vercel"');
 
     const readyHtml = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           onboarding: {
-            completedSteps: ["github", "repository", "pipeline", "linear"],
+            completedSteps: ["github", "repository", "pipeline", "linear", "sandbox"],
             currentStep: "runtime",
           },
           setupHealth: {
@@ -1349,6 +1593,7 @@ describe("OnboardingPageClient", () => {
               },
             },
             openCodeConnection: {
+              checkedAt: "2026-05-16T18:00:01.000Z",
               connected: false,
               status: "missing",
               updatedAt: null,
@@ -1378,7 +1623,7 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("Runtime readiness");
     expect(html).not.toMatch(
-      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-badge/,
+      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-status/,
     );
   });
 
@@ -1408,10 +1653,10 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain('data-step-link="runtime"');
     expect(html).toContain("Save a repository profile before running a sandbox capability check.");
     expect(button).toContain("disabled");
-    expect(button).toContain(">Complete setup</button>");
+    expect(button).toContain(">Complete setup</span>");
   });
 
-  it("routes the Vercel Sandbox blocker back into the Connect Agent step", () => {
+  it("routes the Vercel Sandbox blocker back into the Connect Sandbox step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
@@ -1444,14 +1689,14 @@ describe("OnboardingPageClient", () => {
 
     const vercelRow = html.slice(html.indexOf("Vercel Sandbox connected"));
     expect(html).toContain("Vercel Sandbox connected");
-    // The blocker stays inside the wizard (Connect Agent / runtime step), not Settings.
+    // The blocker stays inside the wizard (Connect Sandbox step), not Settings.
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
     expect(html).not.toContain("Open Vercel");
-    expect(vercelRow).toContain('data-step-link="runtime"');
-    expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Agent");
+    expect(vercelRow).toContain('data-step-link="sandbox"');
+    expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Sandbox");
   });
 
-  it("enables the Verify completion CTA when every blocker passes", () => {
+  it("has no Verify blockers when every requirement passes", () => {
     const repo = repository("repo-a", {
       onboarding: {
         conflictReport: [],
@@ -1467,147 +1712,155 @@ describe("OnboardingPageClient", () => {
       },
       profile: profile("repo-a"),
     });
-    const html = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          github: {
-            installation: null,
-            missingAppKeys: [],
-            missingWebhookKeys: [],
-            primaryProfile: profile("repo-a"),
-            repositories: [repo],
-          },
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
-          },
-          setupHealth: {
-            codexConnection: {
-              connected: true,
-              credentialType: "codex_access_token",
-              expiresAt: "2026-05-16T20:00:00.000Z",
-              status: "connected",
-              updatedAt: "2026-05-16T18:00:00.000Z",
-            },
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            repositorySetup: {
-              configured: true,
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            latestSandboxCapabilityCheck: {
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: null,
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: "vercel",
-              sandboxVercelProjectId: "prj_123",
-              sandboxVercelTeamId: "team_123",
-              status: "success",
-            },
-          },
-        }),
-      }),
-    );
+    const data = onboardingData({
+      github: {
+        installation: null,
+        missingAppKeys: [],
+        missingWebhookKeys: [],
+        primaryProfile: profile("repo-a"),
+        repositories: [repo],
+      },
+      onboarding: {
+        completedAt: null,
+        completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+        createdAt: "2026-05-16T18:00:00.000Z",
+        currentStep: "verify",
+        dismissedAt: null,
+        id: "onboarding-1",
+        skippedSteps: [],
+        status: "in_progress",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+        workspaceId: "workspace-1",
+      },
+      setupHealth: {
+        codexConnection: {
+          accountEmail: null,
+          checkedAt: "2026-05-16T18:00:01.000Z",
+          connected: true,
+          credentialType: "codex_access_token",
+          expiresAt: "2026-05-16T20:00:00.000Z",
+          reconnectReason: null,
+          reconnectRequired: false,
+          status: "connected",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo-a",
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+        repositorySetup: {
+          configured: true,
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+        latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.6-sol",
+          agentProvider: "codex",
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: "repo-a",
+          id: "check-1",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
+          status: "success",
+        },
+      },
+    });
+    const checklist = buildVerifyChecklist({
+      agentConfig: data.agentConfig,
+      health: data.setupHealth,
+      onboarding: data.onboarding,
+    });
 
-    const button = primaryFooterButton(html);
-    expect(html).toContain("Latest selected-repository sandbox capability check succeeded.");
-    expect(button).not.toContain("disabled");
-    expect(button).toContain(">Complete setup</button>");
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+    expect(checklist.find((item) => item.id === "sandbox")?.detail).toBe(
+      "Latest selected-repository sandbox capability check succeeded.",
+    );
   });
 
   it("renders sandbox polling and retry states", () => {
-    const running = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
+    const running = renderVerifyStep(
+      onboardingData({
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+          createdAt: "2026-05-16T18:00:00.000Z",
+          currentStep: "verify",
+          dismissedAt: null,
+          id: "onboarding-1",
+          skippedSteps: [],
+          status: "in_progress",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+          workspaceId: "workspace-1",
+        },
+        setupHealth: {
+          primaryRepositoryProfile: {
+            configured: true,
+            fullName: "acme/repo-a",
+            repositoryId: "repo-a",
+            status: "ready",
           },
-          setupHealth: {
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            latestSandboxCapabilityCheck: {
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: null,
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: null,
-              sandboxVercelProjectId: null,
-              sandboxVercelTeamId: null,
-              status: "running",
-            },
+          latestSandboxCapabilityCheck: {
+            agentModel: "gpt-5.6-sol",
+            agentProvider: "codex",
+            capabilities: {},
+            checkedAt: "2026-05-16T18:00:00.000Z",
+            errorText: null,
+            githubRepositoryId: "repo-a",
+            id: "check-1",
+            sandboxProvider: null,
+            sandboxVercelProjectId: null,
+            sandboxVercelTeamId: null,
+            status: "running",
           },
-        }),
+        },
       }),
     );
-    const failed = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
+    const failed = renderVerifyStep(
+      onboardingData({
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+          createdAt: "2026-05-16T18:00:00.000Z",
+          currentStep: "verify",
+          dismissedAt: null,
+          id: "onboarding-1",
+          skippedSteps: [],
+          status: "in_progress",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+          workspaceId: "workspace-1",
+        },
+        setupHealth: {
+          primaryRepositoryProfile: {
+            configured: true,
+            fullName: "acme/repo-a",
+            repositoryId: "repo-a",
+            status: "ready",
           },
-          setupHealth: {
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            latestSandboxCapabilityCheck: {
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: "sandbox failed",
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: "vercel",
-              sandboxVercelProjectId: "prj_123",
-              sandboxVercelTeamId: "team_123",
-              status: "error",
-            },
+          latestSandboxCapabilityCheck: {
+            agentModel: "gpt-5.6-sol",
+            agentProvider: "codex",
+            capabilities: {},
+            checkedAt: "2026-05-16T18:00:00.000Z",
+            errorText: "sandbox failed",
+            githubRepositoryId: "repo-a",
+            id: "check-1",
+            sandboxProvider: "vercel",
+            sandboxVercelProjectId: "prj_123",
+            sandboxVercelTeamId: "team_123",
+            status: "error",
           },
-        }),
+        },
       }),
     );
 
     expect(running).toContain("Checking…");
     expect(running).toContain(">Running</span>");
+    expect(running).toMatch(/data-status="running" data-tone="progress"/);
     expect(running).toContain("disabled");
     expect(failed).toContain(">Failed</span>");
     expect(failed).toContain("Retry capability check");
@@ -1654,11 +1907,14 @@ describe("OnboardingPageClient", () => {
     expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "15.0", "15")).toBe(false);
     expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "10", "15")).toBe(true);
     expect(isAgentConfigDraftDirty("max_retries", "number", "2", "3")).toBe(true);
+    expect(isAgentConfigDraftDirty("agent_provider", "select", "codex", "codex")).toBe(false);
+    expect(isAgentConfigDraftDirty("agent_provider", "select", "claude-code", "codex")).toBe(true);
   });
 
   it("pairs Onboarding provider changes with the provider's recommended model", () => {
     const currentDrafts = {
-      agent_model: "gpt-5.5",
+      agent_effort: "xhigh",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
       concurrency_limit: "1",
       max_retries: "3",
@@ -1668,11 +1924,11 @@ describe("OnboardingPageClient", () => {
     expect(
       applyAgentConfigDraftChange(currentDrafts, "agent_provider", "claude-code"),
     ).toMatchObject({
-      agent_model: "claude-opus-4-7[1m]",
+      agent_model: "claude-opus-4-8[1m]",
       agent_provider: "claude-code",
     });
     expect(applyAgentConfigDraftChange(currentDrafts, "agent_provider", "codex")).toMatchObject({
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     });
   });
@@ -1754,5 +2010,30 @@ describe("setupHealthItems Linear routing badge", () => {
         linearRouting: { configured: false, status: "missing", updatedAt: null },
       }),
     ).toMatchObject({ value: "Missing", tone: "warning" });
+  });
+});
+
+describe("setupHealthItems Pipeline badge", () => {
+  const pipelineItem = (pipelineReviewed: boolean) => {
+    const data = onboardingData();
+    return setupHealthItems(data.setupHealth, undefined, { pipelineReviewed }).find(
+      (item) => item.label === "Pipeline",
+    );
+  };
+
+  it("does not check off a seeded default pipeline before onboarding review", () => {
+    expect(pipelineItem(false)).toMatchObject({
+      detail: "1 stage from defaults — review and save",
+      tone: "neutral",
+      value: "Defaults",
+    });
+  });
+
+  it("checks off the pipeline after it has been reviewed and saved", () => {
+    expect(pipelineItem(true)).toMatchObject({
+      detail: "1 stage",
+      tone: "success",
+      value: "Ready",
+    });
   });
 });

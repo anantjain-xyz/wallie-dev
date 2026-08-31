@@ -6,6 +6,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+export const preferredRegion = "home";
+
 type Params = { params: Promise<{ sessionId: string }> };
 
 /**
@@ -13,11 +15,13 @@ type Params = { params: Promise<{ sessionId: string }> };
  * read sessions visible through workspace_members, so a non-member gets null →
  * 404. Returns the gating NextResponse on any failure, otherwise the row.
  */
-async function resolveSessionForMember(
-  sessionId: string,
-): Promise<
+async function resolveSessionForMember(sessionId: string): Promise<
   | { response: NextResponse; row?: undefined; userId?: undefined }
-  | { response?: undefined; row: { id: string; workspace_id: string }; userId: string }
+  | {
+      response?: undefined;
+      row: { id: string; phase_status: string; workspace_id: string };
+      userId: string;
+    }
 > {
   const supabase = await createSupabaseServerClient();
   const user = await getSupabaseUserOrNull(supabase);
@@ -28,7 +32,7 @@ async function resolveSessionForMember(
 
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id")
+    .select("id, workspace_id, phase_status")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -65,12 +69,29 @@ export async function POST(_request: Request, { params }: Params) {
     sessionId: resolved.row.id,
   });
 
-  return NextResponse.json({ archivedAt: result.archivedAt, id: result.id });
+  return NextResponse.json({
+    archivedAt: result.archivedAt,
+    id: result.id,
+    phaseStatus: result.phaseStatus,
+    updatedAt: result.updatedAt,
+  });
 }
 
 // Unarchive the session, returning it to its prior phase.
-export async function DELETE(_request: Request, { params }: Params) {
+export async function DELETE(request: Request, { params }: Params) {
   const { sessionId } = await params;
+  const body = (await request.json().catch(() => null)) as {
+    expectedArchivedAt?: unknown;
+  } | null;
+  if (
+    body?.expectedArchivedAt !== undefined &&
+    (typeof body.expectedArchivedAt !== "string" || body.expectedArchivedAt.length === 0)
+  ) {
+    return NextResponse.json(
+      { error: "Expected archive version must be a string." },
+      { status: 400 },
+    );
+  }
   const resolved = await resolveSessionForMember(sessionId);
   if (resolved.response) {
     return resolved.response;
@@ -85,7 +106,17 @@ export async function DELETE(_request: Request, { params }: Params) {
   }
 
   const admin = createSupabaseAdminClient();
-  const result = await unarchiveSession(admin, { sessionId: resolved.row.id });
+  const result = await unarchiveSession(admin, {
+    ...(typeof body?.expectedArchivedAt === "string"
+      ? { expectedArchivedAt: body.expectedArchivedAt }
+      : {}),
+    sessionId: resolved.row.id,
+  });
 
-  return NextResponse.json({ archivedAt: result.archivedAt, id: result.id });
+  return NextResponse.json({
+    archivedAt: result.archivedAt,
+    id: result.id,
+    phaseStatus: result.phaseStatus,
+    updatedAt: result.updatedAt,
+  });
 }

@@ -1,28 +1,51 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
+import { TimeDisplay } from "@/components/shared/time-display";
+import { Status, agentRunStatusValue } from "@/components/ui/status";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
   AgentRunActionResponse,
   AgentRunCancelResponse,
+  RunHistoryErrorResponse,
+  RunHistoryResponse,
 } from "@/features/wallie/contracts";
+import {
+  connectionStateCopy,
+  currentOperationLabel,
+  formatMessageSourceLabel,
+  isRunActivityStalled,
+  lastActivityTimestamp,
+  messagesDisconnectedCopy,
+  messagesEmptyCopy,
+  messagesFailedCopy,
+  messagesLoadingCopy,
+  type WallieRealtimeConnectionState,
+} from "@/features/wallie/activity-summary";
 import {
   mapAgentRunMessageRow,
   mapAgentRunRow,
+  mergeWallieRuns,
+  nextAttemptOrdinal,
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
+import { parseToolUseMessage } from "@/features/wallie/run-message-body";
+import type { WallieRun, WallieRunMessage, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceSettingsPath } from "@/lib/routes";
+import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { cn } from "@/lib/utils";
+
+/** Cap auto-loaded message history so opening a busy run cannot mount unbounded logs. */
+export const WALLIE_RUN_MESSAGE_LIMIT = 100;
 
 type FlashMessage = {
   kind: "error" | "info" | "success";
@@ -37,18 +60,11 @@ export type WalliePanelSession = {
 
 type SessionWalliePanelProps = {
   initialData: WallieSessionData;
+  initialNow?: string;
   session: WalliePanelSession;
-  memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  supabase: SupabaseClient<Database>;
+  supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
 };
-
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  month: "short",
-});
 
 const interactiveLinkClass =
   "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
@@ -64,49 +80,32 @@ function flashToneClass(kind: FlashMessage["kind"]) {
   }
 }
 
-function runStatusToneClass(status: WallieRun["status"]) {
-  switch (status) {
-    case "queued":
-      return "border-border-strong bg-surface-muted text-muted";
-    case "started":
-      return "border-accent/20 bg-accent-soft text-accent";
-    case "running":
-      return "border-accent/20 bg-accent-soft text-accent";
-    case "success":
-      return "border-success/20 bg-success-soft text-success";
-    case "error":
-      return "border-danger/20 bg-danger-soft text-danger";
-    case "canceled":
-      return "border-warning/20 bg-warning-soft text-warning";
-  }
-}
-
-function formatRunStatus(status: WallieRun["status"]) {
-  return formatSentenceCaseLabel(status);
-}
-
-function buildDefaultExpandedRunIds(runs: readonly WallieRun[]) {
-  const nextIds = new Set<string>();
-  const activeRun = runs.find((run) => run.isActive);
-
-  if (activeRun) {
-    nextIds.add(activeRun.id);
-    return nextIds;
-  }
-
-  if (runs[0]) {
-    nextIds.add(runs[0].id);
-  }
-
-  return nextIds;
-}
-
 function actionErrorMessage(payload: AgentRunActionErrorResponse | null) {
   if (!payload) {
     return "Wallie could not queue that run.";
   }
 
   return payload.error;
+}
+
+async function queueRun(endpoint: string, body: Record<string, string>) {
+  const response = await fetch(endpoint, {
+    body: JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | AgentRunActionErrorResponse
+    | AgentRunActionResponse
+    | null;
+
+  if (!response.ok) {
+    throw new Error(actionErrorMessage(payload as AgentRunActionErrorResponse | null));
+  }
+
+  return payload as AgentRunActionResponse;
 }
 
 function hydrateRequestedByMember(
@@ -155,87 +154,221 @@ function formatRequestedBy(run: WallieRun) {
   return run.requestedByMemberId ? "workspace member" : "Wallie";
 }
 
+function mapRealtimeStatus(status: string): WallieRealtimeConnectionState | null {
+  switch (status) {
+    case "SUBSCRIBED":
+      return "live";
+    case "CHANNEL_ERROR":
+    case "TIMED_OUT":
+    case "CLOSED":
+      return "disconnected";
+    default:
+      return null;
+  }
+}
+
 export function SessionWalliePanel({
   initialData,
+  initialNow,
   session,
-  memberIndex,
-  supabase,
+  supabase: injectedSupabase,
   workspaceSlug,
 }: SessionWalliePanelProps) {
+  const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
+  const [supabase] = useState<SupabaseClient<Database>>(
+    () => injectedSupabase ?? createSupabaseBrowserClient(),
+  );
   const [runs, setRuns] = useState(initialData.runs);
+  const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
-  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
-    buildDefaultExpandedRunIds(initialData.runs),
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(
+    () => initialData.runs[0]?.id ?? null,
   );
-  const runIdsKey = useMemo(
-    () =>
-      runs
-        .map((run) => run.id)
-        .sort()
-        .join(","),
-    [runs],
+  const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
+    () => new Set(initialData.loadedMessageRunIds),
   );
+  const [messageLoadErrorRunIds, setMessageLoadErrorRunIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [isLoadingOlderRuns, setIsLoadingOlderRuns] = useState(false);
+  const [olderRunsError, setOlderRunsError] = useState<string | null>(null);
+  const [realtimeReady, setRealtimeReady] = useState(false);
+  const [connectionState, setConnectionState] =
+    useState<WallieRealtimeConnectionState>("connecting");
+  const [connectionAnnouncement, setConnectionAnnouncement] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.parse(renderNow) || Date.now());
+  const sessionIdRef = useRef(session.id);
+  const reconcileGenerationRef = useRef(0);
+  const hadDisconnectRef = useRef(false);
+  // Track each required realtime channel independently; recovery only when all are live.
+  const channelHealthRef = useRef({
+    expandedMessages: null as boolean | null,
+    runs: false,
+    summaryMessages: null as boolean | null,
+  });
+  sessionIdRef.current = session.id;
+  const memberIndex = useMemo(() => {
+    const nextIndex = new Map<string, WorkspaceMember>();
 
+    for (const member of initialData.workspaceMembers) {
+      nextIndex.set(member.id, member);
+    }
+
+    for (const run of initialData.runs) {
+      if (run.requestedByMember) {
+        nextIndex.set(run.requestedByMember.id, run.requestedByMember);
+      }
+    }
+
+    return nextIndex;
+  }, [initialData.runs, initialData.workspaceMembers]);
   useEffect(() => {
+    reconcileGenerationRef.current += 1;
     setRuns(initialData.runs);
+    setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
     setPendingActionId(null);
-    setExpandedRunIds(buildDefaultExpandedRunIds(initialData.runs));
-  }, [initialData.runs, session.id]);
+    setExpandedRunId(initialData.runs[0]?.id ?? null);
+    setLoadedMessageRunIds(new Set(initialData.loadedMessageRunIds));
+    setMessageLoadErrorRunIds(new Set());
+    setIsLoadingOlderRuns(false);
+    setOlderRunsError(null);
+    setConnectionState("connecting");
+    setConnectionAnnouncement(null);
+    hadDisconnectRef.current = false;
+    channelHealthRef.current = {
+      expandedMessages: null,
+      runs: false,
+      summaryMessages: null,
+    };
+  }, [initialData.loadedMessageRunIds, initialData.nextRunCursor, initialData.runs, session.id]);
 
-  async function loadRunMessages(runId: string) {
-    const { data, error } = await supabase
-      .from("agent_run_messages")
-      .select("agent_run_id, created_at, id, kind, message_md")
-      .eq("agent_run_id", runId)
-      .order("created_at", { ascending: true });
+  useEffect(() => {
+    const active = runs.some((run) => run.isActive);
+    if (!active) return;
 
-    if (error) {
-      console.error("Wallie could not load run messages", {
-        error,
-        runId,
+    // Keep the first paint aligned with `initialNow` (hydration-safe / testable),
+    // then follow the wall clock for live stall detection.
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [runs]);
+
+  const loadRunMessages = useCallback(
+    async (runId: string) => {
+      setMessageLoadErrorRunIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        nextIds.delete(runId);
+        return nextIds;
       });
+      const { data, error } = await supabase
+        .from("agent_run_messages")
+        .select("agent_run_id, created_at, id, kind, message_md")
+        .eq("agent_run_id", runId)
+        .order("created_at", { ascending: false })
+        .limit(WALLIE_RUN_MESSAGE_LIMIT);
+
+      if (error) {
+        console.error("Wallie could not load run messages", {
+          error,
+          runId,
+        });
+        setMessageLoadErrorRunIds((currentIds) => new Set(currentIds).add(runId));
+        return;
+      }
+
+      // Query returns newest-first; restore chronological order for the timeline.
+      const rows = [...(data ?? [])].reverse();
+
+      setRuns((currentRuns) => {
+        let nextRuns = currentRuns;
+
+        for (const row of rows) {
+          nextRuns = upsertWallieRunMessage(nextRuns, {
+            agentRunId: row.agent_run_id,
+            message: mapAgentRunMessageRow(row),
+          });
+        }
+
+        return nextRuns;
+      });
+      setLoadedMessageRunIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        nextIds.add(runId);
+        return nextIds;
+      });
+    },
+    [supabase],
+  );
+
+  const markConnectionDisconnected = useEffectEvent(() => {
+    hadDisconnectRef.current = true;
+    setConnectionState("disconnected");
+    setConnectionAnnouncement(connectionStateCopy("disconnected"));
+  });
+
+  const markConnectionLive = useEffectEvent(() => {
+    if (hadDisconnectRef.current) {
+      setConnectionState("recovered");
+      setConnectionAnnouncement(connectionStateCopy("recovered"));
+      hadDisconnectRef.current = false;
+      window.setTimeout(() => {
+        setConnectionState((current) => (current === "recovered" ? "live" : current));
+      }, 4_000);
       return;
     }
 
-    setRuns((currentRuns) => {
-      let nextRuns = currentRuns;
+    setConnectionState("live");
+  });
 
-      for (const row of data ?? []) {
-        nextRuns = upsertWallieRunMessage(nextRuns, {
-          agentRunId: row.agent_run_id,
-          message: mapAgentRunMessageRow(row),
-        });
+  const allRequiredChannelsLive = useEffectEvent(() => {
+    const health = channelHealthRef.current;
+    if (!health.runs) return false;
+    if (health.expandedMessages === false) return false;
+    if (health.summaryMessages === false) return false;
+    return true;
+  });
+
+  const reportChannelStatus = useEffectEvent(
+    (key: "expandedMessages" | "runs" | "summaryMessages", status: string) => {
+      const mapped = mapRealtimeStatus(status);
+      if (!mapped) return;
+
+      if (mapped === "disconnected") {
+        channelHealthRef.current[key] = false;
+        markConnectionDisconnected();
+        return;
       }
 
-      return nextRuns;
-    });
-  }
+      if (mapped === "live") {
+        channelHealthRef.current[key] = true;
+        // Runs subscribe always reconciles history; connection copy waits until
+        // every required channel (including message streams) is live.
+        if (key === "runs") {
+          void reconcileLatestRuns();
+        }
+        if (allRequiredChannelsLive()) {
+          markConnectionLive();
+        }
+      }
+    },
+  );
 
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
-    let isNewRun = false;
-
     setRuns((currentRuns) => {
       const previousRun = currentRuns.find((run) => run.id === row.id);
 
-      isNewRun = !previousRun;
-
       return upsertWallieRun(
         currentRuns,
-        mapAgentRunRow(row, memberIndex, previousRun?.messages ?? []),
+        mapAgentRunRow(row, memberIndex, previousRun?.messages ?? [], {
+          attemptCount:
+            previousRun?.attemptCount ??
+            nextAttemptOrdinal(currentRuns, { id: row.id, stageId: row.stage_id }),
+        }),
       );
     });
-
-    if (isNewRun) {
-      setExpandedRunIds((currentIds) => {
-        const nextIds = new Set(currentIds);
-
-        nextIds.add(row.id);
-        return nextIds;
-      });
-      void loadRunMessages(row.id);
-    }
   });
 
   const handleRunMessageRealtimeUpdate = useEffectEvent((row: Tables<"agent_run_messages">) => {
@@ -247,7 +380,70 @@ export function SessionWalliePanel({
     );
   });
 
+  const reconcileLatestRuns = useEffectEvent(async () => {
+    const requestSessionId = session.id;
+    const generation = ++reconcileGenerationRef.current;
+
+    try {
+      const response = await fetch(`/api/sessions/${requestSessionId}/runs`);
+      const payload = (await response.json().catch(() => null)) as
+        | RunHistoryResponse
+        | RunHistoryErrorResponse
+        | null;
+
+      if (!response.ok || !payload || !("runs" in payload)) {
+        throw new Error(
+          payload && "error" in payload ? payload.error : "Could not reconcile run history.",
+        );
+      }
+
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        generation !== reconcileGenerationRef.current
+      ) {
+        return;
+      }
+
+      setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
+      setNextRunCursor(payload.nextCursor);
+    } catch (error) {
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
+      console.error("Wallie could not reconcile run history", {
+        error,
+        sessionId: requestSessionId,
+      });
+    }
+  });
+
   useEffect(() => {
+    setRealtimeReady(false);
+    let started = false;
+    let idleId: number | null = null;
+    const startRealtime = () => {
+      if (started) return;
+      started = true;
+      setRealtimeReady(true);
+    };
+    const fallbackId = window.setTimeout(startRealtime, 500);
+
+    if ("requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(startRealtime);
+    }
+
+    return () => {
+      window.clearTimeout(fallbackId);
+      if (idleId !== null && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }, [session.id]);
+
+  useEffect(() => {
+    if (!realtimeReady) return;
+
     const runChannel = supabase
       .channel(`wallie-runs:${session.id}`)
       .on(
@@ -266,47 +462,117 @@ export function SessionWalliePanel({
           handleRunRealtimeUpdate(payload.new as Tables<"agent_runs">);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        reportChannelStatus("runs", status);
+      });
 
     return () => {
+      channelHealthRef.current.runs = false;
       void supabase.removeChannel(runChannel);
     };
-  }, [session.id, supabase]);
+  }, [realtimeReady, session.id, supabase]);
+
+  const summaryRun = useMemo(() => {
+    return runs.find((run) => run.isActive) ?? runs[0] ?? null;
+  }, [runs]);
+  // Depend on the run id, not the run object — message upserts change object
+  // identity and must not tear down/recreate the summary Realtime channel.
+  const summaryRunId = summaryRun?.id ?? null;
 
   useEffect(() => {
-    const runIds = runIdsKey ? runIdsKey.split(",") : [];
-    const channels = runIds.map((runId) =>
-      supabase
-        .channel(`wallie-run-messages:${runId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            filter: `agent_run_id=eq.${runId}`,
-            schema: "public",
-            table: "agent_run_messages",
-          },
-          (payload) => {
-            if (payload.eventType === "DELETE") {
-              return;
-            }
+    if (expandedRunId && !loadedMessageRunIds.has(expandedRunId)) {
+      void loadRunMessages(expandedRunId);
+    }
+  }, [expandedRunId, loadRunMessages, loadedMessageRunIds]);
 
-            handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
-          },
-        )
-        .subscribe(),
-    );
+  // Keep the always-visible summary fed even when disclosure stays on an older run
+  // (e.g. a new active run arrives while the user still has a prior run expanded).
+  useEffect(() => {
+    if (summaryRunId && !loadedMessageRunIds.has(summaryRunId)) {
+      void loadRunMessages(summaryRunId);
+    }
+  }, [loadRunMessages, loadedMessageRunIds, summaryRunId]);
+
+  useEffect(() => {
+    if (!realtimeReady || !expandedRunId) {
+      channelHealthRef.current.expandedMessages = null;
+      return;
+    }
+
+    const runId = expandedRunId;
+    channelHealthRef.current.expandedMessages = false;
+    const messageChannel = supabase
+      .channel(`wallie-run-messages:${runId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `agent_run_id=eq.${runId}`,
+          schema: "public",
+          table: "agent_run_messages",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            return;
+          }
+
+          handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void loadRunMessages(runId);
+        }
+        reportChannelStatus("expandedMessages", status);
+      });
 
     return () => {
-      for (const channel of channels) {
-        void supabase.removeChannel(channel);
-      }
+      channelHealthRef.current.expandedMessages = null;
+      void supabase.removeChannel(messageChannel);
     };
-  }, [runIdsKey, supabase]);
+  }, [expandedRunId, loadRunMessages, realtimeReady, supabase]);
+
+  useEffect(() => {
+    if (!realtimeReady || !summaryRunId || summaryRunId === expandedRunId) {
+      channelHealthRef.current.summaryMessages = null;
+      return;
+    }
+
+    const runId = summaryRunId;
+    channelHealthRef.current.summaryMessages = false;
+    const messageChannel = supabase
+      .channel(`wallie-summary-messages:${runId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `agent_run_id=eq.${runId}`,
+          schema: "public",
+          table: "agent_run_messages",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            return;
+          }
+
+          handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void loadRunMessages(runId);
+        }
+        reportChannelStatus("summaryMessages", status);
+      });
+
+    return () => {
+      channelHealthRef.current.summaryMessages = null;
+      void supabase.removeChannel(messageChannel);
+    };
+  }, [expandedRunId, loadRunMessages, realtimeReady, summaryRunId, supabase]);
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
-    missingSecretKeys: initialData.missingSecretKeys,
     mode: initialData.mode,
     repository: initialData.repository,
     requiresVercelSandbox: initialData.requiresVercelSandbox,
@@ -317,113 +583,155 @@ export function SessionWalliePanel({
   // for archived sessions; mirror that here so the Retry button is disabled
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
+  const historicalRuns = useMemo(
+    () => runs.filter((run) => run.id !== summaryRunId),
+    [runs, summaryRunId],
+  );
 
-  async function queueRun(endpoint: string, body: Record<string, string>) {
-    const response = await fetch(endpoint, {
-      body: JSON.stringify(body),
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | AgentRunActionErrorResponse
-      | AgentRunActionResponse
-      | null;
+  const handleRetryRun = useCallback(
+    async (runId: string) => {
+      setPendingActionId(runId);
+      setFlashMessage(null);
 
-    if (!response.ok) {
-      throw new Error(actionErrorMessage(payload as AgentRunActionErrorResponse | null));
-    }
+      try {
+        const payload = await queueRun(`/api/agent-runs/${runId}/retry`, {
+          workspaceId: session.workspaceId,
+        });
 
-    return payload as AgentRunActionResponse;
-  }
+        const run = hydrateRequestedByMember(payload.run, memberIndex);
 
-  async function handleRetryRun(runId: string) {
-    setPendingActionId(runId);
-    setFlashMessage(null);
+        setRuns((currentRuns) =>
+          upsertWallieRun(currentRuns, {
+            ...run,
+            attemptCount: Math.max(
+              run.attemptCount,
+              nextAttemptOrdinal(currentRuns, { id: run.id, stageId: run.stageId }),
+            ),
+          }),
+        );
+        setExpandedRunId(run.id);
+        setFlashMessage(
+          payload.created
+            ? {
+                kind: "success",
+                text: payload.processScheduled
+                  ? "Wallie queued the retry for the worker."
+                  : "Wallie queued the retry.",
+              }
+            : {
+                kind: "info",
+                text: "Wallie already has an active run on this session.",
+              },
+        );
+      } catch (error) {
+        setFlashMessage({
+          kind: "error",
+          text: error instanceof Error ? error.message : "Wallie could not retry that run.",
+        });
+      } finally {
+        setPendingActionId(null);
+      }
+    },
+    [memberIndex, session.workspaceId],
+  );
+
+  const handleCancelRun = useCallback(
+    async (runId: string) => {
+      setPendingActionId(runId);
+      setFlashMessage(null);
+
+      try {
+        const response = await fetch(`/api/agent-runs/${runId}/cancel`, {
+          body: JSON.stringify({ workspaceId: session.workspaceId }),
+          headers: {
+            "content-type": "application/json",
+          },
+          method: "POST",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | AgentRunCancelResponse
+          | { error?: string }
+          | null;
+
+        if (!response.ok) {
+          throw new Error(
+            (payload as { error?: string } | null)?.error ?? "Wallie could not cancel that run.",
+          );
+        }
+
+        const cancelPayload = payload as AgentRunCancelResponse;
+        const run = hydrateRequestedByMember(cancelPayload.run, memberIndex);
+
+        setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
+        setFlashMessage({
+          kind: "info",
+          text: cancelPayload.canceled
+            ? "Wallie canceled the run and stopped the worker from retrying."
+            : "That run had already finished.",
+        });
+      } catch (error) {
+        setFlashMessage({
+          kind: "error",
+          text: error instanceof Error ? error.message : "Wallie could not cancel that run.",
+        });
+      } finally {
+        setPendingActionId(null);
+      }
+    },
+    [memberIndex, session.workspaceId],
+  );
+
+  const handleToggleRun = useCallback((runId: string) => {
+    setExpandedRunId((currentRunId) => (currentRunId === runId ? null : runId));
+  }, []);
+
+  const handleLoadOlderRuns = useCallback(async () => {
+    if (!nextRunCursor || isLoadingOlderRuns) return;
+
+    const requestSessionId = session.id;
+    const requestCursor = nextRunCursor;
+
+    setIsLoadingOlderRuns(true);
+    setOlderRunsError(null);
 
     try {
-      const payload = await queueRun(`/api/agent-runs/${runId}/retry`, {
-        workspaceId: session.workspaceId,
+      const searchParams = new URLSearchParams({
+        createdAt: requestCursor.createdAt,
+        id: requestCursor.id,
       });
-
-      const run = hydrateRequestedByMember(payload.run, memberIndex);
-
-      setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
-      setExpandedRunIds((currentIds) => {
-        const nextIds = new Set(currentIds);
-
-        nextIds.add(run.id);
-        return nextIds;
-      });
-      setFlashMessage(
-        payload.created
-          ? {
-              kind: "success",
-              text: payload.processScheduled
-                ? "Wallie queued the retry for the worker."
-                : "Wallie queued the retry.",
-            }
-          : {
-              kind: "info",
-              text: "Wallie already has an active run on this session.",
-            },
-      );
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not retry that run.",
-      });
-    } finally {
-      setPendingActionId(null);
-    }
-  }
-
-  async function handleCancelRun(runId: string) {
-    setPendingActionId(runId);
-    setFlashMessage(null);
-
-    try {
-      const response = await fetch(`/api/agent-runs/${runId}/cancel`, {
-        body: JSON.stringify({ workspaceId: session.workspaceId }),
-        headers: {
-          "content-type": "application/json",
-        },
-        method: "POST",
-      });
+      const response = await fetch(`/api/sessions/${requestSessionId}/runs?${searchParams}`);
       const payload = (await response.json().catch(() => null)) as
-        | AgentRunCancelResponse
-        | { error?: string }
+        | RunHistoryResponse
+        | RunHistoryErrorResponse
         | null;
 
-      if (!response.ok) {
+      if (!response.ok || !payload || !("runs" in payload)) {
         throw new Error(
-          (payload as { error?: string } | null)?.error ?? "Wallie could not cancel that run.",
+          payload && "error" in payload ? payload.error : "Could not load older runs.",
         );
       }
 
-      const cancelPayload = payload as AgentRunCancelResponse;
-      const run = hydrateRequestedByMember(cancelPayload.run, memberIndex);
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
 
-      setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
-      setFlashMessage({
-        kind: "info",
-        text: cancelPayload.canceled
-          ? "Wallie canceled the run and stopped the worker from retrying."
-          : "That run had already finished.",
-      });
+      setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
+      setNextRunCursor(payload.nextCursor);
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not cancel that run.",
-      });
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
+      setOlderRunsError(error instanceof Error ? error.message : "Could not load older runs.");
     } finally {
-      setPendingActionId(null);
+      if (sessionIdRef.current === requestSessionId) {
+        setIsLoadingOlderRuns(false);
+      }
     }
-  }
+  }, [isLoadingOlderRuns, nextRunCursor, session.id]);
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5 overflow-x-clip">
       {flashMessage ? (
         <div
           aria-live="polite"
@@ -437,31 +745,16 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      {initialData.requiredSecretKeys.length > 0 ? (
-        <div className="ui-subpanel p-4">
-          <p className="ui-label">Required secrets</p>
-          <p className="mt-2 text-sm text-foreground">
-            {initialData.requiredSecretKeys.join(", ")}
-          </p>
-          <p className="mt-2 text-sm text-muted">
-            {initialData.missingSecretKeys.length === 0
-              ? "All required secrets are configured."
-              : `Missing: ${initialData.missingSecretKeys.join(", ")}`}
-          </p>
-          {initialData.missingSecretKeys.length > 0 ? (
-            <div className="mt-3">
-              <Link className={interactiveLinkClass} href={workspaceSettingsPath(workspaceSlug)}>
-                Open Workspace Settings
-              </Link>
-            </div>
-          ) : null}
+      {connectionAnnouncement ? (
+        <div aria-live="polite" className="sr-only" role="status">
+          {connectionAnnouncement}
         </div>
       ) : null}
 
       {isArchived ? (
         <div
           aria-live="polite"
-          className="rounded-[6px] border border-border bg-surface-muted p-5 text-sm leading-7 text-muted"
+          className="rounded-[6px] border border-border bg-control-muted p-5 text-sm leading-7 text-muted"
           role="status"
         >
           This session is archived. Unarchive it to run Wallie again.
@@ -484,147 +777,444 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      <div className="space-y-4">
-        {runs.length === 0 ? (
-          <div className="ui-subpanel p-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
+      <div className="min-w-0 space-y-5">
+        {summaryRun ? (
+          <WallieRunCard
+            actionPending={pendingActionId === summaryRun.id}
+            branchName={
+              summaryRun.sandboxId && summaryRun.stageSlug
+                ? buildStageBranchName(session.id, summaryRun.stageSlug)
+                : null
+            }
+            cancelLocked={pendingActionId !== null}
+            connectionState={connectionState}
+            isExpanded={expandedRunId === summaryRun.id}
+            isPrimary
+            messagesLoaded={loadedMessageRunIds.has(summaryRun.id)}
+            messagesLoadFailed={messageLoadErrorRunIds.has(summaryRun.id)}
+            nowMs={nowMs}
+            onCancel={handleCancelRun}
+            onRetry={handleRetryRun}
+            onToggle={handleToggleRun}
+            renderNow={renderNow}
+            retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+            run={summaryRun}
+            stallTimeoutMs={initialData.stallTimeoutMs}
+          />
         ) : (
-          runs.map((run) => {
-            const isExpanded = expandedRunIds.has(run.id);
-            const runDetailsId = `wallie-run-details-${run.id}`;
-            const requestedByLabel = formatRequestedBy(run);
-            const runIsBusy = run.isActive;
-
-            return (
-              <article key={run.id} aria-busy={runIsBusy} className="ui-subpanel p-5">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <button
-                    aria-controls={runDetailsId}
-                    aria-expanded={isExpanded}
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() =>
-                      setExpandedRunIds((currentIds) => {
-                        const nextIds = new Set(currentIds);
-
-                        if (nextIds.has(run.id)) {
-                          nextIds.delete(run.id);
-                        } else {
-                          nextIds.add(run.id);
-                        }
-
-                        return nextIds;
-                      })
-                    }
-                    type="button"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
-                          runStatusToneClass(run.status),
-                        )}
-                      >
-                        {runIsBusy ? <Spinner /> : null}
-                        {formatRunStatus(run.status)}
-                      </span>
-                      <span className="ui-pill">{formatStageRunLabel(run)}</span>
-                      <span className="ui-pill font-mono text-muted">
-                        {run.modelProvider}/{run.modelName}
-                      </span>
-                    </div>
-
-                    <p className="mt-3 text-sm font-semibold text-foreground">
-                      Requested by {requestedByLabel}
-                    </p>
-                    <p className="mt-1 text-sm text-muted">
-                      Created {dateTimeFormatter.format(new Date(run.createdAt))}
-                      {run.startedAt
-                        ? ` · Started ${dateTimeFormatter.format(new Date(run.startedAt))}`
-                        : ""}
-                      {run.finishedAt
-                        ? ` · Finished ${dateTimeFormatter.format(new Date(run.finishedAt))}`
-                        : ""}
-                    </p>
-                  </button>
-
-                  {run.canCancel ? (
-                    <button
-                      className="ui-button-danger"
-                      disabled={pendingActionId !== null}
-                      onClick={() => void handleCancelRun(run.id)}
-                      type="button"
-                    >
-                      {pendingActionId === run.id ? "Canceling…" : "Cancel"}
-                    </button>
-                  ) : null}
-
-                  {run.canRetry ? (
-                    <button
-                      className="ui-button"
-                      disabled={
-                        pendingActionId !== null || blockingReasons.length > 0 || isArchived
-                      }
-                      onClick={() => void handleRetryRun(run.id)}
-                      type="button"
-                    >
-                      {pendingActionId === run.id ? "Retrying…" : "Retry Run"}
-                    </button>
-                  ) : null}
-                </div>
-
-                {isExpanded ? (
-                  <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
-                    {run.messages.length > 0
-                      ? run.messages.map((message) => (
-                          <div
-                            key={message.id}
-                            className={cn(
-                              "rounded-[6px] border px-4 py-4 text-sm leading-7",
-                              message.kind === "error"
-                                ? "border-danger/20 bg-danger-soft text-danger"
-                                : "border-border bg-surface-muted text-foreground",
-                            )}
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
-                              <span>{message.kind}</span>
-                              <span>{dateTimeFormatter.format(new Date(message.createdAt))}</span>
-                            </div>
-                            <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
-                          </div>
-                        ))
-                      : null}
-                    {run.messages.length === 0 && !runIsBusy ? (
-                      <div
-                        aria-live="polite"
-                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
-                        role="status"
-                      >
-                        No persisted messages were recorded for this run.
-                      </div>
-                    ) : null}
-                    {runIsBusy ? <RunProgressRow /> : null}
-                  </div>
-                ) : null}
-              </article>
-            );
-          })
+          <div className="rounded-[6px] border border-dashed border-border px-4 py-8 text-center text-sm leading-7 text-muted">
+            No runs recorded yet.
+          </div>
         )}
+
+        {historicalRuns.length > 0 ? (
+          <section aria-labelledby="previous-runs-heading" className="min-w-0">
+            <h3 id="previous-runs-heading" className="ui-label">
+              Previous runs
+            </h3>
+            <div className="mt-2 min-w-0 divide-y divide-border border-y border-border">
+              {historicalRuns.map((run) => (
+                <WallieRunCard
+                  key={run.id}
+                  actionPending={pendingActionId === run.id}
+                  branchName={
+                    run.sandboxId && run.stageSlug
+                      ? buildStageBranchName(session.id, run.stageSlug)
+                      : null
+                  }
+                  cancelLocked={pendingActionId !== null}
+                  connectionState={connectionState}
+                  isExpanded={expandedRunId === run.id}
+                  messagesLoaded={loadedMessageRunIds.has(run.id)}
+                  messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+                  nowMs={nowMs}
+                  onCancel={handleCancelRun}
+                  onRetry={handleRetryRun}
+                  onToggle={handleToggleRun}
+                  renderNow={renderNow}
+                  retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+                  run={run}
+                  stallTimeoutMs={initialData.stallTimeoutMs}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
+
+      {olderRunsError ? (
+        <p aria-live="polite" className="text-sm text-danger" role="status">
+          {olderRunsError}
+        </p>
+      ) : null}
+
+      {nextRunCursor ? (
+        <button
+          className="ui-button"
+          disabled={isLoadingOlderRuns}
+          onClick={() => void handleLoadOlderRuns()}
+          type="button"
+        >
+          {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
+        </button>
+      ) : null}
     </div>
   );
 }
 
-function RunProgressRow() {
+type WallieRunCardProps = {
+  actionPending: boolean;
+  branchName: string | null;
+  cancelLocked: boolean;
+  connectionState: WallieRealtimeConnectionState;
+  isExpanded: boolean;
+  isPrimary?: boolean;
+  messagesLoaded: boolean;
+  messagesLoadFailed: boolean;
+  nowMs: number;
+  onCancel: (runId: string) => Promise<void>;
+  onRetry: (runId: string) => Promise<void>;
+  onToggle: (runId: string) => void;
+  renderNow: string;
+  retryLocked: boolean;
+  run: WallieRun;
+  stallTimeoutMs: number;
+};
+
+const WallieRunCard = memo(function WallieRunCard({
+  actionPending,
+  branchName,
+  cancelLocked,
+  connectionState,
+  isExpanded,
+  isPrimary = false,
+  messagesLoaded,
+  messagesLoadFailed,
+  nowMs,
+  onCancel,
+  onRetry,
+  onToggle,
+  renderNow,
+  retryLocked,
+  run,
+  stallTimeoutMs,
+}: WallieRunCardProps) {
+  const runDetailsId = `wallie-run-details-${run.id}`;
+  const stalled = isRunActivityStalled({
+    createdAt: run.createdAt,
+    isActive: run.isActive,
+    lastActivityAt: run.lastActivityAt,
+    nowMs,
+    stallTimeoutMs,
+    status: run.status,
+  });
+  const lastActivityAt = lastActivityTimestamp(run);
+  const operation = run.isActive ? currentOperationLabel({ run, stalled }) : null;
+
   return (
-    <div
-      aria-busy
-      aria-live="polite"
-      className="ui-muted-panel px-4 py-4 text-sm text-muted"
-      role="status"
+    <article
+      aria-busy={run.isActive}
+      aria-label={isPrimary ? "Current Wallie run" : undefined}
+      className={cn(
+        "min-w-0",
+        isPrimary ? "rounded-[8px] border border-border bg-control-muted/30 p-4 sm:p-5" : "py-5",
+        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
+      )}
+      data-run-id={run.id}
+      data-wallie-summary={isPrimary ? "" : undefined}
     >
-      <span className="flex items-center gap-2">
-        <Spinner />
-        <span>Wallie is working</span>
-      </span>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+        <button
+          aria-controls={runDetailsId}
+          aria-expanded={isExpanded}
+          className="min-w-0 flex-1 text-left"
+          onClick={() => onToggle(run.id)}
+          type="button"
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+            {isPrimary ? (
+              <p className="text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
+            ) : (
+              <Status value={agentRunStatusValue(run.status)} />
+            )}
+            {isPrimary ? <Status value={agentRunStatusValue(run.status)} /> : null}
+            <span className="type-annotation text-muted">Attempt {run.attemptCount}</span>
+            <span className="min-w-0 break-all font-mono type-annotation text-foreground">
+              {run.modelProvider}/{run.modelName}
+            </span>
+          </div>
+
+          {isPrimary ? null : (
+            <p className="mt-3 text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
+          )}
+          <p className={cn("mt-1 text-sm text-muted", isPrimary && "type-secondary")}>
+            {run.startedAt ? (
+              <>
+                Started{" "}
+                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.startedAt} />
+                {isPrimary ? null : (
+                  <>
+                    {" · Duration "}
+                    <TimeDisplay
+                      active={run.isActive}
+                      endValue={run.finishedAt}
+                      initialNow={renderNow}
+                      value={run.startedAt}
+                      variant="elapsed"
+                    />
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                Created{" "}
+                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.createdAt} />
+              </>
+            )}
+            {run.finishedAt ? (
+              <>
+                {" · Ended "}
+                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.finishedAt} />
+              </>
+            ) : null}
+          </p>
+          <p className={cn("mt-1 text-sm text-muted", isPrimary && "type-secondary")}>
+            Requested by {formatRequestedBy(run)}
+          </p>
+        </button>
+
+        {run.canCancel ? (
+          <button
+            className="ui-button-danger"
+            disabled={cancelLocked}
+            onClick={() => void onCancel(run.id)}
+            type="button"
+          >
+            {actionPending ? "Canceling…" : "Cancel"}
+          </button>
+        ) : null}
+
+        {run.canRetry ? (
+          <button
+            className="ui-button"
+            disabled={retryLocked}
+            onClick={() => void onRetry(run.id)}
+            type="button"
+          >
+            {actionPending ? "Retrying…" : "Retry Run"}
+          </button>
+        ) : null}
+      </div>
+
+      {isPrimary && operation ? (
+        <p className="mt-4 min-w-0 break-words text-sm font-medium text-foreground [overflow-wrap:anywhere]">
+          {operation}
+        </p>
+      ) : null}
+
+      {isPrimary ? (
+        <dl className="mt-4 grid min-w-0 grid-cols-2 gap-x-5 gap-y-3 border-y border-border/70 py-3 text-sm sm:grid-cols-3">
+          <div className="min-w-0">
+            <dt className="type-annotation text-muted">Elapsed</dt>
+            <dd className="mt-0.5 tabular-nums text-foreground">
+              {run.startedAt ? (
+                <TimeDisplay
+                  active={run.isActive}
+                  endValue={run.finishedAt}
+                  initialNow={renderNow}
+                  value={run.startedAt}
+                  variant="elapsed"
+                />
+              ) : (
+                "—"
+              )}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="type-annotation text-muted">Last event</dt>
+            <dd className="mt-0.5 text-foreground">
+              <TimeDisplay
+                absoluteStyle="short"
+                initialNow={renderNow}
+                value={lastActivityAt}
+                variant="relative"
+              />
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="type-annotation text-muted">Connection</dt>
+            <dd className="mt-0.5 text-foreground">{connectionStateCopy(connectionState)}</dd>
+          </div>
+        </dl>
+      ) : null}
+
+      {isPrimary && stalled ? (
+        <p aria-live="polite" className="mt-3 text-sm text-warning" role="status">
+          This run may be stalled. Cancel it before retrying.
+        </p>
+      ) : null}
+
+      {isExpanded ? (
+        <div
+          id={runDetailsId}
+          className={cn("mt-4 min-w-0 space-y-4", !isPrimary && "border-t border-border/70 pt-4")}
+        >
+          <details className="min-w-0 text-sm">
+            <summary className="cursor-pointer type-annotation font-semibold text-muted">
+              Run details
+            </summary>
+            <dl className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
+              <div className="min-w-0">
+                <dt className="type-annotation text-muted">Run ID</dt>
+                <dd className="break-all font-mono text-foreground">{run.id}</dd>
+              </div>
+              {branchName ? (
+                <div className="min-w-0">
+                  <dt className="type-annotation text-muted">Branch</dt>
+                  <dd className="break-all font-mono text-foreground">{branchName}</dd>
+                </div>
+              ) : null}
+              {run.sandboxId ? (
+                <div className="min-w-0">
+                  <dt className="type-annotation text-muted">Sandbox</dt>
+                  <dd className="break-all font-mono text-foreground">
+                    {run.sandboxProvider ? `${run.sandboxProvider}/` : ""}
+                    {run.sandboxId}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </details>
+
+          <RunMessageTimeline
+            connectionState={connectionState}
+            messages={run.messages}
+            messagesLoadFailed={messagesLoadFailed}
+            messagesLoaded={messagesLoaded}
+            renderNow={renderNow}
+            run={run}
+            stalled={stalled}
+          />
+        </div>
+      ) : null}
+    </article>
+  );
+});
+
+const RunMessageBody = memo(function RunMessageBody({ message }: { message: WallieRunMessage }) {
+  const parsed = useMemo(
+    () => (message.kind === "tool_use" ? parseToolUseMessage(message.messageMd) : null),
+    [message.kind, message.messageMd],
+  );
+
+  if (parsed) {
+    return (
+      <div className="mt-2 min-w-0 break-words text-sm leading-7 text-foreground [overflow-wrap:anywhere]">
+        <p>
+          <strong className="font-semibold text-foreground">Tool:</strong> {parsed.tool}
+        </p>
+        <pre
+          aria-label="Code block"
+          className="artifact-pre first:mt-0 last:mb-0"
+          role="group"
+          tabIndex={0}
+        >
+          <code className="artifact-code-block">{parsed.payload}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <p
+      className={cn(
+        "mt-2 min-w-0 whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]",
+        message.kind === "error" ? "text-danger" : "text-foreground",
+      )}
+    >
+      {message.messageMd}
+    </p>
+  );
+});
+
+function RunMessageTimeline({
+  connectionState,
+  messages,
+  messagesLoadFailed,
+  messagesLoaded,
+  renderNow,
+  run,
+  stalled,
+}: {
+  connectionState: WallieRealtimeConnectionState;
+  messages: WallieRun["messages"];
+  messagesLoadFailed: boolean;
+  messagesLoaded: boolean;
+  renderNow: string;
+  run: WallieRun;
+  stalled: boolean;
+}) {
+  const disconnected = connectionState === "disconnected";
+
+  return (
+    <div className="min-w-0">
+      <p className="ui-label">Messages</p>
+
+      {messages.length > 0 ? (
+        <ol className="mt-3 min-w-0 divide-y divide-border border-y border-border">
+          {messages.map((message) => (
+            <li key={message.id} className="min-w-0 py-3">
+              <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2 type-annotation text-muted">
+                <span>{formatMessageSourceLabel(message.kind)}</span>
+                <TimeDisplay
+                  absoluteStyle="short"
+                  initialNow={renderNow}
+                  value={message.createdAt}
+                />
+              </div>
+              <RunMessageBody message={message} />
+            </li>
+          ))}
+        </ol>
+      ) : null}
+
+      {messages.length === 0 && !run.isActive && messagesLoadFailed ? (
+        <div aria-live="polite" className="mt-3 text-sm text-danger" role="status">
+          {messagesFailedCopy()}
+        </div>
+      ) : null}
+      {messages.length === 0 && !run.isActive && !messagesLoaded && !messagesLoadFailed ? (
+        <div aria-live="polite" className="mt-3 text-sm text-muted" role="status">
+          {messagesLoadingCopy()}
+        </div>
+      ) : null}
+      {messages.length === 0 && !run.isActive && messagesLoaded ? (
+        <div aria-live="polite" className="mt-3 text-sm text-muted" role="status">
+          {messagesEmptyCopy()}
+        </div>
+      ) : null}
+      {run.isActive ? (
+        <div
+          aria-busy
+          aria-live="polite"
+          className="mt-3 flex items-center gap-2 text-sm text-muted"
+          role="status"
+        >
+          {stalled ? null : <Spinner />}
+          <span>
+            {stalled
+              ? messages.length > 0
+                ? "No new messages recently."
+                : "No messages recorded yet."
+              : disconnected
+                ? messagesDisconnectedCopy()
+                : "Waiting for run messages…"}
+          </span>
+        </div>
+      ) : null}
+      {disconnected && messages.length > 0 ? (
+        <p className="mt-3 text-sm text-muted">{messagesDisconnectedCopy()}</p>
+      ) : null}
     </div>
   );
 }

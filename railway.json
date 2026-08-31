@@ -18,6 +18,7 @@
       "src/lib/agent-runner/**",
       "src/lib/claude-code/**",
       "src/lib/codex/**",
+      "src/lib/cursor/**",
       "src/lib/github/**",
       "src/lib/linear-routing/**",
       "src/lib/maintenance/**",

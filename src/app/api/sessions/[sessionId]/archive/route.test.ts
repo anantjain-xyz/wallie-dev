@@ -40,14 +40,19 @@ function routeContext(sessionId = SESSION_ID) {
   return { params: Promise.resolve({ sessionId }) };
 }
 
-function makeRequest(method: "DELETE" | "POST") {
-  return new Request(`http://localhost/api/sessions/${SESSION_ID}/archive`, { method });
+function makeRequest(method: "DELETE" | "POST", body?: Record<string, unknown>) {
+  return new Request(`http://localhost/api/sessions/${SESSION_ID}/archive`, {
+    ...(body
+      ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } }
+      : {}),
+    method,
+  });
 }
 
 function buildSupabaseMock(
   opts: {
     sessionError?: { message: string } | null;
-    sessionRow?: { id: string; workspace_id: string } | null;
+    sessionRow?: { id: string; phase_status: string; workspace_id: string } | null;
   } = {},
 ) {
   return {
@@ -61,7 +66,11 @@ function buildSupabaseMock(
             maybeSingle: async () => ({
               data:
                 opts.sessionRow === undefined
-                  ? { id: SESSION_ID, workspace_id: WORKSPACE_ID }
+                  ? {
+                      id: SESSION_ID,
+                      phase_status: "in_progress",
+                      workspace_id: WORKSPACE_ID,
+                    }
                   : opts.sessionRow,
               error: opts.sessionError ?? null,
             }),
@@ -82,8 +91,15 @@ describe("/api/sessions/[sessionId]/archive", () => {
     mocked.archiveSession.mockResolvedValue({
       archivedAt: "2026-06-07T12:00:00.000Z",
       id: SESSION_ID,
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:01.000Z",
     });
-    mocked.unarchiveSession.mockResolvedValue({ archivedAt: null, id: SESSION_ID });
+    mocked.unarchiveSession.mockResolvedValue({
+      archivedAt: null,
+      id: SESSION_ID,
+      phaseStatus: "awaiting_review",
+      updatedAt: "2026-06-07T12:01:00.000Z",
+    });
   });
 
   it("archives the session and echoes its archived_at", async () => {
@@ -93,6 +109,8 @@ describe("/api/sessions/[sessionId]/archive", () => {
     await expect(response.json()).resolves.toEqual({
       archivedAt: "2026-06-07T12:00:00.000Z",
       id: SESSION_ID,
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:01.000Z",
     });
     expect(mocked.archiveSession).toHaveBeenCalledWith(
       {},
@@ -105,8 +123,34 @@ describe("/api/sessions/[sessionId]/archive", () => {
     const response = await DELETE(makeRequest("DELETE"), routeContext());
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ archivedAt: null, id: SESSION_ID });
+    await expect(response.json()).resolves.toEqual({
+      archivedAt: null,
+      id: SESSION_ID,
+      phaseStatus: "awaiting_review",
+      updatedAt: "2026-06-07T12:01:00.000Z",
+    });
     expect(mocked.unarchiveSession).toHaveBeenCalledWith({}, { sessionId: SESSION_ID });
+  });
+
+  it("passes the expected archive version through for a guarded Undo", async () => {
+    const expectedArchivedAt = "2026-06-07T12:00:00.000Z";
+    const response = await DELETE(makeRequest("DELETE", { expectedArchivedAt }), routeContext());
+
+    expect(response.status).toBe(200);
+    expect(mocked.unarchiveSession).toHaveBeenCalledWith(
+      {},
+      { expectedArchivedAt, sessionId: SESSION_ID },
+    );
+  });
+
+  it("rejects an invalid expected archive version", async () => {
+    const response = await DELETE(
+      makeRequest("DELETE", { expectedArchivedAt: 42 }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocked.unarchiveSession).not.toHaveBeenCalled();
   });
 
   it("rejects unauthenticated requests before mutating", async () => {

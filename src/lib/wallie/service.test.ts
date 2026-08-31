@@ -3,43 +3,64 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Tables } from "@/lib/supabase/database.types";
 import {
-  claimQueuedJobCandidate,
-  enqueueWallieRun,
-  processQueuedAgentJobs,
+  assertSessionFirstRunReady,
+  createSessionWithFirstJob,
+  retryWallieRun,
 } from "@/lib/wallie/service";
-import { processPipelineJob } from "@/lib/pipeline/processor";
+import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
 
 const mocks = vi.hoisted(() => ({
-  loadVercelSandboxConnectionPreview: vi.fn(),
+  assertCurrentSandboxCapabilityCheck: vi.fn(),
+  loadWorkspaceSandboxOverview: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
 }));
 
-vi.mock("@/lib/pipeline/processor", () => ({
-  processPipelineJob: vi.fn(),
-}));
-
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnectionPreview: mocks.loadVercelSandboxConnectionPreview,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxOverview: mocks.loadWorkspaceSandboxOverview,
+  providerLabel: () => "Vercel Sandbox",
 }));
 
 vi.mock("@/lib/sandbox", () => ({
   resolveSandboxImplementation: mocks.resolveSandboxImplementation,
 }));
 
+vi.mock("@/lib/sandbox-capabilities/readiness", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/sandbox-capabilities/readiness")>(
+    "@/lib/sandbox-capabilities/readiness",
+  );
+  return {
+    ...actual,
+    assertCurrentSandboxCapabilityCheck: mocks.assertCurrentSandboxCapabilityCheck,
+  };
+});
+
 beforeEach(() => {
-  mocks.loadVercelSandboxConnectionPreview.mockReset();
+  mocks.assertCurrentSandboxCapabilityCheck.mockReset();
+  mocks.assertCurrentSandboxCapabilityCheck.mockResolvedValue(undefined);
+  mocks.loadWorkspaceSandboxOverview.mockReset();
   mocks.resolveSandboxImplementation.mockReset();
   mocks.resolveSandboxImplementation.mockReturnValue("vercel");
-  mocks.loadVercelSandboxConnectionPreview.mockResolvedValue({
-    lastValidatedAt: baseTimestamp,
-    lastValidationError: null,
-    projectId: "prj_123",
-    projectName: "wallie-sandboxes",
-    status: "connected",
-    teamId: "team_123",
-    tokenPreview: "verc...1234",
+  mocks.loadWorkspaceSandboxOverview.mockResolvedValue({
+    activeProvider: "vercel",
+    connections: {
+      daytona: null,
+      e2b: null,
+      vercel: {
+        connectionRevision: "revision-1",
+        lastValidatedAt: baseTimestamp,
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+        tokenPreview: "verc...1234",
+        updatedAt: baseTimestamp,
+        workspaceId: "ws-1",
+      },
+    },
+    enabledProviders: ["vercel", "e2b", "daytona"],
+    revision: 1,
     updatedAt: baseTimestamp,
-    workspaceId: "ws-1",
   });
 });
 
@@ -49,89 +70,90 @@ afterEach(() => {
 });
 
 describe("wallie service helpers", () => {
-  it("claims the first candidate that wins the race", async () => {
-    const candidates = [
-      { id: "job-1", status: "queued" },
-      { id: "job-2", status: "queued" },
-      { id: "job-3", status: "queued" },
-    ] as const;
-    const attempts: string[] = [];
+  it("creates a session and its first job with one RPC mutation", async () => {
+    const rpc = vi.fn(() => ({
+      single: async () => ({
+        data: {
+          job_id: "job-1",
+          run_id: "run-1",
+          session_id: "session-1",
+          session_number: 42,
+          workspace_slug: "acme",
+        },
+        error: null,
+      }),
+    }));
 
-    const claimed = await claimQueuedJobCandidate(candidates, async (job) => {
-      attempts.push(job.id);
-
-      if (job.id === "job-1") {
-        return null;
-      }
-
-      return job;
+    const result = await createSessionWithFirstJob({
+      admin: { rpc } as unknown as NonNullable<
+        Parameters<typeof createSessionWithFirstJob>[0]["admin"]
+      >,
+      creatorMemberId: "member-1",
+      githubRepositoryId: null,
+      linearIssueId: null,
+      linearIssueUrl: null,
+      modelName: "gpt-5.5",
+      modelProvider: "codex",
+      promptMd: "Create it atomically.",
+      selectedStageIds: ["stage-build", "stage-land"],
+      title: "Atomic create",
+      workspaceId: "workspace-1",
     });
 
-    expect(attempts).toEqual(["job-1", "job-2"]);
-    expect(claimed?.id).toBe("job-2");
-  });
-
-  it("passes an abort signal into claimed pipeline job processing", async () => {
-    const signal = new AbortController().signal;
-    const queuedJob = buildAgentJobRow();
-    const claimedJob = buildAgentJobRow({
-      attempt_count: 1,
-      last_error: null,
-      started_at: baseTimestamp,
-      status: "running",
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("create_session_with_first_job_and_attachments", {
+      agent_model_name: "gpt-5.5",
+      agent_model_provider: "codex",
+      creator_member_id: "member-1",
+      selected_pipeline_id: undefined,
+      selected_stage_ids: ["stage-build", "stage-land"],
+      session_attachment_ids: [],
+      session_github_repository_id: undefined,
+      session_linear_issue_id: undefined,
+      session_linear_issue_url: undefined,
+      session_prompt_md: "Create it atomically.",
+      session_title: "Atomic create",
+      target_workspace_id: "workspace-1",
     });
-    vi.mocked(processPipelineJob).mockResolvedValue({
-      jobId: "job-1",
-      processed: true,
-      result: "success",
-      runId: "run-1",
-    });
-    const admin = {
-      from: (table: string) => {
-        if (table !== "agent_jobs") throw new Error(`unexpected table: ${table}`);
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({ data: queuedJob, error: null }),
-            }),
-          }),
-          update: () => ({
-            eq: () => ({
-              eq: () => ({
-                select: () => ({
-                  maybeSingle: async () => ({ data: claimedJob, error: null }),
-                }),
-              }),
-            }),
-          }),
-        };
-      },
-    };
-
-    const result = await processQueuedAgentJobs({
-      admin: admin as never,
-      requestedJobId: "job-1",
-      signal,
-    });
-
     expect(result).toEqual({
       jobId: "job-1",
-      processed: true,
-      result: "success",
+      number: 42,
       runId: "run-1",
+      sessionId: "session-1",
+      workspaceSlug: "acme",
     });
-    expect(processPipelineJob).toHaveBeenCalledWith({
-      admin,
-      job: claimedJob,
-      signal,
-    });
+  });
+
+  it("blocks first-run prep when the resolved repository is archived", () => {
+    expect(() =>
+      assertSessionFirstRunReady({
+        agentConfig: { effort: "xhigh", model: "gpt-5.5", provider: "codex" },
+        repository: {
+          defaultBranch: "main",
+          defaultProgrammingLanguage: "TypeScript",
+          fullName: "acme/archived",
+          htmlUrl: "https://github.com/acme/archived",
+          id: "repo-archived",
+          isArchived: true,
+          isPrivate: false,
+        },
+        vercelSandboxConnection: {
+          connected: true,
+          lastValidationError: null,
+          projectId: "prj_123",
+          projectName: "wallie-sandboxes",
+          status: "connected",
+          teamId: "team_123",
+        },
+      }),
+    ).toThrow(/archived repository/i);
   });
 });
 
-// ---- enqueue path: regression for WAL-3 ---------------------------------
+// ---- retry enqueue path: regression for WAL-3 ---------------------------
 //
 // The queued `agent_runs` row used to be stamped with the literal placeholder
-// "wallie-control-plane-stub". Here we drive the public enqueue path with a
+// "wallie-control-plane-stub". Here we drive the public retry path with a
 // fake admin/server client and assert the row instead carries the model the
 // workspace has configured.
 
@@ -169,7 +191,6 @@ function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     dedupe_key: "session:sess-1:active",
     finished_at: null,
     id: "job-1",
-    job_type: "session",
     last_error: null,
     requested_by_member_id: "mem-1",
     scheduled_at: null,
@@ -179,7 +200,7 @@ function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     stage_name: null,
     stage_slug: null,
     status: "queued",
-    trigger_type: "manual_run",
+    trigger_type: "manual_retry",
     updated_at: baseTimestamp,
     workspace_id: "ws-1",
     ...overrides,
@@ -200,6 +221,7 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     run_type: "project",
     sandbox_id: null,
     sandbox_provider: null,
+    sandbox_connection_revision: null,
     sandbox_vercel_project_id: null,
     sandbox_vercel_team_id: null,
     session_id: "sess-1",
@@ -251,6 +273,7 @@ function buildSupabaseMocks(opts: {
   insertedJobRow?: AgentJobRow;
   insertedRunRows: Array<Record<string, unknown>>;
   jobInsertError?: PostgrestError | null;
+  existingRun?: AgentRunRow | null;
   primaryRepositoryId?: string | null;
   repositories?: Array<{
     default_branch?: string | null;
@@ -327,19 +350,6 @@ function buildSupabaseMocks(opts: {
           }),
         };
       }
-      if (table === "workspace_secrets") {
-        // No missing required secrets.
-        return {
-          select: () => ({
-            eq: () => ({
-              in: async () => ({
-                data: [],
-                error: null,
-              }),
-            }),
-          }),
-        };
-      }
       if (table === "agent_runs") {
         return {
           select: () =>
@@ -347,6 +357,16 @@ function buildSupabaseMocks(opts: {
               if (filters.has("agent_job_id")) {
                 return {
                   data: opts.loadRunByJobId ? await opts.loadRunByJobId(signal) : null,
+                  error: null,
+                };
+              }
+
+              if (filters.has("id")) {
+                return {
+                  data:
+                    opts.existingRun === undefined
+                      ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
+                      : opts.existingRun,
                   error: null,
                 };
               }
@@ -489,12 +509,12 @@ function buildSupabaseMocks(opts: {
   };
 
   return {
-    admin: admin as unknown as Parameters<typeof enqueueWallieRun>[0]["admin"],
-    supabase: supabase as unknown as Parameters<typeof enqueueWallieRun>[0]["supabase"],
+    admin: admin as unknown as Parameters<typeof retryWallieRun>[0]["admin"],
+    supabase: supabase as unknown as Parameters<typeof retryWallieRun>[0]["supabase"],
   };
 }
 
-describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
+describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
   it("stamps the queued run with the workspace's configured model and provider", async () => {
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
@@ -505,12 +525,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       insertedRunRows,
     });
 
-    const result = await enqueueWallieRun({
+    const result = await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -536,12 +555,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({ code: "session_archived" });
@@ -558,12 +576,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({ code: "session_not_runnable" });
@@ -578,12 +595,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       insertedRunRows,
     });
 
-    await enqueueWallieRun({
+    await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -595,7 +611,54 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect((inserted.model_provider as string).length).toBeGreaterThan(0);
   });
 
-  it("uses the effective workspace repository to choose code mode for queued runs", async () => {
+  it("preserves code mode from the original run when retrying", async () => {
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      existingRun: buildAgentRunRow({
+        finished_at: baseTimestamp,
+        run_type: "code",
+        status: "error",
+      }),
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await retryWallieRun({
+      admin,
+      runId: "run-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    expect(insertedRunRows[0]!.run_type).toBe("code");
+  });
+
+  it("returns the affected provider when its capability check is stale", async () => {
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "e2b",
+      connections: {
+        daytona: null,
+        e2b: {
+          apiKeyPreview: "e2b_...1234",
+          connectionRevision: "revision-e2b",
+          lastValidatedAt: baseTimestamp,
+          lastValidationError: null,
+          status: "connected",
+          updatedAt: baseTimestamp,
+          workspaceId: "ws-1",
+        },
+        vercel: null,
+      },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 2,
+      updatedAt: baseTimestamp,
+    });
+    mocks.assertCurrentSandboxCapabilityCheck.mockRejectedValueOnce(
+      new SandboxCapabilityCheckStaleError("e2b"),
+    );
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
@@ -604,34 +667,42 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       repositories: [{ full_name: "acme/app", id: "repo-1" }],
     });
 
-    await enqueueWallieRun({
-      admin,
-      sessionId: "sess-1",
-      requestedByMemberId: "mem-1",
-      supabase,
-      triggerType: "manual_run",
-      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    await expect(
+      retryWallieRun({
+        admin,
+        runId: "run-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "sandbox_capability_check_stale",
+      provider: "e2b",
+      statusCode: 422,
     });
-
-    expect(insertedRunRows[0]!.run_type).toBe("code");
+    expect(insertedRunRows).toHaveLength(0);
   });
 
   it("blocks code mode when the configured repository id does not resolve", async () => {
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
+      existingRun: buildAgentRunRow({
+        finished_at: baseTimestamp,
+        run_type: "code",
+        status: "error",
+      }),
       insertedRunRows,
       primaryRepositoryId: "repo-missing",
       repositories: [],
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
@@ -643,7 +714,13 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
   });
 
   it("blocks queued runs when the workspace Vercel Sandbox connection is missing", async () => {
-    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      connections: { daytona: null, e2b: null, vercel: null },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 1,
+      updatedAt: baseTimestamp,
+    });
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
@@ -651,37 +728,133 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
-      code: "vercel_sandbox_connection_missing",
+      code: "sandbox_connection_missing",
       statusCode: 422,
     });
 
     expect(insertedRunRows).toHaveLength(0);
   });
 
+  it("blocks queued runs when the active sandbox provider is disabled", async () => {
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "e2b",
+      connections: {
+        daytona: null,
+        e2b: {
+          apiKeyPreview: "e2b_...1234",
+          connectionRevision: "revision-e2b",
+          lastValidatedAt: baseTimestamp,
+          lastValidationError: null,
+          status: "connected",
+          updatedAt: baseTimestamp,
+          workspaceId: "ws-1",
+        },
+        vercel: null,
+      },
+      enabledProviders: ["vercel"],
+      revision: 2,
+      updatedAt: baseTimestamp,
+    });
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await expect(
+      retryWallieRun({
+        admin,
+        runId: "run-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "sandbox_connection_invalid",
+      provider: "e2b",
+      statusCode: 422,
+    });
+    expect(mocks.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
+    expect(insertedRunRows).toHaveLength(0);
+  });
+
+  it("blocks queued runs when Daytona's saved control plane is no longer allowed", async () => {
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "daytona",
+      connections: {
+        daytona: {
+          apiKeyPreview: "daytona_…1234",
+          apiUrl: "https://retired-daytona.example/api",
+          connectionRevision: "revision-daytona",
+          lastValidatedAt: baseTimestamp,
+          lastValidationError: "Daytona API URL is not allowed by this Wallie deployment.",
+          status: "error",
+          target: null,
+          updatedAt: baseTimestamp,
+          workspaceId: "ws-1",
+        },
+        e2b: null,
+        vercel: null,
+      },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 2,
+      updatedAt: baseTimestamp,
+    });
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await expect(
+      retryWallieRun({
+        admin,
+        runId: "run-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "sandbox_connection_invalid",
+      provider: "daytona",
+      statusCode: 422,
+    });
+    expect(mocks.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
+    expect(insertedRunRows).toHaveLength(0);
+  });
+
   it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
     mocks.resolveSandboxImplementation.mockReturnValueOnce("fake");
-    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      connections: { daytona: null, e2b: null, vercel: null },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 1,
+      updatedAt: baseTimestamp,
+    });
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
       insertedRunRows,
     });
 
-    await enqueueWallieRun({
+    await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -689,7 +862,7 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
   });
 });
 
-describe("enqueueWallieRun duplicate job dedupe", () => {
+describe("retryWallieRun duplicate job dedupe", () => {
   it("returns the existing run when run visibility is delayed beyond the old 200 ms window", async () => {
     vi.useFakeTimers();
     const startTime = Date.parse(baseTimestamp);
@@ -710,12 +883,11 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
       },
     });
 
-    const resultPromise = enqueueWallieRun({
+    const resultPromise = retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -743,17 +915,16 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
       loadRunByJobId: () => null,
     });
 
-    const resultPromise = enqueueWallieRun({
+    const resultPromise = retryWallieRun({
       admin,
       runLookupRetry: {
         initialDelayMs: 40,
         maxDelayMs: 80,
         maxElapsedMs: 120,
       },
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
     const rejection = expect(resultPromise).rejects.toMatchObject({
@@ -799,17 +970,16 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
       },
     });
 
-    const resultPromise = enqueueWallieRun({
+    const resultPromise = retryWallieRun({
       admin,
       runLookupRetry: {
         initialDelayMs: 40,
         maxDelayMs: 80,
         maxElapsedMs: 120,
       },
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
     const rejection = expect(resultPromise).rejects.toMatchObject({

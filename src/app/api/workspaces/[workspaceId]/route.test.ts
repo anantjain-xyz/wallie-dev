@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedHomePath: vi.fn(),
+  removeWorkspaceSessionAttachments: vi.fn().mockResolvedValue(undefined),
   stopWorkspaceProviderSandboxes: vi.fn().mockResolvedValue({ stoppedSandboxIds: [] }),
 }));
 
@@ -21,6 +22,10 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/vercel-sandbox/teardown", () => ({
   stopWorkspaceProviderSandboxes: mocked.stopWorkspaceProviderSandboxes,
+}));
+
+vi.mock("@/lib/storage/session-attachment-cleanup", () => ({
+  removeWorkspaceSessionAttachments: mocked.removeWorkspaceSessionAttachments,
 }));
 
 import { DELETE, PATCH } from "./route";
@@ -167,11 +172,17 @@ function mockDeleteResult(result: { error?: unknown; avatarObjects?: { name: str
     eq: vi.fn().mockResolvedValue({ error: null }),
   });
   const sessionsUpdate = vi.fn().mockReturnValue({ eq: sessionsEqWorkspace });
-  const from = vi
-    .fn()
-    .mockImplementation((table: string) =>
-      table === "sessions" ? { update: sessionsUpdate } : { delete: del },
-    );
+  const from = vi.fn().mockImplementation((table: string) => {
+    if (table === "sessions") return { update: sessionsUpdate };
+    if (table === "session_attachments") {
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      };
+    }
+    return { delete: del };
+  });
   const list = vi.fn().mockResolvedValue({ data: result.avatarObjects ?? [], error: null });
   const remove = vi.fn().mockResolvedValue({ data: [], error: null });
   const storageFrom = vi.fn().mockReturnValue({ list, remove });
@@ -339,7 +350,7 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     expect(response.status).toBe(500);
     // The pre-delete teardown already canceled this workspace's jobs/runs; since
     // the delete didn't commit, the route must move any still-generating session
-    // out of `agent_generating` so it isn't stranded with no job.
+    // out of `in_progress` so it isn't stranded with no job.
     expect(calls.from).toHaveBeenCalledWith("sessions");
     expect(calls.sessionsUpdate).toHaveBeenCalledWith({ phase_status: "rejected" });
   });

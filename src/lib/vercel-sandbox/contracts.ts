@@ -23,6 +23,7 @@ export type VercelSandboxCredentials = {
 };
 
 export type VercelSandboxConnectionPreview = {
+  connectionRevision?: string;
   lastValidatedAt: string | null;
   lastValidationError: string | null;
   projectId: string;
@@ -32,8 +33,4 @@ export type VercelSandboxConnectionPreview = {
   tokenPreview: string | null;
   updatedAt: string;
   workspaceId: string;
-};
-
-export type VercelSandboxConnectionResponse = {
-  connection: VercelSandboxConnectionPreview | null;
 };

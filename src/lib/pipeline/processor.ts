@@ -8,7 +8,11 @@ import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
-import { AGENT_PROVIDERS, normalizeAgentProviderName } from "@/lib/agent-config/contracts";
+import {
+  AGENT_PROVIDERS,
+  normalizeAgentProviderName,
+  type AgentEffort,
+} from "@/lib/agent-config/contracts";
 import { inferWallieRunMode } from "@/features/wallie/utils";
 import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
@@ -16,21 +20,33 @@ import {
   ClaudeCodeNotConnectedError,
   getClaudeCodeCredentialForSession,
 } from "@/lib/claude-code/tokens";
-import { isCodexAuthLeaseBusyError } from "@/lib/codex/contracts";
 import {
   createCodexChatGptAuthStore,
   CodexNotConnectedError,
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
+import {
+  CursorNotConnectedError,
+  getCursorCredentialForSession,
+  markCursorReconnectRequired,
+} from "@/lib/cursor/tokens";
 import { getOpenCodeCredentialForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
-import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
+import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
+import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
+import { buildStageBranchName } from "@/lib/pipeline/branch-name";
+import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
+import {
+  formatSessionAttachmentPromptData,
+  loadSessionAttachmentInputs,
+  materializeSessionAttachments,
+  SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
+} from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
-import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 
 import { openSessionPullRequest } from "./pull-request";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
-import { PIPELINE_JOB_TYPE } from "./types";
 
 type AdminClient = SupabaseClient<Database>;
 type SessionRow = Tables<"sessions">;
@@ -65,6 +81,13 @@ const RUN_FAILURE_UNQUOTED_SECRET_ASSIGNMENT_PATTERN = new RegExp(
 export type PipelinePhaseActionResult = {
   error?: string;
   jobId?: string | null;
+  session?: {
+    archivedAt: string | null;
+    currentArtifactVersion: number | null;
+    currentStageId: string;
+    phaseStatus: Tables<"sessions">["phase_status"];
+    rejectionCount: number;
+  };
   success: boolean;
 };
 
@@ -100,9 +123,9 @@ export async function processPipelineJob(input: {
     // marker landed cannot execute against an archived session.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
-      .update({ phase_status: "agent_generating" })
+      .update({ phase_status: "in_progress" })
       .eq("id", session.id)
-      .in("phase_status", ["agent_generating", "awaiting_review", "rejected"])
+      .in("phase_status", ["in_progress", "awaiting_review", "rejected"])
       .is("archived_at", null)
       .select("id")
       .maybeSingle();
@@ -148,35 +171,23 @@ async function runStage(input: {
 
   const newVersion = session.current_artifact_version + 1;
 
-  const config = await loadWorkspaceAgentConfig(admin, session.workspace_id);
+  const [config, previousStages, attemptFeedback, operatingRulesMd, sessionAttachments] =
+    await Promise.all([
+      loadWorkspaceAgentConfig(admin, session.workspace_id),
+      loadCompletedStageArtifacts(admin, session.id),
+      loadLatestFeedback(admin, session.id, stage.id),
+      loadPipelineOperatingRules(admin, stage.pipelineId),
+      loadSessionAttachmentInputs(admin, {
+        sessionId: session.id,
+        workspaceId: session.workspace_id,
+      }),
+    ]);
   const provider = normalizeAgentProviderName(config.provider);
   if (!provider) {
     throw new Error(
       `Unknown agent provider: "${config.provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
     );
   }
-
-  // Pull artifacts from completed prior stages so the prompt can reference
-  // them via {{artifact.previousStages.<slug>}}.
-  const previousStages = await loadCompletedStageArtifacts(admin, session.id);
-
-  // Resume-on-rejection: pull the most recent feedback for this stage so the
-  // template can include it via {{attempt.feedback}}. Match on stage_id so a
-  // rename in the editor doesn't cause us to miss the prior attempt.
-  const attemptFeedback = await loadLatestFeedback(admin, session.id, stage.id);
-
-  // Workspace-editable operating rules for this pipeline, prepended to the
-  // stage prompt so the cross-cutting discipline applies to every stage.
-  const operatingRulesMd = await loadPipelineOperatingRules(admin, stage.pipelineId);
-
-  const prompt = renderStagePrompt(stage, {
-    attemptFeedback,
-    attemptNumber: session.rejection_count + 1,
-    operatingRulesMd,
-    previousStages,
-    sessionPrompt: session.prompt_md,
-    sessionTitle: session.title,
-  });
 
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
@@ -185,6 +196,7 @@ async function runStage(input: {
     repo: { default_branch: string | null; full_name: string; id: string };
   } | null = null;
   let branch: string | null = null;
+  let installationToken: string | undefined;
   const collectedText: string[] = [];
   let artifactInserted = false;
   let runFailureMessageRecorded = false;
@@ -192,6 +204,7 @@ async function runStage(input: {
   try {
     const resolvedRunner = await resolveAgentRunner({
       admin,
+      effort: config.effort,
       model: config.model,
       provider,
       session,
@@ -242,24 +255,35 @@ async function runStage(input: {
         await markPipelineJobError(admin, job, message);
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
-      const installationToken = await mintInstallationToken(github.installationId);
       const sandboxImplementation = resolveSandboxImplementation();
-      const vercelConnection =
-        sandboxImplementation === "vercel"
-          ? await loadRequiredVercelSandboxConnection(admin, session.workspace_id)
-          : null;
+      const sandboxSelection =
+        sandboxImplementation === "fake"
+          ? null
+          : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
+      if (sandboxSelection) {
+        await assertCurrentSandboxCapabilityCheck({
+          admin,
+          agent: { model: config.model, provider },
+          connection: sandboxSelection.connection,
+          repositoryId: github.repo.id,
+          workspaceId: session.workspace_id,
+        });
+      }
+      installationToken = await mintInstallationToken(github.installationId);
       branch = buildStageBranchName(session.id, stage.slug);
       throwIfAborted(signal);
       sandbox = await createSessionSandbox({
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
         branch,
-        implementation: sandboxImplementation,
+        implementation: sandboxSelection?.provider ?? "fake",
+        connection: sandboxSelection?.connection,
         installationToken,
+        ownerId: runId ?? undefined,
         repoFullName: github.repo.full_name,
         signal,
         sessionId: session.id,
-        vercelCredentials: vercelConnection?.credentials,
+        workspaceId: session.workspace_id,
         onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
           if (!runId) return;
           if (sandboxProvider === "fake") {
@@ -269,20 +293,19 @@ async function runStage(input: {
             }
             return;
           }
-          if (!vercelConnection) {
-            throw new Error("Workspace Vercel Sandbox credentials are required.");
+          if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
+            throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
           }
           const attached = await updateRunSandbox(admin, runId, sandboxId, {
-            provider: "vercel",
-            projectId: vercelConnection.credentials.projectId,
-            teamId: vercelConnection.credentials.teamId,
+            connection: sandboxSelection.connection,
+            provider: sandboxSelection.provider,
           });
           if (!attached) {
             // The run was canceled before its sandbox id landed; stop the
             // sandbox we just created so it doesn't keep executing detached
             // from the now-canceled run.
             await stopSandboxById(sandboxId, {
-              vercelCredentials: vercelConnection.credentials,
+              connection: sandboxSelection.connection,
             });
           }
         },
@@ -291,11 +314,56 @@ async function runStage(input: {
 
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
+    if (sessionAttachments.length > 0 && !sandbox) {
+      throw new Error("The configured agent runner cannot receive session image attachments.");
+    }
+
+    const materializedAttachments = sandbox
+      ? await materializeSessionAttachments(admin, sandbox, sessionAttachments)
+      : [];
+    const prompt = renderStagePrompt(
+      {
+        promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
+        slug: trustedPromptValue("stage.slug", stage.slug),
+      },
+      {
+        attemptFeedback:
+          attemptFeedback === null
+            ? null
+            : untrustedPromptValue("attempt.feedback", attemptFeedback),
+        attemptNumber: session.rejection_count + 1,
+        operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
+        previousStages: Object.fromEntries(
+          Object.entries(previousStages).map(([slug, artifact]) => [
+            slug,
+            untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
+          ]),
+        ),
+        sessionAttachmentInstructions:
+          materializedAttachments.length > 0
+            ? trustedPromptValue(
+                "session.attachmentInstructions",
+                SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
+              )
+            : undefined,
+        sessionAttachments:
+          materializedAttachments.length > 0
+            ? untrustedPromptValue(
+                "session.attachments",
+                formatSessionAttachmentPromptData(materializedAttachments),
+              )
+            : undefined,
+        sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
+        sessionTitle: untrustedPromptValue("session.title", session.title),
+      },
+    );
+
     for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
+      secrets: installationToken ? [installationToken] : undefined,
       signal,
       sessionId: session.id,
     })) {
@@ -382,7 +450,7 @@ async function runStage(input: {
       // was parked (canceled or stalled) or archived while this run produced its
       // artifact, this CAS affects zero rows and we must not un-park/un-freeze
       // it or surface the draft.
-      .eq("phase_status", "agent_generating")
+      .eq("phase_status", "in_progress")
       .is("archived_at", null)
       .select("id");
     if (pointerError) throw pointerError;
@@ -426,12 +494,6 @@ async function runStage(input: {
       }
     }
 
-    if (isCodexAuthLeaseBusyError(error)) {
-      await updateSessionStatus(admin, session.id, session.phase_status);
-      await deferPipelineJob(admin, job, error.message);
-      return { jobId: job.id, processed: true, result: "idle", runId };
-    }
-
     if (artifactInserted) {
       // Compensate: drop the orphan so the next retry doesn't hit the
       // (session_id, stage_slug, version) unique constraint.
@@ -454,8 +516,7 @@ async function runStage(input: {
     const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message, {
       retry:
-        !(error instanceof MissingReviewableOutputError) &&
-        !isVercelSandboxConnectionSetupError(error),
+        !(error instanceof MissingReviewableOutputError) && !isSandboxConnectionSetupError(error),
     });
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
@@ -499,11 +560,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw signal.reason instanceof Error ? signal.reason : new Error("Pipeline job aborted.");
 }
 
-function isVercelSandboxConnectionSetupError(error: unknown): boolean {
+function isSandboxConnectionSetupError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    (error.name === "VercelSandboxConnectionMissingError" ||
-      error.name === "VercelSandboxConnectionInvalidError")
+    (error.name === "SandboxConnectionMissingError" ||
+      error.name === "SandboxConnectionInvalidError" ||
+      error.name === "SandboxCapabilityCheckStaleError")
   );
 }
 
@@ -561,7 +623,6 @@ async function enqueueSessionJobWithRun(input: {
     .from("agent_jobs")
     .insert({
       dedupe_key: dedupeKey,
-      job_type: PIPELINE_JOB_TYPE,
       requested_by_member_id: input.requestedByMemberId,
       session_id: input.sessionId,
       stage_id: stage?.id ?? null,
@@ -645,7 +706,7 @@ export async function handleApproval(input: {
     };
   }
 
-  if (!row.archived_at && row.phase_status === "agent_generating") {
+  if (!row.archived_at && row.phase_status === "in_progress") {
     try {
       const queued = await enqueueSessionJobWithRun({
         admin,
@@ -655,18 +716,48 @@ export async function handleApproval(input: {
         workspaceId: input.expectedWorkspaceId,
       });
 
-      return { jobId: queued.jobId, success: true };
+      return {
+        jobId: queued.jobId,
+        session: {
+          archivedAt: row.archived_at,
+          currentArtifactVersion: 0,
+          currentStageId: row.current_stage_id,
+          phaseStatus: row.phase_status,
+          rejectionCount: 0,
+        },
+        success: true,
+      };
     } catch (error) {
       console.error("Approved stage but failed to queue Wallie", {
         error: getErrorMessage(error, "Approved stage but failed to queue Wallie."),
         sessionId: input.sessionId,
         workspaceId: input.expectedWorkspaceId,
       });
-      return { jobId: null, success: true };
+      return {
+        jobId: null,
+        session: {
+          archivedAt: row.archived_at,
+          currentArtifactVersion: 0,
+          currentStageId: row.current_stage_id,
+          phaseStatus: row.phase_status,
+          rejectionCount: 0,
+        },
+        success: true,
+      };
     }
   }
 
-  return { jobId: null, success: true };
+  return {
+    jobId: null,
+    session: {
+      archivedAt: row.archived_at,
+      currentArtifactVersion: row.phase_status === "approved" ? input.version : 0,
+      currentStageId: row.current_stage_id,
+      phaseStatus: row.phase_status,
+      rejectionCount: 0,
+    },
+    success: true,
+  };
 }
 
 export async function handleRejection(input: {
@@ -785,7 +876,17 @@ export async function handleRejection(input: {
 
   await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
 
-  return { jobId: queued.jobId, success: true };
+  return {
+    jobId: queued.jobId,
+    session: {
+      archivedAt: session.archived_at,
+      currentArtifactVersion: session.current_artifact_version,
+      currentStageId: session.current_stage_id,
+      phaseStatus: "rejected",
+      rejectionCount: newRejectionCount,
+    },
+    success: true,
+  };
 }
 
 // --- Data access helpers ---
@@ -822,11 +923,11 @@ async function updateSessionStatus(
     .from("sessions")
     .update({ phase_status: status })
     .eq("id", sessionId)
-    // Every caller runs after the stage was CAS-claimed to `agent_generating`,
+    // Every caller runs after the stage was CAS-claimed to `in_progress`,
     // so this guard is a no-op on the normal path. Its job is to keep a session
     // that was canceled mid-run parked in `rejected` instead of being moved
     // back to a live phase by a late-finishing worker.
-    .eq("phase_status", "agent_generating");
+    .eq("phase_status", "in_progress");
   if (error) throw error;
 }
 
@@ -876,6 +977,7 @@ async function insertArtifact(
 
 async function resolveAgentRunner(input: {
   admin: AdminClient;
+  effort: AgentEffort;
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
@@ -888,6 +990,7 @@ async function resolveAgentRunner(input: {
           codex: {
             chatGptAuthStore: createCodexChatGptAuthStore(input.admin),
             credential,
+            effort: input.effort,
             model: input.model,
           },
         }),
@@ -905,13 +1008,37 @@ async function resolveAgentRunner(input: {
       const credential = await getClaudeCodeCredentialForSession(input.admin, input.session);
       return {
         runner: createAgentRunner("claude-code", {
-          claudeCode: { credential, model: input.model },
+          claudeCode: { credential, effort: input.effort, model: input.model },
         }),
       };
     } catch (error) {
       if (error instanceof ClaudeCodeNotConnectedError) {
         throw new Error(error.message);
       }
+      throw error;
+    }
+  }
+
+  if (input.provider === "cursor") {
+    try {
+      const credential = await getCursorCredentialForSession(input.admin, input.session);
+      return {
+        runner: createAgentRunner("cursor", {
+          cursor: {
+            credential,
+            model: input.model,
+            onAuthenticationFailure: (reason) =>
+              markCursorReconnectRequired(
+                input.admin,
+                credential.userId,
+                credential.generation,
+                reason,
+              ),
+          },
+        }),
+      };
+    } catch (error) {
+      if (error instanceof CursorNotConnectedError) throw new Error(error.message);
       throw error;
     }
   }
@@ -925,9 +1052,7 @@ async function resolveAgentRunner(input: {
         }),
       };
     } catch (error) {
-      if (error instanceof OpenCodeNotConnectedError) {
-        throw new Error(error.message);
-      }
+      if (error instanceof OpenCodeNotConnectedError) throw new Error(error.message);
       throw error;
     }
   }
@@ -989,11 +1114,6 @@ async function mintInstallationToken(installationId: number): Promise<string> {
     { installation_id: installationId },
   );
   return data.token;
-}
-
-function buildStageBranchName(sessionId: string, stageSlug: string): string {
-  const safeSlug = stageSlug.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `wallie/${safeSlug || "stage"}-${sessionId}`;
 }
 
 async function startAgentRun(
@@ -1066,16 +1186,15 @@ async function updateRunSandbox(
         provider: "fake";
       }
     | {
-        projectId: string;
-        provider: "vercel";
-        teamId: string;
+        connection: SandboxConnection;
+        provider: "daytona" | "e2b" | "vercel";
       },
 ): Promise<boolean> {
   const vercelMetadata =
-    metadata.provider === "vercel"
+    metadata.provider === "vercel" && metadata.connection.provider === "vercel"
       ? {
-          sandbox_vercel_project_id: metadata.projectId,
-          sandbox_vercel_team_id: metadata.teamId,
+          sandbox_vercel_project_id: metadata.connection.credentials.projectId,
+          sandbox_vercel_team_id: metadata.connection.credentials.teamId,
         }
       : {
           sandbox_vercel_project_id: null,
@@ -1086,6 +1205,8 @@ async function updateRunSandbox(
     .update({
       sandbox_id: sandboxId,
       sandbox_provider: metadata.provider,
+      sandbox_connection_revision:
+        metadata.provider === "fake" ? null : metadata.connection.revision,
       ...vercelMetadata,
     })
     .eq("id", runId)
@@ -1507,23 +1628,4 @@ async function markPipelineJobError(
     // A job canceled mid-flight stays canceled — never flip it to error.
     .neq("status", "canceled");
   await markActiveRunsForJobError(admin, job.id);
-}
-
-async function deferPipelineJob(
-  admin: AdminClient,
-  job: Tables<"agent_jobs">,
-  message: string,
-): Promise<void> {
-  const { error: retryError } = await admin.rpc("schedule_job_retry", {
-    target_job_id: job.id,
-    base_delay_ms: 15000,
-    max_backoff_ms: 120000,
-  });
-
-  if (!retryError) {
-    await admin.from("agent_jobs").update({ last_error: message }).eq("id", job.id);
-    return;
-  }
-
-  await markPipelineJobError(admin, job, message);
 }

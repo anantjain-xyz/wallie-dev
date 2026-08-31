@@ -5,7 +5,6 @@ import {
   repositoryOnboardingParamsSchema,
 } from "@/lib/repo-onboarding/contracts";
 import {
-  getRepositoryOnboardingState,
   markRepositoryOnboardingReady,
   startRepositoryOnboarding,
 } from "@/lib/repo-onboarding/server";
@@ -49,22 +48,6 @@ function manualReadyErrorResponse(error: unknown) {
   }
 
   throw error;
-}
-
-export async function GET(_request: Request, context: RouteContext) {
-  const authorized = await authorize(context);
-  if ("error" in authorized) {
-    return NextResponse.json({ error: authorized.error }, { status: authorized.status });
-  }
-
-  const admin = createSupabaseAdminClient();
-  const onboarding = await getRepositoryOnboardingState({
-    admin,
-    repositoryId: authorized.parsed.repositoryId,
-    workspaceId: authorized.parsed.workspaceId,
-  });
-
-  return NextResponse.json({ onboarding }, { status: 200 });
 }
 
 export async function POST(_request: Request, context: RouteContext) {

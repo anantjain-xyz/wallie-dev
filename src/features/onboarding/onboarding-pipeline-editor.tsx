@@ -1,27 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { useOptionalLiveRegion } from "@/components/ui/live-region";
 import {
   appendDraftStage,
+  fieldErrorsForStage,
   keepKnownApproverIds,
   moveDraftStage,
   OperatingRulesField,
   PipelineEditorControls,
-  PipelineVariableHelp,
+  PipelineValidationSummary,
+  pipelineValidationTargetId,
+  RemoveStageDialog,
   removeDraftStage,
+  resolveFocusAfterStageRemoval,
   StageRowEditor,
+  stageDisplayName,
   stageToDraft,
   updateDraftStage,
+  updateDraftStageName,
   validatePipelineDraft,
   type DraftPipelineStage,
+  type PipelineDraftValidationResult,
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
 import type { SessionPipeline } from "@/features/sessions/types";
 
 type OnboardingPipelineEditorProps = {
   canManage: boolean;
-  onCompleted: (action: string) => Promise<void>;
+  onCompleted: (action: string, pipeline: SessionPipeline) => Promise<void>;
   pipeline: SessionPipeline | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
@@ -34,13 +42,22 @@ export function OnboardingPipelineEditor({
   workspaceId,
   workspaceMembers,
 }: OnboardingPipelineEditorProps) {
+  const { announce } = useOptionalLiveRegion();
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
     keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
+  const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [removeIndex, setRemoveIndex] = useState<number | null>(null);
+  const removeFocusRef = useRef<HTMLElement | null>(null);
+  const validation: PipelineDraftValidationResult = hasAttemptedSave
+    ? validatePipelineDraft({ name, stages })
+    : { ok: true };
+  const removeStage = removeIndex === null ? null : stages[removeIndex];
+  const editable = canManage && !isSaving;
 
   if (!pipeline) {
     return (
@@ -50,15 +67,52 @@ export function OnboardingPipelineEditor({
     );
   }
 
+  function announceStagePosition(nextStages: DraftPipelineStage[], index: number) {
+    const stage = nextStages[index];
+    if (!stage) return;
+    announce(
+      `${stageDisplayName(stage, index)} moved to position ${index + 1} of ${nextStages.length}.`,
+    );
+  }
+
+  function applyMove(index: number, direction: -1 | 1) {
+    const next = moveDraftStage(stages, index, direction);
+    if (next === stages) return;
+    setStages(next);
+    announceStagePosition(next, index + direction);
+  }
+
+  function handleAddStage() {
+    const next = appendDraftStage(stages);
+    const added = next[next.length - 1]!;
+    setStages(next);
+    announce(
+      `Added ${stageDisplayName(added, next.length - 1)} at position ${next.length} of ${next.length}.`,
+    );
+  }
+
+  function handleRemoveAt(index: number) {
+    const stage = stages[index]!;
+    const label = stageDisplayName(stage, index);
+    setStages(removeDraftStage(stages, index));
+    announce(stage.id ? `${label} will be archived when saved.` : `Discarded unsaved ${label}.`);
+  }
+
   async function savePipeline() {
     setError(null);
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
-    const validation = validatePipelineDraft({ name, stages: stagesToSave });
-    if (!validation.ok) {
-      setError(validation.message);
+    const nextValidation = validatePipelineDraft({ name, stages: stagesToSave });
+    if (!nextValidation.ok) {
+      setHasAttemptedSave(true);
+      setStages(stagesToSave);
+      const targetId = pipelineValidationTargetId(nextValidation.issues[0]!);
+      if (targetId) {
+        window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
+      }
       return;
     }
 
+    setHasAttemptedSave(false);
     setStages(stagesToSave);
     setIsSaving(true);
     try {
@@ -70,13 +124,24 @@ export function OnboardingPipelineEditor({
 
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "Failed to save pipeline.");
+        setError(body?.error ?? "Failed to save pipeline. Your edits are preserved — try again.");
         return;
       }
 
-      await onCompleted("pipeline:save");
+      const body = (await response.json()) as { pipeline: SessionPipeline };
+      // Normalize drafts from the saved response before advancing onboarding so a
+      // failed step persist still keeps server stage IDs (slug lock + rewrite safety).
+      const saved = body.pipeline;
+      setName(saved.name);
+      setOperatingRules(saved.operatingRulesMd ?? "");
+      setStages(keepKnownApproverIds(saved.stages.map(stageToDraft), workspaceMembers));
+      await onCompleted("pipeline:save", saved);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
+      setError(
+        caught instanceof Error
+          ? `${caught.message} Your edits are preserved — try again.`
+          : "Failed to save pipeline. Your edits are preserved — try again.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -84,6 +149,7 @@ export function OnboardingPipelineEditor({
 
   return (
     <div className="space-y-5">
+      <PipelineValidationSummary validation={validation} />
       {error ? (
         <div
           role="alert"
@@ -94,22 +160,34 @@ export function OnboardingPipelineEditor({
       ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
-        <label className="block space-y-1.5">
-          <span className="text-[13px] font-medium text-foreground">Pipeline name</span>
+        <div className="block space-y-1.5">
+          <label className="text-[13px] font-medium text-foreground" htmlFor="pipeline-name">
+            Pipeline name
+          </label>
           <input
+            aria-describedby={`pipeline-name-description${!validation.ok && validation.field === "pipeline-name" ? " pipeline-name-error" : ""}`}
+            aria-invalid={!validation.ok && validation.field === "pipeline-name" ? true : undefined}
+            id="pipeline-name"
             type="text"
             value={name}
-            disabled={!canManage || isSaving}
+            disabled={!editable}
             onChange={(event) => setName(event.target.value)}
-            className="ui-input min-w-[240px]"
+            className={`ui-input min-w-[240px] ${!validation.ok && validation.field === "pipeline-name" ? "border-danger" : ""}`}
             maxLength={80}
           />
-        </label>
-        <PipelineVariableHelp />
+          <p className="type-annotation text-muted" id="pipeline-name-description">
+            Identifies this pipeline throughout the workspace.
+          </p>
+          {!validation.ok && validation.field === "pipeline-name" ? (
+            <p className="text-xs font-medium text-danger" id="pipeline-name-error">
+              {validation.message}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <OperatingRulesField
-        canManage={canManage && !isSaving}
+        canManage={editable}
         compact
         onChange={setOperatingRules}
         value={operatingRules}
@@ -119,16 +197,26 @@ export function OnboardingPipelineEditor({
         {stages.map((stage, index) => (
           <StageRowEditor
             compact
-            key={stage.id ?? `new-${index}`}
-            canManage={canManage && !isSaving}
+            key={stage.key}
+            canManage={editable}
+            errors={fieldErrorsForStage(validation, index)}
             index={index}
             isFirst={index === 0}
             isLast={index === stages.length - 1}
             onChange={(patch) => setStages((current) => updateDraftStage(current, index, patch))}
-            onMoveDown={() => setStages((current) => moveDraftStage(current, index, 1))}
-            onMoveUp={() => setStages((current) => moveDraftStage(current, index, -1))}
-            onRemove={() => setStages((current) => removeDraftStage(current, index))}
+            onChangeName={(nextName) =>
+              setStages((current) => updateDraftStageName(current, index, nextName))
+            }
+            onMoveDown={() => applyMove(index, 1)}
+            onMoveUp={() => applyMove(index, -1)}
+            onRemove={() => handleRemoveAt(index)}
+            onRemoveRequest={() => {
+              removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
+              setRemoveIndex(index);
+            }}
+            priorStages={stages.slice(0, index).map((prior) => ({ slug: prior.slug }))}
             stage={stage}
+            totalStages={stages.length}
             workspaceMembers={workspaceMembers}
           />
         ))}
@@ -137,8 +225,26 @@ export function OnboardingPipelineEditor({
       <PipelineEditorControls
         canManage={canManage}
         isPending={isSaving}
-        onAddStage={() => setStages((current) => appendDraftStage(current))}
+        onAddStage={handleAddStage}
         onSave={() => void savePipeline()}
+      />
+
+      <RemoveStageDialog
+        onConfirm={() => {
+          if (removeIndex === null) return;
+          const index = removeIndex;
+          removeFocusRef.current = resolveFocusAfterStageRemoval(stages.length, index);
+          setRemoveIndex(null);
+          handleRemoveAt(index);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setRemoveIndex(null);
+        }}
+        open={removeIndex !== null && removeStage !== undefined}
+        restoreFocusRef={removeFocusRef}
+        stageLabel={
+          removeStage && removeIndex !== null ? stageDisplayName(removeStage, removeIndex) : "stage"
+        }
       />
     </div>
   );

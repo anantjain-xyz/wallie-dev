@@ -46,22 +46,20 @@ export function workspaceLoginRedirectPath(workspaceSlug: string) {
   return normalizeNextPath(workspaceBasePath(workspaceSlug));
 }
 
+export function isWorkspaceInvitationPath(path: string) {
+  return path.startsWith("/invite/");
+}
+
 export async function ensureProfileForUser(supabase: SupabaseServerClient, user: User) {
   const metadata = (user.user_metadata ?? {}) as UserMetadata;
   const fullName = metadata.full_name ?? metadata.name ?? null;
   const avatarUrl = metadata.avatar_url ?? metadata.picture ?? null;
 
-  const { error } = await supabase.from("profiles").upsert(
-    {
-      avatar_url: avatarUrl,
-      full_name: fullName,
-      id: user.id,
-      primary_email: user.email ?? null,
-    },
-    {
-      onConflict: "id",
-    },
-  );
+  const { error } = await supabase.rpc("ensure_own_profile", {
+    actor_avatar_url: avatarUrl ?? undefined,
+    actor_email: user.email ?? undefined,
+    actor_full_name: fullName ?? undefined,
+  });
 
   if (error) {
     throw error;
@@ -86,18 +84,41 @@ export async function getDefaultWorkspace(supabase: SupabaseServerClient) {
 export async function getWorkspaceBySlugForUser(
   supabase: SupabaseServerClient,
   workspaceSlug: string,
+  userId: string,
 ) {
   const { data, error } = await supabase
     .from("workspaces")
-    .select("id, name, slug, avatar_path")
+    .select(
+      "id, name, slug, avatar_path, current_member:workspace_members!inner(id, role, is_active, kind)",
+    )
     .eq("slug", workspaceSlug)
+    .eq("current_member.user_id", userId)
     .maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  return data satisfies (WorkspaceSummary & { avatar_path: string | null }) | null;
+  if (!data) return null;
+
+  const [currentMember] = data.current_member;
+  if (!currentMember) return null;
+
+  return {
+    currentMember,
+    workspace: {
+      avatar_path: data.avatar_path,
+      id: data.id,
+      name: data.name,
+      slug: data.slug,
+    },
+  } satisfies {
+    currentMember: Pick<
+      Database["public"]["Tables"]["workspace_members"]["Row"],
+      "id" | "is_active" | "kind" | "role"
+    >;
+    workspace: WorkspaceSummary & { avatar_path: string | null };
+  };
 }
 
 export async function hasAnyWorkspaceForUser(supabase: SupabaseServerClient) {

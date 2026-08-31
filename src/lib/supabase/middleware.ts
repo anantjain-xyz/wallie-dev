@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   getSupabaseAuthFlowCookieNames,
   getSupabaseSessionCookieNames,
-  getSupabaseUserOrNull,
+  verifySupabaseAuthIdentity,
 } from "@/lib/supabase/auth";
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
@@ -50,9 +50,20 @@ export async function updateSupabaseSession(request: NextRequest) {
     },
   });
 
-  const user = await getSupabaseUserOrNull(supabase);
+  const verification = await verifySupabaseAuthIdentity(supabase);
 
-  if (!user) {
+  if (process.env.WALLIE_TIMING_LOGS === "1") {
+    console.info("[auth-verification]", {
+      authUserRequests: verification.authUserRequests,
+      claimsVerifications: verification.claimsVerifications,
+      durationMs: verification.durationMs,
+      method: verification.method,
+      name: "middleware.auth",
+      ok: Boolean(verification.identity),
+    });
+  }
+
+  if (!verification.identity) {
     clearSupabaseAuthCookies(request, response);
   }
 

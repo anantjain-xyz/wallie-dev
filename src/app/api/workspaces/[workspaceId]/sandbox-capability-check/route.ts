@@ -69,7 +69,7 @@ export async function POST(request: Request, context: RouteContext) {
     workspaceId: access.context.workspace.id,
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Vercel Sandbox connection update is in progress")) {
+    if (message.includes("Sandbox connection update")) {
       return NextResponse.json({ error: message }, { status: 409 });
     }
     throw error;

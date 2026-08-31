@@ -3,7 +3,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
-import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 
@@ -20,8 +19,13 @@ type SessionRow = {
 
 const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 
-/** Session phase states where Wallie may still do more work. */
-const RECONCILABLE_PHASE_STATUSES = ["agent_generating", "awaiting_review", "rejected"] as const;
+/** Session phase states where Linear may still change the work's final disposition. */
+const RECONCILABLE_PHASE_STATUSES = [
+  "in_progress",
+  "awaiting_review",
+  "approved",
+  "rejected",
+] as const;
 
 /** Agent job states that are not yet terminal and may still consume work. */
 const ACTIVE_AGENT_JOB_STATUSES = ["queued", "started", "running"] as const;
@@ -59,9 +63,9 @@ class RateLimitedError extends Error {
 /**
  * Reconciliation sweep: for every active session that was triggered from a
  * Linear issue, check the issue's current status and run it through the
- * workspace's configurable Linear status router. Archive routes cancel active
- * work; Rework/Merging/Done routes reset to the configured stage and enqueue a
- * fresh pipeline job.
+ * workspace's configurable Linear status router. Canceled routes cancel active
+ * work, Done routes complete manual-merge sessions, and Rework/automated-land
+ * routes reset to the configured stage and enqueue a fresh pipeline job.
  *
  * Sessions are grouped by workspace and queried in a single GraphQL `issues`
  * batch per workspace, so a workspace with N active sessions costs one
@@ -166,23 +170,25 @@ export async function reconcileLinearState(
           try {
             switch (classification.action) {
               case "archive":
-                await archiveSessionForLinearRoute(admin, session, classification.statusName);
-                result.canceled++;
-                break;
-              case "land":
-              case "rework":
-                if (
-                  (await routeSessionToStage(admin, session, {
-                    route: classification.route,
-                    stageSlug: classification.stageSlug,
-                    statusName: classification.statusName,
-                  })) === "archived"
-                ) {
+                if (classification.route === "done") {
+                  await completeSessionForLinearRoute(admin, session, classification.statusName);
+                } else {
+                  await archiveSessionForLinearRoute(admin, session, classification.statusName);
                   result.canceled++;
                 }
                 break;
+              case "land":
+              case "rework":
+                await routeSessionToStage(admin, session, {
+                  route: classification.route,
+                  stageSlug: classification.stageSlug,
+                  statusName: classification.statusName,
+                });
+                break;
               case "start_or_continue":
-                await ensureCurrentStageQueued(admin, session, classification.statusName);
+                if (session.phase_status !== "approved") {
+                  await ensureCurrentStageQueued(admin, session, classification.statusName);
+                }
                 break;
               case "ignore":
               case "pause":
@@ -237,6 +243,30 @@ async function archiveSessionForLinearRoute(
     .in("phase_status", RECONCILABLE_PHASE_STATUSES);
 }
 
+async function completeSessionForLinearRoute(
+  admin: AdminClient,
+  session: SessionRow,
+  statusName: string,
+): Promise<void> {
+  console.log("[reconciler] Linear route completes session, canceling active work", {
+    linearIssueId: session.linear_issue_id,
+    linearState: statusName,
+    sessionId: session.id,
+  });
+
+  await cancelActiveWorkForSession(
+    admin,
+    session,
+    `Linear issue moved to "${statusName}" — session completed by reconciler.`,
+  );
+
+  await admin
+    .from("sessions")
+    .update({ archived_at: new Date().toISOString(), phase_status: "approved" })
+    .eq("id", session.id)
+    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
+}
+
 async function cancelActiveWorkForSession(
   admin: AdminClient,
   session: Pick<SessionRow, "id">,
@@ -253,31 +283,31 @@ async function cancelActiveWorkForSession(
   });
 }
 
-type StageRouteResult = "archived" | "routed" | "skipped";
+type StageRouteResult = "completed" | "routed" | "skipped";
 
 async function routeSessionToStage(
   admin: AdminClient,
   session: SessionRow,
   route: { route: "done" | "merging" | "rework"; stageSlug: string; statusName: string },
 ): Promise<StageRouteResult> {
-  const stages = await loadPipelineStages(admin, session.pipeline_id);
+  const stages = await loadPipelineStages(admin, session.pipeline_id, session.id);
   const targetStage = stages.find((stage) => stage.slug === route.stageSlug);
   if (!targetStage) {
-    console.warn("[reconciler] configured Linear route stage does not exist on session pipeline", {
+    console.warn("[reconciler] configured Linear route stage is not selected on session pipeline", {
       linearIssueId: session.linear_issue_id,
       route: route.route,
       sessionId: session.id,
       stageSlug: route.stageSlug,
     });
     if (route.route === "done") {
-      await archiveSessionForLinearRoute(admin, session, route.statusName);
-      return "archived";
+      await completeSessionForLinearRoute(admin, session, route.statusName);
+      return "completed";
     }
     return "skipped";
   }
 
   const hasActiveJob = await hasActivePipelineJob(admin, session.id);
-  if (session.current_stage_id === targetStage.id) {
+  if (session.current_stage_id === targetStage.id && session.phase_status !== "approved") {
     if (hasActiveJob) return "skipped";
     await ensurePipelineJobQueued(admin, session, route.statusName);
     return "routed";
@@ -400,15 +430,22 @@ type PipelineStageRoutingRow = {
 async function loadPipelineStages(
   admin: AdminClient,
   pipelineId: string,
+  sessionId: string,
 ): Promise<PipelineStageRoutingRow[]> {
-  const { data, error } = await admin
-    .from("pipeline_stages")
-    .select("id, slug, position")
-    .eq("pipeline_id", pipelineId)
-    .order("position", { ascending: true });
+  const [{ data, error }, { data: selections, error: selectionError }] = await Promise.all([
+    admin
+      .from("pipeline_stages")
+      .select("id, slug, position")
+      .eq("pipeline_id", pipelineId)
+      .order("position", { ascending: true }),
+    admin.from("session_selected_stages").select("stage_id").eq("session_id", sessionId),
+  ]);
 
   if (error) throw error;
-  return (data ?? []) as PipelineStageRoutingRow[];
+  if (selectionError) throw selectionError;
+
+  const selectedIds = new Set((selections ?? []).map((selection) => selection.stage_id));
+  return ((data ?? []) as PipelineStageRoutingRow[]).filter((stage) => selectedIds.has(stage.id));
 }
 
 async function hasActivePipelineJob(admin: AdminClient, sessionId: string): Promise<boolean> {
@@ -416,7 +453,6 @@ async function hasActivePipelineJob(admin: AdminClient, sessionId: string): Prom
     .from("agent_jobs")
     .select("id")
     .eq("session_id", sessionId)
-    .eq("job_type", PIPELINE_JOB_TYPE)
     .in("status", ACTIVE_AGENT_JOB_STATUSES)
     .limit(1)
     .maybeSingle();
@@ -434,7 +470,6 @@ async function ensurePipelineJobQueued(
     dedupe_key: session.linear_issue_id
       ? `pipeline:${session.linear_issue_id}:active`
       : `pipeline:session:${session.id}:active`,
-    job_type: PIPELINE_JOB_TYPE,
     requested_by_member_id: null,
     session_id: session.id,
     trigger_type: "assignment",

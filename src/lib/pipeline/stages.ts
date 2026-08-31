@@ -3,12 +3,18 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
+import type {
+  ArchivedPipelineStage,
+  PipelineConfiguration,
+  PipelineStage,
+  SessionPipeline,
+} from "@/features/sessions/types";
 
 type AdminClient = SupabaseClient<Database>;
 
 export function mapStageRow(row: Tables<"pipeline_stages">): PipelineStage {
   return {
+    anyoneCanApprove: row.anyone_can_approve,
     approverMemberIds: row.approver_member_ids ?? [],
     description: row.description,
     id: row.id,
@@ -18,6 +24,13 @@ export function mapStageRow(row: Tables<"pipeline_stages">): PipelineStage {
     promptTemplateMd: row.prompt_template_md,
     slug: row.slug,
   };
+}
+
+function mapArchivedStageRow(row: Tables<"pipeline_stages">): ArchivedPipelineStage {
+  if (!row.archived_at) {
+    throw new Error(`Pipeline stage ${row.id} is not archived.`);
+  }
+  return { ...mapStageRow(row), archivedAt: row.archived_at };
 }
 
 export async function loadStageById(
@@ -44,6 +57,7 @@ export async function loadPipelineWithStages(
         .from("pipeline_stages")
         .select("*")
         .eq("pipeline_id", pipelineId)
+        .is("archived_at", null)
         .order("position", { ascending: true }),
     ]);
 
@@ -57,6 +71,38 @@ export async function loadPipelineWithStages(
     name: pipelineRow.name,
     operatingRulesMd: pipelineRow.operating_rules_md ?? "",
     stages: (stageRows ?? []).map(mapStageRow),
+  };
+}
+
+export async function loadPipelineConfigurationWithStages(
+  admin: AdminClient,
+  pipelineId: string,
+): Promise<PipelineConfiguration | null> {
+  const [{ data: pipelineRow, error: pipelineError }, { data: stageRows, error: stagesError }] =
+    await Promise.all([
+      admin.from("pipelines").select("*").eq("id", pipelineId).maybeSingle(),
+      admin
+        .from("pipeline_stages")
+        .select("*")
+        .eq("pipeline_id", pipelineId)
+        .order("position", { ascending: true }),
+    ]);
+
+  if (pipelineError) throw pipelineError;
+  if (stagesError) throw stagesError;
+  if (!pipelineRow) return null;
+
+  const rows = stageRows ?? [];
+  return {
+    archivedStages: rows
+      .filter((row) => row.archived_at !== null)
+      .sort((left, right) => (right.archived_at ?? "").localeCompare(left.archived_at ?? ""))
+      .map(mapArchivedStageRow),
+    id: pipelineRow.id,
+    isDefault: pipelineRow.is_default,
+    name: pipelineRow.name,
+    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
+    stages: rows.filter((row) => row.archived_at === null).map(mapStageRow),
   };
 }
 
@@ -86,6 +132,21 @@ export async function loadDefaultPipelineForWorkspace(
   if (error) throw error;
   if (!data) return null;
   return loadPipelineWithStages(admin, data.id);
+}
+
+export async function loadDefaultPipelineConfigurationForWorkspace(
+  admin: AdminClient,
+  workspaceId: string,
+): Promise<PipelineConfiguration | null> {
+  const { data, error } = await admin
+    .from("pipelines")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("is_default", true)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return loadPipelineConfigurationWithStages(admin, data.id);
 }
 
 export async function loadCompletedStageArtifacts(

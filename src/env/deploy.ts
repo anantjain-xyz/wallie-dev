@@ -6,5 +6,3 @@
 export const isProductionDeploy = () => process.env.VERCEL_ENV === "production";
 
 export const isPreviewDeploy = () => process.env.VERCEL_ENV === "preview";
-
-export const isLocalDev = () => !process.env.VERCEL_ENV || process.env.VERCEL_ENV === "development";

@@ -1,25 +1,243 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { isSessionSubmitShortcut } from "./create-session-dialog";
+import {
+  getLinearUrlError,
+  isCreateSessionSubmitDisabled,
+  RepositoryField,
+} from "./create-session-dialog";
 
-describe("isSessionSubmitShortcut", () => {
-  it("matches Command+Enter", () => {
-    expect(isSessionSubmitShortcut({ ctrlKey: false, key: "Enter", metaKey: true })).toBe(true);
+describe("getLinearUrlError", () => {
+  it("accepts empty and Linear URLs", () => {
+    expect(getLinearUrlError("  ")).toBeNull();
+    expect(getLinearUrlError("https://linear.app/acme/issue/TEAM-42/title")).toBeNull();
+    expect(getLinearUrlError("https://custom.linear.app/acme/issue/TEAM-42/title")).toBeNull();
   });
 
-  it("matches Ctrl+Enter", () => {
-    expect(isSessionSubmitShortcut({ ctrlKey: true, key: "Enter", metaKey: false })).toBe(true);
+  it("rejects non-Linear URLs", () => {
+    expect(getLinearUrlError("https://example.com/acme/issue/TEAM-42")).toBe(
+      "Must be a Linear issue URL.",
+    );
+    expect(getLinearUrlError("https://linear.app/acme/settings")).toBe(
+      "Must be a Linear issue URL.",
+    );
+  });
+});
+
+describe("isCreateSessionSubmitDisabled", () => {
+  it("waits for repository resolution, including the confirmed empty result", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: false,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "Build the dashboard",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(true);
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "Build the dashboard",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(false);
   });
 
-  it("ignores Enter without a shortcut modifier", () => {
-    expect(isSessionSubmitShortcut({ ctrlKey: false, key: "Enter", metaKey: false })).toBe(false);
+  it("accepts either a prompt or a Linear issue URL", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(true);
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "https://linear.app/acme/issue/TEAM-42/title",
+        prompt: "",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(false);
   });
 
-  it("ignores other Command shortcuts", () => {
-    expect(isSessionSubmitShortcut({ ctrlKey: false, key: "k", metaKey: true })).toBe(false);
+  it("blocks submission while the Linear issue URL is invalid", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "https://linear.app/acme/settings",
+        prompt: "Additional context",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(true);
   });
 
-  it("ignores other Ctrl shortcuts", () => {
-    expect(isSessionSubmitShortcut({ ctrlKey: true, key: "k", metaKey: false })).toBe(false);
+  it("blocks submission while cached repository options are stale", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: true,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "Build the dashboard",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks submission when no pipeline stage is selected", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "Build the dashboard",
+        selectedStageCount: 0,
+        stageCount: 3,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("RepositoryField", () => {
+  const cacheKey = { userId: "user-1", workspaceId: "workspace-1" };
+  const baseProps = {
+    cacheKey,
+    onValueChange: () => undefined,
+    options: [],
+    selectedGithubRepositoryId: "",
+  };
+
+  it("announces repository loading", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryField, {
+        ...baseProps,
+        snapshot: {
+          data: null,
+          error: null,
+          isLoading: true,
+          isRefreshing: false,
+          isStale: false,
+        },
+      }),
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("Loading repositories…");
+  });
+
+  it("renders an accessible error with a retry button", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryField, {
+        ...baseProps,
+        snapshot: {
+          data: null,
+          error: "Repositories unavailable.",
+          isLoading: false,
+          isRefreshing: false,
+          isStale: false,
+        },
+      }),
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Repositories unavailable.");
+    expect(html).toContain(">Retry session options</button>");
+  });
+
+  it("makes the confirmed empty state explicit", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryField, {
+        ...baseProps,
+        snapshot: {
+          data: {
+            defaultGithubRepositoryId: null,
+            pipelineId: null,
+            repositoryOptions: [],
+            stageOptions: [],
+          },
+          error: null,
+          isLoading: false,
+          isRefreshing: false,
+          isStale: false,
+        },
+      }),
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("No repositories are available");
+  });
+
+  it("keeps stale options visible with an announced refresh state", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryField, {
+        ...baseProps,
+        options: [{ label: "acme/app", value: "repo-1" }],
+        selectedGithubRepositoryId: "repo-1",
+        snapshot: {
+          data: {
+            defaultGithubRepositoryId: "repo-1",
+            pipelineId: null,
+            repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+            stageOptions: [],
+          },
+          error: null,
+          isLoading: false,
+          isRefreshing: true,
+          isStale: true,
+        },
+      }),
+    );
+
+    expect(html).toContain("acme/app");
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Refreshing repository options…");
+  });
+
+  it("announces a stale-cache error and offers keyboard-accessible refresh", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryField, {
+        ...baseProps,
+        options: [{ label: "acme/app", value: "repo-1" }],
+        selectedGithubRepositoryId: "repo-1",
+        snapshot: {
+          data: {
+            defaultGithubRepositoryId: "repo-1",
+            pipelineId: null,
+            repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+            stageOptions: [],
+          },
+          error: "Network unavailable.",
+          isLoading: false,
+          isRefreshing: false,
+          isStale: true,
+        },
+      }),
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Session options may be out of date. Network unavailable.");
+    expect(html).toContain(">Refresh session options</button>");
   });
 });

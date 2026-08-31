@@ -1,9 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
+import { WallieMark } from "@/components/shared/wallie-mark";
 import { PageHeader } from "@/components/ui/page-shell";
 import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
@@ -27,23 +27,16 @@ export default async function WorkspaceOnboardingPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border bg-surface">
-        <div className="mx-auto flex h-14 w-full max-w-[640px] items-center justify-between gap-3 px-6 sm:px-8">
+    <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
+      <header className="sticky top-0 z-20 border-b border-border bg-sheet pt-[env(safe-area-inset-top)]">
+        <div className="mx-auto flex h-14 w-full max-w-[640px] items-center justify-between gap-3 pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
           <Link
             href="/"
             aria-label="Wallie home"
-            className="flex items-center gap-2.5 focus-visible:outline-none"
+            className="flex min-h-11 items-center gap-2 rounded-[6px] px-1 text-[22px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
-            <Image
-              src="/wallie-logo-minimal.png"
-              alt=""
-              width={32}
-              height={32}
-              className="h-8 w-8 rounded-[8px] object-contain dark:invert"
-              priority
-            />
-            <span className="text-[16px] font-semibold tracking-tight text-foreground">Wallie</span>
+            <WallieMark className="size-7 shrink-0" />
+            Wallie
           </Link>
           <AccountMenu email={user.email ?? null} />
         </div>
@@ -51,7 +44,7 @@ export default async function WorkspaceOnboardingPage() {
 
       <main
         id="main-content"
-        className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-24 pt-10 sm:px-8"
+        className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-10 sm:px-8"
       >
         <PageHeader
           eyebrow="Step 1 of 2"

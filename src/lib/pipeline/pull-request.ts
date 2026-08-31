@@ -53,7 +53,8 @@ export type OpenSessionPullRequestOutcome =
  *      latest PR for the branch (stage agents are instructed to open their own,
  *      so GitHub — not the local sandbox — is the source of truth).
  *   2. Push this run's commits to the remote, then reuse the PR only if it is
- *      still open; a closed/merged PR can't carry new work, so open a fresh one.
+ *      still open; a closed/merged PR can't carry new work, so open a fresh one
+ *      through the sandbox `gh` CLI and its injected installation token.
  *   3. Upsert a `session_pull_requests` row keyed on (workspace, branch).
  *
  * Why GitHub-first: the sandbox is a shallow, single-revision clone, so a
@@ -124,37 +125,34 @@ export async function openSessionPullRequest(
       if (pushError) {
         return { kind: "push_failed", reason: pushError };
       }
-      try {
-        pr = await openPullRequest({
-          base: input.baseBranch,
-          body: input.body,
-          head: input.branch,
-          octokit,
-          owner,
-          repo,
-          title: input.title,
-        });
-      } catch (error) {
-        if (isNoCommitsError(error)) {
-          // Drop the branch we just pushed so we don't leave it behind.
-          await deleteRemoteBranch(input.sandbox, input.branch);
-          return { kind: "no_commits" };
-        }
-        if (!isAlreadyExistsError(error)) throw error;
-        // Race: an open PR appeared between our lookup and create. Recover it.
-        const recovered = await findPullRequestForHead({
-          head: input.branch,
-          octokit,
-          owner,
-          repo,
-        });
-        if (!recovered) {
-          throw new Error(
-            `pulls.create returned 422 already_exists for ${input.branch} but pulls.list found nothing`,
-          );
-        }
-        pr = recovered;
+      const createError = await createPullRequestWithGh({
+        base: input.baseBranch,
+        body: input.body,
+        head: input.branch,
+        sandbox: input.sandbox,
+        title: input.title,
+      });
+      if (createError && /no commits between/i.test(createError)) {
+        // Drop the branch we just pushed so we don't leave it behind.
+        await deleteRemoteBranch(input.sandbox, input.branch);
+        return { kind: "no_commits" };
       }
+
+      // Resolve the authoritative PR after `gh` returns. This also recovers the
+      // race where another Wallie process created the PR after our first lookup.
+      const created = await findPullRequestForHead({
+        head: input.branch,
+        octokit,
+        owner,
+        repo,
+      });
+      if (!created || created.state !== "open" || created.merged_at) {
+        throw new Error(
+          createError ??
+            `gh pr create succeeded for ${input.branch} but pulls.list found no open PR`,
+        );
+      }
+      pr = created;
     }
   } catch (error) {
     return {
@@ -304,63 +302,27 @@ async function findPullRequestForHead(input: {
   return data.reduce((latest, pr) => (pr.number > latest.number ? pr : latest), data[0]!);
 }
 
-async function openPullRequest(input: {
+async function createPullRequestWithGh(input: {
   base: string;
   body: string;
   head: string;
-  octokit: InstallationOctokit;
-  owner: string;
-  repo: string;
+  sandbox: SandboxHandle;
   title: string;
-}): Promise<GitHubPullRequestResponse> {
-  const { data } = await input.octokit.request<GitHubPullRequestResponse>(
-    "POST /repos/{owner}/{repo}/pulls",
-    {
-      base: input.base,
-      body: input.body,
-      head: input.head,
-      owner: input.owner,
-      repo: input.repo,
-      title: input.title,
-    },
-  );
-  return data;
-}
-
-function isAlreadyExistsError(error: unknown): boolean {
-  if (status422Messages(error).length === 0) return false;
-  return status422Messages(error).some((m) => /already exists/i.test(m) || /pull request/i.test(m));
-}
-
-function isNoCommitsError(error: unknown): boolean {
-  return status422Messages(error).some((m) => /no commits between/i.test(m));
-}
-
-/**
- * Collect human-readable messages from a 422 GitHub error. GitHub puts the
- * useful detail ("A pull request already exists", "No commits between …") in
- * the `errors[].message` array, while octokit surfaces a generic top-level
- * "Validation Failed", so check both. Returns [] for non-422 errors.
- */
-function status422Messages(error: unknown): string[] {
-  if (!error || typeof error !== "object") return [];
-  if ((error as { status?: number }).status !== 422) return [];
-
-  const messages: string[] = [];
-  const top = (error as { message?: string }).message;
-  if (typeof top === "string") messages.push(top);
-
-  const collect = (errors: unknown) => {
-    if (!Array.isArray(errors)) return;
-    for (const entry of errors) {
-      const m = (entry as { message?: string })?.message;
-      if (typeof m === "string") messages.push(m);
-    }
-  };
-  collect((error as { errors?: unknown }).errors);
-  collect((error as { response?: { data?: { errors?: unknown } } }).response?.data?.errors);
-
-  return messages;
+}): Promise<string | null> {
+  const proc = await input.sandbox.exec("gh", [
+    "pr",
+    "create",
+    "--base",
+    input.base,
+    "--head",
+    input.head,
+    "--title",
+    input.title,
+    "--body",
+    input.body,
+  ]);
+  const [output, code] = await Promise.all([proc.output(), proc.exitCode]);
+  return code === 0 ? null : output.stderr.trim().slice(0, 500) || `gh pr create exited ${code}`;
 }
 
 function pullRequestState(pr: GitHubPullRequestResponse): string {

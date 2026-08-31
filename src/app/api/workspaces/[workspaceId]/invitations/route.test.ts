@@ -43,6 +43,7 @@ const savedInvitation = {
   created_at: "2026-06-05T12:00:00.000Z",
   email: "new@example.com",
   expires_at: "2026-06-12T12:00:00.000Z",
+  full_name: "New Person",
   id: "22222222-2222-4222-8222-222222222222",
   invited_by_member_id: MEMBER_ID,
   last_sent_at: "2026-06-05T12:00:00.000Z",
@@ -134,7 +135,10 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
     const insertQuery = mutationQuery({ data: savedInvitation, error: null });
     wireFrom(activeMemberQuery, existingInviteQuery, insertQuery);
 
-    const response = await POST(requestWith({ email: "New@Example.com" }), routeContext());
+    const response = await POST(
+      requestWith({ email: "New@Example.com", fullName: "  New Person  " }),
+      routeContext(),
+    );
 
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toEqual({
@@ -144,6 +148,7 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
         createdAt: "2026-06-05T12:00:00.000Z",
         email: "new@example.com",
         expiresAt: "2026-06-12T12:00:00.000Z",
+        fullName: "New Person",
         id: "22222222-2222-4222-8222-222222222222",
         invitedByMemberId: MEMBER_ID,
         lastSentAt: "2026-06-05T12:00:00.000Z",
@@ -157,6 +162,7 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
     expect(insertQuery.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "new@example.com",
+        full_name: "New Person",
         role: "member",
         status: "pending",
         token_hash: "hashed-token",
@@ -182,13 +188,14 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
     wireFrom(activeMemberQuery, existingInviteQuery, updateQuery);
 
     const response = await POST(
-      requestWith({ email: "new@example.com", role: "admin" }),
+      requestWith({ email: "new@example.com", fullName: "Renamed Person", role: "admin" }),
       routeContext(),
     );
 
     expect(response.status).toBe(200);
     expect(updateQuery.update).toHaveBeenCalledWith(
       expect.objectContaining({
+        full_name: "Renamed Person",
         role: "admin",
         token_hash: "hashed-token",
       }),
@@ -200,7 +207,10 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
     const activeMemberQuery = selectMaybeQuery({ data: { id: "member-2" }, error: null });
     wireFrom(activeMemberQuery);
 
-    const response = await POST(requestWith({ email: "new@example.com" }), routeContext());
+    const response = await POST(
+      requestWith({ email: "new@example.com", fullName: "New Person" }),
+      routeContext(),
+    );
 
     expect(response.status).toBe(409);
     expect(mocked.sendWorkspaceInvitationEmail).not.toHaveBeenCalled();
@@ -215,12 +225,38 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
     const cleanupQuery = mutationQuery({ data: null, error: null });
     wireFrom(activeMemberQuery, existingInviteQuery, insertQuery, cleanupQuery);
 
-    const response = await POST(requestWith({ email: "new@example.com" }), routeContext());
+    const response = await POST(
+      requestWith({ email: "new@example.com", fullName: "New Person" }),
+      routeContext(),
+    );
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({ error: "SMTP unavailable" });
     expect(cleanupQuery.delete).toHaveBeenCalled();
     expect(cleanupQuery.eq).toHaveBeenCalledWith("id", savedInvitation.id);
+  });
+
+  it("restores an existing invitation name when delivery fails", async () => {
+    setupDefaults();
+    mocked.sendWorkspaceInvitationEmail.mockRejectedValue(new Error("SMTP unavailable"));
+    const activeMemberQuery = selectMaybeQuery({ data: null, error: null });
+    const existingInviteQuery = selectMaybeQuery({ data: savedInvitation, error: null });
+    const updateQuery = mutationQuery({
+      data: { ...savedInvitation, full_name: "Renamed Person" },
+      error: null,
+    });
+    const restoreQuery = mutationQuery({ data: null, error: null });
+    wireFrom(activeMemberQuery, existingInviteQuery, updateQuery, restoreQuery);
+
+    const response = await POST(
+      requestWith({ email: "new@example.com", fullName: "Renamed Person" }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(502);
+    expect(restoreQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({ full_name: "New Person", token_hash: "hashed-token" }),
+    );
   });
 
   it("returns the configured rate-limit response before parsing the invite body", async () => {
@@ -231,9 +267,24 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
       result: { success: false },
     });
 
-    const response = await POST(requestWith({ email: "new@example.com" }), routeContext());
+    const response = await POST(
+      requestWith({ email: "new@example.com", fullName: "New Person" }),
+      routeContext(),
+    );
 
     expect(response.status).toBe(429);
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("requires a nonblank member name", async () => {
+    setupDefaults();
+
+    const response = await POST(
+      requestWith({ email: "new@example.com", fullName: "   " }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(400);
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 });

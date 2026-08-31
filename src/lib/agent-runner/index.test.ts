@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   ClaudeCodeRunner,
   CodexRunner,
+  CursorRunner,
   OpenCodeRunner,
   createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG,
+  DEFAULT_AGENT_EFFORT,
   DEFAULT_CLAUDE_CODE_MODEL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_OPENCODE_MODEL,
@@ -38,15 +40,6 @@ describe("createAgentRunner", () => {
     expect(runner.requiresSandbox).toBe(true);
   });
 
-  it("creates an OpenCodeRunner for 'opencode'", () => {
-    const runner = createAgentRunner("opencode", {
-      openCode: { credential: { secret: "opencode-test-key-123456" } },
-    });
-    expect(runner).toBeInstanceOf(OpenCodeRunner);
-    expect(runner.provider).toBe("opencode");
-    expect(runner.requiresSandbox).toBe(true);
-  });
-
   it("throws when codex is selected without credentials", () => {
     expect(() => createAgentRunner("codex")).toThrow(/codex credentials/);
   });
@@ -55,13 +48,36 @@ describe("createAgentRunner", () => {
     expect(() => createAgentRunner("claude-code")).toThrow(/Anthropic API key/);
   });
 
-  it("throws when opencode is selected without credentials", () => {
+  it("creates a CursorRunner when Cursor credentials are provided", () => {
+    const runner = createAgentRunner("cursor", {
+      cursor: {
+        credential: {
+          expiresAt: "2026-11-27T00:00:00.000Z",
+          generation: "11111111-1111-4111-8111-111111111111",
+          secret: "cursor-key",
+          userId: "user-1",
+        },
+      },
+    });
+    expect(runner).toBeInstanceOf(CursorRunner);
+    expect(runner.provider).toBe("cursor");
+  });
+
+  it("creates an OpenCodeRunner when a Zen API key is provided", () => {
+    const runner = createAgentRunner("opencode", {
+      openCode: { credential: { secret: "zen-test-key" } },
+    });
+    expect(runner).toBeInstanceOf(OpenCodeRunner);
+    expect(runner.provider).toBe("opencode");
+  });
+
+  it("throws when OpenCode is selected without credentials", () => {
     expect(() => createAgentRunner("opencode")).toThrow(/OpenCode Zen API key/);
   });
 
   it("throws for unknown provider", () => {
     expect(() => createAgentRunner("unknown-provider" as never)).toThrow(
-      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, opencode',
+      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, cursor, opencode',
     );
   });
 });
@@ -70,8 +86,9 @@ describe("DEFAULT_AGENT_RUNNER_CONFIG", () => {
   it("has sensible defaults", () => {
     expect(DEFAULT_AGENT_RUNNER_CONFIG.provider).toBe("codex");
     expect(DEFAULT_AGENT_RUNNER_CONFIG.model).toBe(DEFAULT_CODEX_MODEL);
-    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.5");
-    expect(DEFAULT_CLAUDE_CODE_MODEL).toBe("claude-opus-4-7[1m]");
+    expect(DEFAULT_AGENT_RUNNER_CONFIG.effort).toBe(DEFAULT_AGENT_EFFORT);
+    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.6-sol");
+    expect(DEFAULT_CLAUDE_CODE_MODEL).toBe("claude-opus-4-8[1m]");
     expect(DEFAULT_OPENCODE_MODEL).toBe("opencode/gpt-5.6-sol");
     expect(DEFAULT_AGENT_RUNNER_CONFIG.maxTurns).toBe(5);
   });

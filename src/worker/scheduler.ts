@@ -21,6 +21,8 @@ export interface Scheduler {
   run(): Promise<void>;
   /** The jobs this worker is currently processing. */
   getActiveJobIds(): string[];
+  /** Wait for every job already claimed by this scheduler to settle. */
+  waitForIdle(): Promise<void>;
 }
 
 /**
@@ -101,7 +103,11 @@ export function createScheduler(
     }
   }
 
-  return { getActiveJobIds, run };
+  async function waitForIdle(): Promise<void> {
+    await Promise.allSettled([...inFlight.values()]);
+  }
+
+  return { getActiveJobIds, run, waitForIdle };
 }
 
 function defaultDelay(ms: number): Promise<void> {

@@ -6,6 +6,7 @@ import {
   type AgentRunCancelResponse,
 } from "@/features/wallie/contracts";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { loadAttemptOrdinalForRun } from "@/features/wallie/server";
 import { buildAgentRunActionErrorResponse, buildAgentRunCancelResponse } from "@/lib/wallie/http";
 import { cancelWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -58,7 +59,12 @@ export async function POST(request: Request, { params }: CancelAgentRunRouteProp
       workspace: access.context.workspace,
     });
 
+    const attemptCount = await loadAttemptOrdinalForRun(result.run.session_id, result.run.id).catch(
+      () => 1,
+    );
+
     const response: AgentRunCancelResponse = buildAgentRunCancelResponse({
+      attemptCount,
       canceled: result.canceled,
       run: result.run,
     });

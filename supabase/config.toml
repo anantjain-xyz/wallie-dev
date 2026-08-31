@@ -158,6 +158,14 @@ additional_redirect_urls = [
   "http://localhost:3000/**",
   "http://127.0.0.1:3000",
   "http://127.0.0.1:3000/**",
+  "http://localhost:3100",
+  "http://localhost:3100/**",
+  "http://127.0.0.1:3100",
+  "http://127.0.0.1:3100/**",
+  "http://localhost:3200",
+  "http://localhost:3200/**",
+  "http://127.0.0.1:3200",
+  "http://127.0.0.1:3200/**",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600

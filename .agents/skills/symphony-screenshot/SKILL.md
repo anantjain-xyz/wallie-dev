@@ -65,6 +65,7 @@ The PR description is the home for proof-of-testing screenshots. They are hosted
    Always `--force-with-lease`, never `--force`. If the lease check fails, someone pushed in the meantime — fetch, re-rebase, and retry from step 3 (the new SHA invalidates the URLs captured in step 4, so re-do the PR-body update too).
 
 8. **Cleanup workspace artifacts**: `rm -rf .symphony/screenshots .playwright-mcp` (those dirs should not appear in `git status` afterward).
+9. Run the repository's required validation before pushing; if it fails, resolve the root cause and record any reusable prerequisite in the workpad.
 
 ## Caveats
 

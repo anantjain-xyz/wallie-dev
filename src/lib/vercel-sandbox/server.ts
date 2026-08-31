@@ -8,6 +8,7 @@ import {
   type VercelSandboxConnectionStatus,
   type VercelSandboxCredentials,
 } from "@/lib/vercel-sandbox/contracts";
+import { redactSecrets } from "@/lib/sandbox/command";
 import { buildSecretPreview, decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
@@ -15,72 +16,13 @@ type AdminClient = SupabaseClient<Database>;
 type ConnectionRow = Tables<"workspace_vercel_sandbox_connections">;
 
 const previewSelect =
-  "workspace_id, token_preview, team_id, project_id, project_name, status, last_validated_at, last_validation_error, updated_at";
+  "workspace_id, token_preview, team_id, project_id, project_name, status, connection_revision, last_validated_at, last_validation_error, updated_at";
 const secretSelect = `${previewSelect}, encrypted_token`;
-
-export class VercelSandboxConnectionMissingError extends Error {
-  constructor() {
-    super("Connect a Vercel Sandbox account before starting Wallie runs.");
-    this.name = "VercelSandboxConnectionMissingError";
-  }
-}
-
-export class VercelSandboxConnectionInvalidError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "VercelSandboxConnectionInvalidError";
-  }
-}
-
-export class VercelSandboxConnectionMutationInProgressError extends Error {
-  constructor() {
-    super("Vercel Sandbox connection update is already in progress. Try again shortly.");
-    this.name = "VercelSandboxConnectionMutationInProgressError";
-  }
-}
-
-export class VercelSandboxConnectionActiveWorkError extends Error {
-  constructor() {
-    super(
-      "Cannot change Vercel while Wallie runs or sandbox checks are queued or running. Wait for them to finish first.",
-    );
-    this.name = "VercelSandboxConnectionActiveWorkError";
-  }
-}
-
-export async function acquireVercelSandboxConnectionMutationLock(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<() => Promise<void>> {
-  const { data, error } = await admin.rpc("begin_vercel_sandbox_connection_mutation", {
-    target_workspace_id: workspaceId,
-  });
-
-  if (error) throw error;
-  if (data === "locked") {
-    throw new VercelSandboxConnectionMutationInProgressError();
-  }
-  if (data === "active") {
-    throw new VercelSandboxConnectionActiveWorkError();
-  }
-  if (typeof data !== "string" || data.length === 0) {
-    throw new Error("Failed to acquire Vercel Sandbox connection update lock.");
-  }
-
-  return async () => {
-    const { error: releaseError } = await admin
-      .from("workspace_vercel_sandbox_connection_mutations")
-      .delete()
-      .eq("workspace_id", workspaceId)
-      .eq("lock_id", data);
-
-    if (releaseError) throw releaseError;
-  };
-}
 
 export function mapVercelSandboxConnectionPreview(
   row: Pick<
     ConnectionRow,
+    | "connection_revision"
     | "last_validated_at"
     | "last_validation_error"
     | "project_id"
@@ -95,6 +37,7 @@ export function mapVercelSandboxConnectionPreview(
   const status: VercelSandboxConnectionStatus = row.status === "connected" ? "connected" : "error";
 
   return {
+    connectionRevision: row.connection_revision,
     lastValidatedAt: row.last_validated_at,
     lastValidationError: row.last_validation_error,
     projectId: row.project_id,
@@ -174,7 +117,12 @@ export async function validateVercelSandboxCredentials(
     }
 > {
   const project = await fetchVercelProject(credentials);
-  if (!project.ok) return project;
+  if (!project.ok) {
+    return {
+      ...project,
+      error: redactSecrets(project.error, [credentials.token]),
+    };
+  }
 
   try {
     await Sandbox.list({
@@ -185,10 +133,12 @@ export async function validateVercelSandboxCredentials(
     });
   } catch (error) {
     return {
-      error:
+      error: redactSecrets(
         error instanceof Error
           ? error.message
           : "Vercel Sandbox validation failed for that project.",
+        [credentials.token],
+      ),
       ok: false,
     };
   }
@@ -235,29 +185,6 @@ export async function loadVercelSandboxConnection(
     },
     preview: mapVercelSandboxConnectionPreview(row),
   };
-}
-
-export async function loadRequiredVercelSandboxConnection(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<{
-  credentials: VercelSandboxCredentials;
-  preview: VercelSandboxConnectionPreview;
-}> {
-  const connection = await loadVercelSandboxConnection(admin, workspaceId);
-
-  if (!connection) {
-    throw new VercelSandboxConnectionMissingError();
-  }
-
-  if (connection.preview.status !== "connected") {
-    throw new VercelSandboxConnectionInvalidError(
-      connection.preview.lastValidationError ??
-        "Saved Vercel Sandbox connection is not valid. Reconnect it in workspace settings.",
-    );
-  }
-
-  return connection;
 }
 
 export async function loadConnectedVercelSandboxConnections(admin: AdminClient): Promise<

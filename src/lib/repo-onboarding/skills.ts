@@ -102,6 +102,38 @@ Do not rely on a Playwright MCP server being present in Wallie cloud runs.
 `,
 );
 
+const WALLIE_COMMIT_SKILL_V4 = skill(
+  "commit",
+  "Create a well-scoped git commit from the intended changes.",
+  `
+# Commit
+
+Steps:
+- Inspect \`git status\`, \`git diff\`, and \`git diff --staged\`.
+- Stage only intended paths by name.
+- Keep generated artifacts, logs, credentials, and screenshots out of normal commits and the final PR diff.
+- Match the repository's commit-message style.
+- Use \`git commit -F <file>\` for multi-line messages.
+- Do not bypass hooks unless a separate screenshot skill explicitly creates a temporary screenshot-only commit.
+`,
+);
+
+const WALLIE_PUSH_SKILL_V4 = skill(
+  "push",
+  "Push the branch and ensure a GitHub pull request exists.",
+  `
+# Push
+
+Steps:
+- Confirm validation passed on the latest commit.
+- Push with upstream tracking: \`git push -u origin HEAD\`.
+- If push is rejected, merge the remote/base branch intentionally and rerun validation.
+- Create or update a PR whose title/body describe the total branch scope.
+- Attach the PR URL to the Linear issue.
+- Do not post duplicate completion comments.
+`,
+);
+
 const WALLIE_AGENTS_INSTRUCTIONS_V1 = [
   "# Wallie Workflow",
   "",
@@ -117,6 +149,8 @@ const WALLIE_AGENTS_INSTRUCTIONS_V1 = [
 
 export const UPGRADABLE_WALLIE_LEGACY_FILES = [
   { content: WALLIE_COMMIT_SKILL_V1.content, path: WALLIE_COMMIT_SKILL_V1.path },
+  { content: WALLIE_COMMIT_SKILL_V4.content, path: WALLIE_COMMIT_SKILL_V4.path },
+  { content: WALLIE_PUSH_SKILL_V4.content, path: WALLIE_PUSH_SKILL_V4.path },
   { content: WALLIE_PR_FEEDBACK_SKILL_V2.content, path: WALLIE_PR_FEEDBACK_SKILL_V2.path },
   { content: WALLIE_SCREENSHOT_SKILL_V1.content, path: WALLIE_SCREENSHOT_SKILL_V1.path },
   { content: WALLIE_SCREENSHOT_SKILL_V2.content, path: WALLIE_SCREENSHOT_SKILL_V2.path },
@@ -174,6 +208,7 @@ Steps:
 - Keep generated artifacts, logs, credentials, and screenshots out of normal commits and the final PR diff.
 - Match the repository's commit-message style.
 - Use \`git commit -F <file>\` for multi-line messages.
+- Preserve Wallie's configured Git author and committer. Do not change \`user.name\` / \`user.email\`, use per-command identity config, pass \`--author\`, set \`GIT_AUTHOR_*\` or \`GIT_COMMITTER_*\`, or add \`Co-authored-by\` trailers.
 - Do not bypass hooks unless a separate screenshot skill explicitly creates a temporary screenshot-only commit.
 `,
   ),
@@ -187,7 +222,8 @@ Steps:
 - Confirm validation passed on the latest commit.
 - Push with upstream tracking: \`git push -u origin HEAD\`.
 - If push is rejected, merge the remote/base branch intentionally and rerun validation.
-- Create or update a PR whose title/body describe the total branch scope.
+- Create or update a PR whose title/body describe the total branch scope using only the sandbox \`gh\` CLI (normally \`gh pr create\` or \`gh pr edit\`).
+- Keep Wallie's injected \`GH_TOKEN\` unchanged. Do not unset, replace, or override it, and do not use a connected GitHub app, MCP server, plugin, browser session, or another API client for GitHub writes.
 - Attach the PR URL to the Linear issue.
 - Do not post duplicate completion comments.
 `,

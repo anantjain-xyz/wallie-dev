@@ -1,0 +1,234 @@
+// @vitest-environment jsdom
+
+import "@testing-library/jest-dom/vitest";
+
+import { createElement } from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { OverlayProvider } from "@/components/ui/overlay-provider";
+import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
+
+function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = {}) {
+  const onApprove = vi.fn();
+  const onReject = vi.fn().mockResolvedValue(true);
+
+  const view = render(
+    createElement(
+      OverlayProvider,
+      null,
+      createElement(SessionReviewBar, {
+        approveLabel: "Approve & advance",
+        mode: { canApprove: true, kind: "reviewable" },
+        onApprove,
+        onReject,
+        phaseActionPending: null,
+        ...overrides,
+      }),
+    ),
+  );
+
+  return { ...view, onApprove, onReject };
+}
+
+describe("SessionReviewBar", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("approves with a single confirmation click", () => {
+    const { onApprove } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Approve & advance" }));
+    expect(onApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects whitespace-only feedback and keeps the dialog open", async () => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "   \n\t  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    expect(onReject).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("preserves feedback when reject submission fails", async () => {
+    const onReject = vi.fn().mockResolvedValue(false);
+    renderBar({ onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Please fix the tone." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    await waitFor(() => expect(onReject).toHaveBeenCalledWith("Please fix the tone."));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveValue("Please fix the tone.");
+  });
+
+  it.each([
+    ["Command+Enter", { metaKey: true }],
+    ["Ctrl+Enter", { ctrlKey: true }],
+  ])("queues a rerun with %s from the feedback field", async (_label, modifier) => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "Address the review feedback." } });
+
+    fireEvent.keyDown(feedback, { key: "Enter", ...modifier });
+
+    await waitFor(() => expect(onReject).toHaveBeenCalledWith("Address the review feedback."));
+  });
+
+  it("leaves bare Enter to the feedback field", async () => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "First line\nSecond line" } });
+
+    expect(fireEvent.keyDown(feedback, { key: "Enter" })).toBe(true);
+    expect(onReject).not.toHaveBeenCalled();
+    expect(feedback).toHaveValue("First line\nSecond line");
+  });
+
+  it("uses the existing validation path for shortcut submission", async () => {
+    const { onReject } = renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "   \n\t  " } });
+
+    fireEvent.keyDown(feedback, { key: "Enter", metaKey: true });
+
+    expect(onReject).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(feedback).toHaveFocus();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("prevents repeated shortcuts from queueing duplicate reruns", async () => {
+    let resolveReject: ((value: boolean) => void) | undefined;
+    const onReject = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveReject = resolve;
+        }),
+    );
+    renderBar({ onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "Address the review feedback." } });
+
+    fireEvent.keyDown(feedback, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(feedback, { key: "Enter", metaKey: true, repeat: true });
+
+    expect(onReject).toHaveBeenCalledTimes(1);
+    resolveReject?.(true);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("exposes the rerun shortcut without changing the button name", async () => {
+    renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const button = await screen.findByRole("button", { name: "Queue rerun" });
+    expect(button).toHaveAttribute("aria-keyshortcuts", "Meta+Enter Control+Enter");
+  });
+
+  it("prevents duplicate submit while a phase action is pending", () => {
+    const { onApprove } = renderBar({ phaseActionPending: "approve" });
+    fireEvent.click(screen.getByRole("button", { name: /Approving/ }));
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("shows an explicit read-only reason for unauthorized sessions", () => {
+    renderBar({
+      mode: {
+        kind: "unauthorized",
+        reason: "You are not authorized to approve or request changes on this stage.",
+      },
+    });
+    expect(screen.getByText(/not authorized/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+  });
+
+  it("keeps Request changes when approve is unauthorized", () => {
+    renderBar({ mode: { canApprove: false, kind: "reviewable" } });
+    expect(screen.getByRole("button", { name: "Request changes" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+    expect(screen.getByText(/not authorized to approve this stage/i)).toBeTruthy();
+  });
+
+  it("shows an explicit read-only reason for archived sessions", () => {
+    renderBar({
+      mode: {
+        kind: "archived",
+        reason: "This session is archived. Unarchive it to resume review.",
+      },
+    });
+    expect(screen.getByText(/archived/i)).toBeTruthy();
+  });
+
+  it("shows an explicit read-only reason for failed runs", () => {
+    renderBar({
+      mode: {
+        kind: "failed",
+        reason: "The latest run failed. Review is paused until Wallie produces a new artifact.",
+      },
+    });
+    expect(screen.getByText(/latest run failed/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+  });
+
+  it("shows an explicit read-only reason when viewing a historical artifact", () => {
+    renderBar({
+      mode: {
+        kind: "historical_version",
+        reason: "You’re viewing an older version. Return to Latest to approve or request changes.",
+      },
+    });
+    expect(screen.getByText(/older version/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+  });
+
+  it("does not render a bottom review bar while running", () => {
+    const { container } = renderBar({ mode: { kind: "running" } });
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+    expect(container.innerHTML).not.toContain("sticky bottom-0");
+  });
+
+  it("uses safe-area-aware sticky padding", () => {
+    const { container } = renderBar();
+    expect(container.innerHTML).toContain("pb-[max(0.75rem,env(safe-area-inset-bottom))]");
+    expect(container.innerHTML).toContain("env(safe-area-inset-left)");
+    expect(container.innerHTML).toContain("env(safe-area-inset-right)");
+    expect(container.innerHTML).toContain("sticky bottom-0");
+  });
+
+  it.each([
+    { canApprove: true, kind: "reviewable" } as const,
+    {
+      kind: "completed",
+      reason: "This session is complete. Review controls are closed.",
+    } as const,
+  ])("keeps the bottom section borderless for $kind mode", (mode) => {
+    const { container } = renderBar({ mode });
+
+    expect(container.firstElementChild).not.toHaveClass("border-t");
+  });
+
+  it("restores focus to Request changes when the dialog closes", async () => {
+    renderBar();
+    const trigger = screen.getByRole("button", { name: "Request changes" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(trigger);
+    });
+  });
+});

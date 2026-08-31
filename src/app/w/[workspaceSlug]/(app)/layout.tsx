@@ -12,21 +12,14 @@ type WorkspaceAppLayoutProps = {
 
 export default async function WorkspaceAppLayout({ children, params }: WorkspaceAppLayoutProps) {
   const { workspaceSlug } = await params;
-  const {
-    defaultSessionGithubRepositoryId,
-    onboarding,
-    sessionRepositoryOptions,
-    user,
-    workspace,
-    workspaceAvatarUrl,
-  } = await loadWorkspaceLayoutContext(workspaceSlug);
+  const { onboarding, user, workspace, workspaceAvatarUrl } =
+    await loadWorkspaceLayoutContext(workspaceSlug);
 
   return (
     <AppShell
-      defaultSessionGithubRepositoryId={defaultSessionGithubRepositoryId}
       onboarding={onboarding}
-      sessionRepositoryOptions={sessionRepositoryOptions}
       viewerEmail={user.email ?? null}
+      viewerId={user.id}
       workspace={workspace}
       workspaceAvatarUrl={workspaceAvatarUrl}
     >

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   listRunningSandboxes: vi.fn(),
-  loadConnectedVercelSandboxConnections: vi.fn(),
+  loadAllConnectedSandboxConnections: vi.fn(),
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -11,8 +11,8 @@ vi.mock("@/lib/sandbox", () => ({
   listRunningSandboxes: mocked.listRunningSandboxes,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadConnectedVercelSandboxConnections: mocked.loadConnectedVercelSandboxConnections,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadAllConnectedSandboxConnections: mocked.loadAllConnectedSandboxConnections,
 }));
 
 import { reapOrphanSandboxes } from "./sandbox-reaper";
@@ -21,6 +21,7 @@ interface ClaimedRow {
   agent_job_id?: string | null;
   checked_at?: string;
   sandbox_id: string;
+  sandbox_connection_revision?: string;
   sandbox_provider?: string;
   sandbox_vercel_project_id?: string;
   sandbox_vercel_team_id?: string;
@@ -46,6 +47,7 @@ function buildAdminMock(
     return rows
       .map((row) => ({
         sandbox_provider: "vercel",
+        sandbox_connection_revision: "revision-1",
         sandbox_vercel_project_id: "prj_123",
         sandbox_vercel_team_id: "team_123",
         checked_at: new Date().toISOString(),
@@ -143,10 +145,14 @@ function buildAdminMock(
 beforeEach(() => {
   mocked.stopSandboxById.mockClear();
   mocked.listRunningSandboxes.mockReset();
-  mocked.loadConnectedVercelSandboxConnections.mockResolvedValue([
+  mocked.loadAllConnectedSandboxConnections.mockResolvedValue([
     {
-      credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
-      preview: { workspaceId: "workspace-1" },
+      connection: {
+        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+      workspaceId: "workspace-1",
     },
   ]);
 });
@@ -163,7 +169,12 @@ describe("reapOrphanSandboxes", () => {
     expect(result.reapedSandboxIds).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
     expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: {
+        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+      workspaceId: "workspace-1",
     });
   });
 
@@ -194,14 +205,14 @@ describe("reapOrphanSandboxes", () => {
     expect(result.activeProviderCount).toBe(3);
     expect(result.reapedSandboxIds.sort()).toEqual(["orphan-1", "orphan-2"]);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("orphan-1", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: expect.objectContaining({ provider: "vercel", revision: "revision-1" }),
     });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("orphan-2", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: expect.objectContaining({ provider: "vercel", revision: "revision-1" }),
     });
     expect(mocked.stopSandboxById).not.toHaveBeenCalledWith(
       "claimed",
-      expect.objectContaining({ vercelCredentials: expect.anything() }),
+      expect.objectContaining({ connection: expect.anything() }),
     );
   });
 
@@ -225,10 +236,10 @@ describe("reapOrphanSandboxes", () => {
 
     const result = await reapOrphanSandboxes(admin as never);
 
-    expect(result.reapedSandboxIds).toEqual(["orphan"]);
+    expect(result.reapedSandboxIds).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalledWith(
       "shared-claimed",
-      expect.objectContaining({ vercelCredentials: expect.anything() }),
+      expect.objectContaining({ connection: expect.anything() }),
     );
   });
 
@@ -244,7 +255,7 @@ describe("reapOrphanSandboxes", () => {
 
     expect(result.reapedSandboxIds).toEqual(["capability-orphan"]);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-orphan", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: expect.objectContaining({ provider: "vercel", revision: "revision-1" }),
     });
   });
 
@@ -266,7 +277,7 @@ describe("reapOrphanSandboxes", () => {
 
     expect(result.reapedSandboxIds).toEqual(["stale-capability-check"]);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("stale-capability-check", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: expect.objectContaining({ provider: "vercel", revision: "revision-1" }),
     });
   });
 

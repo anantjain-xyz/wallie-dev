@@ -55,10 +55,8 @@ describe("/ page", () => {
   it("renders the public landing page for logged-out visitors", async () => {
     const html = renderToStaticMarkup(await HomePage());
 
-    expect(html).toContain("Bring agents together with your team in one shared workspace.");
-    expect(html).toContain("you@company.com");
-    expect(html).toContain("Get started");
-    expect(html).toContain("Sandboxed execution for every stage");
+    expect(html).toContain("Run coding agents through your team");
+    expect(html).toContain("Sign in to Wallie");
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.redirect).not.toHaveBeenCalled();
   });
@@ -72,7 +70,7 @@ describe("/ page", () => {
 
     const html = renderToStaticMarkup(await HomePage());
 
-    expect(html).toContain("Bring agents together with your team in one shared workspace.");
+    expect(html).toContain("Run coding agents through your team");
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.redirect).not.toHaveBeenCalled();
   });

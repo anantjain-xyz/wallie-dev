@@ -1,18 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
-  loadWorkspaceLayoutContext: vi.fn(),
+  loadAuthenticatedWorkspaceContext: vi.fn(),
 }));
 
-vi.mock("@/features/workspaces/workspace-layout-data", () => ({
-  loadWorkspaceLayoutContext: mocked.loadWorkspaceLayoutContext,
+vi.mock("@/features/workspaces/authenticated-context", () => ({
+  loadAuthenticatedWorkspaceContext: mocked.loadAuthenticatedWorkspaceContext,
 }));
 
 import WorkspaceLayout from "./layout";
 
 describe("workspace root layout", () => {
   it("keeps the root route as the access boundary without rendering the app shell", async () => {
-    mocked.loadWorkspaceLayoutContext.mockResolvedValue({
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
       user: { email: "owner@example.com" },
       workspace: { id: "workspace-1", name: "Northwind", slug: "northwind" },
     });
@@ -23,6 +23,6 @@ describe("workspace root layout", () => {
         params: Promise.resolve({ workspaceSlug: "northwind" }),
       }),
     ).resolves.toBe("onboarding-screen");
-    expect(mocked.loadWorkspaceLayoutContext).toHaveBeenCalledWith("northwind");
+    expect(mocked.loadAuthenticatedWorkspaceContext).toHaveBeenCalledWith("northwind");
   });
 });

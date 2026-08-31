@@ -6,6 +6,7 @@ import {
   RepositoryProfileError,
   saveWorkspaceRepositoryProfile,
 } from "@/lib/repo-inference/server";
+import { getLatestSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -51,13 +52,21 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   try {
-    const profile = await saveWorkspaceRepositoryProfile({
-      admin: createSupabaseAdminClient(),
-      payload: parsed.data,
-      workspaceId: parsedWorkspaceId.data,
-    });
+    const admin = createSupabaseAdminClient();
+    const [profile, latestSandboxCapabilityCheck] = await Promise.all([
+      saveWorkspaceRepositoryProfile({
+        admin,
+        payload: parsed.data,
+        workspaceId: parsedWorkspaceId.data,
+      }),
+      getLatestSandboxCapabilityCheck({
+        admin,
+        repositoryId: parsed.data.githubRepositoryId,
+        workspaceId: parsedWorkspaceId.data,
+      }),
+    ]);
 
-    return NextResponse.json({ profile }, { status: 200 });
+    return NextResponse.json({ latestSandboxCapabilityCheck, profile }, { status: 200 });
   } catch (error) {
     if (error instanceof RepositoryProfileError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

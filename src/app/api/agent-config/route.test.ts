@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
@@ -14,8 +14,19 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 import { PATCH, POST } from "./route";
+import * as agentConfigRoute from "./route";
 
 const WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("agent-config route method surface", () => {
+  it("exposes only mutation handlers", () => {
+    expect(Object.keys(agentConfigRoute).sort()).toEqual(["PATCH", "POST"]);
+  });
+});
 
 function postWith(body: unknown) {
   return new Request("http://localhost/api/agent-config", {
@@ -47,38 +58,65 @@ function setupSuccessfulUpsert() {
 describe("POST /api/agent-config — value validation", () => {
   it("rejects negative stall_timeout_ms regardless of access", async () => {
     const response = await POST(
-      postWith({ key: "stall_timeout_ms", value: -300_000, workspaceId: WORKSPACE_ID }),
+      postWith({ config: { stall_timeout_ms: -300_000 }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(400);
-    const payload = (await response.json()) as { error: string };
-    expect(payload.error).toMatch(/at least 30000/);
+    const payload = (await response.json()) as {
+      error: string;
+      fieldErrors: Record<string, string>;
+    };
+    expect(payload.fieldErrors.stall_timeout_ms).toMatch(/at least 30000/);
     expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
   });
 
   it('rejects model = "lol"', async () => {
     const response = await POST(
-      postWith({ key: "agent_model", value: "lol", workspaceId: WORKSPACE_ID }),
+      postWith({ config: { agent_model: "lol" }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(400);
-    const payload = (await response.json()) as { error: string };
-    expect(payload.error).toMatch(/must start with/);
+    const payload = (await response.json()) as { fieldErrors: Record<string, string> };
+    expect(payload.fieldErrors.agent_model).toMatch(/must start with/);
   });
 
   it("rejects max_retries above 10", async () => {
     const response = await POST(
-      postWith({ key: "max_retries", value: 25, workspaceId: WORKSPACE_ID }),
+      postWith({ config: { max_retries: 25 }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(400);
-    const payload = (await response.json()) as { error: string };
-    expect(payload.error).toMatch(/at most 10/);
+    const payload = (await response.json()) as { fieldErrors: Record<string, string> };
+    expect(payload.fieldErrors.max_retries).toMatch(/at most 10/);
+  });
+
+  it("rejects an unsupported agent effort", async () => {
+    const response = await POST(
+      postWith({ config: { agent_effort: "ultra" }, workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { fieldErrors: Record<string, string> };
+    expect(payload.fieldErrors.agent_effort).toMatch(/must be one of/);
+  });
+
+  it("accepts max agent effort with admin access", async () => {
+    grantAccess();
+    setupSuccessfulUpsert();
+
+    const response = await POST(
+      postWith({ config: { agent_effort: "max" }, workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      entries: [{ key: "agent_effort", value: "max" }],
+    });
   });
 
   it("rejects unknown agent_provider", async () => {
     const response = await POST(
-      postWith({ key: "agent_provider", value: "openai", workspaceId: WORKSPACE_ID }),
+      postWith({ config: { agent_provider: "openai" }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(400);
@@ -86,7 +124,7 @@ describe("POST /api/agent-config — value validation", () => {
 
   it("rejects unknown keys", async () => {
     const response = await POST(
-      postWith({ key: "secret_key", value: "value", workspaceId: WORKSPACE_ID }),
+      postWith({ config: { secret_key: "value" }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(400);
@@ -103,53 +141,49 @@ describe("POST /api/agent-config — value validation", () => {
 
     const response = await POST(
       postWith({
-        key: "agent_model",
-        value: "claude-sonnet-4-20250514",
+        config: { agent_model: "claude-sonnet-4-20250514" },
         workspaceId: WORKSPACE_ID,
       }),
     );
 
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as { entry: { key: string; value: unknown } };
-    expect(payload.entry).toEqual({
-      key: "agent_model",
-      value: "claude-sonnet-4-20250514",
-    });
+    const payload = (await response.json()) as { entries: Array<{ key: string; value: unknown }> };
+    expect(payload.entries).toEqual([{ key: "agent_model", value: "claude-sonnet-4-20250514" }]);
   });
 
   it("accepts an OpenCode provider and fully qualified model", async () => {
     grantAccess();
     const upsert = setupSuccessfulUpsert();
 
-    const providerResponse = await POST(
-      postWith({ key: "agent_provider", value: "opencode", workspaceId: WORKSPACE_ID }),
-    );
-    grantAccess();
-    const modelResponse = await POST(
+    const response = await POST(
       postWith({
-        key: "agent_model",
-        value: "opencode/gpt-5.6-sol",
+        config: {
+          agent_model: "opencode/gpt-5.6-sol",
+          agent_provider: "opencode",
+        },
         workspaceId: WORKSPACE_ID,
       }),
     );
 
-    expect(providerResponse.status).toBe(200);
-    expect(modelResponse.status).toBe(200);
-    expect(upsert).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ key: "agent_provider", value_json: "opencode" }),
-      { onConflict: "workspace_id,key" },
-    );
-    expect(upsert).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ key: "agent_model", value_json: "opencode/gpt-5.6-sol" }),
+    expect(response.status).toBe(200);
+    expect(upsert).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          key: "agent_model",
+          value_json: "opencode/gpt-5.6-sol",
+        }),
+        expect.objectContaining({ key: "agent_provider", value_json: "opencode" }),
+      ],
       { onConflict: "workspace_id,key" },
     );
   });
 
   it("rejects uppercase OpenCode model ids", async () => {
     const response = await POST(
-      postWith({ key: "agent_model", value: "opencode/GPT-5.6-sol", workspaceId: WORKSPACE_ID }),
+      postWith({
+        config: { agent_model: "opencode/GPT-5.6-sol" },
+        workspaceId: WORKSPACE_ID,
+      }),
     );
 
     expect(response.status).toBe(400);
@@ -160,12 +194,12 @@ describe("POST /api/agent-config — value validation", () => {
     setupSuccessfulUpsert();
 
     const response = await POST(
-      postWith({ key: "stall_timeout_ms", value: 600_000, workspaceId: WORKSPACE_ID }),
+      postWith({ config: { stall_timeout_ms: 600_000 }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as { entry: { key: string; value: unknown } };
-    expect(payload.entry).toEqual({ key: "stall_timeout_ms", value: 600_000 });
+    const payload = (await response.json()) as { entries: Array<{ key: string; value: unknown }> };
+    expect(payload.entries).toEqual([{ key: "stall_timeout_ms", value: 600_000 }]);
   });
 
   it("normalizes the legacy claude_code agent_provider alias before persisting", async () => {
@@ -173,14 +207,53 @@ describe("POST /api/agent-config — value validation", () => {
     const upsert = setupSuccessfulUpsert();
 
     const response = await POST(
-      postWith({ key: "agent_provider", value: "claude_code", workspaceId: WORKSPACE_ID }),
+      postWith({ config: { agent_provider: "claude_code" }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as { entry: { key: string; value: unknown } };
-    expect(payload.entry).toEqual({ key: "agent_provider", value: "claude-code" });
+    const payload = (await response.json()) as { entries: Array<{ key: string; value: unknown }> };
+    expect(payload.entries).toEqual([{ key: "agent_provider", value: "claude-code" }]);
     expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "agent_provider", value_json: "claude-code" }),
+      [expect.objectContaining({ key: "agent_provider", value_json: "claude-code" })],
+      { onConflict: "workspace_id,key" },
+    );
+  });
+
+  it("validates every field before the atomic write and reports the invalid field", async () => {
+    const response = await POST(
+      postWith({
+        config: { agent_model: "lol", max_retries: 4 },
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      fieldErrors: { agent_model: expect.stringMatching(/must start with/) },
+    });
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("writes every submitted field with one transactional bulk upsert", async () => {
+    grantAccess();
+    const upsert = setupSuccessfulUpsert();
+
+    const response = await POST(
+      postWith({
+        config: { agent_model: "gpt-5.5", agent_provider: "codex", max_retries: 4 },
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledWith(
+      [
+        { key: "agent_model", value_json: "gpt-5.5", workspace_id: WORKSPACE_ID },
+        { key: "agent_provider", value_json: "codex", workspace_id: WORKSPACE_ID },
+        { key: "max_retries", value_json: 4, workspace_id: WORKSPACE_ID },
+      ],
       { onConflict: "workspace_id,key" },
     );
   });
@@ -193,7 +266,7 @@ describe("POST /api/agent-config — value validation", () => {
     });
 
     const response = await POST(
-      postWith({ key: "max_retries", value: 3, workspaceId: WORKSPACE_ID }),
+      postWith({ config: { max_retries: 3 }, workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(403);
@@ -233,6 +306,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
         { key: "concurrency_limit", value: 1 },
         { key: "stall_timeout_ms", value: 900000 },
         { key: "max_retries", value: 3 },
+        { key: "agent_effort", value: "xhigh" },
       ],
       skippedKeys: [],
     });
@@ -241,6 +315,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
         { key: "concurrency_limit", value_json: 1, workspace_id: WORKSPACE_ID },
         { key: "stall_timeout_ms", value_json: 900000, workspace_id: WORKSPACE_ID },
         { key: "max_retries", value_json: 3, workspace_id: WORKSPACE_ID },
+        { key: "agent_effort", value_json: "xhigh", workspace_id: WORKSPACE_ID },
       ],
       { onConflict: "workspace_id,key" },
     );
@@ -273,6 +348,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
       "stall_timeout_ms",
       "max_retries",
       "agent_provider",
+      "agent_effort",
     ]);
     expect(upsert).not.toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ key: "agent_model" })]),
@@ -307,11 +383,11 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
     const payload = (await response.json()) as { applied: Array<{ key: string; value: unknown }> };
     expect(payload.applied).toContainEqual({
       key: "agent_model",
-      value: "claude-opus-4-7[1m]",
+      value: "claude-opus-4-8[1m]",
     });
     expect(upsert).toHaveBeenCalledWith(
       expect.arrayContaining([
-        { key: "agent_model", value_json: "claude-opus-4-7[1m]", workspace_id: WORKSPACE_ID },
+        { key: "agent_model", value_json: "claude-opus-4-8[1m]", workspace_id: WORKSPACE_ID },
       ]),
       { onConflict: "workspace_id,key" },
     );

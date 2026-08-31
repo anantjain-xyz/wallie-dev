@@ -36,6 +36,7 @@ description: Push the current branch to origin and ensure a PR exists for it (cr
    ```
 8. Capture the PR URL: `gh pr view --json url -q .url`.
 9. Attach the PR URL to the active Linear issue. The auto-link from `git push` usually creates a Linear attachment automatically; if not, fall back to GraphQL `attachmentLinkURL` (or `attachmentLinkGitHubPR` for GitHub-specific link metadata).
+10. Run the repository's required validation before pushing; if it fails, resolve the root cause and record any reusable prerequisite in the workpad.
 
 ## Don't
 

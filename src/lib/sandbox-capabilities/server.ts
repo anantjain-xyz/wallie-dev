@@ -9,12 +9,12 @@ import { resolveGitHubAppConfig } from "@/features/github/config";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { getClaudeCodeCredentialForUser } from "@/lib/claude-code/tokens";
 import { getCodexCredentialForUser } from "@/lib/codex/tokens";
+import { getCursorCredentialForUser } from "@/lib/cursor/tokens";
 import { getOpenCodeCredentialForUser } from "@/lib/opencode/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
-import type { AgentProvider } from "@/lib/sandbox/types";
-import { asLooseSupabaseClient } from "@/lib/supabase/loose";
-import type { Database } from "@/lib/supabase/database.types";
-import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
+import type { AgentProvider, SandboxConnection } from "@/lib/sandbox/types";
+import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
+import type { Database, Json } from "@/lib/supabase/database.types";
 import {
   capabilityReportSucceeded,
   probeSandboxCapabilities,
@@ -38,6 +38,8 @@ type StartedSandboxCapabilityCheck = {
 
 function mapCheckRow(row: Record<string, unknown>): SandboxCapabilityCheckState {
   return {
+    agentModel: typeof row.agent_model === "string" ? row.agent_model : null,
+    agentProvider: typeof row.agent_provider === "string" ? row.agent_provider : null,
     capabilities:
       typeof row.capabilities === "object" && row.capabilities !== null
         ? (row.capabilities as SandboxCapabilityCheckState["capabilities"])
@@ -47,8 +49,13 @@ function mapCheckRow(row: Record<string, unknown>): SandboxCapabilityCheckState 
     githubRepositoryId:
       typeof row.github_repository_id === "string" ? row.github_repository_id : null,
     id: typeof row.id === "string" ? row.id : null,
+    sandboxConnectionRevision:
+      typeof row.sandbox_connection_revision === "string" ? row.sandbox_connection_revision : null,
     sandboxProvider:
-      row.sandbox_provider === "vercel" || row.sandbox_provider === "fake"
+      row.sandbox_provider === "vercel" ||
+      row.sandbox_provider === "e2b" ||
+      row.sandbox_provider === "daytona" ||
+      row.sandbox_provider === "fake"
         ? row.sandbox_provider
         : null,
     sandboxVercelProjectId:
@@ -140,29 +147,31 @@ async function updateCheck(input: {
   if (!input.checkId) {
     return {
       capabilities: {},
+      agentModel: null,
+      agentProvider: null,
       checkedAt: new Date().toISOString(),
       errorText: input.errorText,
       githubRepositoryId: null,
       id: null,
       sandboxProvider: null,
+      sandboxConnectionRevision: null,
       sandboxVercelProjectId: null,
       sandboxVercelTeamId: null,
       status: input.status,
     };
   }
 
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
+  const { data, error } = await input.admin
     .from("sandbox_capability_checks")
     .update({
-      capabilities: input.capabilities,
+      capabilities: input.capabilities as Json,
       checked_at: new Date().toISOString(),
       error_text: input.errorText,
       status: input.status,
     })
     .eq("id", input.checkId)
     .select(
-      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+      "id, github_repository_id, status, capabilities, error_text, checked_at, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
     )
     .single();
 
@@ -172,41 +181,29 @@ async function updateCheck(input: {
 
 async function updateCheckSandbox(input: {
   admin: AdminClient;
+  agentModel: string;
+  agentProvider: AgentProvider;
   checkId: string | null;
-  projectId: string;
+  connection: SandboxConnection;
   sandboxId: string;
-  teamId: string;
 }): Promise<void> {
   if (!input.checkId) return;
 
-  const loose = asLooseSupabaseClient(input.admin);
-  const { error } = await loose
+  const vercel = input.connection.provider === "vercel" ? input.connection.credentials : null;
+  const { error } = await input.admin
     .from("sandbox_capability_checks")
     .update({
+      agent_model: input.agentModel,
+      agent_provider: input.agentProvider,
       sandbox_id: input.sandboxId,
-      sandbox_provider: "vercel",
-      sandbox_vercel_project_id: input.projectId,
-      sandbox_vercel_team_id: input.teamId,
+      sandbox_connection_revision: input.connection.revision,
+      sandbox_provider: input.connection.provider,
+      sandbox_vercel_project_id: vercel?.projectId ?? null,
+      sandbox_vercel_team_id: vercel?.teamId ?? null,
     })
     .eq("id", input.checkId);
 
   if (error) throw error;
-}
-
-export async function runAndRecordSandboxCapabilityCheck(input: {
-  admin: AdminClient;
-  repositoryId?: string;
-  userId: string;
-  workspaceId: string;
-}): Promise<SandboxCapabilityCheckState> {
-  const started = await startSandboxCapabilityCheck(input);
-  return completeSandboxCapabilityCheck({
-    admin: input.admin,
-    checkId: started.check.id,
-    repository: started.repository,
-    userId: input.userId,
-    workspaceId: input.workspaceId,
-  });
 }
 
 export async function startSandboxCapabilityCheck(input: {
@@ -229,11 +226,10 @@ export async function getLatestSandboxCapabilityCheck(input: {
   repositoryId: string;
   workspaceId: string;
 }): Promise<SandboxCapabilityCheckState | null> {
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
+  const { data, error } = await input.admin
     .from("sandbox_capability_checks")
     .select(
-      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+      "id, github_repository_id, status, capabilities, error_text, checked_at, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
     )
     .eq("workspace_id", input.workspaceId)
     .eq("github_repository_id", input.repositoryId)
@@ -257,45 +253,47 @@ export async function completeSandboxCapabilityCheck(input: {
   try {
     const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspaceId);
     const provider = agentConfig.provider as AgentProvider;
-    const vercelConnection = await loadRequiredVercelSandboxConnection(
+    const sandboxSelection = await loadRequiredWorkspaceSandboxConnection(
       input.admin,
       input.workspaceId,
     );
     const installationToken = await mintInstallationToken(input.admin, input.repository);
-    switch (provider) {
-      case "codex":
-        await getCodexCredentialForUser(input.admin, input.userId);
-        break;
-      case "claude-code":
-        await getClaudeCodeCredentialForUser(input.admin, input.userId);
-        break;
-      case "opencode":
-        await getOpenCodeCredentialForUser(input.admin, input.userId);
-        break;
+    if (provider === "codex") {
+      await getCodexCredentialForUser(input.admin, input.userId);
+    } else if (provider === "cursor") {
+      await getCursorCredentialForUser(input.admin, input.userId);
+    } else if (provider === "opencode") {
+      await getOpenCodeCredentialForUser(input.admin, input.userId);
+    } else {
+      await getClaudeCodeCredentialForUser(input.admin, input.userId);
     }
 
     sandbox = await createSessionSandbox({
       agentProvider: provider,
       baseBranch: input.repository.default_branch ?? "main",
       branch: `wallie/capability-check-${randomUUID().slice(0, 8)}`,
-      implementation: "vercel",
+      implementation: sandboxSelection.provider,
+      connection: sandboxSelection.connection,
       installationToken,
+      ownerId: input.checkId ?? undefined,
       repoFullName: input.repository.full_name,
       sessionId: randomUUID(),
       timeoutMs: 30 * 60_000,
-      vercelCredentials: vercelConnection.credentials,
+      workspaceId: input.workspaceId,
       onSandboxCreated: async ({ sandboxId }) => {
         await updateCheckSandbox({
           admin: input.admin,
+          agentModel: agentConfig.model,
+          agentProvider: provider,
           checkId: input.checkId,
-          projectId: vercelConnection.credentials.projectId,
+          connection: sandboxSelection.connection,
           sandboxId,
-          teamId: vercelConnection.credentials.teamId,
         });
       },
     });
     console.info("[sandbox-capability-check] sandbox started", {
       agentProvider: provider,
+      sandboxProvider: sandboxSelection.provider,
       sandboxId: sandbox.id,
       workspaceId: input.workspaceId,
     });
@@ -303,8 +301,9 @@ export async function completeSandboxCapabilityCheck(input: {
     const capabilities = await probeSandboxCapabilities({
       agentProvider: provider,
       sandbox,
+      sandboxProvider: sandboxSelection.provider,
     });
-    const success = capabilityReportSucceeded(capabilities);
+    const success = capabilityReportSucceeded(capabilities, sandboxSelection.provider, provider);
     return await updateCheck({
       admin: input.admin,
       capabilities,

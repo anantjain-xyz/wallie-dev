@@ -38,6 +38,14 @@ function job(id: string): ClaimNextResult {
   return { job: { id, workspace_id: "ws-1" } as never, outcome: "claimed" };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("createScheduler", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -49,6 +57,50 @@ describe("createScheduler", () => {
     await scheduler.run();
 
     expect(mocked.claimNextJob).not.toHaveBeenCalled();
+  });
+
+  it("resolves waitForIdle immediately when no jobs are active", async () => {
+    const scheduler = createScheduler(admin, config, { isShuttingDown: () => true });
+
+    await expect(scheduler.waitForIdle()).resolves.toBeUndefined();
+  });
+
+  it("waits for every active job to settle before becoming idle", async () => {
+    const first = deferred();
+    const second = deferred();
+    let claimCount = 0;
+    mocked.claimNextJob.mockImplementation(async () => job(`job-${++claimCount}`));
+    mocked.runClaimedJob.mockImplementation((_admin: never, claimed: { id: string }) =>
+      claimed.id === "job-1" ? first.promise : second.promise,
+    );
+    mocked.sendHeartbeat.mockResolvedValue(undefined);
+
+    const scheduler = createScheduler(admin, config, {
+      isShuttingDown: () => claimCount >= 2,
+      delay: async () => {},
+    });
+
+    await scheduler.run();
+    expect(scheduler.getActiveJobIds()).toEqual(["job-1", "job-2"]);
+
+    let drained = false;
+    const draining = scheduler.waitForIdle().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    first.resolve();
+    await first.promise;
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    expect(scheduler.getActiveJobIds()).toEqual(["job-2"]);
+
+    second.resolve();
+    await draining;
+    expect(drained).toBe(true);
+    expect(scheduler.getActiveJobIds()).toEqual([]);
+    expect(mocked.sendHeartbeat).toHaveBeenLastCalledWith(admin, "worker-test", []);
   });
 
   it("never exceeds maxConcurrentJobs and reports the full in-flight set", async () => {

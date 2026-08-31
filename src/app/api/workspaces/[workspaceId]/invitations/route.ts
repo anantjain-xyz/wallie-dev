@@ -22,7 +22,7 @@ type RouteContext = {
 };
 
 const invitationSelect =
-  "id, workspace_id, email, role, status, token_hash, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at";
+  "id, workspace_id, email, full_name, role, status, token_hash, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at";
 
 type InvitationPersistenceRow = {
   accepted_at: string | null;
@@ -30,6 +30,7 @@ type InvitationPersistenceRow = {
   created_at: string;
   email: string;
   expires_at: string;
+  full_name: string | null;
   id: string;
   invited_by_member_id: string | null;
   last_sent_at: string | null;
@@ -53,6 +54,7 @@ async function restorePendingInvitation(
     .from("workspace_invitations")
     .update({
       expires_at: invitation.expires_at,
+      full_name: invitation.full_name,
       invited_by_member_id: invitation.invited_by_member_id,
       last_sent_at: invitation.last_sent_at,
       role: invitation.role,
@@ -100,7 +102,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  const { email, role } = parsed.data;
+  const { email, fullName, role } = parsed.data;
 
   const { data: activeMember, error: activeMemberError } = await admin
     .from("workspace_members")
@@ -140,6 +142,7 @@ export async function POST(request: Request, context: RouteContext) {
   const tokenHash = hashWorkspaceInvitationToken(token);
   const invitationMutation = {
     expires_at: expiresAt,
+    full_name: fullName,
     invited_by_member_id: access.context.currentMember.id,
     last_sent_at: now,
     role,

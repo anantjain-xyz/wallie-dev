@@ -22,6 +22,7 @@ vi.mock("next/headers", () => ({
 
 vi.mock("@/lib/auth", () => ({
   ensureProfileForUser: mocked.ensureProfileForUser,
+  isWorkspaceInvitationPath: (path: string) => path.startsWith("/invite/"),
   normalizeNextPath: (value: string | null | undefined) => value || "/",
   resolveAuthenticatedHomePath: mocked.resolveAuthenticatedHomePath,
 }));
@@ -34,7 +35,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
 }));
 
-import LoginPage from "@/app/login/page";
+import LoginPage, { metadata } from "@/app/login/page";
 
 const originalVercelEnv = process.env.VERCEL_ENV;
 
@@ -82,6 +83,7 @@ describe("/login page", () => {
         }),
       }),
     ).rejects.toThrow("redirect:/invite/invite-token");
+    expect(mocked.ensureProfileForUser).not.toHaveBeenCalled();
   });
 
   it("keeps the authenticated home fallback for the default next path", async () => {
@@ -92,6 +94,7 @@ describe("/login page", () => {
         searchParams: Promise.resolve({}),
       }),
     ).rejects.toThrow("redirect:/w/acme");
+    expect(mocked.ensureProfileForUser).toHaveBeenCalledTimes(1);
   });
 
   it("renders the email magic-link form by default", async () => {
@@ -104,6 +107,11 @@ describe("/login page", () => {
     expect(html).toContain("Send magic link");
     expect(html).toContain('name="email"');
     expect(html).toContain("you@company.com");
+    expect(html).toContain("Sign in to Wallie");
+    expect(html).toContain("data-wallie-mark");
+    expect(html).not.toContain("wallie-logo-minimal.png");
+    expect(html).not.toContain('aria-label="Wallie home"');
+    expect((metadata.title as { absolute: string }).absolute).toBe("Sign in · Wallie");
   });
 
   it("renders auth feedback and the OTP form after requesting a code", async () => {
@@ -121,8 +129,9 @@ describe("/login page", () => {
     );
 
     expect(html).toContain("Check your inbox for a secure sign-in link");
-    expect(html).toContain("Enter 6-digit code emailed to you");
+    expect(html).toContain("Check your email");
     expect(html).toContain("Continue with code");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
+    expect(html).not.toContain("owner@example.com");
   });
 });

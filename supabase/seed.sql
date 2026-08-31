@@ -19,7 +19,7 @@
 --
 -- The 'queued' run is deliberately seeded with status 'queued' and a null
 -- agent_job_id: the worker's stall detector skips queued runs that have no
--- running parent job (src/worker/stall-detector.ts), so an agent_generating
+-- running parent job (src/worker/stall-detector.ts), so an in_progress
 -- demo session keeps a coherent in-flight run instead of being swept into an
 -- "Error: Stalled" state that contradicts its "Wallie is drafting" banner.
 CREATE OR REPLACE FUNCTION internal.seed_agent_run(
@@ -53,7 +53,7 @@ BEGIN
      status, last_activity_at, started_at, finished_at, created_at)
   VALUES
     (v_run_id, p_workspace_id, p_session_id, null, p_member_id,
-     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-7[1m]',
+     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-8[1m]',
      v_status,
      CASE WHEN v_queued THEN null ELSE coalesce(p_finished_at, p_started_at) END,
      CASE WHEN v_queued THEN null ELSE p_started_at END,
@@ -149,9 +149,9 @@ DECLARE
   gh_inst_id  uuid := '11b2c3d4-0001-4000-8000-000000000001';
   gh_repo1_id uuid := '12b2c3d4-0001-4000-8000-000000000001';
   gh_repo2_id uuid := '12b2c3d4-0002-4000-8000-000000000002';
-  gh_br1_id   uuid := '13b2c3d4-0001-4000-8000-000000000001';
-  gh_br2_id   uuid := '13b2c3d4-0002-4000-8000-000000000002';
-  gh_br3_id   uuid := '13b2c3d4-0003-4000-8000-000000000003';
+  session_pr1_id uuid := '13b2c3d4-0001-4000-8000-000000000001';
+  session_pr2_id uuid := '13b2c3d4-0002-4000-8000-000000000002';
+  session_pr3_id uuid := '13b2c3d4-0003-4000-8000-000000000003';
   repo_setup1_id uuid := '14b2c3d4-0001-4000-8000-000000000001';
   repo_setup2_id uuid := '14b2c3d4-0002-4000-8000-000000000002';
   repo_profile1_id uuid := '15b2c3d4-0001-4000-8000-000000000001';
@@ -163,11 +163,12 @@ DECLARE
   -- Loop cursors for the generated agent-run history (Section 10)
   sess_rec record;
   comp_rec record;
+  scale_run_index int;
 
 BEGIN
 
   -- -------------------------------------------------------------------------
-  -- 1. Auth users (email / password123)
+  -- 1. Auth users
   -- -------------------------------------------------------------------------
   INSERT INTO auth.users (
     instance_id, id, aud, role, email, encrypted_password,
@@ -180,7 +181,7 @@ BEGIN
       '00000000-0000-0000-0000-000000000000',
       user1_id, 'authenticated', 'authenticated',
       'anant@example.com',
-      crypt('password123', gen_salt('bf')),
+      '',
       now(), '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object(
         'sub', user1_id::text,
@@ -196,7 +197,7 @@ BEGIN
       '00000000-0000-0000-0000-000000000000',
       user2_id, 'authenticated', 'authenticated',
       'wallie@example.com',
-      crypt('password123', gen_salt('bf')),
+      '',
       now(), '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object(
         'sub', user2_id::text,
@@ -209,7 +210,7 @@ BEGIN
       now() - interval '12 days', now(), false, false
     );
 
-  -- Auth identities (required for email/password login)
+  -- Auth identities (required for email login)
   INSERT INTO auth.identities (
     id, provider_id, user_id, identity_data, provider,
     last_sign_in_at, created_at, updated_at
@@ -256,10 +257,10 @@ BEGIN
   -- -------------------------------------------------------------------------
   -- 5a. Default pipeline + seeded stages.
   --
-  -- The shipped default is plan → build → land (see
-  -- 20260606000000_pipeline_symphony_alignment.sql). This demo workspace
-  -- customizes it with an explicit Review stage between Build and Land so the
-  -- seeded board below can show review-stage sessions.
+  -- The shipped default is plan → build (see
+  -- 20260811040456_merge_default_build_workflow.sql). This demo workspace
+  -- customizes it with explicit Review and Land stages so the seeded board
+  -- below can show every supported stage shape.
   -- -------------------------------------------------------------------------
   INSERT INTO public.pipelines (id, workspace_id, name, is_default)
   VALUES (default_pipeline_id, ws_id, 'Default', true);
@@ -270,20 +271,22 @@ BEGIN
   SELECT default_pipeline_id, ws_id, s.stage_position, s.slug, s.name, s.description, s.prompt_template_md
   FROM internal.default_pipeline_stages() s;
 
-  -- Make room at position 3 and insert the demo-only Review stage (plan=1,
-  -- build=2, review=3, land=4).
-  UPDATE public.pipeline_stages
-    SET position = 4
-    WHERE pipeline_id = default_pipeline_id AND slug = 'land';
-
+  -- Insert the demo-only Review and Land stages (plan=1, build=2, review=3,
+  -- land=4).
   INSERT INTO public.pipeline_stages (
     pipeline_id, workspace_id, position, slug, name, description, prompt_template_md
   )
-  VALUES (
-    default_pipeline_id, ws_id, 3, 'review', 'Review',
-    'Run a review-and-fix loop: verify the change, address PR feedback from bots and humans, and prepare it for human sign-off.',
-    E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nRun this as a review-and-fix loop for the existing implementation. Do not expand scope or introduce unrelated feature work. Code changes are allowed when they directly resolve review findings, PR feedback, failing checks, or plan gaps.\n\n- **Verify against the plan.** Confirm every acceptance-criteria and validation item is met; call out and fix any gap that is in scope.\n- **PR feedback sweep.** Gather every existing actionable item from bot and human feedback, including top-level PR comments, inline review comments or threads, review states such as changes requested, and failing check annotations. Resolve each with a code change or an explicit, justified response on the same thread or comment where appropriate.\n- **Loop until clear.** Rerun validation, push fixes, re-check CI and PR feedback, and repeat until no actionable feedback remains and no required checks are failing. Pending human-gated checks are fine; do not wait on them.\n- **Checks & evidence.** Confirm CI is green on the latest commit, user-facing changes include the required screenshots, and validation test data has been cleaned up.\n- **Findings.** Report risks, correctness concerns, what feedback was addressed, and a clear recommendation. The change should not advance until findings are resolved and a human approves.'
-  );
+  VALUES
+    (
+      default_pipeline_id, ws_id, 3, 'review', 'Review',
+      'Run a review-and-fix loop: verify the change, address PR feedback from bots and humans, and prepare it for human sign-off.',
+      E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nRun this as a review-and-fix loop for the existing implementation. Do not expand scope or introduce unrelated feature work. Code changes are allowed when they directly resolve review findings, PR feedback, failing checks, or plan gaps.\n\n- **Verify against the plan.** Confirm every acceptance-criteria and validation item is met; call out and fix any gap that is in scope.\n- **PR feedback sweep.** Gather every existing actionable item from bot and human feedback, including top-level PR comments, inline review comments or threads, review states such as changes requested, and failing check annotations. Resolve each with a code change or an explicit, justified response on the same thread or comment where appropriate.\n- **Loop until clear.** Rerun validation, push fixes, re-check CI and PR feedback, and repeat until no actionable feedback remains and no required checks are failing. Pending human-gated checks are fine; do not wait on them.\n- **Checks & evidence.** Confirm CI is green on the latest commit, user-facing changes include the required screenshots, and validation test data has been cleaned up.\n- **Findings.** Report risks, correctness concerns, what feedback was addressed, and a clear recommendation. The change should not advance until findings are resolved and a human approves.'
+    ),
+    (
+      default_pipeline_id, ws_id, 4, 'land', 'Land',
+      'Merge the approved change once CI is green, and capture the rollout.',
+      E'Land the approved change for "{{session.title}}".\n\n## Instructions\n\nConfirm the PR is approved and all required checks are green, squash-merge it, and record the rollout.'
+    );
 
   SELECT id INTO stage_plan_id   FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'plan';
   SELECT id INTO stage_build_id  FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'build';
@@ -327,9 +330,9 @@ BEGIN
   -- 7. Workspace setup state
   -- -------------------------------------------------------------------------
   INSERT INTO public.workspace_linear_routing
-    (id, workspace_id, created_at)
+    (id, workspace_id, land_stage_slug, created_at)
   VALUES
-    (routing_id, ws_id, now() - interval '13 days');
+    (routing_id, ws_id, 'land', now() - interval '13 days');
 
   INSERT INTO public.workspace_repository_profiles
     (id, workspace_id, github_repository_id, is_primary, package_manager,
@@ -369,7 +372,7 @@ BEGIN
     (workspace_id, key, value_json, created_at)
   VALUES
     (ws_id, 'agent_provider', to_jsonb('claude-code'::text), now() - interval '13 days'),
-    (ws_id, 'agent_model', to_jsonb('claude-opus-4-7[1m]'::text), now() - interval '13 days'),
+    (ws_id, 'agent_model', to_jsonb('claude-opus-4-8[1m]'::text), now() - interval '13 days'),
     (ws_id, 'concurrency_limit', to_jsonb(1), now() - interval '13 days'),
     (ws_id, 'max_retries', to_jsonb(3), now() - interval '13 days'),
     (ws_id, 'stall_timeout_ms', to_jsonb(900000), now() - interval '13 days');
@@ -400,7 +403,7 @@ BEGIN
      completed_steps, skipped_steps, completed_at, created_at)
   VALUES
     (onboarding_id, ws_id, 'completed', 'verify', gh_repo1_id,
-     array['github', 'repository', 'pipeline', 'runtime', 'verify']::text[],
+     array['github', 'repository', 'pipeline', 'sandbox', 'runtime', 'verify']::text[],
      array['linear']::text[],
      now() - interval '12 days',
      now() - interval '13 days');
@@ -429,7 +432,7 @@ BEGIN
      to_jsonb(E'# Add SSO login via Google Workspace\n\n## Problem Statement\n\nBusiness customers cannot enforce login policies or reclaim seats when employees leave because Wallie only supports email/password.\n\n## User Story\n\nAs an IT admin on the Business plan, I want to require Google Workspace SSO for my workspace so that only employees with active corporate accounts can log in.\n\n## Acceptance Criteria\n\n- Owners can enable Google SSO from the workspace settings page.\n- Members with matching email domains sign in via Google and are auto-added to the workspace.\n- Non-matching domains are rejected with a clear error.\n- Email/password login is disabled for the workspace once SSO is required.\n\n## Technical Approach\n\n- Use the Supabase Auth Google provider; never break existing email/password sessions mid-request.\n\n## Non-Goals\n\n- Okta, Microsoft Entra, or other IdPs (follow-up).\n\n## Open Questions\n\n- Should we require MFA enforcement client-side or trust Google?\n'::text),
      now() - interval '90 minutes');
 
-  -- Session 2: build / agent_generating — plan approved, build agent running
+  -- Session 2: build / in_progress — plan approved, build agent running
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -439,7 +442,7 @@ BEGIN
      'Self-serve workspace creation flow',
      E'Onboarding is dropping off at workspace creation. Let''s build a proper guided flow.',
      mem1_id,
-     default_pipeline_id, stage_build_id, 'agent_generating', 0,
+     default_pipeline_id, stage_build_id, 'in_progress', 0,
      now() - interval '1 day', now() - interval '30 minutes');
 
   INSERT INTO public.session_artifacts
@@ -482,7 +485,7 @@ BEGIN
   VALUES
     (sess3_id, ws_id, stage_plan_id, 'plan', now() - interval '2 days 12 hours', mem2_id);
 
-  -- Session 4: review / agent_generating — build approved, reviewing the PR
+  -- Session 4: review / in_progress — build approved, reviewing the PR
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -492,7 +495,7 @@ BEGIN
      'Rich-text editor for session prompts',
      E'The plain textarea is rough. Let''s replace it with Tiptap and support image paste.',
      mem1_id,
-     default_pipeline_id, stage_review_id, 'agent_generating', 0,
+     default_pipeline_id, stage_review_id, 'in_progress', 0,
      now() - interval '6 days', now() - interval '4 hours');
 
   INSERT INTO public.session_artifacts
@@ -609,7 +612,7 @@ BEGIN
      to_jsonb(E'# Dark mode and theme customization\n\nAdd a theme toggle to settings. Detect system preference, allow manual override, persist per user.'::text),
      now() - interval '45 minutes');
 
-  -- Session 8: plan / agent_generating (rejected once, re-generating)
+  -- Session 8: plan / in_progress (rejected once, re-generating)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
@@ -619,7 +622,7 @@ BEGIN
      'Weekly email digest of pipeline activity',
      E'We need a weekly email summarizing pipeline activity — sessions that moved, stuck items, and PRs awaiting review.',
      mem1_id,
-     default_pipeline_id, stage_plan_id, 'agent_generating', 0, 1,
+     default_pipeline_id, stage_plan_id, 'in_progress', 0, 1,
      now() - interval '4 hours', now() - interval '20 minutes');
 
   -- Session 9: plan / awaiting_review
@@ -670,7 +673,7 @@ BEGIN
   VALUES
     (sess10_id, ws_id, stage_plan_id, 'plan', now() - interval '2 days 12 hours', mem2_id);
 
-  -- Session 11: build / agent_generating
+  -- Session 11: build / in_progress
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -680,7 +683,7 @@ BEGIN
      'Webhook notifications for pipeline events',
      E'External systems need to react to phase transitions. Add webhook registration and signed POST delivery.',
      mem1_id,
-     default_pipeline_id, stage_build_id, 'agent_generating', 0,
+     default_pipeline_id, stage_build_id, 'in_progress', 0,
      now() - interval '4 days', now() - interval '1 hour');
 
   INSERT INTO public.session_artifacts
@@ -759,7 +762,7 @@ BEGIN
     (sess13_id, ws_id, stage_plan_id, 'plan',   now() - interval '4 days 12 hours', mem1_id),
     (sess13_id, ws_id, stage_build_id, 'build', now() - interval '4 hours',         mem1_id);
 
-  -- Session 14: land / agent_generating
+  -- Session 14: land / in_progress
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -769,7 +772,7 @@ BEGIN
      'Email notification preferences',
      E'Users get too many emails. Add per-user preferences: immediate, daily digest, or off per event category.',
      mem2_id,
-     default_pipeline_id, stage_land_id, 'agent_generating', 0,
+     default_pipeline_id, stage_land_id, 'in_progress', 0,
      now() - interval '7 days', now() - interval '2 hours');
 
   INSERT INTO public.session_artifacts
@@ -864,7 +867,7 @@ BEGIN
     (sess16_id, ws_id, stage_build_id, 'build',   now() - interval '8 days 18 hours',  mem1_id),
     (sess16_id, ws_id, stage_review_id, 'review', now() - interval '8 days 6 hours',   mem1_id);
 
-  -- Session 17: land / agent_generating
+  -- Session 17: land / in_progress
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -874,7 +877,7 @@ BEGIN
      'GitHub PR auto-link from branch naming convention',
      E'When a branch matches wallie-{number}, auto-associate the PR with the session and show it on the card.',
      mem1_id,
-     default_pipeline_id, stage_land_id, 'agent_generating', 0,
+     default_pipeline_id, stage_land_id, 'in_progress', 0,
      now() - interval '12 days', now() - interval '8 days');
 
   INSERT INTO public.session_artifacts
@@ -936,19 +939,19 @@ BEGIN
   -- -------------------------------------------------------------------------
   -- 9. GitHub branches / PRs (linked to sessions)
   -- -------------------------------------------------------------------------
-  INSERT INTO public.github_issue_branches
+  INSERT INTO public.session_pull_requests
     (id, workspace_id, session_id, github_repository_id, branch_name,
      pull_request_number, pull_request_url, pull_request_state, is_draft, created_at)
   VALUES
-    (gh_br1_id, ws_id, sess6_id, gh_repo1_id,
+    (session_pr1_id, ws_id, sess6_id, gh_repo1_id,
      'feat/ci-cd-pipeline', 1,
      'https://github.com/acme-corp/webapp/pull/1', 'merged', false,
      now() - interval '11 days'),
-    (gh_br2_id, ws_id, sess4_id, gh_repo1_id,
+    (session_pr2_id, ws_id, sess4_id, gh_repo1_id,
      'feat/markdown-editor', 7,
      'https://github.com/acme-corp/webapp/pull/7', 'open', true,
      now() - interval '3 days'),
-    (gh_br3_id, ws_id, sess5_id, gh_repo1_id,
+    (session_pr3_id, ws_id, sess5_id, gh_repo1_id,
      'feat/triage-shortcuts', 12,
      'https://github.com/acme-corp/webapp/pull/12', 'open', false,
      now() - interval '1 day');
@@ -962,7 +965,7 @@ BEGIN
   --   * one success run per already-approved stage (from phase completions),
   --   * plus the current stage's run(s) derived from phase_status, where
   --     N = sessions.rejection_count (rejections of the current stage):
-  --       agent_generating -> N rejected attempts + 1 queued run (the current
+  --       in_progress -> N rejected attempts + 1 queued run (the current
   --                           attempt; queued + null job survives the worker's
   --                           stall sweep, so it stays in-flight in the demo)
   --       awaiting_review  -> N rejected attempts + 1 success run (awaiting)
@@ -1013,7 +1016,7 @@ BEGIN
               'rejected', i, v_fin - interval '25 minutes', v_fin);
           END LOOP;
         ELSE
-          -- agent_generating / awaiting_review: N prior rejected attempts, then
+          -- in_progress / awaiting_review: N prior rejected attempts, then
           -- the current attempt (running, or a success awaiting review).
           FOR i IN 1..v_rej LOOP
             v_fin := sess_rec.updated_at - (v_rej - i + 1) * interval '3 hours';
@@ -1023,7 +1026,7 @@ BEGIN
               'rejected', i, v_fin - interval '25 minutes', v_fin);
           END LOOP;
 
-          IF sess_rec.phase_status = 'agent_generating' THEN
+          IF sess_rec.phase_status = 'in_progress' THEN
             PERFORM internal.seed_agent_run(
               ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
               sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
@@ -1038,6 +1041,18 @@ BEGIN
         END IF;
       END;
     END IF;
+  END LOOP;
+
+  -- Session 18 is the run-history scale fixture. Its three completed stages,
+  -- rejected land attempt, and current land attempt above create five runs;
+  -- add 195 older terminal runs so pagination can be exercised against an
+  -- exact 200-run history without increasing the initial page or channel count.
+  FOR scale_run_index IN 1..195 LOOP
+    PERFORM internal.seed_agent_run(
+      ws_id, sess18_id, mem1_id, 'Custom workspace branding and logo upload',
+      stage_plan_id, 'plan', 'Plan', 'completed', 1,
+      now() - interval '13 days' - scale_run_index * interval '10 minutes',
+      now() - interval '13 days' - scale_run_index * interval '10 minutes' + interval '8 minutes');
   END LOOP;
 
 END;

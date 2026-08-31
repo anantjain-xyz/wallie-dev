@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { stopRunSandbox } from "@/lib/pipeline/cancel";
-import type { VercelSandboxCredentials } from "@/lib/sandbox/types";
+import type { SandboxConnection } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -15,6 +15,7 @@ type ActiveRunRow = {
   id: string;
   last_activity_at: string | null;
   sandbox_id: string | null;
+  sandbox_connection_revision: string | null;
   sandbox_provider: string | null;
   sandbox_vercel_project_id: string | null;
   sandbox_vercel_team_id: string | null;
@@ -72,7 +73,7 @@ export async function sweepStalledRuns(
 
   const now = Date.now();
   const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, now);
-  const vercelCredentialsCache = new Map<string, VercelSandboxCredentials | null>();
+  const sandboxConnectionCache = new Map<string, SandboxConnection | null>();
 
   for (const run of activeRuns) {
     if (
@@ -127,7 +128,7 @@ export async function sweepStalledRuns(
     // errors, so a stale or already-stopped sandbox cannot break the sweep
     // batch.
     if (run.sandbox_id) {
-      await stopRunSandbox(admin, run, vercelCredentialsCache);
+      await stopRunSandbox(admin, run, sandboxConnectionCache);
       result.stoppedSandboxIds.push(run.sandbox_id);
     }
 
@@ -144,8 +145,8 @@ export async function sweepStalledRuns(
         stallReason,
       });
 
-      // Transition the session out of agent_generating so the UI is not
-      // stuck. Retried jobs flip back to agent_generating when claimed.
+      // Transition the session out of in_progress so the UI is not
+      // stuck. Retried jobs flip back to in_progress when claimed.
       const { data: jobRow } = await admin
         .from("agent_jobs")
         .select("session_id")
@@ -157,7 +158,7 @@ export async function sweepStalledRuns(
           .from("sessions")
           .update({ phase_status: "rejected" })
           .eq("id", jobRow.session_id)
-          .eq("phase_status", "agent_generating");
+          .eq("phase_status", "in_progress");
       }
     }
 
@@ -189,7 +190,7 @@ async function loadActiveRuns(
     const activeRunQuery = admin
       .from("agent_runs")
       .select(
-        "id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+        "id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
       )
       .in("status", ["queued", "started", "running"]);
     const scopedActiveRunQuery = options.workspaceId

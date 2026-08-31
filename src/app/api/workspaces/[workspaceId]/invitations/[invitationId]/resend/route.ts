@@ -24,7 +24,7 @@ type RouteContext = {
 };
 
 const invitationSelect =
-  "id, workspace_id, email, role, status, token_hash, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at";
+  "id, workspace_id, email, full_name, role, status, token_hash, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at";
 
 type PendingInvitationRow = {
   accepted_at: string | null;
@@ -32,6 +32,7 @@ type PendingInvitationRow = {
   created_at: string;
   email: string;
   expires_at: string;
+  full_name: string | null;
   id: string;
   invited_by_member_id: string | null;
   last_sent_at: string | null;
@@ -55,6 +56,7 @@ async function restorePendingInvitation(
     .from("workspace_invitations")
     .update({
       expires_at: invitation.expires_at,
+      full_name: invitation.full_name,
       invited_by_member_id: invitation.invited_by_member_id,
       last_sent_at: invitation.last_sent_at,
       token_hash: invitation.token_hash,

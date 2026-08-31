@@ -2,22 +2,36 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Status } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
+import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
+
 export interface OpenCodeConnectionStatus {
+  checkedAt: string;
   connected: boolean;
   updatedAt?: string | null;
 }
 
 interface OpenCodeConnectionPanelProps {
+  initialStatus?: OpenCodeConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: OpenCodeConnectionStatus) => void;
 }
 
-export function OpenCodeConnectionPanel({ onStatusChange }: OpenCodeConnectionPanelProps = {}) {
-  const [status, setStatus] = useState<OpenCodeConnectionStatus | null>(null);
+export function OpenCodeConnectionPanel({
+  initialStatus,
+  onStatusChange,
+}: OpenCodeConnectionPanelProps = {}) {
+  const initialStatusRef = useRef(initialStatus);
+  const [status, setStatus] = useState<OpenCodeConnectionStatus | null>(initialStatus ?? null);
   const [credential, setCredential] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { pushToast } = useOptionalToast();
   const onStatusChangeRef = useRef(onStatusChange);
 
   useEffect(() => {
@@ -40,7 +54,7 @@ export function OpenCodeConnectionPanel({ onStatusChange }: OpenCodeConnectionPa
   }, []);
 
   useEffect(() => {
-    void refresh();
+    if (isProviderStatusStale(initialStatusRef.current?.checkedAt)) void refresh();
   }, [refresh]);
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
@@ -64,6 +78,7 @@ export function OpenCodeConnectionPanel({ onStatusChange }: OpenCodeConnectionPa
       if (data) onStatusChangeRef.current?.(data);
       setCredential("");
       setNotice("OpenCode Zen API key saved.");
+      pushToast({ priority: "polite", title: "OpenCode Zen API key saved.", tone: "success" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save OpenCode Zen API key.");
     } finally {
@@ -83,6 +98,7 @@ export function OpenCodeConnectionPanel({ onStatusChange }: OpenCodeConnectionPa
       setCredential("");
       await refresh();
       setNotice("OpenCode Zen API key removed.");
+      pushToast({ priority: "polite", title: "OpenCode Zen API key removed.", tone: "success" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect OpenCode.");
     } finally {
@@ -98,31 +114,34 @@ export function OpenCodeConnectionPanel({ onStatusChange }: OpenCodeConnectionPa
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
       {status === null ? (
-        <p className="text-[13px] text-muted">Checking connection…</p>
+        <Status label="Checking connection" value="running" />
       ) : status.connected ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <p className="text-[13px] font-medium text-foreground">OpenCode Zen API key</p>
-            <p className="text-[12px] text-muted">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[13px] font-medium text-foreground">OpenCode Zen API key</p>
+              <Status compact label="Connected" value="healthy" />
+            </div>
+            <p className="text-xs text-muted">
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
           </div>
-          <button
-            type="button"
-            className="ui-button-danger"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            {isBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          <ActionMenu disabled={isBusy} label="OpenCode credential actions">
+            <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+              Disconnect
+            </DropdownMenuItem>
+          </ActionMenu>
         </div>
       ) : (
-        <p className="text-[13px] text-muted">No OpenCode Zen API key saved yet.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Status compact label="Not connected" value="not_started" />
+          <p className="text-[13px] text-muted">No OpenCode Zen API key saved yet.</p>
+        </div>
       )}
 
       <form className="space-y-3" onSubmit={handleSave}>
         <label className="block space-y-1.5">
-          <span className="text-[12px] font-medium text-foreground">OpenCode Zen API key</span>
+          <span className="text-xs font-medium text-foreground">OpenCode Zen API key</span>
           <input
             autoComplete="off"
             className="ui-input font-mono text-[13px]"
@@ -137,7 +156,11 @@ export function OpenCodeConnectionPanel({ onStatusChange }: OpenCodeConnectionPa
 
         <div className="flex justify-end">
           <button className="ui-button-primary" disabled={saveDisabled} type="submit">
-            {isBusy ? "Saving…" : status?.connected ? "Update API key" : "Save API key"}
+            <ActionButtonLabel
+              idle={status?.connected ? "Update API key" : "Save API key"}
+              pending={isBusy}
+              pendingLabel="Saving…"
+            />
           </button>
         </div>
       </form>

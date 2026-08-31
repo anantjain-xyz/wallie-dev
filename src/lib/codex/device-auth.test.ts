@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
+  daytonaClient: vi.fn(),
   decryptSecretValue: vi.fn((value: string) => value.replace(/^encrypted:/, "")),
+  e2bConnect: vi.fn(),
+  e2bCreate: vi.fn(),
   encryptSecretValue: vi.fn((value: string) => `encrypted:${value}`),
   randomUUID: vi.fn(() => "00000000-0000-0000-0000-000000000123"),
   sandboxCreate: vi.fn(),
@@ -25,6 +28,23 @@ vi.mock("@vercel/sandbox", () => ({
     create: mocked.sandboxCreate,
     get: mocked.sandboxGet,
   },
+}));
+
+vi.mock("e2b", () => ({
+  FileNotFoundError: class FileNotFoundError extends Error {},
+  Sandbox: {
+    connect: mocked.e2bConnect,
+    create: mocked.e2bCreate,
+  },
+}));
+
+vi.mock("@daytona/sdk", () => ({
+  Daytona: class Daytona {
+    constructor(input: unknown) {
+      return mocked.daytonaClient(input);
+    }
+  },
+  DaytonaNotFoundError: class DaytonaNotFoundError extends Error {},
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -65,11 +85,14 @@ type FlowRow = {
   instructions: string | null;
   output_tail: string | null;
   sandbox_id: string;
+  sandbox_connection_revision?: string | null;
+  sandbox_provider?: string | null;
   status: string;
   updated_at: string;
   user_code: string | null;
   user_id: string;
   verification_uri: string | null;
+  workspace_id?: string | null;
 };
 
 class FakeCommand {
@@ -108,11 +131,14 @@ function buildFlowRow(overrides: Partial<FlowRow>): FlowRow {
     instructions: null,
     output_tail: null,
     sandbox_id: "sandbox-1",
+    sandbox_connection_revision: null,
+    sandbox_provider: null,
     status: "starting",
     updated_at: "2026-05-19T00:00:00.000Z",
     user_code: null,
     user_id: "user-1",
     verification_uri: null,
+    workspace_id: null,
     ...overrides,
   };
 }
@@ -139,6 +165,37 @@ function buildAdminMock(rows: FlowRow[]) {
         update: (value: Partial<FlowRow>) => mutationChain(rows, value, "update"),
       };
     }),
+    rpc: vi.fn(
+      async (
+        name: string,
+        args: {
+          flow_id: string;
+          target_connection_revision: string;
+          target_expires_at: string;
+          target_provider: string;
+          target_user_id: string;
+          target_workspace_id: string;
+        },
+      ) => {
+        if (name !== "begin_codex_device_auth_flow") {
+          throw new Error(`unexpected RPC: ${name}`);
+        }
+        rows.push(
+          buildFlowRow({
+            command_id: "provisioning",
+            expires_at: args.target_expires_at,
+            id: args.flow_id,
+            sandbox_connection_revision: args.target_connection_revision,
+            sandbox_id: `provisioning:${args.flow_id}`,
+            sandbox_provider: args.target_provider,
+            status: "starting",
+            user_id: args.target_user_id,
+            workspace_id: args.target_workspace_id,
+          }),
+        );
+        return { data: "started", error: null };
+      },
+    ),
   };
 }
 
@@ -290,6 +347,199 @@ describe("Codex device auth", () => {
     });
   });
 
+  it("stops a provisioned sandbox when cancellation wins the reservation race", async () => {
+    const rows: FlowRow[] = [];
+    const admin = buildAdminMock(rows);
+    const command = new FakeCommand();
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      runCommand: vi.fn(async () => {
+        rows[0] = {
+          ...rows[0]!,
+          canceled_at: "2026-05-19T00:00:30.000Z",
+          status: "canceled",
+        };
+        return command;
+      }),
+      sandboxId: "sandbox-race",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.sandboxCreate.mockResolvedValue(sandbox);
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await startCodexDeviceAuthFlow({
+      userId: "user-1",
+      vercelCredentials,
+    });
+
+    expect(snapshot).toMatchObject({ status: "canceled" });
+    expect(rows[0]).toMatchObject({
+      command_id: "provisioning",
+      sandbox_id: "provisioning:00000000-0000-0000-0000-000000000123",
+      status: "canceled",
+    });
+    expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      projectId: "prj_workspace",
+      sandboxId: "sandbox-race",
+      teamId: "team_workspace",
+      token: "vca_workspace",
+    });
+    expect(sandbox.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs and reconnects ChatGPT device auth through E2B", async () => {
+    const rows: FlowRow[] = [];
+    const authJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      last_refresh: "2026-05-19T00:00:00.000Z",
+      tokens: {
+        access_token: "access-token-value-1234567890",
+        refresh_token: "refresh-token-value-1234567890",
+      },
+    });
+    const filesRead = vi.fn(async (path: string) => {
+      if (path.endsWith(".log")) {
+        return "Open https://chatgpt.com/activate and enter code E2B1-AUTH\n";
+      }
+      if (path.endsWith(".exit")) return "0";
+      if (path === "/home/user/.codex/auth.json") return authJson;
+      throw new Error(`unexpected E2B file: ${path}`);
+    });
+    const e2bSandbox = {
+      commands: { run: vi.fn().mockResolvedValue({ exitCode: 0, stderr: "" }) },
+      files: { read: filesRead },
+      kill: vi.fn(),
+      sandboxId: "e2b-sandbox-1",
+    };
+    const admin = buildAdminMock(rows);
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.e2bCreate.mockResolvedValue(e2bSandbox);
+    mocked.e2bConnect.mockResolvedValue(e2bSandbox);
+
+    const snapshot = await startCodexDeviceAuthFlow({
+      connection: {
+        credentials: { apiKey: "e2b-secret" },
+        provider: "e2b",
+        revision: "e2b-revision-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(snapshot.error).toBeNull();
+    expect(snapshot).toMatchObject({ status: "authenticated" });
+    expect(mocked.e2bCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: "e2b-secret",
+        lifecycle: { onTimeout: "kill" },
+        metadata: expect.objectContaining({ wallie_workspace_id: "workspace-1" }),
+      }),
+    );
+    expect(mocked.e2bConnect).toHaveBeenCalledWith("e2b-sandbox-1", {
+      apiKey: "e2b-secret",
+    });
+    expect(admin.rpc).toHaveBeenCalledWith("begin_codex_device_auth_flow", {
+      flow_id: "00000000-0000-0000-0000-000000000123",
+      target_connection_revision: "e2b-revision-1",
+      target_expires_at: expect.any(String),
+      target_provider: "e2b",
+      target_user_id: "user-1",
+      target_workspace_id: "workspace-1",
+    });
+    expect(admin.rpc.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.e2bCreate.mock.invocationCallOrder[0]!,
+    );
+    expect(rows[0]).toMatchObject({
+      sandbox_connection_revision: "e2b-revision-1",
+      sandbox_id: "e2b-sandbox-1",
+      sandbox_provider: "e2b",
+      status: "authenticated",
+      workspace_id: "workspace-1",
+    });
+    expect(e2bSandbox.kill).toHaveBeenCalled();
+  });
+
+  it("runs and reconnects ChatGPT device auth through Daytona", async () => {
+    const rows: FlowRow[] = [];
+    const authJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      last_refresh: "2026-05-19T00:00:00.000Z",
+      tokens: {
+        access_token: "access-token-value-1234567890",
+        refresh_token: "refresh-token-value-1234567890",
+      },
+    });
+    const downloadFile = vi.fn(async (path: string) => {
+      if (path.endsWith(".log")) {
+        return Buffer.from("Open https://chatgpt.com/activate and enter code DAYT-AUTH\n", "utf8");
+      }
+      if (path.endsWith(".exit")) return Buffer.from("0", "utf8");
+      if (path === "/home/daytona/.codex/auth.json") return Buffer.from(authJson, "utf8");
+      throw new Error(`unexpected Daytona file: ${path}`);
+    });
+    const daytonaSandbox = {
+      delete: vi.fn(),
+      fs: { downloadFile },
+      id: "daytona-sandbox-1",
+      process: {
+        executeCommand: vi.fn().mockResolvedValue({ exitCode: 0, result: "" }),
+      },
+    };
+    const dispose = vi.fn();
+    const daytonaClient = {
+      [Symbol.asyncDispose]: dispose,
+      create: vi.fn().mockResolvedValue(daytonaSandbox),
+      get: vi.fn().mockResolvedValue(daytonaSandbox),
+    };
+    const admin = buildAdminMock(rows);
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.daytonaClient.mockReturnValue(daytonaClient);
+
+    const snapshot = await startCodexDeviceAuthFlow({
+      connection: {
+        credentials: {
+          apiKey: "daytona-secret",
+          apiUrl: "https://daytona.example/api",
+          target: "enterprise",
+        },
+        provider: "daytona",
+        revision: "daytona-revision-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(snapshot.error).toBeNull();
+    expect(snapshot).toMatchObject({ status: "authenticated" });
+    expect(mocked.daytonaClient).toHaveBeenCalledWith({
+      apiKey: "daytona-secret",
+      apiUrl: "https://daytona.example/api",
+      target: "enterprise",
+    });
+    expect(daytonaClient.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoStopInterval: 0,
+        image: "node:22-bookworm",
+        labels: expect.objectContaining({ wallie_workspace_id: "workspace-1" }),
+        resources: { cpu: 2, disk: 10, memory: 4 },
+      }),
+      { timeout: 60 },
+    );
+    expect(admin.rpc.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.daytonaClient.mock.invocationCallOrder[0]!,
+    );
+    expect(rows[0]).toMatchObject({
+      sandbox_connection_revision: "daytona-revision-1",
+      sandbox_id: "daytona-sandbox-1",
+      sandbox_provider: "daytona",
+      status: "authenticated",
+      workspace_id: "workspace-1",
+    });
+    expect(daytonaSandbox.delete).toHaveBeenCalledWith(60, true);
+    expect(dispose).toHaveBeenCalled();
+  });
+
   it("extracts the current Codex CLI one-time code without using banner text", async () => {
     const rows: FlowRow[] = [];
     const admin = buildAdminMock(rows);
@@ -382,7 +632,7 @@ describe("Codex device auth", () => {
       userCode: null,
       verificationUri: null,
     });
-    expect(snapshot.error).toContain("production sandbox provider returned 402 Payment Required");
+    expect(snapshot.error).toContain("active sandbox provider returned 402 Payment Required");
     expect(snapshot.error).not.toContain("Status code 402 is not ok");
   });
 
@@ -603,7 +853,7 @@ describe("Codex device auth", () => {
     }
 
     expect(snapshot).toMatchObject({ status: "error" });
-    expect(snapshot.error).toContain("production sandbox provider returned 402 Payment Required");
+    expect(snapshot.error).toContain("active sandbox provider returned 402 Payment Required");
     expect(snapshot.error).not.toContain("ChatGPT account with Codex access");
     expect(sandbox.stop).toHaveBeenCalled();
   });

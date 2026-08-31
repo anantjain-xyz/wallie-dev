@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -69,11 +71,12 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const checkedAt = new Date().toISOString();
   if (!data) {
-    return NextResponse.json({ connected: false });
+    return NextResponse.json({ checkedAt, connected: false });
   }
 
-  return NextResponse.json(mapCodexCredentialConnectionStatus(data));
+  return NextResponse.json({ ...mapCodexCredentialConnectionStatus(data), checkedAt });
 }
 
 export async function POST(request: Request) {
@@ -112,10 +115,9 @@ export async function POST(request: Request) {
         account_email: null,
         account_id: null,
         auth_cache_last_refresh: null,
-        auth_lock_expires_at: null,
-        auth_lock_run_id: null,
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
+        credential_generation: randomUUID(),
         credential_type: credentialType,
         credential_version: 1,
         encrypted_credential: encryptSecretValue(credential),
@@ -134,7 +136,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(mapCodexCredentialConnectionStatus(data));
+  return NextResponse.json({
+    ...mapCodexCredentialConnectionStatus(data),
+    checkedAt: new Date().toISOString(),
+  });
 }
 
 export async function DELETE() {

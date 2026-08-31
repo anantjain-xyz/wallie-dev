@@ -29,7 +29,7 @@ create policy user_opencode_credentials_delete_self
   using ((select auth.uid()) = user_id);
 
 alter table public.workspace_agent_config
-  drop constraint workspace_agent_config_value_json_known_keys;
+  drop constraint if exists workspace_agent_config_value_json_known_keys;
 
 alter table public.workspace_agent_config
   add constraint workspace_agent_config_value_json_known_keys check (
@@ -48,17 +48,13 @@ alter table public.workspace_agent_config
         and (value_json::text)::numeric between 0 and 10
       when 'agent_provider' then
         jsonb_typeof(value_json) = 'string'
-        and value_json #>> '{}' in ('codex', 'claude-code', 'opencode')
+        and value_json #>> '{}' in ('codex', 'claude-code', 'cursor', 'opencode')
       when 'agent_model' then
         jsonb_typeof(value_json) = 'string'
         and length(value_json #>> '{}') between 1 and 100
         and (
-          value_json #>> '{}' like 'claude-%'
-          or value_json #>> '{}' like 'gpt-%'
-          or value_json #>> '{}' like 'o1%'
-          or value_json #>> '{}' like 'o3%'
-          or value_json #>> '{}' like 'o4%'
-          or value_json #>> '{}' like 'opencode/%'
+          value_json #>> '{}' ~ '^[a-z0-9][a-z0-9._-]{0,98}[a-z0-9](\[1m\])?$|^[a-z0-9]$'
+          or value_json #>> '{}' ~ '^opencode/[a-z0-9]([a-z0-9._-]{0,89}[a-z0-9])?$'
         )
       else true
     end

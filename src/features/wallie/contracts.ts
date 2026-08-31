@@ -1,15 +1,23 @@
 import { z } from "zod";
 
-import type { WallieActionErrorCode, WallieRun } from "@/features/wallie/types";
+import type { WallieActionErrorCode, WallieRun, WallieRunPage } from "@/features/wallie/types";
 
 const workspaceIdSchema = z.string().uuid("Workspace id is invalid.");
 const sessionIdSchema = z.string().uuid("Session id is invalid.");
 const runIdSchema = z.string().uuid("Run id is invalid.");
 
-export const enqueueAgentRunSchema = z.object({
+export const runHistoryParamsSchema = z.object({
   sessionId: sessionIdSchema,
-  workspaceId: workspaceIdSchema,
 });
+
+export const runHistoryQuerySchema = z
+  .object({
+    createdAt: z.string().datetime({ offset: true }).optional(),
+    id: runIdSchema.optional(),
+  })
+  .refine((value) => Boolean(value.createdAt) === Boolean(value.id), {
+    message: "Run history cursor requires both createdAt and id.",
+  });
 
 export const retryAgentRunSchema = z.object({
   workspaceId: workspaceIdSchema,
@@ -37,10 +45,16 @@ export type AgentRunActionResponse = {
 export type AgentRunActionErrorResponse = {
   code: WallieActionErrorCode;
   error: string;
-  missingSecretKeys?: string[];
+  provider?: "vercel" | "e2b" | "daytona";
 };
 
 export type AgentRunCancelResponse = {
   canceled: boolean;
   run: WallieRun;
+};
+
+export type RunHistoryResponse = WallieRunPage;
+
+export type RunHistoryErrorResponse = {
+  error: string;
 };

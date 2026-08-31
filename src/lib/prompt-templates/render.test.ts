@@ -76,6 +76,16 @@ describe("renderTemplate", () => {
     expect(result).toBe("Previous: fix the bug");
   });
 
+  it("resolves hyphenated previous-stage slug paths", () => {
+    const result = renderTemplate(
+      "{{#if artifact.previousStages.code-review}}## Review\n\n{{artifact.previousStages.code-review}}{{/if}}",
+      {
+        artifact: { previousStages: { "code-review": "Ship it." } },
+      },
+    );
+    expect(result).toBe("## Review\n\nShip it.");
+  });
+
   it("handles empty array as falsy in conditionals", () => {
     const result = renderTemplate("{{#if items}}has items{{/if}}", { items: [] });
     expect(result).toBe("");

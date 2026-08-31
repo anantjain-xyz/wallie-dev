@@ -1,12 +1,18 @@
 import type { SVGProps } from "react";
 
 import type { SelectOption } from "@/components/ui/select";
-import { AGENT_PROVIDERS, type AgentProvider } from "@/lib/agent-config/contracts";
+import {
+  AGENT_EFFORT_LEVELS,
+  AGENT_PROVIDERS,
+  type AgentEffort,
+  type AgentProvider,
+} from "@/lib/agent-config/contracts";
 import { cn } from "@/lib/utils";
 
 export const AGENT_PROVIDER_LABELS = {
   codex: "Codex",
   "claude-code": "Claude Code",
+  cursor: "Cursor",
   opencode: "OpenCode",
 } as const satisfies Record<AgentProvider, string>;
 
@@ -26,6 +32,8 @@ export function AgentProviderLogo({
       return <CodexLogoIcon className={className} />;
     case "claude-code":
       return <ClaudeLogoIcon className={className} />;
+    case "cursor":
+      return <CursorLogoIcon className={className} />;
     case "opencode":
       return <OpenCodeLogoIcon className={className} />;
   }
@@ -40,34 +48,43 @@ export const AGENT_PROVIDER_SELECT_OPTIONS = AGENT_PROVIDERS.map(
     }) satisfies SelectOption,
 );
 
-export const AGENT_PROVIDER_EMPTY_OPTION = {
-  icon: <GenericProviderLogoIcon />,
+export const AGENT_CONFIG_VISIBLE_FIELDS = {
+  agent_effort: {
+    description: "Reasoning effort passed to the selected provider.",
+    label: "Effort",
+  },
+  agent_model: {
+    description: "Model identifier passed to the selected provider.",
+    label: "Model",
+  },
+  agent_provider: {
+    description: "Choose the coding agent Wallie uses for runs.",
+    label: "Provider",
+  },
+} as const;
+
+const AGENT_EFFORT_LABELS = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+} as const satisfies Record<AgentEffort, string>;
+
+export const AGENT_EFFORT_SELECT_OPTIONS = AGENT_EFFORT_LEVELS.map(
+  (effort) =>
+    ({
+      label: AGENT_EFFORT_LABELS[effort],
+      value: effort,
+    }) satisfies SelectOption,
+);
+
+export const AGENT_EFFORT_EMPTY_OPTION = {
   label: "Not configured",
   value: "",
 } satisfies SelectOption;
 
 type IconProps = SVGProps<SVGSVGElement>;
-
-function GenericProviderLogoIcon({ className, style, ...props }: IconProps) {
-  return (
-    <svg
-      aria-hidden="true"
-      className={cn("h-4 w-4 shrink-0", className)}
-      fill="none"
-      style={{ color: "var(--muted)", ...style }}
-      viewBox="0 0 16 16"
-      {...props}
-    >
-      <circle cx="8" cy="8" r="5.25" stroke="currentColor" strokeWidth="1.3" />
-      <path
-        d="M8 5.25v5.5M5.25 8h5.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.3"
-      />
-    </svg>
-  );
-}
 
 function CodexLogoIcon({ className, ...props }: IconProps) {
   return (
@@ -98,22 +115,39 @@ function ClaudeLogoIcon({ className, style, ...props }: IconProps) {
   );
 }
 
+function CursorLogoIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={cn("h-4 w-4 shrink-0", className)}
+      fill="none"
+      viewBox="0 0 499 545"
+      {...props}
+    >
+      {/* Official Cursor mark from the cursor.com navbar wordmark. */}
+      <path
+        d="m466.383 137.073-206.469-119.2034c-6.63-3.8287-14.811-3.8287-21.441 0l-206.4586 119.2034c-5.5734 3.218-9.0144 9.169-9.0144 15.615v240.375c0 6.436 3.441 12.397 9.0144 15.615l206.4686 119.203c6.63 3.829 14.811 3.829 21.441 0l206.468-119.203c5.574-3.218 9.015-9.17 9.015-15.615v-240.375c0-6.436-3.441-12.397-9.015-15.615zm-12.969 25.25-199.316 345.223c-1.347 2.326-4.904 1.376-4.904-1.319v-226.048c0-4.517-2.414-8.695-6.33-10.963l-195.7577-113.019c-2.3263-1.347-1.3764-4.905 1.3182-4.905h398.6305c5.661 0 9.199 6.136 6.368 11.041h-.009z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function OpenCodeLogoIcon({ className, ...props }: IconProps) {
   return (
     <svg
       aria-hidden="true"
       className={cn("h-4 w-4 shrink-0", className)}
       fill="none"
-      viewBox="0 0 20 20"
+      viewBox="0 0 24 24"
       {...props}
     >
-      <rect height="14" rx="3" stroke="currentColor" strokeWidth="1.5" width="16" x="2" y="3" />
       <path
-        d="m6 7 3 3-3 3m5.5 0H14"
+        d="M5 4.5h14v15H5zM8 8l3 4-3 4m5 0h3"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
-        strokeWidth="1.5"
+        strokeWidth="1.8"
       />
     </svg>
   );

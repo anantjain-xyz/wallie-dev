@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "paths": {
+      "@fixtures/*": ["cases/*"]
+    },
+    "strict": true,
+    "target": "ES2022"
+  },
+  "include": ["cases/**/*.ts"]
+}

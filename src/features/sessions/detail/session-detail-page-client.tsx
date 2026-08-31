@@ -1,181 +1,175 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
-import { MarkdownContent } from "@/components/shared/markdown-content";
+import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { Spinner } from "@/components/shared/spinner";
+import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { Status } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
 import {
   archiveSessionFromClient,
+  isSessionPhaseMutationResult,
+  loadSessionStateFromClient,
   unarchiveSessionFromClient,
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
-import { SessionConnections } from "@/features/sessions/components/session-connections";
-import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import { ARTIFACT_STAGE_PARAM, ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import type {
+  SessionReviewData,
+  SessionReviewRepository,
+  SessionReviewSession,
+} from "@/features/sessions/detail/data";
+import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
+import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
+import { SessionInspector } from "@/features/sessions/detail/session-inspector";
+import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
+import { buildStageTimeline, StageTimeline } from "@/features/sessions/detail/stage-timeline";
+import type {
+  SessionMutationStage,
+  SessionPhaseMutationResult,
+} from "@/features/sessions/mutation-contracts";
 import {
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
+  removeArtifactRealtimeRow,
+  removeCompletionRealtimeRow,
+  removePullRequestRealtimeRow,
 } from "@/features/sessions/detail/realtime";
 import {
-  isTerminalStage,
-  stageIndex,
-  type PipelineStage,
-  type SessionArtifactSummary,
-  type SessionDetail,
-  type SessionPhaseStatus,
-} from "@/features/sessions/types";
-import { StatusChip } from "@/components/shared/status-chip";
-import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
-import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
-import {
-  getWorkspaceMemberDisplayName,
-  type WorkspaceMember,
-} from "@/features/workspace-members/types";
+  applySessionMutationPatch,
+  compareSessionTimestamps,
+  reconcileSessionMutationPatch,
+  rollbackSessionMutationPatch,
+  runOptimisticMutation,
+  type SessionMutationPatch,
+} from "@/features/sessions/optimistic";
+import type { SessionArtifactSummary } from "@/features/sessions/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
+import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
-  initialData: SessionDetailPageData;
+  activity: ReactNode;
+  canReview?: boolean;
+  failedStageSlug?: string | null;
+  hasFailedRun?: boolean;
+  initialData: SessionReviewData;
+  initialFormattedArtifact: ReactNode | null;
+  initialFormattedArtifactKey: string | null;
+  initialNow?: string;
+  repository?: SessionReviewRepository | null;
 };
 
-const dateTimeFormatOptions: Intl.DateTimeFormatOptions = {
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  month: "short",
+type ArchiveUndoVersion = {
+  archivedAt: string;
 };
 
-const fullDateTimeFormatOptions: Intl.DateTimeFormatOptions = {
-  dateStyle: "medium",
-  timeStyle: "short",
-};
-
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, dateTimeFormatOptions);
-
-const fullDateTimeFormatter = new Intl.DateTimeFormat(undefined, fullDateTimeFormatOptions);
-
-// Deterministic formatters (fixed locale + UTC) for the initial server render.
-// `Intl.DateTimeFormat(undefined, …)` resolves to the environment timezone —
-// UTC on Vercel, local in the browser — so an always-visible absolute date
-// would mismatch on hydration and could even show the wrong calendar day near
-// midnight UTC. We render these UTC-pinned values during SSR/first paint, then
-// swap to the viewer's local formatters after mount (see `mounted` below).
-const ssrDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  ...dateTimeFormatOptions,
-  timeZone: "UTC",
-});
-
-const ssrFullDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  ...fullDateTimeFormatOptions,
-  timeZone: "UTC",
-});
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (Number.isNaN(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
+function isCurrentArchiveVersion(
+  session: Pick<SessionReviewSession, "archivedAt">,
+  version: ArchiveUndoVersion,
+) {
+  return session.archivedAt === version.archivedAt;
 }
 
-function CreatorAvatar({ member }: { member: WorkspaceMember }) {
-  const initial = getWorkspaceMemberDisplayName(member).trim().charAt(0).toUpperCase() || "?";
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-[9px] font-semibold text-foreground"
-    >
-      {initial}
-    </span>
-  );
+function stageIndex(pipeline: SessionReviewSession["pipeline"], stageSlug: string): number {
+  return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
 }
 
-type StageRailEntry = {
-  stage: PipelineStage;
-  status: "completed" | "current" | "upcoming";
-  phaseStatus: SessionPhaseStatus | null;
-  completedAt: string | null;
-};
+function isTerminalStage(pipeline: SessionReviewSession["pipeline"], stageSlug: string): boolean {
+  const terminalStage = pipeline.stages[pipeline.stages.length - 1];
+  return terminalStage?.slug === stageSlug;
+}
 
-function buildStageRail(session: SessionDetail): StageRailEntry[] {
-  const completionIndex = new Map(
-    session.phaseCompletions.map((c) => [c.stageSlug, c.completedAt]),
-  );
-  const currentIdx = stageIndex(session.pipeline, session.currentStageSlug);
-  return session.pipeline.stages.map((stage, idx) => {
-    const completedAt = completionIndex.get(stage.slug) ?? null;
-    if (idx < currentIdx || completedAt) {
-      return {
-        completedAt,
-        phaseStatus: null,
-        stage,
-        status: "completed" as const,
-      };
-    }
-    if (idx === currentIdx) {
-      return {
-        completedAt: null,
-        phaseStatus: session.phaseStatus,
-        stage,
-        status: "current" as const,
-      };
-    }
-    return {
-      completedAt: null,
-      phaseStatus: null,
-      stage,
-      status: "upcoming" as const,
-    };
+function mergeSessionReviewStage(
+  session: SessionReviewSession,
+  stage: SessionMutationStage,
+): SessionReviewSession {
+  const existingStage = session.pipeline.stages.find((current) => current.id === stage.id);
+  if (
+    existingStage?.description === stage.description &&
+    existingStage.name === stage.name &&
+    existingStage.position === stage.position &&
+    existingStage.slug === stage.slug
+  ) {
+    return session;
+  }
+
+  const stages = session.pipeline.stages
+    .filter((current) => current.id !== stage.id)
+    .concat(stage)
+    .sort((left, right) => left.position - right.position);
+
+  return { ...session, pipeline: { stages } };
+}
+
+export function reconcilePhaseMutationResult(
+  session: SessionReviewSession,
+  result: SessionPhaseMutationResult,
+): SessionReviewSession {
+  return reconcileSessionMutationPatch(mergeSessionReviewStage(session, result.currentStage), {
+    archivedAt: result.archivedAt,
+    currentArtifactVersion: result.artifactVersion,
+    currentStageId: result.currentStageId,
+    phaseStatus: result.phaseStatus,
+    rejectionCount: result.rejectionCount,
+    updatedAt: result.updatedAt,
   });
 }
 
-export function SessionDetailPageClient({ initialData }: SessionDetailPageClientProps) {
+export { centerStageTimelineSelection as centerStageRailSelection } from "@/features/sessions/detail/stage-timeline";
+
+export function SessionDetailPageClient({
+  activity,
+  canReview = true,
+  failedStageSlug: initialFailedStageSlug = null,
+  hasFailedRun: initialHasFailedRun = false,
+  initialData,
+  initialFormattedArtifact,
+  initialFormattedArtifactKey,
+  initialNow,
+  repository = null,
+}: SessionDetailPageClientProps) {
+  const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { pushToast } = useOptionalToast();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
-  const sessionCreator = initialData.sessionCreator;
-  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
-    initialData.session.currentStageSlug,
-  );
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [feedbackDraft, setFeedbackDraft] = useState("");
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const latestSessionRef = useRef(session);
+  latestSessionRef.current = session;
+  const creatorDisplayName = initialData.creatorDisplayName;
+  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(() => {
+    const fromUrl = searchParams.get(ARTIFACT_STAGE_PARAM);
+    if (fromUrl && initialData.session.pipeline.stages.some((stage) => stage.slug === fromUrl)) {
+      return fromUrl;
+    }
+    return initialData.session.currentStageSlug;
+  });
+  const [canApprove, setCanApprove] = useState(canReview);
+  const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
+  const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [stopPending, setStopPending] = useState(false);
-  const [archivePending, setArchivePending] = useState(false);
-  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [viewingHistoricalArtifact, setViewingHistoricalArtifact] = useState(false);
+  const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
+  const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
+  const capabilitiesEffectSkipRef = useRef(true);
 
-  // Gate locale/timezone-sensitive timestamps so the absolute "Created" date
-  // renders identically on the server and during the first client paint, then
-  // re-renders in the viewer's local timezone once mounted.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const createdAtDate = new Date(session.createdAt);
-  const createdAtLabel = (mounted ? dateTimeFormatter : ssrDateTimeFormatter).format(createdAtDate);
-  const createdAtFull = (mounted ? fullDateTimeFormatter : ssrFullDateTimeFormatter).format(
-    createdAtDate,
+  const stageTimeline = useMemo(
+    () => buildStageTimeline(session, { failedStageSlug }),
+    [failedStageSlug, session],
   );
-
-  const stageRail = useMemo(() => buildStageRail(session), [session]);
-  const hasConnectionLinks =
-    !!session.linearIssueUrl ||
-    session.pullRequests.some((pullRequest) => pullRequest.pullRequestUrl);
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
 
@@ -195,15 +189,46 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const activeArtifacts = artifactsByStage.get(selectedStageSlug) ?? [];
   const latestArtifact = activeArtifacts[0] ?? null;
   const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
+  const selectedStagePosition = stageIndex(session.pipeline, selectedStageSlug);
+  const currentStagePosition = stageIndex(session.pipeline, session.currentStageSlug);
+  const shouldLoadLatestArtifact =
+    selectedStagePosition < currentStagePosition ||
+    (selectedStageIsCurrent && (session.currentArtifactVersion ?? 0) > 0);
   const isDraftingSelectedStage =
-    selectedStageIsCurrent && session.phaseStatus === "agent_generating" && !session.archivedAt;
+    selectedStageIsCurrent &&
+    (session.phaseStatus === "in_progress" || stopPending) &&
+    !session.archivedAt;
 
-  const canActOnCurrent =
-    selectedStageIsCurrent && session.phaseStatus === "awaiting_review" && !session.archivedAt;
-  const phaseActionBusy = phaseActionPending !== null || isPending;
+  const reviewMode = resolveReviewMode({
+    archivedAt: session.archivedAt,
+    canApprove,
+    hasFailedRun,
+    phaseStatus: session.phaseStatus,
+    selectedStageIsCurrent,
+  });
+  // Optimistic approve/reject flips phaseStatus before the network settles.
+  // Keep the reviewable pending surface so Stop/dialog cannot race the action.
+  // Historical version selections disable approve/reject — those actions always
+  // target session.currentArtifactVersion, not the on-screen older body.
+  const pendingKeepsReviewable =
+    (phaseActionPending === "approve" || phaseActionPending === "reject") &&
+    (reviewMode.kind === "running" || reviewMode.kind === "canceled");
+  const stickyReviewMode =
+    viewingHistoricalArtifact && (reviewMode.kind === "reviewable" || pendingKeepsReviewable)
+      ? ({
+          kind: "historical_version",
+          reason:
+            "You’re viewing an older version. Return to Latest to approve or request changes.",
+        } as const)
+      : pendingKeepsReviewable
+        ? ({ canApprove, kind: "reviewable" } as const)
+        : reviewMode;
 
   useEffect(() => {
     setSession(initialData.session);
+    setCanApprove(canReview);
+    setHasFailedRun(initialHasFailedRun);
+    setFailedStageSlug(initialFailedStageSlug);
     setSelectedStageSlug((currentSlug) => {
       const stageStillExists = initialData.session.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
@@ -211,9 +236,93 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
       return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
     });
-  }, [initialData.session]);
+  }, [canReview, initialData.session, initialFailedStageSlug, initialHasFailedRun]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    // Skip the mount pass — RSC already supplied canApprove / hasFailedRun.
+    // Recompute when the current stage or phase status changes (Realtime / local).
+    if (capabilitiesEffectSkipRef.current) {
+      capabilitiesEffectSkipRef.current = false;
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    // Wait out in-flight phase actions so we don't race the mutation request.
+    if (phaseActionPending !== null) {
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    const phaseStatusAtFetch = session.phaseStatus;
+
+    void fetch(`/api/sessions/${session.id}/review-capabilities`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as {
+          canApprove?: boolean;
+          failedStageSlug?: string | null;
+          hasFailedRun?: boolean;
+        } | null;
+        if (!response.ok || !body || cancelled) return;
+        if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
+        // Generating / awaiting_review clear failure UI immediately (sibling effect).
+        // Ignore a stale error run so refetch-on-phaseStatus cannot resurrect it.
+        if (phaseStatusAtFetch === "in_progress" || phaseStatusAtFetch === "awaiting_review") {
+          setHasFailedRun(false);
+          setFailedStageSlug(null);
+          return;
+        }
+        if (typeof body.hasFailedRun === "boolean") setHasFailedRun(body.hasFailedRun);
+        if ("failedStageSlug" in body) setFailedStageSlug(body.failedStageSlug ?? null);
+      })
+      .catch(() => {
+        // Keep the last known capabilities; review actions still authorize server-side.
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [phaseActionPending, session.currentStageId, session.id, session.phaseStatus]);
+
+  useEffect(() => {
+    if (session.phaseStatus === "in_progress" || session.phaseStatus === "awaiting_review") {
+      setHasFailedRun(false);
+      setFailedStageSlug(null);
+    }
+  }, [session.phaseStatus]);
 
   const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
+    const stageIsKnown = session.pipeline.stages.some((stage) => stage.id === row.current_stage_id);
+    if (!stageIsKnown && compareSessionTimestamps(row.updated_at, session.updatedAt) >= 0) {
+      const previousCurrentStageSlug = session.currentStageSlug;
+      void loadSessionStateFromClient({ sessionId: session.id })
+        .then((result) => {
+          setSession((current) => reconcilePhaseMutationResult(current, result));
+          setSelectedStageSlug((currentSlug) =>
+            currentSlug === previousCurrentStageSlug ? result.currentStage.slug : currentSlug,
+          );
+        })
+        .catch((error) => {
+          pushToast({
+            description:
+              error instanceof Error ? error.message : "Could not reconcile the updated stage.",
+            priority: "assertive",
+            title: "Could not sync stage.",
+            tone: "danger",
+          });
+        });
+      return;
+    }
+
     let previousCurrentStageSlug: string | null = null;
     let nextCurrentStageSlug: string | null = null;
 
@@ -242,12 +351,6 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     },
   );
 
-  const refreshSessionFromServer = useEffectEvent(() => {
-    startTransition(() => {
-      router.refresh();
-    });
-  });
-
   useEffect(() => {
     const channel = supabase
       .channel(`session-detail:${session.id}`)
@@ -261,7 +364,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            refreshSessionFromServer();
+            router.replace(workspaceSessionsPath(initialData.workspaceSlug));
             return;
           }
 
@@ -278,7 +381,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            refreshSessionFromServer();
+            const deleted = payload.old as Pick<Tables<"session_artifacts">, "id"> &
+              Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>;
+            setSession((current) => removeArtifactRealtimeRow(current, deleted));
             return;
           }
 
@@ -295,7 +400,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            refreshSessionFromServer();
+            const deleted = payload.old as Pick<Tables<"session_phase_completions">, "id"> &
+              Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>;
+            setSession((current) => removeCompletionRealtimeRow(current, deleted));
             return;
           }
 
@@ -310,8 +417,46 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           schema: "public",
           table: "session_pull_requests",
         },
-        () => {
-          refreshSessionFromServer();
+        (payload) => {
+          const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as Pick<
+            Tables<"session_pull_requests">,
+            "id" | "pull_request_number" | "pull_request_url" | "updated_at"
+          >;
+          setSession((current) => {
+            const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
+
+            if (payload.eventType === "DELETE") {
+              pullRequestUpdatedAtRef.current.delete(row.id);
+              return removePullRequestRealtimeRow(current, row);
+            }
+
+            const previousUpdatedAt = pullRequestUpdatedAtRef.current.get(row.id);
+            if (
+              previousUpdatedAt &&
+              compareSessionTimestamps(row.updated_at, previousUpdatedAt) <= 0
+            ) {
+              return current;
+            }
+
+            const pullRequests = current.pullRequests.filter(
+              (pullRequest) => pullRequest.id !== row.id,
+            );
+            pullRequestUpdatedAtRef.current.set(row.id, row.updated_at);
+            if (
+              existing?.pullRequestNumber === row.pull_request_number &&
+              existing.pullRequestUrl === row.pull_request_url
+            ) {
+              return current;
+            }
+
+            pullRequests.push({
+              id: row.id,
+              pullRequestNumber: row.pull_request_number,
+              pullRequestUrl: row.pull_request_url,
+            });
+
+            return { ...current, pullRequests };
+          });
         },
       )
       .subscribe();
@@ -319,71 +464,182 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [session.id, supabase]);
+  }, [initialData.workspaceSlug, router, session.id, supabase]);
 
-  async function handlePhaseAction(action: "approve" | "reject") {
+  async function handlePhaseAction(
+    action: "approve" | "reject",
+    feedbackText?: string,
+  ): Promise<boolean> {
+    if (phaseActionPending !== null) return false;
+    if (viewingHistoricalArtifact) return false;
+
     if (action === "reject") {
-      if (!feedbackDraft.trim()) {
-        setActionError("Feedback is required when rejecting.");
-        return;
+      if (!feedbackText?.trim()) {
+        return false;
       }
     }
 
-    setActionError(null);
     setPhaseActionPending(action);
+    startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
+
+    const previousStageSlug = session.currentStageSlug;
+    const previousPatch: SessionMutationPatch = {
+      archivedAt: session.archivedAt,
+      currentArtifactVersion: session.currentArtifactVersion,
+      currentStageId: session.currentStageId,
+      phaseStatus: session.phaseStatus,
+      rejectionCount: session.rejectionCount ?? 0,
+      updatedAt: session.updatedAt,
+    };
+    const nextStage =
+      action === "approve"
+        ? session.pipeline.stages[stageIndex(session.pipeline, session.currentStageSlug) + 1]
+        : null;
+    const optimisticCompletion = {
+      completedAt: new Date().toISOString(),
+      stageSlug: session.currentStageSlug,
+    };
+    const optimisticPhaseCompletions = [
+      ...session.phaseCompletions.filter(
+        (completion) => completion.stageSlug !== session.currentStageSlug,
+      ),
+      optimisticCompletion,
+    ];
+    if (action === "approve") {
+      previousPatch.phaseCompletions = session.phaseCompletions;
+    }
+    const optimisticPatch: SessionMutationPatch =
+      action === "reject"
+        ? { phaseStatus: "rejected", rejectionCount: (session.rejectionCount ?? 0) + 1 }
+        : nextStage
+          ? {
+              currentArtifactVersion: 0,
+              currentStageId: nextStage.id,
+              phaseCompletions: optimisticPhaseCompletions,
+              phaseStatus: "in_progress",
+              rejectionCount: 0,
+            }
+          : {
+              archivedAt: new Date().toISOString(),
+              phaseCompletions: optimisticPhaseCompletions,
+              phaseStatus: "approved",
+            };
 
     try {
-      const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
-        body: JSON.stringify({
-          action,
-          feedbackText: action === "reject" ? feedbackDraft.trim() : undefined,
-          version: session.currentArtifactVersion ?? 1,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
+      await runOptimisticMutation({
+        optimistic: () => {
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch));
+          if (nextStage) setSelectedStageSlug(nextStage.slug);
+        },
+        mutate: async () => {
+          const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
+            body: JSON.stringify({
+              action,
+              feedbackText: action === "reject" ? feedbackText?.trim() : undefined,
+              version: session.currentArtifactVersion ?? 1,
+            }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+          const body = (await response.json().catch(() => null)) as
+            | (Partial<SessionPhaseMutationResult> & { error?: string })
+            | null;
+
+          if (!response.ok) throw new Error(body?.error ?? "Action failed.");
+          if (!isSessionPhaseMutationResult(body)) {
+            throw new Error("Action response was invalid.");
+          }
+          return body;
+        },
+        commit: (result) => {
+          setSession((current) => reconcilePhaseMutationResult(current, result));
+          setSelectedStageSlug((currentSlug) =>
+            currentSlug === previousStageSlug ? result.currentStage.slug : currentSlug,
+          );
+        },
+        rollback: () => {
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          );
+          if (nextStage) {
+            setSelectedStageSlug((currentSlug) =>
+              currentSlug === nextStage.slug ? previousStageSlug : currentSlug,
+            );
+          }
+        },
       });
 
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setActionError(body?.error ?? "Action failed.");
-        return;
-      }
-
-      setFeedbackDraft("");
-      setFeedbackOpen(false);
-      startTransition(() => {
-        router.refresh();
+      finishInteraction(action, "success");
+      pushToast({
+        priority: "polite",
+        title: action === "approve" ? "Review approved." : "Changes queued.",
+        tone: "success",
       });
+      return true;
+    } catch (error) {
+      finishInteraction(action, "error");
+      pushToast({
+        description: error instanceof Error ? error.message : "Action failed.",
+        priority: "assertive",
+        title: action === "approve" ? "Approval failed." : "Could not queue changes.",
+        tone: "danger",
+      });
+      return false;
     } finally {
       setPhaseActionPending(null);
     }
   }
 
-  function handleTitleSaved(nextTitle: string) {
-    setSession((currentSession) => ({ ...currentSession, title: nextTitle }));
-    startTransition(() => {
-      router.refresh();
+  function handleTitleChanged(nextTitle: string, updatedAt?: string, expectedTitle?: string) {
+    setSession((currentSession) => {
+      if (expectedTitle !== undefined && currentSession.title !== expectedTitle) {
+        return currentSession;
+      }
+      return updatedAt
+        ? reconcileSessionMutationPatch(currentSession, { title: nextTitle, updatedAt })
+        : applySessionMutationPatch(currentSession, { title: nextTitle });
     });
   }
 
   async function handleStopRun() {
-    setActionError(null);
+    if (archivePending !== null || phaseActionPending !== null || stopPending) return;
     setStopPending(true);
+    const optimisticPatch: SessionMutationPatch = { phaseStatus: "rejected" };
+    const previousPatch: SessionMutationPatch = {
+      phaseStatus: session.phaseStatus,
+      updatedAt: session.updatedAt,
+    };
 
     try {
-      const response = await fetch(`/api/sessions/${session.id}/cancel`, {
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
+      await runOptimisticMutation({
+        optimistic: () =>
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
+        mutate: async () => {
+          const response = await fetch(`/api/sessions/${session.id}/cancel`, {
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+          const body = (await response.json().catch(() => null)) as
+            | (Partial<SessionPhaseMutationResult> & { error?: string })
+            | null;
+          if (!response.ok) throw new Error(body?.error ?? "Could not stop the run.");
+          if (!isSessionPhaseMutationResult(body)) {
+            throw new Error("Stop response was invalid.");
+          }
+          return body;
+        },
+        commit: (result) => setSession((current) => reconcilePhaseMutationResult(current, result)),
+        rollback: () =>
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          ),
       });
-
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setActionError(body?.error ?? "Could not stop the run.");
-        return;
-      }
-
-      startTransition(() => {
-        router.refresh();
+    } catch (error) {
+      pushToast({
+        description: error instanceof Error ? error.message : "Could not stop the run.",
+        priority: "assertive",
+        title: "Stop failed.",
+        tone: "danger",
       });
     } finally {
       setStopPending(false);
@@ -391,128 +647,197 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   }
 
   async function handleArchive() {
+    if (archivePending !== null || phaseActionPending !== null || stopPending) return;
+    archiveUndoVersionRef.current = null;
     setArchiveError(null);
-    setArchivePending(true);
+    setArchivePending("archive");
+    const optimisticPatch: SessionMutationPatch = {
+      archivedAt: new Date().toISOString(),
+      ...(session.phaseStatus === "in_progress" ? { phaseStatus: "rejected" as const } : {}),
+    };
+    const previousPatch: SessionMutationPatch = {
+      archivedAt: session.archivedAt,
+      phaseStatus: session.phaseStatus,
+      updatedAt: session.updatedAt,
+    };
 
     try {
-      const result = await archiveSessionFromClient({ sessionId: session.id });
-      setArchiveConfirming(false);
-      // Flip the header immediately; router.refresh() + realtime reconcile the
-      // parked phase_status.
-      setSession((current) => ({ ...current, archivedAt: result.archivedAt }));
-      startTransition(() => {
-        router.refresh();
+      const result = await runOptimisticMutation({
+        optimistic: () =>
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
+        mutate: () => archiveSessionFromClient({ sessionId: session.id }),
+        commit: (result) =>
+          setSession((current) =>
+            reconcileSessionMutationPatch(current, {
+              archivedAt: result.archivedAt,
+              phaseStatus: result.phaseStatus,
+              updatedAt: result.updatedAt,
+            }),
+          ),
+        rollback: () =>
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          ),
+      });
+      if (!result.archivedAt) {
+        pushToast({
+          priority: "polite",
+          title: `Session #${session.number} remains active.`,
+        });
+        return;
+      }
+      const undoVersion = {
+        archivedAt: result.archivedAt,
+      } satisfies ArchiveUndoVersion;
+      archiveUndoVersionRef.current = undoVersion;
+      pushToast({
+        action: {
+          altText: `Undo archive for session #${session.number}`,
+          label: "Undo",
+          onClick: () => {
+            if (
+              archiveUndoVersionRef.current !== undoVersion ||
+              !isCurrentArchiveVersion(latestSessionRef.current, undoVersion)
+            ) {
+              return;
+            }
+            void handleUnarchive(undoVersion.archivedAt, true);
+          },
+        },
+        duration: 7000,
+        priority: "polite",
+        title: `Session #${session.number} archived.`,
+        tone: "success",
       });
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : "Failed to archive session.");
+      const message = error instanceof Error ? error.message : "Failed to archive session.";
+      setArchiveError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Archive failed.",
+        tone: "danger",
+      });
     } finally {
-      setArchivePending(false);
+      setArchivePending(null);
     }
   }
 
-  async function handleUnarchive() {
+  async function handleUnarchive(expectedArchivedAt?: string, refreshActiveRoute = false) {
+    if (phaseActionPending !== null || archivePending !== null) return;
+    archiveUndoVersionRef.current = null;
+    const currentSession = latestSessionRef.current;
     setArchiveError(null);
-    setArchivePending(true);
+    setArchivePending("unarchive");
+    const optimisticPatch: SessionMutationPatch = { archivedAt: null };
+    const previousPatch: SessionMutationPatch = {
+      archivedAt: currentSession.archivedAt,
+      updatedAt: currentSession.updatedAt,
+    };
 
     try {
-      const result = await unarchiveSessionFromClient({ sessionId: session.id });
-      setSession((current) => ({ ...current, archivedAt: result.archivedAt }));
-      startTransition(() => {
-        router.refresh();
+      const result = await runOptimisticMutation({
+        optimistic: () =>
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
+        mutate: () =>
+          unarchiveSessionFromClient({ expectedArchivedAt, sessionId: currentSession.id }),
+        commit: (result) =>
+          setSession((current) =>
+            reconcileSessionMutationPatch(current, {
+              archivedAt: result.archivedAt,
+              phaseStatus: result.phaseStatus,
+              updatedAt: result.updatedAt,
+            }),
+          ),
+        rollback: () =>
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          ),
       });
+      if (result.archivedAt !== null) return;
+      pushToast({
+        priority: "polite",
+        title: `Session #${currentSession.number} unarchived.`,
+        tone: "success",
+      });
+      if (refreshActiveRoute) router.refresh();
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : "Failed to unarchive session.");
+      const message = error instanceof Error ? error.message : "Failed to unarchive session.";
+      setArchiveError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Unarchive failed.",
+        tone: "danger",
+      });
     } finally {
-      setArchivePending(false);
+      setArchivePending(null);
     }
   }
 
   const headerActions = session.archivedAt ? (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        <StatusChip tone="planned">Archived</StatusChip>
+        <Status value="archived" />
         <button
           type="button"
           className="ui-button gap-1.5"
-          disabled={archivePending}
+          disabled={archivePending !== null || phaseActionPending !== null}
           onClick={() => void handleUnarchive()}
         >
-          {archivePending ? (
-            <>
-              <Spinner />
-              <span>Unarchiving…</span>
-            </>
-          ) : (
-            "Unarchive"
-          )}
+          <ActionButtonLabel
+            idle="Unarchive"
+            pending={archivePending !== null}
+            pendingLabel={archivePending === "archive" ? "Archiving…" : "Unarchiving…"}
+          />
         </button>
       </div>
-      {archiveError ? (
-        <span className="text-[11px] text-danger" role="alert">
-          {archiveError}
-        </span>
-      ) : null}
+      {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>
   ) : (
     <div className="flex flex-col items-end gap-1">
-      {archiveConfirming ? (
-        <div className="flex items-center gap-2">
-          <span className="text-[12px] text-muted">Archive this session?</span>
+      <div className="flex items-center gap-2">
+        {session.phaseStatus === "in_progress" && phaseActionPending === null ? (
           <button
             type="button"
-            className="ui-button-danger gap-1.5"
-            disabled={archivePending}
-            onClick={() => void handleArchive()}
+            className="ui-button-danger"
+            disabled={stopPending || archivePending !== null || phaseActionPending !== null}
+            onClick={() => void handleStopRun()}
           >
-            {archivePending ? (
-              <>
-                <Spinner />
-                <span>Archiving…</span>
-              </>
-            ) : (
-              "Confirm"
-            )}
+            <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
           </button>
-          <button
-            type="button"
-            className="ui-button"
-            disabled={archivePending}
-            onClick={() => {
-              setArchiveConfirming(false);
-              setArchiveError(null);
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
+        ) : null}
         <button
           type="button"
           className="ui-button gap-1.5"
-          onClick={() => {
-            setArchiveConfirming(true);
-            setArchiveError(null);
-          }}
+          disabled={archivePending !== null || phaseActionPending !== null || stopPending}
+          onClick={() => void handleArchive()}
         >
           <ArchiveIcon className="h-3.5 w-3.5" />
-          <span>Archive</span>
+          <ActionButtonLabel
+            idle="Archive"
+            pending={archivePending === "archive"}
+            pendingLabel="Archiving…"
+          />
         </button>
-      )}
-      {archiveError ? (
-        <span className="text-[11px] text-danger" role="alert">
-          {archiveError}
-        </span>
-      ) : null}
+      </div>
+      {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>
   );
 
+  const approveLabel = isTerminalStage(session.pipeline, session.currentStageSlug)
+    ? "Approve & archive"
+    : "Approve & advance";
+
   return (
-    <PageContainer>
+    <PageContainer className="pb-4">
+      <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
+        actionsAlwaysRight
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             <Link
-              href={workspaceSessionsPath(initialData.workspace.slug)}
+              href={workspaceSessionsPath(initialData.workspaceSlug)}
               className="hover:text-foreground"
             >
               ← Sessions
@@ -526,7 +851,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         titleAsChild
         title={
           <EditableSessionTitle
-            onTitleSaved={handleTitleSaved}
+            onTitleChanged={handleTitleChanged}
             sessionId={session.id}
             sessionNumber={session.number}
             title={session.title}
@@ -535,297 +860,134 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         actions={headerActions}
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-muted">
-        {sessionCreator ? (
-          <>
-            <span className="inline-flex items-center gap-1.5">
-              <CreatorAvatar member={sessionCreator} />
-              <span className="text-foreground">
-                {getWorkspaceMemberDisplayName(sessionCreator)}
-              </span>
-            </span>
-            <span aria-hidden="true">·</span>
-          </>
-        ) : null}
-        <span title={createdAtFull} suppressHydrationWarning>
-          Created {createdAtLabel}
-        </span>
-        <span aria-hidden="true">·</span>
-        {/* Relative time derives from Date.now(), which differs between the
-            server render and hydration; suppress the resulting text mismatch
-            (the label is approximate by nature). */}
-        <span
-          title={fullDateTimeFormatter.format(new Date(session.updatedAt))}
-          suppressHydrationWarning
-        >
-          Updated {relativeTime(session.updatedAt)}
-        </span>
-        {hasConnectionLinks ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <SessionConnections
-              linearIssueId={session.linearIssueId}
-              linearIssueUrl={session.linearIssueUrl}
-              pullRequestCount={session.pullRequestCount}
-              pullRequests={session.pullRequests}
-            />
-          </>
-        ) : null}
-      </div>
-
-      <div className="mb-6 rounded-[10px] border border-border bg-surface px-5 py-4">
-        <StageRail
-          stageRail={stageRail}
-          selectedStageSlug={selectedStageSlug}
+      <div className="mb-4">
+        <StageTimeline
           onSelect={setSelectedStageSlug}
+          selectedStageSlug={selectedStageSlug}
+          timeline={stageTimeline}
         />
       </div>
 
-      <div className="flex flex-col gap-6">
-        <section className="rounded-[8px] border border-border bg-surface">
+      {/* Review workbench: 70/30 on lg+, stacked below 1024px with context after artifact. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0">
+        <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
           <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h2 className="text-[13px] font-semibold text-foreground">
                 {selectedStage?.name ?? selectedStageSlug} artifact
               </h2>
-              <p className="mt-0.5 text-[11px] text-muted">
-                {latestArtifact && canActOnCurrent
+              <p className="mt-0.5 type-annotation text-muted">
+                {latestArtifact && stickyReviewMode.kind === "reviewable"
                   ? "Review this output before approving."
                   : (selectedStage?.description ?? "")}
               </p>
             </div>
-            {selectedStageSlug === session.currentStageSlug ? (
-              <SessionPhaseStatusLabel
-                status={session.phaseStatus}
-                className="shrink-0 text-[11px] leading-4 sm:text-right"
-              />
-            ) : null}
           </div>
 
-          <div aria-busy={isDraftingSelectedStage} aria-live="polite" className="p-4">
-            {latestArtifact && isDraftingSelectedStage ? (
-              <ProgressHint text="Wallie is drafting the next artifact version." />
-            ) : null}
-            {latestArtifact ? (
-              <ArtifactView artifact={latestArtifact} />
-            ) : selectedStageSlug === session.currentStageSlug &&
-              session.phaseStatus === "agent_generating" ? (
-              <ProgressHint text="Wallie is drafting the artifact for this stage." />
-            ) : (
-              <EmptyHint
-                text={
-                  stageIndex(session.pipeline, selectedStageSlug) >
-                  stageIndex(session.pipeline, session.currentStageSlug)
-                    ? "This stage has not started yet."
-                    : "No artifact recorded for this stage."
-                }
-              />
-            )}
-
-            {activeArtifacts.length > 1 ? (
-              <details className="mt-4 text-[12px] text-muted">
-                <summary className="cursor-pointer hover:text-foreground">
-                  {activeArtifacts.length - 1} earlier version
-                  {activeArtifacts.length - 1 === 1 ? "" : "s"}
-                </summary>
-                <ul className="mt-2 space-y-2">
-                  {activeArtifacts.slice(1).map((artifact) => (
-                    <li
-                      key={`${artifact.stageSlug}-${artifact.version}`}
-                      className="rounded-[4px] border border-border bg-background p-3"
-                    >
-                      <p className="text-[11px] uppercase text-muted">
-                        v{artifact.version} ·{" "}
-                        {dateTimeFormatter.format(new Date(artifact.createdAt))}
-                      </p>
-                      <ArtifactView artifact={artifact} compact />
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
-          </div>
-
-          {isDraftingSelectedStage ? (
-            <div className="border-t border-border bg-surface-muted p-4">
-              {actionError ? (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
-                >
-                  {actionError}
-                </div>
-              ) : null}
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                <button
-                  type="button"
-                  className="ui-button-danger gap-1.5"
-                  disabled={stopPending}
-                  onClick={() => void handleStopRun()}
-                >
-                  {stopPending ? (
-                    <>
-                      <Spinner />
-                      <span>Stopping…</span>
-                    </>
-                  ) : (
-                    "Stop run"
-                  )}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {canActOnCurrent ? (
-            <div className="border-t border-border bg-surface-muted p-4">
-              {actionError ? (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
-                >
-                  {actionError}
-                </div>
-              ) : null}
-
-              {feedbackOpen ? (
-                <div className="space-y-3">
-                  <label
-                    className="block text-[12px] font-semibold text-foreground"
-                    htmlFor="session-feedback"
-                  >
-                    Feedback for Wallie
-                  </label>
-                  <textarea
-                    id="session-feedback"
-                    value={feedbackDraft}
-                    onChange={(event) => setFeedbackDraft(event.target.value)}
-                    className="ui-textarea min-h-24"
-                    placeholder="What should change? Wallie will regenerate this stage."
-                  />
-                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-                    <button
-                      type="button"
-                      className="ui-button"
-                      onClick={() => {
-                        setFeedbackOpen(false);
-                        setFeedbackDraft("");
-                        setActionError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={phaseActionBusy}
-                      className="ui-button-primary gap-1.5"
-                      onClick={() => handlePhaseAction("reject")}
-                    >
-                      {phaseActionPending === "reject" ? (
-                        <>
-                          <Spinner />
-                          <span>Queueing…</span>
-                        </>
-                      ) : (
-                        "Queue rerun"
-                      )}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                  <button
-                    type="button"
-                    className="ui-button"
-                    disabled={phaseActionBusy}
-                    onClick={() => setFeedbackOpen(true)}
-                  >
-                    Request changes and rerun
-                  </button>
-                  <button
-                    type="button"
-                    className="ui-button-primary gap-1.5"
-                    disabled={phaseActionBusy}
-                    onClick={() => handlePhaseAction("approve")}
-                  >
-                    {phaseActionPending === "approve" ? (
-                      <>
-                        <Spinner />
-                        <span>Approving…</span>
-                      </>
-                    ) : isTerminalStage(session.pipeline, session.currentStageSlug) ? (
-                      "Approve & archive"
-                    ) : (
-                      "Approve & advance"
-                    )}
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : null}
-        </section>
-
-        <section className="rounded-[8px] border border-border bg-surface p-4">
-          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">Prompt</h2>
-          <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground">
-            {session.promptMd || "No prompt recorded."}
-          </pre>
-        </section>
-
-        <section className="rounded-[8px] border border-border bg-surface p-4">
-          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">
-            Run activity
-          </h2>
-          <div className="mt-3">
-            <SessionWalliePanel
-              initialData={initialData.wallie}
-              session={{
-                archivedAt: session.archivedAt,
-                id: session.id,
-                workspaceId: session.workspaceId,
-              }}
-              memberIndex={initialData.memberIndex}
-              supabase={supabase}
-              workspaceSlug={initialData.workspace.slug}
+          <div
+            aria-busy={isDraftingSelectedStage}
+            aria-live="polite"
+            className="min-h-0 flex-1 p-4"
+          >
+            <ArtifactPanel
+              emptyText={
+                selectedStagePosition > currentStagePosition
+                  ? "This stage has not started yet."
+                  : "No artifact recorded for this stage."
+              }
+              initialFormattedArtifact={initialFormattedArtifact}
+              initialFormattedArtifactKey={initialFormattedArtifactKey}
+              initialNow={renderNow}
+              isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
+              isDrafting={isDraftingSelectedStage}
+              latestArtifact={latestArtifact}
+              loadLatest={shouldLoadLatestArtifact}
+              onViewingHistoricalChange={setViewingHistoricalArtifact}
+              persistStageInUrl={!selectedStageIsCurrent}
+              rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
+              sessionId={session.id}
+              stageSlug={selectedStageSlug}
             />
           </div>
         </section>
+
+        <aside className="ui-sheet p-4 lg:rounded-l-none">
+          <SessionInspector
+            creatorDisplayName={creatorDisplayName}
+            initialNow={renderNow}
+            repository={repository}
+            session={session}
+          />
+        </aside>
       </div>
+
+      <section aria-labelledby="session-runs-heading" className="ui-sheet mt-6">
+        <div className="border-b border-border px-4 py-3">
+          <h2 id="session-runs-heading" className="text-[13px] font-semibold text-foreground">
+            Runs
+          </h2>
+          <p className="mt-0.5 type-annotation text-muted">
+            Review agent run history, status, and messages for this session.
+          </p>
+        </div>
+        <div className="p-4">
+          <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+            {activity}
+          </SessionActivityArchivedAtProvider>
+        </div>
+      </section>
+
+      <SessionReviewBar
+        approveLabel={approveLabel}
+        mode={stickyReviewMode}
+        onApprove={() => {
+          void handlePhaseAction("approve");
+        }}
+        onReject={(feedback) => handlePhaseAction("reject", feedback)}
+        phaseActionPending={phaseActionPending}
+      />
     </PageContainer>
   );
 }
 
 function EditableSessionTitle({
-  onTitleSaved,
+  onTitleChanged,
   sessionId,
   sessionNumber,
   title,
 }: {
-  onTitleSaved: (title: string) => void;
+  onTitleChanged: (title: string, updatedAt?: string, expectedTitle?: string) => void;
   sessionId: string;
   sessionNumber: number;
   title: string;
 }) {
+  const { pushToast } = useOptionalToast();
   const [draftTitle, setDraftTitle] = useState(title);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+  const skipNextBlurSaveRef = useRef(false);
 
   useEffect(() => {
     if (!isEditing) return;
     editInputRef.current?.focus();
+  }, [isEditing]);
+
+  useEffect(() => {
+    if (!isEditing) return;
     editInputRef.current?.select();
   }, [isEditing]);
 
   function startEditing() {
+    skipNextBlurSaveRef.current = false;
     setDraftTitle(title);
     setError(null);
     setIsEditing(true);
   }
 
   function cancelEditing() {
+    skipNextBlurSaveRef.current = true;
     setDraftTitle(title);
     setError(null);
     setIsEditing(false);
@@ -849,15 +1011,20 @@ function EditableSessionTitle({
 
     setIsSaving(true);
     setError(null);
+    setIsEditing(false);
+    onTitleChanged(normalizedTitle);
 
     try {
       const result = await updateSessionTitleFromClient({
         sessionId,
         title: normalizedTitle,
       });
-      setIsEditing(false);
-      onTitleSaved(result.title);
+      setDraftTitle(result.title);
+      onTitleChanged(result.title, result.updatedAt);
+      pushToast({ priority: "polite", title: "Session title updated.", tone: "success" });
     } catch (errorValue) {
+      onTitleChanged(title, undefined, normalizedTitle);
+      setIsEditing(true);
       setError(
         errorValue instanceof Error ? errorValue.message : "Failed to update session title.",
       );
@@ -875,9 +1042,17 @@ function EditableSessionTitle({
           <input
             ref={editInputRef}
             aria-label={`Session #${sessionNumber} title`}
-            className="ui-input h-11 min-w-0 flex-1 px-3 py-1.5 text-[20px] font-semibold sm:text-[22px]"
+            aria-describedby={error ? `session-${sessionNumber}-title-error` : undefined}
+            className="ui-input h-11 min-w-0 w-full px-3 py-1.5 text-[20px] font-semibold sm:text-[22px]"
             disabled={isSaving}
             value={draftTitle}
+            onBlur={() => {
+              if (skipNextBlurSaveRef.current) {
+                skipNextBlurSaveRef.current = false;
+                return;
+              }
+              void saveTitle();
+            }}
             onChange={(event) => {
               setDraftTitle(event.target.value);
               if (error) setError(null);
@@ -885,42 +1060,20 @@ function EditableSessionTitle({
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                void saveTitle();
+                event.currentTarget.blur();
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 cancelEditing();
               }
             }}
           />
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className="ui-icon-button h-9 w-9 text-accent"
-              aria-label={`Save title for session #${sessionNumber}`}
-              title="Save title"
-              disabled={isSaving}
-              onClick={() => void saveTitle()}
-            >
-              {isSaving ? (
-                <Spinner className="h-4 w-4" label="Saving title" />
-              ) : (
-                <CheckIcon className="h-4 w-4" />
-              )}
-            </button>
-            <button
-              type="button"
-              className="ui-icon-button h-9 w-9"
-              aria-label={`Cancel title edit for session #${sessionNumber}`}
-              title="Cancel title edit"
-              disabled={isSaving}
-              onClick={cancelEditing}
-            >
-              <XIcon className="h-4 w-4" />
-            </button>
-          </div>
         </div>
         {error ? (
-          <p className="text-[12px] leading-4 text-danger" role="alert">
+          <p
+            className="text-xs leading-4 text-danger"
+            id={`session-${sessionNumber}-title-error`}
+            role="alert"
+          >
             {error}
           </p>
         ) : null}
@@ -929,171 +1082,17 @@ function EditableSessionTitle({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>{title}</h1>
+    <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>
       <button
         type="button"
-        className="ui-icon-button h-8 w-8 shrink-0"
-        aria-label={`Edit title for session #${sessionNumber}`}
-        title="Edit title"
+        aria-busy={isSaving}
+        className="max-w-full cursor-text rounded-[4px] text-left text-inherit outline-none transition-colors hover:text-accent focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-wait disabled:opacity-70"
+        disabled={isSaving}
         onClick={startEditing}
       >
-        <PencilIcon className="h-4 w-4" />
+        {title}
+        {isSaving ? <Spinner className="ml-2 align-middle text-muted" /> : null}
       </button>
-    </div>
-  );
-}
-
-function StageRail({
-  onSelect,
-  stageRail,
-  selectedStageSlug,
-}: {
-  onSelect: (stageSlug: string) => void;
-  stageRail: StageRailEntry[];
-  selectedStageSlug: string;
-}) {
-  const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
-
-  useEffect(() => {
-    buttonRefs.current.get(selectedStageSlug)?.scrollIntoView({
-      block: "nearest",
-      inline: "center",
-    });
-  }, [selectedStageSlug]);
-
-  return (
-    <ol className="flex snap-x items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
-      {stageRail.map((entry, index) => {
-        const isSelected = entry.stage.slug === selectedStageSlug;
-        return (
-          <li key={entry.stage.id} className="flex shrink-0 snap-start items-center gap-2">
-            <button
-              ref={(node) => {
-                if (node) {
-                  buttonRefs.current.set(entry.stage.slug, node);
-                } else {
-                  buttonRefs.current.delete(entry.stage.slug);
-                }
-              }}
-              type="button"
-              onClick={() => onSelect(entry.stage.slug)}
-              className={cn(
-                "group flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
-                isSelected
-                  ? "border-accent/40 bg-accent-soft text-accent"
-                  : "border-border bg-surface text-foreground hover:bg-surface-muted",
-              )}
-              aria-current={isSelected ? "step" : undefined}
-            >
-              <StageDot entry={entry} />
-              <span>{entry.stage.name}</span>
-            </button>
-            {index < stageRail.length - 1 ? (
-              <span aria-hidden="true" className="hidden h-px w-4 bg-border sm:block" />
-            ) : null}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function StageDot({ entry }: { entry: StageRailEntry }) {
-  let className = "h-2 w-2 rounded-full";
-  if (entry.status === "completed") {
-    className = cn(className, "bg-success");
-  } else if (entry.status === "upcoming") {
-    className = cn(className, "bg-surface-muted border border-border");
-  } else if (entry.phaseStatus === "rejected") {
-    className = cn(className, "bg-danger");
-  } else if (entry.phaseStatus === "approved") {
-    className = cn(className, "bg-success");
-  } else if (entry.phaseStatus === "agent_generating") {
-    className = cn(className, "bg-accent animate-pulse");
-  } else {
-    className = cn(className, "bg-accent");
-  }
-  return <span className={className} aria-hidden="true" />;
-}
-
-function ArtifactView({
-  artifact,
-  compact = false,
-}: {
-  artifact: SessionArtifactSummary;
-  compact?: boolean;
-}) {
-  const [showRaw, setShowRaw] = useState(false);
-
-  // String payloads are markdown; structured (JSON) payloads are shown verbatim.
-  const isMarkdown = typeof artifact.payload === "string";
-
-  const formatted = useMemo(() => {
-    if (typeof artifact.payload === "string") {
-      return artifact.payload;
-    }
-    try {
-      return JSON.stringify(artifact.payload, null, 2);
-    } catch {
-      return String(artifact.payload);
-    }
-  }, [artifact.payload]);
-
-  const showHeaderRow = !compact || isMarkdown;
-
-  return (
-    <div>
-      {showHeaderRow ? (
-        <div className="mb-2 flex items-center justify-between gap-2">
-          {!compact ? (
-            <p className="text-[11px] uppercase tracking-wide text-muted">
-              v{artifact.version} · {dateTimeFormatter.format(new Date(artifact.createdAt))}
-            </p>
-          ) : (
-            <span />
-          )}
-          {isMarkdown ? (
-            <button
-              type="button"
-              className="text-[11px] font-medium text-muted hover:text-foreground"
-              aria-pressed={showRaw}
-              onClick={() => setShowRaw((value) => !value)}
-            >
-              {showRaw ? "View formatted" : "View raw"}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {isMarkdown && !showRaw ? (
-        <MarkdownContent className="max-h-[480px] overflow-auto">{formatted}</MarkdownContent>
-      ) : (
-        <pre
-          className={`max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-[12px] leading-5 text-foreground ${isMarkdown ? "" : "bg-background"}`}
-        >
-          {formatted}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-function EmptyHint({ text }: { text: string }) {
-  return (
-    <p className="rounded-[4px] border border-dashed border-border px-3 py-6 text-center text-[12px] text-muted">
-      {text}
-    </p>
-  );
-}
-
-function ProgressHint({ text }: { text: string }) {
-  return (
-    <div
-      className="mb-3 flex items-center justify-center gap-2 rounded-[4px] border border-accent/20 bg-accent-soft px-3 py-4 text-[12px] font-medium text-accent"
-      role="status"
-    >
-      <Spinner />
-      <span>{text}</span>
-    </div>
+    </h1>
   );
 }

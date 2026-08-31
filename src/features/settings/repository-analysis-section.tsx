@@ -2,23 +2,31 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
+import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
 import {
   mergeRepositoryOnboardingState,
   hasCurrentWallieSkills,
-  RepositoryMetadataPills,
+  RepositoryMetadata,
   RepositorySetupControls,
   RepositorySetupMessages,
-  RepositorySetupStatusBadge,
+  RepositorySetupStatus,
 } from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
+import type {
+  WorkspaceOnboardingConflictResponse,
+  WorkspaceOnboardingMutationDelta,
+  WorkspaceOnboardingMutationErrorResponse,
+  WorkspaceOnboardingUpdatePayload,
+} from "@/lib/onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
+import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 
 type RepositoryAnalysisSectionProps = {
   data: SettingsPageData;
@@ -49,28 +57,33 @@ function initialProfileDraft(data: SettingsPageData): RepositoryProfileState | n
   return null;
 }
 
-function mergeOnboardingData(
+export function reduceSettingsOnboardingMutationData(
   current: SettingsPageData,
-  onboardingData: WorkspaceOnboardingData,
+  response: WorkspaceOnboardingMutationDelta | WorkspaceOnboardingConflictResponse,
 ): SettingsPageData {
+  const next = reduceOnboardingMutationData(current, response);
   return {
-    ...current,
-    agentConfig: onboardingData.agentConfig,
-    github: onboardingData.github,
-    latestSandboxCapabilityCheck: onboardingData.setupHealth.latestSandboxCapabilityCheck,
-    linearRouting: onboardingData.linearRouting,
-    linearSecret: onboardingData.linearSecret,
-    onboarding: onboardingData.onboarding,
-    pipeline: onboardingData.pipeline,
-    setupHealth: onboardingData.setupHealth,
-    workspaceMembers: onboardingData.workspaceMembers,
-    workspaceSecrets: onboardingData.workspaceSecrets,
+    ...next,
+    latestSandboxCapabilityCheck: next.setupHealth.latestSandboxCapabilityCheck,
+  };
+}
+
+export function buildSettingsRepositorySelectionMutation(
+  onboarding: SettingsPageData["onboarding"],
+  changes: WorkspaceOnboardingUpdatePayload,
+) {
+  return {
+    action: "repository-selection" as const,
+    changes,
+    expectedUpdatedAt: onboarding.updatedAt,
+    step: "repository" as const,
   };
 }
 
 function applySavedRepositoryProfile(
   current: SettingsPageData,
   profile: RepositoryProfileState,
+  latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null,
 ): SettingsPageData {
   const github = {
     ...current.github,
@@ -89,9 +102,11 @@ function applySavedRepositoryProfile(
   return {
     ...current,
     github,
+    latestSandboxCapabilityCheck,
     setupHealth: {
       ...current.setupHealth,
       ...buildRepositorySetupHealth(github, current.onboarding.selectedGithubRepositoryId),
+      latestSandboxCapabilityCheck,
     },
   };
 }
@@ -135,9 +150,22 @@ export function RepositoryAnalysisSection({
   const [profileDirty, setProfileDirty] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileAction, setProfileAction] = useState<ProfileAction>(null);
+  const profileActionRef = useRef<ProfileAction>(null);
   const activeRepositoryRef = useRef(selectedRepository?.id ?? null);
   const selectedRepositoryId = selectedRepository?.id ?? null;
   const profileBusy = profileAction !== null;
+
+  function beginProfileAction(action: Exclude<ProfileAction, null>) {
+    if (profileActionRef.current) return false;
+    profileActionRef.current = action;
+    setProfileAction(action);
+    return true;
+  }
+
+  function finishProfileAction() {
+    profileActionRef.current = null;
+    setProfileAction(null);
+  }
 
   function updateProfileDraft(nextProfile: RepositoryProfileState, dirty = false) {
     setProfileDraft(nextProfile);
@@ -146,10 +174,9 @@ export function RepositoryAnalysisSection({
 
   async function selectRepository(repositoryId: string): Promise<boolean> {
     const repository = data.github.repositories.find((candidate) => candidate.id === repositoryId);
-    if (!repository || profileBusy) return false;
+    if (!repository || !beginProfileAction("selecting")) return false;
 
     setProfileError(null);
-    setProfileAction("selecting");
     activeRepositoryRef.current = repository.id;
 
     const patch = buildOnboardingRepositorySelectionPatch(
@@ -161,22 +188,28 @@ export function RepositoryAnalysisSection({
     try {
       if (patch) {
         const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding`, {
-          body: JSON.stringify(patch),
+          body: JSON.stringify(buildSettingsRepositorySelectionMutation(data.onboarding, patch)),
           headers: { "content-type": "application/json" },
           method: "PATCH",
         });
         const body = (await response.json().catch(() => null)) as
-          | (WorkspaceOnboardingData & { error?: string })
+          | WorkspaceOnboardingConflictResponse
+          | WorkspaceOnboardingMutationDelta
+          | WorkspaceOnboardingMutationErrorResponse
           | null;
-        if (!response.ok || !body || "error" in body) {
-          throw new Error(body?.error ?? "Repository selection failed.");
+
+        if (body?.kind === "onboarding-conflict") {
+          setData((current) => reduceSettingsOnboardingMutationData(current, body));
+          throw new Error(body.error);
         }
 
-        setData((current) => mergeOnboardingData(current, body));
-        const selected = body.github.repositories.find(
-          (candidate) => candidate.id === repository.id,
-        );
-        setProfileDraft(selected?.profile ?? null);
+        if (!response.ok || body?.kind !== "onboarding-mutation") {
+          throw new Error(body && "error" in body ? body.error : "Repository selection failed.");
+        }
+
+        setData((current) => reduceSettingsOnboardingMutationData(current, body));
+        notifySessionRepositoriesChanged(data.workspace.id);
+        setProfileDraft(repository.profile ?? null);
       } else {
         setProfileDraft(repository.profile ?? null);
       }
@@ -187,7 +220,7 @@ export function RepositoryAnalysisSection({
       return false;
     } finally {
       if (activeRepositoryRef.current === repository.id) {
-        setProfileAction(null);
+        finishProfileAction();
       }
     }
   }
@@ -195,12 +228,11 @@ export function RepositoryAnalysisSection({
   async function inferRepositoryProfile(
     repository: SettingsPageData["github"]["repositories"][number],
   ) {
-    if (profileBusy) return;
+    if (!beginProfileAction("analyzing")) return;
     activeRepositoryRef.current = repository.id;
     setProfileDraft(null);
     setProfileDirty(false);
     setProfileError(null);
-    setProfileAction("analyzing");
 
     try {
       const response = await fetch(
@@ -221,7 +253,7 @@ export function RepositoryAnalysisSection({
       setProfileError(error instanceof Error ? error.message : "Failed to infer repository setup.");
     } finally {
       if (activeRepositoryRef.current === repository.id) {
-        setProfileAction(null);
+        finishProfileAction();
       }
     }
   }
@@ -236,9 +268,8 @@ export function RepositoryAnalysisSection({
   }
 
   async function saveRepositoryProfile() {
-    if (!profileDraft || !selectedRepository || profileBusy) return;
+    if (!profileDraft || !selectedRepository || !beginProfileAction("saving")) return;
 
-    setProfileAction("saving");
     setProfileError(null);
 
     try {
@@ -261,13 +292,21 @@ export function RepositoryAnalysisSection({
       });
       const body = (await response.json().catch(() => null)) as {
         error?: string;
+        latestSandboxCapabilityCheck?: SandboxCapabilityCheckState | null;
         profile?: RepositoryProfileState;
       } | null;
-      if (!response.ok || !body?.profile) {
+      if (!response.ok || !body?.profile || !("latestSandboxCapabilityCheck" in body)) {
         throw new Error(body?.error ?? "Failed to save repository profile.");
       }
 
-      setData((current) => applySavedRepositoryProfile(current, body.profile!));
+      setData((current) =>
+        applySavedRepositoryProfile(
+          current,
+          body.profile!,
+          body.latestSandboxCapabilityCheck ?? null,
+        ),
+      );
+      notifySessionRepositoriesChanged(data.workspace.id);
       setProfileDraft(body.profile);
       setProfileDirty(false);
       setFlashMessage({ kind: "success", text: "Repository profile saved." });
@@ -276,7 +315,7 @@ export function RepositoryAnalysisSection({
         error instanceof Error ? error.message : "Failed to save repository profile.",
       );
     } finally {
-      setProfileAction(null);
+      finishProfileAction();
     }
   }
 
@@ -292,11 +331,11 @@ export function RepositoryAnalysisSection({
     >
       <div className="space-y-5">
         {selectableRepositories.length === 0 ? (
-          <p className="rounded-[6px] border border-border bg-surface p-4 text-[13px] leading-6 text-muted">
+          <p className="rounded-[6px] border border-border bg-sheet p-4 text-[13px] leading-6 text-muted">
             Connect GitHub and sync repositories before analyzing repository setup.
           </p>
         ) : (
-          <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+          <ul className="divide-y divide-border rounded-[6px] border border-border bg-sheet">
             {selectableRepositories.map((repository) => {
               const selected = selectedRepositoryId === repository.id;
               const showProfileEditor = selected && Boolean(profileDraft);
@@ -324,10 +363,9 @@ export function RepositoryAnalysisSection({
                       >
                         {repository.fullName}
                       </a>
-                      {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
-                      <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                      <RepositorySetupStatus status={repository.onboarding.status} />
                     </div>
-                    <RepositoryMetadataPills repository={repository} />
+                    <RepositoryMetadata repository={repository} />
                     {repository.description ? (
                       <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
                     ) : null}
@@ -381,7 +419,7 @@ export function RepositoryAnalysisSection({
                       profile={profileDraft}
                     />
                   ) : selected && profileAction === "analyzing" ? (
-                    <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
+                    <div className="rounded-[6px] border border-border bg-sheet px-3 py-2 text-[13px] text-muted">
                       Analyzing repository…
                     </div>
                   ) : null}

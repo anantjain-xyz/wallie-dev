@@ -18,12 +18,15 @@ export type SandboxCapabilityResult = {
 export type SandboxCapabilityReport = Record<SandboxCapabilityName, SandboxCapabilityResult>;
 
 export type SandboxCapabilityCheckState = {
+  agentModel?: string | null;
+  agentProvider?: string | null;
   capabilities: Partial<SandboxCapabilityReport>;
   checkedAt: string;
   errorText: string | null;
   githubRepositoryId: string | null;
   id: string | null;
-  sandboxProvider: "vercel" | "fake" | null;
+  sandboxConnectionRevision?: string | null;
+  sandboxProvider: "vercel" | "e2b" | "daytona" | "fake" | null;
   sandboxVercelProjectId: string | null;
   sandboxVercelTeamId: string | null;
   status: "running" | "success" | "error";

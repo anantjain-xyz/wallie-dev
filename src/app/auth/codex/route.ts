@@ -3,14 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizeNextPath, resolveAuthenticatedSettingsPath } from "@/lib/auth";
 import { startCodexDeviceAuthFlow } from "@/lib/codex/device-auth";
 import { loginPath } from "@/lib/routes";
+import {
+  loadRequiredWorkspaceSandboxConnection,
+  SandboxConnectionInvalidError,
+  SandboxConnectionMissingError,
+} from "@/lib/sandbox-connections/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import {
-  loadRequiredVercelSandboxConnection,
-  VercelSandboxConnectionInvalidError,
-  VercelSandboxConnectionMissingError,
-} from "@/lib/vercel-sandbox/server";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 export const runtime = "nodejs";
@@ -46,16 +46,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  let vercelConnection: Awaited<ReturnType<typeof loadRequiredVercelSandboxConnection>>;
+  let sandboxConnection: Awaited<ReturnType<typeof loadRequiredWorkspaceSandboxConnection>>;
   try {
-    vercelConnection = await loadRequiredVercelSandboxConnection(
+    sandboxConnection = await loadRequiredWorkspaceSandboxConnection(
       createSupabaseAdminClient(),
       access.context.workspace.id,
     );
   } catch (error) {
     if (
-      error instanceof VercelSandboxConnectionMissingError ||
-      error instanceof VercelSandboxConnectionInvalidError
+      error instanceof SandboxConnectionMissingError ||
+      error instanceof SandboxConnectionInvalidError
     ) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
@@ -64,8 +64,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const flow = await startCodexDeviceAuthFlow({
+      connection: sandboxConnection.connection,
       userId: user.id,
-      vercelCredentials: vercelConnection.credentials,
+      workspaceId: access.context.workspace.id,
     });
     return NextResponse.json(flow, { status: flow.status === "error" ? 500 : 202 });
   } catch (error) {

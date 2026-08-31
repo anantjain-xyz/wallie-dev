@@ -4,7 +4,7 @@ import { verify } from "@octokit/webhooks-methods";
 
 import { resolveGitHubWebhookSecret } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { asLooseSupabaseClient } from "@/lib/supabase/loose";
+import type { TablesUpdate } from "@/lib/supabase/database.types";
 import { syncGitHubRepositoriesForWorkspace } from "@/features/github/service";
 
 type PullRequestEventPayload = {
@@ -212,8 +212,7 @@ async function updateRepositoryOnboardingFromSetupPr(
     workspaceId: string;
   },
 ): Promise<boolean> {
-  const loose = asLooseSupabaseClient(admin);
-  const { data: row, error: rowError } = await loose
+  const { data: row, error: rowError } = await admin
     .from("repository_onboarding_status")
     .select("id, status, conflict_report")
     .eq("workspace_id", input.workspaceId)
@@ -240,7 +239,7 @@ async function updateRepositoryOnboardingFromSetupPr(
         : input.merged
           ? "ready"
           : "pr_open";
-  const patch: Record<string, unknown> = {
+  const patch: TablesUpdate<"repository_onboarding_status"> = {
     last_error: status === "error" ? "Setup PR was closed without merging." : null,
     setup_pr_number: input.pullRequestNumber,
     setup_pr_url: input.pullRequestUrl,
@@ -248,7 +247,7 @@ async function updateRepositoryOnboardingFromSetupPr(
     ...(input.merged && !hasUnresolvedConflicts ? { conflict_report: [] } : {}),
   };
 
-  const { error } = await loose
+  const { error } = await admin
     .from("repository_onboarding_status")
     .update(patch)
     .eq("id", onboardingRow.id)

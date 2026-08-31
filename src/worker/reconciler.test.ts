@@ -23,10 +23,10 @@ type SessionRow = {
 };
 
 type SecretRow = { workspace_id: string; encrypted_value: string };
-type AgentJobRow = { id: string; job_type?: string; session_id: string; status?: string };
+type AgentJobRow = { id: string; session_id: string; status?: string };
 type PipelineStageRow = { id: string; pipeline_id: string; position: number; slug: string };
 type RoutingRow = {
-  land_stage_slug: string;
+  land_stage_slug: string | null;
   rework_stage_slug: string;
   status_mappings: unknown;
   workspace_id: string;
@@ -38,6 +38,7 @@ interface Fixture {
   agentJobs?: AgentJobRow[];
   pipelineStages?: PipelineStageRow[];
   routingRows?: RoutingRow[];
+  selectedStages?: Array<{ session_id: string; stage_id: string }>;
   /** Session ids whose `agent_jobs` cancel write should reject. */
   failCancelForSessionIds?: Set<string>;
 }
@@ -152,13 +153,25 @@ function buildAdmin(fixture: Fixture) {
         return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
       }
 
+      if (op === "select" && table === "session_selected_stages") {
+        const sessionId = filters["eq.session_id"] as string | undefined;
+        const explicitSelections = fixture.selectedStages?.filter(
+          (selection) => !sessionId || selection.session_id === sessionId,
+        );
+        const session = fixture.sessions.find((candidate) => candidate.id === sessionId);
+        const rows =
+          explicitSelections ??
+          (fixture.pipelineStages ?? [])
+            .filter((stage) => !session?.pipeline_id || stage.pipeline_id === session.pipeline_id)
+            .map((stage) => ({ session_id: sessionId ?? "", stage_id: stage.id }));
+        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
+      }
+
       if (op === "select" && table === "agent_jobs") {
         const sessionId = filters["eq.session_id"] as string | undefined;
-        const jobType = filters["eq.job_type"] as string | undefined;
         const statuses = filters["in.status"] as string[] | undefined;
         let rows = (fixture.agentJobs ?? [])
           .filter((j) => !sessionId || j.session_id === sessionId)
-          .filter((j) => !jobType || (j.job_type ?? "session") === jobType)
           .filter((j) => !statuses || statuses.includes(j.status ?? "queued"));
         rows = rows.slice(0, limit);
         const data = single ? (rows[0] ?? null) : rows.map((j) => ({ id: j.id }));
@@ -246,28 +259,28 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "s2",
           workspace_id: "wA",
           linear_issue_id: "i2",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
         {
           id: "s3",
           workspace_id: "wA",
           linear_issue_id: "i3",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:02Z",
         },
         {
           id: "s4",
           workspace_id: "wB",
           linear_issue_id: "i4",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:03Z",
         },
       ],
@@ -311,14 +324,14 @@ describe("reconcileLinearState", () => {
           id: "s1",
           created_at: "2026-05-01T00:00:00Z",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           workspace_id: "wA",
         },
         {
           id: "s2",
           created_at: "2026-05-01T00:00:01Z",
           linear_issue_id: "i2",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           workspace_id: "wB",
         },
       ],
@@ -353,14 +366,14 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "iActive",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "s2",
           workspace_id: "wA",
           linear_issue_id: "iDone",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
       ],
@@ -390,7 +403,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "s2",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -412,14 +425,14 @@ describe("reconcileLinearState", () => {
     ).toBeUndefined();
   });
 
-  it("cancels active non-terminal sessions, including awaiting_review, for canceled issues", async () => {
+  it("cancels active and approved manual-merge sessions for canceled issues", async () => {
     const fixture: Fixture = {
       sessions: [
         {
           id: "sGenerating",
           workspace_id: "wA",
           linear_issue_id: "iGenerating",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
@@ -460,6 +473,7 @@ describe("reconcileLinearState", () => {
               { id: "iGenerating", state: { type: "canceled" } },
               { id: "iReview", state: { type: "canceled" } },
               { id: "iRejected", state: { type: "canceled" } },
+              { id: "iApproved", state: { type: "canceled" } },
             ],
           },
         },
@@ -468,20 +482,21 @@ describe("reconcileLinearState", () => {
 
     const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
 
-    expect(result.checked).toBe(3);
-    expect(result.canceled).toBe(3);
+    expect(result.checked).toBe(4);
+    expect(result.canceled).toBe(4);
 
     const sessionsScan = calls.find((c) => c.table === "sessions" && c.op === "select");
     expect(sessionsScan?.filters["in.phase_status"]).toEqual([
-      "agent_generating",
+      "in_progress",
       "awaiting_review",
+      "approved",
       "rejected",
     ]);
 
     const fetchBody = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
-    expect(fetchBody.variables.ids).toEqual(["iGenerating", "iReview", "iRejected"]);
+    expect(fetchBody.variables.ids).toEqual(["iGenerating", "iReview", "iRejected", "iApproved"]);
 
-    for (const sessionId of ["sGenerating", "sReview", "sRejected"]) {
+    for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
       const sessionRejection = calls.find(
         (c) =>
           c.table === "sessions" &&
@@ -491,13 +506,14 @@ describe("reconcileLinearState", () => {
       );
       expect(sessionRejection).toBeDefined();
       expect(sessionRejection?.filters["in.phase_status"]).toEqual([
-        "agent_generating",
+        "in_progress",
         "awaiting_review",
+        "approved",
         "rejected",
       ]);
     }
 
-    for (const sessionId of ["sGenerating", "sReview", "sRejected"]) {
+    for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
       const jobCancel = calls.find(
         (c) =>
           c.table === "agent_jobs" &&
@@ -509,7 +525,7 @@ describe("reconcileLinearState", () => {
       expect(jobCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
     }
 
-    for (const sessionId of ["sGenerating", "sReview", "sRejected"]) {
+    for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
       const runCancel = calls.find(
         (c) =>
           c.table === "agent_runs" &&
@@ -520,17 +536,84 @@ describe("reconcileLinearState", () => {
       expect(runCancel).toBeDefined();
       expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
     }
+  });
 
-    for (const sessionId of ["sApproved"]) {
-      const sessionRejection = calls.find(
-        (c) =>
-          c.table === "sessions" &&
-          c.op === "update" &&
-          c.update?.phase_status === "rejected" &&
-          c.filters["eq.id"] === sessionId,
-      );
-      expect(sessionRejection).toBeUndefined();
-    }
+  it("leaves a manual-merge session paused when Linear moves to Merging", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
+      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sManualMerge",
+          current_stage_id: "stage-build",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iManualMerge",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iManualMerge", state: { name: "Merging" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
+    expect(calls.filter((call) => call.op !== "select")).toEqual([]);
+  });
+
+  it("successfully archives a manual-merge session when Linear moves to Done", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
+      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sManualDone",
+          current_stage_id: "stage-build",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iManualDone",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iManualDone", state: { name: "Done" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({ "eq.id": "sManualDone" }),
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({
+          archived_at: expect.any(String),
+          phase_status: "approved",
+        }),
+      }),
+    );
+    expect(calls).not.toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+      }),
+    );
   });
 
   it("routes custom done statuses to the configured land stage", async () => {
@@ -555,7 +638,7 @@ describe("reconcileLinearState", () => {
           pipeline_id: "pipe-1",
           workspace_id: "wA",
           linear_issue_id: "iCustomDone",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
       ],
@@ -658,7 +741,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sRework",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -677,7 +760,6 @@ describe("reconcileLinearState", () => {
         table: "agent_jobs",
         update: expect.objectContaining({
           dedupe_key: "pipeline:iRework:active",
-          job_type: "session",
           session_id: "sRework",
           trigger_type: "assignment",
           workspace_id: "wA",
@@ -798,7 +880,92 @@ describe("reconcileLinearState", () => {
     );
   });
 
-  it("archives Done sessions when the configured land stage is missing", async () => {
+  it("ignores nonterminal Linear routes to an excluded stage", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+      ],
+      routingRows: [routingRow({ land_stage_slug: "land" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      selectedStages: [{ session_id: "sSkipMerge", stage_id: "stage-engineering" }],
+      sessions: [
+        {
+          id: "sSkipMerge",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iSkipMerge",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iSkipMerge", state: { name: "Merging" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(result.canceled).toBe(0);
+    expect(calls.find((call) => call.table === "sessions" && call.op === "update")).toBeUndefined();
+    expect(
+      calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
+    ).toBeUndefined();
+  });
+
+  it("successfully archives Done sessions when the configured target stage is excluded", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+      ],
+      routingRows: [routingRow({ land_stage_slug: "land" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      selectedStages: [{ session_id: "sSkipDone", stage_id: "stage-engineering" }],
+      sessions: [
+        {
+          id: "sSkipDone",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iSkipDone",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iSkipDone", state: { name: "Done" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(result.canceled).toBe(0);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({
+          archived_at: expect.any(String),
+          phase_status: "approved",
+        }),
+      }),
+    );
+    expect(
+      calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
+    ).toBeUndefined();
+  });
+
+  it("successfully archives Done sessions when the configured land stage is missing", async () => {
     const fixture: Fixture = {
       pipelineStages: [
         { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
@@ -833,18 +1000,18 @@ describe("reconcileLinearState", () => {
     const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
 
     expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(1);
+    expect(result.canceled).toBe(0);
     expect(calls).toContainEqual(
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sDoneMissingLand",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
         }),
         op: "update",
         table: "sessions",
         update: expect.objectContaining({
           archived_at: expect.any(String),
-          phase_status: "rejected",
+          phase_status: "approved",
         }),
       }),
     );
@@ -930,6 +1097,63 @@ describe("reconcileLinearState", () => {
     );
   });
 
+  it("reopens an approved manual-merge Build session when Linear moves to Rework", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
+      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sApprovedRework",
+          current_stage_id: "stage-build",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iApprovedRework",
+          phase_status: "approved",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iApprovedRework", state: { name: "Rework" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          "eq.id": "sApprovedRework",
+          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
+        }),
+        op: "update",
+        table: "sessions",
+        update: {
+          archived_at: null,
+          current_artifact_version: 0,
+          current_stage_id: "stage-build",
+          phase_status: "rejected",
+          rejection_count: 0,
+        },
+      }),
+    );
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+        update: expect.objectContaining({
+          dedupe_key: "pipeline:iApprovedRework:active",
+          session_id: "sApprovedRework",
+        }),
+      }),
+    );
+  });
+
   it("requeues awaiting_review sessions when Linear moves back to Todo", async () => {
     const fixture: Fixture = {
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
@@ -971,9 +1195,7 @@ describe("reconcileLinearState", () => {
 
   it("treats started pipeline jobs as active before queueing new work", async () => {
     const fixture: Fixture = {
-      agentJobs: [
-        { id: "jobStarted", job_type: "session", session_id: "sStarted", status: "started" },
-      ],
+      agentJobs: [{ id: "jobStarted", session_id: "sStarted", status: "started" }],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
       sessions: [
         {
@@ -1001,13 +1223,13 @@ describe("reconcileLinearState", () => {
     expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
   });
 
-  it("does not touch approved sessions even if their Linear issue would be terminal", async () => {
+  it("does not queue approved manual-merge sessions when Linear moves back to Todo", async () => {
     const fixture: Fixture = {
       sessions: [
         {
           id: "sApproved",
           workspace_id: "wA",
-          linear_issue_id: "iCanceled",
+          linear_issue_id: "iTodo",
           phase_status: "approved",
           created_at: "2026-05-01T00:00:00Z",
         },
@@ -1018,20 +1240,16 @@ describe("reconcileLinearState", () => {
 
     fetchSpy.mockResolvedValue(
       makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iCanceled", state: { type: "canceled" } }] } },
+        data: { issues: { nodes: [{ id: "iTodo", state: { name: "Todo" } }] } },
       }),
     );
 
     const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
 
-    expect(result.checked).toBe(0);
+    expect(result.checked).toBe(1);
     expect(result.canceled).toBe(0);
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(
-      calls.find(
-        (c) => c.table === "sessions" && c.op === "update" && c.update?.phase_status === "rejected",
-      ),
-    ).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
   });
 
   it("retries once after a 429 with Retry-After", async () => {
@@ -1041,7 +1259,7 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
       ],
@@ -1076,14 +1294,14 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "s2",
           workspace_id: "wB",
           linear_issue_id: "i2",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
       ],
@@ -1113,14 +1331,14 @@ describe("reconcileLinearState", () => {
           id: "sFail",
           workspace_id: "wA",
           linear_issue_id: "iDoneFail",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "sOk",
           workspace_id: "wA",
           linear_issue_id: "iDoneOk",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
       ],
@@ -1152,7 +1370,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sOk",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -1171,7 +1389,7 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
       ],

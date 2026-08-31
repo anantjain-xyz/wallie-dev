@@ -2,7 +2,9 @@
 
 import { useSyncExternalStore } from "react";
 
-import { MoonIcon, SunIcon } from "@/components/shared/icons";
+import { MoonIcon } from "@/components/shared/icons/moon-icon";
+import { SunIcon } from "@/components/shared/icons/sun-icon";
+import { Tooltip } from "@/components/ui/tooltip";
 
 export const THEME_STORAGE_KEY = "wallie-theme";
 
@@ -51,6 +53,11 @@ function getThemeSnapshot(): Theme {
   return readCurrentTheme();
 }
 
+/** Server + first client paint share a neutral snapshot so the icon never mismatches. */
+function getServerThemeSnapshot(): Theme | null {
+  return null;
+}
+
 function subscribeTheme(listener: () => void) {
   themeListeners.add(listener);
 
@@ -74,7 +81,7 @@ function applyTheme(theme: Theme) {
 }
 
 export function ThemeToggle() {
-  const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, () => "light");
+  const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getServerThemeSnapshot);
 
   function handleToggle() {
     const nextTheme = readCurrentTheme() === "dark" ? "light" : "dark";
@@ -82,20 +89,28 @@ export function ThemeToggle() {
     applyTheme(nextTheme);
   }
 
-  const isDark = theme === "dark";
-  const label = isDark ? "Switch to light mode" : "Switch to dark mode";
+  const resolved = theme ?? "light";
+  const isDark = resolved === "dark";
+  const label =
+    theme === null ? "Toggle color theme" : isDark ? "Switch to light mode" : "Switch to dark mode";
   const Icon = isDark ? SunIcon : MoonIcon;
 
   return (
-    <button
-      type="button"
-      className="ui-icon-button"
-      aria-label={label}
-      aria-pressed={isDark}
-      title={label}
-      onClick={handleToggle}
-    >
-      <Icon className="h-3.5 w-3.5" />
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        className="ui-icon-button"
+        aria-label={label}
+        aria-pressed={theme === null ? undefined : isDark}
+        onClick={handleToggle}
+      >
+        {/* Keep the glyph out of the SSR/hydration tree until the client snapshot is ready. */}
+        {theme === null ? (
+          <span aria-hidden="true" className="h-3.5 w-3.5" />
+        ) : (
+          <Icon className="h-3.5 w-3.5" />
+        )}
+      </button>
+    </Tooltip>
   );
 }

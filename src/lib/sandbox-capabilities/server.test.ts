@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  capabilityReportSucceeded: vi.fn(() => true),
   createSessionSandbox: vi.fn(),
+  getClaudeCodeCredentialForUser: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
+  getCursorCredentialForUser: vi.fn(),
   getOpenCodeCredentialForUser: vi.fn(),
-  loadRequiredVercelSandboxConnection: vi.fn(),
+  loadRequiredWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceAgentConfig: vi.fn(),
   octokitRequest: vi.fn(),
   probeSandboxCapabilities: vi.fn(),
@@ -33,7 +36,11 @@ vi.mock("@/lib/codex/tokens", () => ({
 }));
 
 vi.mock("@/lib/claude-code/tokens", () => ({
-  getClaudeCodeCredentialForUser: vi.fn(),
+  getClaudeCodeCredentialForUser: mocked.getClaudeCodeCredentialForUser,
+}));
+
+vi.mock("@/lib/cursor/tokens", () => ({
+  getCursorCredentialForUser: mocked.getCursorCredentialForUser,
 }));
 
 vi.mock("@/lib/opencode/tokens", () => ({
@@ -44,12 +51,12 @@ vi.mock("@/lib/sandbox", () => ({
   createSessionSandbox: mocked.createSessionSandbox,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
 }));
 
 vi.mock("@/lib/sandbox-capabilities/probe", () => ({
-  capabilityReportSucceeded: vi.fn(() => true),
+  capabilityReportSucceeded: mocked.capabilityReportSucceeded,
   probeSandboxCapabilities: mocked.probeSandboxCapabilities,
 }));
 
@@ -177,13 +184,19 @@ function adminMock() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocked.loadWorkspaceAgentConfig.mockResolvedValue({ model: "gpt-5.5", provider: "codex" });
-  mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-    credentials,
-    preview: { workspaceId: "workspace-1" },
+  mocked.loadWorkspaceAgentConfig.mockResolvedValue({
+    effort: "xhigh",
+    model: "gpt-5.5",
+    provider: "codex",
+  });
+  mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+    connection: { credentials, provider: "vercel", revision: "revision-1" },
+    provider: "vercel",
   });
   mocked.octokitRequest.mockResolvedValue({ data: { token: "gh-token" } });
+  mocked.getClaudeCodeCredentialForUser.mockResolvedValue({ secret: "claude-token" });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
+  mocked.getCursorCredentialForUser.mockResolvedValue({ secret: "cursor-token" });
   mocked.getOpenCodeCredentialForUser.mockResolvedValue({ secret: "zen-token" });
   mocked.createSessionSandbox.mockImplementation(async (input) => {
     await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
@@ -199,6 +212,63 @@ beforeEach(() => {
 });
 
 describe("completeSandboxCapabilityCheck", () => {
+  it("validates Cursor credentials for Cursor capability checks", async () => {
+    mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
+      effort: "xhigh",
+      model: "auto",
+      provider: "cursor",
+    });
+    const { admin } = adminMock();
+
+    await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(mocked.getCursorCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
+    expect(mocked.getClaudeCodeCredentialForUser).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "cursor" }),
+    );
+  });
+
+  it("validates OpenCode credentials for OpenCode capability checks", async () => {
+    mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
+      effort: "xhigh",
+      model: "opencode/gpt-5.6-sol",
+      provider: "opencode",
+    });
+    const { admin } = adminMock();
+
+    await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(mocked.getOpenCodeCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "opencode" }),
+    );
+  });
+
   it("creates the probe sandbox with workspace Vercel credentials", async () => {
     const { admin, updates } = adminMock();
 
@@ -217,7 +287,14 @@ describe("completeSandboxCapabilityCheck", () => {
     });
 
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
-      expect.objectContaining({ vercelCredentials: credentials }),
+      expect.objectContaining({
+        connection: { credentials, provider: "vercel", revision: "revision-1" },
+      }),
+    );
+    expect(mocked.capabilityReportSucceeded).toHaveBeenCalledWith(
+      { git: { detail: "ok", ok: true } },
+      "vercel",
+      "codex",
     );
     expect(updates).toContainEqual(
       expect.objectContaining({
@@ -230,7 +307,7 @@ describe("completeSandboxCapabilityCheck", () => {
   });
 
   it("records an error when Vercel Sandbox is not connected", async () => {
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
+    mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(
       new Error("Connect a Vercel Sandbox account before starting Wallie runs."),
     );
     const { admin, updates } = adminMock();
@@ -256,33 +333,6 @@ describe("completeSandboxCapabilityCheck", () => {
         error_text: "Connect a Vercel Sandbox account before starting Wallie runs.",
         status: "error",
       }),
-    );
-  });
-
-  it("requires the current user's Zen key for OpenCode checks", async () => {
-    mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
-      model: "opencode/gpt-5.6-sol",
-      provider: "opencode",
-    });
-    const { admin } = adminMock();
-
-    await completeSandboxCapabilityCheck({
-      admin: admin as never,
-      checkId: "check-1",
-      repository: {
-        default_branch: "main",
-        full_name: "acme/app",
-        github_installation_id: "installation-row-1",
-        id: "repo-1",
-        workspace_id: "workspace-1",
-      },
-      userId: "user-1",
-      workspaceId: "workspace-1",
-    });
-
-    expect(mocked.getOpenCodeCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
-    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
-      expect.objectContaining({ agentProvider: "opencode" }),
     );
   });
 });

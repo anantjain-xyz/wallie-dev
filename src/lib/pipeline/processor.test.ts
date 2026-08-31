@@ -4,10 +4,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
-import { CodexAuthLeaseBusyError } from "@/lib/codex/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
+  assertCurrentSandboxCapabilityCheck: vi.fn().mockResolvedValue(undefined),
   createSupabaseAdminClient: vi.fn(),
   createAgentRunner: vi.fn(),
   createSessionSandbox: vi.fn().mockResolvedValue({
@@ -26,15 +26,25 @@ const mocked = vi.hoisted(() => ({
   getClaudeCodeCredentialForSession: vi.fn().mockResolvedValue({
     secret: "sk-ant-test",
   }),
-  getOpenCodeCredentialForSession: vi.fn().mockResolvedValue({
-    secret: "zen-test-key",
+  getCursorCredentialForSession: vi.fn().mockResolvedValue({
+    expiresAt: "2026-12-01T00:00:00.000Z",
+    generation: "11111111-1111-4111-8111-111111111111",
+    secret: "cursor-test",
+    userId: "user-1",
   }),
+  getOpenCodeCredentialForSession: vi.fn().mockResolvedValue({
+    secret: "zen-test",
+  }),
+  markCursorReconnectRequired: vi.fn(),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
+  loadSessionAttachmentInputs: vi.fn().mockResolvedValue([]),
+  materializeSessionAttachments: vi.fn().mockResolvedValue([]),
+  formatSessionAttachmentPromptData: vi.fn(() => ""),
   loadWorkspaceAgentConfig: vi.fn(),
-  loadRequiredVercelSandboxConnection: vi.fn(),
+  loadRequiredWorkspaceSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
@@ -65,9 +75,17 @@ vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
 }));
 
+vi.mock("@/lib/pipeline/session-attachments", () => ({
+  formatSessionAttachmentPromptData: mocked.formatSessionAttachmentPromptData,
+  loadSessionAttachmentInputs: mocked.loadSessionAttachmentInputs,
+  materializeSessionAttachments: mocked.materializeSessionAttachments,
+  SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS: "attachment instructions",
+}));
+
 vi.mock("@/lib/agent-runner", () => ({
   createAgentRunner: mocked.createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG: {
+    effort: "xhigh",
     provider: "codex",
     model: "gpt-5.5",
     maxTurns: 5,
@@ -81,8 +99,12 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
+}));
+
+vi.mock("@/lib/sandbox-capabilities/readiness", () => ({
+  assertCurrentSandboxCapabilityCheck: mocked.assertCurrentSandboxCapabilityCheck,
 }));
 
 vi.mock("@/lib/codex/tokens", () => ({
@@ -104,6 +126,17 @@ vi.mock("@/lib/claude-code/tokens", () => ({
     }
   },
   getClaudeCodeCredentialForSession: mocked.getClaudeCodeCredentialForSession,
+}));
+
+vi.mock("@/lib/cursor/tokens", () => ({
+  CursorNotConnectedError: class CursorNotConnectedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "CursorNotConnectedError";
+    }
+  },
+  getCursorCredentialForSession: mocked.getCursorCredentialForSession,
+  markCursorReconnectRequired: mocked.markCursorReconnectRequired,
 }));
 
 vi.mock("@/lib/opencode/tokens", () => ({
@@ -137,7 +170,6 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     id: "job-1",
     workspace_id: "ws-1",
     session_id: "sess-1",
-    job_type: "session",
     status: "queued",
     created_at: new Date().toISOString(),
     dedupe_key: "pipeline:TEAM-1:active",
@@ -169,8 +201,10 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     linear_issue_url: "https://linear.app/team/issue/TEAM-1",
     pipeline_id: "pipe-1",
     current_stage_id: "stage-product",
-    phase_status: "agent_generating",
+    phase_status: "in_progress",
     rejection_count: 0,
+    search_document: null,
+    search_text: null,
     current_artifact_version: 0,
     archived_at: null,
     created_at: new Date().toISOString(),
@@ -262,8 +296,10 @@ function buildAdminMock(opts: MockOptions) {
   }
   const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
   const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
+  const rawEffort = typeof lookup.agent_effort === "string" ? lookup.agent_effort : undefined;
   const resolvedProvider = rawProvider ? normalizeAgentProviderName(rawProvider) : "codex";
   const resolvedConfig = {
+    effort: rawEffort ?? "xhigh",
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
     model: rawModel ?? "gpt-5.5",
     provider: resolvedProvider ?? "codex",
@@ -624,9 +660,9 @@ function makeRunner(
   return {
     provider: opts.provider ?? "claude-code",
     requiresSandbox: opts.requiresSandbox ?? true,
-    async *start() {
+    start: vi.fn(async function* () {
       for (const event of events) yield event;
-    },
+    }),
   };
 }
 
@@ -648,9 +684,13 @@ describe("processPipelineJob (generic stage runner)", () => {
       };
     });
     mocked.loadStageById.mockResolvedValue(productStage);
-    mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-      credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
-      preview: { workspaceId: "ws-1" },
+    mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+      provider: "vercel",
     });
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
@@ -663,18 +703,74 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("renders the stage prompt, runs the agent, writes the artifact, and flips status", async () => {
     const session = baseSession();
     const job = baseJob();
+    mocked.loadCompletedStageArtifacts.mockResolvedValueOnce({ plan: "Approved plan" });
+    mocked.loadPipelineOperatingRules.mockResolvedValueOnce(
+      "Keep changes scoped to the approved plan.",
+    );
     const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
       session,
       agentConfig: [],
+      latestFeedback: { feedback_text: "Preserve the public API." },
     });
 
     const result = await processPipelineJob({ admin, job });
 
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptTemplateMd: expect.objectContaining({
+          source: "stage.promptTemplate",
+          trust: "trusted",
+          value: productStage.promptTemplateMd,
+        }),
+        slug: expect.objectContaining({
+          source: "stage.slug",
+          trust: "trusted",
+          value: productStage.slug,
+        }),
+      }),
+      expect.objectContaining({
+        attemptFeedback: expect.objectContaining({
+          source: "attempt.feedback",
+          trust: "untrusted",
+          value: "Preserve the public API.",
+        }),
+        operatingRulesMd: expect.objectContaining({
+          source: "pipeline.operatingRules",
+          trust: "trusted",
+          value: "Keep changes scoped to the approved plan.",
+        }),
+        previousStages: {
+          plan: expect.objectContaining({
+            source: "artifact.previousStages.plan",
+            trust: "untrusted",
+            value: "Approved plan",
+          }),
+        },
+        sessionPrompt: expect.objectContaining({
+          source: "session.prompt",
+          trust: "untrusted",
+          value: session.prompt_md,
+        }),
+        sessionTitle: expect.objectContaining({
+          source: "session.title",
+          trust: "untrusted",
+          value: session.title,
+        }),
+      }),
+    );
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
-        vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        connection: {
+          credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+          provider: "vercel",
+          revision: "revision-1",
+        },
       }),
+    );
+    const runner = mocked.createAgentRunner.mock.results[0]?.value as AgentRunner;
+    expect(vi.mocked(runner.start)).toHaveBeenCalledWith(
+      expect.objectContaining({ secrets: ["gh-token"] }),
     );
     expect(insertedArtifacts).toHaveLength(1);
     const artifact = insertedArtifacts[0]!;
@@ -697,7 +793,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       }),
     ]);
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
@@ -735,7 +831,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     // updateRunSandbox matched zero rows (run already canceled), so the
     // freshly-created sandbox must be stopped instead of left running detached.
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: {
+        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     });
   });
 
@@ -796,7 +896,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -867,7 +967,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -915,7 +1015,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -925,6 +1025,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const { admin } = buildAdminMock({
       session,
       agentConfig: [
+        { key: "agent_effort", value_json: "max" },
         { key: "agent_provider", value_json: "claude-code" },
         { key: "agent_model", value_json: "claude-sonnet-4-5" },
       ],
@@ -936,14 +1037,42 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
       claudeCode: {
         credential: { secret: "sk-ant-test" },
+        effort: "max",
         model: "claude-sonnet-4-5",
       },
     });
   });
 
-  it("resolves the session owner's Zen API key and persists OpenCode metadata", async () => {
-    mocked.createAgentRunner.mockReturnValue(
-      makeRunner([{ type: "text", text: "Spec body" }], { provider: "opencode" }),
+  it("preserves the configured effort for Codex runs", async () => {
+    const session = baseSession();
+    const { admin } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_effort", value_json: "max" },
+        { key: "agent_provider", value_json: "codex" },
+        { key: "agent_model", value_json: "gpt-5.5" },
+      ],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("codex", {
+      codex: {
+        chatGptAuthStore: expect.any(Object),
+        credential: {
+          expiresAt: null,
+          secret: "codex-token",
+          type: "codex_access_token",
+        },
+        effort: "max",
+        model: "gpt-5.5",
+      },
+    });
+  });
+
+  it("resolves the session owner's OpenCode Zen key and persists provider metadata", async () => {
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner([{ type: "text", text: "OpenCode artifact" }], { provider: "opencode" }),
     );
     const session = baseSession();
     const { admin, updatedRuns } = buildAdminMock({
@@ -959,7 +1088,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.getOpenCodeCredentialForSession).toHaveBeenCalledWith(admin, session);
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
       openCode: {
-        credential: { secret: "zen-test-key" },
+        credential: { secret: "zen-test" },
         model: "opencode/gpt-5.6-sol",
       },
     });
@@ -969,31 +1098,50 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
   });
 
-  it("fails clearly when the session owner has no OpenCode key", async () => {
-    mocked.getOpenCodeCredentialForSession.mockRejectedValueOnce(
-      new Error("OpenCode is not connected for the session owner."),
+  it("materializes session images and appends typed attachment context to the task", async () => {
+    const attachment = {
+      contentType: "image/png",
+      fileName: "design.png",
+      id: "attachment-1",
+      position: 1,
+      storagePath: "ws-1/attachment-1.png",
+    };
+    const materialized = {
+      contentType: "image/png",
+      fileName: "design.png",
+      id: "attachment-1",
+      position: 1,
+      sandboxPath: "/tmp/wallie-session-inputs/1-attachment-1.png",
+    };
+    mocked.loadSessionAttachmentInputs.mockResolvedValueOnce([attachment]);
+    mocked.materializeSessionAttachments.mockResolvedValueOnce([materialized]);
+    mocked.formatSessionAttachmentPromptData.mockReturnValueOnce(
+      "1. design.png -> /tmp/wallie-session-inputs/1-attachment-1.png",
     );
-    const session = baseSession();
-    const { admin, insertedMessages, updatedJobs } = buildAdminMock({
-      session,
-      agentConfig: [
-        { key: "agent_provider", value_json: "opencode" },
-        { key: "agent_model", value_json: "opencode/gpt-5.6-sol" },
-      ],
-    });
+    const { admin } = buildAdminMock({ session: baseSession() });
 
-    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+    const result = await processPipelineJob({ admin, job: baseJob() });
 
-    expect(result.result).toBe("error");
-    expect(insertedMessages).toContainEqual(
+    expect(result.result).toBe("success");
+    expect(mocked.materializeSessionAttachments).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({ repoPath: "/vercel/sandbox" }),
+      [attachment],
+    );
+    expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
-        message_md: "**Error:** OpenCode is not connected for the session owner.",
+        sessionAttachmentInstructions: expect.objectContaining({
+          source: "session.attachmentInstructions",
+          trust: "trusted",
+        }),
+        sessionAttachments: expect.objectContaining({
+          source: "session.attachments",
+          trust: "untrusted",
+          value: "1. design.png -> /tmp/wallie-session-inputs/1-attachment-1.png",
+        }),
       }),
     );
-    expect(updatedJobs.at(-1)).toMatchObject({
-      last_error: "OpenCode is not connected for the session owner.",
-      status: "error",
-    });
   });
 
   it("opens a session pull request after the artifact is persisted", async () => {
@@ -1101,7 +1249,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(insertedArtifacts).toHaveLength(1);
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
@@ -1139,7 +1287,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1186,7 +1334,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { current_artifact_version: 3, phase_status: "awaiting_review" },
       { current_artifact_version: 2, phase_status: "rejected" },
     ]);
@@ -1223,17 +1371,17 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
 
-  it("aborts before sandbox creation when Vercel Sandbox is not connected", async () => {
+  it("aborts before sandbox creation when the sandbox connection is not connected", async () => {
     const error = new Error("Connect a Vercel Sandbox account before starting Wallie runs.");
-    error.name = "VercelSandboxConnectionMissingError";
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(error);
+    error.name = "SandboxConnectionMissingError";
+    mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(error);
     const session = baseSession();
     const { admin, insertedArtifacts, insertedMessages, rpc, updatedJobs, updatedSessions } =
       buildAdminMock({
@@ -1252,12 +1400,30 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
     expect(rpc).not.toHaveBeenCalledWith("schedule_job_retry", expect.anything());
     expect(updatedJobs.at(-1)).toMatchObject({
       last_error: "Connect a Vercel Sandbox account before starting Wallie runs.",
+      status: "error",
+    });
+  });
+
+  it("aborts before sandbox creation when the selected provider capability check is stale", async () => {
+    const error = new Error("Run a successful E2B capability check before starting Wallie.");
+    error.name = "SandboxCapabilityCheckStaleError";
+    mocked.assertCurrentSandboxCapabilityCheck.mockRejectedValueOnce(error);
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedJobs } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "Run a successful E2B capability check before starting Wallie.",
       status: "error",
     });
   });
@@ -1281,14 +1447,16 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("success");
-    expect(mocked.loadRequiredVercelSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.loadRequiredWorkspaceSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
         implementation: "fake",
-        vercelCredentials: undefined,
+        connection: undefined,
       }),
     );
     expect(updatedRuns).toContainEqual({
+      sandbox_connection_revision: null,
       sandbox_id: "fake-sandbox-1",
       sandbox_provider: "fake",
       sandbox_vercel_project_id: null,
@@ -1320,7 +1488,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1481,6 +1649,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedRuns[1]).toEqual({
+      sandbox_connection_revision: "revision-1",
       sandbox_id: "sandbox-1",
       sandbox_provider: "vercel",
       sandbox_vercel_project_id: "prj_123",
@@ -1488,47 +1657,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
-  });
-
-  it("records a visible error and defers when Codex ChatGPT auth lease is busy", async () => {
-    mocked.createAgentRunner.mockReturnValue({
-      provider: "codex",
-      requiresSandbox: true,
-      async *start() {
-        throw new CodexAuthLeaseBusyError();
-      },
-    });
-    const session = baseSession();
-    const { admin, insertedMessages, rpc, updatedJobs, updatedRuns, updatedSessions } =
-      buildAdminMock({ session });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    expect(result).toEqual({
-      jobId: "job-1",
-      processed: true,
-      result: "idle",
-      runId: "run-1",
-    });
-    expect(insertedMessages).toEqual([
-      expect.objectContaining({
-        kind: "error",
-        message_md: "**Error:** Codex ChatGPT auth is already in use by another run.",
-      }),
-    ]);
-    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
-    expect(updatedSessions.at(-1)).toEqual({ phase_status: "agent_generating" });
-    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
-      base_delay_ms: 15000,
-      max_backoff_ms: 120000,
-      target_job_id: "job-1",
-    });
-    expect(updatedJobs.at(-1)).toEqual({
-      last_error: "Codex ChatGPT auth is already in use by another run.",
-    });
   });
 
   it("swallows diagnostic insert failures and preserves sandbox failure handling", async () => {
@@ -1551,7 +1682,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
     consoleError.mockRestore();
@@ -1585,7 +1716,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1632,7 +1763,14 @@ describe("handleApproval", () => {
   it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const rpc = vi.fn().mockResolvedValue({
-      data: [{ id: "sess-1", archived_at: null, phase_status: "agent_generating" }],
+      data: [
+        {
+          archived_at: null,
+          current_stage_id: "stage-design",
+          id: "sess-1",
+          phase_status: "in_progress",
+        },
+      ],
       error: null,
     });
     const enqueueError = {
@@ -1712,7 +1850,17 @@ describe("handleApproval", () => {
       version: 1,
     });
 
-    expect(result).toEqual({ jobId: null, success: true });
+    expect(result).toEqual({
+      jobId: null,
+      session: {
+        archivedAt: null,
+        currentArtifactVersion: 0,
+        currentStageId: "stage-design",
+        phaseStatus: "in_progress",
+        rejectionCount: 0,
+      },
+      success: true,
+    });
     expect(consoleError).toHaveBeenCalledWith(
       "Approved stage but failed to queue Wallie",
       expect.objectContaining({

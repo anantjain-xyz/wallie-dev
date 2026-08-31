@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import { type ReactNode } from "react";
 
@@ -8,12 +6,7 @@ import { cn } from "@/lib/utils";
 
 export type SessionConnectionPullRequest = Pick<
   SessionPullRequest,
-  | "id"
-  | "isDraft"
-  | "pullRequestNumber"
-  | "pullRequestState"
-  | "pullRequestUrl"
-  | "repositoryFullName"
+  "id" | "pullRequestNumber" | "pullRequestUrl"
 >;
 
 type SessionConnectionsProps = {
@@ -22,7 +15,6 @@ type SessionConnectionsProps = {
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   onRequestLinkLinear?: () => void;
-  pullRequestCount: number;
   pullRequests?: SessionConnectionPullRequest[];
   quiet?: boolean;
 };
@@ -66,7 +58,7 @@ export function SessionConnections({
     <div
       className={cn(
         "flex flex-wrap items-center gap-1.5",
-        compact ? "text-[11px]" : "text-[12px]",
+        compact ? "type-annotation" : "text-xs",
         className,
       )}
     >
@@ -126,13 +118,13 @@ function ConnectionBadge({
 }: ConnectionBadgeProps) {
   const isInteractive = !!(href || onClick);
   const classes = cn(
-    "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-    compact ? "h-5 text-[11px]" : "h-6 text-[12px]",
-    quiet ? "text-muted hover:text-foreground" : "rounded-full border px-2.5 py-0.5",
+    "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
+    compact ? "h-5 type-annotation" : "h-6 text-xs",
+    quiet ? "text-muted hover:text-foreground" : "rounded-[4px] text-foreground hover:text-accent",
     !quiet &&
       (tone === "linked"
-        ? "border-border bg-surface text-foreground hover:bg-surface-muted"
-        : "border-dashed border-border bg-transparent text-muted hover:text-foreground"),
+        ? "underline decoration-border underline-offset-4"
+        : "text-muted underline decoration-dashed underline-offset-4 hover:text-foreground"),
     isInteractive && "cursor-pointer",
   );
 

@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { linearRoutingUpdateSchema } from "@/lib/linear-routing/contracts";
 import {
-  loadLinearRoutingConfig,
   upsertLinearRoutingConfig,
   validateLinearRoutingStages,
 } from "@/lib/linear-routing/server";
@@ -12,18 +11,6 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
-
-export async function GET(_request: Request, context: RouteContext) {
-  const { workspaceId } = await context.params;
-  const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
-  if (!access.ok) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
-  }
-
-  const admin = createSupabaseAdminClient();
-  const routing = await loadLinearRoutingConfig(admin, access.context.workspace.id);
-  return NextResponse.json({ routing }, { status: 200 });
-}
 
 export async function PUT(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;

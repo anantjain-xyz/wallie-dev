@@ -51,7 +51,7 @@ describe("/api/claude-code/connection", () => {
     const response = await GET();
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ connected: false });
+    expect(await response.json()).toEqual({ checkedAt: expect.any(String), connected: false });
   });
 
   it("returns saved credential metadata without returning the secret", async () => {
@@ -66,6 +66,7 @@ describe("/api/claude-code/connection", () => {
     const response = await GET();
 
     expect(await response.json()).toEqual({
+      checkedAt: expect.any(String),
       connected: true,
       updatedAt: "2026-05-18T00:00:00.000Z",
     });

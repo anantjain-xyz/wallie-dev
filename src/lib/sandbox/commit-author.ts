@@ -2,3 +2,10 @@ export const WALLIE_GITHUB_BOT_COMMIT_AUTHOR = {
   email: "287554934+wallie-dev[bot]@users.noreply.github.com",
   name: "wallie-dev[bot]",
 } as const;
+
+export const WALLIE_GIT_IDENTITY_ENV = {
+  GIT_AUTHOR_EMAIL: WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email,
+  GIT_AUTHOR_NAME: WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name,
+  GIT_COMMITTER_EMAIL: WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email,
+  GIT_COMMITTER_NAME: WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name,
+} as const;

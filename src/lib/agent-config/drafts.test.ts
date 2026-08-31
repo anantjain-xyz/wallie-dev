@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   agentConfigValueToDraft,
   applyAgentConfigDraftChange,
+  isMissingOrEmptyAgentProvider,
   parseAgentConfigDraft,
+  pendingAgentProviderPersistValue,
 } from "./drafts";
 
 describe("agentConfigValueToDraft", () => {
@@ -17,6 +19,16 @@ describe("agentConfigValueToDraft", () => {
     expect(agentConfigValueToDraft("concurrency_limit", 1)).toBe("1");
     expect(agentConfigValueToDraft("agent_model", "gpt-5.5")).toBe("gpt-5.5");
     expect(agentConfigValueToDraft("max_retries", undefined)).toBe("");
+  });
+
+  it("resolves missing and legacy-empty agent_provider values to Codex", () => {
+    expect(agentConfigValueToDraft("agent_provider", undefined)).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", null)).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "")).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "   ")).toBe("   ");
+    expect(agentConfigValueToDraft("agent_provider", "codex")).toBe("codex");
+    expect(agentConfigValueToDraft("agent_provider", "claude-code")).toBe("claude-code");
+    expect(agentConfigValueToDraft("agent_provider", "claude_code")).toBe("claude-code");
   });
 });
 
@@ -66,19 +78,59 @@ describe("parseAgentConfigDraft — stall_timeout_ms", () => {
 describe("applyAgentConfigDraftChange", () => {
   it("pairs a provider change with the provider's recommended model", () => {
     const drafts = {
+      agent_effort: "xhigh",
       agent_provider: "codex",
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       concurrency_limit: "1",
       stall_timeout_ms: "15",
       max_retries: "3",
     };
     expect(applyAgentConfigDraftChange(drafts, "agent_provider", "claude-code")).toMatchObject({
       agent_provider: "claude-code",
-      agent_model: "claude-opus-4-7[1m]",
+      agent_model: "claude-opus-4-8[1m]",
+    });
+    expect(applyAgentConfigDraftChange(drafts, "agent_provider", "cursor")).toMatchObject({
+      agent_provider: "cursor",
+      agent_model: "auto",
     });
     expect(applyAgentConfigDraftChange(drafts, "agent_provider", "opencode")).toMatchObject({
       agent_provider: "opencode",
       agent_model: "opencode/gpt-5.6-sol",
     });
+  });
+
+  it("parses the recommended Cursor default and the catalog Auto id", () => {
+    expect(parseAgentConfigDraft("agent_model", "select", "auto")).toEqual({
+      ok: true,
+      value: "auto",
+    });
+    expect(parseAgentConfigDraft("agent_model", "select", "auto-smart")).toEqual({
+      ok: true,
+      value: "auto-smart",
+    });
+  });
+});
+
+describe("pendingAgentProviderPersistValue", () => {
+  it("returns Codex only for missing or legacy-empty stored providers", () => {
+    expect(pendingAgentProviderPersistValue(undefined, "codex")).toBe("codex");
+    expect(pendingAgentProviderPersistValue("", "codex")).toBe("codex");
+    expect(pendingAgentProviderPersistValue("   ", "codex")).toBeUndefined();
+    expect(pendingAgentProviderPersistValue("codex", "codex")).toBeUndefined();
+    expect(pendingAgentProviderPersistValue("claude-code", "codex")).toBeUndefined();
+  });
+
+  it("persists a user-selected provider when the stored value is empty", () => {
+    expect(pendingAgentProviderPersistValue("", "claude-code")).toBe("claude-code");
+  });
+});
+
+describe("isMissingOrEmptyAgentProvider", () => {
+  it("treats null, undefined, and empty strings as unset, not whitespace", () => {
+    expect(isMissingOrEmptyAgentProvider(undefined)).toBe(true);
+    expect(isMissingOrEmptyAgentProvider(null)).toBe(true);
+    expect(isMissingOrEmptyAgentProvider("")).toBe(true);
+    expect(isMissingOrEmptyAgentProvider("   ")).toBe(false);
+    expect(isMissingOrEmptyAgentProvider("codex")).toBe(false);
   });
 });

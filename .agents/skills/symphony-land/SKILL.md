@@ -60,6 +60,7 @@ If the PR is already `MERGED` when entering this skill, skip the merge: record t
    ```
 8. The remote head branch usually auto-deletes. If not, leave it — don't delete in scripts.
 9. Record the merge SHA in the workpad's `### Notes` and move the issue to `Done`.
+10. Run the repository's required validation before pushing; if it fails, resolve the root cause and record any reusable prerequisite in the workpad.
 
 ## Failure modes → Rework
 

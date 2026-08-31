@@ -3,65 +3,60 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { LandingPage } from "@/components/landing/landing-page";
-import {
-  ApprovalGatesMockup,
-  HeroWorkspaceMockup,
-  RuntimeChoiceMockup,
-  SandboxExecutionMockup,
-} from "@/components/landing/product-mockups";
+import { StackWorkflowMockup } from "@/components/landing/product-mockups";
 
 describe("LandingPage", () => {
-  it("smoke-renders the landing page and top auth form", () => {
+  it("renders a single-viewport page with one hero section and one h1", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain("Wallie");
-    expect(html).toContain("Bring agents together with your team in one shared workspace.");
-    expect(html).toContain('action="/auth/email"');
-    expect(html).toContain('name="email"');
-    expect(html).toContain("Approval gates your team controls");
-    expect(html).toContain("Bring your favorite agent and sandbox");
+    expect(html.match(/<section(?:\s|>)/g)).toHaveLength(1);
+    expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
+    expect(html).not.toMatch(/<h2(?:\s|>)/);
+    expect(html).toContain("data-wallie-mark");
+    expect(html).toContain("Run coding agents through your team");
+    expect(html).toContain("isolated sandboxes");
   });
 
-  it("renders GitHub links in the header and footer", () => {
+  it("links each destination exactly once", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain('href="https://github.com/anantjain-xyz/wallie-dev"');
-    expect(html).toContain("GitHub");
+    expect(html.match(/href="\/login"/g)).toHaveLength(1);
+    expect(html).toContain("Sign in to Wallie");
+    expect(html.match(/github\.com\/anantjain-xyz\/wallie-dev"/g)).toHaveLength(1);
+    expect(html.match(/blob\/main\/LICENSE/g)).toHaveLength(1);
+    expect(html.match(/#readme/g)).toHaveLength(1);
+    expect(html.match(/MIT/g)).toHaveLength(1);
   });
 
-  it("offers a Get started link to /login for narrow viewports", () => {
+  it("keeps the decorative mockup out of the interactive accessibility tree", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain('href="/login"');
-    expect(html).toContain("Get started");
+    expect(html).not.toMatch(/<(button|input|select|textarea)(?:\s|>)/);
+    expect(html).toContain('aria-hidden="true"');
   });
 
-  it("renders the footer with author attribution", () => {
-    const html = renderToStaticMarkup(createElement(LandingPage));
+  it("shows the supported providers without status chatter", () => {
+    const html = renderToStaticMarkup(createElement(StackWorkflowMockup));
 
-    expect(html).toContain("Built by");
-    expect(html).toContain('href="https://anantjain.xyz"');
-    expect(html).toContain("Anant Jain");
+    expect(html).toContain("Codex");
+    expect(html).toContain("Claude Code");
+    expect(html).toContain("Cursor");
+    expect(html).toContain("OpenCode");
+    expect(html).toContain("Vercel");
+    expect(html).toContain("E2B");
+    expect(html).toContain("Daytona");
+    expect(html).toContain("Issues synced from Linear");
+    expect(html).not.toContain("Coming soon");
+    expect(html).not.toContain("approves");
   });
 
-  it("smoke-renders the code-native product mockups", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        "div",
-        null,
-        createElement(HeroWorkspaceMockup),
-        createElement(SandboxExecutionMockup),
-        createElement(ApprovalGatesMockup),
-        createElement(RuntimeChoiceMockup),
-      ),
-    );
+  it("shows the pipeline stages in the mockup", () => {
+    const html = renderToStaticMarkup(createElement(StackWorkflowMockup));
 
-    expect(html).toContain("Default pipeline");
-    expect(html).toContain("vercel://acme-sso-4921");
-    expect(html).toContain("Review pipeline");
-    expect(html).toContain("Approvers: Ava Patel, Jordan Kim");
-    expect(html).toContain("Connect Agent");
-    expect(html).toContain("Provider access");
-    expect(html).toContain("Vercel Sandbox");
+    expect(html).toContain("Plan");
+    expect(html).toContain("Design");
+    expect(html).toContain("Build");
+    expect(html).toContain("Land");
+    expect(html).not.toContain("<script");
   });
 });

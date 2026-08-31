@@ -1,27 +1,29 @@
 import { parseCodexChatGptAuthJson } from "@/lib/codex/auth-json";
 import {
-  CodexAuthLeaseBusyError,
   type ChatGptCodexCredential,
   type CodexChatGptAuthStore,
   type CodexCredential,
 } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
+import type { AgentEffort } from "@/lib/agent-config/contracts";
+import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 const CODEX_HOME_DIR = ".codex";
 const CODEX_AUTH_FILE_NAME = "auth.json";
-const CHATGPT_AUTH_LEASE_MS = 35 * 60_000;
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
   credential: CodexCredential;
-  /** Required for ChatGPT subscription auth so the runner can lease and persist auth.json. */
+  /** Required for ChatGPT subscription auth so the runner can persist refreshed auth.json. */
   chatGptAuthStore?: CodexChatGptAuthStore;
-  /** Model identifier (e.g. "gpt-5.5"). */
+  /** Model identifier (e.g. "gpt-5.6-sol"). */
   model?: string;
+  /** Reasoning effort passed to Codex. */
+  effort?: AgentEffort;
 }
 
 /**
@@ -29,7 +31,7 @@ export interface CodexRunnerOptions {
  *
  * Runs `codex exec` inside a per-session sandbox. API keys and Codex access
  * tokens are injected only into the process environment. ChatGPT subscription
- * auth writes a leased Codex auth.json before the run and persists any
+ * auth writes the saved Codex auth.json before the run and persists any
  * refreshed auth cache after the CLI exits. Streams stdout line-by-line as
  * AgentEvents.
  *
@@ -57,6 +59,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
+    const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
     const promptFile = promptFileFor(sandbox);
     const codexHome = codexHomeFor(sandbox);
 
@@ -67,6 +70,7 @@ export class CodexRunner implements AgentRunner {
 
     const shellCmd = codexCommandForCredential(
       model,
+      effort,
       this.options.credential,
       codexHome,
       promptFile,
@@ -75,7 +79,12 @@ export class CodexRunner implements AgentRunner {
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CODEX_HOME: codexHome, ...codexCredentialEnv(this.options.credential) },
+      env: {
+        CI: "1",
+        CODEX_HOME: codexHome,
+        ...WALLIE_GIT_IDENTITY_ENV,
+        ...codexCredentialEnv(this.options.credential),
+      },
       signal: input.signal,
     });
 
@@ -124,14 +133,9 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner requires a sandbox.");
     }
 
-    const credential = this.options.credential;
-    if (credential.type !== "chatgpt_auth_json") {
+    const configuredCredential = this.options.credential;
+    if (configuredCredential.type !== "chatgpt_auth_json") {
       throw new Error("CodexRunner expected ChatGPT subscription auth.");
-    }
-
-    const runId = input.runId;
-    if (!runId) {
-      throw new Error("CodexRunner requires runId for ChatGPT subscription auth.");
     }
 
     const store = this.options.chatGptAuthStore;
@@ -139,35 +143,20 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner requires a ChatGPT auth store for subscription auth.");
     }
 
-    const leaseExpiresAt = new Date(Date.now() + CHATGPT_AUTH_LEASE_MS).toISOString();
-    const leased = await store.acquireChatGptAuthLease({
-      leaseExpiresAt,
-      runId,
-      userId: credential.userId,
-    });
-    if (!leased) {
-      throw new CodexAuthLeaseBusyError();
-    }
-
-    try {
-      yield* this.runWithLeasedChatGptAuth(input, leased, store);
-    } finally {
-      await store.releaseChatGptAuthLease({
-        runId,
-        userId: leased.userId,
-      });
-    }
+    const credential = await store.loadChatGptAuth({ userId: configuredCredential.userId });
+    yield* this.runWithChatGptAuth(input, credential, store);
   }
 
-  private async *runWithLeasedChatGptAuth(
+  private async *runWithChatGptAuth(
     input: AgentRunnerStartInput,
     credential: ChatGptCodexCredential,
     store: CodexChatGptAuthStore,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
-    if (!sandbox || !input.runId) return;
+    if (!sandbox) return;
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
+    const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
     const promptFile = promptFileFor(sandbox);
     const codexHome = codexHomeFor(sandbox);
     const codexAuthFile = codexAuthFileFor(sandbox);
@@ -177,10 +166,10 @@ export class CodexRunner implements AgentRunner {
 
     const proc = await sandbox.exec(
       "bash",
-      ["-lc", codexExecCommand(model, promptFile, sandbox.repoPath)],
+      ["-lc", codexExecCommand(model, effort, promptFile, sandbox.repoPath)],
       {
         cwd: sandbox.repoPath,
-        env: { CI: "1", CODEX_HOME: codexHome },
+        env: { CI: "1", CODEX_HOME: codexHome, ...WALLIE_GIT_IDENTITY_ENV },
         signal: input.signal,
       },
     );
@@ -209,28 +198,27 @@ export class CodexRunner implements AgentRunner {
       if (event) yield event;
     }
 
-    await persistRefreshedChatGptAuthJson({
-      credential,
-      runId: input.runId,
-      sandbox,
-      store,
-    });
-
     const code = await proc.exitCode;
-    if (code !== 0) {
-      const message = codexExitErrorMessage(code, stderrBuf);
-      if (isAuthFailure(message)) {
-        await store.markChatGptAuthReconnectRequired({
-          reason:
-            "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
-          runId: input.runId,
-          userId: credential.userId,
-        });
-      }
+    const errorMessage = code === 0 ? null : codexExitErrorMessage(code, stderrBuf);
+    if (errorMessage && isAuthFailure(errorMessage)) {
+      await store.markChatGptAuthReconnectRequired({
+        previousCredentialGeneration: credential.credentialGeneration,
+        previousCredentialVersion: credential.credentialVersion,
+        reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
+        userId: credential.userId,
+      });
+    } else {
+      await persistRefreshedChatGptAuthJson({
+        credential,
+        sandbox,
+        store,
+      });
+    }
 
+    if (errorMessage) {
       yield {
         type: "error",
-        message,
+        message: errorMessage,
       };
     }
 
@@ -401,13 +389,14 @@ function codexAuthFileFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>
 
 function codexCommandForCredential(
   model: string,
+  effort: AgentEffort,
   credential: CodexCredential,
   codexHome: string,
   promptFile: string,
   sandboxRepoPath: string,
 ): string {
   if (credential.type !== "codex_access_token") {
-    return codexExecCommand(model, promptFile, sandboxRepoPath);
+    return codexExecCommand(model, effort, promptFile, sandboxRepoPath);
   }
 
   const loginCommand = [
@@ -416,12 +405,11 @@ function codexCommandForCredential(
       `cli_auth_credentials_store="file"`,
     )} >/dev/stderr`,
   ].join(" && ");
-  return `${loginCommand} && ${codexExecCommand(model, promptFile, sandboxRepoPath)}`;
+  return `${loginCommand} && ${codexExecCommand(model, effort, promptFile, sandboxRepoPath)}`;
 }
 
 async function persistRefreshedChatGptAuthJson(input: {
   credential: ChatGptCodexCredential;
-  runId: string;
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>;
   store: CodexChatGptAuthStore;
 }) {
@@ -432,13 +420,17 @@ async function persistRefreshedChatGptAuthJson(input: {
   await input.store.persistChatGptAuthJson({
     authJson: refreshedAuthJson,
     metadata,
+    previousCredentialGeneration: input.credential.credentialGeneration,
     previousCredentialVersion: input.credential.credentialVersion,
-    runId: input.runId,
     userId: input.credential.userId,
   });
 }
 
-export function codexExecArgs(model: string, sandboxRepoPath: string): string[] {
+export function codexExecArgs(
+  model: string,
+  sandboxRepoPath: string,
+  effort: AgentEffort = DEFAULT_CODEX_REASONING_EFFORT,
+): string[] {
   return [
     "exec",
     "--model",
@@ -446,9 +438,14 @@ export function codexExecArgs(model: string, sandboxRepoPath: string): string[] 
     "--sandbox",
     CODEX_SANDBOX_MODE,
     "-c",
-    `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+    `model_reasoning_effort="${effort}"`,
     "-c",
     `cli_auth_credentials_store="file"`,
+    "-c",
+    "mcp_servers={}",
+    "-c",
+    "apps.github.enabled=false",
+    "--ignore-user-config",
     CODEX_EXTERNAL_SANDBOX_FLAG,
     "--cd",
     sandboxRepoPath,
@@ -457,10 +454,13 @@ export function codexExecArgs(model: string, sandboxRepoPath: string): string[] 
   ];
 }
 
-function codexExecCommand(model: string, promptFile: string, sandboxRepoPath: string): string {
-  return `codex ${codexExecArgs(model, sandboxRepoPath).map(shellQuote).join(" ")} < ${shellQuote(
-    promptFile,
-  )}`;
+function codexExecCommand(
+  model: string,
+  effort: AgentEffort,
+  promptFile: string,
+  sandboxRepoPath: string,
+): string {
+  return `codex ${codexExecArgs(model, sandboxRepoPath, effort).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 }
 
 async function ensureCodexHome(

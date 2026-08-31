@@ -10,6 +10,7 @@ export const WORKSPACE_ONBOARDING_STEPS = [
   "repository",
   "pipeline",
   "linear",
+  "sandbox",
   "runtime",
   "verify",
 ] as const;
@@ -40,10 +41,40 @@ export const workspaceOnboardingUpdatePayloadSchema = z
     message: "At least one onboarding field is required.",
   });
 
+export const WORKSPACE_ONBOARDING_MUTATION_ACTIONS = [
+  "continue",
+  "exit",
+  "navigate",
+  "repository-selection",
+  "skip",
+  "step-complete",
+] as const;
+
+export const workspaceOnboardingMutationActionSchema = z.enum(
+  WORKSPACE_ONBOARDING_MUTATION_ACTIONS,
+);
+
+export const workspaceOnboardingMutationRequestSchema = z.object({
+  action: workspaceOnboardingMutationActionSchema,
+  changes: workspaceOnboardingUpdatePayloadSchema,
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
+  step: workspaceOnboardingStepSchema,
+});
+
+export const workspaceOnboardingCompletionRequestSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
+});
+
 export type WorkspaceOnboardingStep = z.infer<typeof workspaceOnboardingStepSchema>;
 export type WorkspaceOnboardingStatus = z.infer<typeof workspaceOnboardingStatusSchema>;
 export type WorkspaceOnboardingUpdatePayload = z.infer<
   typeof workspaceOnboardingUpdatePayloadSchema
+>;
+export type WorkspaceOnboardingMutationAction = z.infer<
+  typeof workspaceOnboardingMutationActionSchema
+>;
+export type WorkspaceOnboardingMutationRequest = z.infer<
+  typeof workspaceOnboardingMutationRequestSchema
 >;
 
 export type WorkspaceOnboardingState = {
@@ -60,6 +91,17 @@ export type WorkspaceOnboardingState = {
   workspaceId: string;
 };
 
+export type WorkspaceOnboardingStepState = Pick<
+  WorkspaceOnboardingState,
+  | "completedAt"
+  | "completedSteps"
+  | "currentStep"
+  | "dismissedAt"
+  | "selectedGithubRepositoryId"
+  | "skippedSteps"
+  | "status"
+>;
+
 export type SetupPresenceStatus = "missing" | "present";
 export type SetupReadinessStatus = "missing" | "placeholder" | "ready";
 
@@ -71,18 +113,34 @@ export type OnboardingSetupHealth = {
     values: Partial<Record<AgentConfigKey, unknown>>;
   };
   codexConnection: {
+    accountEmail: string | null;
+    checkedAt: string;
     connected: boolean;
     credentialType: CodexCredentialType | null;
     expiresAt: string | null;
+    reconnectReason: string | null;
+    reconnectRequired: boolean;
     status: "connected" | "expired" | "missing";
     updatedAt: string | null;
   };
   claudeCodeConnection: {
+    checkedAt: string;
     connected: boolean;
     status: "connected" | "missing";
     updatedAt: string | null;
   };
+  cursorConnection?: {
+    accountEmail: string | null;
+    checkedAt: string;
+    connected: boolean;
+    expiresAt: string | null;
+    reconnectReason: string | null;
+    reconnectRequired: boolean;
+    status: "connected" | "expired" | "missing";
+    updatedAt: string | null;
+  };
   openCodeConnection: {
+    checkedAt: string;
     connected: boolean;
     status: "connected" | "missing";
     updatedAt: string | null;
@@ -102,6 +160,17 @@ export type OnboardingSetupHealth = {
     updatedAt: string | null;
   };
   latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+  sandboxConnection?: {
+    connected: boolean;
+    connectionRevision: string | null;
+    displayName: string | null;
+    lastValidationError: string | null;
+    provider: "vercel" | "e2b" | "daytona";
+    providerLabel: string;
+    status: "connected" | "error" | "missing";
+    updatedAt: string | null;
+  };
+  /** @deprecated Provider-neutral consumers should use sandboxConnection. */
   vercelSandboxConnection: {
     connected: boolean;
     lastValidationError: string | null;
@@ -142,4 +211,44 @@ export type OnboardingSetupHealth = {
     repositoryId: string | null;
     status: RepositoryOnboardingStatus | Extract<SetupReadinessStatus, "placeholder">;
   };
+};
+
+export type OnboardingSetupHealthDelta = Partial<OnboardingSetupHealth>;
+
+export type OnboardingValidationError = {
+  field: string;
+  message: string;
+};
+
+export type WorkspaceOnboardingMutationDelta = {
+  action: WorkspaceOnboardingMutationAction | "complete";
+  kind: "onboarding-mutation";
+  onboarding: WorkspaceOnboardingStepState;
+  setupHealth: OnboardingSetupHealthDelta;
+  step: WorkspaceOnboardingStep;
+  updatedAt: string;
+  validationErrors: OnboardingValidationError[];
+};
+
+export type WorkspaceOnboardingConflictResponse = {
+  action: WorkspaceOnboardingMutationAction | "complete";
+  authoritative: {
+    onboarding: WorkspaceOnboardingStepState;
+    setupHealth: OnboardingSetupHealthDelta;
+    updatedAt: string;
+  };
+  error: string;
+  kind: "onboarding-conflict";
+  retryable: true;
+  step: WorkspaceOnboardingStep;
+  validationErrors: OnboardingValidationError[];
+};
+
+export type WorkspaceOnboardingMutationErrorResponse = {
+  action: WorkspaceOnboardingMutationAction | "complete" | null;
+  error: string;
+  kind: "onboarding-mutation-error";
+  retryable: boolean;
+  step: WorkspaceOnboardingStep | null;
+  validationErrors: OnboardingValidationError[];
 };

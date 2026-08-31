@@ -2,11 +2,12 @@
 
 import type { Dispatch, SetStateAction } from "react";
 
+import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import type { WorkspaceOnboardingStep } from "@/lib/onboarding/contracts";
 
 type VerifySetupSectionProps = {
@@ -21,11 +22,12 @@ const stepAnchor: Record<WorkspaceOnboardingStep, string> = {
   pipeline: "pipeline",
   repository: "repository",
   runtime: "runtime",
+  sandbox: "sandbox",
   verify: "verify",
 };
 
 function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]) {
-  return item.id === "vercel-sandbox" ? "#vercel" : `#${stepAnchor[item.step]}`;
+  return item.id === "vercel-sandbox" ? "#sandbox" : `#${stepAnchor[item.step]}`;
 }
 
 export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySetupSectionProps) {
@@ -38,6 +40,9 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   const preferredRepositoryId =
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
+  const activeSandbox = data.setupHealth.sandboxConnection;
+  const sandboxConnected =
+    activeSandbox?.connected ?? data.setupHealth.vercelSandboxConnection.connected;
 
   return (
     <Section
@@ -49,17 +54,20 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
         <div className="space-y-3">
           {checklist.map((item) => (
             <div
-              className="flex flex-col gap-3 rounded-[6px] border border-border bg-surface px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
+              className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
               key={item.id}
             >
               <div className="min-w-0">
                 <p className="text-[13px] font-medium text-foreground">{item.label}</p>
-                <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <StatusBadge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
-                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
-                </StatusBadge>
+                <Status
+                  label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
+                  value={configurationStatusFromTone(
+                    item.statusTone ?? (item.passed ? "success" : "warning"),
+                  )}
+                />
                 {!item.passed && item.step !== "verify" ? (
                   <a className="ui-button" href={checklistItemHref(item)}>
                     Open
@@ -73,7 +81,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
         <div className="border-t border-border pt-6">
           <div className="mb-4 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Run the check against the selected repository.
             </p>
           </div>
@@ -92,8 +100,8 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             }
             preferredRepositoryId={preferredRepositoryId}
             repositories={data.github.repositories}
+            sandboxConnected={sandboxConnected}
             setFlashMessage={setFlashMessage}
-            vercelSandboxConnected={data.setupHealth.vercelSandboxConnection.connected}
             workspaceId={data.workspace.id}
           />
         </div>

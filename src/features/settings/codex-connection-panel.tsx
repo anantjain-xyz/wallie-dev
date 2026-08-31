@@ -2,8 +2,14 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Spinner } from "@/components/shared/spinner";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Status, type StatusValue } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
+import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 export interface CodexConnectionStatus {
@@ -11,6 +17,7 @@ export interface CodexConnectionStatus {
   authCacheLastRefresh?: string | null;
   connected: boolean;
   credentialType?: CodexCredentialType | null;
+  checkedAt: string;
   expired?: boolean;
   expiresAt?: string | null;
   reconnectReason?: string | null;
@@ -33,12 +40,29 @@ interface CodexConnectionPanelProps {
   returnTo?: string;
   /** Banner to surface when the query string reports codex_connect=... */
   connectFlash?: string | null;
+  /** Server-loaded status used immediately and revalidated only after its freshness window. */
+  initialStatus?: CodexConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: CodexConnectionStatus) => void;
+  onSandboxConnectionSelect?: () => void;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
+  sandboxConnectionReady?: boolean;
+  /** @deprecated Use sandboxConnectionHref. */
   vercelConnectionHref?: string;
+  /** @deprecated Use sandboxConnectionReady. */
   vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId?: string;
 }
+
+const codexDeviceFlowStatusValues = {
+  authenticated: "complete",
+  canceled: "canceled",
+  error: "failed",
+  expired: "failed",
+  prompted: "running",
+  starting: "running",
+} satisfies Record<CodexDeviceFlow["status"], StatusValue>;
 
 const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "chatgpt_auth_json",
@@ -46,28 +70,61 @@ const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "platform_api_key",
 ];
 
+function deviceFlowMessage(deviceFlow: CodexDeviceFlow) {
+  switch (deviceFlow.status) {
+    case "starting":
+      return "Waiting for sign-in code…";
+    case "prompted":
+      return deviceFlow.userCode ? "Enter this code in ChatGPT" : "Waiting for sign-in code…";
+    case "authenticated":
+      return "ChatGPT sign-in succeeded.";
+    case "canceled":
+      return "ChatGPT sign-in was canceled.";
+    case "error":
+      return deviceFlow.error ?? "ChatGPT sign-in failed. Try again.";
+    case "expired":
+      return "ChatGPT sign-in expired. Start again.";
+  }
+}
+
 export function ChatGptSubscriptionControls({
   blocked,
   deviceFlow,
   isBusy,
   onCancel,
+  onSandboxConnectionSelect,
   onStart,
+  pendingAction = null,
+  sandboxConnectionHref,
+  sandboxConnectionLabel = "a sandbox provider",
   vercelConnectionHref = "#vercel",
 }: {
   blocked: boolean;
   deviceFlow: CodexDeviceFlow | null;
   isBusy: boolean;
   onCancel: () => void;
+  onSandboxConnectionSelect?: () => void;
   onStart: () => void;
+  pendingAction?: "cancel" | "disconnect" | "save" | "start" | null;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
   vercelConnectionHref?: string;
 }) {
   return (
     <div className="space-y-3">
       {blocked ? (
-        <p className="text-[12px] leading-5 text-warning">
+        <p className="text-xs leading-5 text-warning">
           Connect{" "}
-          <a className="underline underline-offset-2" href={vercelConnectionHref}>
-            Vercel Sandbox
+          <a
+            className="underline underline-offset-2"
+            href={sandboxConnectionHref ?? vercelConnectionHref}
+            onClick={(event) => {
+              if (!onSandboxConnectionSelect) return;
+              event.preventDefault();
+              onSandboxConnectionSelect();
+            }}
+          >
+            {sandboxConnectionLabel}
           </a>{" "}
           before using a ChatGPT subscription.
         </p>
@@ -83,20 +140,17 @@ export function ChatGptSubscriptionControls({
         onClick={onStart}
         type="button"
       >
-        {isBusy ? "Starting…" : "Sign in with ChatGPT"}
+        <ActionButtonLabel
+          idle="Sign in with ChatGPT"
+          pending={pendingAction === "start"}
+          pendingLabel="Starting…"
+        />
       </button>
 
       {deviceFlow ? (
-        <div className="space-y-2 rounded-[6px] border border-border bg-surface p-3">
-          <p className="text-[12px] font-medium text-foreground">
-            {deviceFlow.status === "starting"
-              ? "Waiting for sign-in code…"
-              : deviceFlow.status === "prompted"
-                ? deviceFlow.userCode
-                  ? "Enter this code in ChatGPT"
-                  : "Waiting for sign-in code…"
-                : formatSentenceCaseLabel(deviceFlow.status)}
-          </p>
+        <div className="space-y-2 rounded-[6px] border border-border bg-sheet p-3">
+          <Status compact value={codexDeviceFlowStatusValues[deviceFlow.status]} />
+          <p className="text-xs font-medium text-foreground">{deviceFlowMessage(deviceFlow)}</p>
           {deviceFlow.userCode ? (
             <p className="font-mono text-[22px] font-semibold tracking-normal text-foreground">
               {deviceFlow.userCode}
@@ -104,7 +158,7 @@ export function ChatGptSubscriptionControls({
           ) : null}
           {deviceFlow.verificationUri ? (
             <a
-              className="text-[12px] text-link underline underline-offset-2"
+              className="text-xs text-link underline underline-offset-2"
               href={deviceFlow.verificationUri}
               rel="noreferrer"
               target="_blank"
@@ -114,12 +168,16 @@ export function ChatGptSubscriptionControls({
           ) : null}
           <div>
             <button
-              className="text-[12px] font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className="text-xs font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isBusy}
               onClick={onCancel}
               type="button"
             >
-              Cancel
+              <ActionButtonLabel
+                idle="Cancel"
+                pending={pendingAction === "cancel"}
+                pendingLabel="Canceling…"
+              />
             </button>
           </div>
         </div>
@@ -130,20 +188,32 @@ export function ChatGptSubscriptionControls({
 
 export function CodexConnectionPanel({
   connectFlash,
+  initialStatus,
+  onSandboxConnectionSelect,
   onStatusChange,
   returnTo,
+  sandboxConnectionHref,
+  sandboxConnectionLabel,
+  sandboxConnectionReady,
   vercelConnectionHref = "#vercel",
   vercelSandboxConnection,
   workspaceId,
 }: CodexConnectionPanelProps) {
-  const [status, setStatus] = useState<CodexConnectionStatus | null>(null);
-  const [credentialType, setCredentialType] = useState<CodexCredentialType>("chatgpt_auth_json");
+  const initialStatusRef = useRef(initialStatus);
+  const [status, setStatus] = useState<CodexConnectionStatus | null>(() => initialStatus ?? null);
+  const [credentialType, setCredentialType] = useState<CodexCredentialType>(
+    () => initialStatus?.credentialType ?? "chatgpt_auth_json",
+  );
   const [credential, setCredential] = useState("");
   const [expiresOn, setExpiresOn] = useState("");
   const [deviceFlow, setDeviceFlow] = useState<CodexDeviceFlow | null>(null);
-  const [isBusy, setIsBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    "cancel" | "disconnect" | "save" | "start" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const actionInFlightRef = useRef(false);
+  const { pushToast } = useOptionalToast();
+  const isBusy = pendingAction !== null;
 
   // Held in a ref so the panel is robust to callers that pass a fresh callback
   // on every render — otherwise the refresh effect would refire in a loop.
@@ -171,7 +241,9 @@ export function CodexConnectionPanel({
   }, []);
 
   useEffect(() => {
-    void refresh();
+    if (isProviderStatusStale(initialStatusRef.current?.checkedAt)) {
+      void refresh();
+    }
   }, [refresh]);
 
   const deviceFlowCallbackUrl = useCallback(
@@ -226,9 +298,10 @@ export function CodexConnectionPanel({
   }, [deviceFlow, pollDeviceFlow]);
 
   const handleStartChatGptSignIn = async () => {
-    setIsBusy(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("start");
     setError(null);
-    setNotice(null);
     setDeviceFlow(null);
     try {
       const next =
@@ -259,26 +332,34 @@ export function CodexConnectionPanel({
       }
       setDeviceFlow(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start Codex sign-in.");
+      const message = err instanceof Error ? err.message : "Failed to start Codex sign-in.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
   const handleCancelChatGptSignIn = async () => {
     if (!deviceFlow) return;
-    setIsBusy(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("cancel");
     setError(null);
     try {
       await fetch(deviceFlowCallbackUrl(deviceFlow.flowId), {
         method: "DELETE",
       });
       setDeviceFlow(null);
-      setNotice("Codex sign-in canceled.");
+      pushToast({ priority: "polite", title: "Codex sign-in canceled.", tone: "neutral" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to cancel Codex sign-in.");
+      const message = err instanceof Error ? err.message : "Failed to cancel Codex sign-in.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
@@ -303,16 +384,16 @@ export function CodexConnectionPanel({
     }
     setCredentialType(type);
     setError(null);
-    setNotice(null);
   };
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (credentialType === "chatgpt_auth_json") return;
+    if (actionInFlightRef.current) return;
 
-    setIsBusy(true);
+    actionInFlightRef.current = true;
+    setPendingAction("save");
     setError(null);
-    setNotice(null);
     try {
       const response = await fetch("/api/codex/connection", {
         method: "POST",
@@ -335,17 +416,22 @@ export function CodexConnectionPanel({
       setStatus(data);
       if (data) onStatusChangeRef.current?.(data);
       setCredential("");
+      pushToast({ priority: "polite", title: "Codex credential saved.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Codex credential.");
+      const message = err instanceof Error ? err.message : "Failed to save Codex credential.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
   const handleDisconnect = async () => {
-    setIsBusy(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("disconnect");
     setError(null);
-    setNotice(null);
     try {
       const response = await fetch("/api/codex/connection", { method: "DELETE" });
       if (!response.ok && response.status !== 204) {
@@ -355,11 +441,14 @@ export function CodexConnectionPanel({
       setExpiresOn("");
       setDeviceFlow(null);
       await refresh();
-      setNotice("Codex credential removed.");
+      pushToast({ priority: "polite", title: "Codex credential removed.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disconnect Codex.");
+      const message = err instanceof Error ? err.message : "Failed to disconnect Codex.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
@@ -369,15 +458,15 @@ export function CodexConnectionPanel({
     : null;
   const saveDisabled = isBusy || credential.trim().length === 0;
   const chatGptBlocked =
-    !workspaceId || !vercelSandboxConnection || vercelSandboxConnection.status !== "connected";
+    !workspaceId || !(sandboxConnectionReady ?? vercelSandboxConnection?.status === "connected");
 
-  const connectionTone: "connected" | "expired" | "reconnect" | null = status
+  const connectionValue: StatusValue | null = status
     ? status.reconnectRequired
-      ? "reconnect"
+      ? "needs_attention"
       : status.expired
-        ? "expired"
+        ? "blocked"
         : status.connected
-          ? "connected"
+          ? "healthy"
           : null
     : null;
   const showForm = !status?.connected;
@@ -385,43 +474,59 @@ export function CodexConnectionPanel({
   return (
     <div className="space-y-4">
       {flashText ? <p className="text-[13px] leading-5 text-muted">{flashText}</p> : null}
-      {notice ? <p className="text-[13px] leading-5 text-success">{notice}</p> : null}
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
-      {status === null ? <p className="text-[13px] text-muted">Checking connection…</p> : null}
+      {status === null ? <Status label="Checking connection" value="running" /> : null}
 
-      {status && connectionTone ? (
+      {status && !connectionValue ? <Status label="Not connected" value="not_started" /> : null}
+
+      {status && connectionValue ? (
         <div className="flex items-center justify-between gap-3">
-          <p className="flex min-w-0 items-center gap-2 text-[13px]">
-            <span
-              aria-hidden
-              className={`h-2 w-2 shrink-0 rounded-full ${dotClass(connectionTone)}`}
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-[13px]">
+            <Status
+              compact
+              label={
+                status.reconnectRequired
+                  ? "Needs attention"
+                  : status.expired
+                    ? "Expired"
+                    : "Connected"
+              }
+              value={connectionValue}
             />
             <span className="truncate font-medium text-foreground">
               {activeCredentialLabel ?? "Codex credential"}
             </span>
             <span className="text-muted">·</span>
             <span className="truncate text-muted">{statusSecondary(status)}</span>
-          </p>
-          <button
-            type="button"
-            className="text-[12px] text-muted underline-offset-2 transition-colors hover:text-danger hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            {isBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          </div>
+          {pendingAction === "disconnect" ? (
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 text-xs text-muted"
+              role="status"
+            >
+              <Spinner />
+              Disconnecting…
+            </span>
+          ) : (
+            <ActionMenu disabled={isBusy} label="Codex credential actions">
+              <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+                Disconnect
+              </DropdownMenuItem>
+            </ActionMenu>
+          )}
         </div>
       ) : null}
 
       {status && showForm ? (
         <>
-          <div className="inline-flex flex-wrap rounded-[6px] border border-border bg-surface p-1">
+          <div className="inline-flex flex-wrap rounded-[6px] border border-border bg-sheet p-1">
             {CREDENTIAL_TYPES.map((type) => (
               <button
-                className={`rounded-[5px] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                className={`rounded-[5px] px-3 py-1.5 text-xs font-medium transition-colors ${
                   credentialType === type
-                    ? "bg-surface-strong text-foreground"
+                    ? "bg-control-hover text-foreground"
                     : "text-muted hover:text-foreground"
                 }`}
                 disabled={isBusy}
@@ -440,13 +545,17 @@ export function CodexConnectionPanel({
               deviceFlow={deviceFlow}
               isBusy={isBusy}
               onCancel={handleCancelChatGptSignIn}
+              onSandboxConnectionSelect={onSandboxConnectionSelect}
               onStart={handleStartChatGptSignIn}
+              pendingAction={pendingAction}
+              sandboxConnectionHref={sandboxConnectionHref}
+              sandboxConnectionLabel={sandboxConnectionLabel}
               vercelConnectionHref={vercelConnectionHref}
             />
           ) : (
             <form className="space-y-3" onSubmit={handleSave}>
               <label className="block space-y-1.5">
-                <span className="text-[12px] font-medium text-foreground">
+                <span className="text-xs font-medium text-foreground">
                   {codexCredentialTypeLabel(credentialType)}
                 </span>
                 <input
@@ -465,7 +574,7 @@ export function CodexConnectionPanel({
 
               {credentialType === "codex_access_token" ? (
                 <label className="block max-w-[220px] space-y-1.5">
-                  <span className="text-[12px] font-medium text-foreground">Expiration date</span>
+                  <span className="text-xs font-medium text-foreground">Expiration date</span>
                   <input
                     className="ui-input"
                     disabled={isBusy}
@@ -477,7 +586,7 @@ export function CodexConnectionPanel({
               ) : null}
 
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[12px] leading-5 text-muted">
+                <p className="text-xs leading-5 text-muted">
                   {credentialType === "codex_access_token" ? (
                     <a
                       className="underline underline-offset-2"
@@ -499,11 +608,15 @@ export function CodexConnectionPanel({
                   )}
                 </p>
                 <button className="ui-button-primary" disabled={saveDisabled} type="submit">
-                  {isBusy
-                    ? "Saving…"
-                    : status?.expired || status?.reconnectRequired
-                      ? "Update credential"
-                      : "Save credential"}
+                  <ActionButtonLabel
+                    idle={
+                      status?.expired || status?.reconnectRequired
+                        ? "Update credential"
+                        : "Save credential"
+                    }
+                    pending={pendingAction === "save"}
+                    pendingLabel="Saving…"
+                  />
                 </button>
               </div>
             </form>
@@ -512,17 +625,6 @@ export function CodexConnectionPanel({
       ) : null}
     </div>
   );
-}
-
-function dotClass(tone: "connected" | "expired" | "reconnect"): string {
-  switch (tone) {
-    case "connected":
-      return "bg-accent";
-    case "expired":
-      return "bg-danger";
-    case "reconnect":
-      return "bg-warning";
-  }
 }
 
 function statusSecondary(status: CodexConnectionStatus): string {

@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 
 import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
 import { SplashShell } from "@/components/auth/splash-shell";
-import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import {
+  ensureProfileForUser,
+  isWorkspaceInvitationPath,
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
 import { emailCodeAuthCookieName, normalizeEmailCodeAddress } from "@/lib/auth-email-code-cookie";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -11,6 +17,12 @@ import { readFirstValue } from "@/lib/utils";
 
 type LoginPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export const metadata: Metadata = {
+  title: {
+    absolute: "Sign in · Wallie",
+  },
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
@@ -24,7 +36,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const user = await getSupabaseUserOrNull(supabase);
 
   if (user) {
-    await ensureProfileForUser(supabase, user);
+    if (!isWorkspaceInvitationPath(next)) {
+      await ensureProfileForUser(supabase, user);
+    }
     redirect(next === "/" ? await resolveAuthenticatedHomePath(supabase) : next);
   }
 

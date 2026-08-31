@@ -1,28 +1,38 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
+import type {
+  AgentConfigEntry,
+  AgentConfigFieldErrors,
+  BatchUpsertAgentConfigErrorResponse,
+  BatchUpsertAgentConfigRequest,
+  BatchUpsertAgentConfigResponse,
+} from "@/app/api/agent-config/route";
 import {
-  AGENT_PROVIDER_EMPTY_OPTION,
+  AGENT_CONFIG_VISIBLE_FIELDS,
+  AGENT_EFFORT_EMPTY_OPTION,
+  AGENT_EFFORT_SELECT_OPTIONS,
   AGENT_PROVIDER_SELECT_OPTIONS,
 } from "@/components/shared/agent-provider-options";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
-import { useApiAction } from "@/features/settings/use-api-action";
 import {
   type AgentConfigKey,
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   STALL_TIMEOUT_MINUTE_LIMITS,
+  agentProviderSupportsEffort,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
 } from "@/lib/agent-config/contracts";
@@ -30,7 +40,9 @@ import {
   agentConfigValueToDraft,
   applyAgentConfigDraftChange,
   parseAgentConfigDraft,
+  pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
+import { discoverCursorModels } from "@/lib/cursor/client";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type AgentConfigSectionProps = {
@@ -39,10 +51,18 @@ type AgentConfigSectionProps = {
   codexConnectFlash?: string | null;
   extraContent?: ReactNode;
   initialAgentConfig: AgentConfigMap;
-  onAgentConfigSaved?: (entry: UpsertAgentConfigResponse["entry"]) => void;
+  initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
+  initialCodexStatus?: CodexConnectionStatus;
+  initialCursorStatus?: CursorConnectionStatus;
+  initialOpenCodeStatus?: OpenCodeConnectionStatus;
+  onAgentConfigSaved?: (entries: AgentConfigEntry[]) => void;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  onCursorStatusChange?: (status: CursorConnectionStatus) => void;
   onOpenCodeStatusChange?: (status: OpenCodeConnectionStatus) => void;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
+  sandboxConnectionReady?: boolean;
   setFlashMessage: (message: FlashMessage) => void;
   tagline?: ReactNode;
   title?: string;
@@ -55,6 +75,7 @@ type FieldType = "number" | "select" | "text";
 type FieldDescriptor = {
   configKey: AgentConfigKey;
   description: string;
+  emptyOption?: SelectOption;
   label: string;
   options?: readonly SelectOption[];
   placeholder?: string;
@@ -65,6 +86,7 @@ function AgentConfigField({
   description,
   disabled,
   draft,
+  emptyOption,
   error,
   label,
   onChange,
@@ -76,6 +98,7 @@ function AgentConfigField({
   description: string;
   disabled: boolean;
   draft: string;
+  emptyOption?: SelectOption;
   error: string | null;
   label: string;
   onChange: (next: string) => void;
@@ -89,7 +112,7 @@ function AgentConfigField({
       {type === "select" && options ? (
         <SelectField
           disabled={disabled}
-          emptyOption={AGENT_PROVIDER_EMPTY_OPTION}
+          emptyOption={emptyOption}
           label={label}
           onValueChange={onChange}
           options={options}
@@ -113,11 +136,11 @@ function AgentConfigField({
         </>
       )}
       {error ? (
-        <p className="text-[12px] leading-5 text-danger" role="alert">
+        <p className="text-xs leading-5 text-danger" role="alert">
           {error}
         </p>
       ) : (
-        <p className="text-[12px] leading-5 text-muted">{description}</p>
+        <p className="text-xs leading-5 text-muted">{description}</p>
       )}
     </div>
   );
@@ -129,10 +152,18 @@ export function AgentConfigSection({
   codexConnectFlash,
   extraContent,
   initialAgentConfig,
+  initialClaudeCodeStatus,
+  initialCodexStatus,
+  initialCursorStatus,
+  initialOpenCodeStatus,
   onAgentConfigSaved,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  onCursorStatusChange,
   onOpenCodeStatusChange,
+  sandboxConnectionHref,
+  sandboxConnectionLabel,
+  sandboxConnectionReady,
   setFlashMessage,
   tagline = "Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution.",
   title = "Coding agent",
@@ -143,6 +174,7 @@ export function AgentConfigSection({
   const [drafts, setDrafts] = useState<Record<AgentConfigKey, string>>(() => ({
     agent_provider: agentConfigValueToDraft("agent_provider", initialAgentConfig.agent_provider),
     agent_model: agentConfigValueToDraft("agent_model", initialAgentConfig.agent_model),
+    agent_effort: agentConfigValueToDraft("agent_effort", initialAgentConfig.agent_effort),
     concurrency_limit: agentConfigValueToDraft(
       "concurrency_limit",
       initialAgentConfig.concurrency_limit,
@@ -153,46 +185,55 @@ export function AgentConfigSection({
     ),
     max_retries: agentConfigValueToDraft("max_retries", initialAgentConfig.max_retries),
   }));
-
-  const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown], true>({
-    call: (key, value) =>
-      fetch("/api/agent-config", {
-        body: JSON.stringify({
-          key,
-          value,
-          workspaceId,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      }),
-    errorText: "Agent config save failed.",
-    onSuccess: (payload) => {
-      setAgentConfig((current) => ({ ...current, [payload.entry.key]: payload.entry.value }));
-      onAgentConfigSaved?.(payload.entry);
-      return true;
-    },
-    setFlashMessage,
-    successText: null,
-  });
+  const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
+  const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
+  const [cursorModels, setCursorModels] = useState<SelectOption[]>([]);
+  const [cursorConnected, setCursorConnected] = useState(initialCursorStatus?.connected ?? false);
 
   const selectedAgentProvider: AgentProvider =
     normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
 
-  const fields: FieldDescriptor[] = useMemo(
-    () => [
+  useEffect(() => {
+    if (selectedAgentProvider !== "cursor" || !cursorConnected) return;
+    const controller = new AbortController();
+    void discoverCursorModels(controller.signal)
+      .then(({ connectionStatus, models }) => {
+        setCursorModels(models);
+        if (connectionStatus) {
+          setCursorConnected(connectionStatus.connected);
+          onCursorStatusChange?.(connectionStatus);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [cursorConnected, onCursorStatusChange, selectedAgentProvider]);
+
+  const fields: FieldDescriptor[] = useMemo(() => {
+    const allFields: FieldDescriptor[] = [
       {
         configKey: "agent_provider",
-        description: "Which agent CLI to use for coding tasks.",
-        label: "Agent provider",
+        description: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.description,
+        label: AGENT_CONFIG_VISIBLE_FIELDS.agent_provider.label,
         options: AGENT_PROVIDER_SELECT_OPTIONS,
         type: "select",
       },
       {
         configKey: "agent_model",
-        description: "Model identifier passed to the selected agent provider.",
-        label: "Agent model",
+        description: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.description,
+        label: AGENT_CONFIG_VISIBLE_FIELDS.agent_model.label,
         placeholder: getRecommendedAgentModel(selectedAgentProvider),
-        type: "text",
+        options:
+          selectedAgentProvider === "cursor" && cursorModels.length > 0 ? cursorModels : undefined,
+        type: selectedAgentProvider === "cursor" && cursorModels.length > 0 ? "select" : "text",
+      },
+      {
+        configKey: "agent_effort",
+        description: AGENT_CONFIG_VISIBLE_FIELDS.agent_effort.description,
+        emptyOption: AGENT_EFFORT_EMPTY_OPTION,
+        label: AGENT_CONFIG_VISIBLE_FIELDS.agent_effort.label,
+        options: AGENT_EFFORT_SELECT_OPTIONS,
+        type: "select",
       },
       {
         configKey: "concurrency_limit",
@@ -218,9 +259,13 @@ export function AgentConfigSection({
         placeholder: "3",
         type: "number",
       },
-    ],
-    [selectedAgentProvider],
-  );
+    ];
+
+    return allFields.filter(
+      (field) =>
+        field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedAgentProvider),
+    );
+  }, [cursorModels, selectedAgentProvider]);
 
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];
@@ -230,49 +275,111 @@ export function AgentConfigSection({
     const validation = draftIsEmpty
       ? null
       : parseAgentConfigDraft(field.configKey, field.type, draft);
-    const validationError = validation && !validation.ok ? validation.error : null;
+    const validationError =
+      (isDirty && draftIsEmpty
+        ? `${field.label} is required.`
+        : validation && !validation.ok
+          ? validation.error
+          : null) ??
+      serverFieldErrors[field.configKey] ??
+      null;
     return { field, draft, isDirty, validation, validationError };
   });
   const providerFieldStatuses = fieldStatuses.filter(
     (status) =>
-      status.field.configKey === "agent_provider" || status.field.configKey === "agent_model",
+      status.field.configKey === "agent_provider" ||
+      status.field.configKey === "agent_model" ||
+      status.field.configKey === "agent_effort",
   );
   const executionFieldStatuses = fieldStatuses.filter(
     (status) =>
-      status.field.configKey !== "agent_provider" && status.field.configKey !== "agent_model",
+      status.field.configKey !== "agent_provider" &&
+      status.field.configKey !== "agent_model" &&
+      status.field.configKey !== "agent_effort",
   );
 
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
-  const canSave = !saveAgentConfig.isBusy && saveableFields.length > 0 && !hasErrors;
+  const canSave = !isSaving && saveableFields.length > 0 && !hasErrors;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
+    setServerFieldErrors((current) => {
+      if (!current[key]) return current;
+      const nextErrors = { ...current };
+      delete nextErrors[key];
+      return nextErrors;
+    });
   }
 
   async function handleSaveAll() {
-    if (saveableFields.length === 0) return;
+    if (saveInFlightRef.current || saveableFields.length === 0) return;
+    saveInFlightRef.current = true;
+    setIsSaving(true);
+    setServerFieldErrors({});
 
-    let successCount = 0;
+    const config: BatchUpsertAgentConfigRequest["config"] = {};
     for (const status of saveableFields) {
-      if (!status.validation || !status.validation.ok) continue;
-      const result = await saveAgentConfig.run(status.field.configKey, status.validation.value);
-      if (result === true) successCount++;
+      if (status.validation?.ok) {
+        config[status.field.configKey] = status.validation.value;
+      }
+    }
+    const pendingProvider = pendingAgentProviderPersistValue(
+      agentConfig.agent_provider,
+      drafts.agent_provider,
+    );
+    if (pendingProvider !== undefined) {
+      config.agent_provider = pendingProvider;
     }
 
-    if (successCount === saveableFields.length) {
+    try {
+      const response = await fetch("/api/agent-config", {
+        body: JSON.stringify({ config, workspaceId } satisfies BatchUpsertAgentConfigRequest),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | BatchUpsertAgentConfigErrorResponse
+        | BatchUpsertAgentConfigResponse
+        | null;
+      if (!response.ok || !payload || !("entries" in payload)) {
+        if (payload && "fieldErrors" in payload) {
+          setServerFieldErrors(payload.fieldErrors ?? {});
+        }
+        throw new Error(
+          payload && "error" in payload ? payload.error : "Agent config save failed.",
+        );
+      }
+
+      setAgentConfig((current) => {
+        const next = { ...current };
+        for (const entry of payload.entries) {
+          next[entry.key] = entry.value;
+        }
+        return next;
+      });
+      setDrafts((current) => {
+        const next = { ...current };
+        for (const entry of payload.entries) {
+          next[entry.key] = agentConfigValueToDraft(entry.key, entry.value);
+        }
+        return next;
+      });
+      onAgentConfigSaved?.(payload.entries);
       setFlashMessage({
         kind: "success",
         text: "Saved.",
       });
-    } else if (successCount > 0) {
+    } catch (error) {
       setFlashMessage({
         kind: "error",
-        text: `Saved ${successCount} of ${saveableFields.length} agent settings — see errors above.`,
+        text: error instanceof Error ? error.message : "Agent config save failed.",
       });
+    } finally {
+      saveInFlightRef.current = false;
+      setIsSaving(false);
     }
-    // If successCount === 0, useApiAction already surfaced the per-call error flash.
   }
 
   return (
@@ -284,8 +391,9 @@ export function AgentConfigSection({
               <AgentConfigField
                 key={status.field.configKey}
                 description={status.field.description}
-                disabled={saveAgentConfig.isBusy}
+                disabled={isSaving}
                 draft={status.draft}
+                emptyOption={status.field.emptyOption}
                 error={status.validationError}
                 label={status.field.label}
                 onChange={(next) => handleFieldChange(status.field.configKey, next)}
@@ -298,10 +406,21 @@ export function AgentConfigSection({
 
           <ProviderAccessPanel
             connectFlash={codexConnectFlash}
+            initialClaudeCodeStatus={initialClaudeCodeStatus}
+            initialCodexStatus={initialCodexStatus}
+            initialCursorStatus={initialCursorStatus}
+            initialOpenCodeStatus={initialOpenCodeStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
+            onCursorStatusChange={(status) => {
+              setCursorConnected(status.connected);
+              onCursorStatusChange?.(status);
+            }}
             onOpenCodeStatusChange={onOpenCodeStatusChange}
             provider={selectedAgentProvider}
+            sandboxConnectionHref={sandboxConnectionHref}
+            sandboxConnectionLabel={sandboxConnectionLabel}
+            sandboxConnectionReady={sandboxConnectionReady}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
           />
@@ -311,8 +430,9 @@ export function AgentConfigSection({
               <AgentConfigField
                 key={status.field.configKey}
                 description={status.field.description}
-                disabled={saveAgentConfig.isBusy}
+                disabled={isSaving}
                 draft={status.draft}
+                emptyOption={status.field.emptyOption}
                 error={status.validationError}
                 label={status.field.label}
                 onChange={(next) => handleFieldChange(status.field.configKey, next)}
@@ -324,7 +444,7 @@ export function AgentConfigSection({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-            <p className="text-[12px] text-muted">
+            <p className="text-xs text-muted">
               {dirtyFields.length === 0
                 ? "No unsaved changes."
                 : `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}.`}
@@ -335,7 +455,7 @@ export function AgentConfigSection({
               onClick={() => void handleSaveAll()}
               type="button"
             >
-              {saveAgentConfig.isBusy ? "Saving…" : "Save changes"}
+              <ActionButtonLabel idle="Save changes" pending={isSaving} pendingLabel="Saving…" />
             </button>
           </div>
 
@@ -348,10 +468,21 @@ export function AgentConfigSection({
           </p>
           <ProviderAccessPanel
             connectFlash={codexConnectFlash}
+            initialClaudeCodeStatus={initialClaudeCodeStatus}
+            initialCodexStatus={initialCodexStatus}
+            initialCursorStatus={initialCursorStatus}
+            initialOpenCodeStatus={initialOpenCodeStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
+            onCursorStatusChange={(status) => {
+              setCursorConnected(status.connected);
+              onCursorStatusChange?.(status);
+            }}
             onOpenCodeStatusChange={onOpenCodeStatusChange}
             provider={selectedAgentProvider}
+            sandboxConnectionHref={sandboxConnectionHref}
+            sandboxConnectionLabel={sandboxConnectionLabel}
+            sandboxConnectionReady={sandboxConnectionReady}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
           />

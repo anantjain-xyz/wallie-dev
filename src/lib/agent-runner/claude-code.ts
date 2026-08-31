@@ -1,14 +1,18 @@
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
+import type { AgentEffort } from "@/lib/agent-config/contracts";
+import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 
 export interface ClaudeCodeRunnerOptions {
   /** User-supplied Anthropic API key resolved by getClaudeCodeCredentialForUser. */
   credential: ClaudeCodeCredential;
-  /** Model identifier or Claude Code alias, e.g. "claude-opus-4-7[1m]". */
+  /** Model identifier or Claude Code alias, e.g. "claude-opus-4-8[1m]". */
   model?: string;
+  /** Reasoning effort passed to Claude Code. */
+  effort?: AgentEffort;
 }
 
 /**
@@ -41,12 +45,20 @@ export class ClaudeCodeRunner implements AgentRunner {
     await sandbox.writeFile(promptFile, input.prompt);
 
     const model = this.options.model ?? DEFAULT_CLAUDE_CODE_MODEL;
+    const effort = this.options.effort ?? DEFAULT_CLAUDE_CODE_EFFORT;
     const cliArgs = [
       "--print",
       "--model",
       model,
       "--effort",
-      DEFAULT_CLAUDE_CODE_EFFORT,
+      effort,
+      "--bare",
+      "--add-dir",
+      sandbox.repoPath,
+      "--no-chrome",
+      "--strict-mcp-config",
+      "--mcp-config",
+      '{"mcpServers":{}}',
       "--permission-mode",
       "bypassPermissions",
       "--output-format",
@@ -63,7 +75,11 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { ANTHROPIC_API_KEY: this.options.credential.secret, CI: "1" },
+      env: {
+        ANTHROPIC_API_KEY: this.options.credential.secret,
+        CI: "1",
+        ...WALLIE_GIT_IDENTITY_ENV,
+      },
       signal: input.signal,
     });
 
