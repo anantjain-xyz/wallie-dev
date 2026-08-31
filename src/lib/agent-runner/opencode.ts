@@ -60,7 +60,7 @@ export class OpenCodeRunner implements AgentRunner {
     ]);
 
     const model = this.options.model ?? DEFAULT_OPENCODE_MODEL;
-    const cliArgs = ["run", "--format", "json", "--model", model, "--auto"];
+    const cliArgs = ["run", "--format", "json", "--model", model];
     if (input.continueSessionId) {
       cliArgs.push("--session", input.continueSessionId);
     }
@@ -81,7 +81,7 @@ export class OpenCodeRunner implements AgentRunner {
     let hasUsage = false;
 
     const handleLine = (line: string): AgentEvent[] => {
-      const parsed = parseOpenCodeLine(line);
+      const parsed = parseOpenCodeLine(line, secrets);
       if (!parsed) return [];
       if (parsed.sessionId) lastSessionId = parsed.sessionId;
       if (parsed.usage) {
@@ -160,7 +160,21 @@ export class OpenCodeRunner implements AgentRunner {
   }
 }
 
-export function parseOpenCodeLine(line: string): ParsedOpenCodeLine | null {
+const MAX_TOOL_INPUT_CHARS = 4096;
+const MAX_TOOL_TEXT_CHARS = 500;
+const BULKY_TOOL_FIELDS = new Set([
+  "afterFullFileContent",
+  "content",
+  "diffString",
+  "directoryTreeRoot",
+  "fileText",
+  "parsingResult",
+]);
+
+export function parseOpenCodeLine(
+  line: string,
+  secrets: Array<string | undefined> = [],
+): ParsedOpenCodeLine | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
@@ -208,7 +222,7 @@ export function parseOpenCodeLine(line: string): ParsedOpenCodeLine | null {
         {
           type: "tool_use",
           tool: typeof toolPart.tool === "string" ? toolPart.tool : "unknown",
-          input: typeof input === "string" ? input : JSON.stringify(input ?? {}),
+          input: serializeToolInput(input, secrets),
         },
       ],
       sessionId,
@@ -257,6 +271,37 @@ function openCodeErrorMessage(error: unknown): string {
 
 function finiteNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function serializeToolInput(input: unknown, secrets: Array<string | undefined>): string {
+  const compactInput = compactToolValue(input ?? {}, secrets);
+  const json = redactSecrets(
+    typeof compactInput === "string" ? compactInput : JSON.stringify(compactInput),
+    secrets,
+  );
+  if (json.length <= MAX_TOOL_INPUT_CHARS) return json;
+  return `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`;
+}
+
+function compactToolValue(value: unknown, secrets: Array<string | undefined>, depth = 0): unknown {
+  if (typeof value === "string") return truncateToolText(redactSecrets(value, secrets));
+  if (Array.isArray(value)) {
+    if (depth > 4) return value;
+    return value.slice(0, 20).map((item) => compactToolValue(item, secrets, depth + 1));
+  }
+  if (!isRecord(value) || depth > 4) return value;
+
+  const compacted: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (BULKY_TOOL_FIELDS.has(key)) continue;
+    compacted[key] = compactToolValue(nested, secrets, depth + 1);
+  }
+  return compacted;
+}
+
+function truncateToolText(value: string): string {
+  if (value.length <= MAX_TOOL_TEXT_CHARS) return value;
+  return `${value.slice(0, MAX_TOOL_TEXT_CHARS)}…`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

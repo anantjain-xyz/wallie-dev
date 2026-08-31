@@ -80,8 +80,9 @@ describe("OpenCodeRunner", () => {
     const [call] = sandbox.calls;
     expect(call.cmd).toBe("bash");
     expect(call.args[1]).toContain(
-      "opencode 'run' '--format' 'json' '--model' 'opencode/gpt-5.6-sol' '--auto'",
+      "opencode 'run' '--format' 'json' '--model' 'opencode/gpt-5.6-sol'",
     );
+    expect(call.args[1]).not.toContain("'--auto'");
     expect(call.args[1]).toContain("'--session' 'native-previous'");
     expect(call.args[1]).toContain(`< '${promptPath}'`);
     expect(call.args.join(" ")).not.toContain(credential.secret);
@@ -106,6 +107,58 @@ describe("OpenCodeRunner", () => {
       events: [{ type: "tool_use", tool: "read", input: `{"path":"x"}` }],
       sessionId: undefined,
     });
+  });
+
+  it("compacts bulky tool input before emitting it", () => {
+    const secret = "tool-input-secret";
+    const parsed = parseOpenCodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        part: {
+          tool: "write",
+          state: {
+            status: "completed",
+            input: {
+              content: `${secret}${"x".repeat(20_000)}`,
+              note: `${secret}${"y".repeat(20_000)}`,
+              path: "src/large.ts",
+            },
+          },
+        },
+      }),
+      [secret],
+    );
+
+    expect(parsed?.events).toEqual([
+      {
+        type: "tool_use",
+        tool: "write",
+        input: JSON.stringify({
+          note: `[REDACTED]${"y".repeat(490)}…`,
+          path: "src/large.ts",
+        }),
+      },
+    ]);
+    expect(JSON.stringify(parsed)).not.toContain(secret);
+    expect(JSON.stringify(parsed)).not.toContain("x".repeat(100));
+
+    const bounded = parseOpenCodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        part: {
+          tool: "custom",
+          state: {
+            status: "completed",
+            input: Object.fromEntries(
+              Array.from({ length: 20 }, (_, index) => [`field${index}`, "z".repeat(2_000)]),
+            ),
+          },
+        },
+      }),
+    );
+    const boundedInput = (bounded?.events[0] as { input: string }).input;
+    expect(boundedInput.length).toBeLessThanOrEqual(4_096);
+    expect(boundedInput.endsWith("…[truncated]")).toBe(true);
   });
 
   it("emits a useful clipped non-zero error without exposing the credential", async () => {
