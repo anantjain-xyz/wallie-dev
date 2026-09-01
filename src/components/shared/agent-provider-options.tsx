@@ -139,16 +139,12 @@ function OpenCodeLogoIcon({ className, ...props }: IconProps) {
       aria-hidden="true"
       className={cn("h-4 w-4 shrink-0", className)}
       fill="none"
-      viewBox="0 0 24 24"
+      viewBox="0 0 240 300"
       {...props}
     >
-      <path
-        d="M5 4.5h14v15H5zM8 8l3 4-3 4m5 0h3"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
+      {/* Official OpenCode mark from opencode.ai/brand */}
+      <path className="fill-[#CFCECD] dark:fill-[#4B4646]" d="M180 240H60V120H180V240Z" />
+      <path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="currentColor" />
     </svg>
   );
 }
