@@ -131,7 +131,7 @@ export function buildRuntimeReadiness(input: {
             ? 'Model must start with "claude-" for Claude Code.'
             : provider === "cursor"
               ? "Select a model returned by your Cursor account."
-              : 'Model must use a lowercase "opencode/<model-id>" identifier.',
+              : 'Model must use a lowercase "<provider-id>/<model-id>" identifier.',
     });
   }
 
