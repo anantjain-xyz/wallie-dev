@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(17);
+select plan(18);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_table(
@@ -133,6 +133,15 @@ select lives_ok(
   $$,
   'workspace agent config accepts custom opencode provider ids'
 );
+select lives_ok(
+  $$
+    update public.workspace_agent_config
+    set value_json = '"openrouter/anthropic/claude-sonnet-4"'::jsonb
+    where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+      and key = 'agent_model'
+  $$,
+  'workspace agent config accepts model ids with slashes after the provider'
+);
 select throws_ok(
   $$
     update public.workspace_agent_config
@@ -147,13 +156,13 @@ select throws_ok(
 select throws_ok(
   $$
     update public.workspace_agent_config
-    set value_json = '"opencode-go/glm-5.3/x"'::jsonb
+    set value_json = '"opencode-go/glm-5.3/"'::jsonb
     where workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
       and key = 'agent_model'
   $$,
   '23514',
   null,
-  'workspace agent config rejects provider/model ids with more than one slash'
+  'workspace agent config rejects provider/model ids with empty segments'
 );
 
 select * from finish();

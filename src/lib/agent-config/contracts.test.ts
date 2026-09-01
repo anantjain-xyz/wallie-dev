@@ -296,6 +296,10 @@ describe("parseAgentConfigValue — agent_model", () => {
       ok: true,
       value: "anthropic/claude-sonnet-4-5",
     });
+    expect(parseAgentConfigValue("agent_model", "openrouter/anthropic/claude-sonnet-4")).toEqual({
+      ok: true,
+      value: "openrouter/anthropic/claude-sonnet-4",
+    });
     expect(parseAgentConfigValue("agent_model", "OpenCode/gpt-5.6-sol")).toEqual({
       ok: false,
       error: expect.stringContaining("lowercase"),
@@ -304,7 +308,11 @@ describe("parseAgentConfigValue — agent_model", () => {
       ok: false,
       error: expect.any(String),
     });
-    expect(parseAgentConfigValue("agent_model", "opencode-go/glm-5.3/x")).toEqual({
+    expect(parseAgentConfigValue("agent_model", "opencode-go/glm-5.3/")).toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(parseAgentConfigValue("agent_model", "opencode-go//glm-5.3")).toEqual({
       ok: false,
       error: expect.any(String),
     });
@@ -394,9 +402,10 @@ describe("modelMatchesProvider", () => {
     expect(modelMatchesProvider("opencode", "opencode/gpt-5.6-sol")).toBe(true);
     expect(modelMatchesProvider("opencode", "opencode-go/glm-5.3")).toBe(true);
     expect(modelMatchesProvider("opencode", "anthropic/claude-sonnet-4-5")).toBe(true);
+    expect(modelMatchesProvider("opencode", "openrouter/anthropic/claude-sonnet-4")).toBe(true);
     expect(modelMatchesProvider("opencode", "gpt-5.6-sol")).toBe(false);
     expect(modelMatchesProvider("opencode", "OpenCode/gpt-5.6-sol")).toBe(false);
-    expect(modelMatchesProvider("opencode", "opencode-go/glm-5.3/x")).toBe(false);
+    expect(modelMatchesProvider("opencode", "opencode-go/glm-5.3/")).toBe(false);
     expect(modelMatchesProvider("claude-code", "anthropic/claude-sonnet-4-5")).toBe(false);
   });
 });

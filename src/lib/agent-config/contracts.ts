@@ -134,7 +134,6 @@ const CURSOR_MODEL_PREFIXES = [
   "o3",
   "o4",
 ] as const;
-const OPENCODE_PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 const AGENT_MODEL_FAMILY_HINT = `${CLAUDE_MODEL_PREFIX}, ${CODEX_MODEL_PREFIXES.join(", ")}, composer-, auto, or a lowercase <provider-id>/<model-id> for OpenCode`;
 const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
@@ -241,16 +240,20 @@ function modelMatchesAnyProvider(model: string): boolean {
 /**
  * OpenCode model ids are `<provider-id>/<model-id>` where the provider id is
  * whatever the user configured in their opencode.json (e.g. `opencode-go`,
- * `anthropic`), so both segments only need the same lowercase slug syntax.
- * Exactly one slash; brackets stay Claude-only.
+ * `openrouter`). OpenCode splits the reference at the first slash, so the
+ * model-id remainder may itself contain slashes (e.g.
+ * `openrouter/anthropic/claude-sonnet-4`); every segment just needs the same
+ * lowercase slug syntax. Brackets stay Claude-only.
  */
 function parseOpenCodeModelId(model: string): { providerId: string; modelId: string } | null {
   const slashIndex = model.indexOf("/");
-  if (slashIndex <= 0 || model.indexOf("/", slashIndex + 1) !== -1) return null;
+  if (slashIndex <= 0) return null;
   const providerId = model.slice(0, slashIndex);
   const modelId = model.slice(slashIndex + 1);
-  if (!OPENCODE_PROVIDER_ID_PATTERN.test(providerId)) return null;
-  if (!AGENT_MODEL_BODY_PATTERN.test(modelId)) return null;
+  if (!AGENT_MODEL_BODY_PATTERN.test(providerId)) return null;
+  if (modelId.split("/").some((segment) => !AGENT_MODEL_BODY_PATTERN.test(segment))) {
+    return null;
+  }
   return { providerId, modelId };
 }
 
