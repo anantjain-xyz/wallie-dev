@@ -22,29 +22,31 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
       }),
     );
 
-    const { data: onboardingRow, error: onboardingError } = await timing.segment(
-      "workspace-onboarding",
-      () =>
-        supabase
-          .from("workspace_onboarding")
-          .select("current_step, status")
-          .eq("workspace_id", workspace.id)
-          .maybeSingle(),
-      (result) => ({
-        payloadBytes: approximatePayloadSizeBytes(result.data),
-        rows: result.data ? 1 : 0,
-      }),
-    );
+    const [onboardingResult, viewerProfile] = await Promise.all([
+      timing.segment(
+        "workspace-onboarding",
+        () =>
+          supabase
+            .from("workspace_onboarding")
+            .select("current_step, status")
+            .eq("workspace_id", workspace.id)
+            .maybeSingle(),
+        (result) => ({
+          payloadBytes: approximatePayloadSizeBytes(result.data),
+          rows: result.data ? 1 : 0,
+        }),
+      ),
+      timing.segment(
+        "viewer-profile",
+        () => loadOwnProfileDisplay(supabase, user.id),
+        (profile) => ({
+          payloadBytes: approximatePayloadSizeBytes(profile),
+          rows: profile.found ? 1 : 0,
+        }),
+      ),
+    ]);
+    const { data: onboardingRow, error: onboardingError } = onboardingResult;
     if (onboardingError) throw onboardingError;
-
-    const viewerProfile = await timing.segment(
-      "viewer-profile",
-      () => loadOwnProfileDisplay(supabase, user.id),
-      (profile) => ({
-        payloadBytes: approximatePayloadSizeBytes(profile),
-        rows: 1,
-      }),
-    );
 
     return {
       onboarding: mapOnboardingResumeState(onboardingRow),

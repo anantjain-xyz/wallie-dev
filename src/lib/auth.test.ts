@@ -83,6 +83,7 @@ describe("auth helpers", () => {
 
     await expect(loadOwnProfileDisplay({ from } as never, "user-1")).resolves.toEqual({
       avatarUrl: "https://cdn.example.com/ada.png",
+      found: true,
     });
     expect(from).toHaveBeenCalledWith("profiles");
     expect(select).toHaveBeenCalledWith("avatar_url");
@@ -101,6 +102,26 @@ describe("auth helpers", () => {
 
     await expect(loadOwnProfileDisplay(supabase as never, "user-1")).resolves.toEqual({
       avatarUrl: null,
+      found: false,
+    });
+  });
+
+  it("keeps found true when the profile row exists without a photo", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { avatar_url: null },
+      error: null,
+    });
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({ maybeSingle }),
+        }),
+      }),
+    };
+
+    await expect(loadOwnProfileDisplay(supabase as never, "user-1")).resolves.toEqual({
+      avatarUrl: null,
+      found: true,
     });
   });
 

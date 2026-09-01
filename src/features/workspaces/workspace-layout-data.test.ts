@@ -88,8 +88,8 @@ describe("loadWorkspaceLayoutContext", () => {
       workspaceAvatarUrl: null,
     });
     expect(supabase.from).toHaveBeenCalledTimes(2);
-    expect(supabase.from).toHaveBeenNthCalledWith(1, "workspace_onboarding");
-    expect(supabase.from).toHaveBeenNthCalledWith(2, "profiles");
+    expect(supabase.from).toHaveBeenCalledWith("workspace_onboarding");
+    expect(supabase.from).toHaveBeenCalledWith("profiles");
   });
 
   it("returns the signed-in user's profile photo from profiles", async () => {
@@ -135,14 +135,47 @@ describe("loadWorkspaceLayoutContext", () => {
 
     const timingPayload = timingLog.mock.calls.find(
       (call) => call[0] === "[server-timing]",
-    )?.[1] as { segments?: Array<{ name: string }> } | undefined;
-    expect(timingPayload?.segments?.map((segment) => segment.name)).toEqual([
-      "auth-workspace-context",
-      "workspace-onboarding",
-      "viewer-profile",
-    ]);
+    )?.[1] as
+      | {
+          segments?: Array<{ metadata?: { rows?: number }; name: string }>;
+        }
+      | undefined;
+    const segmentNames = timingPayload?.segments?.map((segment) => segment.name) ?? [];
+    expect(segmentNames[0]).toBe("auth-workspace-context");
+    expect([...segmentNames.slice(1)].sort()).toEqual(["viewer-profile", "workspace-onboarding"]);
     expect(timingPayload?.segments).not.toContainEqual(
       expect.objectContaining({ name: "default-session-repository" }),
     );
+    expect(
+      timingPayload?.segments?.find((segment) => segment.name === "viewer-profile")?.metadata,
+    ).toMatchObject({ rows: 1 });
+  });
+
+  it("reports zero viewer-profile rows when the signed-in user has no profile", async () => {
+    const supabase = buildSupabaseMock(
+      {
+        current_step: "github",
+        status: "dismissed",
+      },
+      null,
+    );
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    vi.stubEnv("WALLIE_TIMING_LOGS", "1");
+    const timingLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await expect(loadWorkspaceLayoutContext("missing-profile")).resolves.toMatchObject({
+      viewerAvatarUrl: null,
+    });
+
+    const timingPayload = timingLog.mock.calls.find(
+      (call) => call[0] === "[server-timing]",
+    )?.[1] as
+      | {
+          segments?: Array<{ metadata?: { rows?: number }; name: string }>;
+        }
+      | undefined;
+    expect(
+      timingPayload?.segments?.find((segment) => segment.name === "viewer-profile")?.metadata,
+    ).toMatchObject({ rows: 0 });
   });
 });

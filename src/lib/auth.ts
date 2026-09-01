@@ -79,6 +79,7 @@ export async function loadOwnProfileDisplay(supabase: SupabaseServerClient, user
 
   return {
     avatarUrl: data?.avatar_url ?? null,
+    found: data !== null,
   };
 }
 
