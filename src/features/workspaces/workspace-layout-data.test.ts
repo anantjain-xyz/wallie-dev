@@ -30,6 +30,7 @@ function buildSupabaseMock(
     current_step: "github",
     status: "dismissed",
   },
+  profileRow: { avatar_url: string | null } | null = { avatar_url: null },
 ) {
   return {
     from: vi.fn((table: string) => {
@@ -38,6 +39,16 @@ function buildSupabaseMock(
           select: () => ({
             eq: () => ({
               maybeSingle: async () => ({ data: onboardingRow, error: null }),
+            }),
+          }),
+        };
+      }
+
+      if (table === "profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: profileRow, error: null }),
             }),
           }),
         };
@@ -72,11 +83,31 @@ describe("loadWorkspaceLayoutContext", () => {
       },
       supabase,
       user,
+      viewerAvatarUrl: null,
       workspace,
       workspaceAvatarUrl: null,
     });
-    expect(supabase.from).toHaveBeenCalledTimes(1);
-    expect(supabase.from).toHaveBeenCalledWith("workspace_onboarding");
+    expect(supabase.from).toHaveBeenCalledTimes(2);
+    expect(supabase.from).toHaveBeenNthCalledWith(1, "workspace_onboarding");
+    expect(supabase.from).toHaveBeenNthCalledWith(2, "profiles");
+  });
+
+  it("returns the signed-in user's profile photo from profiles", async () => {
+    const supabase = buildSupabaseMock(
+      {
+        current_step: "github",
+        status: "dismissed",
+      },
+      { avatar_url: "https://cdn.example.com/owner.png" },
+    );
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      supabase,
+      user,
+      workspace,
+    });
+    await expect(loadWorkspaceLayoutContext("member-access")).resolves.toMatchObject({
+      viewerAvatarUrl: "https://cdn.example.com/owner.png",
+    });
   });
 
   it("treats a missing onboarding row as setup-required state", async () => {
@@ -108,6 +139,7 @@ describe("loadWorkspaceLayoutContext", () => {
     expect(timingPayload?.segments?.map((segment) => segment.name)).toEqual([
       "auth-workspace-context",
       "workspace-onboarding",
+      "viewer-profile",
     ]);
     expect(timingPayload?.segments).not.toContainEqual(
       expect.objectContaining({ name: "default-session-repository" }),

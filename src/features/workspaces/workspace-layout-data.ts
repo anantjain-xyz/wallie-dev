@@ -3,9 +3,10 @@ import "server-only";
 import { cache } from "react";
 
 import { mapOnboardingResumeState } from "@/features/onboarding/flow";
-import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
-import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import { loadOwnProfileDisplay } from "@/lib/auth";
+import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
+import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 
 export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) => {
   return withServerTiming("workspace.layout", { workspaceSlug }, async (timing) => {
@@ -36,10 +37,20 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
     );
     if (onboardingError) throw onboardingError;
 
+    const viewerProfile = await timing.segment(
+      "viewer-profile",
+      () => loadOwnProfileDisplay(supabase, user.id),
+      (profile) => ({
+        payloadBytes: approximatePayloadSizeBytes(profile),
+        rows: 1,
+      }),
+    );
+
     return {
       onboarding: mapOnboardingResumeState(onboardingRow),
       supabase,
       user,
+      viewerAvatarUrl: viewerProfile.avatarUrl,
       workspace,
       workspaceAvatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),
     };
