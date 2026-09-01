@@ -42,6 +42,7 @@ type ShellHeaderProps = {
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
+  viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
   workspace: WorkspaceSummary;
@@ -165,6 +166,7 @@ export function ShellHeader({
   navItems,
   onboarding,
   pathnameOverride,
+  viewerAvatarUrl,
   viewerEmail,
   viewerId,
   workspace,
@@ -368,7 +370,7 @@ export function ShellHeader({
               <div className="flex shrink-0 items-center gap-1.5">
                 {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
                 <ThemeToggle />
-                <AccountMenu email={viewerEmail} />
+                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
               </div>
             </div>
 
@@ -380,7 +382,7 @@ export function ShellHeader({
               <div className="flex shrink-0 items-center gap-2">
                 {renderPrimaryAction(createButtonRef)}
                 <ThemeToggle />
-                <AccountMenu email={viewerEmail} />
+                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
               </div>
             </div>
           </header>
