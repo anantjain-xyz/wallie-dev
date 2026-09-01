@@ -13,7 +13,7 @@ type BrandName =
 
 const MOCKUP_GRID_CLASS = "grid grid-cols-2 gap-2 sm:grid-cols-4";
 const MOCKUP_TILE_CLASS =
-  "flex h-full min-h-12 w-full min-w-0 items-center gap-2 rounded-[6px] border border-border/50 bg-canvas px-2.5 py-2.5";
+  "flex h-full min-h-[3.625rem] w-full min-w-0 items-center gap-2 rounded-[6px] border border-border/50 bg-canvas px-2.5 py-2.5";
 const PIPELINE_STAGES = ["Plan", "Design", "Build", "Land"] as const;
 
 function BrandGlyph({ brand }: { brand: BrandName }) {
