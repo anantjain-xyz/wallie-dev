@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
@@ -70,6 +71,7 @@ export function WorkspaceMembersSection({
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 }) {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [members, setMembers] = useState(workspaceMembers);
@@ -228,6 +230,7 @@ export function WorkspaceMembersSection({
         kind: "success",
         text: "Your profile was updated across all workspaces.",
       });
+      router.refresh();
     } catch (error) {
       setProfileError(
         error instanceof Error ? error.message : "Wallie could not update your profile.",
