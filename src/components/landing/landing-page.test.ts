@@ -59,4 +59,21 @@ describe("LandingPage", () => {
     expect(html).toContain("Land");
     expect(html).not.toContain("<script");
   });
+
+  it("uses OpenCode's official rectangular O mark in the mockup", () => {
+    const html = renderToStaticMarkup(createElement(StackWorkflowMockup));
+
+    expect(html).toContain('viewBox="0 0 240 300"');
+    expect(html).toContain("M180 60H60V240H180V60ZM240 300H0V0H240V300Z");
+    expect(html).not.toContain("M5 4.5h14v15H5z");
+  });
+
+  it("sizes agent, sandbox, and pipeline tiles on the same grid", () => {
+    const html = renderToStaticMarkup(createElement(StackWorkflowMockup));
+    const gridClass = "grid grid-cols-2 gap-2 sm:grid-cols-4";
+
+    expect(html.split(gridClass).length - 1).toBe(3);
+    expect(html).not.toContain("grid-cols-3");
+    expect(html).not.toContain("flex-1 rounded-[5px]");
+  });
 });
