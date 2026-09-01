@@ -49,7 +49,11 @@ import type {
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
-import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
+import {
+  OPENCODE_ZEN_PROVIDER_ID,
+  normalizeAgentProviderName,
+  parseOpenCodeModelId,
+} from "@/lib/agent-config/contracts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
@@ -103,6 +107,31 @@ function presenceBadge(configured: boolean) {
   return configured
     ? { tone: "success" as const, value: "Saved" }
     : { tone: "warning" as const, value: "Missing" };
+}
+
+function openCodeAccessSummary(health: OnboardingSetupHealth) {
+  const model =
+    typeof health.agentConfig.values.agent_model === "string"
+      ? health.agentConfig.values.agent_model
+      : "";
+  const providerId = parseOpenCodeModelId(model)?.providerId ?? OPENCODE_ZEN_PROVIDER_ID;
+  if (providerId === OPENCODE_ZEN_PROVIDER_ID) {
+    return {
+      connected: health.openCodeConnection.connected,
+      credentialLabel: health.openCodeConnection.connected ? "OpenCode Zen API key" : null,
+      expired: false,
+      updatedAt: health.openCodeConnection.updatedAt,
+    };
+  }
+  const provider = health.openCodeConnection.providers.find(
+    (item) => item.providerId === providerId,
+  );
+  return {
+    connected: Boolean(provider),
+    credentialLabel: provider ? `OpenCode ${providerId} API key` : null,
+    expired: false,
+    updatedAt: provider?.updatedAt ?? null,
+  };
 }
 
 function applyGithubHealth(
@@ -203,12 +232,7 @@ export function setupHealthItems(
             updatedAt: health.cursorConnection?.updatedAt ?? null,
           }
         : selectedProvider === "opencode"
-          ? {
-              connected: health.openCodeConnection.connected,
-              credentialLabel: health.openCodeConnection.connected ? "OpenCode Zen API key" : null,
-              expired: false,
-              updatedAt: health.openCodeConnection.updatedAt,
-            }
+          ? openCodeAccessSummary(health)
           : {
               connected: health.codexConnection.connected,
               credentialLabel: health.codexConnection.credentialType

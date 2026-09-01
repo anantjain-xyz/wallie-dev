@@ -102,6 +102,7 @@ const onboardingData = {
     openCodeConnection: {
       checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
+      providers: [],
       status: "missing",
       updatedAt: null,
     },

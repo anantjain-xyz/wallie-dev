@@ -2,12 +2,14 @@ import {
   type AgentConfigKey,
   type AgentProvider,
   ALLOWED_AGENT_CONFIG_KEYS,
+  OPENCODE_ZEN_PROVIDER_ID,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   getRecommendedAgentConfigDefault,
   isAgentConfigKey,
   modelMatchesProvider,
   normalizeAgentProviderName,
   parseAgentConfigValue,
+  parseOpenCodeModelId,
 } from "@/lib/agent-config/contracts";
 import { isMissingOrEmptyAgentProvider } from "@/lib/agent-config/drafts";
 import { canSkipOnboardingStep } from "@/features/onboarding/flow";
@@ -205,17 +207,28 @@ export function buildRuntimeReadiness(input: {
         step: "runtime",
       });
       break;
-    case "opencode":
+    case "opencode": {
+      const parsedModel = parseOpenCodeModelId(model);
+      const providerId = parsedModel?.providerId ?? OPENCODE_ZEN_PROVIDER_ID;
+      const isZen = providerId === OPENCODE_ZEN_PROVIDER_ID;
+      const hasProviderKey = isZen
+        ? input.openCodeConnection.connected
+        : (input.openCodeConnection.providers ?? []).some((item) => item.providerId === providerId);
       requirements.push({
-        detail: input.openCodeConnection.connected
-          ? "Current user has a connected OpenCode Zen API key."
-          : "Connect the current user's OpenCode Zen API key.",
-        id: "opencode-connection",
-        label: "OpenCode Zen API key",
-        passed: input.openCodeConnection.connected,
+        detail: hasProviderKey
+          ? isZen
+            ? "Current user has a connected OpenCode Zen API key."
+            : `Current user has a connected API key for OpenCode provider "${providerId}".`
+          : isZen
+            ? "Connect the current user's OpenCode Zen API key."
+            : `Add an API key for OpenCode provider "${providerId}" in Settings.`,
+        id: isZen ? "opencode-connection" : "opencode-provider-connection",
+        label: isZen ? "OpenCode Zen API key" : `OpenCode ${providerId} API key`,
+        passed: hasProviderKey,
         step: "runtime",
       });
       break;
+    }
   }
 
   return {

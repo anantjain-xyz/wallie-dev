@@ -138,6 +138,9 @@ const AGENT_MODEL_FAMILY_HINT = `${CLAUDE_MODEL_PREFIX}, ${CODEX_MODEL_PREFIXES.
 const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
+/** Reserved OpenCode Zen provider id. Custom provider credentials must not use this slug. */
+export const OPENCODE_ZEN_PROVIDER_ID = "opencode";
+
 const intInRange = (label: string, min: number, max: number) =>
   z
     .number({
@@ -245,16 +248,50 @@ function modelMatchesAnyProvider(model: string): boolean {
  * `openrouter/anthropic/claude-sonnet-4`); every segment just needs the same
  * lowercase slug syntax. Brackets stay Claude-only.
  */
-function parseOpenCodeModelId(model: string): { providerId: string; modelId: string } | null {
-  const slashIndex = model.indexOf("/");
+export function parseOpenCodeModelId(
+  model: string,
+): { providerId: string; modelId: string } | null {
+  const trimmed = model.trim();
+  const slashIndex = trimmed.indexOf("/");
   if (slashIndex <= 0) return null;
-  const providerId = model.slice(0, slashIndex);
-  const modelId = model.slice(slashIndex + 1);
+  const providerId = trimmed.slice(0, slashIndex);
+  const modelId = trimmed.slice(slashIndex + 1);
   if (!AGENT_MODEL_BODY_PATTERN.test(providerId)) return null;
   if (modelId.split("/").some((segment) => !AGENT_MODEL_BODY_PATTERN.test(segment))) {
     return null;
   }
   return { providerId, modelId };
+}
+
+/**
+ * Validate a standalone OpenCode provider id (the segment before the first
+ * slash in a model reference). Rejects the reserved Zen `opencode` prefix so
+ * custom credentials cannot shadow the Zen key.
+ */
+export function parseOpenCodeProviderId(
+  value: unknown,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof value !== "string") {
+    return { ok: false, error: "Provider id must be a string." };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: false, error: "Provider id is required." };
+  }
+  if (trimmed === OPENCODE_ZEN_PROVIDER_ID) {
+    return {
+      ok: false,
+      error: 'The reserved "opencode" provider uses the OpenCode Zen API key field.',
+    };
+  }
+  if (!AGENT_MODEL_BODY_PATTERN.test(trimmed)) {
+    return {
+      ok: false,
+      error:
+        "Provider id must be a lowercase slug of letters, numbers, dots, dashes, and underscores.",
+    };
+  }
+  return { ok: true, value: trimmed };
 }
 
 function modelHasSupportedSyntax(model: string): boolean {

@@ -32,8 +32,9 @@ const mocked = vi.hoisted(() => ({
     secret: "cursor-test",
     userId: "user-1",
   }),
-  getOpenCodeCredentialForSession: vi.fn().mockResolvedValue({
-    secret: "zen-test",
+  getOpenCodeAuthForSession: vi.fn().mockResolvedValue({
+    credential: { secret: "zen-test" },
+    providerCredentials: {},
   }),
   markCursorReconnectRequired: vi.fn(),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
@@ -146,7 +147,7 @@ vi.mock("@/lib/opencode/tokens", () => ({
       this.name = "OpenCodeNotConnectedError";
     }
   },
-  getOpenCodeCredentialForSession: mocked.getOpenCodeCredentialForSession,
+  getOpenCodeAuthForSession: mocked.getOpenCodeAuthForSession,
 }));
 
 vi.mock("@/features/github/config", () => ({
@@ -1085,16 +1086,54 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     await processPipelineJob({ admin, job: baseJob() });
 
-    expect(mocked.getOpenCodeCredentialForSession).toHaveBeenCalledWith(admin, session);
+    expect(mocked.getOpenCodeAuthForSession).toHaveBeenCalledWith(
+      admin,
+      session,
+      "opencode/gpt-5.6-sol",
+    );
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
       openCode: {
         credential: { secret: "zen-test" },
         model: "opencode/gpt-5.6-sol",
+        providerCredentials: {},
       },
     });
     expect(updatedRuns[0]).toMatchObject({
       model_name: "opencode/gpt-5.6-sol",
       model_provider: "opencode",
+    });
+  });
+
+  it("resolves a custom OpenCode provider key for the configured model", async () => {
+    mocked.getOpenCodeAuthForSession.mockResolvedValueOnce({
+      credential: null,
+      providerCredentials: { "opencode-go": { secret: "go-test" } },
+    });
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner([{ type: "text", text: "OpenCode artifact" }], { provider: "opencode" }),
+    );
+    const session = baseSession();
+    const { admin } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_provider", value_json: "opencode" },
+        { key: "agent_model", value_json: "opencode-go/glm-5.3" },
+      ],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.getOpenCodeAuthForSession).toHaveBeenCalledWith(
+      admin,
+      session,
+      "opencode-go/glm-5.3",
+    );
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
+      openCode: {
+        credential: null,
+        model: "opencode-go/glm-5.3",
+        providerCredentials: { "opencode-go": { secret: "go-test" } },
+      },
     });
   });
 
