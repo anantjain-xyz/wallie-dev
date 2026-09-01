@@ -392,6 +392,12 @@ describe("modelMatchesProvider", () => {
     expect(modelMatchesProvider("codex", "GPT-5-codex")).toBe(false);
   });
 
+  it("never matches slashed ids to Codex or Claude Code", () => {
+    expect(modelMatchesProvider("codex", "gpt-custom/foo")).toBe(false);
+    expect(modelMatchesProvider("claude-code", "claude-custom/foo")).toBe(false);
+    expect(modelMatchesProvider("cursor", "gpt-5.5/gpt-5.5")).toBe(false);
+  });
+
   it("matches Cursor Auto catalog ids", () => {
     expect(modelMatchesProvider("cursor", "auto")).toBe(true);
     expect(modelMatchesProvider("cursor", "auto-smart")).toBe(true);

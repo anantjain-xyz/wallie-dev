@@ -324,6 +324,10 @@ export function modelMatchesProvider(provider: AgentProvider, model: string): bo
   const trimmed = model.trim();
   if (!trimmed) return false;
   if (!modelHasSupportedSyntax(trimmed)) return false;
+  // Slashed provider/model references are an OpenCode concept — Codex and
+  // Claude Code take bare model ids, so a slashed id must never pair with
+  // them even when its first segment starts with a family prefix.
+  if (provider !== "opencode" && trimmed.includes("/")) return false;
   switch (provider) {
     case "claude-code":
       return trimmed.startsWith(CLAUDE_MODEL_PREFIX);
