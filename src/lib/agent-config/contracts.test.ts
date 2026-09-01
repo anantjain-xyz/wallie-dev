@@ -283,16 +283,36 @@ describe("parseAgentConfigValue — agent_model", () => {
     });
   });
 
-  it("accepts lowercase OpenCode Zen model identifiers", () => {
+  it("accepts lowercase OpenCode provider/model identifiers", () => {
     expect(parseAgentConfigValue("agent_model", "opencode/gpt-5.6-sol")).toEqual({
       ok: true,
       value: "opencode/gpt-5.6-sol",
+    });
+    expect(parseAgentConfigValue("agent_model", "opencode-go/glm-5.3")).toEqual({
+      ok: true,
+      value: "opencode-go/glm-5.3",
+    });
+    expect(parseAgentConfigValue("agent_model", "anthropic/claude-sonnet-4-5")).toEqual({
+      ok: true,
+      value: "anthropic/claude-sonnet-4-5",
+    });
+    expect(parseAgentConfigValue("agent_model", "openrouter/anthropic/claude-sonnet-4")).toEqual({
+      ok: true,
+      value: "openrouter/anthropic/claude-sonnet-4",
     });
     expect(parseAgentConfigValue("agent_model", "OpenCode/gpt-5.6-sol")).toEqual({
       ok: false,
       error: expect.stringContaining("lowercase"),
     });
-    expect(parseAgentConfigValue("agent_model", "anthropic/claude-sonnet-4-5")).toEqual({
+    expect(parseAgentConfigValue("agent_model", "opencode-go/GLM-5.3")).toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(parseAgentConfigValue("agent_model", "opencode-go/glm-5.3/")).toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(parseAgentConfigValue("agent_model", "opencode-go//glm-5.3")).toEqual({
       ok: false,
       error: expect.any(String),
     });
@@ -372,16 +392,27 @@ describe("modelMatchesProvider", () => {
     expect(modelMatchesProvider("codex", "GPT-5-codex")).toBe(false);
   });
 
+  it("never matches slashed ids to Codex or Claude Code", () => {
+    expect(modelMatchesProvider("codex", "gpt-custom/foo")).toBe(false);
+    expect(modelMatchesProvider("claude-code", "claude-custom/foo")).toBe(false);
+    expect(modelMatchesProvider("cursor", "gpt-5.5/gpt-5.5")).toBe(false);
+  });
+
   it("matches Cursor Auto catalog ids", () => {
     expect(modelMatchesProvider("cursor", "auto")).toBe(true);
     expect(modelMatchesProvider("cursor", "auto-smart")).toBe(true);
     expect(modelMatchesProvider("cursor", "composer-2")).toBe(true);
   });
 
-  it("matches OpenCode only to lowercase opencode/* ids", () => {
+  it("matches OpenCode to lowercase provider/model ids only", () => {
     expect(modelMatchesProvider("opencode", "opencode/gpt-5.6-sol")).toBe(true);
+    expect(modelMatchesProvider("opencode", "opencode-go/glm-5.3")).toBe(true);
+    expect(modelMatchesProvider("opencode", "anthropic/claude-sonnet-4-5")).toBe(true);
+    expect(modelMatchesProvider("opencode", "openrouter/anthropic/claude-sonnet-4")).toBe(true);
     expect(modelMatchesProvider("opencode", "gpt-5.6-sol")).toBe(false);
     expect(modelMatchesProvider("opencode", "OpenCode/gpt-5.6-sol")).toBe(false);
+    expect(modelMatchesProvider("opencode", "opencode-go/glm-5.3/")).toBe(false);
+    expect(modelMatchesProvider("claude-code", "anthropic/claude-sonnet-4-5")).toBe(false);
   });
 });
 

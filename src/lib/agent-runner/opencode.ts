@@ -7,7 +7,7 @@ import { DEFAULT_OPENCODE_MODEL } from "./types";
 export interface OpenCodeRunnerOptions {
   /** User-supplied OpenCode Zen API key resolved by getOpenCodeCredentialForUser. */
   credential: OpenCodeCredential;
-  /** OpenCode Zen model identifier in provider/model form. */
+  /** OpenCode model identifier in provider/model form. */
   model?: string;
 }
 
