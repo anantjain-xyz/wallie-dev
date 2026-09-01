@@ -32,6 +32,13 @@ describe("AGENT_PROVIDER_SELECT_OPTIONS", () => {
     expect(html).toContain("466.383 137.073");
     expect(html).not.toContain("M5 3v18");
   });
+
+  it("uses OpenCode's official rectangular O mark", () => {
+    const html = renderToStaticMarkup(AgentProviderLogo({ provider: "opencode" }));
+    expect(html).toContain('viewBox="0 0 240 300"');
+    expect(html).toContain("M180 60H60V240H180V60ZM240 300H0V0H240V300Z");
+    expect(html).not.toContain("M5 4.5h14v15H5z");
+  });
 });
 
 describe("AGENT_CONFIG_VISIBLE_FIELDS", () => {
