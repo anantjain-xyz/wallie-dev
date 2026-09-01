@@ -7,7 +7,11 @@ import { resolveEffectiveSessionRepository } from "@/features/sessions/effective
 import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
+import {
+  createAgentRunner,
+  DEFAULT_OPENCODE_MODEL,
+  loadWorkspaceAgentConfig,
+} from "@/lib/agent-runner";
 import {
   AGENT_PROVIDERS,
   normalizeAgentProviderName,
@@ -30,7 +34,7 @@ import {
   getCursorCredentialForSession,
   markCursorReconnectRequired,
 } from "@/lib/cursor/tokens";
-import { getOpenCodeCredentialForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
+import { getOpenCodeAuthForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
@@ -1045,10 +1049,18 @@ async function resolveAgentRunner(input: {
 
   if (input.provider === "opencode") {
     try {
-      const credential = await getOpenCodeCredentialForSession(input.admin, input.session);
+      const auth = await getOpenCodeAuthForSession(
+        input.admin,
+        input.session,
+        input.model ?? DEFAULT_OPENCODE_MODEL,
+      );
       return {
         runner: createAgentRunner("opencode", {
-          openCode: { credential, model: input.model },
+          openCode: {
+            credential: auth.credential,
+            model: input.model,
+            providerCredentials: auth.providerCredentials,
+          },
         }),
       };
     } catch (error) {

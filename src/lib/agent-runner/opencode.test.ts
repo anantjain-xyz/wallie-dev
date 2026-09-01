@@ -7,9 +7,19 @@ import { OpenCodeRunner, parseOpenCodeLine } from "./opencode";
 const credential = { secret: "zen-secret-key-1234567890" };
 
 describe("OpenCodeRunner", () => {
-  it("requires a Zen API key and a sandbox", async () => {
+  it("requires a matching credential for the configured model provider", async () => {
     expect(() => new OpenCodeRunner({ credential: { secret: "" } })).toThrow(
       /OpenCode Zen API key/,
+    );
+    expect(
+      () =>
+        new OpenCodeRunner({
+          model: "opencode-go/glm-5.3",
+          credential: { secret: "zen-secret-key-1234567890" },
+        }),
+    ).toThrow(/API key for provider "opencode-go"/);
+    expect(() => new OpenCodeRunner({ model: "gpt-5.6-sol" })).toThrow(
+      /"<provider-id>\/<model-id>"/,
     );
 
     const runner = new OpenCodeRunner({ credential });
@@ -91,6 +101,70 @@ describe("OpenCodeRunner", () => {
       XDG_DATA_HOME: "/tmp/wallie-opencode-run-1/data",
     });
     expect(JSON.stringify(call.opts)).not.toContain(credential.secret);
+  });
+
+  it("writes the custom provider key into auth.json and redacts it", async () => {
+    const providerSecret = "opencode-go-secret-key-1234567890";
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data: `{"type":"text","part":{"text":"${providerSecret}"}}\n`,
+        stream: "stdout",
+      },
+    ]);
+
+    const runner = new OpenCodeRunner({
+      model: "opencode-go/glm-5.3",
+      providerCredentials: { "opencode-go": { secret: providerSecret } },
+    });
+    const events = [];
+    for await (const event of runner.start({
+      prompt: "Implement it",
+      runId: "run-go",
+      sandbox,
+      sessionId: "session-1",
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
+    expect(JSON.stringify(events)).not.toContain(providerSecret);
+
+    const authPath = "/tmp/wallie-opencode-run-go/data/opencode/auth.json";
+    expect(await sandbox.readFile(authPath)).toBe(
+      `${JSON.stringify({ "opencode-go": { type: "api", key: providerSecret } })}\n`,
+    );
+    expect(sandbox.calls[0].args[1]).toContain("'--model' 'opencode-go/glm-5.3'");
+    expect(JSON.stringify(sandbox.calls[0].opts)).not.toContain(providerSecret);
+  });
+
+  it("keeps the Zen entry when a custom provider model also has a Zen key", async () => {
+    const providerSecret = "opencode-go-secret-key-1234567890";
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      { data: `{"type":"text","part":{"text":"ok"}}\n`, stream: "stdout" },
+    ]);
+
+    const runner = new OpenCodeRunner({
+      credential,
+      model: "opencode-go/glm-5.3",
+      providerCredentials: { "opencode-go": { secret: providerSecret } },
+    });
+    for await (const event of runner.start({
+      prompt: "p",
+      runId: "run-both",
+      sandbox,
+      sessionId: "s",
+    })) {
+      void event;
+    }
+
+    expect(await sandbox.readFile("/tmp/wallie-opencode-run-both/data/opencode/auth.json")).toBe(
+      `${JSON.stringify({
+        opencode: { type: "api", key: credential.secret },
+        "opencode-go": { type: "api", key: providerSecret },
+      })}\n`,
+    );
   });
 
   it("emits completed and failed tool events but ignores pending tool events", () => {

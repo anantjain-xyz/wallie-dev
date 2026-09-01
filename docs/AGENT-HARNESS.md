@@ -109,12 +109,12 @@ of containing instructions, delimiters, or unexpectedly large content.
 
 ## Runner and credential contract
 
-| Runner      | Credential path                                            | Process behavior                                                                         |
-| ----------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Codex       | OpenAI API credential or per-user ChatGPT/Codex credential | Runs inside the external sandbox with the configured model and streams normalized events |
-| Claude Code | Per-user Anthropic API credential                          | Runs with permission bypass inside the external sandbox and streams normalized events    |
-| Cursor      | Expiring per-user API key minted by Cursor browser sign-in | Runs Cursor CLI inside the external sandbox and streams normalized events                |
-| OpenCode    | Per-user OpenCode Zen API key                              | Runs OpenCode CLI with isolated XDG auth and streams normalized events                   |
+| Runner      | Credential path                                                                                 | Process behavior                                                                                            |
+| ----------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Codex       | OpenAI API credential or per-user ChatGPT/Codex credential                                      | Runs inside the external sandbox with the configured model and streams normalized events                    |
+| Claude Code | Per-user Anthropic API credential                                                               | Runs with permission bypass inside the external sandbox and streams normalized events                       |
+| Cursor      | Expiring per-user API key minted by Cursor browser sign-in                                      | Runs Cursor CLI inside the external sandbox and streams normalized events                                   |
+| OpenCode    | Per-user OpenCode Zen API key, plus optional per-provider keys keyed by the model’s provider id | Runs OpenCode CLI with isolated XDG auth (`auth.json` entries by provider id) and streams normalized events |
 
 Credentials belong to the session creator, not the current reviewer. ChatGPT
 subscription credentials are written to `.codex/auth.json` with owner-only

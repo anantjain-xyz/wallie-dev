@@ -41,6 +41,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
     openCodeConnection: {
       checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
+      providers: [],
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
@@ -275,6 +276,7 @@ describe("buildRuntimeReadiness", () => {
         openCodeConnection: {
           checkedAt: "2026-05-16T18:00:01.000Z",
           connected: false,
+          providers: [],
           status: "missing",
           updatedAt: null,
         },
@@ -282,6 +284,45 @@ describe("buildRuntimeReadiness", () => {
         repositorySetup: health().repositorySetup,
       }).canComplete,
     ).toBe(false);
+  });
+
+  it("requires a matching per-provider key for custom OpenCode model ids", () => {
+    const missing = buildRuntimeReadiness({
+      agentConfig: { agent_model: "opencode-go/glm-5.3", agent_provider: "opencode" },
+      claudeCodeConnection: health().claudeCodeConnection,
+      codexConnection: health().codexConnection,
+      openCodeConnection: {
+        ...health().openCodeConnection,
+        connected: true,
+        providers: [],
+      },
+      primaryRepositoryId: repositoryId,
+      repositorySetup: health().repositorySetup,
+    });
+    expect(missing.canComplete).toBe(false);
+    expect(
+      missing.requirements.find((item) => item.id === "opencode-provider-connection"),
+    ).toMatchObject({
+      passed: false,
+      label: "OpenCode opencode-go API key",
+    });
+
+    const ready = buildRuntimeReadiness({
+      agentConfig: { agent_model: "opencode-go/glm-5.3", agent_provider: "opencode" },
+      claudeCodeConnection: health().claudeCodeConnection,
+      codexConnection: health().codexConnection,
+      openCodeConnection: {
+        checkedAt: "2026-05-16T18:00:01.000Z",
+        connected: false,
+        providers: [{ providerId: "opencode-go", updatedAt: "2026-09-01T00:00:00.000Z" }],
+        status: "missing",
+        updatedAt: null,
+      },
+      primaryRepositoryId: repositoryId,
+      repositorySetup: health().repositorySetup,
+    });
+    expect(ready.canComplete).toBe(true);
+    expect(ready.requirements.find((item) => item.id === "opencode-connection")).toBeUndefined();
   });
 });
 
