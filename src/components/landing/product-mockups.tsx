@@ -1,4 +1,5 @@
-import { Fragment } from "react";
+import { AgentProviderLogo } from "@/components/shared/agent-provider-options";
+import { cn } from "@/lib/utils";
 
 type BrandName =
   | "claude"
@@ -9,6 +10,11 @@ type BrandName =
   | "linear"
   | "opencode"
   | "vercel";
+
+const MOCKUP_GRID_CLASS = "grid grid-cols-2 gap-2 sm:grid-cols-4";
+const MOCKUP_TILE_CLASS =
+  "flex h-full min-h-12 w-full min-w-0 items-center gap-2 rounded-[6px] border border-border/50 bg-canvas px-2.5 py-2.5";
+const PIPELINE_STAGES = ["Plan", "Design", "Build", "Land"] as const;
 
 function BrandGlyph({ brand }: { brand: BrandName }) {
   if (brand === "vercel") {
@@ -48,16 +54,7 @@ function BrandGlyph({ brand }: { brand: BrandName }) {
   }
 
   if (brand === "opencode") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" aria-hidden="true">
-        <path
-          d="M5 4.5h14v15H5zM8 8l3 4-3 4m5 0h3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="1.8"
-        />
-      </svg>
-    );
+    return <AgentProviderLogo provider="opencode" />;
   }
 
   if (brand === "codex") {
@@ -101,11 +98,29 @@ function BrandGlyph({ brand }: { brand: BrandName }) {
 
 function BrandMark({ brand, label }: { brand: BrandName; label: string }) {
   return (
-    <div className="flex min-w-0 flex-col items-start gap-2 rounded-[6px] border border-border/50 bg-canvas px-2.5 py-2.5 min-[480px]:flex-row min-[480px]:items-center">
+    <div className={MOCKUP_TILE_CLASS}>
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[5px] bg-sheet text-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--border)_50%,transparent)]">
         <BrandGlyph brand={brand} />
       </span>
       <span className="min-w-0 text-xs font-semibold leading-4 text-foreground">{label}</span>
+    </div>
+  );
+}
+
+function PipelineStage({ index, name }: { index: number; name: string }) {
+  return (
+    <div className={cn("relative justify-center", MOCKUP_TILE_CLASS)}>
+      {index > 0 ? (
+        <span
+          className={cn(
+            "pointer-events-none absolute top-1/2 -left-1 z-[1] -translate-x-1/2 -translate-y-1/2 type-annotation text-muted",
+            index % 2 === 0 && "hidden sm:block",
+          )}
+        >
+          →
+        </span>
+      ) : null}
+      <span className="type-annotation font-semibold text-foreground">{name}</span>
     </div>
   );
 }
@@ -121,7 +136,7 @@ export function StackWorkflowMockup() {
           <p className="font-mono type-annotation font-semibold uppercase tracking-[0.12em] text-muted">
             Coding agents
           </p>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className={cn("mt-2", MOCKUP_GRID_CLASS)}>
             <BrandMark brand="codex" label="Codex" />
             <BrandMark brand="claude" label="Claude Code" />
             <BrandMark brand="cursor" label="Cursor" />
@@ -133,7 +148,7 @@ export function StackWorkflowMockup() {
           <p className="font-mono type-annotation font-semibold uppercase tracking-[0.12em] text-muted">
             Sandboxes
           </p>
-          <div className="mt-2 grid grid-cols-3 gap-2">
+          <div className={cn("mt-2", MOCKUP_GRID_CLASS)}>
             <BrandMark brand="vercel" label="Vercel" />
             <BrandMark brand="e2b" label="E2B" />
             <BrandMark brand="daytona" label="Daytona" />
@@ -144,19 +159,10 @@ export function StackWorkflowMockup() {
           <p className="font-mono type-annotation font-semibold uppercase tracking-[0.12em] text-muted">
             Pipeline
           </p>
-          <div className="mt-2 rounded-[6px] border border-border/50 bg-canvas p-3">
-            <div className="flex items-center gap-1">
-              {["Plan", "Design", "Build", "Land"].map((stage, index) => (
-                <Fragment key={stage}>
-                  {index > 0 ? (
-                    <span className="shrink-0 type-annotation text-muted">→</span>
-                  ) : null}
-                  <div className="min-w-0 flex-1 rounded-[5px] border border-border/50 bg-sheet px-1.5 py-2 text-center type-annotation font-semibold text-foreground">
-                    {stage}
-                  </div>
-                </Fragment>
-              ))}
-            </div>
+          <div className={cn("mt-2", MOCKUP_GRID_CLASS)}>
+            {PIPELINE_STAGES.map((stage, index) => (
+              <PipelineStage key={stage} index={index} name={stage} />
+            ))}
           </div>
         </div>
 
