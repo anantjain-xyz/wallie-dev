@@ -3,7 +3,7 @@
  * control-wallie — verification harness for the Wallie Next.js web UI.
  * Invocations are documented in .cursor/skills/verify-wallie/SKILL.md.
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -119,6 +119,74 @@ function pidAlive(pid) {
   }
 }
 
+function collectProcessTree(rootPid) {
+  const root = Number(rootPid);
+  const childrenByPpid = new Map();
+  try {
+    for (const name of fs.readdirSync("/proc")) {
+      if (!/^\d+$/.test(name)) continue;
+      try {
+        const status = fs.readFileSync(`/proc/${name}/status`, "utf8");
+        const ppidMatch = status.match(/^PPid:\s+(\d+)/m);
+        if (!ppidMatch) continue;
+        const ppid = Number(ppidMatch[1]);
+        const list = childrenByPpid.get(ppid);
+        if (list) list.push(Number(name));
+        else childrenByPpid.set(ppid, [Number(name)]);
+      } catch {
+        /* process exited */
+      }
+    }
+  } catch {
+    return new Set([root]);
+  }
+  const tree = new Set();
+  const queue = [root];
+  while (queue.length) {
+    const pid = queue.pop();
+    if (tree.has(pid)) continue;
+    tree.add(pid);
+    const children = childrenByPpid.get(pid);
+    if (children) queue.push(...children);
+  }
+  return tree;
+}
+
+function pidsListeningOnPort(port) {
+  const pids = new Set();
+  try {
+    const out = execFileSync("ss", ["-ltnp"], { encoding: "utf8" });
+    const localPort = new RegExp(`[:\\]]${port}\\s`);
+    for (const line of out.split("\n")) {
+      if (!localPort.test(`${line} `)) continue;
+      for (const match of line.matchAll(/pid=(\d+)/g)) {
+        pids.add(Number(match[1]));
+      }
+    }
+  } catch {
+    /* ss unavailable */
+  }
+  return pids;
+}
+
+function nextLogConfirmsBind(logPath, port) {
+  if (!logPath || !fs.existsSync(logPath)) return false;
+  const text = fs.readFileSync(logPath, "utf8");
+  return new RegExp(`(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1?\\]):${port}\\b`).test(text);
+}
+
+function spawnedServerOwnsPort(pid, port, logPath) {
+  const listeners = pidsListeningOnPort(port);
+  if (listeners.size > 0) {
+    const tree = collectProcessTree(pid);
+    for (const listener of listeners) {
+      if (tree.has(listener)) return true;
+    }
+    return false;
+  }
+  return nextLogConfirmsBind(logPath, port);
+}
+
 async function fetchText(url, timeoutMs = 5000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -137,7 +205,8 @@ function tailLog(logPath, maxChars = 2000) {
   return text.slice(-maxChars);
 }
 
-async function waitForReady(baseUrl, { timeoutMs = 60_000, pid, logPath } = {}) {
+async function waitForReady(baseUrl, { timeoutMs = 60_000, pid, logPath, port } = {}) {
+  const listenPort = String(port ?? new URL(baseUrl).port ?? "3000");
   const started = Date.now();
   let lastError = "";
   while (Date.now() - started < timeoutMs) {
@@ -146,6 +215,22 @@ async function waitForReady(baseUrl, { timeoutMs = 60_000, pid, logPath } = {}) 
       throw new Error(
         `Next process ${pid} exited before ${baseUrl} became ready.${logTail ? `\n${logTail}` : ""}`,
       );
+    }
+    if (logPath && fs.existsSync(logPath)) {
+      const log = fs.readFileSync(logPath, "utf8");
+      if (/EADDRINUSE|address already in use/i.test(log)) {
+        throw new Error(
+          `Next failed to bind ${baseUrl}: address already in use.\n${tailLog(logPath)}`,
+        );
+      }
+    }
+    if (pid && !spawnedServerOwnsPort(pid, listenPort, logPath)) {
+      const listeners = [...pidsListeningOnPort(listenPort)];
+      lastError = `port ${listenPort} is not owned by Next pid ${pid} (listeners=${
+        listeners.join(",") || "none"
+      })`;
+      await delay(500);
+      continue;
     }
     try {
       const { status, text } = await fetchText(baseUrl, 3000);
@@ -157,6 +242,11 @@ async function waitForReady(baseUrl, { timeoutMs = 60_000, pid, logPath } = {}) 
       ) {
         if (pid && !pidAlive(pid)) {
           throw new Error(`Next process ${pid} exited after ${baseUrl} answered`);
+        }
+        if (pid && !spawnedServerOwnsPort(pid, listenPort, logPath)) {
+          lastError = `HTTP ready but pid ${pid} does not own port ${listenPort}`;
+          await delay(500);
+          continue;
         }
         return;
       }
@@ -316,10 +406,15 @@ async function cmdLaunch(args) {
   const browserLog = join(evidenceDir, "browser.log");
   pids.browser = spawnLogged(process.execPath, [SCRIPT_PATH, "_browser-serve"], browserLog);
   updateRun({ pids });
-  await waitForBrowserSidecar(pids.browser, browserLog);
 
-  if (!args["skip-ready-wait"]) {
-    await waitForReady(baseUrl, { pid: nextPid, logPath: nextLog });
+  try {
+    await waitForBrowserSidecar(pids.browser, browserLog);
+    if (!args["skip-ready-wait"]) {
+      await waitForReady(baseUrl, { pid: nextPid, logPath: nextLog, port });
+    }
+  } catch (error) {
+    await cmdStop({ quiet: true }).catch(() => undefined);
+    throw error;
   }
 
   process.stdout.write(`ready baseUrl=${baseUrl} evidenceDir=${evidenceDir} nextPid=${nextPid}\n`);
@@ -331,6 +426,11 @@ async function cmdDoctor() {
 
   if (!pidAlive(run.pids?.next)) {
     problems.push(`next pid ${run.pids?.next} is not running`);
+  } else if (
+    run.port &&
+    !spawnedServerOwnsPort(run.pids.next, run.port, join(run.evidenceDir, "next.log"))
+  ) {
+    problems.push(`next pid ${run.pids.next} does not own port ${run.port}`);
   }
   if (run.pids?.worker != null && !pidAlive(run.pids.worker)) {
     problems.push(`worker pid ${run.pids.worker} is not running`);
