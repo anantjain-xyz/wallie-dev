@@ -10,6 +10,7 @@ import http from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { parseEnv } from "node:util";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,7 +29,7 @@ function usage(exitCode = 1) {
   control-wallie.mjs stop
   control-wallie.mjs sign-in [--destination <path>]
   control-wallie.mjs browser goto <path-or-url>
-  control-wallie.mjs browser click --role <role> --name <name> [--screenshot <file>]
+  control-wallie.mjs browser click --role <role> --name <name> [--wait-for-url <re>] [--wait-for-text <text>] [--wait-hidden] [--screenshot <file>]
   control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--submit] [--screenshot <file>] [--snapshot-aria <file>]
   control-wallie.mjs browser press --key <key>
   control-wallie.mjs browser screenshot --path <file>
@@ -60,15 +61,7 @@ function parseArgs(argv) {
 function loadEnvLocal() {
   const envPath = join(REPO_ROOT, ".env.local");
   if (!fs.existsSync(envPath)) return {};
-  const out = {};
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    out[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
-  }
-  return out;
+  return parseEnv(fs.readFileSync(envPath, "utf8"));
 }
 
 function mergedEnv(extra = {}) {
@@ -117,6 +110,42 @@ function pidAlive(pid) {
   } catch {
     return false;
   }
+}
+
+function readPidIdentity(pid) {
+  if (!pid) return null;
+  try {
+    const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ").trim();
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const afterComm = stat
+      .slice(stat.lastIndexOf(")") + 1)
+      .trim()
+      .split(/\s+/);
+    const starttime = afterComm[19] ?? "";
+    return { pid, cmdline, starttime };
+  } catch {
+    return null;
+  }
+}
+
+function captureIdentities(pids) {
+  const pidIdentities = {};
+  for (const [key, pid] of Object.entries(pids ?? {})) {
+    const identity = readPidIdentity(pid);
+    if (identity) pidIdentities[key] = identity;
+  }
+  return pidIdentities;
+}
+
+function pidStillOurs(pid, identity) {
+  if (!pid || !identity) return false;
+  const current = readPidIdentity(pid);
+  if (!current) return false;
+  return current.starttime === identity.starttime && current.cmdline === identity.cmdline;
+}
+
+function recordedPidAlive(run, key) {
+  return pidStillOurs(run.pids?.[key], run.pidIdentities?.[key]);
 }
 
 function collectProcessTree(rootPid) {
@@ -348,27 +377,39 @@ async function cmdLaunch(args) {
   }
 
   if (fs.existsSync(CURRENT_RUN_PATH)) {
-    try {
-      await cmdStop({ quiet: true });
-    } catch {
-      /* no prior run */
-    }
+    await cmdStop({ quiet: true });
   }
 
   const manageSupabase = Boolean(args["manage-supabase"]);
   if (manageSupabase) {
-    await spawnLoggedWait("supabase", ["start"], join(evidenceDir, "supabase-start.log"));
+    writeRun({
+      runId,
+      evidenceDir,
+      baseUrl,
+      port,
+      pids: {},
+      lastUrl: baseUrl,
+      startedAt: new Date().toISOString(),
+      manageSupabase: true,
+    });
     try {
+      await spawnLoggedWait("supabase", ["start"], join(evidenceDir, "supabase-start.log"));
       const auth = await fetchText("http://127.0.0.1:54321/auth/v1/health", 5000);
-      if (auth.status >= 500) {
+      if (auth.status !== 200) {
         throw new Error(`Supabase Auth health returned ${auth.status}`);
       }
     } catch (error) {
-      throw new Error(
-        `Supabase started but Auth is not reachable at http://127.0.0.1:54321 (${
-          error instanceof Error ? error.message : String(error)
-        })`,
-      );
+      const detail = error instanceof Error ? error.message : String(error);
+      try {
+        await cmdStop({ quiet: true });
+      } catch (stopError) {
+        throw new Error(
+          `Supabase start/probe failed (${detail}); cleanup also failed (${
+            stopError instanceof Error ? stopError.message : String(stopError)
+          })`,
+        );
+      }
+      throw new Error(`Supabase start/probe failed (${detail})`);
     }
   }
 
@@ -396,6 +437,7 @@ async function cmdLaunch(args) {
     baseUrl,
     port,
     pids,
+    pidIdentities: captureIdentities(pids),
     lastUrl: baseUrl,
     startedAt: new Date().toISOString(),
     manageSupabase,
@@ -405,7 +447,7 @@ async function cmdLaunch(args) {
 
   const browserLog = join(evidenceDir, "browser.log");
   pids.browser = spawnLogged(process.execPath, [SCRIPT_PATH, "_browser-serve"], browserLog);
-  updateRun({ pids });
+  updateRun({ pids, pidIdentities: captureIdentities(pids) });
 
   try {
     await waitForBrowserSidecar(pids.browser, browserLog);
@@ -424,7 +466,7 @@ async function cmdDoctor() {
   const run = readRun();
   const problems = [];
 
-  if (!pidAlive(run.pids?.next)) {
+  if (!recordedPidAlive(run, "next")) {
     problems.push(`next pid ${run.pids?.next} is not running`);
   } else if (
     run.port &&
@@ -432,10 +474,10 @@ async function cmdDoctor() {
   ) {
     problems.push(`next pid ${run.pids.next} does not own port ${run.port}`);
   }
-  if (run.pids?.worker != null && !pidAlive(run.pids.worker)) {
+  if (run.pids?.worker != null && !recordedPidAlive(run, "worker")) {
     problems.push(`worker pid ${run.pids.worker} is not running`);
   }
-  if (run.pids?.browser != null && !pidAlive(run.pids.browser)) {
+  if (run.pids?.browser != null && !recordedPidAlive(run, "browser")) {
     problems.push(`browser sidecar pid ${run.pids.browser} is not running`);
   }
 
@@ -488,8 +530,8 @@ async function cmdDoctor() {
   );
 }
 
-function killPidTree(pid) {
-  if (!pid || !pidAlive(pid)) return;
+function killRecordedPid(pid, identity) {
+  if (!pidStillOurs(pid, identity)) return;
   try {
     process.kill(-pid, "SIGTERM");
   } catch {
@@ -503,13 +545,13 @@ function killPidTree(pid) {
 
 async function cmdStop(options = {}) {
   const run = readRun();
-  killPidTree(run.pids?.browser);
-  killPidTree(run.pids?.worker);
-  killPidTree(run.pids?.next);
+  killRecordedPid(run.pids?.browser, run.pidIdentities?.browser);
+  killRecordedPid(run.pids?.worker, run.pidIdentities?.worker);
+  killRecordedPid(run.pids?.next, run.pidIdentities?.next);
   await delay(800);
   for (const key of ["browser", "next", "worker"]) {
     const pid = run.pids?.[key];
-    if (pidAlive(pid)) {
+    if (pidStillOurs(pid, run.pidIdentities?.[key])) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {
@@ -518,20 +560,25 @@ async function cmdStop(options = {}) {
     }
   }
 
+  let supabaseStopError = null;
   if (run.manageSupabase) {
     try {
       await spawnLoggedWait("supabase", ["stop"], join(run.evidenceDir, "supabase-stop.log"));
     } catch (error) {
-      if (!options.quiet) {
-        process.stderr.write(
-          `supabase stop failed: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      }
+      supabaseStopError = error;
     }
   }
 
   run.stoppedAt = new Date().toISOString();
   fs.writeFileSync(join(run.evidenceDir, "run.json"), `${JSON.stringify(run, null, 2)}\n`);
+  if (supabaseStopError) {
+    writeRun(run);
+    throw new Error(
+      `supabase stop failed: ${
+        supabaseStopError instanceof Error ? supabaseStopError.message : String(supabaseStopError)
+      }`,
+    );
+  }
   if (fs.existsSync(CURRENT_RUN_PATH)) fs.unlinkSync(CURRENT_RUN_PATH);
   if (!options.quiet) {
     process.stdout.write(`stopped evidenceDir=${run.evidenceDir} (evidence retained)\n`);
@@ -598,6 +645,18 @@ async function executeBrowserAction(page, run, args) {
         : page.waitForLoadState("domcontentloaded"),
       locator.click(),
     ]);
+    if (args["wait-for-url"]) {
+      await page.waitForURL(new RegExp(String(args["wait-for-url"])), { timeout: 15_000 });
+    }
+    if (args["wait-for-text"]) {
+      await page
+        .getByText(String(args["wait-for-text"]))
+        .first()
+        .waitFor({ state: "visible", timeout: 15_000 });
+    }
+    if (args["wait-hidden"]) {
+      await locator.waitFor({ state: "hidden", timeout: 15_000 });
+    }
     if (args.screenshot) {
       const path = evidencePath(run, String(args.screenshot));
       await page.screenshot({ path, fullPage: true });
@@ -684,6 +743,11 @@ async function cmdBrowserServe() {
     };
 
     if (req.method === "GET" && req.url === "/health") {
+      const browser = context.browser();
+      if (page.isClosed() || !browser?.isConnected()) {
+        fail(503, "browser disconnected");
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, url: page.url() }));
       return;
@@ -793,9 +857,14 @@ async function cmdSignIn(args) {
     `${run.baseUrl}/auth/confirm?next=${encodeURIComponent(destination)}` +
     `&token_hash=${encodeURIComponent(hashedToken)}&type=email`;
 
+  const destinationPath = destination.startsWith("http")
+    ? new URL(destination).pathname
+    : destination;
+  const destinationPattern = String(destinationPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
   await browserRpc({
     _: ["goto", confirmUrl],
-    waitForUrl: "\\/w\\/acme-corp",
+    waitForUrl: destinationPattern,
   });
   process.stdout.write(`signed-in destination=${destination}\n`);
 }

@@ -64,7 +64,7 @@ Harness: **Playwright** (`@playwright/test` Chromium) via `control-wallie`. `lau
 # Navigate
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /
 
-# Click by role + accessible name
+# Click by role + accessible name (add --wait-hidden / --wait-for-text / --wait-for-url for async UI)
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "Sign in to Wallie"
 
 # Fill (add --submit to press Enter in the same live page, e.g. Sessions search)
@@ -116,12 +116,12 @@ Executable entrypoint (no install step beyond repo `pnpm install` + Playwright b
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs <command>
 ```
 
-| Command     | Purpose                                                                                                                 |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `launch`    | Start Next (optional `--worker`, `--manage-supabase`), wait until this process owns the port, start the browser sidecar |
-| `doctor`    | Read-only readiness check for Next, login, optional worker, and the browser sidecar                                     |
-| `browser …` | goto / click / fill / press / screenshot / snapshot against the live sidecar page                                       |
-| `sign-in`   | Admin magic-link sign-in as `anant@example.com` on the same live page                                                   |
-| `stop`      | Tear down recorded PIDs (and `supabase stop` when this run started Supabase)                                            |
+| Command     | Purpose                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `launch`    | Start Next (optional `--worker`, `--manage-supabase`), wait until this process owns the port, start the browser sidecar                              |
+| `doctor`    | Read-only readiness check for Next, login, optional worker, and the browser sidecar                                                                  |
+| `browser …` | goto / click / fill / press / screenshot / snapshot against the live sidecar page; click can `--wait-hidden`, `--wait-for-text`, or `--wait-for-url` |
+| `sign-in`   | Admin magic-link sign-in as `anant@example.com` on the same live page                                                                                |
+| `stop`      | Tear down recorded PIDs (and `supabase stop` when this run started Supabase)                                                                         |
 
 State file: `.wallie/verify/current-run.json` → points at the active run directory.
