@@ -24,8 +24,8 @@ function usage(exitCode = 1) {
   control-wallie.mjs stop
   control-wallie.mjs sign-in [--destination <path>]
   control-wallie.mjs browser goto <path-or-url>
-  control-wallie.mjs browser click --role <role> --name <name>
-  control-wallie.mjs browser fill --role <role> --name <name> --value <value>
+  control-wallie.mjs browser click --role <role> --name <name> [--screenshot <file>]
+  control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--screenshot <file>] [--snapshot-aria <file>]
   control-wallie.mjs browser press --key <key>
   control-wallie.mjs browser screenshot --path <file>
   control-wallie.mjs browser snapshot --aria --path <file>
@@ -304,7 +304,7 @@ async function cmdStop(options = {}) {
 }
 
 async function withBrowser(run, fn) {
-  const { chromium } = await import("playwright");
+  const { chromium } = await import("@playwright/test");
   const userDataDir = join(run.evidenceDir, "browser-profile");
   fs.mkdirSync(userDataDir, { recursive: true });
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -360,8 +360,26 @@ async function cmdBrowser(args) {
     await ensurePage(page, run);
 
     if (action === "click") {
-      await locatorFor(page, args.role, args.name).first().click();
-      await page.waitForLoadState("domcontentloaded");
+      const locator = locatorFor(page, args.role, args.name).first();
+      const beforeUrl = page.url();
+      const href = await locator.getAttribute("href");
+      await Promise.all([
+        href && href.startsWith("/")
+          ? page.waitForURL(
+              (url) => {
+                const next = url.toString();
+                return next !== beforeUrl && next.includes(href.split("?")[0]);
+              },
+              { timeout: 15_000 },
+            )
+          : page.waitForLoadState("domcontentloaded"),
+        locator.click(),
+      ]);
+      if (args.screenshot) {
+        const path = evidencePath(run, String(args.screenshot));
+        await page.screenshot({ path, fullPage: true });
+        process.stdout.write(`screenshot ${path}\n`);
+      }
       process.stdout.write(`click role=${args.role} name=${args.name} url=${page.url()}\n`);
       return;
     }
@@ -369,6 +387,17 @@ async function cmdBrowser(args) {
     if (action === "fill") {
       if (args.value === undefined) throw new Error("--value required");
       await locatorFor(page, args.role, args.name).first().fill(String(args.value));
+      if (args.screenshot) {
+        const path = evidencePath(run, String(args.screenshot));
+        await page.screenshot({ path, fullPage: true });
+        process.stdout.write(`screenshot ${path}\n`);
+      }
+      if (args["snapshot-aria"]) {
+        const path = evidencePath(run, String(args["snapshot-aria"]));
+        const aria = await page.locator("body").ariaSnapshot();
+        fs.writeFileSync(path, `${aria}\n`);
+        process.stdout.write(`snapshot ${path}\n`);
+      }
       process.stdout.write(`fill role=${args.role} name=${args.name}\n`);
       return;
     }

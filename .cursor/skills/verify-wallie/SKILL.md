@@ -17,7 +17,7 @@ From the repo root:
 # One-time / when deps are missing
 pnpm install
 command -v supabase >/dev/null || (curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin supabase)
-pnpm exec playwright install chromium
+pnpm exec playwright install chromium   # browsers for @playwright/test
 
 # Env (gitignored). Fill keys from `supabase status` after start.
 test -f .env.local || cp .env.example .env.local
@@ -56,7 +56,7 @@ If doctor fails, stop and relaunch. Never drive an instance you did not start.
 
 ## Drive
 
-Harness: **Playwright** via `control-wallie` (Chromium). Stable handles are ARIA roles/names from production UI — almost no `data-testid` on real pages.
+Harness: **Playwright** (`@playwright/test` Chromium) via `control-wallie`. Stable handles are ARIA roles/names from production UI — almost no `data-testid` on real pages.
 
 ```bash
 # Navigate
