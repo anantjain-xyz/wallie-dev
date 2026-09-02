@@ -30,7 +30,7 @@ function usage(exitCode = 1) {
   control-wallie.mjs sign-in [--destination <path>]
   control-wallie.mjs browser goto <path-or-url>
   control-wallie.mjs browser click --role <role> --name <name> [--wait-for-url <re>] [--wait-for-text <text>] [--wait-hidden] [--screenshot <file>]
-  control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--submit] [--screenshot <file>] [--snapshot-aria <file>]
+  control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--submit] [--wait-for-url <re>] [--wait-for-text <text>] [--screenshot <file>] [--snapshot-aria <file>]
   control-wallie.mjs browser press --key <key>
   control-wallie.mjs browser screenshot --path <file>
   control-wallie.mjs browser snapshot --aria --path <file>
@@ -146,6 +146,56 @@ function pidStillOurs(pid, identity) {
 
 function recordedPidAlive(run, key) {
   return pidStillOurs(run.pids?.[key], run.pidIdentities?.[key]);
+}
+
+function captureLiveDescendants(pid, identity) {
+  if (!pidStillOurs(pid, identity)) return [];
+  const descendants = [];
+  for (const child of collectProcessTree(pid)) {
+    if (child === Number(pid)) continue;
+    const current = readPidIdentity(child);
+    if (current) descendants.push(current);
+  }
+  return descendants;
+}
+
+function killVerifiedPid(pid, identity, signal) {
+  if (!pidStillOurs(pid, identity)) return;
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function signInFailedUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    if (url.pathname === "/login" || url.pathname.startsWith("/login/")) return true;
+    if (url.pathname === "/auth/confirm" || url.pathname.startsWith("/auth/confirm/")) {
+      return true;
+    }
+    if (url.searchParams.has("error")) return true;
+  } catch {
+    return /\/login(?:\/|\?|#|$)|\/auth\/confirm/.test(String(urlString));
+  }
+  return false;
+}
+
+function destinationWaitPattern(destinationPath) {
+  const raw = String(destinationPath).startsWith("/")
+    ? String(destinationPath)
+    : `/${destinationPath}`;
+  const path = raw.replace(/\/+$/, "") || "/";
+  if (path === "/") {
+    return "^https?:\\/\\/[^/]+\\/?([?#]|$)";
+  }
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `^https?:\\/\\/[^/]+${escaped}(?:\\/|[?#]|$)`;
 }
 
 function collectProcessTree(rootPid) {
@@ -530,30 +580,23 @@ async function cmdDoctor() {
   );
 }
 
-function killRecordedPid(pid, identity) {
-  if (!pidStillOurs(pid, identity)) return;
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      /* already gone */
-    }
-  }
-}
-
 async function cmdStop(options = {}) {
   const run = readRun();
-  killRecordedPid(run.pids?.browser, run.pidIdentities?.browser);
-  killRecordedPid(run.pids?.worker, run.pidIdentities?.worker);
-  killRecordedPid(run.pids?.next, run.pidIdentities?.next);
+  const liveDescendants = {
+    browser: captureLiveDescendants(run.pids?.browser, run.pidIdentities?.browser),
+    worker: captureLiveDescendants(run.pids?.worker, run.pidIdentities?.worker),
+    next: captureLiveDescendants(run.pids?.next, run.pidIdentities?.next),
+  };
+  killVerifiedPid(run.pids?.browser, run.pidIdentities?.browser, "SIGTERM");
+  killVerifiedPid(run.pids?.worker, run.pidIdentities?.worker, "SIGTERM");
+  killVerifiedPid(run.pids?.next, run.pidIdentities?.next, "SIGTERM");
   await delay(800);
   for (const key of ["browser", "next", "worker"]) {
-    const pid = run.pids?.[key];
-    if (pidStillOurs(pid, run.pidIdentities?.[key])) {
+    killVerifiedPid(run.pids?.[key], run.pidIdentities?.[key], "SIGKILL");
+    for (const descendant of liveDescendants[key] ?? []) {
+      if (!pidStillOurs(descendant.pid, descendant)) continue;
       try {
-        process.kill(pid, "SIGKILL");
+        process.kill(descendant.pid, "SIGKILL");
       } catch {
         /* ignore */
       }
@@ -671,8 +714,52 @@ async function executeBrowserAction(page, run, args) {
     const locator = locatorFor(page, args.role, args.name).first();
     await locator.fill(String(args.value));
     if (args.submit) {
+      const beforeUrl = page.url();
+      const submitted = String(args.value);
       await locator.press("Enter");
-      await page.waitForLoadState("domcontentloaded");
+      let settled = false;
+      try {
+        await page.waitForURL(
+          (url) => {
+            const href = url.toString();
+            if (href === beforeUrl) return false;
+            try {
+              const parsed = new URL(href);
+              const q = parsed.searchParams.get("q");
+              if (q != null && q === submitted) return true;
+              return (
+                parsed.pathname !== new URL(beforeUrl).pathname ||
+                parsed.search !== new URL(beforeUrl).search
+              );
+            } catch {
+              return href !== beforeUrl;
+            }
+          },
+          { timeout: 15_000 },
+        );
+        settled = true;
+      } catch {
+        try {
+          await page.getByRole("alert").first().waitFor({ state: "visible", timeout: 5_000 });
+          settled = true;
+        } catch {
+          settled = false;
+        }
+      }
+      if (!settled) {
+        throw new Error(
+          `fill --submit did not change the URL or show an alert (still ${page.url()})`,
+        );
+      }
+    }
+    if (args["wait-for-url"]) {
+      await page.waitForURL(new RegExp(String(args["wait-for-url"])), { timeout: 15_000 });
+    }
+    if (args["wait-for-text"]) {
+      await page
+        .getByText(String(args["wait-for-text"]))
+        .first()
+        .waitFor({ state: "visible", timeout: 15_000 });
     }
     if (args.screenshot) {
       const path = evidencePath(run, String(args.screenshot));
@@ -811,6 +898,7 @@ async function browserRpc(args) {
     throw new Error(data.error ?? `browser rpc ${response.status}`);
   }
   if (data.stdout) process.stdout.write(data.stdout);
+  return data;
 }
 
 async function cmdBrowser(args) {
@@ -860,12 +948,16 @@ async function cmdSignIn(args) {
   const destinationPath = destination.startsWith("http")
     ? new URL(destination).pathname
     : destination;
-  const destinationPattern = String(destinationPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const destinationPattern = destinationWaitPattern(destinationPath);
 
-  await browserRpc({
+  const result = await browserRpc({
     _: ["goto", confirmUrl],
     waitForUrl: destinationPattern,
   });
+  const landed = result.lastUrl ?? "";
+  if (signInFailedUrl(landed) || !new RegExp(destinationPattern).test(landed)) {
+    throw new Error(`sign-in did not reach ${destinationPath}; landed on ${landed || "(unknown)"}`);
+  }
   process.stdout.write(`signed-in destination=${destination}\n`);
 }
 
