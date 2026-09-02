@@ -4,15 +4,19 @@
  * Invocations are documented in .cursor/skills/verify-wallie/SKILL.md.
  */
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import http from "node:http";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "../../../..");
 const VERIFY_ROOT = join(REPO_ROOT, ".wallie", "verify");
 const CURRENT_RUN_PATH = join(VERIFY_ROOT, "current-run.json");
+const SCRIPT_PATH = __filename;
 
 const DEFAULT_SERVICE_ROLE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
@@ -25,7 +29,7 @@ function usage(exitCode = 1) {
   control-wallie.mjs sign-in [--destination <path>]
   control-wallie.mjs browser goto <path-or-url>
   control-wallie.mjs browser click --role <role> --name <name> [--screenshot <file>]
-  control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--screenshot <file>] [--snapshot-aria <file>]
+  control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--submit] [--screenshot <file>] [--snapshot-aria <file>]
   control-wallie.mjs browser press --key <key>
   control-wallie.mjs browser screenshot --path <file>
   control-wallie.mjs browser snapshot --aria --path <file>
@@ -67,6 +71,10 @@ function loadEnvLocal() {
   return out;
 }
 
+function mergedEnv(extra = {}) {
+  return { ...process.env, ...loadEnvLocal(), ...extra };
+}
+
 function readRun() {
   if (!fs.existsSync(CURRENT_RUN_PATH)) {
     throw new Error(`No active run at ${CURRENT_RUN_PATH}. Run launch first.`);
@@ -88,7 +96,15 @@ function updateRun(patch) {
 }
 
 function evidencePath(run, relativePath) {
-  const target = isAbsolute(relativePath) ? relativePath : join(run.evidenceDir, relativePath);
+  if (relativePath == null || String(relativePath).trim() === "") {
+    throw new Error("evidence path is required");
+  }
+  const evidenceRoot = resolve(run.evidenceDir);
+  const target = resolve(evidenceRoot, String(relativePath));
+  const prefix = evidenceRoot.endsWith("/") ? evidenceRoot : `${evidenceRoot}/`;
+  if (target !== evidenceRoot && !target.startsWith(prefix)) {
+    throw new Error(`evidence path escapes run directory: ${relativePath}`);
+  }
   fs.mkdirSync(dirname(target), { recursive: true });
   return target;
 }
@@ -115,10 +131,22 @@ async function fetchText(url, timeoutMs = 5000) {
   }
 }
 
-async function waitForReady(baseUrl, timeoutMs = 60_000) {
+function tailLog(logPath, maxChars = 2000) {
+  if (!fs.existsSync(logPath)) return "";
+  const text = fs.readFileSync(logPath, "utf8");
+  return text.slice(-maxChars);
+}
+
+async function waitForReady(baseUrl, { timeoutMs = 60_000, pid, logPath } = {}) {
   const started = Date.now();
   let lastError = "";
   while (Date.now() - started < timeoutMs) {
+    if (pid && !pidAlive(pid)) {
+      const logTail = logPath ? tailLog(logPath) : "";
+      throw new Error(
+        `Next process ${pid} exited before ${baseUrl} became ready.${logTail ? `\n${logTail}` : ""}`,
+      );
+    }
     try {
       const { status, text } = await fetchText(baseUrl, 3000);
       if (
@@ -127,6 +155,9 @@ async function waitForReady(baseUrl, timeoutMs = 60_000) {
           text.includes("Workspace navigation") ||
           text.includes("Wallie"))
       ) {
+        if (pid && !pidAlive(pid)) {
+          throw new Error(`Next process ${pid} exited after ${baseUrl} answered`);
+        }
         return;
       }
       lastError = `status=${status} bodyMarkers=missing`;
@@ -144,12 +175,73 @@ function spawnLogged(command, args, logPath, extraEnv = {}) {
   const out = fs.openSync(logPath, "a");
   const child = spawn(command, args, {
     cwd: REPO_ROOT,
-    env: { ...process.env, ...loadEnvLocal(), ...extraEnv },
+    env: mergedEnv(extraEnv),
     detached: true,
     stdio: ["ignore", out, out],
   });
   child.unref();
   return child.pid;
+}
+
+function spawnLoggedWait(command, args, logPath, extraEnv = {}) {
+  return new Promise((resolvePromise, reject) => {
+    fs.mkdirSync(dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, "");
+    const out = fs.openSync(logPath, "a");
+    const child = spawn(command, args, {
+      cwd: REPO_ROOT,
+      env: mergedEnv(extraEnv),
+      stdio: ["ignore", out, out],
+    });
+    child.on("error", (error) => {
+      try {
+        fs.closeSync(out);
+      } catch {
+        /* ignore */
+      }
+      reject(error);
+    });
+    child.on("close", (code) => {
+      try {
+        fs.closeSync(out);
+      } catch {
+        /* ignore */
+      }
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(
+        new Error(
+          `${command} ${args.join(" ")} exited ${code}. See ${logPath}\n${tailLog(logPath)}`,
+        ),
+      );
+    });
+  });
+}
+
+async function waitForBrowserSidecar(pid, logPath, timeoutMs = 30_000) {
+  const started = Date.now();
+  let lastError = "";
+  while (Date.now() - started < timeoutMs) {
+    if (pid && !pidAlive(pid)) {
+      throw new Error(`browser sidecar ${pid} exited before it became ready.\n${tailLog(logPath)}`);
+    }
+    try {
+      const current = readRun();
+      if (current.browserPort) {
+        const health = await fetchText(`http://127.0.0.1:${current.browserPort}/health`, 1000);
+        if (health.status === 200) return current;
+        lastError = `health ${health.status}`;
+      } else {
+        lastError = "browserPort missing";
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await delay(200);
+  }
+  throw new Error(`Timed out waiting for browser sidecar (${lastError})`);
 }
 
 async function cmdLaunch(args) {
@@ -165,7 +257,6 @@ async function cmdLaunch(args) {
     );
   }
 
-  // Stop a previous control-wallie-owned Next if present.
   if (fs.existsSync(CURRENT_RUN_PATH)) {
     try {
       await cmdStop({ quiet: true });
@@ -174,20 +265,29 @@ async function cmdLaunch(args) {
     }
   }
 
-  const pids = {};
-  if (args["manage-supabase"]) {
-    pids.supabaseStart = spawnLogged(
-      "supabase",
-      ["start"],
-      join(evidenceDir, "supabase-start.log"),
-    );
-    await delay(1000);
+  const manageSupabase = Boolean(args["manage-supabase"]);
+  if (manageSupabase) {
+    await spawnLoggedWait("supabase", ["start"], join(evidenceDir, "supabase-start.log"));
+    try {
+      const auth = await fetchText("http://127.0.0.1:54321/auth/v1/health", 5000);
+      if (auth.status >= 500) {
+        throw new Error(`Supabase Auth health returned ${auth.status}`);
+      }
+    } catch (error) {
+      throw new Error(
+        `Supabase started but Auth is not reachable at http://127.0.0.1:54321 (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
   }
 
+  const nextLog = join(evidenceDir, "next.log");
+  const pids = {};
   const nextPid = spawnLogged(
     "pnpm",
     ["exec", "next", "dev", "--port", port, "--hostname", "127.0.0.1"],
-    join(evidenceDir, "next.log"),
+    nextLog,
     {
       NEXT_PUBLIC_APP_URL: baseUrl,
       PORT: port,
@@ -199,6 +299,7 @@ async function cmdLaunch(args) {
     pids.worker = spawnLogged("pnpm", ["worker"], join(evidenceDir, "worker.log"));
   }
 
+  const browserToken = crypto.randomBytes(16).toString("hex");
   const run = {
     runId,
     evidenceDir,
@@ -207,12 +308,18 @@ async function cmdLaunch(args) {
     pids,
     lastUrl: baseUrl,
     startedAt: new Date().toISOString(),
-    manageSupabase: Boolean(args["manage-supabase"]),
+    manageSupabase,
+    browserToken,
   };
   writeRun(run);
 
+  const browserLog = join(evidenceDir, "browser.log");
+  pids.browser = spawnLogged(process.execPath, [SCRIPT_PATH, "_browser-serve"], browserLog);
+  updateRun({ pids });
+  await waitForBrowserSidecar(pids.browser, browserLog);
+
   if (!args["skip-ready-wait"]) {
-    await waitForReady(baseUrl);
+    await waitForReady(baseUrl, { pid: nextPid, logPath: nextLog });
   }
 
   process.stdout.write(`ready baseUrl=${baseUrl} evidenceDir=${evidenceDir} nextPid=${nextPid}\n`);
@@ -225,6 +332,12 @@ async function cmdDoctor() {
   if (!pidAlive(run.pids?.next)) {
     problems.push(`next pid ${run.pids?.next} is not running`);
   }
+  if (run.pids?.worker != null && !pidAlive(run.pids.worker)) {
+    problems.push(`worker pid ${run.pids.worker} is not running`);
+  }
+  if (run.pids?.browser != null && !pidAlive(run.pids.browser)) {
+    problems.push(`browser sidecar pid ${run.pids.browser} is not running`);
+  }
 
   try {
     const home = await fetchText(run.baseUrl, 5000);
@@ -233,14 +346,16 @@ async function cmdDoctor() {
       home.text.includes("Sign in to Wallie") ||
       home.text.includes("Workspace navigation") ||
       home.text.includes("Wallie");
-    if (!okHome) problems.push("GET / missing Wallie identity markers");
+    if (home.status === 200 && !okHome) problems.push("GET / missing Wallie identity markers");
   } catch (error) {
     problems.push(`GET / failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   try {
     const login = await fetchText(`${run.baseUrl}/login`, 5000);
-    if (login.status === 200) {
+    if (login.status !== 200) {
+      problems.push(`GET /login -> ${login.status}`);
+    } else {
       if (!login.text.includes("Sign in to Wallie")) {
         problems.push("GET /login missing Sign in to Wallie");
       }
@@ -250,6 +365,17 @@ async function cmdDoctor() {
     }
   } catch (error) {
     problems.push(`GET /login failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (run.browserPort) {
+    try {
+      const health = await fetchText(`http://127.0.0.1:${run.browserPort}/health`, 2000);
+      if (health.status !== 200) problems.push(`browser sidecar health -> ${health.status}`);
+    } catch (error) {
+      problems.push(
+        `browser sidecar is not reachable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   if (problems.length) {
@@ -277,10 +403,11 @@ function killPidTree(pid) {
 
 async function cmdStop(options = {}) {
   const run = readRun();
+  killPidTree(run.pids?.browser);
   killPidTree(run.pids?.worker);
   killPidTree(run.pids?.next);
   await delay(800);
-  for (const key of ["next", "worker"]) {
+  for (const key of ["browser", "next", "worker"]) {
     const pid = run.pids?.[key];
     if (pidAlive(pid)) {
       try {
@@ -291,39 +418,23 @@ async function cmdStop(options = {}) {
     }
   }
 
+  if (run.manageSupabase) {
+    try {
+      await spawnLoggedWait("supabase", ["stop"], join(run.evidenceDir, "supabase-stop.log"));
+    } catch (error) {
+      if (!options.quiet) {
+        process.stderr.write(
+          `supabase stop failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
+  }
+
   run.stoppedAt = new Date().toISOString();
   fs.writeFileSync(join(run.evidenceDir, "run.json"), `${JSON.stringify(run, null, 2)}\n`);
   if (fs.existsSync(CURRENT_RUN_PATH)) fs.unlinkSync(CURRENT_RUN_PATH);
   if (!options.quiet) {
     process.stdout.write(`stopped evidenceDir=${run.evidenceDir} (evidence retained)\n`);
-  }
-}
-
-async function withBrowser(run, fn) {
-  const { chromium } = await import("@playwright/test");
-  const userDataDir = join(run.evidenceDir, "browser-profile");
-  fs.mkdirSync(userDataDir, { recursive: true });
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: true,
-    viewport: { width: 1280, height: 800 },
-  });
-  const page = context.pages()[0] ?? (await context.newPage());
-  try {
-    return await fn(page, context);
-  } finally {
-    const lastUrl = page.url();
-    if (lastUrl && lastUrl !== "about:blank") {
-      updateRun({ lastUrl });
-    }
-    await context.close();
-  }
-}
-
-async function ensurePage(page, run) {
-  const current = page.url();
-  if (current === "about:blank" || current === "") {
-    const target = run.lastUrl || run.baseUrl;
-    await page.goto(target, { waitUntil: "domcontentloaded" });
   }
 }
 
@@ -338,98 +449,215 @@ function locatorFor(page, role, name) {
   return page.getByRole(role, { name: nameOption });
 }
 
-async function cmdBrowser(args) {
-  const run = readRun();
+async function ensurePage(page, run) {
+  const current = page.url();
+  if (current === "about:blank" || current === "") {
+    const target = run.lastUrl || run.baseUrl;
+    await page.goto(target, { waitUntil: "domcontentloaded" });
+  }
+}
+
+async function executeBrowserAction(page, run, args) {
   const action = args._[0];
-  if (!action) usage();
+  const lines = [];
+  const log = (message) => {
+    lines.push(message);
+  };
 
-  await withBrowser(run, async (page) => {
-    if (action === "goto") {
-      const target = args._[1];
-      if (!target) usage();
-      const url = target.startsWith("http") ? target : new URL(target, run.baseUrl).toString();
-      await page.goto(url, { waitUntil: "domcontentloaded" });
-      process.stdout.write(`goto ${page.url()}\n`);
-      return;
+  if (action === "goto") {
+    const target = args._[1] ?? args.target;
+    if (target == null || target === "") {
+      throw new Error("browser goto requires a path or URL");
     }
-
-    await ensurePage(page, run);
-
-    if (action === "click") {
-      const locator = locatorFor(page, args.role, args.name).first();
-      const beforeUrl = page.url();
-      const href = await locator.getAttribute("href");
-      await Promise.all([
-        href && href.startsWith("/")
-          ? page.waitForURL(
-              (url) => {
-                const next = url.toString();
-                return next !== beforeUrl && next.includes(href.split("?")[0]);
-              },
-              { timeout: 15_000 },
-            )
-          : page.waitForLoadState("domcontentloaded"),
-        locator.click(),
-      ]);
-      if (args.screenshot) {
-        const path = evidencePath(run, String(args.screenshot));
-        await page.screenshot({ path, fullPage: true });
-        process.stdout.write(`screenshot ${path}\n`);
-      }
-      process.stdout.write(`click role=${args.role} name=${args.name} url=${page.url()}\n`);
-      return;
+    const url = String(target).startsWith("http")
+      ? String(target)
+      : new URL(String(target), run.baseUrl).toString();
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    if (args.waitForUrl) {
+      await page.waitForURL(new RegExp(String(args.waitForUrl)), { timeout: 15_000 });
     }
+    log(`goto ${page.url()}`);
+    return { stdout: `${lines.join("\n")}\n`, lastUrl: page.url() };
+  }
 
-    if (action === "fill") {
-      if (args.value === undefined) throw new Error("--value required");
-      await locatorFor(page, args.role, args.name).first().fill(String(args.value));
-      if (args.screenshot) {
-        const path = evidencePath(run, String(args.screenshot));
-        await page.screenshot({ path, fullPage: true });
-        process.stdout.write(`screenshot ${path}\n`);
-      }
-      if (args["snapshot-aria"]) {
-        const path = evidencePath(run, String(args["snapshot-aria"]));
-        const aria = await page.locator("body").ariaSnapshot();
-        fs.writeFileSync(path, `${aria}\n`);
-        process.stdout.write(`snapshot ${path}\n`);
-      }
-      process.stdout.write(`fill role=${args.role} name=${args.name}\n`);
-      return;
-    }
+  await ensurePage(page, run);
 
-    if (action === "press") {
-      if (!args.key) throw new Error("--key required");
-      await page.keyboard.press(String(args.key));
-      process.stdout.write(`press key=${args.key}\n`);
-      return;
-    }
-
-    if (action === "screenshot") {
-      if (!args.path) throw new Error("--path required");
-      const path = evidencePath(run, String(args.path));
+  if (action === "click") {
+    const locator = locatorFor(page, args.role, args.name).first();
+    const beforeUrl = page.url();
+    const href = await locator.getAttribute("href");
+    await Promise.all([
+      href && href.startsWith("/")
+        ? page.waitForURL(
+            (url) => {
+              const next = url.toString();
+              return next !== beforeUrl && next.includes(href.split("?")[0]);
+            },
+            { timeout: 15_000 },
+          )
+        : page.waitForLoadState("domcontentloaded"),
+      locator.click(),
+    ]);
+    if (args.screenshot) {
+      const path = evidencePath(run, String(args.screenshot));
       await page.screenshot({ path, fullPage: true });
-      process.stdout.write(`screenshot ${path}\n`);
-      return;
+      log(`screenshot ${path}`);
     }
+    log(`click role=${args.role} name=${args.name} url=${page.url()}`);
+    return { stdout: `${lines.join("\n")}\n`, lastUrl: page.url() };
+  }
 
-    if (action === "snapshot") {
-      if (!args.path) throw new Error("--path required");
-      const path = evidencePath(run, String(args.path));
+  if (action === "fill") {
+    if (args.value === undefined) throw new Error("--value required");
+    const locator = locatorFor(page, args.role, args.name).first();
+    await locator.fill(String(args.value));
+    if (args.submit) {
+      await locator.press("Enter");
+      await page.waitForLoadState("domcontentloaded");
+    }
+    if (args.screenshot) {
+      const path = evidencePath(run, String(args.screenshot));
+      await page.screenshot({ path, fullPage: true });
+      log(`screenshot ${path}`);
+    }
+    if (args["snapshot-aria"]) {
+      const path = evidencePath(run, String(args["snapshot-aria"]));
       const aria = await page.locator("body").ariaSnapshot();
       fs.writeFileSync(path, `${aria}\n`);
-      process.stdout.write(`snapshot ${path}\n`);
+      log(`snapshot ${path}`);
+    }
+    log(`fill role=${args.role} name=${args.name}${args.submit ? " submit=Enter" : ""}`);
+    return { stdout: `${lines.join("\n")}\n`, lastUrl: page.url() };
+  }
+
+  if (action === "press") {
+    if (!args.key) throw new Error("--key required");
+    await page.keyboard.press(String(args.key));
+    log(`press key=${args.key}`);
+    return { stdout: `${lines.join("\n")}\n`, lastUrl: page.url() };
+  }
+
+  if (action === "screenshot") {
+    if (!args.path) throw new Error("--path required");
+    const path = evidencePath(run, String(args.path));
+    await page.screenshot({ path, fullPage: true });
+    log(`screenshot ${path}`);
+    return { stdout: `${lines.join("\n")}\n`, lastUrl: page.url() };
+  }
+
+  if (action === "snapshot") {
+    if (!args.path) throw new Error("--path required");
+    const path = evidencePath(run, String(args.path));
+    const aria = await page.locator("body").ariaSnapshot();
+    fs.writeFileSync(path, `${aria}\n`);
+    log(`snapshot ${path}`);
+    return { stdout: `${lines.join("\n")}\n`, lastUrl: page.url() };
+  }
+
+  throw new Error(`unknown browser action: ${action ?? "(missing)"}`);
+}
+
+function readHttpBody(req) {
+  return new Promise((resolvePromise, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolvePromise(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+async function cmdBrowserServe() {
+  const initial = readRun();
+  const { chromium } = await import("@playwright/test");
+  const userDataDir = join(initial.evidenceDir, "browser-profile");
+  fs.mkdirSync(userDataDir, { recursive: true });
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    headless: true,
+    viewport: { width: 1280, height: 800 },
+  });
+  const page = context.pages()[0] ?? (await context.newPage());
+
+  const server = http.createServer(async (req, res) => {
+    const fail = (status, message) => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: message }));
+    };
+
+    if (req.method === "GET" && req.url === "/health") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, url: page.url() }));
       return;
     }
 
-    usage();
+    if (req.method !== "POST" || req.url !== "/rpc") {
+      fail(404, "not found");
+      return;
+    }
+
+    const run = readRun();
+    const expected = `Bearer ${run.browserToken}`;
+    if (req.headers.authorization !== expected) {
+      fail(401, "unauthorized");
+      return;
+    }
+
+    try {
+      const body = JSON.parse((await readHttpBody(req)) || "{}");
+      const result = await executeBrowserAction(page, run, body);
+      if (result.lastUrl && result.lastUrl !== "about:blank") {
+        updateRun({ lastUrl: result.lastUrl });
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      fail(500, error instanceof Error ? error.message : String(error));
+    }
   });
+
+  const shutdown = async () => {
+    await context.close().catch(() => undefined);
+    server.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    const browserPort = typeof address === "object" && address ? address.port : 0;
+    updateRun({ browserPort });
+  });
+}
+
+async function browserRpc(args) {
+  const run = readRun();
+  if (!run.browserPort) {
+    throw new Error("browser sidecar is not running; relaunch with control-wallie launch");
+  }
+  const response = await fetch(`http://127.0.0.1:${run.browserPort}/rpc`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${run.browserToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(args),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error ?? `browser rpc ${response.status}`);
+  }
+  if (data.stdout) process.stdout.write(data.stdout);
+}
+
+async function cmdBrowser(args) {
+  if (!args._[0]) usage();
+  await browserRpc(args);
 }
 
 async function cmdSignIn(args) {
   const run = readRun();
   const destination = String(args.destination ?? "/w/acme-corp/sessions");
-  const env = { ...loadEnvLocal(), ...process.env };
+  const env = mergedEnv();
   const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
   const serviceKey = env.SUPABASE_SECRET_KEY ?? DEFAULT_SERVICE_ROLE_KEY;
   const allowlistedRedirect = `http://localhost:3000/auth/confirm?next=${encodeURIComponent(destination)}`;
@@ -465,11 +693,11 @@ async function cmdSignIn(args) {
     `${run.baseUrl}/auth/confirm?next=${encodeURIComponent(destination)}` +
     `&token_hash=${encodeURIComponent(hashedToken)}&type=email`;
 
-  await withBrowser(run, async (page) => {
-    await page.goto(confirmUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForURL(/\/w\/acme-corp/, { timeout: 15_000 });
-    process.stdout.write(`signed-in url=${page.url()}\n`);
+  await browserRpc({
+    _: ["goto", confirmUrl],
+    waitForUrl: "\\/w\\/acme-corp",
   });
+  process.stdout.write(`signed-in destination=${destination}\n`);
 }
 
 async function main() {
@@ -484,6 +712,7 @@ async function main() {
     else if (command === "stop") await cmdStop();
     else if (command === "sign-in") await cmdSignIn(args);
     else if (command === "browser") await cmdBrowser(args);
+    else if (command === "_browser-serve") await cmdBrowserServe();
     else usage();
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

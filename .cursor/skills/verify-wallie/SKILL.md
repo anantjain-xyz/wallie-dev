@@ -32,15 +32,17 @@ supabase db reset   # applies migrations + supabase/seed.sql (acme-corp, anant@e
 
 # Start the app for verification (records PIDs + evidence dir)
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs launch
+# Optional: also start worker and/or own the local Supabase stack
+# node .cursor/skills/verify-wallie/scripts/control-wallie.mjs launch --worker --manage-supabase
 ```
 
-**Ready signal:** helper prints `ready baseUrl=http://127.0.0.1:<port>` after `GET /` returns 200 and the HTML contains `Sign in to Wallie` or `Wallie`. Dev server logs `✓ Ready` / `Local:`.
+**Ready signal:** helper prints `ready baseUrl=http://127.0.0.1:<port>` after the spawned Next process is still alive, `GET /` returns 200, and the HTML contains `Sign in to Wallie` or `Wallie`. `--manage-supabase` waits for `supabase start` to exit 0 and probes `http://127.0.0.1:54321` before starting Next. Dev server logs `✓ Ready` / `Local:`.
 
 **Default port:** `3000` (`WALLIE_VERIFY_PORT` to override). Playwright's packaged e2e server uses `3100` separately; do not point this skill at a foreign Playwright webServer unless you own it.
 
 **Worker:** not required for landing, login, or reading seeded authenticated pages. Required for session jobs to leave `in_progress` and for full approve→next-stage execution. Start with a second terminal `pnpm worker` when proving pipeline progression.
 
-**Teardown:** `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs stop` (kills only recorded PIDs; leaves `.wallie/verify/<run-id>/` intact). Do not `pkill -f next`.
+**Teardown:** `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs stop` (kills the browser sidecar, Next, and optional worker PIDs recorded at launch; leaves `.wallie/verify/<run-id>/` intact). If launch used `--manage-supabase`, stop also runs `supabase stop`. Do not `pkill -f next`.
 
 ## Doctor
 
@@ -50,13 +52,13 @@ Read-only health check before any drive:
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs doctor
 ```
 
-Requires: a run state file from `launch`, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). Optionally probes `GET <baseUrl>/login` for `Sign in to Wallie` + `Work email`.
+Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. The Playwright sidecar started at launch must answer `/health`.
 
 If doctor fails, stop and relaunch. Never drive an instance you did not start.
 
 ## Drive
 
-Harness: **Playwright** (`@playwright/test` Chromium) via `control-wallie`. Stable handles are ARIA roles/names from production UI — almost no `data-testid` on real pages.
+Harness: **Playwright** (`@playwright/test` Chromium) via `control-wallie`. `launch` starts a long-lived browser sidecar so `browser` and `sign-in` commands share one live page until `stop`. Do not treat each command as a fresh tab. Stable handles are ARIA roles/names from production UI — almost no `data-testid` on real pages.
 
 ```bash
 # Navigate
@@ -65,7 +67,7 @@ node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /
 # Click by role + accessible name
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "Sign in to Wallie"
 
-# Fill
+# Fill (add --submit to press Enter in the same live page, e.g. Sessions search)
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser fill --role textbox --name "Work email" --value "anant@example.com"
 
 # Auth shortcut when local Supabase is up (seed user)
@@ -95,7 +97,7 @@ Feature recipes live in [`features/`](./features/). Drive from the map; one feat
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs stop
 ```
 
-Stops Next (and optional worker) PIDs recorded at launch. Does **not** delete evidence. Does **not** run `supabase stop` unless you passed `--manage-supabase` at launch (default: leave shared local Supabase running).
+Stops the browser sidecar, Next, and optional worker PIDs recorded at launch. Does **not** delete evidence. Runs `supabase stop` only when launch used `--manage-supabase` (default: leave a shared local Supabase running).
 
 Confirm evidence still exists: `ls .wallie/verify/<run-id>/`.
 
@@ -114,12 +116,12 @@ Executable entrypoint (no install step beyond repo `pnpm install` + Playwright b
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs <command>
 ```
 
-| Command     | Purpose                                                                                        |
-| ----------- | ---------------------------------------------------------------------------------------------- |
-| `launch`    | Start `pnpm dev` (optional `--worker`, `--manage-supabase`), wait until ready, write run state |
-| `doctor`    | Read-only readiness check                                                                      |
-| `browser …` | goto / click / fill / press / screenshot / snapshot                                            |
-| `sign-in`   | Admin magic-link sign-in as `anant@example.com`                                                |
-| `stop`      | Tear down recorded PIDs only                                                                   |
+| Command     | Purpose                                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `launch`    | Start Next (optional `--worker`, `--manage-supabase`), wait until this process owns the port, start the browser sidecar |
+| `doctor`    | Read-only readiness check for Next, login, optional worker, and the browser sidecar                                     |
+| `browser …` | goto / click / fill / press / screenshot / snapshot against the live sidecar page                                       |
+| `sign-in`   | Admin magic-link sign-in as `anant@example.com` on the same live page                                                   |
+| `stop`      | Tear down recorded PIDs (and `supabase stop` when this run started Supabase)                                            |
 
 State file: `.wallie/verify/current-run.json` → points at the active run directory.

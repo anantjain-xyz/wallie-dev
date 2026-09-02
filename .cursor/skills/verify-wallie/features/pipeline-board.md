@@ -23,11 +23,12 @@ Preconditions:
 - Browser is signed in to `/w/acme-corp`.
 
 - **Open board.** Visit the workspace root. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp`. Heading `Pipeline` and region `Pipeline board` are visible.
-- **Use filters.** Focus pipeline filters. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser snapshot --aria --path pipeline-filters.aria.txt` after interacting with `Pipeline filters` controls if present. The board region remains on the page.
+- **Filter by status.** Choose `Awaiting review`. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role button --name "Awaiting review"`. The `Pipeline board` region stays on the page and `Awaiting review` is pressed. Cards that are not awaiting review disappear (or the board shows an empty-filter state).
 - **Open session.** Choose a session open link. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "/^Open session /"`. The session detail URL loads under `/w/acme-corp/sessions/`.
 - **Proof.** Capture the board. Run `... browser screenshot --path pipeline.png` and `... browser snapshot --aria --path pipeline.aria.txt`. Artifacts identify Wallie, `Pipeline`, and `Pipeline board`.
 
 ## Gotchas
 
 - The board can be empty on a fresh workspace without seed; seed before claiming card-open proof.
+- `Pipeline filters` (search and status chips) render only when the workspace has active sessions. If the zero state is showing, skip `pipeline-filter` and report the unmet precondition.
 - `pnpm worker` is not required to view the board, only to advance jobs behind the scenes.

@@ -15,7 +15,7 @@ This directory is the maintained source for verifying user-facing Wallie behavio
 - Start every recipe from the baseline state unless its preconditions say otherwise.
 - Prefer ARIA roles and accessible names over CSS selectors or DOM position.
 - Treat every command as literal. Keep quoted names and flags unchanged.
-- Run browser actions through `control-wallie browser`.
+- Run browser actions through `control-wallie browser`. Commands share one live page started at `launch`; fill then click works without reloading.
 - Sign in through `control-wallie sign-in` when Supabase is healthy; do not invent passwords (Wallie has no password login UI).
 - Restore seeded review state after mutations when possible. Do not remove proof artifacts during cleanup.
 
