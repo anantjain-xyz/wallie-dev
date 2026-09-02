@@ -88,9 +88,7 @@ function updateRun(patch) {
 }
 
 function evidencePath(run, relativePath) {
-  const target = isAbsolute(relativePath)
-    ? relativePath
-    : join(run.evidenceDir, relativePath);
+  const target = isAbsolute(relativePath) ? relativePath : join(run.evidenceDir, relativePath);
   fs.mkdirSync(dirname(target), { recursive: true });
   return target;
 }
@@ -217,9 +215,7 @@ async function cmdLaunch(args) {
     await waitForReady(baseUrl);
   }
 
-  process.stdout.write(
-    `ready baseUrl=${baseUrl} evidenceDir=${evidenceDir} nextPid=${nextPid}\n`,
-  );
+  process.stdout.write(`ready baseUrl=${baseUrl} evidenceDir=${evidenceDir} nextPid=${nextPid}\n`);
 }
 
 async function cmdDoctor() {

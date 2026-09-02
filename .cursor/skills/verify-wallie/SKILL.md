@@ -114,12 +114,12 @@ Executable entrypoint (no install step beyond repo `pnpm install` + Playwright b
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs <command>
 ```
 
-| Command | Purpose |
-| --- | --- |
-| `launch` | Start `pnpm dev` (optional `--worker`, `--manage-supabase`), wait until ready, write run state |
-| `doctor` | Read-only readiness check |
-| `browser …` | goto / click / fill / press / screenshot / snapshot |
-| `sign-in` | Admin magic-link sign-in as `anant@example.com` |
-| `stop` | Tear down recorded PIDs only |
+| Command     | Purpose                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| `launch`    | Start `pnpm dev` (optional `--worker`, `--manage-supabase`), wait until ready, write run state |
+| `doctor`    | Read-only readiness check                                                                      |
+| `browser …` | goto / click / fill / press / screenshot / snapshot                                            |
+| `sign-in`   | Admin magic-link sign-in as `anant@example.com`                                                |
+| `stop`      | Tear down recorded PIDs only                                                                   |
 
 State file: `.wallie/verify/current-run.json` → points at the active run directory.
