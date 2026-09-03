@@ -12,6 +12,32 @@ export type DbTypesDriftResult = Readonly<{
   messages: readonly string[];
 }>;
 
+const TYPE_CHANGING_SQL = [
+  /\bCREATE\s+(?:OR\s+REPLACE\s+)?TABLE\b/i,
+  /\bDROP\s+TABLE\b/i,
+  /\bCREATE\s+TYPE\b/i,
+  /\bALTER\s+TYPE\b/i,
+  /\bDROP\s+TYPE\b/i,
+  /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i,
+  /\bDROP\s+FUNCTION\b/i,
+  /\bALTER\s+FUNCTION\b/i,
+  /\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\b/i,
+  /\bDROP\s+VIEW\b/i,
+  /\bADD\s+COLUMN\b/i,
+  /\bDROP\s+COLUMN\b/i,
+  /\bRENAME\s+COLUMN\b/i,
+  /\bALTER\s+COLUMN\b/i,
+];
+
+function stripSqlComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+}
+
+export function migrationCanChangeGeneratedTypes(sql: string): boolean {
+  const stripped = stripSqlComments(sql);
+  return TYPE_CHANGING_SQL.some((pattern) => pattern.test(stripped));
+}
+
 function gitCommitUnixTime(path: string, cwd: string): number | null {
   try {
     const output = execFileSync("git", ["log", "-1", "--format=%ct", "--", path], {
@@ -24,6 +50,19 @@ function gitCommitUnixTime(path: string, cwd: string): number | null {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
   } catch {
     return null;
+  }
+}
+
+export function isShallowGitRepository(cwd: string): boolean {
+  try {
+    const output = execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return output === "true";
+  } catch {
+    return false;
   }
 }
 
@@ -72,10 +111,22 @@ export function checkDbTypesDrift(projectDirectory = process.cwd()): DbTypesDrif
   const latestMigration = migrations[migrations.length - 1]!;
   const latestVersion = latestMigration.match(/^(\d{14})_/)?.[1] ?? "unknown";
   const messages = [`Latest migration: ${latestMigration} (version ${latestVersion}).`];
+  const latestSql = readFileSync(resolve(migrationsDir, latestMigration), "utf8");
 
-  // database.types.ts has no version header or migration stamp, so a filename
-  // comment check is not available. Git commit timestamps are the remaining
-  // heuristic; they are missing in shallow CI checkouts.
+  if (!migrationCanChangeGeneratedTypes(latestSql)) {
+    messages.push(
+      `OK: ${latestMigration} does not change generated types (policies, indexes, constraints, grants, or data only). Skipping the types-vs-migration timestamp comparison.`,
+    );
+    return { exitCode: 0, latestMigration, messages };
+  }
+
+  if (isShallowGitRepository(projectDirectory)) {
+    messages.push(
+      `ERROR: git history is shallow, so commit timestamps cannot prove ${generatedDatabaseTypesPath} was regenerated after type-changing ${latestMigration}. Fetch full history or run \`pnpm db:types\` against local Supabase and inspect the diff.`,
+    );
+    return { exitCode: 1, latestMigration, messages };
+  }
+
   const typesTime = gitCommitUnixTime(generatedDatabaseTypesPath, projectDirectory);
   const migrationTime = gitCommitUnixTime(
     `${supabaseMigrationsDirectory}/${latestMigration}`,
@@ -84,14 +135,14 @@ export function checkDbTypesDrift(projectDirectory = process.cwd()): DbTypesDrif
 
   if (typesTime === null || migrationTime === null) {
     messages.push(
-      "WARNING: git commit timestamps for the types file and/or latest migration are unavailable (common in shallow CI checkouts). This heuristic cannot prove types were regenerated after the latest migration. Run `pnpm db:types` against local Supabase and inspect the diff. Exiting 0 to avoid a flaky blocker.",
+      "WARNING: git commit timestamps for the types file and/or latest migration are unavailable. This heuristic cannot prove types were regenerated after the latest type-changing migration. Run `pnpm db:types` against local Supabase and inspect the diff. Exiting 0 to avoid a flaky blocker.",
     );
     return { exitCode: 0, latestMigration, messages };
   }
 
   if (typesTime < migrationTime) {
     messages.push(
-      `ERROR: ${generatedDatabaseTypesPath} last changed at ${typesTime}, but ${latestMigration} last changed at ${migrationTime}. Regenerated types look older than the latest migration. Run \`pnpm db:types\` against local Supabase and commit the result.`,
+      `ERROR: ${generatedDatabaseTypesPath} last changed at ${typesTime}, but ${latestMigration} last changed at ${migrationTime}. Regenerated types look older than the latest type-changing migration. Run \`pnpm db:types\` against local Supabase and commit the result.`,
     );
     return { exitCode: 1, latestMigration, messages };
   }

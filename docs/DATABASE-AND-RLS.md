@@ -203,15 +203,15 @@ mock.
 
 ## Required proof
 
-| Claim                                  | Proof                                                                              |
-| -------------------------------------- | ---------------------------------------------------------------------------------- |
-| Migration chain is self-consistent     | `supabase db reset`                                                                |
-| SQL privileges and RLS behavior        | `pnpm check:db-tests` plus the relevant identity matrix                            |
-| Generated schema projection is current | `pnpm db:types` and clean generated diff                                           |
-| Migration versions are unique          | Existing migration-version Vitest                                                  |
-| Realtime projection is current         | Apply the migration chain locally; `pnpm check:db-tests` when the stack is running |
-| Rolling compatibility                  | Isolated upgrade using the prior schema and old/new caller versions                |
-| TypeScript consumers remain sound      | Focused tests and `pnpm check`                                                     |
+| Claim                                  | Proof                                                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Migration chain is self-consistent     | `supabase db reset`                                                                            |
+| SQL privileges and RLS behavior        | `pnpm check:db-tests` plus the relevant identity matrix                                        |
+| Generated schema projection is current | `pnpm db:types` and clean generated diff                                                       |
+| Migration versions are unique          | Existing migration-version Vitest                                                              |
+| Realtime projection is current         | pgTAP catalog assertion in `supabase/tests/realtime_publication.sql` via `pnpm check:db-tests` |
+| Rolling compatibility                  | Isolated upgrade using the prior schema and old/new caller versions                            |
+| TypeScript consumers remain sound      | Focused tests and `pnpm check`                                                                 |
 
 String inspection of SQL is useful for narrow projections; it is not a
 substitute for applying the migration or exercising Postgres identities.
