@@ -1,7 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
-import { stopRunSandbox } from "@/lib/pipeline/cancel";
+import {
+  ACTIVE_AGENT_RUN_STATUSES,
+  stopRunSandbox,
+  type ActiveAgentRunStatus,
+} from "@/lib/pipeline/cancel";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -19,7 +23,7 @@ type ActiveRunRow = {
   sandbox_provider: string | null;
   sandbox_vercel_project_id: string | null;
   sandbox_vercel_team_id: string | null;
-  status: "queued" | "started" | "running";
+  status: ActiveAgentRunStatus;
   workspace_id: string;
 };
 
@@ -107,7 +111,7 @@ export async function sweepStalledRuns(
         status: "error" as const,
       })
       .eq("id", run.id)
-      .in("status", ["queued", "started", "running"]);
+      .in("status", ACTIVE_AGENT_RUN_STATUSES);
 
     if (updateError) {
       console.error("[stall-detector] failed to error stalled run", {
@@ -192,7 +196,7 @@ async function loadActiveRuns(
       .select(
         "id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
       )
-      .in("status", ["queued", "started", "running"]);
+      .in("status", ACTIVE_AGENT_RUN_STATUSES);
     const scopedActiveRunQuery = options.workspaceId
       ? activeRunQuery.eq("workspace_id", options.workspaceId)
       : activeRunQuery;

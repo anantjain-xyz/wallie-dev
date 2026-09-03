@@ -6,7 +6,12 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
-import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import {
+  ACTIVE_AGENT_JOB_STATUSES,
+  ACTIVE_AGENT_RUN_STATUSES,
+  cancelSessionWork,
+  isActiveAgentRunStatus,
+} from "@/lib/pipeline/cancel";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
@@ -479,7 +484,7 @@ async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
     .from("agent_runs")
     .select(runSelect)
     .eq("session_id", sessionId)
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -501,7 +506,10 @@ async function loadActiveJobByDedupeKey(
     .select(jobSelect)
     .eq("workspace_id", workspaceId)
     .eq("dedupe_key", dedupeKey)
-    .in("status", ["queued", "running"])
+    // Must match the partial unique index that raised the 23505 we are
+    // recovering from; a narrower set here made the dedupe lookup miss a
+    // `started` job and rethrow the violation as a hard failure.
+    .in("status", ACTIVE_AGENT_JOB_STATUSES)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -902,7 +910,7 @@ export async function cancelWallieRun(input: {
 
   // A run that already reached a terminal state has nothing to cancel. Return
   // it unchanged so the caller can treat a double-click as a no-op.
-  if (!["queued", "started", "running"].includes(existingRun.status)) {
+  if (!isActiveAgentRunStatus(existingRun.status)) {
     return { canceled: false, run: existingRun } satisfies CancelWallieRunResult;
   }
 

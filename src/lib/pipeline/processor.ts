@@ -40,6 +40,7 @@ import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sand
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
+import { ACTIVE_AGENT_JOB_STATUSES, ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import {
   formatSessionAttachmentPromptData,
@@ -582,7 +583,7 @@ async function loadActiveSessionJob(
     .select("id")
     .eq("workspace_id", input.workspaceId)
     .eq("dedupe_key", input.dedupeKey)
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_JOB_STATUSES)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -1155,7 +1156,7 @@ async function startAgentRun(
       triggered_by_member_id: input.requestedByMemberId,
     })
     .eq("agent_job_id", input.jobId)
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .select("id")
     .maybeSingle();
 
@@ -1225,7 +1226,7 @@ async function updateRunSandbox(
     // Only attach the sandbox to a run that is still active. If the run was
     // canceled in the race before its sandbox id landed, this affects zero
     // rows and the caller stops the orphaned sandbox.
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .select("id");
   if (error) {
     throw error;
@@ -1253,7 +1254,7 @@ async function markRunSuccess(
     .eq("id", runId)
     // Don't resurrect a run that was canceled while this worker was still
     // processing it.
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 async function markRunError(admin: AdminClient, runId: string): Promise<void> {
@@ -1265,7 +1266,7 @@ async function markRunError(admin: AdminClient, runId: string): Promise<void> {
     })
     .eq("id", runId)
     // Don't flip a canceled run back to error.
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 // Best-effort cleanup for a job whose session is no longer claimable (terminal
@@ -1277,7 +1278,7 @@ async function cancelQueuedRunsForJob(admin: AdminClient, jobId: string): Promis
     .from("agent_runs")
     .update({ finished_at: new Date().toISOString(), status: "canceled" })
     .eq("agent_job_id", jobId)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 
   if (error) {
     console.error("Failed to cancel runs for an unclaimable job", {
@@ -1315,7 +1316,7 @@ async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise
       .from("agent_runs")
       .select("id")
       .eq("agent_job_id", jobId)
-      .in("status", ["queued", "started", "running"])
+      .in("status", ACTIVE_AGENT_RUN_STATUSES)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -1346,7 +1347,7 @@ async function markActiveRunsForJobError(admin: AdminClient, jobId: string): Pro
       status: "error" as const,
     })
     .eq("agent_job_id", jobId)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 async function persistEvent(
@@ -1576,7 +1577,7 @@ async function touchRunActivity(admin: AdminClient, runId: string): Promise<void
     .from("agent_runs")
     .update({ last_activity_at: new Date().toISOString() })
     .eq("id", runId)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 async function markPipelineJobSuccess(
