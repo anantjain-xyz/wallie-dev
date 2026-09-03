@@ -17,6 +17,7 @@ function gitCommitUnixTime(path: string, cwd: string): number | null {
     const output = execFileSync("git", ["log", "-1", "--format=%ct", "--", path], {
       cwd,
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim();
     if (output.length === 0) return null;
     const value = Number(output);
