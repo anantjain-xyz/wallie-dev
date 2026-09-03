@@ -52,11 +52,14 @@ local Supabase schema and inspect the diff.
 
 `pnpm db:types:check` (`pnpm check:types-drift`) is a heuristic, not a full
 regen. `src/lib/supabase/database.types.ts` has no version header, so the
-script cannot match the latest migration filename to a stamp. When git history
-is available it compares commit timestamps of the types file and the latest
-migration and fails if types look older. Shallow CI checkouts often lack that
-history; the script then logs a warning and exits 0. It is **not** part of
-`check:fast` — a warning-only skip is better than a flaky blocker.
+script cannot match the latest migration filename to a stamp. When the latest
+migration cannot change generated types, the timestamp comparison is skipped.
+When git history is complete it compares commit timestamps of the types file
+and a type-changing latest migration and fails if types look older. A shallow
+clone cannot trust those timestamps, so a type-changing latest migration fails
+the heuristic instead of printing OK. It is **not** part of `check:fast`. The
+live-repo Vitest skips the timestamp assertion on shallow checkouts; a fixture
+covers the fail path.
 
 The SQL test suite is **not yet in CI**. GitHub Actions does not install the
 Supabase CLI or run `supabase start`, so `supabase test db` has no local stack.
