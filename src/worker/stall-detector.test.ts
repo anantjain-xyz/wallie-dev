@@ -38,6 +38,7 @@ interface AgentJobRow {
   session_id: string;
   attempt_count: number;
   status: "queued" | "running" | "success" | "error" | "canceled";
+  workspace_id: string;
 }
 
 interface AgentConfigRow {
@@ -78,6 +79,19 @@ function buildAdminMock(state: MockState) {
   const fromAgentRuns = () => ({
     select: () => {
       const filters = new Map<string, unknown>();
+      const matchingRuns = () => {
+        const statuses = filters.get("status") as string[] | undefined;
+        const workspaceId = filters.get("workspace_id") as string | undefined;
+        const jobId = filters.get("agent_job_id");
+        return state.runs
+          .filter((r) => !statuses || statuses.includes(r.status))
+          .filter((r) => !workspaceId || r.workspace_id === workspaceId)
+          .filter((r) => {
+            if (jobId === undefined) return true;
+            if (Array.isArray(jobId)) return r.agent_job_id != null && jobId.includes(r.agent_job_id);
+            return r.agent_job_id === jobId;
+          });
+      };
       const builder = {
         eq: (col: string, value: unknown) => {
           filters.set(col, value);
@@ -88,16 +102,12 @@ function buildAdminMock(state: MockState) {
           return builder;
         },
         order: () => builder,
-        range: async (from: number, to: number) => {
-          const statuses = filters.get("status") as string[] | undefined;
-          const workspaceId = filters.get("workspace_id") as string | undefined;
-          return {
-            data: state.runs
-              .filter((r) => !statuses || statuses.includes(r.status))
-              .filter((r) => !workspaceId || r.workspace_id === workspaceId)
-              .slice(from, to + 1),
-            error: null,
-          };
+        range: async (from: number, to: number) => ({
+          data: matchingRuns().slice(from, to + 1),
+          error: null,
+        }),
+        then: (resolve: (value: { data: AgentRunRow[]; error: null }) => void) => {
+          resolve({ data: matchingRuns(), error: null });
         },
       };
       return builder;
@@ -117,10 +127,36 @@ function buildAdminMock(state: MockState) {
   });
 
   const fromAgentJobs = () => ({
-    select: (cols: string) => ({
-      eq: (_col: string, id: string) => ({
+    select: (cols: string) => {
+      const filters = new Map<string, unknown>();
+      const matchingJobs = () =>
+        state.jobs.filter((row) => {
+          const id = filters.get("id");
+          if (Array.isArray(id) && !id.includes(row.id)) return false;
+          if (typeof id === "string" && row.id !== id) return false;
+          const status = filters.get("status");
+          if (typeof status === "string" && row.status !== status) return false;
+          const workspaceId = filters.get("workspace_id");
+          if (typeof workspaceId === "string" && row.workspace_id !== workspaceId) return false;
+          return true;
+        });
+
+      const builder = {
+        eq: (col: string, value: unknown) => {
+          filters.set(col, value);
+          return builder;
+        },
+        in: (col: string, value: unknown) => {
+          filters.set(col, value);
+          return builder;
+        },
+        order: () => builder,
+        range: async (from: number, to: number) => ({
+          data: matchingJobs().slice(from, to + 1),
+          error: null,
+        }),
         maybeSingle: async () => {
-          const row = state.jobs.find((j) => j.id === id);
+          const row = matchingJobs()[0];
           if (!row) return { data: null, error: null };
           if (cols.includes("session_id")) {
             return { data: { session_id: row.session_id }, error: null };
@@ -130,16 +166,15 @@ function buildAdminMock(state: MockState) {
           }
           return { data: row, error: null };
         },
-      }),
-      in: (_col: string, ids: string[]) => ({
-        eq: async (_col2: string, expectedStatus: string) => ({
-          data: state.jobs
-            .filter((row) => ids.includes(row.id) && row.status === expectedStatus)
-            .map((row) => ({ id: row.id })),
-          error: null,
-        }),
-      }),
-    }),
+        then: (resolve: (value: { data: Array<{ id: string }>; error: null }) => void) => {
+          resolve({
+            data: matchingJobs().map((row) => ({ id: row.id })),
+            error: null,
+          });
+        },
+      };
+      return builder;
+    },
     update: (patch: Record<string, unknown>) => ({
       // Stall-detector calls update(...).eq("id", jobId) (single-eq, awaited)
       // for the retry-path last_error stamp, and update(...).eq("id", jobId)
@@ -281,6 +316,7 @@ function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     session_id: "sess-1",
     attempt_count: 0,
     status: "running",
+    workspace_id: "ws-1",
     ...overrides,
   };
 }
@@ -393,8 +429,8 @@ describe("sweepStalledRuns", () => {
     const state: MockState = {
       configs: [],
       jobs: [
-        job({ id: "job-1", session_id: "sess-1" }),
-        job({ id: "job-2", session_id: "sess-2" }),
+        job({ id: "job-1", session_id: "sess-1", workspace_id: "ws-1" }),
+        job({ id: "job-2", session_id: "sess-2", workspace_id: "ws-2" }),
       ],
       runs: [
         activeRun({ id: "run-1", workspace_id: "ws-1", agent_job_id: "job-1" }),
@@ -659,5 +695,143 @@ describe("sweepStalledRuns", () => {
     // A second sweep tick is a no-op — no active rows remain.
     const second = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
     expect(second.stalledRunIds).toEqual([]);
+  });
+
+  it("retries a running job whose runs are all already terminal", async () => {
+    // Crash after markRunSuccess and before markPipelineJobSuccess: the run
+    // is success, the job is still running, and the active-run sweep never
+    // sees it. The session is already awaiting_review so the in_progress
+    // park is a no-op.
+    const state: MockState = {
+      runs: [activeRun({ status: "success", sandbox_id: null })],
+      jobs: [job()],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "awaiting_review" }]]),
+      rpcCalls: [],
+    };
+    const { admin, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual([]);
+    expect(result.retriedJobIds).toEqual(["job-1"]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(state.rpcCalls).toContainEqual({
+      args: {
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+        target_job_id: "job-1",
+      },
+      name: "schedule_job_retry",
+    });
+    expect(sessionUpdates).toEqual([
+      {
+        expected: "in_progress",
+        id: "sess-1",
+        patch: { phase_status: "rejected" },
+      },
+    ]);
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("awaiting_review");
+  });
+
+  it("marks a running job with only terminal runs errored when retries are exhausted", async () => {
+    const state: MockState = {
+      runs: [activeRun({ status: "error", sandbox_id: null })],
+      jobs: [job({ attempt_count: 3 })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin, jobUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual(["job-1"]);
+    expect(state.rpcCalls.some((c) => c.name === "schedule_job_retry")).toBe(false);
+    expect(jobUpdates).toContainEqual({
+      id: "job-1",
+      patch: {
+        finished_at: expect.any(String),
+        last_error: "Stalled: running job has no active runs",
+        status: "error",
+      },
+      status: "running",
+    });
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("rejected");
+  });
+
+  it("does not close a running job with terminal runs while a fresh heartbeat owns it", async () => {
+    const state: MockState = {
+      runs: [activeRun({ status: "success", sandbox_id: null })],
+      jobs: [job()],
+      configs: [],
+      heartbeats: [{ active_job_ids: ["job-1"], last_heartbeat_at: new Date().toISOString() }],
+      sessions: new Map([["sess-1", { phase_status: "awaiting_review" }]]),
+      rpcCalls: [],
+    };
+    const { admin } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(state.rpcCalls).toEqual([]);
+    expect(state.jobs[0]?.status).toBe("running");
+  });
+
+  it("does not close a running job that still has an active run", async () => {
+    const state: MockState = {
+      runs: [
+        activeRun({
+          last_activity_at: new Date().toISOString(),
+          status: "running",
+        }),
+      ],
+      jobs: [job()],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(result.stalledRunIds).toEqual([]);
+    expect(state.jobs[0]?.status).toBe("running");
+  });
+
+  it("only closes terminal-run jobs in the requested workspace", async () => {
+    const state: MockState = {
+      runs: [
+        activeRun({
+          agent_job_id: "job-1",
+          id: "run-1",
+          status: "success",
+          workspace_id: "ws-1",
+        }),
+        activeRun({
+          agent_job_id: "job-2",
+          id: "run-2",
+          status: "success",
+          workspace_id: "ws-2",
+        }),
+      ],
+      jobs: [
+        job({ id: "job-1", session_id: "sess-1", workspace_id: "ws-1" }),
+        job({ id: "job-2", session_id: "sess-2", workspace_id: "ws-2" }),
+      ],
+      configs: [],
+      rpcCalls: [],
+      sessions: new Map([
+        ["sess-1", { phase_status: "awaiting_review" }],
+        ["sess-2", { phase_status: "awaiting_review" }],
+      ]),
+    };
+    const { admin } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS, { workspaceId: "ws-1" });
+
+    expect(result.retriedJobIds).toEqual(["job-1"]);
+    expect(state.jobs.find((row) => row.id === "job-1")?.status).toBe("queued");
+    expect(state.jobs.find((row) => row.id === "job-2")?.status).toBe("running");
   });
 });
