@@ -46,13 +46,9 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 
 **Four layers:** the Supabase schema defines the nouns; `src/lib/pipeline/` is the verb engine; `src/app/api/` is the edge (ingest + ack); `src/worker/` drains the queue. Everything else is UI glue or integration plumbing.
 
-**Hub files** (read these first):
-
-- `src/lib/pipeline/processor.ts` — generic stage runner + approve/reject handlers
-- `src/lib/pipeline/stages.ts` — pipeline/stage loaders, prior-artifact map for prompts
-- `src/app/api/sessions/[sessionId]/phase-action/route.ts` — in-app approve/reject endpoint
-- `src/lib/wallie/service.ts` — job enqueue, dedupe keys, run lifecycle
-- `src/worker/index.ts` — daemon entry (heartbeat, poll loop, stall detector, reconciler, sandbox reaper)
+For file ownership and where to start reading, see
+[Architecture](docs/ARCHITECTURE.md#layers-and-owners). Do not load the
+pipeline implementation files until you are changing that path.
 
 ## Key Conventions
 

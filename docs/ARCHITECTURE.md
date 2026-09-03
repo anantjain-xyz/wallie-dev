@@ -16,6 +16,11 @@ Runtime-specific contracts live in:
 - [Sandbox provider contracts](SANDBOX-PROVIDER-CONTRACTS.md)
 - [Worker operations](WORKER-OPERATIONS.md)
 
+Known implementation gaps stay in those owning contracts. They are
+domain-specific, so do not copy or merge the lists. Pipeline concurrency
+gaps live in
+[Pipeline and worker lifecycle](PIPELINE-WORKER-LIFECYCLE.md#review-concurrency).
+
 ## System context
 
 ```mermaid
