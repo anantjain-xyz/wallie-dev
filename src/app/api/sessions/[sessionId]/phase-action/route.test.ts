@@ -205,6 +205,26 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     });
   });
 
+  it("rejects unparseable bodies with the invalid_input envelope", async () => {
+    const missingVersion = await POST(makeRequest({ action: "approve" }), routeContext());
+    expect(missingVersion.status).toBe(400);
+    await expect(missingVersion.json()).resolves.toMatchObject({ code: "invalid_input" });
+
+    const stringVersion = await POST(
+      makeRequest({ action: "approve", version: "1" }),
+      routeContext(),
+    );
+    expect(stringVersion.status).toBe(400);
+    await expect(stringVersion.json()).resolves.toMatchObject({ code: "invalid_input" });
+
+    const unknownAction = await POST(makeRequest({ action: "noop", version: 1 }), routeContext());
+    expect(unknownAction.status).toBe(400);
+    await expect(unknownAction.json()).resolves.toMatchObject({ code: "invalid_input" });
+
+    expect(mocked.handleApproval).not.toHaveBeenCalled();
+    expect(mocked.handleRejection).not.toHaveBeenCalled();
+  });
+
   it("returns 404 for a cross-workspace session hidden by RLS", async () => {
     const supabase = buildSupabase({ sessionRow: null });
     mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);

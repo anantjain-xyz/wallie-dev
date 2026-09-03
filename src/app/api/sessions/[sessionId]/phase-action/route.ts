@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import type {
   SessionMutationErrorCode,
@@ -16,11 +17,11 @@ export const preferredRegion = "home";
 
 type Params = { params: Promise<{ sessionId: string }> };
 
-type PhaseActionBody = {
-  action: "approve" | "reject";
-  feedbackText?: string;
-  version: number;
-};
+const PhaseActionBodySchema = z.object({
+  action: z.enum(["approve", "reject"]),
+  feedbackText: z.string().optional(),
+  version: z.number(),
+});
 
 function errorResponse(code: SessionMutationErrorCode, error: string, status: number) {
   return NextResponse.json<SessionMutationErrorResponse>({ code, error }, { status });
@@ -41,16 +42,22 @@ export async function POST(request: Request, { params }: Params) {
       return errorResponse("unauthorized", "Unauthorized", 401);
     }
 
-    let body: PhaseActionBody;
+    let raw: unknown;
     try {
-      body = (await request.json()) as PhaseActionBody;
+      raw = await request.json();
     } catch {
       return errorResponse("invalid_input", "Invalid JSON body", 400);
     }
 
-    if (typeof body.version !== "number" || Number.isNaN(body.version)) {
-      return errorResponse("invalid_input", "version must be a number", 400);
+    const parsed = PhaseActionBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return errorResponse(
+        "invalid_input",
+        parsed.error.issues[0]?.message ?? "Invalid request body",
+        400,
+      );
     }
+    const body = parsed.data;
 
     // Membership check via RLS: the server client can only read sessions the
     // current user can see through workspace_members. If the caller is not a
