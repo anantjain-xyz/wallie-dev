@@ -873,7 +873,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("success");
   });
 
-  it("replaces unpublished artifact markdown with the retry output and opens a PR from the new sandbox", async () => {
+  it("replaces unpublished artifact markdown after winning the pointer, then opens a PR from the new sandbox", async () => {
     const session = baseSession();
     const {
       admin,
@@ -892,9 +892,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     // A leftover unpublished row at (session, stage, N+1) from a crash after
-    // insert and before openSessionPullRequest must not be published from a
-    // null sandbox. The retry regenerates, replaces the unpublished markdown,
-    // and pushes from the new sandbox so reviewers see matching commits.
+    // insert and before the pointer CAS must not be rewritten until this
+    // generation wins the pointer. The retry regenerates, claims the session,
+    // writes its markdown, and pushes from the new sandbox.
     expect(result.result).toBe("success");
     expect(insertedArtifacts).toHaveLength(1);
     expect(artifactUpsertConflicts).toEqual(["session_id,stage_slug,version"]);
@@ -919,7 +919,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
-  it("does not overwrite artifact markdown after another generation publishes the version", async () => {
+  it("does not overwrite artifact markdown or force-push after another generation publishes the version", async () => {
     const session = baseSession();
     const { admin, updatedArtifacts, deletedArtifacts } = buildAdminMock({
       session,
@@ -935,11 +935,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("idle");
     expect(updatedArtifacts).toEqual([]);
     expect(deletedArtifacts).toEqual([]);
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: "Stored markdown from the crashed attempt",
-      }),
-    );
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
   });
 
   it("deletes the orphaned artifact when cancellation wins the pointer CAS", async () => {
@@ -958,6 +954,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(deletedArtifacts).toEqual([
       { session_id: session.id, stage_slug: "product", version: 1 },
     ]);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(result.result).toBe("idle");
   });
 
@@ -977,6 +974,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     // did not insert the row, so a lost pointer CAS must not delete it.
     expect(insertedArtifacts).toHaveLength(1);
     expect(deletedArtifacts).toEqual([]);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(result.result).toBe("idle");
   });
 
@@ -996,6 +994,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     // published version.
     expect(insertedArtifacts).toHaveLength(1);
     expect(deletedArtifacts).toEqual([]);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(result.result).toBe("idle");
   });
 

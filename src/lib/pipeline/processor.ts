@@ -422,7 +422,7 @@ async function runStage(input: {
 
     const published = await publishArtifact({
       admin,
-      artifactMarkdown: inserted.markdown,
+      artifactMarkdown,
       branch,
       github,
       newVersion,
@@ -494,11 +494,12 @@ async function runStage(input: {
 }
 
 /**
- * Publish a generated artifact: optional PR open, the `awaiting_review`
- * pointer CAS, then mark the run successful. Job success stays with the
- * caller so it still lands after `sandbox.stop()` — a crash in that
- * window is recovered by marking the still-running job `success` in the
- * terminal-run sweep, not by moving the write into this function.
+ * Publish a generated artifact: claim `awaiting_review`, write canonical
+ * markdown if this process did not insert the row, optionally open a PR,
+ * then mark the run successful. Job success stays with the caller so it
+ * still lands after `sandbox.stop()` — a crash in that window is recovered
+ * by marking the still-running job `success` in the terminal-run sweep,
+ * not by moving the write into this function.
  */
 async function publishArtifact(input: {
   admin: AdminClient;
@@ -519,6 +520,58 @@ async function publishArtifact(input: {
 }): Promise<"idle" | "published"> {
   const { admin, artifactMarkdown, branch, github, newVersion, runId, sandbox, session, stage } =
     input;
+
+  // Claim the generation before mutating the shared stage branch or the
+  // unpublished artifact row. `openSessionPullRequest` force-pushes
+  // `wallie/<stage>-<session>`; a loser that pushed last would rewrite the PR
+  // while the session kept the winner's markdown.
+  const { data: pointerRows, error: pointerError } = await admin
+    .from("sessions")
+    .update({
+      current_artifact_version: newVersion,
+      phase_status: "awaiting_review",
+    })
+    .eq("id", session.id)
+    // Only advance a session that is still generating AND not archived. If it
+    // was parked (canceled or stalled) or archived while this run produced its
+    // artifact, this CAS affects zero rows and we must not un-park/un-freeze
+    // it or surface the draft. The version predicate stops a stale snapshot
+    // from publishing over a pointer another generation already advanced.
+    .eq("phase_status", "in_progress")
+    .eq("current_artifact_version", session.current_artifact_version)
+    .is("archived_at", null)
+    .select("id");
+  if (pointerError) throw pointerError;
+
+  if (!pointerRows || pointerRows.length === 0) {
+    // Cancellation or another generation won the pointer. Delete only a row
+    // this process inserted, and only while it is still unpublished. If a
+    // replacement adopted this row and already advanced the session pointer,
+    // deleting it would leave `current_artifact_version` aiming at nothing.
+    if (input.ownsUnpublishedRow) {
+      await deleteUnpublishedArtifact(admin, {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+      });
+    }
+    return "idle";
+  }
+
+  input.onPointerAdvanced();
+
+  // A crash can leave someone else's markdown at this version. Only the
+  // pointer winner may replace it, so the reviewed artifact matches this run.
+  if (!input.ownsUnpublishedRow) {
+    await writePublishedArtifactMarkdown(admin, {
+      artifactJson: artifactMarkdown,
+      sessionId: session.id,
+      stageId: stage.id,
+      stageSlug: stage.slug,
+      version: newVersion,
+      workspaceId: session.workspace_id,
+    });
+  }
 
   if (sandbox && github && branch) {
     const prOutcome = await openSessionPullRequest({
@@ -553,39 +606,6 @@ async function publishArtifact(input: {
       });
     }
   }
-
-  const { data: pointerRows, error: pointerError } = await admin
-    .from("sessions")
-    .update({
-      current_artifact_version: newVersion,
-      phase_status: "awaiting_review",
-    })
-    .eq("id", session.id)
-    // Only advance a session that is still generating AND not archived. If it
-    // was parked (canceled or stalled) or archived while this run produced its
-    // artifact, this CAS affects zero rows and we must not un-park/un-freeze
-    // it or surface the draft.
-    .eq("phase_status", "in_progress")
-    .is("archived_at", null)
-    .select("id");
-  if (pointerError) throw pointerError;
-
-  if (!pointerRows || pointerRows.length === 0) {
-    // Cancellation or another generation won the pointer. Delete only a row
-    // this process inserted, and only while it is still unpublished. If a
-    // replacement adopted this row and already advanced the session pointer,
-    // deleting it would leave `current_artifact_version` aiming at nothing.
-    if (input.ownsUnpublishedRow) {
-      await deleteUnpublishedArtifact(admin, {
-        sessionId: session.id,
-        stageSlug: stage.slug,
-        version: newVersion,
-      });
-    }
-    return "idle";
-  }
-
-  input.onPointerAdvanced();
 
   if (runId) {
     await persistEvent(admin, runId, session.workspace_id, {
@@ -916,14 +936,14 @@ async function insertArtifact(
     version: number;
     workspaceId: string;
   },
-): Promise<{ inserted: boolean; markdown: string }> {
+): Promise<{ inserted: boolean }> {
   // `newVersion` is computed from the session row loaded at claim time. A
   // crash after this write and before the pointer CAS leaves an unpublished
   // row at `(session_id, stage_slug, version)`. A plain insert then hits
   // `session_artifacts_unique_version` on every retry. ON CONFLICT DO NOTHING
-  // avoids clobbering a row another live generation already published. If the
-  // conflicting row is still unpublished, the retry replaces its markdown so
-  // the new sandbox's commits and the artifact reviewers see stay aligned.
+  // avoids clobbering a row another live generation already published. The
+  // pointer winner writes canonical markdown in `publishArtifact`; a concurrent
+  // unpublished replace here would race that claim.
   const { data, error } = await admin
     .from("session_artifacts")
     .upsert(
@@ -940,78 +960,20 @@ async function insertArtifact(
     .select("id")
     .maybeSingle();
   if (error) throw error;
-  if (data != null) {
-    return { inserted: true, markdown: input.artifactJson };
-  }
-
-  // Conflict: a crash left an unpublished row, or another generation inserted
-  // first. If the session has not published this version yet, replace the
-  // stored markdown with this retry's output so the PR opened from this
-  // sandbox matches the artifact reviewers will see. The dead sandbox's
-  // commits are gone; regenerating them is the recovery.
-  const replaced = await replaceUnpublishedArtifact(admin, {
-    artifactJson: input.artifactJson,
-    sessionId: input.sessionId,
-    stageSlug: input.stageSlug,
-    version: input.version,
-  });
-  if (replaced) {
-    return { inserted: true, markdown: input.artifactJson };
-  }
-
-  const stored = await loadArtifactMarkdown(admin, {
-    sessionId: input.sessionId,
-    stageSlug: input.stageSlug,
-    version: input.version,
-  });
-  return { inserted: false, markdown: stored ?? input.artifactJson };
+  return { inserted: data != null };
 }
 
-function markdownFromArtifactJson(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value.length > 0 ? value : null;
-  }
-  if (value == null) {
-    return null;
-  }
-  const serialized = JSON.stringify(value);
-  return serialized === "null" ? null : serialized;
-}
-
-async function loadArtifactMarkdown(
-  admin: AdminClient,
-  input: { sessionId: string; stageSlug: string; version: number },
-): Promise<string | null> {
-  const { data, error } = await admin
-    .from("session_artifacts")
-    .select("artifact_json")
-    .eq("session_id", input.sessionId)
-    .eq("stage_slug", input.stageSlug)
-    .eq("version", input.version)
-    .maybeSingle();
-  if (error) throw error;
-  return markdownFromArtifactJson(data?.artifact_json);
-}
-
-async function replaceUnpublishedArtifact(
+async function writePublishedArtifactMarkdown(
   admin: AdminClient,
   input: {
     artifactJson: string;
     sessionId: string;
+    stageId: string;
     stageSlug: string;
     version: number;
+    workspaceId: string;
   },
-): Promise<boolean> {
-  const { data: session, error: sessionError } = await admin
-    .from("sessions")
-    .select("current_artifact_version")
-    .eq("id", input.sessionId)
-    .maybeSingle();
-  if (sessionError) throw sessionError;
-  if ((session?.current_artifact_version ?? 0) >= input.version) {
-    return false;
-  }
-
+): Promise<void> {
   const { data, error } = await admin
     .from("session_artifacts")
     .update({ artifact_json: input.artifactJson })
@@ -1021,7 +983,20 @@ async function replaceUnpublishedArtifact(
     .select("id")
     .maybeSingle();
   if (error) throw error;
-  return data != null;
+  if (data != null) return;
+
+  const { error: upsertError } = await admin.from("session_artifacts").upsert(
+    {
+      artifact_json: input.artifactJson,
+      session_id: input.sessionId,
+      stage_id: input.stageId,
+      stage_slug: input.stageSlug,
+      version: input.version,
+      workspace_id: input.workspaceId,
+    },
+    { onConflict: "session_id,stage_slug,version" },
+  );
+  if (upsertError) throw upsertError;
 }
 
 async function deleteUnpublishedArtifact(

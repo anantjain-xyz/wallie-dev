@@ -153,8 +153,8 @@ the target repository remains their runtime semantic owner.
 
 If cancellation wins after artifact insertion but before the guarded pointer
 update, the processor deletes the unpublished artifact so the version remains
-reusable. A later retry regenerates in a new sandbox and replaces unpublished
-markdown only while the session pointer has not published that version.
+reusable. A later retry regenerates in a new sandbox, claims the session
+pointer, then writes unpublished markdown and force-pushes only if it won.
 
 ## Failure, retry, and teardown
 

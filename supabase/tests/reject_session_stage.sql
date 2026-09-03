@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(19);
+select plan(23);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_function(
@@ -314,10 +314,94 @@ select is((select job_id from adopt_reject), (select job_id from adopt_session),
 select ok(not (select job_created from adopt_reject), 'adoption does not insert a second active job');
 select is((select phase_status::text from adopt_reject), 'rejected', 'adopted rejection still parks the session');
 
+create temp table zombie_session as
+select *
+from public.create_session_with_first_job(
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-0001-4000-8000-000000000001',
+  'Reject closes runless active job',
+  'Published run, job still running.',
+  'codex',
+  'gpt-5.5',
+  null,
+  null,
+  '12b2c3d4-0001-4000-8000-000000000001',
+  null
+);
+
+insert into public.session_artifacts (
+  workspace_id,
+  session_id,
+  stage_id,
+  stage_slug,
+  version,
+  artifact_json
+)
+select
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  result.session_id,
+  session.current_stage_id,
+  stage.slug,
+  1,
+  to_jsonb('# Plan'::text)
+from zombie_session result
+join public.sessions session on session.id = result.session_id
+join public.pipeline_stages stage on stage.id = session.current_stage_id;
+
+update public.sessions session
+set phase_status = 'awaiting_review', current_artifact_version = 1
+from zombie_session result
+where session.id = result.session_id;
+
+update public.agent_runs run
+set status = 'success', finished_at = now()
+from zombie_session result
+where run.id = result.run_id;
+
+update public.agent_jobs job
+set status = 'running', started_at = now()
+from zombie_session result
+where job.id = result.job_id;
+
+create temp table zombie_reject as
+select *
+from public.reject_session_stage(
+  (select session_id from zombie_session),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  1,
+  'retry after the published job stalled',
+  'codex',
+  'gpt-5.5',
+  'project',
+  'c1b2c3d4-0001-4000-8000-000000000001'
+);
+
+select is(
+  (select status::text from public.agent_jobs where id = (select job_id from zombie_session)),
+  'success',
+  'runless running job is closed as success so the dedupe index releases'
+);
+select ok((select job_created from zombie_reject), 'a new rerun job is created instead of adopting the zombie');
+select ok(
+  (select job_id from zombie_reject) is distinct from (select job_id from zombie_session),
+  'the queued rerun is not the stalled published job'
+);
+select ok(
+  exists (
+    select 1
+    from public.agent_runs run
+    join zombie_reject result on result.run_id = run.id
+    where run.agent_job_id = result.job_id
+      and run.status = 'queued'
+  ),
+  'the new rerun job has a queued run'
+);
+
 delete from public.sessions
 where id in (select session_id from phase_session)
    or id in (select session_id from happy_session)
-   or id in (select session_id from adopt_session);
+   or id in (select session_id from adopt_session)
+   or id in (select session_id from zombie_session);
 
 update internal.workspace_issue_counters
 set last_issue_number = (select last_issue_number from test_baseline),

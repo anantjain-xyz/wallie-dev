@@ -11,7 +11,9 @@
 -- `create_session_with_first_job` produces, and moves the session to
 -- `rejected` — all or nothing. A concurrent approval or second rejection
 -- serializes behind the row lock and re-validates the phase, so it observes
--- `rejected` and returns empty instead of racing.
+-- `rejected` and returns empty instead of racing. An active job with no live
+-- run (published `success` run, job still `running`) is closed and replaced
+-- with a queued rerun instead of being adopted.
 --
 -- Validation failures raise so the whole transaction rolls back. Messages match
 -- the strings the application already surfaces to reviewers:
@@ -206,7 +208,66 @@ begin
       and existing_run.status in ('queued', 'started', 'running')
     order by existing_run.created_at desc
     limit 1;
-  else
+
+    if created_run_id is null then
+      -- Active job with no live run: typical crash cut where the artifact is
+      -- published and the run is `success` but the job is still `running`.
+      -- Adopting that job would park the session in `rejected` with nothing
+      -- queued; the terminal-run sweep would then mark the old job successful.
+      -- Close it so the active-dedupe unique index releases, then insert a
+      -- fresh queued job (the run insert below).
+      if exists (
+        select 1
+        from public.agent_runs existing_run
+        where existing_run.agent_job_id = created_job_id
+          and existing_run.status = 'success'
+      ) then
+        update public.agent_jobs existing_job
+        set status = 'success',
+            finished_at = coalesce(existing_job.finished_at, now())
+        where existing_job.id = created_job_id
+          and existing_job.status in ('queued', 'started', 'running');
+      else
+        update public.agent_jobs existing_job
+        set status = 'error',
+            finished_at = coalesce(existing_job.finished_at, now()),
+            last_error = coalesce(
+              existing_job.last_error,
+              'Rejected while the active job had no live run.'
+            )
+        where existing_job.id = created_job_id
+          and existing_job.status in ('queued', 'started', 'running');
+      end if;
+
+      adopted_existing_job := false;
+
+      insert into public.agent_jobs as replacement_job (
+        workspace_id,
+        session_id,
+        requested_by_member_id,
+        stage_id,
+        stage_slug,
+        stage_name,
+        trigger_type,
+        status,
+        dedupe_key
+      )
+      values (
+        p_workspace_id,
+        p_session_id,
+        p_requested_by_member_id,
+        reviewed_stage.id,
+        reviewed_stage.slug,
+        reviewed_stage.name,
+        'comment_retry',
+        'queued',
+        active_dedupe_key
+      )
+      returning replacement_job.id into created_job_id;
+    end if;
+  end if;
+
+  if not adopted_existing_job then
     insert into public.agent_runs as queued_run (
       workspace_id,
       session_id,
