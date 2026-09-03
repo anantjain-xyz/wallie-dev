@@ -12,6 +12,8 @@ type AdminClient = SupabaseClient<Database>;
 
 const ACTIVE_RUN_PAGE_SIZE = 100;
 const FRESH_WORKER_HEARTBEAT_MS = 60_000;
+/** Jobs that have been claimed. Must not include `queued`. */
+const CLAIMED_AGENT_JOB_STATUSES = ["started", "running"] as const;
 
 type ActiveRunRow = {
   agent_job_id: string | null;
@@ -45,14 +47,15 @@ export interface StallSweepOptions {
  * and either reschedules the parent job for retry (attempts remaining) or
  * marks it terminally errored (attempts exhausted).
  *
- * A second pass then closes `running` jobs whose runs are all already
- * terminal. `markRunSuccess` lands before `sandbox.stop()` in a `finally`,
- * and `markPipelineJobSuccess` is after that network call; a crash there
- * leaves the run `success`, the job `running`, and the session already
- * `awaiting_review`. That job is marked `success` so the active-session
- * dedupe key is released without regenerating a published artifact.
- * Jobs whose runs are all `error` / `canceled` (or that have no runs)
- * keep the stalled-run retry-or-terminal-error policy.
+ * A second pass then closes claimed (`started` / `running`) jobs whose
+ * runs are all already terminal. `markRunSuccess` lands before
+ * `sandbox.stop()` in a `finally`, and `markPipelineJobSuccess` is after
+ * that network call; a crash there leaves the run `success`, the job
+ * claimed, and the session already `awaiting_review`. That job is marked
+ * `success` so the active-session dedupe key is released without
+ * regenerating a published artifact. Jobs whose runs are all `error` /
+ * `canceled` (or that have no runs) keep the stalled-run
+ * retry-or-terminal-error policy.
  */
 export async function sweepStalledRuns(
   admin: AdminClient,
@@ -197,23 +200,25 @@ type RunningJobRow = {
 };
 
 /**
- * Close running jobs that the active-run sweep cannot see: every attached
+ * Close claimed jobs that the active-run sweep cannot see: every attached
  * run is already terminal (or the job has no runs).
  *
- * A crash after `publishArtifact` looks like run `success` + job `running`
- * + session `awaiting_review`. Retrying would re-claim that session and
- * mint another artifact, so those jobs are marked `success` with the same
- * running-row CAS as a live `markPipelineJobSuccess`. Jobs whose runs are
- * all `error` / `canceled` (or that have no runs) still go through
- * `resolveStalledJob` and park an `in_progress` session.
+ * A crash after `publishArtifact` looks like run `success` + job still
+ * claimed + session `awaiting_review`. Retrying would re-claim that
+ * session and mint another artifact, so those jobs are marked `success`
+ * with the same claimed-row CAS as a live `markPipelineJobSuccess`. Jobs
+ * whose runs are all `error` / `canceled` (or that have no runs) still go
+ * through `resolveStalledJob` and park an `in_progress` session.
  *
  * Jobs still listed on a fresh worker heartbeat are left alone — that is
  * the live `sandbox.stop()` window after `markRunSuccess`.
  *
- * Running jobs with no `agent_runs` row at all (Linear-routed enqueue, or
+ * Claimed jobs with no `agent_runs` row at all (Linear-routed enqueue, or
  * the gap between claim and `startAgentRun`) must also be older than the
- * workspace stall timeout. The scheduler heartbeats only after claim, so a
- * concurrent sweep can otherwise retry a live job before its run exists.
+ * workspace stall timeout, measured from this attempt's `started_at`
+ * (`claim_next_agent_job` refreshes it on every claim). The scheduler
+ * heartbeats only after claim, so a concurrent sweep can otherwise retry
+ * a live job before its run exists.
  */
 async function sweepRunningJobsWithTerminalRuns(
   admin: AdminClient,
@@ -260,7 +265,7 @@ async function sweepRunningJobsWithTerminalRuns(
         status: "success",
       })
       .eq("id", job.id)
-      .eq("status", "running");
+      .in("status", CLAIMED_AGENT_JOB_STATUSES);
     if (error) {
       console.error("[stall-detector] failed to acknowledge successful job", {
         error: error.message,
@@ -311,7 +316,7 @@ async function sweepRunningJobsWithTerminalRuns(
     });
     await parkSessionForStalledJob(admin, job.session_id);
 
-    console.log("[stall-detector] closed running job with no active runs", {
+    console.log("[stall-detector] closed claimed job with no active runs", {
       jobId: job.id,
       workspaceId: job.workspace_id,
     });
@@ -336,7 +341,7 @@ async function loadRunningJobs(
     const runningJobQuery = admin
       .from("agent_jobs")
       .select("id, session_id, workspace_id, started_at, created_at")
-      .eq("status", "running");
+      .in("status", CLAIMED_AGENT_JOB_STATUSES);
     const scopedRunningJobQuery = options.workspaceId
       ? runningJobQuery.eq("workspace_id", options.workspaceId)
       : runningJobQuery;
@@ -564,7 +569,7 @@ async function loadRunningJobIds(admin: AdminClient, jobIds: string[]): Promise<
     .from("agent_jobs")
     .select("id")
     .in("id", [...new Set(jobIds)])
-    .eq("status", "running");
+    .in("status", CLAIMED_AGENT_JOB_STATUSES);
 
   if (error) {
     console.error("[stall-detector] failed to load running jobs", { error: error.message });
@@ -627,7 +632,7 @@ async function resolveStalledJob(input: {
       status: "error",
     })
     .eq("id", jobId)
-    .eq("status", "running");
+    .in("status", CLAIMED_AGENT_JOB_STATUSES);
 
   if (!jobError) {
     result.stalledJobIds.push(jobId);

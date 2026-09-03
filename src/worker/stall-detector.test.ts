@@ -39,7 +39,7 @@ interface AgentJobRow {
   attempt_count: number;
   created_at: string;
   started_at: string | null;
-  status: "queued" | "running" | "success" | "error" | "canceled";
+  status: "queued" | "started" | "running" | "success" | "error" | "canceled";
   workspace_id: string;
 }
 
@@ -73,7 +73,11 @@ interface MockState {
 
 function buildAdminMock(state: MockState) {
   const runUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
-  const jobUpdates: Array<{ id: string; patch: Record<string, unknown>; status?: string }> = [];
+  const jobUpdates: Array<{
+    id: string;
+    patch: Record<string, unknown>;
+    status?: string | string[];
+  }> = [];
   const runMessageInserts: AgentRunMessageInsert[] = [];
   const sessionUpdates: Array<{ id: string; patch: Record<string, unknown>; expected?: string }> =
     [];
@@ -138,6 +142,7 @@ function buildAdminMock(state: MockState) {
           if (Array.isArray(id) && !id.includes(row.id)) return false;
           if (typeof id === "string" && row.id !== id) return false;
           const status = filters.get("status");
+          if (Array.isArray(status) && !status.includes(row.status)) return false;
           if (typeof status === "string" && row.status !== status) return false;
           const workspaceId = filters.get("workspace_id");
           if (typeof workspaceId === "string" && row.workspace_id !== workspaceId) return false;
@@ -201,6 +206,13 @@ function buildAdminMock(state: MockState) {
             jobUpdates.push({ id: jobId, patch, status: expectedStatus });
             const row = state.jobs.find((j) => j.id === jobId);
             if (row && row.status === expectedStatus) Object.assign(row, patch);
+            return { error: null };
+          },
+          in: async (_col2: string, expectedStatuses: string[]) => {
+            recorded = true;
+            jobUpdates.push({ id: jobId, patch, status: expectedStatuses });
+            const row = state.jobs.find((j) => j.id === jobId);
+            if (row && expectedStatuses.includes(row.status)) Object.assign(row, patch);
             return { error: null };
           },
           then: (resolve: (v: { error: null }) => void) => {
@@ -608,7 +620,7 @@ describe("sweepStalledRuns", () => {
         last_error: expect.stringContaining("Stalled: no activity"),
         status: "error",
       },
-      status: "running",
+      status: ["started", "running"],
     });
   });
 
@@ -727,11 +739,36 @@ describe("sweepStalledRuns", () => {
         finished_at: expect.any(String),
         status: "success",
       },
-      status: "running",
+      status: ["started", "running"],
     });
     expect(state.jobs[0]?.status).toBe("success");
     expect(sessionUpdates).toEqual([]);
     expect(state.sessions.get("sess-1")?.phase_status).toBe("awaiting_review");
+  });
+
+  it("acknowledges a started job whose run already succeeded", async () => {
+    const state: MockState = {
+      runs: [activeRun({ status: "success", sandbox_id: null })],
+      jobs: [job({ status: "started" })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "awaiting_review" }]]),
+      rpcCalls: [],
+    };
+    const { admin, jobUpdates, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(jobUpdates).toContainEqual({
+      id: "job-1",
+      patch: {
+        finished_at: expect.any(String),
+        status: "success",
+      },
+      status: ["started", "running"],
+    });
+    expect(state.jobs[0]?.status).toBe("success");
+    expect(sessionUpdates).toEqual([]);
   });
 
   it("retries a running job whose runs are all already errored", async () => {
@@ -786,7 +823,7 @@ describe("sweepStalledRuns", () => {
         last_error: "Stalled: running job has no active runs",
         status: "error",
       },
-      status: "running",
+      status: ["started", "running"],
     });
     expect(state.sessions.get("sess-1")?.phase_status).toBe("rejected");
   });

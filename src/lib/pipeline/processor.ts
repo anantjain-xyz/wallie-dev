@@ -494,12 +494,12 @@ async function runStage(input: {
 }
 
 /**
- * Publish a generated artifact: claim `awaiting_review`, write canonical
- * markdown if this process did not insert the row, optionally open a PR,
- * then mark the run successful. Job success stays with the caller so it
- * still lands after `sandbox.stop()` — a crash in that window is recovered
- * by marking the still-running job `success` in the terminal-run sweep,
- * not by moving the write into this function.
+ * Publish a generated artifact: claim `awaiting_review` with canonical
+ * markdown in one transaction, optionally open a PR, then mark the run
+ * successful. Job success stays with the caller so it still lands after
+ * `sandbox.stop()` — a crash in that window is recovered by marking the
+ * still-running job `success` in the terminal-run sweep, not by moving
+ * the write into this function.
  */
 async function publishArtifact(input: {
   admin: AdminClient;
@@ -521,29 +521,23 @@ async function publishArtifact(input: {
   const { admin, artifactMarkdown, branch, github, newVersion, runId, sandbox, session, stage } =
     input;
 
-  // Claim the generation before mutating the shared stage branch or the
-  // unpublished artifact row. `openSessionPullRequest` force-pushes
-  // `wallie/<stage>-<session>`; a loser that pushed last would rewrite the PR
-  // while the session kept the winner's markdown.
-  const { data: pointerRows, error: pointerError } = await admin
-    .from("sessions")
-    .update({
-      current_artifact_version: newVersion,
-      phase_status: "awaiting_review",
-    })
-    .eq("id", session.id)
-    // Only advance a session that is still generating AND not archived. If it
-    // was parked (canceled or stalled) or archived while this run produced its
-    // artifact, this CAS affects zero rows and we must not un-park/un-freeze
-    // it or surface the draft. The version predicate stops a stale snapshot
-    // from publishing over a pointer another generation already advanced.
-    .eq("phase_status", "in_progress")
-    .eq("current_artifact_version", session.current_artifact_version)
-    .is("archived_at", null)
-    .select("id");
-  if (pointerError) throw pointerError;
+  // Claim the generation and persist canonical markdown in one transaction
+  // before mutating the shared stage branch. A loser that pushed last would
+  // rewrite the PR while the session kept the winner's markdown; publishing
+  // `awaiting_review` before the markdown write would also let a reviewer
+  // approve stale recovered text.
+  const { data: published, error: publishError } = await publishSessionStageArtifactRpc(admin, {
+    p_artifact_json: artifactMarkdown,
+    p_expected_artifact_version: session.current_artifact_version,
+    p_session_id: session.id,
+    p_stage_id: stage.id,
+    p_stage_slug: stage.slug,
+    p_version: newVersion,
+    p_workspace_id: session.workspace_id,
+  });
+  if (publishError) throw publishError;
 
-  if (!pointerRows || pointerRows.length === 0) {
+  if (published !== true) {
     // Cancellation or another generation won the pointer. Delete only a row
     // this process inserted, and only while it is still unpublished. If a
     // replacement adopted this row and already advanced the session pointer,
@@ -559,19 +553,6 @@ async function publishArtifact(input: {
   }
 
   input.onPointerAdvanced();
-
-  // A crash can leave someone else's markdown at this version. Only the
-  // pointer winner may replace it, so the reviewed artifact matches this run.
-  if (!input.ownsUnpublishedRow) {
-    await writePublishedArtifactMarkdown(admin, {
-      artifactJson: artifactMarkdown,
-      sessionId: session.id,
-      stageId: stage.id,
-      stageSlug: stage.slug,
-      version: newVersion,
-      workspaceId: session.workspace_id,
-    });
-  }
 
   if (sandbox && github && branch) {
     const prOutcome = await openSessionPullRequest({
@@ -740,13 +721,12 @@ export async function handleApproval(input: {
   };
 }
 
-// `reject_session_stage` (migration 20260903000001) is not yet present in the
-// generated `database.types.ts`, which `pnpm db:types` regenerates against a
-// running local database. Until that regeneration lands, its contract is
-// declared here and the admin client is viewed through the augmented schema.
-// Delete this block once `Database["public"]["Functions"]["reject_session_stage"]`
-// exists — the generated `Returns` columns are non-nullable, so the fields below
-// only get narrower.
+// `reject_session_stage` and `publish_session_stage_artifact` (migrations
+// 20260903000001 / 20260903000002) are not yet present in the generated
+// `database.types.ts`, which `pnpm db:types` regenerates against a running
+// local database. Until that regeneration lands, their contracts are declared
+// here and the admin client is viewed through the augmented schema.
+// Delete this block once both functions exist in `Database["public"]["Functions"]`.
 type RejectSessionStageArgs = {
   p_agent_model_name: string;
   p_agent_model_provider: string;
@@ -771,9 +751,23 @@ type RejectSessionStageRow = {
   workspace_id: string;
 };
 
-type DatabaseWithRejectSessionStage = Omit<Database, "public"> & {
+type PublishSessionStageArtifactArgs = {
+  p_artifact_json: string;
+  p_expected_artifact_version: number;
+  p_session_id: string;
+  p_stage_id: string;
+  p_stage_slug: string;
+  p_version: number;
+  p_workspace_id: string;
+};
+
+type DatabaseWithPipelineRpcs = Omit<Database, "public"> & {
   public: Omit<Database["public"], "Functions"> & {
     Functions: Database["public"]["Functions"] & {
+      publish_session_stage_artifact: {
+        Args: PublishSessionStageArtifactArgs;
+        Returns: boolean;
+      };
       reject_session_stage: {
         Args: RejectSessionStageArgs;
         Returns: RejectSessionStageRow[];
@@ -783,8 +777,15 @@ type DatabaseWithRejectSessionStage = Omit<Database, "public"> & {
 };
 
 function rejectSessionStageRpc(admin: AdminClient, args: RejectSessionStageArgs) {
-  return (admin as unknown as SupabaseClient<DatabaseWithRejectSessionStage>).rpc(
+  return (admin as unknown as SupabaseClient<DatabaseWithPipelineRpcs>).rpc(
     "reject_session_stage",
+    args,
+  );
+}
+
+function publishSessionStageArtifactRpc(admin: AdminClient, args: PublishSessionStageArtifactArgs) {
+  return (admin as unknown as SupabaseClient<DatabaseWithPipelineRpcs>).rpc(
+    "publish_session_stage_artifact",
     args,
   );
 }
@@ -941,9 +942,9 @@ async function insertArtifact(
   // crash after this write and before the pointer CAS leaves an unpublished
   // row at `(session_id, stage_slug, version)`. A plain insert then hits
   // `session_artifacts_unique_version` on every retry. ON CONFLICT DO NOTHING
-  // avoids clobbering a row another live generation already published. The
-  // pointer winner writes canonical markdown in `publishArtifact`; a concurrent
-  // unpublished replace here would race that claim.
+  // avoids clobbering a row another live generation already published.
+  // `publish_session_stage_artifact` then upserts canonical markdown and
+  // claims `awaiting_review` in one transaction.
   const { data, error } = await admin
     .from("session_artifacts")
     .upsert(
@@ -961,42 +962,6 @@ async function insertArtifact(
     .maybeSingle();
   if (error) throw error;
   return { inserted: data != null };
-}
-
-async function writePublishedArtifactMarkdown(
-  admin: AdminClient,
-  input: {
-    artifactJson: string;
-    sessionId: string;
-    stageId: string;
-    stageSlug: string;
-    version: number;
-    workspaceId: string;
-  },
-): Promise<void> {
-  const { data, error } = await admin
-    .from("session_artifacts")
-    .update({ artifact_json: input.artifactJson })
-    .eq("session_id", input.sessionId)
-    .eq("stage_slug", input.stageSlug)
-    .eq("version", input.version)
-    .select("id")
-    .maybeSingle();
-  if (error) throw error;
-  if (data != null) return;
-
-  const { error: upsertError } = await admin.from("session_artifacts").upsert(
-    {
-      artifact_json: input.artifactJson,
-      session_id: input.sessionId,
-      stage_id: input.stageId,
-      stage_slug: input.stageSlug,
-      version: input.version,
-      workspace_id: input.workspaceId,
-    },
-    { onConflict: "session_id,stage_slug,version" },
-  );
-  if (upsertError) throw upsertError;
 }
 
 async function deleteUnpublishedArtifact(

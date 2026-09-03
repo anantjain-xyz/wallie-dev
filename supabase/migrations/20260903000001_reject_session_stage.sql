@@ -11,9 +11,10 @@
 -- `create_session_with_first_job` produces, and moves the session to
 -- `rejected` — all or nothing. A concurrent approval or second rejection
 -- serializes behind the row lock and re-validates the phase, so it observes
--- `rejected` and returns empty instead of racing. An active job with no live
--- run (published `success` run, job still `running`) is closed and replaced
--- with a queued rerun instead of being adopted.
+-- `rejected` and returns empty instead of racing. An active job is adopted
+-- only when it already has a queued rerun. A started/running publish
+-- generation, or an active job with no live run, is closed and replaced
+-- with a queued rerun.
 --
 -- Validation failures raise so the whole transaction rolls back. Messages match
 -- the strings the application already surfaces to reviewers:
@@ -64,6 +65,7 @@ declare
   active_dedupe_key text;
   created_job_id uuid;
   created_run_id uuid;
+  adopted_run_status public.agent_run_status;
   adopted_existing_job boolean := false;
 begin
   if nullif(btrim(p_feedback_text), '') is null then
@@ -201,27 +203,36 @@ begin
   end;
 
   if adopted_existing_job then
-    select existing_run.id
-    into created_run_id
+    select existing_run.id, existing_run.status
+    into created_run_id, adopted_run_status
     from public.agent_runs existing_run
     where existing_run.agent_job_id = created_job_id
       and existing_run.status in ('queued', 'started', 'running')
     order by existing_run.created_at desc
     limit 1;
 
-    if created_run_id is null then
-      -- Active job with no live run: typical crash cut where the artifact is
-      -- published and the run is `success` but the job is still `running`.
-      -- Adopting that job would park the session in `rejected` with nothing
-      -- queued; the terminal-run sweep would then mark the old job successful.
-      -- Close it so the active-dedupe unique index releases, then insert a
-      -- fresh queued job (the run insert below).
-      if exists (
-        select 1
-        from public.agent_runs existing_run
-        where existing_run.agent_job_id = created_job_id
-          and existing_run.status = 'success'
-      ) then
+    -- Adopt only a queued rerun (manual retry that raced review). A started
+    -- or running run is the generation that just published — adopting it
+    -- lets that worker mark the run/job successful while the session stays
+    -- `rejected` with no work to apply the feedback. A missing live run is
+    -- the success-run / still-running-job crash cut.
+    if created_run_id is null or adopted_run_status is distinct from 'queued' then
+      if created_run_id is not null then
+        update public.agent_runs existing_run
+        set status = 'canceled',
+            finished_at = coalesce(existing_run.finished_at, now())
+        where existing_run.id = created_run_id
+          and existing_run.status in ('queued', 'started', 'running');
+      end if;
+
+      if created_run_id is not null
+         or exists (
+           select 1
+           from public.agent_runs existing_run
+           where existing_run.agent_job_id = created_job_id
+             and existing_run.status = 'success'
+         )
+      then
         update public.agent_jobs existing_job
         set status = 'success',
             finished_at = coalesce(existing_job.finished_at, now())
@@ -240,6 +251,7 @@ begin
       end if;
 
       adopted_existing_job := false;
+      created_run_id := null;
 
       insert into public.agent_jobs as replacement_job (
         workspace_id,

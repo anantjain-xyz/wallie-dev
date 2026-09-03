@@ -151,10 +151,11 @@ the target repository remains their runtime semantic owner.
 - The artifact prefix is used as fallback PR prose; the artifact in Supabase is
   the review source of truth.
 
-If cancellation wins after artifact insertion but before the guarded pointer
-update, the processor deletes the unpublished artifact so the version remains
-reusable. A later retry regenerates in a new sandbox, claims the session
-pointer, then writes unpublished markdown and force-pushes only if it won.
+If cancellation wins after artifact insertion but before the guarded publish
+transaction, the processor deletes the unpublished artifact so the version
+remains reusable. A later retry regenerates in a new sandbox, then
+`publish_session_stage_artifact` writes canonical markdown and claims
+`awaiting_review` in one step before force-pushing.
 
 ## Failure, retry, and teardown
 

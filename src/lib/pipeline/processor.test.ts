@@ -703,7 +703,26 @@ function buildAdminMock(opts: MockOptions) {
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
-  const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+  const rpc = vi.fn(async (fn: string, args?: unknown) => {
+    if (fn === "publish_session_stage_artifact") {
+      const payload = (args ?? {}) as Record<string, unknown>;
+      if (opts.pointerUpdateError) {
+        return { data: null, error: opts.pointerUpdateError };
+      }
+      if (opts.pointerCasMiss) {
+        return { data: false, error: null };
+      }
+      updatedSessions.push({
+        current_artifact_version: payload.p_version,
+        phase_status: "awaiting_review",
+      });
+      if (typeof payload.p_artifact_json === "string") {
+        updatedArtifacts.push({ artifact_json: payload.p_artifact_json });
+      }
+      return { data: true, error: null };
+    }
+    return { data: null, error: null };
+  });
 
   return {
     admin: createProcessorTestAdminClient({
@@ -892,9 +911,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     // A leftover unpublished row at (session, stage, N+1) from a crash after
-    // insert and before the pointer CAS must not be rewritten until this
-    // generation wins the pointer. The retry regenerates, claims the session,
-    // writes its markdown, and pushes from the new sandbox.
+    // insert and before the pointer CAS must not become `awaiting_review` until
+    // this generation's markdown is durable. The retry regenerates, then
+    // `publish_session_stage_artifact` writes canonical markdown and claims
+    // review in one transaction before pushing from the new sandbox.
     expect(result.result).toBe("success");
     expect(insertedArtifacts).toHaveLength(1);
     expect(artifactUpsertConflicts).toEqual(["session_id,stage_slug,version"]);
