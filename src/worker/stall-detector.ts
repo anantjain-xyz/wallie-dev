@@ -48,9 +48,11 @@ export interface StallSweepOptions {
  * A second pass then closes `running` jobs whose runs are all already
  * terminal. `markRunSuccess` lands before `sandbox.stop()` in a `finally`,
  * and `markPipelineJobSuccess` is after that network call; a crash there
- * leaves the run `success`, the job `running`, and the session's
- * `session:<id>:active` dedupe key held forever because no active run is
- * left for the first pass to see.
+ * leaves the run `success`, the job `running`, and the session already
+ * `awaiting_review`. That job is marked `success` so the active-session
+ * dedupe key is released without regenerating a published artifact.
+ * Jobs whose runs are all `error` / `canceled` (or that have no runs)
+ * keep the stalled-run retry-or-terminal-error policy.
  */
 export async function sweepStalledRuns(
   admin: AdminClient,
@@ -194,11 +196,17 @@ type RunningJobRow = {
 
 /**
  * Close running jobs that the active-run sweep cannot see: every attached
- * run is already `success` / `error` / `canceled` (or the job has no runs).
- * Reuses `resolveStalledJob` so retry vs terminal-error stays the same
- * policy as a stalled run. Jobs still listed on a fresh worker heartbeat
- * are left alone — that is the live `sandbox.stop()` window after
- * `markRunSuccess`.
+ * run is already terminal (or the job has no runs).
+ *
+ * A crash after `publishArtifact` looks like run `success` + job `running`
+ * + session `awaiting_review`. Retrying would re-claim that session and
+ * mint another artifact, so those jobs are marked `success` with the same
+ * running-row CAS as a live `markPipelineJobSuccess`. Jobs whose runs are
+ * all `error` / `canceled` (or that have no runs) still go through
+ * `resolveStalledJob` and park an `in_progress` session.
+ *
+ * Jobs still listed on a fresh worker heartbeat are left alone — that is
+ * the live `sandbox.stop()` window after `markRunSuccess`.
  */
 async function sweepRunningJobsWithTerminalRuns(
   admin: AdminClient,
@@ -225,11 +233,49 @@ async function sweepRunningJobsWithTerminalRuns(
     return;
   }
 
+  const jobsWithSuccessfulRuns = await loadJobIdsWithSuccessfulRuns(
+    admin,
+    stalled.map((job) => job.id),
+  );
+  if (jobsWithSuccessfulRuns === null) {
+    return;
+  }
+
+  const completedWithoutAck = stalled.filter((job) => jobsWithSuccessfulRuns.has(job.id));
+  const failedWithoutActiveRuns = stalled.filter((job) => !jobsWithSuccessfulRuns.has(job.id));
+
+  for (const job of completedWithoutAck) {
+    const { error } = await admin
+      .from("agent_jobs")
+      .update({
+        finished_at: new Date().toISOString(),
+        status: "success",
+      })
+      .eq("id", job.id)
+      .eq("status", "running");
+    if (error) {
+      console.error("[stall-detector] failed to acknowledge successful job", {
+        error: error.message,
+        jobId: job.id,
+      });
+      continue;
+    }
+
+    console.log("[stall-detector] acknowledged running job whose run already succeeded", {
+      jobId: job.id,
+      workspaceId: job.workspace_id,
+    });
+  }
+
+  if (failedWithoutActiveRuns.length === 0) {
+    return;
+  }
+
   const maxRetries = await loadMaxRetries(admin, [
-    ...new Set(stalled.map((job) => job.workspace_id)),
+    ...new Set(failedWithoutActiveRuns.map((job) => job.workspace_id)),
   ]);
 
-  for (const job of stalled) {
+  for (const job of failedWithoutActiveRuns) {
     await resolveStalledJob({
       admin,
       jobId: job.id,
@@ -310,6 +356,36 @@ async function loadJobIdsWithActiveRuns(
     // Fail closed: a read error must not look like "no active runs" or we
     // would retry/error live jobs that still have work in flight.
     return new Set(jobIds);
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+}
+
+async function loadJobIdsWithSuccessfulRuns(
+  admin: AdminClient,
+  jobIds: string[],
+): Promise<Set<string> | null> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("agent_job_id")
+    .in("agent_job_id", [...new Set(jobIds)])
+    .eq("status", "success");
+
+  if (error) {
+    console.error("[stall-detector] failed to load successful runs for running jobs", {
+      error: error.message,
+    });
+    // Fail closed: a read error must not look like "no success run" or we
+    // would retry a generation that already published its artifact.
+    return null;
   }
 
   return new Set(

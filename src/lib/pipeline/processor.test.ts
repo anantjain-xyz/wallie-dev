@@ -235,6 +235,8 @@ interface MockOptions {
    * starting the run (isJobCanceled). Defaults to an active status. */
   jobStatus?: string;
   artifactInsertError?: { message: string } | null;
+  /** `false` models ON CONFLICT DO NOTHING (another generation already holds the version). */
+  artifactInserted?: boolean;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
@@ -285,6 +287,7 @@ function createProcessorTestAdminClient(
 function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
   const artifactUpsertConflicts: Array<string | undefined> = [];
+  const artifactUpsertIgnoreDuplicates: Array<boolean | undefined> = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
   const insertedMessages: Array<Record<string, unknown>> = [];
   const updatedJobs: Array<Record<string, unknown>> = [];
@@ -347,10 +350,22 @@ function buildAdminMock(opts: MockOptions) {
       insertedArtifacts.push(row);
       return { error: opts.artifactInsertError ?? null };
     },
-    upsert: async (row: Record<string, unknown>, options?: { onConflict?: string }) => {
+    upsert: async (
+      row: Record<string, unknown>,
+      options?: { ignoreDuplicates?: boolean; onConflict?: string },
+    ) => {
       insertedArtifacts.push(row);
       artifactUpsertConflicts.push(options?.onConflict);
-      return { error: opts.artifactInsertError ?? null };
+      artifactUpsertIgnoreDuplicates.push(options?.ignoreDuplicates);
+      return {
+        select: () => ({
+          maybeSingle: async () => ({
+            data:
+              opts.artifactInsertError || opts.artifactInserted === false ? null : { id: "art-1" },
+            error: opts.artifactInsertError ?? null,
+          }),
+        }),
+      };
     },
     delete: () => {
       const filters: Record<string, unknown> = {};
@@ -647,6 +662,7 @@ function buildAdminMock(opts: MockOptions) {
       rpc,
     }),
     artifactUpsertConflicts,
+    artifactUpsertIgnoreDuplicates,
     insertedArtifacts,
     insertedMessages,
     insertedRuns,
@@ -809,19 +825,23 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("adopts an existing unpublished artifact row on the unique version key", async () => {
     const session = baseSession();
-    const { admin, artifactUpsertConflicts, insertedArtifacts } = buildAdminMock({
-      session,
-      agentConfig: [],
-    });
+    const { admin, artifactUpsertConflicts, artifactUpsertIgnoreDuplicates, insertedArtifacts } =
+      buildAdminMock({
+        session,
+        agentConfig: [],
+        artifactInserted: false,
+      });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     // A leftover unpublished row at (session, stage, N+1) from a crash after
     // insert and before the pointer CAS must be adopted, not rejected by
-    // session_artifacts_unique_version.
+    // session_artifacts_unique_version. ON CONFLICT DO NOTHING keeps the
+    // first writer's markdown.
     expect(result.result).toBe("success");
     expect(insertedArtifacts).toHaveLength(1);
     expect(artifactUpsertConflicts).toEqual(["session_id,stage_slug,version"]);
+    expect(artifactUpsertIgnoreDuplicates).toEqual([true]);
   });
 
   it("deletes the orphaned artifact when cancellation wins the pointer CAS", async () => {
@@ -840,6 +860,24 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(deletedArtifacts).toEqual([
       { session_id: session.id, stage_slug: "product", version: 1 },
     ]);
+    expect(result.result).toBe("idle");
+  });
+
+  it("does not delete a conflicting unpublished artifact when the pointer CAS misses", async () => {
+    const session = baseSession();
+    const { admin, insertedArtifacts, deletedArtifacts } = buildAdminMock({
+      session,
+      agentConfig: [],
+      artifactInserted: false,
+      pointerCasMiss: true,
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    // Another generation already holds (session, stage, version). This process
+    // did not insert the row, so a lost pointer CAS must not delete it.
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(deletedArtifacts).toEqual([]);
     expect(result.result).toBe("idle");
   });
 

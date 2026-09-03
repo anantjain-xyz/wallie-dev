@@ -408,7 +408,7 @@ async function runStage(input: {
       throw new MissingReviewableOutputError(message);
     }
 
-    await insertArtifact(admin, {
+    artifactInserted = await insertArtifact(admin, {
       artifactJson: artifactMarkdown,
       sessionId: session.id,
       stageId: stage.id,
@@ -416,7 +416,6 @@ async function runStage(input: {
       version: newVersion,
       workspaceId: session.workspace_id,
     });
-    artifactInserted = true;
 
     const published = await publishArtifact({
       admin,
@@ -427,6 +426,7 @@ async function runStage(input: {
       onPointerAdvanced: () => {
         sessionPointerAdvanced = true;
       },
+      ownsUnpublishedRow: artifactInserted,
       runId,
       sandbox,
       session,
@@ -494,8 +494,8 @@ async function runStage(input: {
  * Publish a generated artifact: optional PR open, the `awaiting_review`
  * pointer CAS, then mark the run successful. Job success stays with the
  * caller so it still lands after `sandbox.stop()` — a crash in that
- * window is recovered by the terminal-run job sweep, not by moving the
- * write into this function.
+ * window is recovered by marking the still-running job `success` in the
+ * terminal-run sweep, not by moving the write into this function.
  */
 async function publishArtifact(input: {
   admin: AdminClient;
@@ -507,6 +507,7 @@ async function publishArtifact(input: {
   } | null;
   newVersion: number;
   onPointerAdvanced: () => void;
+  ownsUnpublishedRow: boolean;
   runId: string | null;
   sandbox: SandboxHandle | null;
   session: SessionRow;
@@ -567,16 +568,18 @@ async function publishArtifact(input: {
   if (pointerError) throw pointerError;
 
   if (!pointerRows || pointerRows.length === 0) {
-    // Cancellation won the race. Drop the just-inserted artifact so a later
-    // rerun can reuse this version — the unique (session_id, stage_slug,
-    // version) constraint would otherwise reject the next draft — and finish
-    // without marking success (the run and job are already canceled).
-    await admin
-      .from("session_artifacts")
-      .delete()
-      .eq("session_id", session.id)
-      .eq("stage_slug", stage.slug)
-      .eq("version", newVersion);
+    // Cancellation or another generation won the pointer. Delete only a row
+    // this process inserted. A conflict on the unique version key means the
+    // row belongs to another generation (or an earlier crash of a different
+    // job); deleting it would leave a published pointer aiming at nothing.
+    if (input.ownsUnpublishedRow) {
+      await admin
+        .from("session_artifacts")
+        .delete()
+        .eq("session_id", session.id)
+        .eq("stage_slug", stage.slug)
+        .eq("version", newVersion);
+    }
     return "idle";
   }
 
@@ -911,26 +914,31 @@ async function insertArtifact(
     version: number;
     workspaceId: string;
   },
-): Promise<void> {
+): Promise<boolean> {
   // `newVersion` is computed from the session row loaded at claim time. A
   // crash after this write and before the pointer CAS leaves an unpublished
   // row at `(session_id, stage_slug, version)`. A plain insert then hits
-  // `session_artifacts_unique_version` on every retry and the job terminals
-  // with the leftover row still unpublished. Adopt that row so the retry can
-  // write the new draft; the pointer CAS then either publishes it (first
-  // write) or is a no-op (already `awaiting_review`).
-  const { error } = await admin.from("session_artifacts").upsert(
-    {
-      artifact_json: input.artifactJson,
-      session_id: input.sessionId,
-      stage_id: input.stageId,
-      stage_slug: input.stageSlug,
-      version: input.version,
-      workspace_id: input.workspaceId,
-    },
-    { onConflict: "session_id,stage_slug,version" },
-  );
+  // `session_artifacts_unique_version` on every retry. ON CONFLICT DO NOTHING
+  // adopts that orphan without overwriting it. A racing replacement that
+  // computed the same version must not clobber the first writer's markdown,
+  // and must not delete the row if its later pointer CAS loses.
+  const { data, error } = await admin
+    .from("session_artifacts")
+    .upsert(
+      {
+        artifact_json: input.artifactJson,
+        session_id: input.sessionId,
+        stage_id: input.stageId,
+        stage_slug: input.stageSlug,
+        version: input.version,
+        workspace_id: input.workspaceId,
+      },
+      { ignoreDuplicates: true, onConflict: "session_id,stage_slug,version" },
+    )
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  return data != null;
 }
 
 async function resolveAgentRunner(input: {

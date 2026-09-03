@@ -698,11 +698,11 @@ describe("sweepStalledRuns", () => {
     expect(second.stalledRunIds).toEqual([]);
   });
 
-  it("retries a running job whose runs are all already terminal", async () => {
+  it("marks a running job success when its run already succeeded", async () => {
     // Crash after markRunSuccess and before markPipelineJobSuccess: the run
     // is success, the job is still running, and the active-run sweep never
-    // sees it. The session is already awaiting_review so the in_progress
-    // park is a no-op.
+    // sees it. The session is already awaiting_review; retrying would mint
+    // another artifact, so the job is acknowledged as success instead.
     const state: MockState = {
       runs: [activeRun({ status: "success", sandbox_id: null })],
       jobs: [job()],
@@ -710,10 +710,37 @@ describe("sweepStalledRuns", () => {
       sessions: new Map([["sess-1", { phase_status: "awaiting_review" }]]),
       rpcCalls: [],
     };
-    const { admin, sessionUpdates } = buildAdminMock(state);
+    const { admin, jobUpdates, sessionUpdates } = buildAdminMock(state);
     const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
 
     expect(result.stalledRunIds).toEqual([]);
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(state.rpcCalls).toEqual([]);
+    expect(jobUpdates).toContainEqual({
+      id: "job-1",
+      patch: {
+        finished_at: expect.any(String),
+        status: "success",
+      },
+      status: "running",
+    });
+    expect(state.jobs[0]?.status).toBe("success");
+    expect(sessionUpdates).toEqual([]);
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("awaiting_review");
+  });
+
+  it("retries a running job whose runs are all already errored", async () => {
+    const state: MockState = {
+      runs: [activeRun({ status: "error", sandbox_id: null })],
+      jobs: [job()],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
     expect(result.retriedJobIds).toEqual(["job-1"]);
     expect(result.stalledJobIds).toEqual([]);
     expect(state.rpcCalls).toContainEqual({
@@ -731,7 +758,7 @@ describe("sweepStalledRuns", () => {
         patch: { phase_status: "rejected" },
       },
     ]);
-    expect(state.sessions.get("sess-1")?.phase_status).toBe("awaiting_review");
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("rejected");
   });
 
   it("marks a running job with only terminal runs errored when retries are exhausted", async () => {
@@ -831,8 +858,8 @@ describe("sweepStalledRuns", () => {
 
     const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS, { workspaceId: "ws-1" });
 
-    expect(result.retriedJobIds).toEqual(["job-1"]);
-    expect(state.jobs.find((row) => row.id === "job-1")?.status).toBe("queued");
+    expect(result.retriedJobIds).toEqual([]);
+    expect(state.jobs.find((row) => row.id === "job-1")?.status).toBe("success");
     expect(state.jobs.find((row) => row.id === "job-2")?.status).toBe("running");
   });
 });
