@@ -125,6 +125,15 @@ export async function processPipelineJob(input: {
     // from regenerating an artifact that has already been approved, and closes
     // the archive race — a job enqueued in the narrow window before archive's
     // marker landed cannot execute against an archived session.
+    //
+    // `awaiting_review` stays in this set even after `reject_session_stage`
+    // became one transaction. Rejection now enqueues the rerun and flips the
+    // session to `rejected` together, so a reject-then-crash no longer leaves
+    // a job stranded against `awaiting_review`. Other enqueue-before-flip
+    // paths still do: Linear `start_or_continue` and same-stage reroute insert
+    // a job without changing phase, and interactive `enqueueSessionJobWithRun`
+    // allows a retry while the session is still awaiting review. Dropping this
+    // status would mark those jobs successful without generating anything.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
       .update({ phase_status: "in_progress" })
