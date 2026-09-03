@@ -17,8 +17,7 @@ import {
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
-import { inferWallieRunMode } from "@/features/wallie/utils";
-import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
+import { enqueueSessionJobWithRun, resolveQueuedRunConfig } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import {
   ClaudeCodeNotConnectedError,
@@ -40,6 +39,7 @@ import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sand
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
+import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import {
   formatSessionAttachmentPromptData,
@@ -125,6 +125,15 @@ export async function processPipelineJob(input: {
     // from regenerating an artifact that has already been approved, and closes
     // the archive race — a job enqueued in the narrow window before archive's
     // marker landed cannot execute against an archived session.
+    //
+    // `awaiting_review` stays in this set even after `reject_session_stage`
+    // became one transaction. Rejection now enqueues the rerun and flips the
+    // session to `rejected` together, so a reject-then-crash no longer leaves
+    // a job stranded against `awaiting_review`. Other enqueue-before-flip
+    // paths still do: Linear `start_or_continue` and same-stage reroute insert
+    // a job without changing phase, and interactive `enqueueSessionJobWithRun`
+    // allows a retry while the session is still awaiting review. Dropping this
+    // status would mark those jobs successful without generating anything.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
       .update({ phase_status: "in_progress" })
@@ -291,7 +300,9 @@ async function runStage(input: {
         onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
           if (!runId) return;
           if (sandboxProvider === "fake") {
-            const attached = await updateRunSandbox(admin, runId, sandboxId, { provider: "fake" });
+            const attached = await updateRunSandbox(admin, runId, sandboxId, {
+              provider: "fake",
+            });
             if (!attached) {
               await stopSandboxById(sandboxId);
             }
@@ -399,7 +410,7 @@ async function runStage(input: {
       throw new MissingReviewableOutputError(message);
     }
 
-    await insertArtifact(admin, {
+    const inserted = await insertArtifact(admin, {
       artifactJson: artifactMarkdown,
       sessionId: session.id,
       stageId: stage.id,
@@ -407,82 +418,26 @@ async function runStage(input: {
       version: newVersion,
       workspaceId: session.workspace_id,
     });
-    artifactInserted = true;
+    artifactInserted = inserted.inserted;
 
-    if (sandbox && github && branch) {
-      const prOutcome = await openSessionPullRequest({
-        admin,
-        baseBranch: github.repo.default_branch ?? "main",
-        body: artifactMarkdown.slice(0, 60000),
-        branch,
-        installationId: github.installationId,
-        repoFullName: github.repo.full_name,
-        repoId: github.repo.id,
-        sandbox,
-        sessionId: session.id,
-        title: `${stage.name}: ${session.title}`,
-        workspaceId: session.workspace_id,
-      });
-
-      // PR plumbing is recoverable — the artifact is durable and the reviewer
-      // can approve the artifact directly — so we never block the stage. But we
-      // always surface the outcome: `no_commits` used to be fully silent, which
-      // is exactly how empty `session_pull_requests` went unnoticed.
-      if (prOutcome.kind === "no_commits") {
-        console.info("Stage produced no pull request (no commits ahead of base)", {
-          sessionId: session.id,
-          stageSlug: stage.slug,
-        });
-      } else if (prOutcome.kind !== "success") {
-        console.error("Failed to open session pull request", {
-          kind: prOutcome.kind,
-          reason: prOutcome.reason,
-          sessionId: session.id,
-          stageSlug: stage.slug,
-        });
-      }
-    }
-
-    const { data: pointerRows, error: pointerError } = await admin
-      .from("sessions")
-      .update({
-        current_artifact_version: newVersion,
-        phase_status: "awaiting_review",
-      })
-      .eq("id", session.id)
-      // Only advance a session that is still generating AND not archived. If it
-      // was parked (canceled or stalled) or archived while this run produced its
-      // artifact, this CAS affects zero rows and we must not un-park/un-freeze
-      // it or surface the draft.
-      .eq("phase_status", "in_progress")
-      .is("archived_at", null)
-      .select("id");
-    if (pointerError) throw pointerError;
-
-    if (!pointerRows || pointerRows.length === 0) {
-      // Cancellation won the race. Drop the just-inserted artifact so a later
-      // rerun can reuse this version — the unique (session_id, stage_slug,
-      // version) constraint would otherwise reject the next draft — and finish
-      // without marking success (the run and job are already canceled).
-      if (artifactInserted) {
-        await admin
-          .from("session_artifacts")
-          .delete()
-          .eq("session_id", session.id)
-          .eq("stage_slug", stage.slug)
-          .eq("version", newVersion);
-      }
+    const published = await publishArtifact({
+      admin,
+      artifactMarkdown,
+      branch,
+      github,
+      newVersion,
+      onPointerAdvanced: () => {
+        sessionPointerAdvanced = true;
+      },
+      ownsUnpublishedRow: inserted.inserted,
+      runId,
+      sandbox,
+      session,
+      stage,
+      usage,
+    });
+    if (published === "idle") {
       return { jobId: job.id, processed: true, result: "idle", runId };
-    }
-    sessionPointerAdvanced = true;
-
-    if (runId) {
-      await persistEvent(admin, runId, session.workspace_id, {
-        type: "completion",
-        taskComplete: true,
-        summary: `${stage.name} run completed`,
-      });
-      await markRunSuccess(admin, runId, usage);
     }
   } catch (error) {
     runId = runId ?? (await loadActiveRunIdForJob(admin, job.id));
@@ -500,13 +455,13 @@ async function runStage(input: {
 
     if (artifactInserted) {
       // Compensate: drop the orphan so the next retry doesn't hit the
-      // (session_id, stage_slug, version) unique constraint.
-      await admin
-        .from("session_artifacts")
-        .delete()
-        .eq("session_id", session.id)
-        .eq("stage_slug", stage.slug)
-        .eq("version", newVersion);
+      // (session_id, stage_slug, version) unique constraint. Skip the delete
+      // when another generation has already published this version.
+      await deleteUnpublishedArtifact(admin, {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+      });
     }
 
     if (sessionPointerAdvanced) {
@@ -538,11 +493,114 @@ async function runStage(input: {
   return { jobId: job.id, processed: true, result: "success", runId };
 }
 
-// --- Approval + rejection handlers ---
+/**
+ * Publish a generated artifact: claim `awaiting_review` with canonical
+ * markdown in one transaction, optionally open a PR, then mark the run
+ * successful. Job success stays with the caller so it still lands after
+ * `sandbox.stop()` — a crash in that window is recovered by marking the
+ * still-running job `success` in the terminal-run sweep, not by moving
+ * the write into this function.
+ */
+async function publishArtifact(input: {
+  admin: AdminClient;
+  artifactMarkdown: string;
+  branch: string | null;
+  github: {
+    installationId: number;
+    repo: { default_branch: string | null; full_name: string; id: string };
+  } | null;
+  newVersion: number;
+  onPointerAdvanced: () => void;
+  ownsUnpublishedRow: boolean;
+  runId: string | null;
+  sandbox: SandboxHandle | null;
+  session: SessionRow;
+  stage: PipelineStage;
+  usage: { inputTokens: number; outputTokens: number } | undefined;
+}): Promise<"idle" | "published"> {
+  const { admin, artifactMarkdown, branch, github, newVersion, runId, sandbox, session, stage } =
+    input;
 
-function isUniqueViolation(error: { code?: string } | null | undefined) {
-  return error?.code === "23505";
+  // Claim the generation and persist canonical markdown in one transaction
+  // before mutating the shared stage branch. A loser that pushed last would
+  // rewrite the PR while the session kept the winner's markdown; publishing
+  // `awaiting_review` before the markdown write would also let a reviewer
+  // approve stale recovered text.
+  const { data: published, error: publishError } = await publishSessionStageArtifactRpc(admin, {
+    p_artifact_json: artifactMarkdown,
+    p_expected_artifact_version: session.current_artifact_version,
+    p_session_id: session.id,
+    p_stage_id: stage.id,
+    p_stage_slug: stage.slug,
+    p_version: newVersion,
+    p_workspace_id: session.workspace_id,
+  });
+  if (publishError) throw publishError;
+
+  if (published !== true) {
+    // Cancellation or another generation won the pointer. Delete only a row
+    // this process inserted, and only while it is still unpublished. If a
+    // replacement adopted this row and already advanced the session pointer,
+    // deleting it would leave `current_artifact_version` aiming at nothing.
+    if (input.ownsUnpublishedRow) {
+      await deleteUnpublishedArtifact(admin, {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+      });
+    }
+    return "idle";
+  }
+
+  input.onPointerAdvanced();
+
+  if (sandbox && github && branch) {
+    const prOutcome = await openSessionPullRequest({
+      admin,
+      baseBranch: github.repo.default_branch ?? "main",
+      body: artifactMarkdown.slice(0, 60000),
+      branch,
+      installationId: github.installationId,
+      repoFullName: github.repo.full_name,
+      repoId: github.repo.id,
+      sandbox,
+      sessionId: session.id,
+      title: `${stage.name}: ${session.title}`,
+      workspaceId: session.workspace_id,
+    });
+
+    // PR plumbing is recoverable — the artifact is durable and the reviewer
+    // can approve the artifact directly — so we never block the stage. But we
+    // always surface the outcome: `no_commits` used to be fully silent, which
+    // is exactly how empty `session_pull_requests` went unnoticed.
+    if (prOutcome.kind === "no_commits") {
+      console.info("Stage produced no pull request (no commits ahead of base)", {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+      });
+    } else if (prOutcome.kind !== "success") {
+      console.error("Failed to open session pull request", {
+        kind: prOutcome.kind,
+        reason: prOutcome.reason,
+        sessionId: session.id,
+        stageSlug: stage.slug,
+      });
+    }
+  }
+
+  if (runId) {
+    await persistEvent(admin, runId, session.workspace_id, {
+      type: "completion",
+      taskComplete: true,
+      summary: `${stage.name} run completed`,
+    });
+    await markRunSuccess(admin, runId, input.usage);
+  }
+
+  return "published";
 }
+
+// --- Approval + rejection handlers ---
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
@@ -571,110 +629,6 @@ function isSandboxConnectionSetupError(error: unknown): boolean {
       error.name === "SandboxConnectionInvalidError" ||
       error.name === "SandboxCapabilityCheckStaleError")
   );
-}
-
-async function loadActiveSessionJob(
-  admin: AdminClient,
-  input: { dedupeKey: string; workspaceId: string },
-) {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("id")
-    .eq("workspace_id", input.workspaceId)
-    .eq("dedupe_key", input.dedupeKey)
-    .in("status", ["queued", "started", "running"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data?.id ?? null;
-}
-
-async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
-  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
-
-  if (error) {
-    console.error("Failed to clean up orphaned pipeline job", {
-      error,
-      jobId,
-    });
-  }
-}
-
-async function enqueueSessionJobWithRun(input: {
-  admin: AdminClient;
-  requestedByMemberId: string | null;
-  sessionId: string;
-  triggerType: Tables<"agent_jobs">["trigger_type"];
-  workspaceId: string;
-}) {
-  const dedupeKey = buildWallieJobDedupeKey(input.sessionId);
-  const [agentConfig, repositoryResolution, session] = await Promise.all([
-    loadWorkspaceAgentConfig(input.admin, input.workspaceId),
-    resolveEffectiveSessionRepository({
-      sessionId: input.sessionId,
-      supabase: input.admin,
-      workspaceId: input.workspaceId,
-    }),
-    loadSessionById(input.admin, input.sessionId),
-  ]);
-  const stage = session ? await loadStageById(input.admin, session.current_stage_id) : null;
-  const { data: job, error: jobError } = await input.admin
-    .from("agent_jobs")
-    .insert({
-      dedupe_key: dedupeKey,
-      requested_by_member_id: input.requestedByMemberId,
-      session_id: input.sessionId,
-      stage_id: stage?.id ?? null,
-      stage_name: stage?.name ?? null,
-      stage_slug: stage?.slug ?? null,
-      trigger_type: input.triggerType,
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
-
-  if (isUniqueViolation(jobError)) {
-    return {
-      created: false,
-      jobId: await loadActiveSessionJob(input.admin, {
-        dedupeKey,
-        workspaceId: input.workspaceId,
-      }),
-    };
-  }
-
-  if (jobError || !job) {
-    throw jobError ?? new Error("Wallie job insert did not return a job id.");
-  }
-
-  const runType = inferWallieRunMode(repositoryResolution.repositoryId);
-  const { error: runError } = await input.admin.from("agent_runs").insert({
-    agent_job_id: job.id,
-    model_name: agentConfig.model,
-    model_provider: agentConfig.provider,
-    run_type: runType,
-    session_id: input.sessionId,
-    stage_id: stage?.id ?? null,
-    stage_name: stage?.name ?? null,
-    stage_slug: stage?.slug ?? null,
-    triggered_by_member_id: input.requestedByMemberId,
-    workspace_id: input.workspaceId,
-  });
-
-  if (runError) {
-    await cleanupQueuedJob(input.admin, job.id);
-    throw runError;
-  }
-
-  return {
-    created: true,
-    jobId: job.id,
-  };
 }
 
 export async function handleApproval(input: {
@@ -715,9 +669,12 @@ export async function handleApproval(input: {
       const queued = await enqueueSessionJobWithRun({
         admin,
         requestedByMemberId: input.approverMemberId,
-        sessionId: input.sessionId,
+        session: {
+          current_stage_id: row.current_stage_id,
+          id: input.sessionId,
+          workspace_id: input.expectedWorkspaceId,
+        },
         triggerType: "assignment",
-        workspaceId: input.expectedWorkspaceId,
       });
 
       return {
@@ -764,6 +721,75 @@ export async function handleApproval(input: {
   };
 }
 
+// `reject_session_stage` and `publish_session_stage_artifact` (migrations
+// 20260903000001 / 20260903000004) are not yet present in the generated
+// `database.types.ts`, which `pnpm db:types` regenerates against a running
+// local database. Until that regeneration lands, their contracts are declared
+// here and the admin client is viewed through the augmented schema.
+// Delete this block once both functions exist in `Database["public"]["Functions"]`.
+type RejectSessionStageArgs = {
+  p_agent_model_name: string;
+  p_agent_model_provider: string;
+  p_artifact_version: number;
+  p_feedback_text: string;
+  p_requested_by_member_id?: string;
+  p_run_type?: string;
+  p_session_id: string;
+  p_workspace_id: string;
+};
+
+type RejectSessionStageRow = {
+  archived_at: string | null;
+  current_artifact_version: number;
+  current_stage_id: string;
+  job_created: boolean;
+  job_id: string;
+  phase_status: Database["public"]["Enums"]["pipeline_phase_status"];
+  rejection_count: number;
+  run_id: string | null;
+  session_id: string;
+  workspace_id: string;
+};
+
+type PublishSessionStageArtifactArgs = {
+  p_artifact_json: string;
+  p_expected_artifact_version: number;
+  p_session_id: string;
+  p_stage_id: string;
+  p_stage_slug: string;
+  p_version: number;
+  p_workspace_id: string;
+};
+
+type DatabaseWithPipelineRpcs = Omit<Database, "public"> & {
+  public: Omit<Database["public"], "Functions"> & {
+    Functions: Database["public"]["Functions"] & {
+      publish_session_stage_artifact: {
+        Args: PublishSessionStageArtifactArgs;
+        Returns: boolean;
+      };
+      reject_session_stage: {
+        Args: RejectSessionStageArgs;
+        Returns: RejectSessionStageRow[];
+      };
+    };
+  };
+};
+
+function rejectSessionStageRpc(admin: AdminClient, args: RejectSessionStageArgs) {
+  return (admin as unknown as SupabaseClient<DatabaseWithPipelineRpcs>).rpc(
+    "reject_session_stage",
+    args,
+  );
+}
+
+function publishSessionStageArtifactRpc(admin: AdminClient, args: PublishSessionStageArtifactArgs) {
+  return (admin as unknown as SupabaseClient<DatabaseWithPipelineRpcs>).rpc(
+    "publish_session_stage_artifact",
+    args,
+  );
+}
+
 export async function handleRejection(input: {
   admin?: AdminClient;
   expectedWorkspaceId: string;
@@ -774,102 +800,15 @@ export async function handleRejection(input: {
 }): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
-  const session = await loadSessionById(admin, input.sessionId);
-  if (!session) {
-    return { error: "Session not found.", success: false };
-  }
-
-  if (session.workspace_id !== input.expectedWorkspaceId) {
-    return { error: "Session not found.", success: false };
-  }
-
-  if (session.archived_at) {
-    return { error: "Session is archived.", success: false };
-  }
-
-  if (session.phase_status !== "awaiting_review") {
-    return { error: "Session is not awaiting review.", success: false };
-  }
-
-  if (session.current_artifact_version !== input.version) {
-    return { error: "Version mismatch: a newer version exists.", success: false };
-  }
-
-  const stage = await loadStageById(admin, session.current_stage_id);
-  if (!stage) {
-    return {
-      error: "Session references a missing stage.",
-      success: false,
-    };
-  }
-
-  const newRejectionCount = session.rejection_count + 1;
-
-  // Atomic CAS on rejection_count: only the first rejection that observed
-  // the current count can advance it. A concurrent second rejection sees
-  // rows-updated=0 and exits without double-counting. The `archived_at is null`
-  // predicate also makes this atomic with archive — an archive that lands
-  // between the load above and this CAS turns the rejection into a no-op rather
-  // than enqueueing fresh work on an archived session.
-  const { data: claimedRejection, error: claimRejectionError } = await admin
-    .from("sessions")
-    .update({ rejection_count: newRejectionCount })
-    .eq("id", input.sessionId)
-    .eq("workspace_id", input.expectedWorkspaceId)
-    .eq("rejection_count", session.rejection_count)
-    .eq("phase_status", "awaiting_review")
-    .eq("current_artifact_version", input.version)
-    .is("archived_at", null)
-    .select("id")
-    .maybeSingle();
-
-  if (claimRejectionError) {
-    return { error: claimRejectionError.message, success: false };
-  }
-
-  if (!claimedRejection) {
-    return {
-      error: "Rejection raced with another update — please refresh and try again.",
-      success: false,
-    };
-  }
-
-  // Feedback lives in its own table keyed on (session_id, stage_id,
-  // target_version). Stage_id is the immutable FK so a stage rename between
-  // generation and review does not orphan the row. The unique constraint
-  // makes the row a first-write-wins record of "why was this version
-  // rejected" — the loser of a truly concurrent rejection is caught by the
-  // CAS guard above; this insert is a defense-in-depth check.
-  const { error: feedbackInsertError } = await admin.from("session_artifact_feedback").insert({
-    feedback_text: input.feedbackText,
-    session_id: input.sessionId,
-    stage_id: stage.id,
-    stage_slug: stage.slug,
-    target_version: input.version,
-    workspace_id: session.workspace_id,
-  });
-
-  // 23505 = unique_violation: feedback already exists for this target_version,
-  // which means a prior attempt inserted it but a later step (e.g., agent_jobs
-  // enqueue) failed and the session never advanced. Treat as idempotent
-  // success and proceed to enqueue rather than wedging the session in
-  // awaiting_review with rejection_count bumped but nothing queued.
-  if (feedbackInsertError && feedbackInsertError.code !== "23505") {
-    return { error: feedbackInsertError.message, success: false };
-  }
-
-  // Enqueue a new generation job BEFORE flipping phase_status to 'rejected'.
-  // If the enqueue fails with a non-dedupe error we must not transition into
-  // 'rejected', because 'rejected' with no queued worker is a wedged state the
-  // UI cannot recover from.
-  let queued: { created: boolean; jobId: string | null };
+  // The rerun's queued run must carry the workspace's configured model and the
+  // session's run mode, resolved with the same lookups the shared enqueue path
+  // uses. These are configuration reads, not state transitions, so they sit
+  // outside the RPC; a failure here changes nothing.
+  let runConfig: Awaited<ReturnType<typeof resolveQueuedRunConfig>>;
   try {
-    queued = await enqueueSessionJobWithRun({
-      admin,
-      requestedByMemberId: input.requestedByMemberId,
-      sessionId: session.id,
-      triggerType: "comment_retry",
-      workspaceId: session.workspace_id,
+    runConfig = await resolveQueuedRunConfig(admin, {
+      id: input.sessionId,
+      workspace_id: input.expectedWorkspaceId,
     });
   } catch (error) {
     return {
@@ -878,16 +817,47 @@ export async function handleRejection(input: {
     };
   }
 
-  await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
+  // One transaction: lock the session, validate workspace/archive/phase/version,
+  // record the feedback, enqueue the rerun job + queued run under the session's
+  // active dedupe key, and move the session to `rejected`. Any guard failure
+  // raises and rolls everything back, so a rejection can no longer leave the
+  // session wedged with a bumped rejection count and nothing queued, and a
+  // concurrent approval serializes behind the row lock instead of racing the
+  // final phase write.
+  const { data, error } = await rejectSessionStageRpc(admin, {
+    p_agent_model_name: runConfig.modelName,
+    p_agent_model_provider: runConfig.modelProvider,
+    p_artifact_version: input.version,
+    p_feedback_text: input.feedbackText,
+    p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+    p_run_type: runConfig.runType,
+    p_session_id: input.sessionId,
+    p_workspace_id: input.expectedWorkspaceId,
+  });
+
+  if (error) {
+    // The RPC raises with the reviewer-facing message for every guard
+    // ("Session not found.", "Session is archived.", "Session is not awaiting
+    // review.", "Version mismatch: a newer version exists."); surface it as-is.
+    return { error: error.message, success: false };
+  }
+
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) {
+    return {
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    };
+  }
 
   return {
-    jobId: queued.jobId,
+    jobId: row.job_id,
     session: {
-      archivedAt: session.archived_at,
-      currentArtifactVersion: session.current_artifact_version,
-      currentStageId: session.current_stage_id,
-      phaseStatus: "rejected",
-      rejectionCount: newRejectionCount,
+      archivedAt: row.archived_at,
+      currentArtifactVersion: row.current_artifact_version,
+      currentStageId: row.current_stage_id,
+      phaseStatus: row.phase_status,
+      rejectionCount: row.rejection_count,
     },
     success: true,
   };
@@ -967,15 +937,53 @@ async function insertArtifact(
     version: number;
     workspaceId: string;
   },
+): Promise<{ inserted: boolean }> {
+  // `newVersion` is computed from the session row loaded at claim time. A
+  // crash after this write and before the pointer CAS leaves an unpublished
+  // row at `(session_id, stage_slug, version)`. A plain insert then hits
+  // `session_artifacts_unique_version` on every retry. ON CONFLICT DO NOTHING
+  // avoids clobbering a row another live generation already published.
+  // `publish_session_stage_artifact` then upserts canonical markdown and
+  // claims `awaiting_review` in one transaction.
+  const { data, error } = await admin
+    .from("session_artifacts")
+    .upsert(
+      {
+        artifact_json: input.artifactJson,
+        session_id: input.sessionId,
+        stage_id: input.stageId,
+        stage_slug: input.stageSlug,
+        version: input.version,
+        workspace_id: input.workspaceId,
+      },
+      { ignoreDuplicates: true, onConflict: "session_id,stage_slug,version" },
+    )
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  return { inserted: data != null };
+}
+
+async function deleteUnpublishedArtifact(
+  admin: AdminClient,
+  input: { sessionId: string; stageSlug: string; version: number },
 ): Promise<void> {
-  const { error } = await admin.from("session_artifacts").insert({
-    artifact_json: input.artifactJson,
-    session_id: input.sessionId,
-    stage_id: input.stageId,
-    stage_slug: input.stageSlug,
-    version: input.version,
-    workspace_id: input.workspaceId,
-  });
+  const { data: session, error: sessionError } = await admin
+    .from("sessions")
+    .select("current_artifact_version")
+    .eq("id", input.sessionId)
+    .maybeSingle();
+  if (sessionError) throw sessionError;
+  if (session?.current_artifact_version === input.version) {
+    return;
+  }
+
+  const { error } = await admin
+    .from("session_artifacts")
+    .delete()
+    .eq("session_id", input.sessionId)
+    .eq("stage_slug", input.stageSlug)
+    .eq("version", input.version);
   if (error) throw error;
 }
 
@@ -1155,7 +1163,7 @@ async function startAgentRun(
       triggered_by_member_id: input.requestedByMemberId,
     })
     .eq("agent_job_id", input.jobId)
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .select("id")
     .maybeSingle();
 
@@ -1225,7 +1233,7 @@ async function updateRunSandbox(
     // Only attach the sandbox to a run that is still active. If the run was
     // canceled in the race before its sandbox id landed, this affects zero
     // rows and the caller stops the orphaned sandbox.
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .select("id");
   if (error) {
     throw error;
@@ -1253,7 +1261,7 @@ async function markRunSuccess(
     .eq("id", runId)
     // Don't resurrect a run that was canceled while this worker was still
     // processing it.
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 async function markRunError(admin: AdminClient, runId: string): Promise<void> {
@@ -1265,7 +1273,7 @@ async function markRunError(admin: AdminClient, runId: string): Promise<void> {
     })
     .eq("id", runId)
     // Don't flip a canceled run back to error.
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 // Best-effort cleanup for a job whose session is no longer claimable (terminal
@@ -1277,7 +1285,7 @@ async function cancelQueuedRunsForJob(admin: AdminClient, jobId: string): Promis
     .from("agent_runs")
     .update({ finished_at: new Date().toISOString(), status: "canceled" })
     .eq("agent_job_id", jobId)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 
   if (error) {
     console.error("Failed to cancel runs for an unclaimable job", {
@@ -1315,7 +1323,7 @@ async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise
       .from("agent_runs")
       .select("id")
       .eq("agent_job_id", jobId)
-      .in("status", ["queued", "started", "running"])
+      .in("status", ACTIVE_AGENT_RUN_STATUSES)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -1346,7 +1354,7 @@ async function markActiveRunsForJobError(admin: AdminClient, jobId: string): Pro
       status: "error" as const,
     })
     .eq("agent_job_id", jobId)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 async function persistEvent(
@@ -1576,7 +1584,7 @@ async function touchRunActivity(admin: AdminClient, runId: string): Promise<void
     .from("agent_runs")
     .update({ last_activity_at: new Date().toISOString() })
     .eq("id", runId)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
 async function markPipelineJobSuccess(

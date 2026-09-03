@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
-import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import { ACTIVE_AGENT_JOB_STATUSES, cancelSessionWork } from "@/lib/pipeline/cancel";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 
@@ -26,9 +26,6 @@ const RECONCILABLE_PHASE_STATUSES = [
   "approved",
   "rejected",
 ] as const;
-
-/** Agent job states that are not yet terminal and may still consume work. */
-const ACTIVE_AGENT_JOB_STATUSES = ["queued", "started", "running"] as const;
 
 /** Page size for the reconciliation cursor. */
 const RECONCILE_PAGE_SIZE = 50;

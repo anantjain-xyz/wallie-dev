@@ -535,7 +535,7 @@ Tenant-owned data rows are scoped to a `workspace_id`, and Supabase RLS policies
 
 ### Concurrency
 
-Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection CAS-claims the status, version, and rejection count before recording feedback, but its later enqueue and status update are a multi-step workflow rather than one atomic transaction.
+Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection uses `reject_session_stage`: it locks the session row and applies feedback, enqueue, and `rejected` in one transaction, so a concurrent approval serializes on that lock and re-validates phase.
 
 ### Deduplication
 
