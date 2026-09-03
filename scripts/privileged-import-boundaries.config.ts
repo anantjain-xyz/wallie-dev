@@ -3,14 +3,13 @@ import type { PrivilegedImportBoundaryConfig } from "./verify-privileged-imports
 export const privilegedImportBoundaryConfig = {
   browserEntryPoints: ["src/lib/supabase/browser.ts"],
   exceptions: [],
-  /*
-   * `privileged-route` approves ALL `src/app/**/route.ts` handlers, not a
-   * curated subset. Combined with `worker` and `server-service`, this
-   * enforces the browser/server wall (browser and non-server modules cannot
-   * reach admin/env/crypto) but not the RLS-versus-admin choice inside
-   * server code. Narrowing `privileged-route` to a specific allowlist of
-   * routes that truly need service-role would be a future improvement.
-   */
+  // `privileged-route` approves ALL route handlers (`src/app` files named
+  // route.ts), not a curated subset. Combined with `worker` and
+  // `server-service`, this enforces the browser/server wall (browser and
+  // non-server modules cannot reach admin/env/crypto) but not the
+  // RLS-versus-admin choice inside server code. Narrowing
+  // `privileged-route` to a specific allowlist of routes that truly need
+  // service-role would be a future improvement.
   ownerRules: [
     {
       boundary: "worker-runtime",

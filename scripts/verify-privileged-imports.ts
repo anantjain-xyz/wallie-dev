@@ -1,12 +1,10 @@
-/*
- * Privileged-import lint: keep browser and non-server modules from reaching
- * admin, server env, and crypto.
- *
- * Approved owners are the worker (`src/worker/**`), any route handler
- * (`src/app/**/route.ts`), and any module that imports `server-only`. The
- * check does not distinguish, within server code, between routes that need
- * service-role and routes that could use the RLS client.
- */
+// Privileged-import lint: keep browser and non-server modules from reaching
+// admin, server env, and crypto.
+//
+// Approved owners are the worker (src/worker), any route handler
+// (src/app files named route.ts), and any module that imports "server-only".
+// The check does not distinguish, within server code, between routes that
+// need service-role and routes that could use the RLS client.
 import { resolveModuleName } from "typescript";
 import ts from "typescript";
 import { isAbsolute, relative, resolve, sep } from "node:path";
