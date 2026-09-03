@@ -620,6 +620,19 @@ async function cmdDoctor() {
     }
   }
 
+  if (run.manageSupabase) {
+    try {
+      const auth = await fetchText("http://127.0.0.1:54321/auth/v1/health", 5000);
+      if (auth.status !== 200) {
+        problems.push(`Supabase Auth health -> ${auth.status}`);
+      }
+    } catch (error) {
+      problems.push(
+        `Supabase Auth is not reachable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   if (problems.length) {
     process.stderr.write(`doctor FAIL\n${problems.map((p) => `- ${p}`).join("\n")}\n`);
     process.exit(1);

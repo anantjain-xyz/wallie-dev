@@ -25,7 +25,7 @@ Preconditions:
 
 - **Open ledger.** Arrive on Sessions. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp/sessions`. Heading `Sessions` is visible and navigation `Workspace navigation` includes `Sessions`.
 - **Search.** Type a known seeded title fragment and submit the search form. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser fill --role searchbox --name "Search prompts, titles, or Linear IDs" --value "plan" --submit`. Wait until the URL includes `q=plan` (or the matching rows are visible) before the next command. Filling without `--submit` does not filter.
-- **Status filter.** Choose `All`. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role button --name "All"`. The ledger refreshes without error and still shows the Sessions heading.
+- **Status filter.** Choose `All`. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role button --name "All" --wait-for-url "scope=all"`. Wait until the URL includes `scope=all` before the next command. The ledger refreshes without error and still shows the Sessions heading.
 - **Open a row.** Choose a session link. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "/^Open session /"`. The URL includes `/sessions/` and the detail chrome (stage timeline or review bar) appears.
 - **Proof.** Capture the ledger. Run `... browser screenshot --path sessions.png` and `... browser snapshot --aria --path sessions.aria.txt` from `/w/acme-corp/sessions`. Artifacts show `Sessions` and at least one session row.
 

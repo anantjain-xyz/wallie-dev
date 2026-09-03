@@ -22,7 +22,7 @@ Preconditions:
 
 - **Open settings.** Visit Settings. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp/settings`. Heading `Settings` is visible with workspace navigation still present.
 - **Switch category.** Open Advanced. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp/settings?category=advanced`. The Advanced category content is shown without leaving `/settings`.
-- **Verify setup.** Move to the verify-setup section via in-page nav or Integrations category. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp/settings?category=integrations` then snapshot. Copy related to setup verification is visible when that section is rendered.
+- **Verify setup.** Open Integrations, then follow the in-page `Verify setup` link. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp/settings?category=integrations` then `... browser click --role link --name "Verify setup" --wait-for-url "#verify" --wait-for-text "Verify setup"`. The URL hash is `#verify` and the `Verify setup` section heading is visible. Do not treat a full-page snapshot of Integrations as proof of this sub-feature.
 - **Proof.** Capture `settings.png` and `settings.aria.txt` showing `Settings` and the active category.
 
 ## Gotchas

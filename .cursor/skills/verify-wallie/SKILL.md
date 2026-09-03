@@ -52,7 +52,7 @@ Read-only health check before any drive:
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs doctor
 ```
 
-Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. The Playwright sidecar started at launch must answer `/health`.
+Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. If launch used `--manage-supabase`, Auth `http://127.0.0.1:54321/auth/v1/health` must return 200. The Playwright sidecar started at launch must answer `/health`.
 
 If doctor fails, stop and relaunch. Never drive an instance you did not start.
 
