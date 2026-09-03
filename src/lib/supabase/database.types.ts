@@ -2482,25 +2482,6 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      update_user_display_name: {
-        Args: { actor_full_name: string; actor_user_id: string }
-        Returns: {
-          avatar_overridden: boolean
-          avatar_path: string | null
-          avatar_url: string | null
-          created_at: string
-          full_name: string | null
-          id: string
-          primary_email: string | null
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "profiles"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
       update_user_profile: {
         Args: {
           actor_avatar_changed?: boolean
