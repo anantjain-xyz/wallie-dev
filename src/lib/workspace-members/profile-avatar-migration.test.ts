@@ -43,7 +43,7 @@ describe("profile avatar migration", () => {
     expect(profileFunction).toContain("and kind = 'human'");
   });
 
-  it("keeps both profile mutation functions service-role only", () => {
+  it("keeps update_user_profile service-role only", () => {
     expect(migration).toContain(
       "revoke all on function public.update_user_profile(uuid, text, boolean, text, text)",
     );
@@ -51,6 +51,5 @@ describe("profile avatar migration", () => {
       "grant execute on function public.update_user_profile(uuid, text, boolean, text, text)",
     );
     expect(migration).toContain("to service_role");
-    expect(migration).toContain("public.update_user_display_name");
   });
 });

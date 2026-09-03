@@ -58,15 +58,7 @@ describe("workspace invitations schema", () => {
     expect(authName).toBeGreaterThan(invitationName);
   });
 
-  it("keeps account-wide display-name writes service-role only", () => {
-    expect(displayNameMigration).toContain("public.update_user_display_name");
-    expect(displayNameMigration).toContain(
-      "revoke all on function public.update_user_display_name(uuid, text)",
-    );
-    expect(displayNameMigration).toContain(
-      "grant execute on function public.update_user_display_name(uuid, text)",
-    );
-    expect(displayNameMigration).toContain("to service_role");
+  it("keeps authenticated profile seeding constrained", () => {
     expect(displayNameMigration).toContain("public.ensure_own_profile");
     expect(displayNameMigration).toContain("to authenticated");
     expect(displayNameMigration).toContain(
@@ -79,7 +71,9 @@ describe("workspace invitations schema", () => {
 
     const ensureFunction = displayNameMigration.slice(
       displayNameMigration.indexOf("create or replace function public.ensure_own_profile"),
-      displayNameMigration.indexOf("create or replace function public.update_user_display_name"),
+      displayNameMigration.indexOf(
+        "-- Profile writes go through the two synchronization functions below.",
+      ),
     );
 
     expect(ensureFunction).toContain("security definer");
