@@ -17,8 +17,7 @@ import {
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
-import { inferWallieRunMode } from "@/features/wallie/utils";
-import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
+import { enqueueSessionJobWithRun } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import {
   ClaudeCodeNotConnectedError,
@@ -40,7 +39,7 @@ import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sand
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
-import { ACTIVE_AGENT_JOB_STATUSES, ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
+import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import {
   formatSessionAttachmentPromptData,
@@ -541,10 +540,6 @@ async function runStage(input: {
 
 // --- Approval + rejection handlers ---
 
-function isUniqueViolation(error: { code?: string } | null | undefined) {
-  return error?.code === "23505";
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
     return error.message;
@@ -572,110 +567,6 @@ function isSandboxConnectionSetupError(error: unknown): boolean {
       error.name === "SandboxConnectionInvalidError" ||
       error.name === "SandboxCapabilityCheckStaleError")
   );
-}
-
-async function loadActiveSessionJob(
-  admin: AdminClient,
-  input: { dedupeKey: string; workspaceId: string },
-) {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("id")
-    .eq("workspace_id", input.workspaceId)
-    .eq("dedupe_key", input.dedupeKey)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data?.id ?? null;
-}
-
-async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
-  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
-
-  if (error) {
-    console.error("Failed to clean up orphaned pipeline job", {
-      error,
-      jobId,
-    });
-  }
-}
-
-async function enqueueSessionJobWithRun(input: {
-  admin: AdminClient;
-  requestedByMemberId: string | null;
-  sessionId: string;
-  triggerType: Tables<"agent_jobs">["trigger_type"];
-  workspaceId: string;
-}) {
-  const dedupeKey = buildWallieJobDedupeKey(input.sessionId);
-  const [agentConfig, repositoryResolution, session] = await Promise.all([
-    loadWorkspaceAgentConfig(input.admin, input.workspaceId),
-    resolveEffectiveSessionRepository({
-      sessionId: input.sessionId,
-      supabase: input.admin,
-      workspaceId: input.workspaceId,
-    }),
-    loadSessionById(input.admin, input.sessionId),
-  ]);
-  const stage = session ? await loadStageById(input.admin, session.current_stage_id) : null;
-  const { data: job, error: jobError } = await input.admin
-    .from("agent_jobs")
-    .insert({
-      dedupe_key: dedupeKey,
-      requested_by_member_id: input.requestedByMemberId,
-      session_id: input.sessionId,
-      stage_id: stage?.id ?? null,
-      stage_name: stage?.name ?? null,
-      stage_slug: stage?.slug ?? null,
-      trigger_type: input.triggerType,
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
-
-  if (isUniqueViolation(jobError)) {
-    return {
-      created: false,
-      jobId: await loadActiveSessionJob(input.admin, {
-        dedupeKey,
-        workspaceId: input.workspaceId,
-      }),
-    };
-  }
-
-  if (jobError || !job) {
-    throw jobError ?? new Error("Wallie job insert did not return a job id.");
-  }
-
-  const runType = inferWallieRunMode(repositoryResolution.repositoryId);
-  const { error: runError } = await input.admin.from("agent_runs").insert({
-    agent_job_id: job.id,
-    model_name: agentConfig.model,
-    model_provider: agentConfig.provider,
-    run_type: runType,
-    session_id: input.sessionId,
-    stage_id: stage?.id ?? null,
-    stage_name: stage?.name ?? null,
-    stage_slug: stage?.slug ?? null,
-    triggered_by_member_id: input.requestedByMemberId,
-    workspace_id: input.workspaceId,
-  });
-
-  if (runError) {
-    await cleanupQueuedJob(input.admin, job.id);
-    throw runError;
-  }
-
-  return {
-    created: true,
-    jobId: job.id,
-  };
 }
 
 export async function handleApproval(input: {
@@ -716,9 +607,12 @@ export async function handleApproval(input: {
       const queued = await enqueueSessionJobWithRun({
         admin,
         requestedByMemberId: input.approverMemberId,
-        sessionId: input.sessionId,
+        session: {
+          current_stage_id: row.current_stage_id,
+          id: input.sessionId,
+          workspace_id: input.expectedWorkspaceId,
+        },
         triggerType: "assignment",
-        workspaceId: input.expectedWorkspaceId,
       });
 
       return {
@@ -868,9 +762,8 @@ export async function handleRejection(input: {
     queued = await enqueueSessionJobWithRun({
       admin,
       requestedByMemberId: input.requestedByMemberId,
-      sessionId: session.id,
+      session,
       triggerType: "comment_retry",
-      workspaceId: session.workspace_id,
     });
   } catch (error) {
     return {
