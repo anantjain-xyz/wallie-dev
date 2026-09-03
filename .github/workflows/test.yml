@@ -37,6 +37,18 @@ jobs:
       - name: Run full validation
         run: pnpm check
 
+      # pgTAP is not run in CI yet. `supabase test db` needs Docker, the
+      # Supabase CLI, and a running local stack (`supabase start`, 1-3 minutes).
+      # This workflow does not install the CLI or start Supabase, and adding a
+      # failing step would break the validation-contract exact shape.
+      # When that environment is ready, add:
+      #   - name: Start local Supabase
+      #     run: SUPABASE_TELEMETRY_DISABLED=1 supabase start
+      #   - name: Run pgTAP database tests
+      #     run: pnpm check:db-tests
+      # Until then, run `pnpm check:db-tests` locally after `supabase start`.
+      # See docs/VERIFICATION.md.
+
   route-budgets:
     runs-on: ubuntu-latest
     timeout-minutes: 15

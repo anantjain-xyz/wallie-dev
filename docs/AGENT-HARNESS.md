@@ -90,22 +90,26 @@ even when its stage was approved.
 
 ## Current instruction and trust boundary
 
-The present renderer performs raw substitution. It does not escape, delimit, or
-sanitize session text, feedback, artifacts, operating rules, or stage
-templates. [`sanitizeUntrusted()`](../src/lib/pipeline/prompt-safety.ts) is not
-called by the production prompt path and recognizes boundaries from the retired
-fixed-stage prompts.
+The production `runStage()` path classifies every prompt slot before rendering.
+Control text uses `trustedPromptValue()`; session, feedback, attachment, and
+artifact data uses `untrustedPromptValue()`.
+[`renderStagePrompt()`](../src/lib/prompt-templates/index.ts) accepts only those
+pre-classified values. The single crossing into a renderer string is
+[`verifyPromptBoundary()`](../src/lib/pipeline/prompt-safety.ts): trusted
+control text keeps its template syntax, and untrusted data is wrapped in
+collision-free boundary markers that cannot occur in its body.
 
-There is therefore no mechanically enforced precedence between:
+The compile fixture in
+[`src/lib/prompt-templates/index.typecheck.ts`](../src/lib/prompt-templates/index.typecheck.ts)
+uses `@ts-expect-error` to prove raw strings are rejected. When extending
+prompts, classify every new slot and preserve the typed value through the
+rendering API; never pass a raw string across the boundary.
 
-1. Workspace operating rules.
-2. The current stage template.
-3. Interpolated member, reviewer, or agent-generated data.
-4. Repository-local instructions discovered by the CLI after clone.
-
-Until a typed prompt boundary is implemented, changes must not claim that
-untrusted prompt content is isolated. Treat every interpolated value as capable
-of containing instructions, delimiters, or unexpectedly large content.
+The typed boundary covers values Wallie interpolates into the stage prompt. It
+does not cover repository-local instructions the CLI discovers after clone.
+Treat interpolated untrusted values as capable of containing instructions,
+delimiters, or unexpectedly large content — they are labeled and delimited, not
+stripped.
 
 ## Runner and credential contract
 
@@ -174,7 +178,7 @@ remains reusable. A later retry regenerates in a new sandbox, then
 
 These are current limitations, not desired contracts:
 
-- Prompt trust isolation and a total rendered-prompt budget are not enforced.
+- A total rendered-prompt budget is not enforced.
 - Session prompt and reviewer feedback sizes are not bounded by the prompt
   renderer; route limits on templates and operating rules do not bound the
   combined prompt.

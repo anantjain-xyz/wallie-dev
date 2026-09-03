@@ -39,7 +39,7 @@ export async function claimNextJob(
     return { outcome: "idle" };
   }
 
-  return { job: row as AgentJobRow, outcome: "claimed" };
+  return { job: row, outcome: "claimed" };
 }
 
 /**
