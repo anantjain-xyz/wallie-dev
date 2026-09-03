@@ -347,10 +347,7 @@ function buildAdminMock(opts: MockOptions) {
       insertedArtifacts.push(row);
       return { error: opts.artifactInsertError ?? null };
     },
-    upsert: async (
-      row: Record<string, unknown>,
-      options?: { onConflict?: string },
-    ) => {
+    upsert: async (row: Record<string, unknown>, options?: { onConflict?: string }) => {
       insertedArtifacts.push(row);
       artifactUpsertConflicts.push(options?.onConflict);
       return { error: opts.artifactInsertError ?? null };

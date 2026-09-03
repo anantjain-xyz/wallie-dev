@@ -88,7 +88,8 @@ function buildAdminMock(state: MockState) {
           .filter((r) => !workspaceId || r.workspace_id === workspaceId)
           .filter((r) => {
             if (jobId === undefined) return true;
-            if (Array.isArray(jobId)) return r.agent_job_id != null && jobId.includes(r.agent_job_id);
+            if (Array.isArray(jobId))
+              return r.agent_job_id != null && jobId.includes(r.agent_job_id);
             return r.agent_job_id === jobId;
           });
       };

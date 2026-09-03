@@ -225,10 +225,9 @@ async function sweepRunningJobsWithTerminalRuns(
     return;
   }
 
-  const maxRetries = await loadMaxRetries(
-    admin,
-    [...new Set(stalled.map((job) => job.workspace_id))],
-  );
+  const maxRetries = await loadMaxRetries(admin, [
+    ...new Set(stalled.map((job) => job.workspace_id)),
+  ]);
 
   for (const job of stalled) {
     await resolveStalledJob({
