@@ -99,14 +99,18 @@ Use these rules when placing code:
 3. RLS-backed server reads use the server client. The privileged-import lint
    approves the admin client for the worker (`src/worker/**`), any route
    handler (`src/app/**/route.ts`), and any module that imports `server-only`.
-   The lint enforces that browser-side code and non-server modules cannot
-   reach admin, server env, or crypto. It does not distinguish, within server
-   code, between routes that need service-role and routes that could use the
-   RLS client. The choice between the admin client and the RLS server client
-   inside route handlers is a code-review convention: prefer the RLS server
-   client and `requireWorkspaceAccessById` for user-scoped operations; use
-   the admin client only when bypassing RLS is required (webhooks,
-   worker-equivalent mutations, maintenance endpoints).
+   The lint is a direct-import restriction plus a browser-reachability check:
+   it flags unapproved modules that import a privileged module directly, and
+   it flags privileged modules reachable from configured browser entry points.
+   An ordinary server module that imports a `server-only` service which itself
+   imports admin is not flagged unless that module is also reachable from the
+   browser. It does not distinguish, within server code, between routes that
+   need service-role and routes that could use the RLS client. The choice
+   between the admin client and the RLS server client inside route handlers is
+   a code-review convention: prefer the RLS server client and
+   `requireWorkspaceAccessById` for user-scoped operations; use the admin
+   client only when bypassing RLS is required (webhooks, worker-equivalent
+   mutations, maintenance endpoints).
 4. The worker may call pipeline and integration services, but domain services
    must not depend on UI components or route response shapes.
 5. Provider-specific SDK calls stay behind agent or sandbox adapters. Generic

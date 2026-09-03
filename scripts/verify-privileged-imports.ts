@@ -1,5 +1,8 @@
-// Privileged-import lint: keep browser and non-server modules from reaching
-// admin, server env, and crypto.
+// Privileged-import lint: a direct-import restriction plus a
+// browser-reachability check. Unapproved modules that import admin, server
+// env, or crypto directly are flagged; privileged modules reachable from
+// configured browser entry points are flagged. Transitive reachability from
+// an ordinary server module through a `server-only` service is not.
 //
 // Approved owners are the worker (src/worker), any route handler
 // (src/app files named route.ts), and any module that imports "server-only".

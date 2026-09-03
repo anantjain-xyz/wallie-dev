@@ -5,11 +5,14 @@ export const privilegedImportBoundaryConfig = {
   exceptions: [],
   // `privileged-route` approves ALL route handlers (`src/app` files named
   // route.ts), not a curated subset. Combined with `worker` and
-  // `server-service`, this enforces the browser/server wall (browser and
-  // non-server modules cannot reach admin/env/crypto) but not the
-  // RLS-versus-admin choice inside server code. Narrowing
-  // `privileged-route` to a specific allowlist of routes that truly need
-  // service-role would be a future improvement.
+  // `server-service`, this is a direct-import restriction plus a
+  // browser-reachability check. Unapproved modules that import a privileged
+  // module directly are flagged; privileged modules reachable from configured
+  // browser entry points are flagged. An ordinary server module that imports
+  // a `server-only` service which itself imports admin is not flagged. This
+  // does not distinguish the RLS-versus-admin choice inside server code.
+  // Narrowing `privileged-route` to a specific allowlist of routes that
+  // truly need service-role would be a future improvement.
   ownerRules: [
     {
       boundary: "worker-runtime",
