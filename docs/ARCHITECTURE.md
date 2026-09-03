@@ -117,8 +117,9 @@ Use these rules when placing code:
 - Job claims, artifact publication, approval, and cancellation use scoped
   status, version, or archive guards. Callers must treat a guard miss as a
   normal race outcome.
-- Rejection only CAS-claims its first step and is not yet atomic with approval.
-  The resulting concurrency gap is documented in
+- Rejection (`reject_session_stage`) locks the session row and applies
+  feedback, enqueue, and `rejected` in one transaction. A concurrent approval
+  serializes on that lock and re-validates phase. Details are in
   [Pipeline and worker lifecycle](PIPELINE-WORKER-LIFECYCLE.md#review-concurrency).
 - The schema is forward-only. The consolidated baseline is frozen; subsequent
   changes use uniquely versioned migrations.

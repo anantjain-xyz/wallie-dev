@@ -56,25 +56,28 @@ reroutes can all place a session there.
 
 ## Normal lifecycle
 
-| Event                        | Guard or atomic boundary                                                                                                         | Durable result                                                                                           | Follow-up                                     |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Create session               | `create_session_with_first_job` runs transactionally                                                                             | Session at first stage, queued job, and queued run are inserted together                                 | Worker polling discovers the job              |
-| Claim job                    | `claim_next_agent_job` locks and CAS-updates a ready queued job while enforcing workspace capacity                               | Job becomes running and its attempt count advances                                                       | Scheduler advertises the job in its heartbeat |
-| Claim session for generation | Processor updates only an unarchived, nonterminal session                                                                        | Session becomes or remains `in_progress`                                                                 | Generic stage execution begins                |
-| Complete generation          | Artifact insert followed by `in_progress` + unarchived CAS                                                                       | Artifact version becomes current and session becomes `awaiting_review`                                   | Run and job finish successfully               |
-| Fail generation              | Guarded compensation and retry scheduling                                                                                        | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored | A later claim may start the retry             |
-| Reject artifact              | Version/status/rejection-count CAS, then feedback insert and enqueue                                                             | Feedback is first-write-wins for that stage version; a new job/run is queued; session becomes `rejected` | Worker claim returns it to `in_progress`      |
-| Approve nonterminal stage    | `approve_session_stage` transaction checks workspace, version, status, and approver; records completion and advances by position | Session points to next stage at version zero and `in_progress`                                           | TypeScript enqueues the next job/run          |
-| Approve terminal stage       | Same approval transaction                                                                                                        | Session remains `approved` and receives `archived_at`                                                    | No further job is created                     |
+| Event                        | Guard or atomic boundary                                                                                                         | Durable result                                                                                               | Follow-up                                     |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| Create session               | `create_session_with_first_job` runs transactionally                                                                             | Session at first stage, queued job, and queued run are inserted together                                     | Worker polling discovers the job              |
+| Claim job                    | `claim_next_agent_job` locks and CAS-updates a ready queued job while enforcing workspace capacity                               | Job becomes running and its attempt count advances                                                           | Scheduler advertises the job in its heartbeat |
+| Claim session for generation | Processor updates only an unarchived, nonterminal session                                                                        | Session becomes or remains `in_progress`                                                                     | Generic stage execution begins                |
+| Complete generation          | Artifact insert followed by `in_progress` + unarchived CAS                                                                       | Artifact version becomes current and session becomes `awaiting_review`                                       | Run and job finish successfully               |
+| Fail generation              | Guarded compensation and retry scheduling                                                                                        | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored     | A later claim may start the retry             |
+| Reject artifact              | `reject_session_stage` locks the session row and applies feedback, enqueue, and `rejected` in one transaction                    | Feedback is recorded; a new job/run is queued or an active dedupe row is adopted; session becomes `rejected` | Worker claim returns it to `in_progress`      |
+| Approve nonterminal stage    | `approve_session_stage` transaction checks workspace, version, status, and approver; records completion and advances by position | Session points to next stage at version zero and `in_progress`                                               | TypeScript enqueues the next job/run          |
+| Approve terminal stage       | Same approval transaction                                                                                                        | Session remains `approved` and receives `archived_at`                                                        | No further job is created                     |
 
 The artifact insert and session-pointer update are separate operations. If
 cancellation wins after the artifact insert, the processor deletes the
 unpublished artifact so that its version can be reused safely. Deletion
 re-reads the session pointer first: if another generation has already
-published that version, the row is left in place. A retry that finds an
-unpublished row at the next version publishes the stored markdown instead of
-regenerating, so reviewers never approve an artifact that does not match the
-successful run.
+published that version, the row is left in place. A retry after a crash that
+left an unpublished row regenerates in a new sandbox, replaces the unpublished
+markdown if the session pointer has not yet advanced to that version, then
+opens the pull request from that sandbox. Reviewers therefore see artifact
+text that matches the commits the retry pushed. If another generation has
+already published the version, the retry does not overwrite the stored
+markdown.
 
 ## Review concurrency
 
@@ -95,25 +98,24 @@ does not roll back an already approved stage; the session remains
 `in_progress` on the next stage and can be queued again through an
 idempotent interactive or reconciliation path.
 
-Rejection is deliberately a compensated multi-step workflow:
+Rejection is one transactional database operation (`reject_session_stage`):
 
-1. CAS-increment `rejection_count` against workspace, status, version, and
-   `archived_at is null`.
-2. Insert immutable feedback for the reviewed stage version.
-3. Enqueue the rerun before changing the session to `rejected`.
-4. Change the phase only after a job exists or an equivalent active dedupe row
-   is found.
+- The function locks the session row for the rest of the transaction.
+- The session must belong to the expected workspace.
+- It must still be `awaiting_review` and unarchived.
+- `current_artifact_version` must match the reviewed version.
+- Feedback is recorded, the rerun job and queued run are inserted or an
+  already-active dedupe row is adopted, and the session becomes `rejected`
+  in the same transaction.
 
-Do not describe rejection as one database transaction. Changes to this path
-must test failures between every step.
+A concurrent approval serializes behind the same row lock and re-validates
+the phase. After rejection commits, approval observes `rejected` and returns
+empty instead of racing a later unguarded write. Validation failures raise so
+the whole transaction rolls back.
 
-Current limitation: approval can land after step 1 while the rejection remains
-in progress. Approval does not check `rejection_count`, and the rejection's
-final `phase_status = rejected` write is unguarded. The rejection can therefore
-enqueue against the now-current stage and change an `in_progress` or
-`approved` phase to `rejected`. A terminal approval remains archived because
-rejection does not clear `archived_at`. Treat approval versus an in-flight
-rejection as an unresolved concurrency bug, not a safe losing-race outcome.
+TypeScript resolves the workspace agent config before calling the RPC; those
+reads are not state transitions. Do not describe rejection as a compensated
+multi-step workflow.
 
 ## Deduplication
 
