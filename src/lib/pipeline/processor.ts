@@ -418,80 +418,23 @@ async function runStage(input: {
     });
     artifactInserted = true;
 
-    if (sandbox && github && branch) {
-      const prOutcome = await openSessionPullRequest({
-        admin,
-        baseBranch: github.repo.default_branch ?? "main",
-        body: artifactMarkdown.slice(0, 60000),
-        branch,
-        installationId: github.installationId,
-        repoFullName: github.repo.full_name,
-        repoId: github.repo.id,
-        sandbox,
-        sessionId: session.id,
-        title: `${stage.name}: ${session.title}`,
-        workspaceId: session.workspace_id,
-      });
-
-      // PR plumbing is recoverable — the artifact is durable and the reviewer
-      // can approve the artifact directly — so we never block the stage. But we
-      // always surface the outcome: `no_commits` used to be fully silent, which
-      // is exactly how empty `session_pull_requests` went unnoticed.
-      if (prOutcome.kind === "no_commits") {
-        console.info("Stage produced no pull request (no commits ahead of base)", {
-          sessionId: session.id,
-          stageSlug: stage.slug,
-        });
-      } else if (prOutcome.kind !== "success") {
-        console.error("Failed to open session pull request", {
-          kind: prOutcome.kind,
-          reason: prOutcome.reason,
-          sessionId: session.id,
-          stageSlug: stage.slug,
-        });
-      }
-    }
-
-    const { data: pointerRows, error: pointerError } = await admin
-      .from("sessions")
-      .update({
-        current_artifact_version: newVersion,
-        phase_status: "awaiting_review",
-      })
-      .eq("id", session.id)
-      // Only advance a session that is still generating AND not archived. If it
-      // was parked (canceled or stalled) or archived while this run produced its
-      // artifact, this CAS affects zero rows and we must not un-park/un-freeze
-      // it or surface the draft.
-      .eq("phase_status", "in_progress")
-      .is("archived_at", null)
-      .select("id");
-    if (pointerError) throw pointerError;
-
-    if (!pointerRows || pointerRows.length === 0) {
-      // Cancellation won the race. Drop the just-inserted artifact so a later
-      // rerun can reuse this version — the unique (session_id, stage_slug,
-      // version) constraint would otherwise reject the next draft — and finish
-      // without marking success (the run and job are already canceled).
-      if (artifactInserted) {
-        await admin
-          .from("session_artifacts")
-          .delete()
-          .eq("session_id", session.id)
-          .eq("stage_slug", stage.slug)
-          .eq("version", newVersion);
-      }
+    const published = await publishArtifact({
+      admin,
+      artifactMarkdown,
+      branch,
+      github,
+      newVersion,
+      onPointerAdvanced: () => {
+        sessionPointerAdvanced = true;
+      },
+      runId,
+      sandbox,
+      session,
+      stage,
+      usage,
+    });
+    if (published === "idle") {
       return { jobId: job.id, processed: true, result: "idle", runId };
-    }
-    sessionPointerAdvanced = true;
-
-    if (runId) {
-      await persistEvent(admin, runId, session.workspace_id, {
-        type: "completion",
-        taskComplete: true,
-        summary: `${stage.name} run completed`,
-      });
-      await markRunSuccess(admin, runId, usage);
     }
   } catch (error) {
     runId = runId ?? (await loadActiveRunIdForJob(admin, job.id));
@@ -545,6 +488,110 @@ async function runStage(input: {
 
   await markPipelineJobSuccess(admin, job);
   return { jobId: job.id, processed: true, result: "success", runId };
+}
+
+/**
+ * Publish a generated artifact: optional PR open, the `awaiting_review`
+ * pointer CAS, then mark the run successful. Job success stays with the
+ * caller so it still lands after `sandbox.stop()` — a crash in that
+ * window is recovered by the terminal-run job sweep, not by moving the
+ * write into this function.
+ */
+async function publishArtifact(input: {
+  admin: AdminClient;
+  artifactMarkdown: string;
+  branch: string | null;
+  github: {
+    installationId: number;
+    repo: { default_branch: string | null; full_name: string; id: string };
+  } | null;
+  newVersion: number;
+  onPointerAdvanced: () => void;
+  runId: string | null;
+  sandbox: SandboxHandle | null;
+  session: SessionRow;
+  stage: PipelineStage;
+  usage: { inputTokens: number; outputTokens: number } | undefined;
+}): Promise<"idle" | "published"> {
+  const { admin, artifactMarkdown, branch, github, newVersion, runId, sandbox, session, stage } =
+    input;
+
+  if (sandbox && github && branch) {
+    const prOutcome = await openSessionPullRequest({
+      admin,
+      baseBranch: github.repo.default_branch ?? "main",
+      body: artifactMarkdown.slice(0, 60000),
+      branch,
+      installationId: github.installationId,
+      repoFullName: github.repo.full_name,
+      repoId: github.repo.id,
+      sandbox,
+      sessionId: session.id,
+      title: `${stage.name}: ${session.title}`,
+      workspaceId: session.workspace_id,
+    });
+
+    // PR plumbing is recoverable — the artifact is durable and the reviewer
+    // can approve the artifact directly — so we never block the stage. But we
+    // always surface the outcome: `no_commits` used to be fully silent, which
+    // is exactly how empty `session_pull_requests` went unnoticed.
+    if (prOutcome.kind === "no_commits") {
+      console.info("Stage produced no pull request (no commits ahead of base)", {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+      });
+    } else if (prOutcome.kind !== "success") {
+      console.error("Failed to open session pull request", {
+        kind: prOutcome.kind,
+        reason: prOutcome.reason,
+        sessionId: session.id,
+        stageSlug: stage.slug,
+      });
+    }
+  }
+
+  const { data: pointerRows, error: pointerError } = await admin
+    .from("sessions")
+    .update({
+      current_artifact_version: newVersion,
+      phase_status: "awaiting_review",
+    })
+    .eq("id", session.id)
+    // Only advance a session that is still generating AND not archived. If it
+    // was parked (canceled or stalled) or archived while this run produced its
+    // artifact, this CAS affects zero rows and we must not un-park/un-freeze
+    // it or surface the draft.
+    .eq("phase_status", "in_progress")
+    .is("archived_at", null)
+    .select("id");
+  if (pointerError) throw pointerError;
+
+  if (!pointerRows || pointerRows.length === 0) {
+    // Cancellation won the race. Drop the just-inserted artifact so a later
+    // rerun can reuse this version — the unique (session_id, stage_slug,
+    // version) constraint would otherwise reject the next draft — and finish
+    // without marking success (the run and job are already canceled).
+    await admin
+      .from("session_artifacts")
+      .delete()
+      .eq("session_id", session.id)
+      .eq("stage_slug", stage.slug)
+      .eq("version", newVersion);
+    return "idle";
+  }
+
+  input.onPointerAdvanced();
+
+  if (runId) {
+    await persistEvent(admin, runId, session.workspace_id, {
+      type: "completion",
+      taskComplete: true,
+      summary: `${stage.name} run completed`,
+    });
+    await markRunSuccess(admin, runId, input.usage);
+  }
+
+  return "published";
 }
 
 // --- Approval + rejection handlers ---
