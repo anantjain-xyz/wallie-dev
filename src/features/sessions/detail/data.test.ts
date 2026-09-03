@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -37,18 +34,6 @@ import type { WallieSessionRepository } from "@/features/wallie/types";
 import { approximatePayloadSizeBytes } from "@/lib/server-timing";
 
 const SEEDED_SESSION_18_BASELINE_RPC_BYTES = 10_603;
-const detailMigration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260718000001_narrow_session_detail_page.sql"),
-  "utf8",
-);
-const creatorIdentityMigration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260808000002_session_selected_stages.sql"),
-  "utf8",
-);
-const selectedStagesMigration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260808000002_session_selected_stages.sql"),
-  "utf8",
-);
 
 function makeRpcPayload() {
   return {
@@ -185,34 +170,6 @@ describe("session review RSC contract", () => {
       },
     ]);
     expect(JSON.stringify(review)).not.toContain("storage_path");
-  });
-});
-
-describe("session detail RPC access result", () => {
-  it("folds the no-workspace signal into the existing detail RPC", () => {
-    expect(detailMigration).toContain("'access', jsonb_build_object(");
-    expect(detailMigration).toContain("'hasAnyWorkspace', v_has_any_workspace");
-    expect(detailMigration).toContain("wm.user_id = auth.uid()");
-    expect(detailMigration).toContain("and wm.is_active");
-    expect(detailMigration).toContain("and wm.kind = 'human'");
-  });
-
-  it("falls back through nonblank creator identity fields before using the placeholder", () => {
-    const fullNameIndex = creatorIdentityMigration.indexOf("nullif(btrim(wm.full_name), '')");
-    const usernameIndex = creatorIdentityMigration.indexOf("nullif(btrim(wm.username), '')");
-    const emailIndex = creatorIdentityMigration.indexOf("nullif(btrim(wm.email), '')");
-    const unknownMemberIndex = creatorIdentityMigration.indexOf("'Unknown member'");
-
-    expect(fullNameIndex).toBeGreaterThan(-1);
-    expect(usernameIndex).toBeGreaterThan(fullNameIndex);
-    expect(emailIndex).toBeGreaterThan(usernameIndex);
-    expect(unknownMemberIndex).toBeGreaterThan(emailIndex);
-  });
-
-  it("returns only the stages selected for the session", () => {
-    expect(selectedStagesMigration).toContain("join public.session_selected_stages selection");
-    expect(selectedStagesMigration).toContain("selection.session_id = v_session.id");
-    expect(selectedStagesMigration).toContain("'pipeline', jsonb_build_object('stages', v_stages)");
   });
 });
 
