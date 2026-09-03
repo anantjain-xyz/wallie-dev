@@ -105,6 +105,12 @@ Use these rules when placing code:
 6. Cross-row concurrency belongs in Postgres when one transaction is required.
    TypeScript callers still handle an empty CAS result as a normal race outcome.
 
+Workspace-scoped routes return the canonical error envelope `{ error: string }`.
+The phase-action route instead returns `{ code: string, error: string }` because
+its TypeScript client needs machine-readable codes for optimistic-update
+rollback. New routes should use `{ error: string }` unless they have a client
+that consumes typed codes.
+
 ## Durable invariants
 
 - Every tenant-owned row is scoped by `workspace_id`; RLS is the isolation
