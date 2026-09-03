@@ -112,8 +112,7 @@ function pidAlive(pid) {
   }
 }
 
-function readPidIdentity(pid) {
-  if (!pid) return null;
+function readLinuxPidIdentity(pid) {
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ").trim();
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -122,10 +121,28 @@ function readPidIdentity(pid) {
       .trim()
       .split(/\s+/);
     const starttime = afterComm[19] ?? "";
+    if (!cmdline && !starttime) return null;
     return { pid, cmdline, starttime };
   } catch {
     return null;
   }
+}
+
+function readPsPidIdentity(pid) {
+  try {
+    const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
+      encoding: "utf8",
+    }).trim();
+    if (!out) return null;
+    return { pid, cmdline: out, starttime: out };
+  } catch {
+    return null;
+  }
+}
+
+function readPidIdentity(pid) {
+  if (!pid) return null;
+  return readLinuxPidIdentity(pid) ?? readPsPidIdentity(pid);
 }
 
 function captureIdentities(pids) {
@@ -192,13 +209,14 @@ function destinationWaitPattern(destinationPath) {
     : `/${destinationPath}`;
   const path = raw.replace(/\/+$/, "") || "/";
   if (path === "/") {
-    return "^https?:\\/\\/[^/]+\\/?([?#]|$)";
+    // confirm/route.ts replaces "/" with authenticated home (/w/<slug> or /onboarding/...).
+    return "^https?:\\/\\/[^/]+(\\/?([?#]|$)|\\/w\\/[^/?#]+|\\/onboarding(?:\\/|$))";
   }
   const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return `^https?:\\/\\/[^/]+${escaped}(?:\\/|[?#]|$)`;
 }
 
-function collectProcessTree(rootPid) {
+function collectProcessTreeFromProc(rootPid) {
   const root = Number(rootPid);
   const childrenByPpid = new Map();
   try {
@@ -217,10 +235,35 @@ function collectProcessTree(rootPid) {
       }
     }
   } catch {
+    return new Set();
+  }
+  return walkPidTree(root, childrenByPpid);
+}
+
+function collectProcessTreeFromPs(rootPid) {
+  const root = Number(rootPid);
+  const childrenByPpid = new Map();
+  try {
+    const out = execFileSync("ps", ["-axo", "pid=", "-o", "ppid="], { encoding: "utf8" });
+    for (const line of out.split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 2) continue;
+      const pid = Number(parts[0]);
+      const ppid = Number(parts[1]);
+      if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+      const list = childrenByPpid.get(ppid);
+      if (list) list.push(pid);
+      else childrenByPpid.set(ppid, [pid]);
+    }
+  } catch {
     return new Set([root]);
   }
+  return walkPidTree(root, childrenByPpid);
+}
+
+function walkPidTree(root, childrenByPpid) {
   const tree = new Set();
-  const queue = [root];
+  const queue = [Number(root)];
   while (queue.length) {
     const pid = queue.pop();
     if (tree.has(pid)) continue;
@@ -229,6 +272,13 @@ function collectProcessTree(rootPid) {
     if (children) queue.push(...children);
   }
   return tree;
+}
+
+function collectProcessTree(rootPid) {
+  const fromProc = collectProcessTreeFromProc(rootPid);
+  if (fromProc.size > 1) return fromProc;
+  const fromPs = collectProcessTreeFromPs(rootPid);
+  return fromPs.size > 0 ? fromPs : fromProc.size > 0 ? fromProc : new Set([Number(rootPid)]);
 }
 
 function pidsListeningOnPort(port) {
