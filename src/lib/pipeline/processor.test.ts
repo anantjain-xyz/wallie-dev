@@ -237,6 +237,12 @@ interface MockOptions {
   artifactInsertError?: { message: string } | null;
   /** `false` models ON CONFLICT DO NOTHING (another generation already holds the version). */
   artifactInserted?: boolean;
+  /** Unpublished markdown already stored at the next version; skip regeneration. */
+  existingUnpublishedArtifact?: string;
+  /** Stored markdown loaded after an upsert conflict (pre-check missed the row). */
+  adoptedArtifactMarkdown?: string;
+  /** Session pointer observed after a lost CAS — published version if another generation won. */
+  rereadCurrentArtifactVersion?: number;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
@@ -294,6 +300,7 @@ function buildAdminMock(opts: MockOptions) {
   const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
   const deletedArtifacts: Array<Record<string, unknown>> = [];
+  let artifactMarkdownSelects = 0;
 
   const lookup: Record<string, unknown> = {};
   for (const row of opts.agentConfig ?? []) {
@@ -312,10 +319,21 @@ function buildAdminMock(opts: MockOptions) {
   mocked.loadWorkspaceAgentConfig.mockResolvedValue(resolvedConfig);
 
   const sessionsTable = {
-    select: () => {
+    select: (cols?: string) => {
       const builder = {
         eq: () => builder,
-        maybeSingle: async () => ({ data: opts.session, error: null }),
+        maybeSingle: async () => {
+          if (
+            cols === "current_artifact_version" &&
+            opts.rereadCurrentArtifactVersion !== undefined
+          ) {
+            return {
+              data: { current_artifact_version: opts.rereadCurrentArtifactVersion },
+              error: null,
+            };
+          }
+          return { data: opts.session, error: null };
+        },
       };
       return builder;
     },
@@ -349,6 +367,22 @@ function buildAdminMock(opts: MockOptions) {
     insert: async (row: Record<string, unknown>) => {
       insertedArtifacts.push(row);
       return { error: opts.artifactInsertError ?? null };
+    },
+    select: () => {
+      const chain = {
+        eq: () => chain,
+        maybeSingle: async () => {
+          artifactMarkdownSelects += 1;
+          const markdown =
+            opts.existingUnpublishedArtifact ??
+            (artifactMarkdownSelects > 1 ? opts.adoptedArtifactMarkdown : undefined);
+          return {
+            data: markdown != null ? { artifact_json: markdown } : null,
+            error: null,
+          };
+        },
+      };
+      return chain;
     },
     upsert: (
       row: Record<string, unknown>,
@@ -830,6 +864,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         session,
         agentConfig: [],
         artifactInserted: false,
+        adoptedArtifactMarkdown: "Stored markdown from the crashed attempt",
       });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
@@ -842,6 +877,32 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toHaveLength(1);
     expect(artifactUpsertConflicts).toEqual(["session_id,stage_slug,version"]);
     expect(artifactUpsertIgnoreDuplicates).toEqual([true]);
+    expect(mocked.openSessionPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: "Stored markdown from the crashed attempt",
+      }),
+    );
+  });
+
+  it("publishes a recovered unpublished artifact without rerunning the agent", async () => {
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
+      session,
+      agentConfig: [],
+      existingUnpublishedArtifact: "Stored markdown from the crashed attempt",
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("success");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(updatedSessions).toEqual([
+      { phase_status: "in_progress" },
+      { current_artifact_version: 1, phase_status: "awaiting_review" },
+    ]);
   });
 
   it("deletes the orphaned artifact when cancellation wins the pointer CAS", async () => {
@@ -876,6 +937,25 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     // Another generation already holds (session, stage, version). This process
     // did not insert the row, so a lost pointer CAS must not delete it.
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(deletedArtifacts).toEqual([]);
+    expect(result.result).toBe("idle");
+  });
+
+  it("does not delete an inserted artifact after another generation publishes it", async () => {
+    const session = baseSession();
+    const { admin, insertedArtifacts, deletedArtifacts } = buildAdminMock({
+      session,
+      agentConfig: [],
+      pointerCasMiss: true,
+      rereadCurrentArtifactVersion: 1,
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    // This process inserted the row, then stalled long enough for a replacement
+    // to adopt it and win the pointer. The lost CAS must not delete the now-
+    // published version.
     expect(insertedArtifacts).toHaveLength(1);
     expect(deletedArtifacts).toEqual([]);
     expect(result.result).toBe("idle");

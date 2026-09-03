@@ -69,7 +69,12 @@ reroutes can all place a session there.
 
 The artifact insert and session-pointer update are separate operations. If
 cancellation wins after the artifact insert, the processor deletes the
-unpublished artifact so that its version can be reused safely.
+unpublished artifact so that its version can be reused safely. Deletion
+re-reads the session pointer first: if another generation has already
+published that version, the row is left in place. A retry that finds an
+unpublished row at the next version publishes the stored markdown instead of
+regenerating, so reviewers never approve an artifact that does not match the
+successful run.
 
 ## Review concurrency
 
@@ -162,9 +167,14 @@ does not enqueue work.
   enforces the per-workspace concurrency limit.
 - The worker heartbeat records the full in-flight job set.
 - A fresh heartbeat protects an active job from the stall detector.
+- A running job whose attached run is already `success` is marked `success`
+  rather than retried, so a crash after publish cannot mint a second artifact.
 - A run with no activity beyond its workspace timeout and no fresh owning
   heartbeat is marked errored. Its sandbox is stopped, and its job is either
   rescheduled with backoff or marked terminally errored.
+- A running job with no `agent_runs` row is retried only after `started_at`
+  (falling back to `created_at`) exceeds the workspace stall timeout. That
+  covers the claim → heartbeat → `startAgentRun` gap for Linear-routed jobs.
 - Stall recovery parks the session in `rejected`; a retried job returns it to
   `in_progress` when claimed.
 - Linear reconciliation may keep a current stage queued, reroute a session to a

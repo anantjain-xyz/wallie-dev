@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(20);
+select plan(19);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_function(

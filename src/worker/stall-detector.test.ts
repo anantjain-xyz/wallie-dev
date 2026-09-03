@@ -37,6 +37,8 @@ interface AgentJobRow {
   id: string;
   session_id: string;
   attempt_count: number;
+  created_at: string;
+  started_at: string | null;
   status: "queued" | "running" | "success" | "error" | "canceled";
   workspace_id: string;
 }
@@ -316,6 +318,8 @@ function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     id: "job-1",
     session_id: "sess-1",
     attempt_count: 0,
+    created_at: new Date(Date.now() - TEN_MIN_MS).toISOString(),
+    started_at: new Date(Date.now() - TEN_MIN_MS).toISOString(),
     status: "running",
     workspace_id: "ws-1",
     ...overrides,
@@ -861,5 +865,57 @@ describe("sweepStalledRuns", () => {
     expect(result.retriedJobIds).toEqual([]);
     expect(state.jobs.find((row) => row.id === "job-1")?.status).toBe("success");
     expect(state.jobs.find((row) => row.id === "job-2")?.status).toBe("running");
+  });
+
+  it("does not retry a recently claimed job that has no runs yet", async () => {
+    const state: MockState = {
+      runs: [],
+      jobs: [
+        job({
+          created_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        }),
+      ],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(state.rpcCalls).toEqual([]);
+    expect(state.jobs[0]?.status).toBe("running");
+    expect(sessionUpdates).toEqual([]);
+  });
+
+  it("retries a runless job once it is older than the stall timeout", async () => {
+    const state: MockState = {
+      runs: [],
+      jobs: [job()],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual(["job-1"]);
+    expect(state.rpcCalls).toContainEqual({
+      args: {
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+        target_job_id: "job-1",
+      },
+      name: "schedule_job_retry",
+    });
+    expect(sessionUpdates).toEqual([
+      {
+        expected: "in_progress",
+        id: "sess-1",
+        patch: { phase_status: "rejected" },
+      },
+    ]);
   });
 });

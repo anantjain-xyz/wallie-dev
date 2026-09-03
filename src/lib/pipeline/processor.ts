@@ -215,226 +215,276 @@ async function runStage(input: {
   let runFailureMessageRecorded = false;
   let sessionPointerAdvanced = false;
   try {
-    const resolvedRunner = await resolveAgentRunner({
-      admin,
-      effort: config.effort,
-      model: config.model,
-      provider,
-      session,
-    });
-
-    runId = await startAgentRun(admin, {
-      jobId: job.id,
-      model: config.model,
-      provider: resolvedRunner.runner.provider,
-      requestedByMemberId: job.requested_by_member_id,
-      runType: "project",
+    // A crash after insertArtifact and before the pointer CAS leaves an
+    // unpublished row at this version. Publish that stored markdown instead of
+    // regenerating: a retry's sandbox/PR would otherwise diverge from the
+    // artifact reviewers see. Do this before resolving credentials so a
+    // disconnected agent cannot block recovery.
+    const recoveredMarkdown = await loadArtifactMarkdown(admin, {
       sessionId: session.id,
-      stage,
-      workspaceId: session.workspace_id,
-    });
-
-    // A workspace delete or session cancel can flip this job to `canceled`
-    // between the worker's claim and now — both cancel the job (and any run that
-    // already existed) first. The run `startAgentRun` just inserted, though, was
-    // born `running` because the cancel sweep predated it, so the sweep's
-    // run-status guard didn't catch it. Re-check the job here and bail BEFORE
-    // creating a sandbox: for a workspace delete the run row and the Vercel
-    // connection credentials are about to be cascade-deleted together, so a
-    // sandbox spun up past this point would leave nothing for the reaper to find
-    // or stop. Cancelling the run we just started also re-arms `updateRunSandbox`
-    // as the backstop for the narrow race where the cancel lands during sandbox
-    // creation.
-    if (await isJobCanceled(admin, job.id)) {
-      await cancelQueuedRunsForJob(admin, job.id);
-      return { jobId: job.id, processed: true, result: "idle", runId: null };
-    }
-
-    // CLI-backed runners require a GitHub repo to clone into the sandbox.
-    if (resolvedRunner.runner.requiresSandbox) {
-      github = await loadGitHubContext(admin, session.workspace_id, session.id);
-      if (!github) {
-        const message =
-          "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.";
-        if (runId) {
-          await persistRunFailureDiagnostic(admin, {
-            error: message,
-            runId,
-            workspaceId: session.workspace_id,
-          });
-          await markRunError(admin, runId);
-        }
-        await updateSessionStatus(admin, session.id, "rejected");
-        await markPipelineJobError(admin, job, message);
-        return { jobId: job.id, processed: true, result: "error", runId: null };
-      }
-      const sandboxImplementation = resolveSandboxImplementation();
-      const sandboxSelection =
-        sandboxImplementation === "fake"
-          ? null
-          : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
-      if (sandboxSelection) {
-        await assertCurrentSandboxCapabilityCheck({
-          admin,
-          agent: { model: config.model, provider },
-          connection: sandboxSelection.connection,
-          repositoryId: github.repo.id,
-          workspaceId: session.workspace_id,
-        });
-      }
-      installationToken = await mintInstallationToken(github.installationId);
-      branch = buildStageBranchName(session.id, stage.slug);
-      throwIfAborted(signal);
-      sandbox = await createSessionSandbox({
-        agentProvider: provider,
-        baseBranch: github.repo.default_branch ?? "main",
-        branch,
-        implementation: sandboxSelection?.provider ?? "fake",
-        connection: sandboxSelection?.connection,
-        installationToken,
-        ownerId: runId ?? undefined,
-        repoFullName: github.repo.full_name,
-        signal,
-        sessionId: session.id,
-        workspaceId: session.workspace_id,
-        onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
-          if (!runId) return;
-          if (sandboxProvider === "fake") {
-            const attached = await updateRunSandbox(admin, runId, sandboxId, { provider: "fake" });
-            if (!attached) {
-              await stopSandboxById(sandboxId);
-            }
-            return;
-          }
-          if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
-            throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
-          }
-          const attached = await updateRunSandbox(admin, runId, sandboxId, {
-            connection: sandboxSelection.connection,
-            provider: sandboxSelection.provider,
-          });
-          if (!attached) {
-            // The run was canceled before its sandbox id landed; stop the
-            // sandbox we just created so it doesn't keep executing detached
-            // from the now-canceled run.
-            await stopSandboxById(sandboxId, {
-              connection: sandboxSelection.connection,
-            });
-          }
-        },
-      });
-    }
-
-    let usage: { inputTokens: number; outputTokens: number } | undefined;
-
-    if (sessionAttachments.length > 0 && !sandbox) {
-      throw new Error("The configured agent runner cannot receive session image attachments.");
-    }
-
-    const materializedAttachments = sandbox
-      ? await materializeSessionAttachments(admin, sandbox, sessionAttachments)
-      : [];
-    const prompt = renderStagePrompt(
-      {
-        promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
-        slug: trustedPromptValue("stage.slug", stage.slug),
-      },
-      {
-        attemptFeedback:
-          attemptFeedback === null
-            ? null
-            : untrustedPromptValue("attempt.feedback", attemptFeedback),
-        attemptNumber: session.rejection_count + 1,
-        operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
-        previousStages: Object.fromEntries(
-          Object.entries(previousStages).map(([slug, artifact]) => [
-            slug,
-            untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
-          ]),
-        ),
-        sessionAttachmentInstructions:
-          materializedAttachments.length > 0
-            ? trustedPromptValue(
-                "session.attachmentInstructions",
-                SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
-              )
-            : undefined,
-        sessionAttachments:
-          materializedAttachments.length > 0
-            ? untrustedPromptValue(
-                "session.attachments",
-                formatSessionAttachmentPromptData(materializedAttachments),
-              )
-            : undefined,
-        sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
-        sessionTitle: untrustedPromptValue("session.title", session.title),
-      },
-    );
-
-    for await (const event of resolvedRunner.runner.start({
-      maxTokens: undefined,
-      prompt,
-      runId: runId ?? undefined,
-      sandbox: sandbox ?? undefined,
-      secrets: installationToken ? [installationToken] : undefined,
-      signal,
-      sessionId: session.id,
-    })) {
-      throwIfAborted(signal);
-      if (runId) {
-        await persistEvent(admin, runId, session.workspace_id, event);
-      }
-      if (event.type === "error") {
-        runFailureMessageRecorded = true;
-      }
-      if (event.type === "text") {
-        collectedText.push(event.text);
-      } else if (event.type === "completion") {
-        if (event.usage) usage = event.usage;
-      } else if (event.type === "error") {
-        throw new Error(event.message);
-      }
-    }
-
-    const artifactMarkdown = collectedText.join("\n").trim();
-    if (!artifactMarkdown) {
-      const message = `${stage.name} did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.`;
-
-      if (runId) {
-        await persistEvent(admin, runId, session.workspace_id, { type: "error", message });
-        runFailureMessageRecorded = true;
-      }
-
-      throw new MissingReviewableOutputError(message);
-    }
-
-    artifactInserted = await insertArtifact(admin, {
-      artifactJson: artifactMarkdown,
-      sessionId: session.id,
-      stageId: stage.id,
       stageSlug: stage.slug,
       version: newVersion,
-      workspaceId: session.workspace_id,
     });
+    if (recoveredMarkdown != null) {
+      runId = await startAgentRun(admin, {
+        jobId: job.id,
+        model: config.model,
+        provider,
+        requestedByMemberId: job.requested_by_member_id,
+        runType: "project",
+        sessionId: session.id,
+        stage,
+        workspaceId: session.workspace_id,
+      });
+      if (await isJobCanceled(admin, job.id)) {
+        await cancelQueuedRunsForJob(admin, job.id);
+        return { jobId: job.id, processed: true, result: "idle", runId: null };
+      }
 
-    const published = await publishArtifact({
-      admin,
-      artifactMarkdown,
-      branch,
-      github,
-      newVersion,
-      onPointerAdvanced: () => {
-        sessionPointerAdvanced = true;
-      },
-      ownsUnpublishedRow: artifactInserted,
-      runId,
-      sandbox,
-      session,
-      stage,
-      usage,
-    });
-    if (published === "idle") {
-      return { jobId: job.id, processed: true, result: "idle", runId };
+      const published = await publishArtifact({
+        admin,
+        artifactMarkdown: recoveredMarkdown,
+        branch: null,
+        github: null,
+        newVersion,
+        onPointerAdvanced: () => {
+          sessionPointerAdvanced = true;
+        },
+        ownsUnpublishedRow: false,
+        runId,
+        sandbox: null,
+        session,
+        stage,
+        usage: undefined,
+      });
+      if (published === "idle") {
+        return { jobId: job.id, processed: true, result: "idle", runId };
+      }
+    } else {
+      const resolvedRunner = await resolveAgentRunner({
+        admin,
+        effort: config.effort,
+        model: config.model,
+        provider,
+        session,
+      });
+
+      runId = await startAgentRun(admin, {
+        jobId: job.id,
+        model: config.model,
+        provider: resolvedRunner.runner.provider,
+        requestedByMemberId: job.requested_by_member_id,
+        runType: "project",
+        sessionId: session.id,
+        stage,
+        workspaceId: session.workspace_id,
+      });
+
+      // A workspace delete or session cancel can flip this job to `canceled`
+      // between the worker's claim and now — both cancel the job (and any run that
+      // already existed) first. The run `startAgentRun` just inserted, though, was
+      // born `running` because the cancel sweep predated it, so the sweep's
+      // run-status guard didn't catch it. Re-check the job here and bail BEFORE
+      // creating a sandbox: for a workspace delete the run row and the Vercel
+      // connection credentials are about to be cascade-deleted together, so a
+      // sandbox spun up past this point would leave nothing for the reaper to find
+      // or stop. Cancelling the run we just started also re-arms `updateRunSandbox`
+      // as the backstop for the narrow race where the cancel lands during sandbox
+      // creation.
+      if (await isJobCanceled(admin, job.id)) {
+        await cancelQueuedRunsForJob(admin, job.id);
+        return { jobId: job.id, processed: true, result: "idle", runId: null };
+      }
+
+      // CLI-backed runners require a GitHub repo to clone into the sandbox.
+      if (resolvedRunner.runner.requiresSandbox) {
+        github = await loadGitHubContext(admin, session.workspace_id, session.id);
+        if (!github) {
+          const message =
+            "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.";
+          if (runId) {
+            await persistRunFailureDiagnostic(admin, {
+              error: message,
+              runId,
+              workspaceId: session.workspace_id,
+            });
+            await markRunError(admin, runId);
+          }
+          await updateSessionStatus(admin, session.id, "rejected");
+          await markPipelineJobError(admin, job, message);
+          return { jobId: job.id, processed: true, result: "error", runId: null };
+        }
+        const sandboxImplementation = resolveSandboxImplementation();
+        const sandboxSelection =
+          sandboxImplementation === "fake"
+            ? null
+            : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
+        if (sandboxSelection) {
+          await assertCurrentSandboxCapabilityCheck({
+            admin,
+            agent: { model: config.model, provider },
+            connection: sandboxSelection.connection,
+            repositoryId: github.repo.id,
+            workspaceId: session.workspace_id,
+          });
+        }
+        installationToken = await mintInstallationToken(github.installationId);
+        branch = buildStageBranchName(session.id, stage.slug);
+        throwIfAborted(signal);
+        sandbox = await createSessionSandbox({
+          agentProvider: provider,
+          baseBranch: github.repo.default_branch ?? "main",
+          branch,
+          implementation: sandboxSelection?.provider ?? "fake",
+          connection: sandboxSelection?.connection,
+          installationToken,
+          ownerId: runId ?? undefined,
+          repoFullName: github.repo.full_name,
+          signal,
+          sessionId: session.id,
+          workspaceId: session.workspace_id,
+          onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
+            if (!runId) return;
+            if (sandboxProvider === "fake") {
+              const attached = await updateRunSandbox(admin, runId, sandboxId, {
+                provider: "fake",
+              });
+              if (!attached) {
+                await stopSandboxById(sandboxId);
+              }
+              return;
+            }
+            if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
+              throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
+            }
+            const attached = await updateRunSandbox(admin, runId, sandboxId, {
+              connection: sandboxSelection.connection,
+              provider: sandboxSelection.provider,
+            });
+            if (!attached) {
+              // The run was canceled before its sandbox id landed; stop the
+              // sandbox we just created so it doesn't keep executing detached
+              // from the now-canceled run.
+              await stopSandboxById(sandboxId, {
+                connection: sandboxSelection.connection,
+              });
+            }
+          },
+        });
+      }
+
+      let usage: { inputTokens: number; outputTokens: number } | undefined;
+
+      if (sessionAttachments.length > 0 && !sandbox) {
+        throw new Error("The configured agent runner cannot receive session image attachments.");
+      }
+
+      const materializedAttachments = sandbox
+        ? await materializeSessionAttachments(admin, sandbox, sessionAttachments)
+        : [];
+      const prompt = renderStagePrompt(
+        {
+          promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
+          slug: trustedPromptValue("stage.slug", stage.slug),
+        },
+        {
+          attemptFeedback:
+            attemptFeedback === null
+              ? null
+              : untrustedPromptValue("attempt.feedback", attemptFeedback),
+          attemptNumber: session.rejection_count + 1,
+          operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
+          previousStages: Object.fromEntries(
+            Object.entries(previousStages).map(([slug, artifact]) => [
+              slug,
+              untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
+            ]),
+          ),
+          sessionAttachmentInstructions:
+            materializedAttachments.length > 0
+              ? trustedPromptValue(
+                  "session.attachmentInstructions",
+                  SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
+                )
+              : undefined,
+          sessionAttachments:
+            materializedAttachments.length > 0
+              ? untrustedPromptValue(
+                  "session.attachments",
+                  formatSessionAttachmentPromptData(materializedAttachments),
+                )
+              : undefined,
+          sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
+          sessionTitle: untrustedPromptValue("session.title", session.title),
+        },
+      );
+
+      for await (const event of resolvedRunner.runner.start({
+        maxTokens: undefined,
+        prompt,
+        runId: runId ?? undefined,
+        sandbox: sandbox ?? undefined,
+        secrets: installationToken ? [installationToken] : undefined,
+        signal,
+        sessionId: session.id,
+      })) {
+        throwIfAborted(signal);
+        if (runId) {
+          await persistEvent(admin, runId, session.workspace_id, event);
+        }
+        if (event.type === "error") {
+          runFailureMessageRecorded = true;
+        }
+        if (event.type === "text") {
+          collectedText.push(event.text);
+        } else if (event.type === "completion") {
+          if (event.usage) usage = event.usage;
+        } else if (event.type === "error") {
+          throw new Error(event.message);
+        }
+      }
+
+      const artifactMarkdown = collectedText.join("\n").trim();
+      if (!artifactMarkdown) {
+        const message = `${stage.name} did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.`;
+
+        if (runId) {
+          await persistEvent(admin, runId, session.workspace_id, { type: "error", message });
+          runFailureMessageRecorded = true;
+        }
+
+        throw new MissingReviewableOutputError(message);
+      }
+
+      const inserted = await insertArtifact(admin, {
+        artifactJson: artifactMarkdown,
+        sessionId: session.id,
+        stageId: stage.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+        workspaceId: session.workspace_id,
+      });
+      artifactInserted = inserted.inserted;
+
+      const published = await publishArtifact({
+        admin,
+        artifactMarkdown: inserted.markdown,
+        branch,
+        github,
+        newVersion,
+        onPointerAdvanced: () => {
+          sessionPointerAdvanced = true;
+        },
+        ownsUnpublishedRow: inserted.inserted,
+        runId,
+        sandbox,
+        session,
+        stage,
+        usage,
+      });
+      if (published === "idle") {
+        return { jobId: job.id, processed: true, result: "idle", runId };
+      }
     }
   } catch (error) {
     runId = runId ?? (await loadActiveRunIdForJob(admin, job.id));
@@ -452,13 +502,13 @@ async function runStage(input: {
 
     if (artifactInserted) {
       // Compensate: drop the orphan so the next retry doesn't hit the
-      // (session_id, stage_slug, version) unique constraint.
-      await admin
-        .from("session_artifacts")
-        .delete()
-        .eq("session_id", session.id)
-        .eq("stage_slug", stage.slug)
-        .eq("version", newVersion);
+      // (session_id, stage_slug, version) unique constraint. Skip the delete
+      // when another generation has already published this version.
+      await deleteUnpublishedArtifact(admin, {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+      });
     }
 
     if (sessionPointerAdvanced) {
@@ -569,16 +619,15 @@ async function publishArtifact(input: {
 
   if (!pointerRows || pointerRows.length === 0) {
     // Cancellation or another generation won the pointer. Delete only a row
-    // this process inserted. A conflict on the unique version key means the
-    // row belongs to another generation (or an earlier crash of a different
-    // job); deleting it would leave a published pointer aiming at nothing.
+    // this process inserted, and only while it is still unpublished. If a
+    // replacement adopted this row and already advanced the session pointer,
+    // deleting it would leave `current_artifact_version` aiming at nothing.
     if (input.ownsUnpublishedRow) {
-      await admin
-        .from("session_artifacts")
-        .delete()
-        .eq("session_id", session.id)
-        .eq("stage_slug", stage.slug)
-        .eq("version", newVersion);
+      await deleteUnpublishedArtifact(admin, {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+      });
     }
     return "idle";
   }
@@ -914,7 +963,7 @@ async function insertArtifact(
     version: number;
     workspaceId: string;
   },
-): Promise<boolean> {
+): Promise<{ inserted: boolean; markdown: string }> {
   // `newVersion` is computed from the session row loaded at claim time. A
   // crash after this write and before the pointer CAS leaves an unpublished
   // row at `(session_id, stage_slug, version)`. A plain insert then hits
@@ -938,7 +987,67 @@ async function insertArtifact(
     .select("id")
     .maybeSingle();
   if (error) throw error;
-  return data != null;
+  if (data != null) {
+    return { inserted: true, markdown: input.artifactJson };
+  }
+
+  // Conflict: keep the stored markdown so the PR body matches the row the
+  // session will expose, not this retry's newly generated text.
+  const stored = await loadArtifactMarkdown(admin, {
+    sessionId: input.sessionId,
+    stageSlug: input.stageSlug,
+    version: input.version,
+  });
+  return { inserted: false, markdown: stored ?? input.artifactJson };
+}
+
+function markdownFromArtifactJson(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.length > 0 ? value : null;
+  }
+  if (value == null) {
+    return null;
+  }
+  const serialized = JSON.stringify(value);
+  return serialized === "null" ? null : serialized;
+}
+
+async function loadArtifactMarkdown(
+  admin: AdminClient,
+  input: { sessionId: string; stageSlug: string; version: number },
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from("session_artifacts")
+    .select("artifact_json")
+    .eq("session_id", input.sessionId)
+    .eq("stage_slug", input.stageSlug)
+    .eq("version", input.version)
+    .maybeSingle();
+  if (error) throw error;
+  return markdownFromArtifactJson(data?.artifact_json);
+}
+
+async function deleteUnpublishedArtifact(
+  admin: AdminClient,
+  input: { sessionId: string; stageSlug: string; version: number },
+): Promise<void> {
+  const { data: session, error: sessionError } = await admin
+    .from("sessions")
+    .select("current_artifact_version")
+    .eq("id", input.sessionId)
+    .maybeSingle();
+  if (sessionError) throw sessionError;
+  if (session?.current_artifact_version === input.version) {
+    return;
+  }
+
+  const { error } = await admin
+    .from("session_artifacts")
+    .delete()
+    .eq("session_id", input.sessionId)
+    .eq("stage_slug", input.stageSlug)
+    .eq("version", input.version);
+  if (error) throw error;
 }
 
 async function resolveAgentRunner(input: {

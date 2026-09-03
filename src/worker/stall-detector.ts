@@ -69,7 +69,7 @@ export async function sweepStalledRuns(
   const activeRuns = await loadActiveRuns(admin, options);
 
   if (activeRuns.length === 0) {
-    await sweepRunningJobsWithTerminalRuns(admin, options, result);
+    await sweepRunningJobsWithTerminalRuns(admin, options, result, defaultStallTimeoutMs);
     return result;
   }
 
@@ -181,7 +181,7 @@ export async function sweepStalledRuns(
     });
   }
 
-  await sweepRunningJobsWithTerminalRuns(admin, options, result);
+  await sweepRunningJobsWithTerminalRuns(admin, options, result, defaultStallTimeoutMs);
   return result;
 }
 
@@ -189,8 +189,10 @@ const DEFAULT_MAX_RETRIES = 3;
 const TERMINAL_RUNS_JOB_STALL_REASON = "Stalled: running job has no active runs";
 
 type RunningJobRow = {
+  created_at: string;
   id: string;
   session_id: string;
+  started_at: string | null;
   workspace_id: string;
 };
 
@@ -207,11 +209,17 @@ type RunningJobRow = {
  *
  * Jobs still listed on a fresh worker heartbeat are left alone — that is
  * the live `sandbox.stop()` window after `markRunSuccess`.
+ *
+ * Running jobs with no `agent_runs` row at all (Linear-routed enqueue, or
+ * the gap between claim and `startAgentRun`) must also be older than the
+ * workspace stall timeout. The scheduler heartbeats only after claim, so a
+ * concurrent sweep can otherwise retry a live job before its run exists.
  */
 async function sweepRunningJobsWithTerminalRuns(
   admin: AdminClient,
   options: StallSweepOptions,
   result: StallSweepResult,
+  defaultStallTimeoutMs: number,
 ): Promise<void> {
   const runningJobs = await loadRunningJobs(admin, options);
   if (runningJobs.length === 0) {
@@ -271,11 +279,29 @@ async function sweepRunningJobsWithTerminalRuns(
     return;
   }
 
+  const jobsWithAnyRuns = await loadJobIdsWithAnyRuns(
+    admin,
+    failedWithoutActiveRuns.map((job) => job.id),
+  );
+  if (jobsWithAnyRuns === null) {
+    return;
+  }
+
+  const failedWithTerminalRuns = failedWithoutActiveRuns.filter((job) =>
+    jobsWithAnyRuns.has(job.id),
+  );
+  const runlessJobs = failedWithoutActiveRuns.filter((job) => !jobsWithAnyRuns.has(job.id));
+  const agedRunlessJobs = await selectAgedRunlessJobs(admin, runlessJobs, defaultStallTimeoutMs);
+  const stalledJobs = [...failedWithTerminalRuns, ...agedRunlessJobs];
+  if (stalledJobs.length === 0) {
+    return;
+  }
+
   const maxRetries = await loadMaxRetries(admin, [
-    ...new Set(failedWithoutActiveRuns.map((job) => job.workspace_id)),
+    ...new Set(stalledJobs.map((job) => job.workspace_id)),
   ]);
 
-  for (const job of failedWithoutActiveRuns) {
+  for (const job of stalledJobs) {
     await resolveStalledJob({
       admin,
       jobId: job.id,
@@ -309,7 +335,7 @@ async function loadRunningJobs(
   for (let offset = 0; ; offset += ACTIVE_RUN_PAGE_SIZE) {
     const runningJobQuery = admin
       .from("agent_jobs")
-      .select("id, session_id, workspace_id")
+      .select("id, session_id, workspace_id, started_at, created_at")
       .eq("status", "running");
     const scopedRunningJobQuery = options.workspaceId
       ? runningJobQuery.eq("workspace_id", options.workspaceId)
@@ -393,6 +419,57 @@ async function loadJobIdsWithSuccessfulRuns(
       .map((row) => row.agent_job_id)
       .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
   );
+}
+
+async function loadJobIdsWithAnyRuns(
+  admin: AdminClient,
+  jobIds: string[],
+): Promise<Set<string> | null> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("agent_job_id")
+    .in("agent_job_id", [...new Set(jobIds)]);
+
+  if (error) {
+    console.error("[stall-detector] failed to load runs for running jobs", {
+      error: error.message,
+    });
+    // Fail closed: a read error must not classify a live job as runless or we
+    // would retry it during the claim → startAgentRun gap.
+    return null;
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+}
+
+async function selectAgedRunlessJobs(
+  admin: AdminClient,
+  jobs: RunningJobRow[],
+  defaultStallTimeoutMs: number,
+): Promise<RunningJobRow[]> {
+  if (jobs.length === 0) {
+    return [];
+  }
+
+  const now = Date.now();
+  const stallTimeouts = await loadStallTimeouts(admin, [
+    ...new Set(jobs.map((job) => job.workspace_id)),
+  ]);
+
+  return jobs.filter((job) => {
+    const timeoutMs = stallTimeouts.get(job.workspace_id) ?? defaultStallTimeoutMs;
+    const startedAt = job.started_at ?? job.created_at;
+    const elapsed = now - new Date(startedAt).getTime();
+    return Number.isFinite(elapsed) && elapsed >= timeoutMs;
+  });
 }
 
 async function loadActiveRuns(
