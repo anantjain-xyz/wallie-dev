@@ -53,7 +53,7 @@ function gitCommitUnixTime(path: string, cwd: string): number | null {
   }
 }
 
-export function isShallowGitRepository(cwd: string): boolean {
+export function isShallowGitRepository(cwd = process.cwd()): boolean {
   try {
     const output = execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
       cwd,

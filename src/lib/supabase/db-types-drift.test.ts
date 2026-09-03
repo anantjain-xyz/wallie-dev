@@ -195,10 +195,6 @@ describe("generated database types drift heuristic", () => {
   it.skipIf(isShallowGitRepository())(
     "accepts the committed types file against the latest checked-in migration",
     () => {
-      // GitHub Actions checkout defaults to fetch-depth 1. A type-changing
-      // latest migration then fails this heuristic because timestamps cannot
-      // be trusted. The isolated shallow-clone test covers that path; this
-      // assertion needs full history.
       const result = checkDbTypesDrift();
       expect(result.exitCode).toBe(0);
       expect(result.latestMigration).toMatch(/^\d{14}_.+\.sql$/);
