@@ -350,7 +350,7 @@ function buildAdminMock(opts: MockOptions) {
       insertedArtifacts.push(row);
       return { error: opts.artifactInsertError ?? null };
     },
-    upsert: async (
+    upsert: (
       row: Record<string, unknown>,
       options?: { ignoreDuplicates?: boolean; onConflict?: string },
     ) => {
