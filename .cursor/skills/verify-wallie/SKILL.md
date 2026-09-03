@@ -52,7 +52,7 @@ Read-only health check before any drive:
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs doctor
 ```
 
-Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. If launch used `--manage-supabase`, Auth `http://127.0.0.1:54321/auth/v1/health` must return 200. The Playwright sidecar started at launch must answer `/health`.
+Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. If launch used `--manage-supabase`, Auth `http://127.0.0.1:54321/auth/v1/health` must return 200. The Playwright sidecar must be recorded (PID, identity, port) and answer `/health`.
 
 If doctor fails, stop and relaunch. Never drive an instance you did not start.
 
@@ -64,7 +64,7 @@ Harness: **Playwright** (`@playwright/test` Chromium) via `control-wallie`. `lau
 # Navigate
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /
 
-# Click by role + accessible name (add --wait-hidden / --wait-for-text / --wait-for-url for async UI)
+# Click by role + accessible name (add --wait-for-role heading --wait-for-name, --wait-for-text, --wait-for-url, --wait-hidden)
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "Sign in to Wallie"
 
 # Fill (add --submit to press Enter in the same live page, e.g. Sessions search)
@@ -116,12 +116,12 @@ Executable entrypoint (no install step beyond repo `pnpm install` + Playwright b
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs <command>
 ```
 
-| Command     | Purpose                                                                                                                                              |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `launch`    | Start Next (optional `--worker`, `--manage-supabase`), wait until this process owns the port, start the browser sidecar                              |
-| `doctor`    | Read-only readiness check for Next, login, optional worker, and the browser sidecar                                                                  |
-| `browser …` | goto / click / fill / press / screenshot / snapshot against the live sidecar page; click can `--wait-hidden`, `--wait-for-text`, or `--wait-for-url` |
-| `sign-in`   | Admin magic-link sign-in as `anant@example.com` on the same live page                                                                                |
-| `stop`      | Tear down recorded PIDs (and `supabase stop` when this run started Supabase)                                                                         |
+| Command     | Purpose                                                                                                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `launch`    | Start Next (optional `--worker`, `--manage-supabase`), wait until this process owns the port, start the browser sidecar                                                                   |
+| `doctor`    | Read-only readiness check for Next, login, optional worker, and the browser sidecar                                                                                                       |
+| `browser …` | goto / click / fill / press / screenshot / snapshot against the live sidecar page; click can `--wait-hidden`, `--wait-for-text`, `--wait-for-role`/`--wait-for-name`, or `--wait-for-url` |
+| `sign-in`   | Admin magic-link sign-in as `anant@example.com` on the same live page                                                                                                                     |
+| `stop`      | Tear down recorded PIDs (and `supabase stop` when this run started Supabase)                                                                                                              |
 
 State file: `.wallie/verify/current-run.json` → points at the active run directory.

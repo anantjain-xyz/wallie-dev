@@ -24,8 +24,8 @@ Preconditions:
 
 - **Open board.** Visit the workspace root. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /w/acme-corp`. Heading `Pipeline` and region `Pipeline board` are visible.
 - **Filter by status.** Choose `Awaiting review`. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role button --name "Awaiting review"`. The `Pipeline board` region stays on the page and `Awaiting review` is pressed. Cards that are not awaiting review disappear (or the board shows an empty-filter state).
+- **Proof.** Capture the board **before** opening a session. Run `... browser screenshot --path pipeline.png` and `... browser snapshot --aria --path pipeline.aria.txt`. Artifacts identify Wallie, `Pipeline`, and `Pipeline board`.
 - **Open session.** Choose a session open link. Run `node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "/^Open session /"`. The session detail URL loads under `/w/acme-corp/sessions/`.
-- **Proof.** Capture the board. Run `... browser screenshot --path pipeline.png` and `... browser snapshot --aria --path pipeline.aria.txt`. Artifacts identify Wallie, `Pipeline`, and `Pipeline board`.
 
 ## Gotchas
 

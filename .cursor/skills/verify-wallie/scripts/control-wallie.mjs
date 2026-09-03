@@ -29,7 +29,7 @@ function usage(exitCode = 1) {
   control-wallie.mjs stop
   control-wallie.mjs sign-in [--destination <path>]
   control-wallie.mjs browser goto <path-or-url>
-  control-wallie.mjs browser click --role <role> --name <name> [--wait-for-url <re>] [--wait-for-text <text>] [--wait-hidden] [--screenshot <file>]
+  control-wallie.mjs browser click --role <role> --name <name> [--wait-for-url <re>] [--wait-for-text <text>] [--wait-for-role <role> --wait-for-name <name>] [--wait-hidden] [--screenshot <file>]
   control-wallie.mjs browser fill --role <role> --name <name> --value <value> [--submit] [--wait-for-url <re>] [--wait-for-text <text>] [--screenshot <file>] [--snapshot-aria <file>]
   control-wallie.mjs browser press --key <key>
   control-wallie.mjs browser screenshot --path <file>
@@ -158,7 +158,7 @@ function pidStillOurs(pid, identity) {
   if (!pid || !identity) return false;
   const current = readPidIdentity(pid);
   if (!current) return false;
-  return current.starttime === identity.starttime && current.cmdline === identity.cmdline;
+  return String(current.starttime) === String(identity.starttime);
 }
 
 function recordedPidAlive(run, key) {
@@ -559,6 +559,12 @@ async function cmdLaunch(args) {
     throw error;
   }
 
+  const readyRun = readRun();
+  updateRun({
+    pids: readyRun.pids,
+    pidIdentities: captureIdentities(readyRun.pids),
+  });
+
   process.stdout.write(`ready baseUrl=${baseUrl} evidenceDir=${evidenceDir} nextPid=${nextPid}\n`);
 }
 
@@ -577,7 +583,9 @@ async function cmdDoctor() {
   if (run.pids?.worker != null && !recordedPidAlive(run, "worker")) {
     problems.push(`worker pid ${run.pids.worker} is not running`);
   }
-  if (run.pids?.browser != null && !recordedPidAlive(run, "browser")) {
+  if (!run.pids?.browser || !run.pidIdentities?.browser || !run.browserPort) {
+    problems.push("browser sidecar was not recorded; relaunch");
+  } else if (!recordedPidAlive(run, "browser")) {
     problems.push(`browser sidecar pid ${run.pids.browser} is not running`);
   }
 
@@ -754,7 +762,11 @@ async function executeBrowserAction(page, run, args) {
     if (args["wait-for-url"]) {
       await page.waitForURL(new RegExp(String(args["wait-for-url"])), { timeout: 15_000 });
     }
-    if (args["wait-for-text"]) {
+    if (args["wait-for-role"]) {
+      await locatorFor(page, args["wait-for-role"], args["wait-for-name"] ?? args["wait-for-text"])
+        .first()
+        .waitFor({ state: "visible", timeout: 15_000 });
+    } else if (args["wait-for-text"]) {
       await page
         .getByText(String(args["wait-for-text"]))
         .first()
