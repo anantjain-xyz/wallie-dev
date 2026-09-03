@@ -722,7 +722,7 @@ export async function handleApproval(input: {
 }
 
 // `reject_session_stage` and `publish_session_stage_artifact` (migrations
-// 20260903000001 / 20260903000002) are not yet present in the generated
+// 20260903000001 / 20260903000004) are not yet present in the generated
 // `database.types.ts`, which `pnpm db:types` regenerates against a running
 // local database. Until that regeneration lands, their contracts are declared
 // here and the admin client is viewed through the augmented schema.
