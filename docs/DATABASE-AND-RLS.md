@@ -192,7 +192,9 @@ mock.
 
 - Realtime tables are explicitly added to the publication.
 - Consumers of delete events may require `REPLICA IDENTITY FULL`.
-- Publication changes must update the existing Realtime projection tests.
+- Publication changes must be applied on a live local stack (`supabase db reset`
+  and `pnpm check:db-tests` when the stack is running). SQL-text assertions are
+  not a substitute.
 - Storage buckets have their own access surface. Public object reads do not
   imply public mutation authority.
 - Workspace-avatar mutation is mediated by privileged server code with size and
@@ -201,15 +203,15 @@ mock.
 
 ## Required proof
 
-| Claim                                  | Proof                                                                                      |
-| -------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Migration chain is self-consistent     | `supabase db reset`                                                                        |
-| SQL privileges and RLS behavior        | `SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local` plus the relevant identity matrix |
-| Generated schema projection is current | `pnpm db:types` and clean generated diff                                                   |
-| Migration versions are unique          | Existing migration-version Vitest                                                          |
-| Realtime projection is current         | Existing Realtime publication Vitest                                                       |
-| Rolling compatibility                  | Isolated upgrade using the prior schema and old/new caller versions                        |
-| TypeScript consumers remain sound      | Focused tests and `pnpm check`                                                             |
+| Claim                                  | Proof                                                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Migration chain is self-consistent     | `supabase db reset`                                                                            |
+| SQL privileges and RLS behavior        | `pnpm check:db-tests` plus the relevant identity matrix                                        |
+| Generated schema projection is current | `pnpm db:types` and clean generated diff                                                       |
+| Migration versions are unique          | Existing migration-version Vitest                                                              |
+| Realtime projection is current         | pgTAP catalog assertion in `supabase/tests/realtime_publication.sql` via `pnpm check:db-tests` |
+| Rolling compatibility                  | Isolated upgrade using the prior schema and old/new caller versions                            |
+| TypeScript consumers remain sound      | Focused tests and `pnpm check`                                                                 |
 
 String inspection of SQL is useful for narrow projections; it is not a
 substitute for applying the migration or exercising Postgres identities.
