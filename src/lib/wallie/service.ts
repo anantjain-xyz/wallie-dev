@@ -759,7 +759,7 @@ async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
 
 async function inferSessionRunType(
   admin: AdminClient,
-  session: SessionForEnqueue,
+  session: Pick<SessionForEnqueue, "id" | "workspace_id">,
 ): Promise<WallieRunMode> {
   const resolution = await resolveEffectiveSessionRepository({
     sessionId: session.id,
@@ -767,6 +767,36 @@ async function inferSessionRunType(
     workspaceId: session.workspace_id,
   });
   return inferWallieRunMode(resolution.repositoryId);
+}
+
+export type QueuedRunConfig = {
+  modelName: string;
+  modelProvider: string;
+  runType: WallieRunMode;
+};
+
+/**
+ * Model and run mode the next queued run for `session` must carry. Both the
+ * TypeScript enqueue path and the `reject_session_stage` RPC caller stamp their
+ * run rows from this so the worker sees the same shape regardless of which
+ * transition queued the work. The model lookup is the same one
+ * pipeline/processor.ts performs at execution time; drift between the two
+ * re-introduces the original placeholder-model bug.
+ */
+export async function resolveQueuedRunConfig(
+  admin: AdminClient,
+  session: Pick<SessionForEnqueue, "id" | "workspace_id">,
+  runType?: WallieRunMode,
+): Promise<QueuedRunConfig> {
+  const [agentConfig, resolvedRunType] = await Promise.all([
+    loadWorkspaceAgentConfig(admin, session.workspace_id),
+    runType ?? inferSessionRunType(admin, session),
+  ]);
+  return {
+    modelName: agentConfig.model,
+    modelProvider: agentConfig.provider,
+    runType: resolvedRunType,
+  };
 }
 
 /**
@@ -786,14 +816,9 @@ export async function enqueueSessionJobWithRun(
   input: EnqueueSessionJobWithRunInput,
 ): Promise<EnqueueWallieRunResult> {
   const { admin, session } = input;
-  // Resolve the workspace's configured model so the queued row matches what
-  // the executor will actually run. Source-of-truth is the same lookup
-  // pipeline/processor.ts uses; drift between the two re-introduces the
-  // original placeholder bug.
-  const [agentConfig, stage, runType] = await Promise.all([
-    loadWorkspaceAgentConfig(admin, session.workspace_id),
+  const [runConfig, stage] = await Promise.all([
+    resolveQueuedRunConfig(admin, session, input.runType),
     loadStageSnapshot(admin, session.current_stage_id),
-    input.runType ?? inferSessionRunType(admin, session),
   ]);
 
   const jobInsert = createJobInsert({
@@ -839,10 +864,10 @@ export async function enqueueSessionJobWithRun(
       createRunInsert({
         sessionId: session.id,
         jobId: job.id,
-        modelName: agentConfig.model,
-        modelProvider: agentConfig.provider,
+        modelName: runConfig.modelName,
+        modelProvider: runConfig.modelProvider,
         requestedByMemberId: input.requestedByMemberId,
-        runType,
+        runType: runConfig.runType,
         stage,
         workspaceId: session.workspace_id,
       }),

@@ -17,7 +17,7 @@ import {
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
-import { enqueueSessionJobWithRun } from "@/lib/wallie/service";
+import { enqueueSessionJobWithRun, resolveQueuedRunConfig } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import {
   ClaudeCodeNotConnectedError,
@@ -659,6 +659,55 @@ export async function handleApproval(input: {
   };
 }
 
+// `reject_session_stage` (migration 20260903000001) is not yet present in the
+// generated `database.types.ts`, which `pnpm db:types` regenerates against a
+// running local database. Until that regeneration lands, its contract is
+// declared here and the admin client is viewed through the augmented schema.
+// Delete this block once `Database["public"]["Functions"]["reject_session_stage"]`
+// exists — the generated `Returns` columns are non-nullable, so the fields below
+// only get narrower.
+type RejectSessionStageArgs = {
+  p_agent_model_name: string;
+  p_agent_model_provider: string;
+  p_artifact_version: number;
+  p_feedback_text: string;
+  p_requested_by_member_id?: string;
+  p_run_type?: string;
+  p_session_id: string;
+  p_workspace_id: string;
+};
+
+type RejectSessionStageRow = {
+  archived_at: string | null;
+  current_artifact_version: number;
+  current_stage_id: string;
+  job_created: boolean;
+  job_id: string;
+  phase_status: Database["public"]["Enums"]["pipeline_phase_status"];
+  rejection_count: number;
+  run_id: string | null;
+  session_id: string;
+  workspace_id: string;
+};
+
+type DatabaseWithRejectSessionStage = Omit<Database, "public"> & {
+  public: Omit<Database["public"], "Functions"> & {
+    Functions: Database["public"]["Functions"] & {
+      reject_session_stage: {
+        Args: RejectSessionStageArgs;
+        Returns: RejectSessionStageRow[];
+      };
+    };
+  };
+};
+
+function rejectSessionStageRpc(admin: AdminClient, args: RejectSessionStageArgs) {
+  return (admin as unknown as SupabaseClient<DatabaseWithRejectSessionStage>).rpc(
+    "reject_session_stage",
+    args,
+  );
+}
+
 export async function handleRejection(input: {
   admin?: AdminClient;
   expectedWorkspaceId: string;
@@ -669,101 +718,15 @@ export async function handleRejection(input: {
 }): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
-  const session = await loadSessionById(admin, input.sessionId);
-  if (!session) {
-    return { error: "Session not found.", success: false };
-  }
-
-  if (session.workspace_id !== input.expectedWorkspaceId) {
-    return { error: "Session not found.", success: false };
-  }
-
-  if (session.archived_at) {
-    return { error: "Session is archived.", success: false };
-  }
-
-  if (session.phase_status !== "awaiting_review") {
-    return { error: "Session is not awaiting review.", success: false };
-  }
-
-  if (session.current_artifact_version !== input.version) {
-    return { error: "Version mismatch: a newer version exists.", success: false };
-  }
-
-  const stage = await loadStageById(admin, session.current_stage_id);
-  if (!stage) {
-    return {
-      error: "Session references a missing stage.",
-      success: false,
-    };
-  }
-
-  const newRejectionCount = session.rejection_count + 1;
-
-  // Atomic CAS on rejection_count: only the first rejection that observed
-  // the current count can advance it. A concurrent second rejection sees
-  // rows-updated=0 and exits without double-counting. The `archived_at is null`
-  // predicate also makes this atomic with archive — an archive that lands
-  // between the load above and this CAS turns the rejection into a no-op rather
-  // than enqueueing fresh work on an archived session.
-  const { data: claimedRejection, error: claimRejectionError } = await admin
-    .from("sessions")
-    .update({ rejection_count: newRejectionCount })
-    .eq("id", input.sessionId)
-    .eq("workspace_id", input.expectedWorkspaceId)
-    .eq("rejection_count", session.rejection_count)
-    .eq("phase_status", "awaiting_review")
-    .eq("current_artifact_version", input.version)
-    .is("archived_at", null)
-    .select("id")
-    .maybeSingle();
-
-  if (claimRejectionError) {
-    return { error: claimRejectionError.message, success: false };
-  }
-
-  if (!claimedRejection) {
-    return {
-      error: "Rejection raced with another update — please refresh and try again.",
-      success: false,
-    };
-  }
-
-  // Feedback lives in its own table keyed on (session_id, stage_id,
-  // target_version). Stage_id is the immutable FK so a stage rename between
-  // generation and review does not orphan the row. The unique constraint
-  // makes the row a first-write-wins record of "why was this version
-  // rejected" — the loser of a truly concurrent rejection is caught by the
-  // CAS guard above; this insert is a defense-in-depth check.
-  const { error: feedbackInsertError } = await admin.from("session_artifact_feedback").insert({
-    feedback_text: input.feedbackText,
-    session_id: input.sessionId,
-    stage_id: stage.id,
-    stage_slug: stage.slug,
-    target_version: input.version,
-    workspace_id: session.workspace_id,
-  });
-
-  // 23505 = unique_violation: feedback already exists for this target_version,
-  // which means a prior attempt inserted it but a later step (e.g., agent_jobs
-  // enqueue) failed and the session never advanced. Treat as idempotent
-  // success and proceed to enqueue rather than wedging the session in
-  // awaiting_review with rejection_count bumped but nothing queued.
-  if (feedbackInsertError && feedbackInsertError.code !== "23505") {
-    return { error: feedbackInsertError.message, success: false };
-  }
-
-  // Enqueue a new generation job BEFORE flipping phase_status to 'rejected'.
-  // If the enqueue fails with a non-dedupe error we must not transition into
-  // 'rejected', because 'rejected' with no queued worker is a wedged state the
-  // UI cannot recover from.
-  let queued: { created: boolean; jobId: string | null };
+  // The rerun's queued run must carry the workspace's configured model and the
+  // session's run mode, resolved with the same lookups the shared enqueue path
+  // uses. These are configuration reads, not state transitions, so they sit
+  // outside the RPC; a failure here changes nothing.
+  let runConfig: Awaited<ReturnType<typeof resolveQueuedRunConfig>>;
   try {
-    queued = await enqueueSessionJobWithRun({
-      admin,
-      requestedByMemberId: input.requestedByMemberId,
-      session,
-      triggerType: "comment_retry",
+    runConfig = await resolveQueuedRunConfig(admin, {
+      id: input.sessionId,
+      workspace_id: input.expectedWorkspaceId,
     });
   } catch (error) {
     return {
@@ -772,16 +735,47 @@ export async function handleRejection(input: {
     };
   }
 
-  await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
+  // One transaction: lock the session, validate workspace/archive/phase/version,
+  // record the feedback, enqueue the rerun job + queued run under the session's
+  // active dedupe key, and move the session to `rejected`. Any guard failure
+  // raises and rolls everything back, so a rejection can no longer leave the
+  // session wedged with a bumped rejection count and nothing queued, and a
+  // concurrent approval serializes behind the row lock instead of racing the
+  // final phase write.
+  const { data, error } = await rejectSessionStageRpc(admin, {
+    p_agent_model_name: runConfig.modelName,
+    p_agent_model_provider: runConfig.modelProvider,
+    p_artifact_version: input.version,
+    p_feedback_text: input.feedbackText,
+    p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+    p_run_type: runConfig.runType,
+    p_session_id: input.sessionId,
+    p_workspace_id: input.expectedWorkspaceId,
+  });
+
+  if (error) {
+    // The RPC raises with the reviewer-facing message for every guard
+    // ("Session not found.", "Session is archived.", "Session is not awaiting
+    // review.", "Version mismatch: a newer version exists."); surface it as-is.
+    return { error: error.message, success: false };
+  }
+
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) {
+    return {
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    };
+  }
 
   return {
-    jobId: queued.jobId,
+    jobId: row.job_id,
     session: {
-      archivedAt: session.archived_at,
-      currentArtifactVersion: session.current_artifact_version,
-      currentStageId: session.current_stage_id,
-      phaseStatus: "rejected",
-      rejectionCount: newRejectionCount,
+      archivedAt: row.archived_at,
+      currentArtifactVersion: row.current_artifact_version,
+      currentStageId: row.current_stage_id,
+      phaseStatus: row.phase_status,
+      rejectionCount: row.rejection_count,
     },
     success: true,
   };

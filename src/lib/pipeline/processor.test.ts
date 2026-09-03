@@ -2162,104 +2162,48 @@ describe("handleApproval", () => {
 // ---- handleRejection ----------------------------------------------------
 
 interface RejectionMockOptions {
-  session: Tables<"sessions"> | null;
-  rejectionClaim?: { id: string } | null;
-  rejectionClaimError?: { message: string } | null;
-  enqueueError?: { code?: string; message: string } | null;
-  workspaceMember?: { id: string } | null;
-  feedbackInsertError?: { message: string; code?: string } | null;
+  rpcResult?: { data: unknown; error: { code?: string; message: string } | null };
+  /** Repository the session's pull request resolves to; drives the run mode. */
+  sessionPullRequestRepositoryId?: string | null;
 }
 
-function buildRejectionMock(opts: RejectionMockOptions) {
-  const sessionUpdates: Array<Record<string, unknown>> = [];
-  const artifactUpdates: Array<{ patch: Record<string, unknown> }> = [];
-  const insertedFeedback: Array<Record<string, unknown>> = [];
-  const enqueuedJobs: Array<Record<string, unknown>> = [];
-
-  const sessionsTable = {
-    select: () => {
-      const builder = {
-        eq: () => builder,
-        maybeSingle: async () => ({ data: opts.session, error: null }),
-      };
-      return builder;
-    },
-    update: (patch: Record<string, unknown>) => {
-      sessionUpdates.push(patch);
-      const eqChain = {
-        eq() {
-          return eqChain;
-        },
-        is() {
-          return eqChain;
-        },
-        select() {
-          return {
-            maybeSingle: async () => ({
-              data: opts.rejectionClaim === undefined ? { id: "sess-1" } : opts.rejectionClaim,
-              error: opts.rejectionClaimError ?? null,
-            }),
-          };
-        },
-        then(resolve: (value: { data: null; error: null }) => void) {
-          resolve({ data: null, error: null });
-        },
-      };
-      const builder: Record<string, unknown> = {};
-      builder.eq = () => eqChain;
-      return builder;
-    },
+function rejectedSessionRow(overrides: Record<string, unknown> = {}) {
+  return {
+    archived_at: null,
+    current_artifact_version: 1,
+    current_stage_id: "stage-product",
+    job_created: true,
+    job_id: "job-retry",
+    phase_status: "rejected",
+    rejection_count: 1,
+    run_id: "run-retry",
+    session_id: "sess-1",
+    workspace_id: "ws-1",
+    ...overrides,
   };
+}
 
-  const artifactsTable = {
-    update: (patch: Record<string, unknown>) => ({
-      eq: () => ({
-        eq: () => ({
-          eq: async () => {
-            artifactUpdates.push({ patch });
-            return { error: null };
-          },
-        }),
-      }),
-    }),
-  };
+// Rejection is a single RPC. The only table reads left in the TypeScript path
+// resolve the queued run's model + run mode (`resolveQueuedRunConfig`), which
+// walks the effective-repository lookup before the RPC is called.
+function buildRejectionMock(opts: RejectionMockOptions = {}) {
+  const rpc = vi
+    .fn()
+    .mockResolvedValue(opts.rpcResult ?? { data: [rejectedSessionRow()], error: null });
 
-  const workspaceMembersTable = {
+  const sessionPullRequestsTable = {
     select: () => ({
       eq: () => ({
         eq: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({ data: opts.workspaceMember ?? null, error: null }),
-          }),
-        }),
-      }),
-    }),
-  };
-
-  const agentJobsTable = {
-    delete: () => ({
-      eq: () => ({
-        eq: async () => ({ error: null }),
-      }),
-    }),
-    insert: (row: Record<string, unknown>) => {
-      enqueuedJobs.push(row);
-      return {
-        select: () => ({
-          single: async () => ({
-            data: opts.enqueueError ? null : { id: "job-retry" },
-            error: opts.enqueueError ?? null,
-          }),
-        }),
-      };
-    },
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          in: () => ({
-            order: () => ({
-              limit: () => ({
-                maybeSingle: async () => ({ data: { id: "job-retry-existing" }, error: null }),
+          order: () => ({
+            limit: () => ({
+              maybeSingle: async () => ({
+                data:
+                  opts.sessionPullRequestRepositoryId === undefined ||
+                  opts.sessionPullRequestRepositoryId === null
+                    ? null
+                    : { github_repository_id: opts.sessionPullRequestRepositoryId },
+                error: null,
               }),
             }),
           }),
@@ -2268,63 +2212,25 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     }),
   };
 
-  const agentRunsTable = {
-    insert: () => ({
-      select: () => ({
-        single: async () => ({ data: { id: "run-retry", session_id: "sess-1" }, error: null }),
-      }),
-    }),
-    // Serves the dedupe path's bounded wait for the existing job's run row:
-    // .select().eq("agent_job_id").order().limit().abortSignal().maybeSingle().
-    select: () => {
-      const chain = {
-        abortSignal: () => chain,
-        eq: () => chain,
-        limit: () => chain,
-        maybeSingle: async () => ({
-          data: { id: "run-retry-existing", session_id: "sess-1" },
-          error: null,
-        }),
-        order: () => chain,
-      };
-      return chain;
-    },
-  };
-
-  const agentConfigTable = {
-    select: () => ({
-      eq: () => ({
-        in: async () => ({ data: [], error: null }),
-      }),
-    }),
-  };
-
-  const pipelineStagesTable = {
-    select: () => ({
-      eq: () => ({
-        maybeSingle: async () => ({
-          data: { id: productStage.id, name: productStage.name, slug: productStage.slug },
-          error: null,
-        }),
-      }),
-    }),
-  };
-
-  const feedbackTable = {
-    insert: async (row: Record<string, unknown>) => {
-      insertedFeedback.push(row);
-      return { error: opts.feedbackInsertError ?? null };
-    },
-  };
-
-  const sessionPullRequestsTable = {
+  const githubRepositoriesTable = {
     select: () => ({
       eq: () => ({
         eq: () => ({
-          order: () => ({
-            limit: () => ({
-              maybeSingle: async () => ({ data: null, error: null }),
-            }),
+          maybeSingle: async () => ({
+            data: opts.sessionPullRequestRepositoryId
+              ? {
+                  default_branch: "main",
+                  default_programming_language: null,
+                  full_name: "acme/app",
+                  github_installation_id: "inst-1",
+                  html_url: "https://github.com/acme/app",
+                  id: opts.sessionPullRequestRepositoryId,
+                  is_archived: false,
+                  private: false,
+                  workspace_id: "ws-1",
+                }
+              : null,
+            error: null,
           }),
         }),
       }),
@@ -2349,129 +2255,47 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     }),
   };
 
+  // Only the effective-repository lookup reads the session now; the RPC owns
+  // every guard that used to need the full row.
+  const sessionsTable = {
+    select: () => {
+      const builder = {
+        eq: () => builder,
+        maybeSingle: async () => ({ data: { github_repository_id: null }, error: null }),
+      };
+      return builder;
+    },
+  };
+
   const tables: Record<string, unknown> = {
-    sessions: sessionsTable,
-    session_artifacts: artifactsTable,
-    session_artifact_feedback: feedbackTable,
-    workspace_members: workspaceMembersTable,
-    agent_jobs: agentJobsTable,
-    agent_runs: agentRunsTable,
-    pipeline_stages: pipelineStagesTable,
-    workspace_agent_config: agentConfigTable,
+    github_repositories: githubRepositoriesTable,
     session_pull_requests: sessionPullRequestsTable,
-    workspace_repository_profiles: workspaceRepositoryProfilesTable,
+    sessions: sessionsTable,
     workspace_onboarding: workspaceOnboardingTable,
+    workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
   return {
-    admin: createProcessorTestAdminClient({ from: (name: string) => tables[name] ?? {} }),
-    sessionUpdates,
-    artifactUpdates,
-    insertedFeedback,
-    enqueuedJobs,
+    admin: createProcessorTestAdminClient({
+      from: (name: string) => tables[name] ?? {},
+      rpc,
+    }),
+    rpc,
   };
 }
 
 describe("handleRejection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocked.loadStageById.mockResolvedValue(productStage);
+    mocked.loadWorkspaceAgentConfig.mockResolvedValue({
+      effort: "xhigh",
+      model: "gpt-5.5",
+      provider: "codex",
+    });
   });
 
-  it("returns 'session not found' when the session row is missing", async () => {
-    const { admin } = buildRejectionMock({ session: null });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "needs work",
-      requestedByMemberId: "mem-reviewer",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("Session not found");
-  });
-
-  it("returns 'session not found' when the workspace doesn't match (cross-workspace guard)", async () => {
-    const session = baseSession({ workspace_id: "ws-OTHER", phase_status: "awaiting_review" });
-    const { admin } = buildRejectionMock({ session });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "needs work",
-      requestedByMemberId: "mem-reviewer",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("Session not found");
-  });
-
-  it("refuses to reject an archived session without enqueuing work", async () => {
-    const session = baseSession({
-      archived_at: "2026-06-07T12:00:00.000Z",
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-    });
-    const { admin, enqueuedJobs } = buildRejectionMock({ session });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "needs work",
-      requestedByMemberId: "mem-reviewer",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("archived");
-    expect(enqueuedJobs).toHaveLength(0);
-  });
-
-  it("rejects with a version-mismatch error when current_artifact_version moved on", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 2,
-    });
-    const { admin } = buildRejectionMock({ session });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "needs work",
-      requestedByMemberId: "mem-reviewer",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("Version mismatch");
-  });
-
-  it("rejects with 'race' when the rejection_count CAS finds no matching row", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-    });
-    const { admin } = buildRejectionMock({ session, rejectionClaim: null });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "needs work",
-      requestedByMemberId: "mem-reviewer",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("raced");
-  });
-
-  it("writes feedback, enqueues a retry, then flips status to rejected", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 0,
-    });
-    const { admin, sessionUpdates, insertedFeedback, enqueuedJobs } = buildRejectionMock({
-      session,
-    });
+  it("rejects through the reject_session_stage RPC with the reviewer, version, feedback, and queued-run config", async () => {
+    const { admin, rpc } = buildRejectionMock();
 
     const result = await handleRejection({
       admin,
@@ -2482,37 +2306,77 @@ describe("handleRejection", () => {
       version: 1,
     });
 
-    expect(result.success).toBe(true);
-    expect(result.jobId).toBe("job-retry");
-    expect(insertedFeedback).toHaveLength(1);
-    expect(insertedFeedback[0]).toMatchObject({
-      feedback_text: "tighten the spec",
-      session_id: "sess-1",
-      target_version: 1,
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("reject_session_stage", {
+      p_agent_model_name: "gpt-5.5",
+      p_agent_model_provider: "codex",
+      p_artifact_version: 1,
+      p_feedback_text: "tighten the spec",
+      p_requested_by_member_id: "mem-reviewer",
+      p_run_type: "project",
+      p_session_id: "sess-1",
+      p_workspace_id: "ws-1",
     });
-    expect(enqueuedJobs).toHaveLength(1);
-    expect(enqueuedJobs[0]!.session_id).toBe("sess-1");
-    expect(enqueuedJobs[0]!.requested_by_member_id).toBe("mem-reviewer");
-    expect(enqueuedJobs[0]).toMatchObject({
-      stage_id: "stage-product",
-      stage_name: "Product",
-      stage_slug: "product",
+    expect(result).toEqual({
+      jobId: "job-retry",
+      session: {
+        archivedAt: null,
+        currentArtifactVersion: 1,
+        currentStageId: "stage-product",
+        phaseStatus: "rejected",
+        rejectionCount: 1,
+      },
+      success: true,
     });
-    expect(enqueuedJobs[0]!.trigger_type).toBe("comment_retry");
-    expect(sessionUpdates[0]).toEqual({ rejection_count: 1 });
-    expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
   });
 
-  it("treats a unique_violation on enqueue (23505) as silent success — the existing queued job will pick up the feedback", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 0,
+  it("stamps the code run mode when the session's pull request resolves to a repository", async () => {
+    const { admin, rpc } = buildRejectionMock({ sessionPullRequestRepositoryId: "repo-1" });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs tests",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
     });
-    const { admin, sessionUpdates } = buildRejectionMock({
-      session,
-      enqueueError: { code: "23505", message: "duplicate" },
+
+    expect(result.success).toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      "reject_session_stage",
+      expect.objectContaining({ p_run_type: "code" }),
+    );
+  });
+
+  it("omits the reviewer when no member id is available", async () => {
+    const { admin, rpc } = buildRejectionMock();
+
+    await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: null,
+      sessionId: "sess-1",
+      version: 1,
     });
+
+    expect(rpc).toHaveBeenCalledWith(
+      "reject_session_stage",
+      expect.objectContaining({ p_requested_by_member_id: undefined }),
+    );
+  });
+
+  it("reports the adopted job when the RPC deduped against an already-active job", async () => {
+    const { admin } = buildRejectionMock({
+      rpcResult: {
+        data: [
+          rejectedSessionRow({ job_created: false, job_id: "job-retry-existing", run_id: null }),
+        ],
+        error: null,
+      },
+    });
+
     const result = await handleRejection({
       admin,
       expectedWorkspaceId: "ws-1",
@@ -2521,85 +2385,69 @@ describe("handleRejection", () => {
       sessionId: "sess-1",
       version: 1,
     });
+
     expect(result.success).toBe(true);
-    // The shared enqueue path resolves the live job behind the dedupe key and
-    // reports it instead of treating the unique violation as a failure.
     expect(result.jobId).toBe("job-retry-existing");
-    expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
+    expect(result.session?.phaseStatus).toBe("rejected");
   });
 
-  it("returns the enqueue error and stops *before* flipping to rejected when the retry can't be queued", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 0,
+  it.each([
+    ["P0002", "Session not found."],
+    ["55000", "Session is archived."],
+    ["55000", "Session is not awaiting review."],
+    ["55000", "Version mismatch: a newer version exists."],
+    ["42501", "Reviewer is not an active member of workspace ws-1"],
+  ])("surfaces the RPC guard failure %s '%s' without a state change", async (code, message) => {
+    const { admin, rpc } = buildRejectionMock({
+      rpcResult: { data: null, error: { code, message } },
     });
-    const { admin, sessionUpdates } = buildRejectionMock({
-      session,
-      enqueueError: { code: "deadlock", message: "queue write failed" },
-    });
+
     const result = await handleRejection({
       admin,
       expectedWorkspaceId: "ws-1",
-      feedbackText: "boom",
+      feedbackText: "needs work",
       requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("queue write failed");
-    expect(sessionUpdates).toEqual([{ rejection_count: 1 }]);
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ error: message, success: false });
   });
 
-  it("treats a 23505 feedback insert as idempotent so a retry after a prior enqueue failure can still flip phase_status", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 0,
-    });
-    const { admin, sessionUpdates } = buildRejectionMock({
-      session,
-      feedbackInsertError: {
-        code: "23505",
-        message: "duplicate key value violates unique constraint",
-      },
-    });
+  it("treats an empty RPC result as a lost race", async () => {
+    const { admin } = buildRejectionMock({ rpcResult: { data: [], error: null } });
 
     const result = await handleRejection({
       admin,
-      expectedWorkspaceId: session.workspace_id,
-      feedbackText: "race",
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
       requestedByMemberId: "mem-reviewer",
-      sessionId: session.id,
-      version: 1,
-    });
-
-    expect(result.success).toBe(true);
-    expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
-  });
-
-  it("aborts the rejection when the feedback insert fails with a non-23505 error", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 0,
-    });
-    const { admin, sessionUpdates } = buildRejectionMock({
-      session,
-      feedbackInsertError: { code: "23503", message: "foreign key violation" },
-    });
-
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: session.workspace_id,
-      feedbackText: "boom",
-      requestedByMemberId: "mem-reviewer",
-      sessionId: session.id,
+      sessionId: "sess-1",
       version: 1,
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("foreign key");
-    expect(sessionUpdates).toEqual([{ rejection_count: 1 }]);
+    expect(result.error).toContain("raced with another update");
+  });
+
+  it("fails before calling the RPC when the queued-run config cannot be resolved", async () => {
+    mocked.loadWorkspaceAgentConfig.mockRejectedValueOnce(
+      new Error('Unknown agent provider: "nope". Supported: codex, claude-code'),
+    );
+    const { admin, rpc } = buildRejectionMock();
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(rpc).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Unknown agent provider");
   });
 });
