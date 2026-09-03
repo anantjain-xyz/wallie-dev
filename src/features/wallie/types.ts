@@ -11,10 +11,7 @@ export type WallieBlockingCode =
   | "repository_unavailable"
   | "sandbox_connection_invalid"
   | "sandbox_connection_missing"
-  | "sandbox_capability_check_stale"
-  /** @deprecated Kept while older clients migrate to provider-neutral codes. */
-  | "vercel_sandbox_connection_invalid"
-  | "vercel_sandbox_connection_missing";
+  | "sandbox_capability_check_stale";
 
 export type WallieActionErrorCode =
   | WallieBlockingCode
