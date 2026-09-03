@@ -284,6 +284,7 @@ function createProcessorTestAdminClient(
 
 function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
+  const artifactUpsertConflicts: Array<string | undefined> = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
   const insertedMessages: Array<Record<string, unknown>> = [];
   const updatedJobs: Array<Record<string, unknown>> = [];
@@ -344,6 +345,14 @@ function buildAdminMock(opts: MockOptions) {
   const artifactsTable = {
     insert: async (row: Record<string, unknown>) => {
       insertedArtifacts.push(row);
+      return { error: opts.artifactInsertError ?? null };
+    },
+    upsert: async (
+      row: Record<string, unknown>,
+      options?: { onConflict?: string },
+    ) => {
+      insertedArtifacts.push(row);
+      artifactUpsertConflicts.push(options?.onConflict);
       return { error: opts.artifactInsertError ?? null };
     },
     delete: () => {
@@ -640,6 +649,7 @@ function buildAdminMock(opts: MockOptions) {
       from: (name: string) => tables[name] ?? {},
       rpc,
     }),
+    artifactUpsertConflicts,
     insertedArtifacts,
     insertedMessages,
     insertedRuns,
@@ -798,6 +808,23 @@ describe("processPipelineJob (generic stage runner)", () => {
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
+  });
+
+  it("adopts an existing unpublished artifact row on the unique version key", async () => {
+    const session = baseSession();
+    const { admin, artifactUpsertConflicts, insertedArtifacts } = buildAdminMock({
+      session,
+      agentConfig: [],
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    // A leftover unpublished row at (session, stage, N+1) from a crash after
+    // insert and before the pointer CAS must be adopted, not rejected by
+    // session_artifacts_unique_version.
+    expect(result.result).toBe("success");
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(artifactUpsertConflicts).toEqual(["session_id,stage_slug,version"]);
   });
 
   it("deletes the orphaned artifact when cancellation wins the pointer CAS", async () => {

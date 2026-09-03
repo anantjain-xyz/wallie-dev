@@ -865,14 +865,24 @@ async function insertArtifact(
     workspaceId: string;
   },
 ): Promise<void> {
-  const { error } = await admin.from("session_artifacts").insert({
-    artifact_json: input.artifactJson,
-    session_id: input.sessionId,
-    stage_id: input.stageId,
-    stage_slug: input.stageSlug,
-    version: input.version,
-    workspace_id: input.workspaceId,
-  });
+  // `newVersion` is computed from the session row loaded at claim time. A
+  // crash after this write and before the pointer CAS leaves an unpublished
+  // row at `(session_id, stage_slug, version)`. A plain insert then hits
+  // `session_artifacts_unique_version` on every retry and the job terminals
+  // with the leftover row still unpublished. Adopt that row so the retry can
+  // write the new draft; the pointer CAS then either publishes it (first
+  // write) or is a no-op (already `awaiting_review`).
+  const { error } = await admin.from("session_artifacts").upsert(
+    {
+      artifact_json: input.artifactJson,
+      session_id: input.sessionId,
+      stage_id: input.stageId,
+      stage_slug: input.stageSlug,
+      version: input.version,
+      workspace_id: input.workspaceId,
+    },
+    { onConflict: "session_id,stage_slug,version" },
+  );
   if (error) throw error;
 }
 
