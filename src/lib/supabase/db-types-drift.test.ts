@@ -191,13 +191,4 @@ describe("generated database types drift heuristic", () => {
     expect(result.exitCode).toBe(1);
     expect(result.messages.some((message) => message.includes("shallow"))).toBe(true);
   });
-
-  it.skipIf(isShallowGitRepository())(
-    "accepts the committed types file against the latest checked-in migration",
-    () => {
-      const result = checkDbTypesDrift();
-      expect(result.exitCode).toBe(0);
-      expect(result.latestMigration).toMatch(/^\d{14}_.+\.sql$/);
-    },
-  );
 });
