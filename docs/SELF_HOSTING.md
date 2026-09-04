@@ -116,7 +116,7 @@ After creating it: copy the **App ID** → `GITHUB_APP_ID`, generate a private k
 These are entered through the app's **Settings** UI and stored encrypted in your database — they are intentionally **not** environment variables:
 
 - **Agent provider & model** — Codex, Claude Code, Cursor, or OpenCode, plus the provider credential (ChatGPT sign-in / Codex token / OpenAI key, an Anthropic API key, Cursor browser sign-in, or an OpenCode Zen / per-provider API key). Cursor sign-in is processed by the Wallie worker.
-- **Linear API key** — for pulling issue context.
+- **Linear API key (optional)** — add one if you want to attach Linear issue context. You can start a session with a prompt alone.
 - **GitHub installation** — install the App onto the repos a workspace should see.
 - **Sandbox provider** — connect Vercel, E2B, and/or Daytona, choose one active provider, then run its repository capability check. Connections are retained when switching.
 
@@ -126,9 +126,9 @@ See [README → Configure agent provider](../README.md#configure-agent-provider)
 
 1. Open your origin and sign up via Supabase Auth.
 2. Complete onboarding (create a workspace).
-3. In **Settings**, connect an agent provider, your Linear key, install the GitHub App, pick a repo, and connect the selected sandbox provider.
+3. In **Settings**, connect an agent provider, install the GitHub App, pick a repo, and connect the selected sandbox provider. Add a Linear key only if you want to attach Linear issues.
 4. Run the sandbox capability check for that repository and confirm Git, Node 22, the agent CLI, Playwright, Chromium, and screenshot smoke all pass.
-5. Create a session.
+5. Create a session by describing a task; attaching a Linear issue is optional.
 6. Confirm the **worker logs** show it claiming the job, and that an artifact appears in the session detail view for review.
 
 If a session stays at `in_progress`: the worker isn't running, agent credentials are missing/invalid, or the worker can't reach your web origin or Supabase. Check the worker logs first.

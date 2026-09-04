@@ -223,7 +223,7 @@ export function GitHubConnectionPanel({
         <div className="flex flex-wrap items-center justify-between gap-4">
           <p className="max-w-2xl text-[13px] leading-6 text-muted">
             {hasGitHubAppConfig
-              ? "The app requests read access to repositories and metadata, plus write access to pull requests on the repos you select during install."
+              ? "The app requests read and write access to repository contents and pull requests, plus read access to metadata. This lets Wallie prepare your repository and publish changes on the repos you select during install."
               : source === "onboarding"
                 ? "Once these variables are set and the app restarts, the install button turns on. You cannot finish this step or continue until the App is installed and a repository is connected."
                 : "Once these variables are set and the app restarts, the install button turns on."}
