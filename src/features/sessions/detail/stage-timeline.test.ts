@@ -74,6 +74,23 @@ it("does not infer completion for an unapproved stage moved before the current s
   ]);
 });
 
+it.each(["in_progress", "awaiting_review"] as const)(
+  "shows an active %s revisit instead of its historical completion",
+  (phaseStatus) => {
+    const session = makeSession({ phaseStatus });
+    session.phaseCompletions.push({ stageSlug: "build", completedAt: "2026-06-07T11:30:00.000Z" });
+    const timeline = buildStageTimeline(session);
+    expect(timeline[1]?.status).toBe("current");
+    render(
+      createElement(StageTimeline, { onSelect: vi.fn(), selectedStageSlug: "build", timeline }),
+    );
+    const label = phaseStatus === "in_progress" ? "In progress" : "Awaiting review";
+    expect(
+      screen.getByRole("button", { name: `Build: ${label}` }).getAttribute("aria-current"),
+    ).toBe("step");
+  },
+);
+
 describe("centerStageTimelineSelection", () => {
   it("centers the selected stage with horizontal rail scrolling only", () => {
     const scrollTo = vi.fn();

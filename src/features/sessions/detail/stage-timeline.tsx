@@ -36,40 +36,29 @@ export function buildStageTimeline(
   const failedStageSlug = options?.failedStageSlug ?? null;
 
   return session.pipeline.stages.map((stage, idx) => {
-    const completedAt = completionIndex.get(stage.slug) ?? null;
-
-    if (failedStageSlug === stage.slug) {
-      return {
-        phaseStatus: idx === currentIdx ? session.phaseStatus : null,
-        stage,
-        status: "failed" as const,
-      };
-    }
-
-    if (completedAt || (idx === currentIdx && session.phaseStatus === "approved")) {
-      return {
-        phaseStatus: null,
-        stage,
-        status: "completed" as const,
-      };
-    }
-
+    // Live ordering can revisit an approved stage. Its active state takes
+    // precedence over a completion recorded on a previous visit.
     if (idx === currentIdx) {
-      if (session.phaseStatus === "rejected") {
-        return {
-          phaseStatus: session.phaseStatus,
-          stage,
-          status: "not_running" as const,
-        };
+      if (session.phaseStatus === "approved") {
+        return { phaseStatus: null, stage, status: "completed" as const };
       }
-
+      if (failedStageSlug === stage.slug) {
+        return { phaseStatus: session.phaseStatus, stage, status: "failed" as const };
+      }
       return {
         phaseStatus: session.phaseStatus,
         stage,
-        status: "current" as const,
+        status:
+          session.phaseStatus === "rejected" ? ("not_running" as const) : ("current" as const),
       };
     }
 
+    if (completionIndex.get(stage.slug)) {
+      return { phaseStatus: null, stage, status: "completed" as const };
+    }
+    if (failedStageSlug === stage.slug) {
+      return { phaseStatus: null, stage, status: "failed" as const };
+    }
     return {
       phaseStatus: null,
       stage,
