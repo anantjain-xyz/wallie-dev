@@ -1,5 +1,5 @@
 import { SkeletonBlock } from "@/components/ui/skeleton";
-import { PageContainer } from "@/components/ui/page-shell";
+import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 
 const listRowTitleWidths = ["w-7/12", "w-5/12", "w-8/12", "w-6/12", "w-9/12", "w-4/12"];
 
@@ -35,15 +35,9 @@ function SessionRowSkeleton({ index }: { index: number }) {
 
 function StageRailSkeleton() {
   return (
-    <div className="grid gap-3 sm:grid-cols-3" aria-hidden="true">
+    <div className="mb-4 flex flex-wrap gap-1.5 border-b border-border pb-3" aria-hidden="true">
       {Array.from({ length: 3 }, (_, index) => (
-        <div key={index} className="flex min-w-0 items-center gap-2">
-          <SkeletonBlock className="h-6 w-6 shrink-0 rounded-full" />
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <SkeletonBlock className="h-3 w-24 max-w-full" />
-            <SkeletonBlock className="h-2 w-full" />
-          </div>
-        </div>
+        <SkeletonBlock key={index} className="h-10 w-28" />
       ))}
     </div>
   );
@@ -51,39 +45,17 @@ function StageRailSkeleton() {
 
 function ArtifactPanelSkeleton() {
   return (
-    <section className="ui-sheet">
-      <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 space-y-2">
-          <SkeletonBlock className="h-4 w-40" />
-          <SkeletonBlock className="h-3 w-56 max-w-full" />
-        </div>
-        <SkeletonBlock className="h-6 w-28 shrink-0 rounded-full" />
+    <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
+      <div className="space-y-2 border-b border-border px-4 py-3">
+        <SkeletonBlock className="h-4 w-40 max-w-full" />
+        <SkeletonBlock className="h-3 w-56 max-w-full" />
       </div>
       <div className="space-y-3 p-4">
         <SkeletonBlock className="h-4 w-11/12" />
         <SkeletonBlock className="h-4 w-full" />
         <SkeletonBlock className="h-4 w-10/12" />
-        <SkeletonBlock className="mt-5 h-28 w-full" />
-      </div>
-      <div className="flex justify-end gap-2 border-t border-border bg-control-muted p-4">
-        <SkeletonBlock className="h-9 w-40" />
-        <SkeletonBlock className="h-9 w-36" />
-      </div>
-    </section>
-  );
-}
-
-function CompactPanelSkeleton({ lines = 3 }: { lines?: number }) {
-  return (
-    <section className="ui-sheet p-4">
-      <SkeletonBlock className="h-3 w-24" />
-      <div className="mt-3 space-y-2">
-        {Array.from({ length: lines }, (_, index) => (
-          <SkeletonBlock
-            key={index}
-            className={index === lines - 1 ? "h-3 w-7/12" : "h-3 w-full"}
-          />
-        ))}
+        <SkeletonBlock className="mt-5 h-36 w-full" />
+        <SkeletonBlock className="h-4 w-8/12" />
       </div>
     </section>
   );
@@ -123,35 +95,46 @@ export function SessionsListLoadingSkeleton() {
 
 export function SessionDetailLoadingSkeleton() {
   return (
-    <PageContainer>
+    <PageContainer className="pb-4">
       <section aria-busy="true" aria-label="Loading session" role="status">
-        <header className="mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sm:mb-10">
-          <div className="min-w-0 flex-1 space-y-3">
-            <SkeletonBlock className="h-3 w-32" />
-            <div className="flex min-w-0 items-center gap-2">
-              <SkeletonBlock className="h-8 w-8/12 max-w-[520px]" />
-              <SkeletonBlock className="h-8 w-8 shrink-0 rounded-full" />
-            </div>
-          </div>
-          <SkeletonBlock className="h-9 w-24 shrink-0" />
-        </header>
+        <span className="sr-only">Loading session…</span>
+        <PageHeader
+          actionsRightOnDesktop
+          eyebrow={<SkeletonBlock className="h-4 w-32" />}
+          titleAsChild
+          title={<SkeletonBlock className="h-8 w-full max-w-[520px]" />}
+          actions={<SkeletonBlock className="h-9 w-24" />}
+        />
 
-        <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5" aria-hidden="true">
-          <SkeletonBlock className="h-4 w-28" />
-          <SkeletonBlock className="h-4 w-32" />
-          <SkeletonBlock className="h-4 w-24" />
-          <SkeletonBlock className="h-4 w-28" />
-        </div>
+        <StageRailSkeleton />
 
-        <div className="ui-sheet mb-6 px-5 py-4">
-          <StageRailSkeleton />
-        </div>
-
-        <div className="flex flex-col gap-6">
+        <div
+          className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0"
+          aria-hidden="true"
+        >
           <ArtifactPanelSkeleton />
-          <CompactPanelSkeleton lines={4} />
-          <CompactPanelSkeleton lines={3} />
+          <aside className="ui-sheet space-y-5 p-4 lg:rounded-l-none">
+            <SkeletonBlock className="h-4 w-20" />
+            {Array.from({ length: 4 }, (_, index) => (
+              <div key={index} className="flex items-center justify-between gap-4">
+                <SkeletonBlock className="h-3 w-16" />
+                <SkeletonBlock className="h-3 w-28" />
+              </div>
+            ))}
+            <SkeletonBlock className="h-8 w-full" />
+          </aside>
         </div>
+
+        <section className="ui-sheet mt-6" aria-hidden="true">
+          <div className="space-y-2 border-b border-border px-4 py-3">
+            <SkeletonBlock className="h-4 w-16" />
+            <SkeletonBlock className="h-3 w-64 max-w-full" />
+          </div>
+          <div className="space-y-3 p-4">
+            <SkeletonBlock className="h-12 w-full" />
+            <SkeletonBlock className="h-12 w-full" />
+          </div>
+        </section>
       </section>
     </PageContainer>
   );

@@ -49,7 +49,7 @@ describe("SessionDetailLoadingSkeleton", () => {
     expect(html).toContain('aria-label="Loading session"');
     expect(html).toContain("border-b border-border");
     expect(html).toContain("bg-control-muted");
-    expect((html.match(/ui-sheet/g) ?? []).length).toBe(4);
+    expect((html.match(/ui-sheet/g) ?? []).length).toBe(3);
     expectNoFocusableFakeControls(html);
   });
 });
