@@ -9,7 +9,7 @@ import {
 } from "@/lib/storage/contracts";
 
 export const sessionAttachmentBucket = "session-attachments";
-export const sessionAttachmentExpiryMs = 24 * 60 * 60 * 1000;
+export { sessionAttachmentExpiryMs } from "@/lib/storage/contracts";
 
 export function createSessionAttachmentIdentity(workspaceId: string, contentType: string) {
   const id = randomUUID();

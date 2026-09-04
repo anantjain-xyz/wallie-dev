@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
@@ -134,10 +135,10 @@ describe("CreateSessionDialog accessibility", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
     expect(dialog).toHaveAccessibleDescription(
-      "Link a Linear issue or describe the work, then choose where Wallie should run.",
+      "Describe the work or link a Linear issue, then choose where Wallie should run.",
     );
     expect(screen.queryByText("Work to start")).toBeNull();
-    await waitFor(() => expect(screen.getByLabelText("Linear issue URL")).toHaveFocus());
+    await waitFor(() => expect(screen.getByLabelText("Prompt")).toHaveFocus());
     await waitFor(() => expect(document.body.dataset.scrollLocked).toBe("1"));
     expect(screen.getByText("Outside").closest("button")).toHaveAttribute("aria-hidden", "true");
 
@@ -601,4 +602,208 @@ describe("CreateSessionDialog accessibility", () => {
         .closest('[role="status"]'),
     ).toBeVisible();
   });
+});
+
+function DraftHarness({
+  userId = "user-1",
+  workspaceId = "workspace-1",
+}: {
+  userId?: string;
+  workspaceId?: string;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <OverlayProvider>
+      <button onClick={() => setOpen(true)}>Reopen composer</button>
+      <CreateSessionDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        userId={userId}
+        workspaceId={workspaceId}
+        workspaceSlug="acme"
+      />
+    </OverlayProvider>
+  );
+}
+
+function prepareDraftOptions() {
+  clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+    defaultGithubRepositoryId: "repo-1",
+    pipelineId: "pipeline-1",
+    repositoryOptions: [{ id: "repo-1", fullName: "acme/app" }],
+    stageOptions: [{ id: "stage-1", name: "Plan", position: 1, description: "Plan the work" }],
+  });
+  clientMocks.uploadSessionAttachmentFromClient.mockResolvedValue({
+    contentType: "image/png",
+    fileName: "draft.png",
+    id: "attachment-1",
+    sizeBytes: 8,
+  });
+}
+
+async function fillImageDraft(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(await screen.findByLabelText("Prompt"), "Build a useful thing");
+  await user.type(screen.getByLabelText("Title (optional)"), "My draft title");
+  await user.upload(
+    screen.getByLabelText("Add images"),
+    new File(["png data"], "draft.png", { type: "image/png" }),
+  );
+  await screen.findByText(/8 B · Ready/);
+}
+
+describe("session draft lifetime", () => {
+  it("preserves fields and uploaded images after Escape and Close, and discards explicitly", async () => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    render(<DraftHarness />);
+    await fillImageDraft(user);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+    await user.click(screen.getByText("Reopen composer"));
+    expect(await screen.findByLabelText("Prompt")).toHaveValue("Build a useful thing");
+    expect(screen.getByLabelText("Title (optional)")).toHaveValue("My draft title");
+    expect(screen.getByText(/8 B · Ready/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(await screen.findByText("Reopen composer"));
+    expect(await screen.findByLabelText("Prompt")).toHaveValue("Build a useful thing");
+    await user.click(screen.getByRole("button", { name: "Discard draft" }));
+    await waitFor(() =>
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).toHaveBeenCalledWith({
+        attachmentId: "attachment-1",
+        workspaceId: "workspace-1",
+      }),
+    );
+    await user.click(screen.getByText("Reopen composer"));
+    expect(await screen.findByLabelText("Prompt")).toHaveValue("");
+    expect(screen.queryByText("draft.png")).toBeNull();
+  });
+
+  it("retains a failed submission and clears a successful one without deleting committed images", async () => {
+    prepareDraftOptions();
+    clientMocks.createSessionFromClient
+      .mockRejectedValueOnce(new Error("Try again"))
+      .mockResolvedValueOnce({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
+    const user = userEvent.setup();
+    render(<DraftHarness />);
+    await fillImageDraft(user);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await screen.findByText("Try again");
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Build a useful thing");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+    await user.click(screen.getByText("Reopen composer"));
+    expect(await screen.findByLabelText("Prompt")).toHaveValue("");
+    expect(screen.queryByText("draft.png")).toBeNull();
+  });
+
+  it.each([
+    { userId: "user-2", workspaceId: "workspace-1" },
+    { userId: "user-1", workspaceId: "workspace-2" },
+  ])("clears the draft when its scope changes to %o", async (scope) => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    const view = render(<DraftHarness />);
+    await fillImageDraft(user);
+    view.rerender(<DraftHarness {...scope} />);
+    expect(await screen.findByLabelText("Prompt")).toHaveValue("");
+    expect(screen.queryByText("draft.png")).toBeNull();
+    await waitFor(() =>
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).toHaveBeenCalledWith({
+        attachmentId: "attachment-1",
+        workspaceId: "workspace-1",
+      }),
+    );
+  });
+});
+
+it.each(["reopen", "submit"])(
+  "renews expired draft images on %s before allowing creation",
+  async (trigger) => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    render(<DraftHarness />);
+    await fillImageDraft(user);
+    if (trigger === "reopen") await user.keyboard("{Escape}");
+
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 25 * 60 * 60 * 1000);
+    let finishUpload!: (value: unknown) => void;
+    clientMocks.uploadSessionAttachmentFromClient.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    try {
+      if (trigger === "reopen") await user.click(screen.getByText("Reopen composer"));
+      else await user.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() =>
+        expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledTimes(2),
+      );
+      expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+      expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Prompt")).toHaveValue("Build a useful thing");
+      finishUpload({
+        id: "renewed-attachment",
+        contentType: "image/png",
+        fileName: "draft.png",
+        sizeBytes: 8,
+      });
+      await screen.findByText(/8 B · Ready/);
+      clientMocks.createSessionFromClient.mockResolvedValueOnce({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() =>
+        expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+          expect.objectContaining({ attachmentIds: ["renewed-attachment"] }),
+        ),
+      );
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).toHaveBeenCalledWith({
+        attachmentId: "attachment-1",
+        workspaceId: "workspace-1",
+      });
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalledWith(
+        expect.objectContaining({ attachmentId: "renewed-attachment" }),
+      );
+    } finally {
+      now.mockRestore();
+    }
+  },
+);
+
+it("renews files after an authoritative attachment conflict without duplicating creation", async () => {
+  prepareDraftOptions();
+  const user = userEvent.setup();
+  render(<DraftHarness />);
+  await fillImageDraft(user);
+  clientMocks.createSessionFromClient.mockRejectedValueOnce(
+    Object.assign(new Error("Images expired"), { code: "session_attachments_changed" }),
+  );
+  clientMocks.uploadSessionAttachmentFromClient.mockResolvedValueOnce({
+    id: "replacement-attachment",
+    contentType: "image/png",
+    fileName: "draft.png",
+    sizeBytes: 8,
+  });
+  await user.click(screen.getByRole("button", { name: "Start session" }));
+  await screen.findByText(/Session images expired or changed/);
+  await waitFor(() =>
+    expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledTimes(2),
+  );
+  await screen.findByText(/8 B · Ready/);
+  expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText("Prompt")).toHaveValue("Build a useful thing");
+  clientMocks.createSessionFromClient.mockResolvedValueOnce({
+    canonicalUrl: "/w/acme/sessions/42",
+    number: 42,
+  });
+  await user.click(screen.getByRole("button", { name: "Start session" }));
+  await waitFor(() =>
+    expect(clientMocks.createSessionFromClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ attachmentIds: ["replacement-attachment"] }),
+    ),
+  );
 });
