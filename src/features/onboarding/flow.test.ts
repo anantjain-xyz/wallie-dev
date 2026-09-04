@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ONBOARDING_STEPS,
+  ONBOARDING_GROUPS,
   buildOnboardingAdvancePatch,
   buildOnboardingContinuePatch,
   buildOnboardingExitPatch,
@@ -35,13 +36,18 @@ function onboardingState(
 }
 
 describe("onboarding flow helpers", () => {
+  it("groups every setup step exactly once without changing the persisted sequence", () => {
+    expect(ONBOARDING_GROUPS.flatMap((group) => group.steps)).toEqual(
+      ONBOARDING_STEPS.map((step) => step.id),
+    );
+  });
   it("uses Connect terminology for Linear and agent provider setup labels", () => {
     expect(
       ONBOARDING_STEPS.filter((step) => step.id === "linear" || step.id === "runtime").map(
         ({ id, shortTitle, title }) => [id, title, shortTitle],
       ),
     ).toEqual([
-      ["linear", "Connect Linear", "Linear"],
+      ["linear", "Connect Linear (optional)", "Linear"],
       ["runtime", "Connect Agent", "Agent"],
     ]);
   });
@@ -65,6 +71,19 @@ describe("onboarding flow helpers", () => {
       ["runtime", "available"],
       ["verify", "available"],
     ]);
+  });
+
+  it("keeps skipped steps distinct after setup is marked completed", () => {
+    const items = getOnboardingStepRailItems(
+      onboardingState({
+        status: "completed",
+        currentStep: "verify",
+        skippedSteps: ["linear", "runtime"],
+      }),
+    );
+    expect(items.find((item) => item.id === "linear")?.displayState).toBe("skipped");
+    expect(items.find((item) => item.id === "runtime")?.displayState).toBe("skipped");
+    expect(items.find((item) => item.id === "github")?.displayState).toBe("completed");
   });
 
   it("continues by completing the current step and persisting the next current step", () => {
