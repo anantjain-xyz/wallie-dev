@@ -9,6 +9,7 @@ export type SessionImageDraft = {
   attachmentId?: string;
   clientId: string;
   error?: string;
+  refreshAfter?: number;
   file: File;
   fileName: string;
   previewUrl: string;
