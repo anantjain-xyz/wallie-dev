@@ -127,6 +127,7 @@ describe("session detail realtime helpers", () => {
       completed_at: "2026-05-21T13:07:00.000Z",
       id: "completion-1",
       session_id: "sess-1",
+      stage_id: "stage-1",
       stage_slug: "product",
     });
 
@@ -134,6 +135,7 @@ describe("session detail realtime helpers", () => {
       {
         completedAt: "2026-05-21T13:07:00.000Z",
         id: "completion-1",
+        stageId: "stage-1",
         stageSlug: "product",
       },
     ]);
@@ -180,4 +182,36 @@ describe("session detail realtime helpers", () => {
 
     expect(removePullRequestRealtimeRow(withPullRequest, { id: "pr-1" }).pullRequests).toEqual([]);
   });
+});
+
+it("upserts a renamed stage completion by durable identity and preserves distinct stages", () => {
+  const session = {
+    ...baseSession,
+    phaseCompletions: [
+      {
+        id: "old-completion",
+        stageId: "stage-1",
+        stageSlug: "old-slug",
+        completedAt: "2026-05-21T13:00:00.000Z",
+      },
+      {
+        id: "other-completion",
+        stageId: "stage-2",
+        stageSlug: "new-slug",
+        completedAt: "2026-05-21T13:00:00.000Z",
+      },
+    ],
+  };
+  const next = mergeCompletionRealtimeRow(session, {
+    id: "new-completion",
+    stage_id: "stage-1",
+    stage_slug: "new-slug",
+    session_id: "sess-1",
+    completed_at: "2026-05-21T14:00:00.000Z",
+  });
+  expect(next.phaseCompletions).toHaveLength(2);
+  expect(next.phaseCompletions.map((completion) => completion.id)).toEqual([
+    "other-completion",
+    "new-completion",
+  ]);
 });

@@ -48,6 +48,7 @@ import {
   reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
+  sameCompletionStage,
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
@@ -82,11 +83,6 @@ function isCurrentArchiveVersion(
 
 function stageIndex(pipeline: SessionReviewSession["pipeline"], stageSlug: string): number {
   return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
-}
-
-function isTerminalStage(pipeline: SessionReviewSession["pipeline"], stageSlug: string): boolean {
-  const terminalStage = pipeline.stages[pipeline.stages.length - 1];
-  return terminalStage?.slug === stageSlug;
 }
 
 function mergeSessionReviewStage(
@@ -497,11 +493,12 @@ export function SessionDetailPageClient({
         : null;
     const optimisticCompletion = {
       completedAt: new Date().toISOString(),
+      stageId: session.currentStageId,
       stageSlug: session.currentStageSlug,
     };
     const optimisticPhaseCompletions = [
       ...session.phaseCompletions.filter(
-        (completion) => completion.stageSlug !== session.currentStageSlug,
+        (completion) => !sameCompletionStage(completion, optimisticCompletion),
       ),
       optimisticCompletion,
     ];
@@ -825,10 +822,6 @@ export function SessionDetailPageClient({
     </div>
   );
 
-  const approveLabel = isTerminalStage(session.pipeline, session.currentStageSlug)
-    ? "Approve & archive"
-    : "Approve & advance";
-
   return (
     <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
@@ -938,7 +931,10 @@ export function SessionDetailPageClient({
       </section>
 
       <SessionReviewBar
-        approveLabel={approveLabel}
+        approveLabel="Approve stage"
+        approveDescription={
+          phaseActionPending ? undefined : "Final-stage approval may also archive the session."
+        }
         mode={stickyReviewMode}
         onApprove={() => {
           void handlePhaseAction("approve");

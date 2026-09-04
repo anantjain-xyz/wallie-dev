@@ -63,6 +63,8 @@ export type SessionCreationStageOption = {
 export type SessionPhaseCompletion = {
   completedAt: string;
   id?: string;
+  /** Stable identity; optional for payloads cached before this field was added. */
+  stageId?: string | null;
   stageSlug: string;
 };
 

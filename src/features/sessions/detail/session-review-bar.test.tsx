@@ -42,6 +42,14 @@ describe("SessionReviewBar", () => {
     expect(onApprove).toHaveBeenCalledTimes(1);
   });
 
+  it("announces the archive consequence when focusing the approval action", () => {
+    const description = "Final-stage approval may also archive the session.";
+    renderBar({ approveLabel: "Approve stage", approveDescription: description });
+    expect(screen.getByRole("button", { name: "Approve stage" })).toHaveAccessibleDescription(
+      description,
+    );
+  });
+
   it("rejects whitespace-only feedback and keeps the dialog open", async () => {
     const { onReject } = renderBar();
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));

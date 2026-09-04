@@ -280,6 +280,8 @@ export function serializeSessionReviewData(
       number: payload.session.number,
       phaseCompletions: payload.session.phaseCompletions.map((completion) => ({
         completedAt: completion.completedAt,
+        id: completion.id,
+        stageId: completion.stageId,
         stageSlug: completion.stageSlug,
       })),
       phaseStatus: payload.session.phaseStatus,

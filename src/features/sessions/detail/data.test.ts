@@ -66,7 +66,14 @@ function makeRpcPayload() {
       linearIssueId: null,
       linearIssueUrl: null,
       number: 18,
-      phaseCompletions: [{ completedAt: "2026-07-06T17:32:06.176Z", stageSlug: "plan" }],
+      phaseCompletions: [
+        {
+          completedAt: "2026-07-06T17:32:06.176Z",
+          id: "completion-plan",
+          stageId: "stage-plan",
+          stageSlug: "plan",
+        },
+      ],
       phaseStatus: "awaiting_review" as const,
       pipeline: {
         id: "pipeline-private-to-server",
@@ -136,6 +143,14 @@ describe("session review RSC contract", () => {
       "name",
       "position",
       "slug",
+    ]);
+    expect(review.session.phaseCompletions).toEqual([
+      {
+        completedAt: "2026-07-06T17:32:06.176Z",
+        id: "completion-plan",
+        stageId: "stage-plan",
+        stageSlug: "plan",
+      },
     ]);
     expect(JSON.stringify(review)).not.toContain("must-not-cross");
     expect(JSON.stringify(review)).not.toContain("private-to-server");

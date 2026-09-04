@@ -194,6 +194,21 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("acme/app");
   });
 
+  it("does not promise a next stage that live pipeline edits could change", () => {
+    const data = makeSessionDetailData();
+    data.session.pipeline.stages.push({
+      id: "custom-stage",
+      slug: "security-check",
+      name: "Security check",
+      description: "Review security",
+      position: 10,
+    });
+    const html = renderDetail({ data });
+    expect(html).toContain("Approve stage");
+    expect(html).not.toContain("Approve &amp; start Security check");
+    expect(html).toContain("Final-stage approval may also archive the session.");
+  });
+
   it("uses a 70/30 workbench grid with sticky review controls", () => {
     const html = renderDetail();
 
@@ -202,7 +217,8 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("lg:pl-5");
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain("Approve stage");
+    expect(html).toContain("Final-stage approval may also archive the session.");
     expect(html).toContain('aria-label="Pipeline stages"');
     expect(html).not.toContain("max-h-[480px]");
     expect(html).not.toContain(">Prompt<");
@@ -244,13 +260,13 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Product artifact");
     expect(html).toContain("Rendered artifact");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain("Approve stage");
   });
 
   it("shows reviewable controls when awaiting review", () => {
     const html = renderDetail();
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain("Approve stage");
   });
 
   it("shows stop run while generating", () => {
@@ -282,14 +298,16 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain(">Product</span>");
     expect(html).toContain(">Land</span>");
     expect(html).toContain("Product artifact");
-    expect(html).toContain("Wallie is drafting the artifact for this stage.");
+    expect(html).toContain("Waiting for this stage’s artifact. Follow progress in Runs below.");
     expect(html).toContain("Stop run");
     expect(html.indexOf("Stop run")).toBeLessThan(html.indexOf("Archive"));
     expect(html).not.toContain("Wallie is generating this stage’s artifact.");
     expect(html).not.toContain("sticky bottom-0");
     expect(html).not.toContain("Request changes");
     expect(html).not.toContain("data-status=");
-    expect(html).not.toMatch(/In progress|Complete|Upcoming/);
+    expect(html).toContain("In progress");
+    expect(html).toContain("Completed");
+    expect(html).toContain("Upcoming");
   });
 
   it("shows an explicit completed reason", () => {
@@ -314,7 +332,7 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ canReview: false });
     expect(html).toContain("Request changes");
     expect(html).toContain("You are not authorized to approve this stage.");
-    expect(html).not.toContain("Approve &amp; archive");
+    expect(html).not.toContain("Approve stage");
   });
 
   it("shows an explicit read-only reason when the stage is not ready for review", () => {
@@ -331,4 +349,12 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Collapsed — expand to inspect the original session input");
     expect(html).not.toContain("Build the title editor");
   });
+});
+
+it("does not promise automatic archival for a Linear-linked manual-merge workflow", () => {
+  const data = makeSessionDetailData();
+  data.session.linearIssueId = "TEAM-123";
+  const html = renderDetail({ data });
+  expect(html).toContain("Final-stage approval may also archive the session.");
+  expect(html).not.toContain("completes and archives");
 });

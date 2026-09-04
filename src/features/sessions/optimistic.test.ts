@@ -190,3 +190,23 @@ describe("optimistic session mutations", () => {
     ).toBe(advanced);
   });
 });
+
+it("replaces optimistic approval by stage ID when a stage was renamed", () => {
+  const updated = applySessionMutationPatch(
+    {
+      ...session,
+      phaseCompletions: [
+        { stageId: "stage-plan", stageSlug: "old-slug", completedAt: "2026-07-17T10:00:00.000Z" },
+      ],
+    },
+    {
+      phaseCompletion: {
+        stageId: "stage-plan",
+        stageSlug: "plan",
+        completedAt: "2026-07-17T12:00:00.000Z",
+      },
+    },
+  );
+  expect(updated.phaseCompletions).toHaveLength(1);
+  expect(updated.phaseCompletions[0]?.stageSlug).toBe("plan");
+});
