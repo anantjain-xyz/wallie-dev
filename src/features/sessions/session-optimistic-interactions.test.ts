@@ -204,9 +204,14 @@ describe("optimistic session interactions", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve & start Build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
 
     expect(screen.getByText("Drafting artifact")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "If this is the final stage, approval completes and archives the session.",
+      ),
+    ).toBeNull();
     expect((screen.getByRole("button", { name: /Approving/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );
@@ -266,7 +271,7 @@ describe("optimistic session interactions", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve & complete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
 
     const unarchive = screen.getByRole("button", { name: "Unarchive" }) as HTMLButtonElement;
     expect(unarchive.disabled).toBe(true);

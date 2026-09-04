@@ -12,7 +12,8 @@ export type StageTimelineStatus =
   | "current"
   | "upcoming"
   | "failed"
-  | "changes_requested";
+  | "not_running"
+  | "unapproved";
 
 export type StageTimelineEntry = {
   phaseStatus: SessionPhaseStatus | null;
@@ -45,11 +46,7 @@ export function buildStageTimeline(
       };
     }
 
-    if (
-      idx < currentIdx ||
-      completedAt ||
-      (idx === currentIdx && session.phaseStatus === "approved")
-    ) {
+    if (completedAt || (idx === currentIdx && session.phaseStatus === "approved")) {
       return {
         phaseStatus: null,
         stage,
@@ -62,7 +59,7 @@ export function buildStageTimeline(
         return {
           phaseStatus: session.phaseStatus,
           stage,
-          status: "changes_requested" as const,
+          status: "not_running" as const,
         };
       }
 
@@ -76,7 +73,7 @@ export function buildStageTimeline(
     return {
       phaseStatus: null,
       stage,
-      status: "upcoming" as const,
+      status: idx < currentIdx ? ("unapproved" as const) : ("upcoming" as const),
     };
   });
 }
@@ -102,8 +99,10 @@ export function stageTimelineLabel(entry: StageTimelineEntry): string {
       return "Completed";
     case "failed":
       return "Failed";
-    case "changes_requested":
-      return "Changes requested";
+    case "not_running":
+      return "Not running";
+    case "unapproved":
+      return "Not approved";
     case "upcoming":
       return "Upcoming";
     case "current":
@@ -164,7 +163,7 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                       ? "border-success/30 bg-success-soft text-success"
                       : entry.status === "failed"
                         ? "border-danger/30 bg-danger-soft text-danger"
-                        : entry.status === "changes_requested"
+                        : entry.status === "not_running"
                           ? "border-warning/30 bg-warning-soft text-warning"
                           : isCurrent
                             ? "border-accent bg-accent-soft text-accent"
@@ -173,7 +172,7 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                 >
                   {entry.status === "completed" ? (
                     <CheckIcon className="h-3.5 w-3.5" />
-                  ) : entry.status === "failed" || entry.status === "changes_requested" ? (
+                  ) : entry.status === "failed" || entry.status === "not_running" ? (
                     "!"
                   ) : (
                     index + 1

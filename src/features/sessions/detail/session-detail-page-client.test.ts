@@ -194,7 +194,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("acme/app");
   });
 
-  it("names the next selected stage in the approval action", () => {
+  it("does not promise a next stage that live pipeline edits could change", () => {
     const data = makeSessionDetailData();
     data.session.pipeline.stages.push({
       id: "custom-stage",
@@ -204,8 +204,11 @@ describe("SessionDetailPageClient", () => {
       position: 10,
     });
     const html = renderDetail({ data });
-    expect(html).toContain("Approve &amp; start Security check");
-    expect(html).not.toContain("Completing this session archives it.");
+    expect(html).toContain("Approve stage");
+    expect(html).not.toContain("Approve &amp; start Security check");
+    expect(html).toContain(
+      "If this is the final stage, approval completes and archives the session.",
+    );
   });
 
   it("uses a 70/30 workbench grid with sticky review controls", () => {
@@ -216,8 +219,10 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("lg:pl-5");
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; complete");
-    expect(html).toContain("Completing this session archives it.");
+    expect(html).toContain("Approve stage");
+    expect(html).toContain(
+      "If this is the final stage, approval completes and archives the session.",
+    );
     expect(html).toContain('aria-label="Pipeline stages"');
     expect(html).not.toContain("max-h-[480px]");
     expect(html).not.toContain(">Prompt<");
@@ -259,13 +264,13 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Product artifact");
     expect(html).toContain("Rendered artifact");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; complete");
+    expect(html).toContain("Approve stage");
   });
 
   it("shows reviewable controls when awaiting review", () => {
     const html = renderDetail();
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; complete");
+    expect(html).toContain("Approve stage");
   });
 
   it("shows stop run while generating", () => {
@@ -331,7 +336,7 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ canReview: false });
     expect(html).toContain("Request changes");
     expect(html).toContain("You are not authorized to approve this stage.");
-    expect(html).not.toContain("Approve &amp; complete");
+    expect(html).not.toContain("Approve stage");
   });
 
   it("shows an explicit read-only reason when the stage is not ready for review", () => {

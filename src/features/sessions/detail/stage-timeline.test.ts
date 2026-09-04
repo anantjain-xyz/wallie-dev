@@ -51,15 +51,27 @@ describe("buildStageTimeline", () => {
     expect(timeline.map((entry) => entry.status)).toEqual(["completed", "current", "upcoming"]);
   });
 
-  it("marks changes_requested when the current stage is rejected", () => {
+  it("uses neutral wording for rejected or stopped stages", () => {
     const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }));
-    expect(timeline[1]?.status).toBe("changes_requested");
+    expect(timeline[1]?.status).toBe("not_running");
   });
 
   it("marks failed when a failed stage slug is provided", () => {
     const timeline = buildStageTimeline(makeSession(), { failedStageSlug: "build" });
     expect(timeline[1]?.status).toBe("failed");
   });
+});
+
+it("does not infer completion for an unapproved stage moved before the current stage", () => {
+  const session = makeSession();
+  const [plan, build, land] = session.pipeline.stages;
+  session.pipeline.stages = [plan!, land!, build!];
+  const timeline = buildStageTimeline(session);
+  expect(timeline.map(stageTimelineLabel)).toEqual([
+    "Completed",
+    "Not approved",
+    "Awaiting review",
+  ]);
 });
 
 describe("centerStageTimelineSelection", () => {
@@ -113,13 +125,13 @@ describe("StageTimeline", () => {
     expect(current.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("shows failure and requested changes as text as well as visual indicators", () => {
+  it("shows failure and stopped states as text as well as visual indicators", () => {
     expect(
       stageTimelineLabel(buildStageTimeline(makeSession(), { failedStageSlug: "build" })[1]!),
     ).toBe("Failed");
     expect(
       stageTimelineLabel(buildStageTimeline(makeSession({ phaseStatus: "rejected" }))[1]!),
-    ).toBe("Changes requested");
+    ).toBe("Not running");
     expect(
       stageTimelineLabel(buildStageTimeline(makeSession({ phaseStatus: "in_progress" }))[1]!),
     ).toBe("In progress");
@@ -129,7 +141,7 @@ describe("StageTimeline", () => {
     const timeline = buildStageTimeline(
       makeSession({ currentStageSlug: "land", phaseStatus: "approved" }),
     );
-    expect(timeline.map(stageTimelineLabel)).toEqual(["Completed", "Completed", "Completed"]);
+    expect(timeline.map(stageTimelineLabel)).toEqual(["Completed", "Not approved", "Completed"]);
   });
 
   it("does not mark an earlier failed stage as the current step", () => {

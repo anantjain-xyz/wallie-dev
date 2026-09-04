@@ -34,6 +34,7 @@ export function SessionReviewBar({
   const [feedbackDraft, setFeedbackDraft] = useState("");
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const feedbackFieldId = useId();
+  const approveDescriptionId = useId();
   const feedbackRef = useRef<HTMLTextAreaElement | null>(null);
   const rejectInFlightRef = useRef(false);
   const requestChangesTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -124,6 +125,7 @@ export function SessionReviewBar({
             <div className="min-w-0 space-y-1 text-right">
               <button
                 type="button"
+                aria-describedby={approveDescription ? approveDescriptionId : undefined}
                 className="ui-button-primary max-w-full whitespace-normal [overflow-wrap:anywhere]"
                 disabled={phaseActionBusy}
                 onClick={() => {
@@ -138,7 +140,9 @@ export function SessionReviewBar({
                 />
               </button>
               {approveDescription ? (
-                <p className="text-xs text-muted">{approveDescription}</p>
+                <p id={approveDescriptionId} className="max-w-sm text-xs text-muted">
+                  {approveDescription}
+                </p>
               ) : null}
             </div>
           ) : (

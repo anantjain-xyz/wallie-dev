@@ -820,16 +820,6 @@ export function SessionDetailPageClient({
     </div>
   );
 
-  const nextStage =
-    currentStagePosition >= 0 ? session.pipeline.stages[currentStagePosition + 1] : null;
-  const isFinalStage =
-    currentStagePosition === session.pipeline.stages.length - 1 && currentStagePosition >= 0;
-  const approveLabel = nextStage
-    ? `Approve & start ${nextStage.name}`
-    : isFinalStage
-      ? "Approve & complete"
-      : "Approve";
-
   return (
     <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
@@ -939,8 +929,12 @@ export function SessionDetailPageClient({
       </section>
 
       <SessionReviewBar
-        approveLabel={approveLabel}
-        approveDescription={isFinalStage ? "Completing this session archives it." : undefined}
+        approveLabel="Approve stage"
+        approveDescription={
+          phaseActionPending
+            ? undefined
+            : "If this is the final stage, approval completes and archives the session."
+        }
         mode={stickyReviewMode}
         onApprove={() => {
           void handlePhaseAction("approve");
