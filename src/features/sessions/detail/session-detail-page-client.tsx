@@ -84,11 +84,6 @@ function stageIndex(pipeline: SessionReviewSession["pipeline"], stageSlug: strin
   return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
 }
 
-function isTerminalStage(pipeline: SessionReviewSession["pipeline"], stageSlug: string): boolean {
-  const terminalStage = pipeline.stages[pipeline.stages.length - 1];
-  return terminalStage?.slug === stageSlug;
-}
-
 function mergeSessionReviewStage(
   session: SessionReviewSession,
   stage: SessionMutationStage,
@@ -825,9 +820,15 @@ export function SessionDetailPageClient({
     </div>
   );
 
-  const approveLabel = isTerminalStage(session.pipeline, session.currentStageSlug)
-    ? "Approve & archive"
-    : "Approve & advance";
+  const nextStage =
+    currentStagePosition >= 0 ? session.pipeline.stages[currentStagePosition + 1] : null;
+  const isFinalStage =
+    currentStagePosition === session.pipeline.stages.length - 1 && currentStagePosition >= 0;
+  const approveLabel = nextStage
+    ? `Approve & start ${nextStage.name}`
+    : isFinalStage
+      ? "Approve & complete"
+      : "Approve";
 
   return (
     <PageContainer className="pb-4">
@@ -939,6 +940,7 @@ export function SessionDetailPageClient({
 
       <SessionReviewBar
         approveLabel={approveLabel}
+        approveDescription={isFinalStage ? "Completing this session archives it." : undefined}
         mode={stickyReviewMode}
         onApprove={() => {
           void handlePhaseAction("approve");

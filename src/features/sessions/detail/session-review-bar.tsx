@@ -15,6 +15,7 @@ const FEEDBACK_MAX = 4_000;
 
 type SessionReviewBarProps = {
   approveLabel: string;
+  approveDescription?: string;
   mode: ReviewMode;
   onApprove: () => void;
   onReject: (feedback: string) => Promise<boolean>;
@@ -23,6 +24,7 @@ type SessionReviewBarProps = {
 
 export function SessionReviewBar({
   approveLabel,
+  approveDescription,
   mode,
   onApprove,
   onReject,
@@ -119,21 +121,26 @@ export function SessionReviewBar({
             Request changes
           </button>
           {mode.canApprove ? (
-            <button
-              type="button"
-              className="ui-button-primary"
-              disabled={phaseActionBusy}
-              onClick={() => {
-                if (phaseActionBusy) return;
-                onApprove();
-              }}
-            >
-              <ActionButtonLabel
-                idle={approveLabel}
-                pending={phaseActionPending === "approve"}
-                pendingLabel="Approving…"
-              />
-            </button>
+            <div className="min-w-0 space-y-1 text-right">
+              <button
+                type="button"
+                className="ui-button-primary max-w-full whitespace-normal [overflow-wrap:anywhere]"
+                disabled={phaseActionBusy}
+                onClick={() => {
+                  if (phaseActionBusy) return;
+                  onApprove();
+                }}
+              >
+                <ActionButtonLabel
+                  idle={approveLabel}
+                  pending={phaseActionPending === "approve"}
+                  pendingLabel="Approving…"
+                />
+              </button>
+              {approveDescription ? (
+                <p className="text-xs text-muted">{approveDescription}</p>
+              ) : null}
+            </div>
           ) : (
             <p className="text-sm text-muted" role="status">
               You are not authorized to approve this stage.

@@ -100,7 +100,7 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
     });
   });
 
-  await page.getByRole("button", { name: "Approve & advance" }).click();
+  await page.getByRole("button", { name: "Approve & start Build" }).click();
   await expect(page.getByText("Drafting", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Approving/ })).toBeDisabled();
   approveGate.release();

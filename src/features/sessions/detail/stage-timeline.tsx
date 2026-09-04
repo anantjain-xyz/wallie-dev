@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { CheckIcon } from "@/components/shared/icons/check-icon";
 import type { SessionReviewPipeline, SessionReviewSession } from "@/features/sessions/detail/data";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
@@ -38,13 +39,17 @@ export function buildStageTimeline(
 
     if (failedStageSlug === stage.slug) {
       return {
-        phaseStatus: session.phaseStatus,
+        phaseStatus: idx === currentIdx ? session.phaseStatus : null,
         stage,
         status: "failed" as const,
       };
     }
 
-    if (idx < currentIdx || completedAt) {
+    if (
+      idx < currentIdx ||
+      completedAt ||
+      (idx === currentIdx && session.phaseStatus === "approved")
+    ) {
       return {
         phaseStatus: null,
         stage,
@@ -91,6 +96,21 @@ export function centerStageTimelineSelection(
   });
 }
 
+export function stageTimelineLabel(entry: StageTimelineEntry): string {
+  switch (entry.status) {
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "changes_requested":
+      return "Changes requested";
+    case "upcoming":
+      return "Upcoming";
+    case "current":
+      return entry.phaseStatus === "awaiting_review" ? "Awaiting review" : "In progress";
+  }
+}
+
 type StageTimelineProps = {
   onSelect: (stageSlug: string) => void;
   selectedStageSlug: string;
@@ -112,6 +132,8 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
       <ol className="flex flex-wrap items-center gap-1.5" ref={railRef}>
         {timeline.map((entry, index) => {
           const isSelected = entry.stage.slug === selectedStageSlug;
+          const label = stageTimelineLabel(entry);
+          const isCurrent = entry.phaseStatus !== null && entry.status !== "completed";
           return (
             <li key={entry.stage.id} className="flex min-w-0 items-center gap-1.5">
               <button
@@ -125,14 +147,42 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                 type="button"
                 onClick={() => onSelect(entry.stage.slug)}
                 className={cn(
-                  "group flex min-w-0 max-w-full items-center gap-1.5 rounded-[4px] px-2 py-1 text-xs font-medium transition-colors",
+                  "group flex min-w-0 max-w-full items-center gap-2 rounded-[6px] px-3 py-2 text-left text-xs font-medium transition-colors",
                   isSelected
                     ? "bg-accent-soft text-accent"
                     : "text-muted hover:bg-control-muted hover:text-foreground",
                 )}
-                aria-current={isSelected ? "step" : undefined}
+                aria-label={`${entry.stage.name}: ${label}`}
+                aria-current={isCurrent ? "step" : undefined}
+                aria-pressed={isSelected}
               >
-                <span className="min-w-0 [overflow-wrap:anywhere]">{entry.stage.name}</span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs",
+                    entry.status === "completed"
+                      ? "border-success/30 bg-success-soft text-success"
+                      : entry.status === "failed"
+                        ? "border-danger/30 bg-danger-soft text-danger"
+                        : entry.status === "changes_requested"
+                          ? "border-warning/30 bg-warning-soft text-warning"
+                          : isCurrent
+                            ? "border-accent bg-accent-soft text-accent"
+                            : "border-border text-muted",
+                  )}
+                >
+                  {entry.status === "completed" ? (
+                    <CheckIcon className="h-3.5 w-3.5" />
+                  ) : entry.status === "failed" || entry.status === "changes_requested" ? (
+                    "!"
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  <span className="block text-foreground">{entry.stage.name}</span>
+                  <span className="block font-normal">{label}</span>
+                </span>
               </button>
               {index < timeline.length - 1 ? (
                 <span aria-hidden="true" className="hidden h-px w-3 bg-border sm:block" />
