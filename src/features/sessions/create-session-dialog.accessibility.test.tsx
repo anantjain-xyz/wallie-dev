@@ -773,3 +773,37 @@ it.each(["reopen", "submit"])(
     }
   },
 );
+
+it("renews files after an authoritative attachment conflict without duplicating creation", async () => {
+  prepareDraftOptions();
+  const user = userEvent.setup();
+  render(<DraftHarness />);
+  await fillImageDraft(user);
+  clientMocks.createSessionFromClient.mockRejectedValueOnce(
+    Object.assign(new Error("Images expired"), { code: "session_attachments_changed" }),
+  );
+  clientMocks.uploadSessionAttachmentFromClient.mockResolvedValueOnce({
+    id: "replacement-attachment",
+    contentType: "image/png",
+    fileName: "draft.png",
+    sizeBytes: 8,
+  });
+  await user.click(screen.getByRole("button", { name: "Start session" }));
+  await screen.findByText(/Session images expired or changed/);
+  await waitFor(() =>
+    expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledTimes(2),
+  );
+  await screen.findByText(/8 B · Ready/);
+  expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText("Prompt")).toHaveValue("Build a useful thing");
+  clientMocks.createSessionFromClient.mockResolvedValueOnce({
+    canonicalUrl: "/w/acme/sessions/42",
+    number: 42,
+  });
+  await user.click(screen.getByRole("button", { name: "Start session" }));
+  await waitFor(() =>
+    expect(clientMocks.createSessionFromClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ attachmentIds: ["replacement-attachment"] }),
+    ),
+  );
+});

@@ -257,12 +257,11 @@ function CreateSessionDialogBody({
     }
   }
 
-  function refreshExpiredImages() {
+  function refreshExpiredImages(force = false) {
     const expired = imageDraftsRef.current.filter(
       (image) =>
         image.status === "ready" &&
-        image.refreshAfter !== undefined &&
-        image.refreshAfter <= Date.now(),
+        (force || (image.refreshAfter !== undefined && image.refreshAfter <= Date.now())),
     );
     if (expired.length === 0) return false;
     const expiredIds = new Set(expired.map((image) => image.clientId));
@@ -448,7 +447,18 @@ function CreateSessionDialogBody({
       if (isSessionOptionsChangedError(error)) {
         invalidateSessionRepositoryCache(workspaceId);
       }
-      setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "session_attachments_changed" &&
+        refreshExpiredImages(true)
+      ) {
+        setErrorMessage(
+          "Session images expired or changed. Refreshing them now; start the session once they are ready.",
+        );
+      } else {
+        setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
+      }
       setIsSubmitting(false);
     }
   }
