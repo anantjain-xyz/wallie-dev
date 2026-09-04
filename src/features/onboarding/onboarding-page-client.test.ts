@@ -346,11 +346,9 @@ function renderVerifyStep(data: WorkspaceOnboardingData) {
 
 function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = html.match(
-    new RegExp(
-      `<button[^>]*>[^]*?<span class="min-w-0 flex-1 truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
-    ),
-  )?.[0];
+  const match = html
+    .match(/<button\b[^]*?<\/button>/g)
+    ?.find((button) => new RegExp(`<span>${escapedLabel}<\\/span>`).test(button));
   if (!match) {
     throw new Error(`${label} rail button was not rendered.`);
   }
@@ -902,7 +900,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const futureButton = desktopRailButton(managerHtml, "Verify setup");
-    const readOnlyButton = desktopRailButton(readOnlyHtml, "Analyze repositories");
+    const readOnlyButton = desktopRailButton(readOnlyHtml, "Prepare repository");
     expect(futureButton).not.toContain("disabled");
     expect(futureButton).not.toContain("cursor-not-allowed");
     expect(readOnlyButton).not.toContain("disabled");
@@ -931,15 +929,17 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(desktopRailButton(linearHtml, "Connect Linear")).toContain('aria-current="step"');
-    expect(linearHtml).toContain(">Connect Linear</h2>");
+    expect(desktopRailButton(linearHtml, "Connect Linear (optional)")).toContain(
+      'aria-current="step"',
+    );
+    expect(linearHtml).toContain(">Connect Linear (optional)</h2>");
     expect(desktopRailButton(runtimeHtml, "Connect Agent")).toContain('aria-current="step"');
     expect(runtimeHtml).toContain(">Connect Agent</h2>");
-    expect(runtimeHtml).toContain('<span class="min-w-0 flex-1 truncate">Connect Agent</span>');
+    expect(runtimeHtml).toContain("<span>Connect Agent</span>");
     expect(runtimeHtml).not.toContain(">Runtime</span>");
   });
 
-  it("shows setup actions in Analyze repositories for every synced repository", () => {
+  it("shows setup actions in Prepare repository for every synced repository", () => {
     const primary = profile("repo-a");
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
@@ -1026,7 +1026,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html).toContain("Analyze repositories");
+    expect(html).toContain("Prepare repository");
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
     expect(html).not.toContain(">Analyze repository</button>");
@@ -1988,7 +1988,7 @@ describe("setupHealthItems Linear routing badge", () => {
     ).toMatchObject({
       value: "Defaults",
       tone: "neutral",
-      detail: "Default routes — add a Linear key",
+      detail: "Default routes — used when Linear is connected",
     });
   });
 
@@ -2005,13 +2005,13 @@ describe("setupHealthItems Linear routing badge", () => {
     ).toMatchObject({ value: "Saved", tone: "success" });
   });
 
-  it("shows 'Missing' when no routing row exists", () => {
+  it("marks unconfigured optional Linear routing as optional", () => {
     expect(
       routingItem({
         linearKey: { configured: false, status: "missing", updatedAt: null },
         linearRouting: { configured: false, status: "missing", updatedAt: null },
       }),
-    ).toMatchObject({ value: "Missing", tone: "warning" });
+    ).toMatchObject({ value: "Optional", tone: "neutral" });
   });
 });
 

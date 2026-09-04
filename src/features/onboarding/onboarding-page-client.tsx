@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
-import { Status } from "@/components/ui/status";
+import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -22,6 +22,7 @@ import {
   getOnboardingStepRailItems,
   onboardingStepIndex,
   ONBOARDING_STEPS,
+  ONBOARDING_GROUPS,
   type OnboardingStepDisplayState,
 } from "@/features/onboarding/flow";
 import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
@@ -69,7 +70,7 @@ type HealthTone = "accent" | "danger" | "neutral" | "success" | "warning";
 
 type HealthSummaryItem = {
   detail: ReactNode;
-  label: string;
+  label: keyof typeof healthSetupSteps;
   tone: HealthTone;
   value: string;
 };
@@ -201,13 +202,15 @@ export function setupHealthItems(
           tone: "neutral" as const,
           value: "Defaults",
         };
-  const linearKey = presenceBadge(health.linearKey.configured);
+  const linearKey = health.linearKey.configured
+    ? presenceBadge(true)
+    : { tone: "neutral" as const, value: "Optional" };
   // Routing rows are seeded with workspace defaults, so `configured` is true even
   // before a Linear key exists. Only show the green "Saved" state once the key is
   // present; otherwise surface the default routes as a neutral "Defaults" badge so a
   // fresh workspace never reads as configured.
   const linearRouting = !health.linearRouting.configured
-    ? { tone: "warning" as const, value: "Missing" }
+    ? { tone: "neutral" as const, value: "Optional" }
     : health.linearKey.configured
       ? { tone: "success" as const, value: "Saved" }
       : { tone: "neutral" as const, value: "Defaults" };
@@ -316,24 +319,26 @@ export function setupHealthItems(
     },
     { detail: pipeline.detail, label: "Pipeline", tone: pipeline.tone, value: pipeline.value },
     {
-      detail: health.linearKey.updatedAt ? "Credential stored" : "Workspace secret required",
+      detail: health.linearKey.configured
+        ? "Credential stored"
+        : "Only needed to attach Linear issues",
       label: "Linear key",
       tone: linearKey.tone,
       value: linearKey.value,
     },
     {
       detail: !health.linearRouting.configured
-        ? "Routing not mapped"
+        ? "Optional status sync is not configured"
         : health.linearKey.configured
           ? "Routes saved"
-          : "Default routes — add a Linear key",
+          : "Default routes — used when Linear is connected",
       label: "Linear routing",
       tone: linearRouting.tone,
       value: linearRouting.value,
     },
     {
       detail: health.agentConfig.configuredKeys.length
-        ? health.agentConfig.configuredKeys.join(", ")
+        ? "Provider and model saved"
         : "Agent settings required",
       label: "Agent config",
       tone: agentConfig.tone,
@@ -378,22 +383,70 @@ function StepNavigation({
       aria-label="Setup steps"
       className="h-fit min-w-0 rounded-[6px] border border-border bg-sheet p-2 lg:sticky lg:top-8 lg:border-0 lg:bg-transparent lg:p-0"
     >
-      <ol className="grid grid-cols-2 gap-2 lg:flex lg:flex-col lg:gap-1">
-        {items.map((step) => (
-          <li className="min-w-0" key={step.id}>
-            <button
-              type="button"
-              aria-current={step.displayState === "active" ? "step" : undefined}
-              className={cn(
-                "flex w-full min-w-0 items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
-                railStateClasses[step.displayState],
-                (!canSelect || !step.isNavigable) && "cursor-not-allowed",
-              )}
-              disabled={!canSelect || !step.isNavigable}
-              onClick={() => onSelect(step.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{step.title}</span>
-            </button>
+      <div className="lg:hidden">
+        <label htmlFor="onboarding-step-picker" className="type-label text-muted">
+          Setup step
+        </label>
+        <select
+          id="onboarding-step-picker"
+          className="mt-2 min-h-11 w-full rounded-[6px] border border-border bg-sheet px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          value={items.find((step) => step.displayState === "active")?.id}
+          disabled={!canSelect}
+          onChange={(event) => {
+            const step = items.find((item) => item.id === event.target.value);
+            if (step?.isNavigable) onSelect(step.id);
+          }}
+        >
+          {ONBOARDING_GROUPS.map((group) => (
+            <optgroup key={group.title} label={group.title}>
+              {items
+                .filter((step) => group.steps.includes(step.id))
+                .map((step) => (
+                  <option key={step.id} value={step.id} disabled={!step.isNavigable}>
+                    {step.title}
+                    {step.displayState === "completed"
+                      ? " — Done"
+                      : step.displayState === "skipped"
+                        ? " — Skipped"
+                        : ""}
+                  </option>
+                ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+      <ol className="hidden space-y-5 lg:block">
+        {ONBOARDING_GROUPS.map((group, index) => (
+          <li key={group.title}>
+            <p className="mb-2 px-2 type-label text-muted lg:px-3">
+              {index + 1}. {group.title}
+            </p>
+            <ol className="grid grid-cols-2 gap-1 lg:grid-cols-1">
+              {items
+                .filter((step) => group.steps.includes(step.id))
+                .map((step) => (
+                  <li className="min-w-0" key={step.id}>
+                    <button
+                      type="button"
+                      aria-current={step.displayState === "active" ? "step" : undefined}
+                      className={cn(
+                        "flex min-h-11 w-full min-w-0 flex-wrap items-center justify-between gap-1 rounded-[6px] px-2 py-2 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
+                        railStateClasses[step.displayState],
+                        (!canSelect || !step.isNavigable) && "cursor-not-allowed",
+                      )}
+                      disabled={!canSelect || !step.isNavigable}
+                      onClick={() => onSelect(step.id)}
+                    >
+                      <span>{step.title}</span>
+                      {step.displayState === "completed" || step.displayState === "skipped" ? (
+                        <span className="type-annotation">
+                          {step.displayState === "completed" ? "Done" : "Skipped"}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+            </ol>
           </li>
         ))}
       </ol>
@@ -401,55 +454,97 @@ function StepNavigation({
   );
 }
 
+const healthSetupSteps = {
+  GitHub: "github",
+  Repository: "repository",
+  Profile: "repository",
+  Pipeline: "pipeline",
+  "Linear key": "linear",
+  "Linear routing": "linear",
+  "Agent config": "runtime",
+  "Provider access": "runtime",
+  "Sandbox provider": "sandbox",
+  Sandbox: "verify",
+} satisfies Record<string, WorkspaceOnboardingStep>;
+
 function SetupHealthSummary({
+  canSelect,
+  onSelect,
   health,
   initialNow,
   pipelineReviewed,
 }: {
+  canSelect: boolean;
+  onSelect: (step: WorkspaceOnboardingStep) => void;
   health: OnboardingSetupHealth;
   initialNow: string;
   pipelineReviewed: boolean;
 }) {
   const items = setupHealthItems(health, initialNow, { pipelineReviewed });
+  const required = items.filter((item) => healthSetupSteps[item.label] !== "linear");
+  const needsAttention = required.filter((item) => item.tone !== "success");
+  const configured = required.filter((item) => item.tone === "success");
+  const optional = items.filter((item) => healthSetupSteps[item.label] === "linear");
+
+  function renderItems(entries: HealthSummaryItem[]) {
+    return (
+      <ul className="mt-3 divide-y divide-border">
+        {entries.map((item) => (
+          <li key={item.label} className="py-1 first:pt-0">
+            <button
+              type="button"
+              aria-label={`Open ${item.label} setup: ${item.value}`}
+              className="min-h-11 w-full rounded-[6px] px-2 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+              disabled={!canSelect}
+              onClick={() => onSelect(healthSetupSteps[item.label])}
+            >
+              <span className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[13px] font-medium text-foreground">{item.label}</span>
+                <Status label={item.value} value={configurationStatusFromTone(item.tone)} />
+              </span>
+              <span className="mt-1 block break-words text-xs leading-5 text-muted">
+                {item.detail}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <aside className="h-fit min-w-0 lg:sticky lg:top-8">
-      <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Health</h2>
-      <ul className="mt-4 space-y-2.5">
-        {items.map((item) => {
-          const complete = item.tone === "success";
-          return (
-            <li key={item.label} className="flex items-center gap-2.5">
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
-                  complete
-                    ? "border-[1.5px] border-foreground bg-transparent text-foreground"
-                    : "border-border bg-transparent text-transparent",
-                )}
-              >
-                {complete ? (
-                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-                    <path
-                      d="m3.5 8.25 3 3 6-6.5"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : null}
-              </span>
-              <span
-                className={cn("text-[13px] leading-5", complete ? "text-foreground" : "text-muted")}
-              >
-                {item.label}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+      <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Setup status</h2>
+      <p className="mt-1 text-xs leading-5 text-muted">
+        Saved connections still need a successful check before your first task.
+      </p>
+      {needsAttention.length > 0 ? (
+        renderItems(needsAttention)
+      ) : (
+        <p className="mt-3 text-xs text-muted">Your saved setup is listed below.</p>
+      )}
+      {configured.length > 0 ? (
+        <details className="mt-4 border-t border-border pt-2">
+          <summary className="min-h-11 cursor-pointer py-3 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+            Configured ({configured.length})
+          </summary>
+          {renderItems(configured)}
+        </details>
+      ) : null}
+      <details className="border-t border-border pt-2">
+        <summary className="min-h-11 cursor-pointer py-3 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+          Linear (optional)
+        </summary>
+        {renderItems(optional)}
+      </details>
+      <button
+        type="button"
+        className="ui-button mt-3 w-full"
+        disabled={!canSelect}
+        onClick={() => onSelect("verify")}
+      >
+        Review readiness
+      </button>
     </aside>
   );
 }
@@ -968,7 +1063,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         <div className="min-w-0 space-y-2">
           <h1 className="type-page-title">Set up {data.workspace.name}</h1>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">
-            Finish the required connections before starting sessions.
+            Connect a repository and execution access, then verify your setup and start a task.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -1035,6 +1130,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         </section>
 
         <SetupHealthSummary
+          canSelect={!isSaving}
+          onSelect={(step) => void selectStep(step)}
           health={data.setupHealth}
           initialNow={renderNow}
           pipelineReviewed={isCompleted || onboarding.completedSteps.includes("pipeline")}
