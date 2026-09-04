@@ -143,6 +143,33 @@ describe("SessionWalliePanel", () => {
     expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
   });
 
+  it("keeps setup problems out of archived history without enabling retry", () => {
+    const html = renderPanel(
+      data({ repository: null, runs: [run({ canRetry: true, status: "error" })] }),
+      "2026-06-07T12:00:00.000Z",
+    );
+    expect(html).not.toContain("Setup needed before");
+    expect(html).not.toContain("Open Workspace Settings");
+    expect(html).toContain("This session is archived.");
+    expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
+  });
+
+  it.each([
+    ["successful history", [run()], false],
+    ["active work", [run({ isActive: true, isTerminal: false, status: "running" })], false],
+    ["retryable failure", [run({ canRetry: true, status: "error" })], true],
+    ["first run", [], true],
+  ] as const)("makes setup guidance actionable for %s", (_label, runs, expanded) => {
+    const html = renderPanel(data({ repository: null, runs: [...runs] }));
+    const details = html.match(/<details[^>]*>\s*<summary[^>]*>Setup needed before/);
+    expect(details).not.toBeNull();
+    expect(details![0].includes('open=""')).toBe(expanded);
+    expect(html).toContain("Open Workspace Settings");
+    if (runs[0]?.canRetry) {
+      expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
+    }
+  });
+
   it("does not show the Vercel setup blocker when fake sandboxes are selected", () => {
     const html = renderPanel(
       data({
