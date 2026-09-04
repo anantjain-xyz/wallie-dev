@@ -826,7 +826,7 @@ export function SessionDetailPageClient({
     <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
-        actionsAlwaysRight
+        actionsRightOnDesktop
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             <Link

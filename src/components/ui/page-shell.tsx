@@ -26,10 +26,10 @@ export const PAGE_HEADER_TITLE_CLASS = "type-page-title break-words";
 type PageHeaderProps = {
   actions?: ReactNode;
   /**
-   * Keep actions in a dedicated right-hand column instead of allowing them to
-   * wrap beneath long title content.
+   * Keep actions in a dedicated right-hand column from sm up. On mobile,
+   * give titles the full width and place actions below.
    */
-  actionsAlwaysRight?: boolean;
+  actionsRightOnDesktop?: boolean;
   description?: ReactNode;
   eyebrow?: ReactNode;
   /**
@@ -49,7 +49,7 @@ type PageHeaderProps = {
 
 export function PageHeader({
   actions,
-  actionsAlwaysRight = false,
+  actionsRightOnDesktop = false,
   description,
   eyebrow,
   eyebrowAsPlain = false,
@@ -62,7 +62,7 @@ export function PageHeader({
         eyebrowAsPlain
           ? "type-label text-muted"
           : "type-label uppercase tracking-[0.08em] text-muted",
-        actionsAlwaysRight && "col-span-2",
+        actionsRightOnDesktop && "sm:col-span-2",
       )}
     >
       {eyebrow}
@@ -79,12 +79,12 @@ export function PageHeader({
     <header
       className={cn(
         "mb-8 items-start gap-x-6 gap-y-3 sm:mb-10",
-        actionsAlwaysRight
-          ? "grid grid-cols-[minmax(0,1fr)_auto]"
+        actionsRightOnDesktop
+          ? "grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]"
           : "flex flex-wrap justify-between",
       )}
     >
-      {actionsAlwaysRight ? (
+      {actionsRightOnDesktop ? (
         <>
           {eyebrowContent}
           <div className="min-w-0 space-y-2">{titleContent}</div>
@@ -99,7 +99,7 @@ export function PageHeader({
         <div
           className={cn(
             "flex shrink-0 flex-wrap items-center gap-2",
-            actionsAlwaysRight && "justify-self-end",
+            actionsRightOnDesktop && "sm:justify-self-end",
           )}
         >
           {actions}

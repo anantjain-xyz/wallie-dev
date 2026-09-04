@@ -158,7 +158,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("Cancel title edit");
   });
 
-  it("keeps a long title untruncated while actions stay in a right-hand column", () => {
+  it("gives mobile titles full width and keeps desktop actions on the right", () => {
     const data = makeSessionDetailData();
     data.session.title =
       "A deliberately long session title that must wrap in full without displacing archive actions";
@@ -166,8 +166,8 @@ describe("SessionDetailPageClient", () => {
     const headerMatch = html.match(/<header class="([^"]+)">([\s\S]*?)<\/header>/);
 
     expect(headerMatch).not.toBeNull();
-    expect(headerMatch?.[1]).toContain("grid-cols-[minmax(0,1fr)_auto]");
-    expect(headerMatch?.[2]).toContain("col-span-2");
+    expect(headerMatch?.[1]).toContain("grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]");
+    expect(headerMatch?.[2]).toContain("sm:col-span-2");
     expect(headerMatch?.[2]).toContain(data.session.title);
     expect(headerMatch?.[2]).toContain("Archive");
     expect(headerMatch?.[2]).not.toMatch(/line-clamp|overflow-hidden|truncate/);
