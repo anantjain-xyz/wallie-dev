@@ -754,16 +754,21 @@ export function SessionWalliePanel({
       {isArchived ? (
         <div
           aria-live="polite"
-          className="rounded-[6px] border border-border bg-control-muted p-5 text-sm leading-7 text-muted"
+          className="rounded-[6px] border border-border bg-control-muted p-3 text-sm leading-5 text-muted"
           role="status"
         >
           This session is archived. Unarchive it to run Wallie again.
         </div>
       ) : null}
 
-      {blockingReasons.length > 0 ? (
-        <div className="rounded-[6px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
-          <p className="font-semibold">Wallie is not ready to run.</p>
+      {!isArchived && blockingReasons.length > 0 ? (
+        <details
+          className="rounded-[6px] border border-border bg-control-muted p-4 text-sm leading-6 text-muted"
+          open={runs.length === 0 || Boolean(summaryRun?.canRetry)}
+        >
+          <summary className="cursor-pointer font-medium text-foreground">
+            Setup needed before {runs.length === 0 ? "the first run" : "another run"}
+          </summary>
           <ul className="mt-3 space-y-2">
             {blockingReasons.map((reason) => (
               <li key={reason.code}>{reason.message}</li>
@@ -774,7 +779,7 @@ export function SessionWalliePanel({
               Open Workspace Settings
             </Link>
           </div>
-        </div>
+        </details>
       ) : null}
 
       <div className="min-w-0 space-y-5">
