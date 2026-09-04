@@ -216,16 +216,15 @@ describe("SessionReviewBar", () => {
     expect(container.innerHTML).toContain("sticky bottom-0");
   });
 
-  it.each([
-    { canApprove: true, kind: "reviewable" } as const,
-    {
-      kind: "completed",
-      reason: "This session is complete. Review controls are closed.",
-    } as const,
-  ])("keeps the bottom section borderless for $kind mode", (mode) => {
-    const { container } = renderBar({ mode });
-
+  it("keeps the actionable bottom section borderless", () => {
+    const { container } = renderBar();
     expect(container.firstElementChild).not.toHaveClass("border-t");
+  });
+
+  it("leaves completed history unobstructed by a sticky notice", () => {
+    const { container } = renderBar({ mode: { kind: "completed", reason: "Session complete" } });
+    expect(container.innerHTML).not.toContain("sticky bottom-0");
+    expect(screen.queryByText("Session complete")).toBeNull();
   });
 
   it("restores focus to Request changes when the dialog closes", async () => {

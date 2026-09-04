@@ -1283,6 +1283,21 @@
   }
 }
 
+.ui-completion-check {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: wallie-completion-check 240ms ease-out;
+}
+
+@keyframes wallie-completion-check {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @keyframes wallie-overlay-fade-in {
   from {
     opacity: 0;

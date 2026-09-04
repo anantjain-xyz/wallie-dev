@@ -28,6 +28,7 @@ import type {
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import { SessionInspector } from "@/features/sessions/detail/session-inspector";
+import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
 import { buildStageTimeline, StageTimeline } from "@/features/sessions/detail/stage-timeline";
 import type {
@@ -852,6 +853,8 @@ export function SessionDetailPageClient({
         }
         actions={headerActions}
       />
+
+      <SessionCompletionSummary session={session} />
 
       <div className="mb-4">
         <StageTimeline

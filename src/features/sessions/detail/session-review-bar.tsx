@@ -48,13 +48,12 @@ export function SessionReviewBar({
     return () => window.cancelAnimationFrame(frame);
   }, [dialogOpen]);
 
-  if (mode.kind === "other_stage") {
+  if (mode.kind === "other_stage" || mode.kind === "completed") {
     return null;
   }
 
   if (
     mode.kind === "archived" ||
-    mode.kind === "completed" ||
     mode.kind === "canceled" ||
     mode.kind === "unauthorized" ||
     mode.kind === "failed" ||
