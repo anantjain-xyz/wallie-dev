@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(28);
+select plan(30);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_function(
@@ -297,6 +297,16 @@ set phase_status = 'awaiting_review', current_artifact_version = 1
 from adopt_session result
 where session.id = result.session_id;
 
+-- A legacy partial rejection may have saved feedback before enqueue failed.
+-- The successful retry must replace that feedback on the same unique target.
+insert into public.session_artifact_feedback (
+  workspace_id, session_id, stage_id, stage_slug, target_version, feedback_text
+)
+select session.workspace_id, session.id, stage.id, stage.slug, 1, 'stale partial feedback'
+from adopt_session result
+join public.sessions session on session.id = result.session_id
+join public.pipeline_stages stage on stage.id = session.current_stage_id;
+
 create temp table adopt_reject as
 select *
 from public.reject_session_stage(
@@ -313,6 +323,21 @@ from public.reject_session_stage(
 select is((select job_id from adopt_reject), (select job_id from adopt_session), 'active job is adopted');
 select ok(not (select job_created from adopt_reject), 'adoption does not insert a second active job');
 select is((select phase_status::text from adopt_reject), 'rejected', 'adopted rejection still parks the session');
+
+select is(
+  (select feedback.feedback_text from public.session_artifact_feedback feedback
+   join adopt_reject result on result.session_id = feedback.session_id
+   where feedback.stage_id = result.current_stage_id and feedback.target_version = 1),
+  'retry with the already-queued job',
+  'successful rejection replaces feedback left by a partial attempt'
+);
+select is(
+  (select count(*)::integer from public.session_artifact_feedback feedback
+   join adopt_reject result on result.session_id = feedback.session_id
+   where feedback.stage_id = result.current_stage_id and feedback.target_version = 1),
+  1,
+  'feedback recovery keeps exactly one row for the reviewed artifact'
+);
 
 create temp table zombie_session as
 select *
