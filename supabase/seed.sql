@@ -936,6 +936,18 @@ BEGIN
     (sess18_id, ws_id, stage_build_id, 'build',   now() - interval '8 days 12 hours',  mem1_id),
     (sess18_id, ws_id, stage_review_id, 'review', now() - interval '7 days 12 hours',  mem2_id);
 
+  -- Selected stages are persisted separately from the session's pipeline ID.
+  -- Migrations run before this seed, so their backfill cannot cover these rows.
+  -- Every demo session uses the complete four-stage demo pipeline.
+  INSERT INTO public.session_selected_stages (session_id, workspace_id, stage_id)
+  SELECT s.id, s.workspace_id, stage.id
+  FROM public.sessions s
+  JOIN public.pipeline_stages stage
+    ON stage.pipeline_id = s.pipeline_id AND stage.workspace_id = s.workspace_id
+  WHERE s.workspace_id = ws_id
+    AND s.pipeline_id = default_pipeline_id
+    AND stage.archived_at IS NULL;
+
   -- -------------------------------------------------------------------------
   -- 9. GitHub branches / PRs (linked to sessions)
   -- -------------------------------------------------------------------------
