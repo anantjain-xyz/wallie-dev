@@ -37,18 +37,6 @@ jobs:
       - name: Run full validation
         run: pnpm check
 
-      # pgTAP is not run in CI yet. `supabase test db` needs Docker, the
-      # Supabase CLI, and a running local stack (`supabase start`, 1-3 minutes).
-      # This workflow does not install the CLI or start Supabase, and adding a
-      # failing step would break the validation-contract exact shape.
-      # When that environment is ready, add:
-      #   - name: Start local Supabase
-      #     run: SUPABASE_TELEMETRY_DISABLED=1 supabase start
-      #   - name: Run pgTAP database tests
-      #     run: pnpm check:db-tests
-      # Until then, run `pnpm check:db-tests` locally after `supabase start`.
-      # See docs/VERIFICATION.md.
-
   route-budgets:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,3 +64,47 @@ jobs:
 
       - name: Enforce route bundle ceilings
         run: pnpm check:route-budgets
+
+  database-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@aa3515eac405eac768fa4a72147c22d88a283c7b
+        with:
+          version: 2.113.0
+
+      - name: Start isolated local Supabase
+        run: supabase start --exclude studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1
+
+      - name: Run database regression tests
+        run: pnpm check:db-tests
+
+      - name: Print database diagnostics on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs supabase_db_wallie-dev --tail 100
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup

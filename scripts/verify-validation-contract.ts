@@ -22,6 +22,7 @@ const expectedScripts = {
   typecheck: "tsc --noEmit",
   "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
   test: "vitest run",
+  "check:db-tests": "SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local",
   "check:fast":
     "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
   check: "pnpm check:fast && pnpm test",
@@ -108,6 +109,30 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
               name: "Run full validation",
               run: "pnpm check",
             },
+          ],
+        },
+        "database-tests": {
+          "runs-on": "ubuntu-latest",
+          "timeout-minutes": 15,
+          env: { SUPABASE_TELEMETRY_DISABLED: "1" },
+          steps: [
+            ...setupSteps,
+            {
+              name: "Set up Supabase CLI",
+              uses: "supabase/setup-cli@aa3515eac405eac768fa4a72147c22d88a283c7b",
+              with: { version: "2.113.0" },
+            },
+            {
+              name: "Start isolated local Supabase",
+              run: 'supabase start --exclude studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1',
+            },
+            { name: "Run database regression tests", run: "pnpm check:db-tests" },
+            {
+              name: "Print database diagnostics on failure",
+              if: "failure()",
+              run: "docker ps -a\ndocker logs supabase_db_wallie-dev --tail 100\n",
+            },
+            { name: "Stop local Supabase", if: "always()", run: "supabase stop --no-backup" },
           ],
         },
         "route-budgets": {
