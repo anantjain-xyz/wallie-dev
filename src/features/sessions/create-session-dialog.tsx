@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -35,6 +35,7 @@ import {
   allowedSessionAttachmentMimeTypes,
   maxSessionAttachmentBytes,
   maxSessionAttachments,
+  sessionAttachmentExpiryMs,
 } from "@/lib/storage/contracts";
 import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 
@@ -114,8 +115,11 @@ function CreateSessionDialogBody({
   const disposedRef = useRef(false);
   const imageDraftsRef = useRef<SessionImageDraft[]>([]);
 
+  const refreshImagesOnOpen = useEffectEvent(refreshExpiredImages);
+
   useEffect(() => {
     if (open) {
+      refreshImagesOnOpen();
       finishInteraction("open_create_dialog", "success");
       void preloadSessionRepositories({ userId, workspaceId }).catch(() => undefined);
     }
@@ -211,6 +215,9 @@ function CreateSessionDialogBody({
   }
 
   async function uploadImageDraft(clientId: string, file: File) {
+    // Start the lifetime before the request and renew a minute early, leaving
+    // room for request latency before the server validates pending attachments.
+    const refreshAfter = Date.now() + sessionAttachmentExpiryMs - 60_000;
     try {
       const uploaded = await uploadSessionAttachmentFromClient({ file, workspaceId });
       if (disposedRef.current) {
@@ -226,6 +233,7 @@ function CreateSessionDialogBody({
             ? {
                 ...image,
                 attachmentId: uploaded.id,
+                refreshAfter,
                 error: undefined,
                 fileName: uploaded.fileName,
                 sizeBytes: uploaded.sizeBytes,
@@ -247,6 +255,34 @@ function CreateSessionDialogBody({
         ),
       );
     }
+  }
+
+  function refreshExpiredImages() {
+    const expired = imageDraftsRef.current.filter(
+      (image) =>
+        image.status === "ready" &&
+        image.refreshAfter !== undefined &&
+        image.refreshAfter <= Date.now(),
+    );
+    if (expired.length === 0) return false;
+    const expiredIds = new Set(expired.map((image) => image.clientId));
+    updateImageDrafts((current) =>
+      current.map((image) =>
+        expiredIds.has(image.clientId)
+          ? { ...image, attachmentId: undefined, error: undefined, status: "uploading" }
+          : image,
+      ),
+    );
+    for (const image of expired) {
+      if (image.attachmentId) {
+        void deletePendingSessionAttachmentFromClient({
+          attachmentId: image.attachmentId,
+          workspaceId,
+        }).catch(() => undefined);
+      }
+      void uploadImageDraft(image.clientId, image.file);
+    }
+    return true;
   }
 
   async function handleRemoveImage(clientId: string) {
@@ -365,6 +401,11 @@ function CreateSessionDialogBody({
 
     if (selectedStageIds.length === 0) {
       setErrorMessage("Select at least one stage.");
+      return;
+    }
+
+    if (refreshExpiredImages()) {
+      setErrorMessage("Refreshing expired images. Start the session once they are ready.");
       return;
     }
 

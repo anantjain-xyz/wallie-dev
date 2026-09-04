@@ -717,3 +717,59 @@ describe("session draft lifetime", () => {
     );
   });
 });
+
+it.each(["reopen", "submit"])(
+  "renews expired draft images on %s before allowing creation",
+  async (trigger) => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    render(<DraftHarness />);
+    await fillImageDraft(user);
+    if (trigger === "reopen") await user.keyboard("{Escape}");
+
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 25 * 60 * 60 * 1000);
+    let finishUpload!: (value: unknown) => void;
+    clientMocks.uploadSessionAttachmentFromClient.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    try {
+      if (trigger === "reopen") await user.click(screen.getByText("Reopen composer"));
+      else await user.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() =>
+        expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledTimes(2),
+      );
+      expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+      expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Prompt")).toHaveValue("Build a useful thing");
+      finishUpload({
+        id: "renewed-attachment",
+        contentType: "image/png",
+        fileName: "draft.png",
+        sizeBytes: 8,
+      });
+      await screen.findByText(/8 B · Ready/);
+      clientMocks.createSessionFromClient.mockResolvedValueOnce({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() =>
+        expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+          expect.objectContaining({ attachmentIds: ["renewed-attachment"] }),
+        ),
+      );
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).toHaveBeenCalledWith({
+        attachmentId: "attachment-1",
+        workspaceId: "workspace-1",
+      });
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalledWith(
+        expect.objectContaining({ attachmentId: "renewed-attachment" }),
+      );
+    } finally {
+      now.mockRestore();
+    }
+  },
+);
