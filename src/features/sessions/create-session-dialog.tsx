@@ -87,26 +87,39 @@ export function isCreateSessionSubmitDisabled(input: {
   );
 }
 
-// When `open` is false the body does not mount, so all of its local state is
-// reset automatically on reopen. This avoids a reset effect (which the
-// react-hooks/set-state-in-effect lint rule forbids).
+// Keep a draft in the workspace shell's memory until it is submitted or discarded.
+// The key also prevents a draft from crossing account or workspace boundaries.
 export function CreateSessionDialog(props: CreateSessionDialogProps) {
-  if (!props.open) {
-    return null;
-  }
-  return <CreateSessionDialogBody {...props} />;
+  const [revision, setRevision] = useState(0);
+  return (
+    <CreateSessionDialogBody
+      {...props}
+      key={`${props.userId}:${props.workspaceId}:${revision}`}
+      onReset={() => setRevision((current) => current + 1)}
+    />
+  );
 }
 
-function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSessionDialogProps) {
+function CreateSessionDialogBody({
+  onClose,
+  onReset,
+  open,
+  userId,
+  workspaceId,
+}: CreateSessionDialogProps & { onReset: () => void }) {
   const router = useRouter();
   const { startNavigation } = useOptionalRouteProgress();
   const submitInFlightRef = useRef(false);
   const sessionCommittedRef = useRef(false);
+  const disposedRef = useRef(false);
   const imageDraftsRef = useRef<SessionImageDraft[]>([]);
 
   useEffect(() => {
-    finishInteraction("open_create_dialog", "success");
-  }, []);
+    if (open) {
+      finishInteraction("open_create_dialog", "success");
+      void preloadSessionRepositories({ userId, workspaceId }).catch(() => undefined);
+    }
+  }, [open, userId, workspaceId]);
 
   const [prompt, setPrompt] = useState("");
   const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
@@ -132,7 +145,9 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   );
 
   useEffect(() => {
+    disposedRef.current = false;
     return () => {
+      disposedRef.current = true;
       for (const image of imageDraftsRef.current) {
         URL.revokeObjectURL(image.previewUrl);
         if (!sessionCommittedRef.current && image.attachmentId) {
@@ -198,6 +213,13 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   async function uploadImageDraft(clientId: string, file: File) {
     try {
       const uploaded = await uploadSessionAttachmentFromClient({ file, workspaceId });
+      if (disposedRef.current) {
+        void deletePendingSessionAttachmentFromClient({
+          attachmentId: uploaded.id,
+          workspaceId,
+        }).catch(() => undefined);
+        return;
+      }
       updateImageDrafts((current) =>
         current.map((image) =>
           image.clientId === clientId
@@ -377,6 +399,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       // previous page-scoped mounting closed it implicitly on navigation.
       sessionCommittedRef.current = true;
       onClose();
+      onReset();
       startNavigation(result.canonicalUrl);
       router.push(result.canonicalUrl);
     } catch (error) {
@@ -403,60 +426,19 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
 
   return (
     <Dialog
-      open
+      open={open}
       onOpenChange={(nextOpen) => {
         if (!nextOpen && !isSubmitting && !hasActiveAttachmentOperation) onClose();
       }}
     >
       <DialogContent
         className="max-w-xl"
-        description="Link a Linear issue or describe the work, then choose where Wallie should run."
+        description="Describe the work or link a Linear issue, then choose where Wallie should run."
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
       >
         <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
           <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
-                Linear issue URL
-              </label>
-              <input
-                id="session-linear"
-                aria-describedby={
-                  [
-                    "session-linear-description",
-                    linearError ? "session-linear-error" : null,
-                    errorMessage ? "create-session-error" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" ") || undefined
-                }
-                autoComplete="off"
-                autoFocus
-                name="linearUrl"
-                value={linearUrl}
-                onChange={(event) => handleLinearChange(event.target.value)}
-                onBlur={handleLinearBlur}
-                className="ui-input"
-                placeholder="https://linear.app/acme/issue/TEAM-123"
-                type="url"
-              />
-              <p className="type-annotation text-muted" id="session-linear-description">
-                Wallie uses the issue title and, when the prompt is empty, its description.
-              </p>
-              {linearError ? (
-                <p className="text-xs text-danger" id="session-linear-error" role="alert">
-                  {linearError}
-                </p>
-              ) : null}
-            </div>
-
-            <div className="flex items-center gap-3" aria-hidden="true">
-              <span className="h-px flex-1 bg-border" />
-              <span className="type-annotation text-muted">or</span>
-              <span className="h-px flex-1 bg-border" />
-            </div>
-
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
                 Prompt
@@ -469,6 +451,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
                     .join(" ") || undefined
                 }
                 autoComplete="off"
+                autoFocus
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -496,6 +479,46 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
               {attachmentMessage ? (
                 <p className="text-xs text-warning" role="status">
                   {attachmentMessage}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-border" />
+              <span className="type-annotation text-muted">or</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
+                Linear issue URL
+              </label>
+              <input
+                id="session-linear"
+                aria-describedby={
+                  [
+                    "session-linear-description",
+                    linearError ? "session-linear-error" : null,
+                    errorMessage ? "create-session-error" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
+                }
+                autoComplete="off"
+                name="linearUrl"
+                value={linearUrl}
+                onChange={(event) => handleLinearChange(event.target.value)}
+                onBlur={handleLinearBlur}
+                className="ui-input"
+                placeholder="https://linear.app/acme/issue/TEAM-123"
+                type="url"
+              />
+              <p className="type-annotation text-muted" id="session-linear-description">
+                Wallie uses the issue title and, when the prompt is empty, its description.
+              </p>
+              {linearError ? (
+                <p className="text-xs text-danger" id="session-linear-error" role="alert">
+                  {linearError}
                 </p>
               ) : null}
             </div>
@@ -588,14 +611,28 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             </div>
           ) : null}
 
+          <p className="text-xs text-muted">
+            Closing keeps your draft while you stay in this workspace. Reloading clears it.
+          </p>
           <div className="flex flex-wrap items-center justify-end gap-3">
+            <button
+              type="button"
+              disabled={isSubmitting || hasActiveAttachmentOperation}
+              onClick={() => {
+                onClose();
+                onReset();
+              }}
+              className="ui-button mr-auto"
+            >
+              Discard draft
+            </button>
             <button
               type="button"
               disabled={isSubmitting || hasActiveAttachmentOperation}
               onClick={onClose}
               className="ui-button"
             >
-              Cancel
+              Close
             </button>
             <button
               type="submit"
