@@ -20,7 +20,7 @@ describe("SessionsZeroState", () => {
     const html = renderZeroState("first-run");
 
     expect(html).toContain("No sessions yet");
-    expect(html).toContain("Turn a Linear issue into a session");
+    expect(html).toContain("Describe a task");
     expect(html).not.toContain("archived");
   });
 

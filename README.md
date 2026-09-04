@@ -5,7 +5,7 @@
 
 AI-powered product development automation. Wallie turns a work prompt -- optionally linked to a Linear issue -- into reviewed, staged work. It runs Codex, Claude Code, Cursor, or OpenCode in a GitHub-backed sandbox, preserves a versioned artifact for every stage, and keeps the human approval loop in the dashboard.
 
-> **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance — sign up and start in minutes, no setup required. It's actively maintained, so you can use it for real work.
+> **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance. To run your first task, connect a GitHub repository, a sandbox provider, and your agent credentials. Linear is optional.
 >
 > **Want to run your own?** Wallie is open source (MIT). Follow the [Self-Hosting guide](docs/SELF_HOSTING.md) to deploy your own instance, or the [Local Setup](#local-setup-end-to-end) section below to hack on it.
 
