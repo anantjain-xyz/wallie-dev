@@ -61,6 +61,14 @@ describe("SessionReviewBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
     expect(onReject).not.toHaveBeenCalled();
     expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAccessibleDescription(
+      "Feedback is required. Whitespace-only notes are not accepted.",
+    );
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Fix the copy" },
+    });
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "false");
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
@@ -113,6 +121,14 @@ describe("SessionReviewBar", () => {
 
     expect(onReject).not.toHaveBeenCalled();
     expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAccessibleDescription(
+      "Feedback is required. Whitespace-only notes are not accepted.",
+    );
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Fix the copy" },
+    });
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "false");
     expect(feedback).toHaveFocus();
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
