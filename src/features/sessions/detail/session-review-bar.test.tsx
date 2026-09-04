@@ -43,7 +43,7 @@ describe("SessionReviewBar", () => {
   });
 
   it("announces the archive consequence when focusing the approval action", () => {
-    const description = "If this is the final stage, approval completes and archives the session.";
+    const description = "Final-stage approval may also archive the session.";
     renderBar({ approveLabel: "Approve stage", approveDescription: description });
     expect(screen.getByRole("button", { name: "Approve stage" })).toHaveAccessibleDescription(
       description,

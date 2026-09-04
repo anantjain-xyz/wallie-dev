@@ -156,7 +156,7 @@ describe("StageTimeline", () => {
 
   it("marks a terminal approved stage completed before its completion event arrives", () => {
     const timeline = buildStageTimeline(
-      makeSession({ currentStageSlug: "land", phaseStatus: "approved" }),
+      makeSession({ currentStageId: "stage-3", currentStageSlug: "land", phaseStatus: "approved" }),
     );
     expect(timeline.map(stageTimelineLabel)).toEqual(["Completed", "Not approved", "Completed"]);
   });
@@ -197,4 +197,33 @@ describe("StageTimeline", () => {
     expect(html).toContain("min-w-0 max-w-full");
     expect(html).toContain("[overflow-wrap:anywhere]");
   });
+});
+
+it("has no upcoming work after terminal approval despite a stage reorder", () => {
+  const session = makeSession({ phaseStatus: "approved" });
+  expect(buildStageTimeline(session).map(stageTimelineLabel)).toEqual([
+    "Completed",
+    "Completed",
+    "Not approved",
+  ]);
+});
+
+it("matches renamed stages by ID and does not transfer approval to a reused slug", () => {
+  const session = makeSession();
+  session.phaseCompletions = [
+    { stageId: "stage-1", stageSlug: "plan", completedAt: "2026-06-07T11:00:00.000Z" },
+  ];
+  session.pipeline.stages[0]!.slug = "discovery";
+  session.pipeline.stages[2]!.slug = "plan";
+  expect(buildStageTimeline(session).map(stageTimelineLabel)).toEqual([
+    "Completed",
+    "Awaiting review",
+    "Upcoming",
+  ]);
+});
+
+it("keeps the current step after its slug changes", () => {
+  const session = makeSession();
+  session.pipeline.stages[1]!.slug = "implement";
+  expect(buildStageTimeline(session)[1]?.status).toBe("current");
 });

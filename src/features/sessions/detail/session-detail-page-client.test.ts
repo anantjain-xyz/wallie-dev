@@ -206,9 +206,7 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ data });
     expect(html).toContain("Approve stage");
     expect(html).not.toContain("Approve &amp; start Security check");
-    expect(html).toContain(
-      "If this is the final stage, approval completes and archives the session.",
-    );
+    expect(html).toContain("Final-stage approval may also archive the session.");
   });
 
   it("uses a 70/30 workbench grid with sticky review controls", () => {
@@ -220,9 +218,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("Request changes");
     expect(html).toContain("Approve stage");
-    expect(html).toContain(
-      "If this is the final stage, approval completes and archives the session.",
-    );
+    expect(html).toContain("Final-stage approval may also archive the session.");
     expect(html).toContain('aria-label="Pipeline stages"');
     expect(html).not.toContain("max-h-[480px]");
     expect(html).not.toContain(">Prompt<");
@@ -353,4 +349,12 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Collapsed — expand to inspect the original session input");
     expect(html).not.toContain("Build the title editor");
   });
+});
+
+it("does not promise automatic archival for a Linear-linked manual-merge workflow", () => {
+  const data = makeSessionDetailData();
+  data.session.linearIssueId = "TEAM-123";
+  const html = renderDetail({ data });
+  expect(html).toContain("Final-stage approval may also archive the session.");
+  expect(html).not.toContain("completes and archives");
 });

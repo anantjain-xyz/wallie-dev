@@ -21,18 +21,25 @@ export type StageTimelineEntry = {
   status: StageTimelineStatus;
 };
 
-function stageIndex(pipeline: SessionReviewPipeline, stageSlug: string): number {
-  return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
+function stageIndex(pipeline: SessionReviewPipeline, stageId: string): number {
+  return pipeline.stages.findIndex((stage) => stage.id === stageId);
 }
 
 export function buildStageTimeline(
   session: SessionReviewSession,
   options?: { failedStageSlug?: string | null },
 ): StageTimelineEntry[] {
-  const completionIndex = new Map(
-    session.phaseCompletions.map((completion) => [completion.stageSlug, completion.completedAt]),
+  const completedStageIds = new Set(
+    session.phaseCompletions
+      .filter((completion) => completion.stageId && completion.completedAt)
+      .map((completion) => completion.stageId),
   );
-  const currentIdx = stageIndex(session.pipeline, session.currentStageSlug);
+  const completedLegacySlugs = new Set(
+    session.phaseCompletions
+      .filter((completion) => !completion.stageId && completion.completedAt)
+      .map((completion) => completion.stageSlug),
+  );
+  const currentIdx = stageIndex(session.pipeline, session.currentStageId);
   const failedStageSlug = options?.failedStageSlug ?? null;
 
   return session.pipeline.stages.map((stage, idx) => {
@@ -53,7 +60,7 @@ export function buildStageTimeline(
       };
     }
 
-    if (completionIndex.get(stage.slug)) {
+    if (completedStageIds.has(stage.id) || completedLegacySlugs.has(stage.slug)) {
       return { phaseStatus: null, stage, status: "completed" as const };
     }
     if (failedStageSlug === stage.slug) {
@@ -62,7 +69,10 @@ export function buildStageTimeline(
     return {
       phaseStatus: null,
       stage,
-      status: idx < currentIdx ? ("unapproved" as const) : ("upcoming" as const),
+      status:
+        session.phaseStatus === "approved" || idx < currentIdx
+          ? ("unapproved" as const)
+          : ("upcoming" as const),
     };
   });
 }

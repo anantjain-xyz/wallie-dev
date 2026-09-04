@@ -8,6 +8,7 @@ import type {
 import {
   compareSessionTimestamps,
   reconcileSessionMutationPatch,
+  sameCompletionStage,
 } from "@/features/sessions/optimistic";
 
 type SessionRealtimeRow = Pick<
@@ -34,7 +35,7 @@ type ArtifactRealtimeRow = Pick<
 
 type CompletionRealtimeRow = Pick<
   Tables<"session_phase_completions">,
-  "completed_at" | "id" | "session_id" | "stage_slug"
+  "completed_at" | "id" | "session_id" | "stage_id" | "stage_slug"
 >;
 
 export function mergeSessionRealtimeRow(
@@ -129,19 +130,24 @@ export function mergeCompletionRealtimeRow(
   const completion: SessionPhaseCompletion = {
     completedAt: row.completed_at,
     id: row.id,
+    stageId: row.stage_id,
     stageSlug: row.stage_slug,
   };
   const existingCompletion = session.phaseCompletions.find(
-    (current) => current.stageSlug === completion.stageSlug,
+    (current) => current.id === completion.id || sameCompletionStage(current, completion),
   );
   if (
     existingCompletion &&
-    compareSessionTimestamps(existingCompletion.completedAt, completion.completedAt) >= 0
+    (compareSessionTimestamps(existingCompletion.completedAt, completion.completedAt) > 0 ||
+      (existingCompletion.completedAt === completion.completedAt &&
+        existingCompletion.id === completion.id &&
+        existingCompletion.stageId === completion.stageId &&
+        existingCompletion.stageSlug === completion.stageSlug))
   ) {
     return session;
   }
   const phaseCompletions = session.phaseCompletions.filter(
-    (current) => current.stageSlug !== completion.stageSlug,
+    (current) => current.id !== completion.id && !sameCompletionStage(current, completion),
   );
 
   phaseCompletions.push(completion);

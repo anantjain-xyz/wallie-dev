@@ -207,11 +207,7 @@ describe("optimistic session interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
 
     expect(screen.getByText("Drafting artifact")).toBeTruthy();
-    expect(
-      screen.queryByText(
-        "If this is the final stage, approval completes and archives the session.",
-      ),
-    ).toBeNull();
+    expect(screen.queryByText("Final-stage approval may also archive the session.")).toBeNull();
     expect((screen.getByRole("button", { name: /Approving/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );

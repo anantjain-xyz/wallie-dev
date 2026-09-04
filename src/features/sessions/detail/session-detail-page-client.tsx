@@ -48,6 +48,7 @@ import {
   reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
+  sameCompletionStage,
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
@@ -492,11 +493,12 @@ export function SessionDetailPageClient({
         : null;
     const optimisticCompletion = {
       completedAt: new Date().toISOString(),
+      stageId: session.currentStageId,
       stageSlug: session.currentStageSlug,
     };
     const optimisticPhaseCompletions = [
       ...session.phaseCompletions.filter(
-        (completion) => completion.stageSlug !== session.currentStageSlug,
+        (completion) => !sameCompletionStage(completion, optimisticCompletion),
       ),
       optimisticCompletion,
     ];
@@ -931,9 +933,7 @@ export function SessionDetailPageClient({
       <SessionReviewBar
         approveLabel="Approve stage"
         approveDescription={
-          phaseActionPending
-            ? undefined
-            : "If this is the final stage, approval completes and archives the session."
+          phaseActionPending ? undefined : "Final-stage approval may also archive the session."
         }
         mode={stickyReviewMode}
         onApprove={() => {
