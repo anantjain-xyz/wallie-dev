@@ -9,7 +9,18 @@ import type {
 import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 
+export type PipelineRecoveryChanges = {
+  sessions: Map<string, PipelineDashboardCard | null>;
+  insertedSessionIds: Set<string>;
+  runs: Map<
+    string,
+    { runId: string; runStatus: PipelineDashboardCard["latestRunStatus"]; isInsert: boolean }
+  >;
+  pullRequests: Set<string>;
+};
+
 export type PipelineBoardAction =
+  | { lanes: PipelineDashboardLane[]; changes?: PipelineRecoveryChanges; type: "recover" }
   | {
       invalidatedCardIds?: ReadonlySet<string>;
       lanes: PipelineDashboardLane[];
@@ -417,11 +428,62 @@ function updatePipelineCardRun(
   };
 }
 
+/** Apply the snapshot now, retaining only entities changed while it was in flight. */
+export function recoverPipelineBoard(
+  current: PipelineBoardState,
+  lanes: PipelineDashboardLane[],
+  changes?: PipelineRecoveryChanges,
+): PipelineBoardState {
+  let recovered = createPipelineBoardState(lanes);
+  if (!changes) return recovered;
+  for (const [id, live] of changes.sessions) {
+    if (!live) {
+      recovered = removePipelineCard(recovered, id);
+      continue;
+    }
+    const fresh = recovered.cardsById[id];
+    if (fresh && fresh.updatedAt > live.updatedAt) continue;
+    const target = recovered.lanes.find(
+      (lane) => lane.pipeline.id === live.pipelineId && lane.id === live.currentStageId,
+    );
+    const possiblyCountedOffPage =
+      !fresh && !changes.insertedSessionIds.has(id) && Boolean(target?.cursor);
+    const next = {
+      ...live,
+      latestRunId: fresh ? fresh.latestRunId : live.latestRunId,
+      latestRunStatus: fresh ? fresh.latestRunStatus : live.latestRunStatus,
+      pullRequests: fresh?.pullRequests ?? live.pullRequests,
+    };
+    recovered = upsertPipelineCard(recovered, next, true);
+    // An absent card in a partial lane may already be included in its server total.
+    if (possiblyCountedOffPage && target) {
+      recovered = {
+        ...recovered,
+        lanes: recovered.lanes.map((lane) =>
+          pipelineLaneKey(lane) === pipelineLaneKey(target)
+            ? { ...lane, totalCount: Math.max(lane.cardIds.length, lane.totalCount - 1) }
+            : lane,
+        ),
+      };
+    }
+  }
+  for (const [sessionId, update] of changes.runs) {
+    recovered = updatePipelineCardRun(recovered, { sessionId, ...update });
+  }
+  for (const id of changes.pullRequests) {
+    const live = current.cardsById[id];
+    if (live) recovered = updatePipelineCardPullRequests(recovered, id, live.pullRequests);
+  }
+  return recovered;
+}
+
 export function pipelineBoardReducer(
   state: PipelineBoardState,
   action: PipelineBoardAction,
 ): PipelineBoardState {
   switch (action.type) {
+    case "recover":
+      return recoverPipelineBoard(state, action.lanes, action.changes);
     case "append-page":
       return appendPipelineBoardLanePage(state, action.page);
     case "reconcile":
