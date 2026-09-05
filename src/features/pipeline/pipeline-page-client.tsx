@@ -29,6 +29,7 @@ import {
   createPipelineBoardState,
   pipelineBoardReducer,
   pipelineLaneKey,
+  type PipelineRecoveryChanges,
 } from "@/features/pipeline/model";
 import type {
   PipelineBoardLane,
@@ -209,15 +210,14 @@ function PipelinePageContent({
   boardRef.current = board;
   const [refreshPending, startRefresh] = useTransition();
   const refreshInFlight = useRef(false);
-  const eventVersion = useRef(0);
   const refreshGeneration = useRef(0);
-  const recoveryVersion = useRef<number | null>(null);
+  const recoveryChanges = useRef<PipelineRecoveryChanges | null>(null);
   const recoveryRef = useRef<ReturnType<typeof createSessionRecoveryRefresh> | null>(null);
   const refreshBoard = useCallback(() => {
     if (refreshInFlight.current || loadingLaneKeyRef.current) return;
     refreshInFlight.current = true;
     refreshGeneration.current += 1;
-    recoveryVersion.current = eventVersion.current;
+    recoveryChanges.current = { sessions: new Map(), runs: new Map(), pullRequests: new Set() };
     startRefresh(() => router.refresh());
   }, [router]);
 
@@ -228,20 +228,26 @@ function PipelinePageContent({
   useEffect(() => {
     if (initialLanesRef.current === initialData.lanes) return;
     initialLanesRef.current = initialData.lanes;
-    if (recoveryVersion.current !== null) {
-      const racedWithLiveUpdate = recoveryVersion.current !== eventVersion.current;
-      recoveryVersion.current = null;
-      if (racedWithLiveUpdate) {
-        recoveryRef.current?.request();
-        return;
-      }
+    if (recoveryChanges.current) {
+      const changes = recoveryChanges.current;
+      recoveryChanges.current = null;
       // Rebuild bounded first pages: retained pages may contain missed archives/deletes.
       const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
       startTransition(() => {
         if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
-        dispatch({ lanes: initialData.lanes, type: "recover" });
+        dispatch({ lanes: initialData.lanes, changes, type: "recover" });
       });
       invalidatedCardIds.current.clear();
+      if (
+        [...changes.sessions.values()].some(
+          (card) =>
+            card &&
+            !initialData.lanes.some(
+              (lane) => lane.id === card.currentStageId && lane.pipeline.id === card.pipelineId,
+            ),
+        )
+      )
+        recoveryRef.current?.request();
       return;
     }
     const invalidated = new Set(invalidatedCardIds.current);
@@ -308,7 +314,6 @@ function PipelinePageContent({
     async function refreshSessionPullRequests(sessionId: string) {
       const requestId = (prRequests.get(sessionId) ?? 0) + 1;
       prRequests.set(sessionId, requestId);
-      const startedAtVersion = eventVersion.current;
       const startedAtGeneration = refreshGeneration.current;
       const { data, error } = await supabase!
         .from("session_pull_requests")
@@ -324,11 +329,11 @@ function PipelinePageContent({
         startedAtGeneration !== refreshGeneration.current
       )
         return;
-      if (error || startedAtVersion !== eventVersion.current || refreshInFlight.current) {
+      if (error) {
         recovery.request();
         return;
       }
-      eventVersion.current += 1;
+      recoveryChanges.current?.pullRequests.add(sessionId);
 
       const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
         id: row.id,
@@ -350,16 +355,19 @@ function PipelinePageContent({
           table: "sessions",
         },
         (payload) => {
-          eventVersion.current += 1;
           if (payload.eventType === "DELETE") {
             const oldId = (payload.old as { id?: string } | null)?.id;
-            if (oldId) dispatch({ cardId: oldId, type: "remove" });
+            if (oldId) {
+              recoveryChanges.current?.sessions.set(oldId, null);
+              dispatch({ cardId: oldId, type: "remove" });
+            }
             return;
           }
 
           setHasObservedSession(true);
           const row = payload.new as Tables<"sessions">;
           if (row.archived_at) {
+            recoveryChanges.current?.sessions.set(row.id, null);
             dispatch({ cardId: row.id, type: "remove" });
             return;
           }
@@ -383,6 +391,7 @@ function PipelinePageContent({
             updatedAt: row.updated_at,
             workspaceId: row.workspace_id,
           };
+          recoveryChanges.current?.sessions.set(next.id, next);
           const hasTargetLane = currentBoard.lanes.some(
             (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
           );
@@ -420,7 +429,6 @@ function PipelinePageContent({
           table: "agent_runs",
         },
         (payload) => {
-          eventVersion.current += 1;
           if (payload.eventType === "DELETE") {
             const deletedRun = payload.old as { id?: string; session_id?: string } | null;
             const card = deletedRun?.session_id
@@ -431,6 +439,13 @@ function PipelinePageContent({
           }
 
           const run = payload.new as Pick<Tables<"agent_runs">, "id" | "session_id" | "status">;
+          const priorRun = recoveryChanges.current?.runs.get(run.session_id);
+          recoveryChanges.current?.runs.set(run.session_id, {
+            runId: run.id,
+            runStatus: run.status,
+            isInsert:
+              payload.eventType === "INSERT" || (priorRun?.runId === run.id && priorRun.isInsert),
+          });
           dispatch({
             isInsert: payload.eventType === "INSERT",
             runId: run.id,
@@ -449,7 +464,6 @@ function PipelinePageContent({
           table: "session_pull_requests",
         },
         (payload) => {
-          eventVersion.current += 1;
           const row =
             payload.eventType === "DELETE"
               ? (payload.old as { session_id?: string } | null)
@@ -680,7 +694,7 @@ function PipelinePageContent({
                     error={laneErrors[key]}
                     filtersActive={filtersActive}
                     initialNow={renderNow}
-                    isLoading={loadingLaneKey === key}
+                    isLoading={refreshPending || loadingLaneKey === key}
                     isMobileActive={activeLaneKey === key}
                     lane={lane}
                     onLoadMore={loadMore}

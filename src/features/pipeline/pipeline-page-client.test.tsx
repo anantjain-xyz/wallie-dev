@@ -261,7 +261,7 @@ describe("PipelinePageClient", () => {
     ).toContain("Failed");
   });
 
-  it("keeps live changes when they race recovery and retries for a quiet snapshot", async () => {
+  it("applies missed changes even when live traffic races recovery", async () => {
     vi.useFakeTimers();
     const supabase = installSupabaseMock();
     const original = initialData();
@@ -274,16 +274,39 @@ describe("PipelinePageClient", () => {
         new: sessionRow(card(1, PLAN_STAGE_ID, { title: "Live title" })),
       }),
     );
-    view.rerender(<PipelinePageClient initialData={initialData()} />);
+    view.rerender(<PipelinePageClient initialData={initialData([card(1, PLAN_STAGE_ID)], [])} />);
     expect(screen.getByText("Live title")).toBeTruthy();
+    expect(screen.queryByText("Session 3")).toBeNull();
     await act(async () => vi.advanceTimersByTime(10_000));
-    expect(mocked.refresh).toHaveBeenCalledTimes(2);
-    view.rerender(<PipelinePageClient initialData={initialData([], [])} />);
-    expect(screen.queryByText("Live title")).toBeNull();
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
     view.unmount();
     act(() => window.dispatchEvent(new Event("online")));
     await act(async () => vi.advanceTimersByTime(10_000));
-    expect(mocked.refresh).toHaveBeenCalledTimes(2);
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("visibly disables pagination until recovery finishes", async () => {
+    vi.useFakeTimers();
+    installSupabaseMock();
+    let finish!: () => void;
+    mocked.refresh.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={initialData()} />);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    const button = screen.getByRole("button", { name: "Load more Plan sessions" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.textContent).toBe("Loading…");
+    act(() => button.click());
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("distinguishes an archived-only workspace from first run", () => {

@@ -55,6 +55,82 @@ function board() {
 }
 
 describe("pipelineBoardReducer", () => {
+  it("recovers independent changes while retaining only concurrent session changes", () => {
+    const live = {
+      ...card(1),
+      title: "Live title",
+      updatedAt: "2026-07-19T00:00:00Z",
+      latestRunId: "old-run",
+      latestRunStatus: "running" as const,
+    };
+    const next = pipelineBoardReducer(board(), {
+      type: "recover",
+      lanes: [lane(PLAN_STAGE_ID, "Plan", [card(1)]), lane(BUILD_STAGE_ID, "Build", [])],
+      changes: { sessions: new Map([[live.id, live]]), runs: new Map(), pullRequests: new Set() },
+    });
+    expect(next.cardsById[live.id]?.title).toBe("Live title");
+    expect(next.cardsById[live.id]?.latestRunId).toBeNull();
+    expect(next.cardsById[card(2).id]).toBeUndefined();
+    expect(next.cardsById[card(3).id]).toBeUndefined();
+  });
+
+  it("does not resurrect a card deleted during recovery or overwrite a newer snapshot", () => {
+    const newer = { ...card(2), title: "Newer", updatedAt: "2026-07-19T00:00:00Z" };
+    const next = pipelineBoardReducer(board(), {
+      type: "recover",
+      lanes: [lane(PLAN_STAGE_ID, "Plan", [card(1), newer])],
+      changes: {
+        sessions: new Map([
+          [card(1).id, null],
+          [card(2).id, card(2)],
+        ]),
+        runs: new Map(),
+        pullRequests: new Set(),
+      },
+    });
+    expect(next.cardsById[card(1).id]).toBeUndefined();
+    expect(next.cardsById[card(2).id]?.title).toBe("Newer");
+    expect(next.lanes[0]?.totalCount).toBe(1);
+  });
+
+  it("retains concurrent run updates without losing refreshed session fields", () => {
+    const current = pipelineBoardReducer(board(), {
+      type: "update-run",
+      sessionId: card(1).id,
+      runId: "new-run",
+      runStatus: "running",
+      isInsert: true,
+    });
+    const next = pipelineBoardReducer(current, {
+      type: "recover",
+      lanes: [lane(PLAN_STAGE_ID, "Plan", [{ ...card(1), title: "Refreshed" }])],
+      changes: {
+        sessions: new Map(),
+        runs: new Map([[card(1).id, { runId: "new-run", runStatus: "running", isInsert: true }]]),
+        pullRequests: new Set(),
+      },
+    });
+    expect(next.cardsById[card(1).id]).toMatchObject({
+      title: "Refreshed",
+      latestRunId: "new-run",
+      latestRunStatus: "running",
+    });
+  });
+
+  it("does not double count a concurrent update to an off-page card", () => {
+    const next = pipelineBoardReducer(board(), {
+      type: "recover",
+      lanes: [{ ...lane(PLAN_STAGE_ID, "Plan", [card(1)]), totalCount: 20 }],
+      changes: {
+        sessions: new Map([[card(2).id, card(2)]]),
+        runs: new Map(),
+        pullRequests: new Set(),
+      },
+    });
+    expect(next.lanes[0]?.totalCount).toBe(20);
+    expect(next.cardsById[card(2).id]).toBeDefined();
+  });
+
   it("normalizes cards once into an ID map and ordered per-lane ID arrays", () => {
     const duplicated = card(1);
     const state = createPipelineBoardState([
