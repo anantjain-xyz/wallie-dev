@@ -17,6 +17,7 @@ const authenticatedRoutes = [
   { name: "pipeline", path: workspacePath },
   { name: "sessions", path: `${workspacePath}/sessions` },
   { name: "session-detail", path: `${workspacePath}/sessions/1` },
+  { name: "active-session", path: `${workspacePath}/sessions/8` },
   { name: "onboarding", path: `${workspacePath}/onboarding` },
   { name: "settings-integrations", path: `${workspacePath}/settings?category=integrations` },
   { name: "settings-pipeline", path: `${workspacePath}/settings?category=pipeline` },
@@ -31,6 +32,8 @@ async function applyTheme(page: Page, theme: Theme) {
     window.localStorage.setItem("wallie-theme", nextTheme);
     document.documentElement.dataset.theme = nextTheme;
   }, theme);
+  // Finish background reads before a deliberate full-document theme reload.
+  await page.waitForLoadState("networkidle");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 }
@@ -106,6 +109,17 @@ async function expectNoAxeViolations(page: Page) {
   expect(violations).toEqual([]);
 }
 
+async function expectPageReady(page: Page) {
+  await expect(page.locator("#main-content")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+  await expect(page.locator("[data-route-loading]")).toHaveCount(0);
+  // Nested settings/onboarding fallbacks must settle too. An active run's
+  // progress status stays busy for its entire execution and is not a fallback.
+  await expect(
+    page.locator('[role="status"][aria-busy="true"]:not([data-run-progress])'),
+  ).toHaveCount(0);
+}
+
 async function captureRouteMatrix(
   page: Page,
   routes: ReadonlyArray<{ name: string; path: string }>,
@@ -117,9 +131,7 @@ async function captureRouteMatrix(
       for (const route of routes) {
         await page.goto(route.path);
         await applyTheme(page, theme);
-        await expect(page.locator("#main-content")).toBeVisible();
-        await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-        await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0);
+        await expectPageReady(page);
         await expectResponsiveContract(page, width);
         if ((width === 390 && theme === "light") || (width === 1440 && theme === "dark")) {
           await expectNoAxeViolations(page);
@@ -128,6 +140,9 @@ async function captureRouteMatrix(
           fullPage: true,
           path: join(screenshotRoot, `${route.name}-${width}-${theme}.png`),
         });
+        // This matrix inspects settled pages. Interruption is covered separately
+        // by route-recovery tests; do not cancel unfinished reads between samples.
+        await page.waitForLoadState("networkidle");
       }
     }
   }
@@ -157,6 +172,7 @@ test("production viewport and theme matrix stays responsive and warning-free", a
 
 test("keyboard, coarse-pointer, reduced-motion, and zoom-critical flows remain usable", async ({
   browser,
+  browserName,
 }) => {
   test.setTimeout(3 * 60_000);
   const context = await browser.newContext({
@@ -169,10 +185,9 @@ test("keyboard, coarse-pointer, reduced-motion, and zoom-critical flows remain u
 
   for (const route of authenticatedRoutes) {
     await page.goto(route.path);
-    await expect(page.locator("#main-content")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-    await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0);
-    await page.keyboard.press("Tab");
+    await expectPageReady(page);
+    // Safari uses Option+Tab to include links and other controls in tab order.
+    await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
     await expect
       .poll(() => page.evaluate(() => document.activeElement !== document.body))
       .toBe(true);
@@ -189,6 +204,7 @@ test("keyboard, coarse-pointer, reduced-motion, and zoom-critical flows remain u
 
   await page.setViewportSize({ height: 450, width: 640 });
   await page.goto(`${workspacePath}/settings?category=integrations`);
+  await expectPageReady(page);
   await expectResponsiveContract(page, 640);
   await context.close();
 });
