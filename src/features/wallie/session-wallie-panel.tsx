@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
+import { usePublishExecution } from "@/features/sessions/detail/execution-summary";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
@@ -208,6 +209,13 @@ export function SessionWalliePanel({
     summaryMessages: null as boolean | null,
   });
   sessionIdRef.current = session.id;
+  usePublishExecution({
+    sessionId: session.id,
+    run: runs[0],
+    connection: connectionState,
+    nowMs,
+    stallTimeoutMs: initialData.stallTimeoutMs,
+  });
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
 
