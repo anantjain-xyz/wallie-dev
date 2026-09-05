@@ -10,6 +10,7 @@ import {
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
+import type { ToastInput } from "@/components/ui/toast";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
@@ -17,10 +18,15 @@ const mocked = vi.hoisted(() => {
   const refresh = vi.fn();
   return {
     refresh,
+    pushToast: vi.fn<(toast: ToastInput) => number>(),
     router: { refresh, replace: vi.fn() },
     handlers: new Map<string, (payload: unknown) => void>(),
   };
 });
+
+vi.mock("@/components/ui/toast", () => ({
+  useOptionalToast: () => ({ pushToast: mocked.pushToast }),
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/w/acme/sessions/7",
@@ -116,7 +122,61 @@ describe("SessionDetailPageClient", () => {
     cleanup();
     vi.restoreAllMocks();
     mocked.refresh.mockReset();
+    mocked.pushToast.mockReset();
     mocked.handlers.clear();
+  });
+
+  it("refreshes after a successful archive Undo has cleared its pending state", async () => {
+    const data = makeSessionDetailData();
+    const archivedAt = "2026-06-07T12:00:00.000Z";
+    let finishUndo!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "DELETE") {
+        return new Promise<Response>((resolve) => {
+          finishUndo = resolve;
+        });
+      }
+      return Response.json({
+        id: data.session.id,
+        archivedAt,
+        phaseStatus: "awaiting_review",
+        updatedAt: archivedAt,
+      });
+    });
+    const view = render(
+      createElement(SessionDetailPageClient, {
+        canReview: true,
+        activity: null,
+        initialData: data,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      }),
+    );
+    await act(async () => fireEvent.click(view.getByRole("button", { name: "Archive" })));
+    const undo = mocked.pushToast.mock.calls.find(([toast]) => toast.action?.label === "Undo")?.[0]
+      .action;
+    expect(undo).toBeDefined();
+    await act(async () => undo!.onClick());
+    expect((view.getByRole("button", { name: "Archive" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(mocked.refresh).not.toHaveBeenCalled();
+    mocked.refresh.mockImplementation(() => {
+      expect((view.getByRole("button", { name: "Archive" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    await act(async () =>
+      finishUndo(
+        Response.json({
+          id: data.session.id,
+          archivedAt: null,
+          phaseStatus: "awaiting_review",
+          updatedAt: "2026-06-07T12:01:00.000Z",
+        }),
+      ),
+    );
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
   });
 
   it("reconciles recovered snapshots without overwriting newer session state", async () => {
