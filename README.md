@@ -8,6 +8,8 @@ AI-powered product development automation. Wallie turns a work prompt -- optiona
 > **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance. To run your first task, connect a GitHub repository, a sandbox provider, and your agent credentials. Linear is optional.
 >
 > **Want to run your own?** Wallie is open source (MIT). Follow the [Self-Hosting guide](docs/SELF_HOSTING.md) to deploy your own instance, or the [Local Setup](#local-setup-end-to-end) section below to hack on it.
+>
+> After setup, follow the [first-task verification walkthrough](docs/SELF_HOSTING.md#7-verify-the-first-task-through-completion) to review the output and verify the resulting PR.
 
 ## How It Works
 
