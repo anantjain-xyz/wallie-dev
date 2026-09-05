@@ -1,6 +1,6 @@
 # Self-Hosting Wallie
 
-This guide walks through deploying your **own production Wallie instance** on the internet. If you just want to use Wallie, the hosted instance at [**wallie.dev**](https://wallie.dev) is free and maintained — no setup required.
+This guide walks through deploying your **own production Wallie instance** on the internet. To use the hosted instance at [**wallie.dev**](https://wallie.dev), you do not need to deploy these services. You still connect a GitHub repository, a sandbox provider, and your agent credentials before running a task. Linear is optional.
 
 If you only want to run Wallie **locally for development**, follow the [README → Local Setup](../README.md#local-setup-end-to-end) instead. This document assumes you want a real, always-on deployment.
 
@@ -74,7 +74,7 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
 
 3. Deploy, then point your domain at the deployment so `NEXT_PUBLIC_APP_URL` matches the real origin.
 
-> **Vercel Sandbox credentials:** when the web app and worker run **on Vercel**, Sandbox execution uses Vercel OIDC automatically — you do **not** need `VERCEL_TOKEN`/`VERCEL_TEAM_ID`/`VERCEL_PROJECT_ID`. If your worker runs **off** Vercel (e.g. Railway), see step 4. Per-workspace Sandbox connections are also entered in the app's Settings UI.
+> **Session sandbox credentials:** hosting the web app on Vercel does not replace the per-workspace sandbox connection. Connect and test the selected provider in Settings (step 6). The `VERCEL_*` environment credentials described in step 4 are for operator/helper sandboxes; they do not make a workspace ready to run sessions.
 
 ## 4. Deploy the worker
 
@@ -122,16 +122,54 @@ These are entered through the app's **Settings** UI and stored encrypted in your
 
 See [README → Configure agent provider](../README.md#configure-agent-provider) and the integration sections for details.
 
-## 7. Smoke test
+## 7. Verify the first task through completion
 
-1. Open your origin and sign up via Supabase Auth.
-2. Complete onboarding (create a workspace).
-3. In **Settings**, connect an agent provider, install the GitHub App, pick a repo, and connect the selected sandbox provider. Add a Linear key only if you want to attach Linear issues.
-4. Run the sandbox capability check for that repository and confirm Git, Node 22, the agent CLI, Playwright, Chromium, and screenshot smoke all pass.
-5. Create a session by describing a task; attaching a Linear issue is optional.
-6. Confirm the **worker logs** show it claiming the job, and that an artifact appears in the session detail view for review.
+Use a repository and a small task you are comfortable running through your
+configured providers. This rehearsal uses sandbox and model access and can
+create a branch and pull request in that repository.
 
-If a session stays at `in_progress`: the worker isn't running, agent credentials are missing/invalid, or the worker can't reach your web origin or Supabase. Check the worker logs first.
+1. Open your origin in a fresh browser session. Request a sign-in email and
+   follow its link. Confirm it returns to your origin and the expected account.
+2. Create a workspace and complete onboarding: connect GitHub, select and
+   prepare a repository, and connect execution access. A workspace name alone
+   does not complete setup. Keep the default Plan → Build pipeline for the
+   first rehearsal; Linear is optional.
+3. Run the selected sandbox provider's repository capability check. Resolve
+   any blockers before creating the task. Confirm the worker has started and
+   is publishing fresh heartbeats; see [Worker operations](WORKER-OPERATIONS.md#heartbeats-and-activity).
+4. Describe a bounded change with a clear acceptance condition, such as fixing
+   a specific README typo. Start the session once. In Runs, confirm it moves
+   from queued into execution and produces an artifact ready for review.
+5. Request one concrete change to the first artifact. Confirm the request
+   succeeds, a new run appears, and a new artifact version becomes
+   reviewable. Inspect the revised output before approving it.
+6. Approve the stage and confirm the next configured stage starts. Continue
+   through every selected stage and approve the final output. Confirm the
+   session shows **Pipeline complete**.
+7. Open the resulting PR when one was produced and verify its repository,
+   changes, and checks on GitHub. If there is no PR, inspect the final artifact
+   and confirm that matches the task's expected output. Pipeline completion
+   does not mean a PR was merged or deployed.
+8. Reload the completed session and open its URL in a second signed-in browser
+   session. Confirm the output, artifact history, and completion state remain
+   available.
+
+Record the deployed commit, provider/model, session URL, review/revision outcome,
+and any resulting PR URL. Record queue wait and execution duration separately
+from Runs and worker logs; a fast-loading page does not prove fast execution.
+Do not use seeded completed sessions as evidence that your deployment ran a task.
+
+Before inviting a wider team, send a test invitation to an account you control
+and follow it from a signed-out browser. Confirm it reaches the intended
+workspace with the intended role. The local browser suite verifies selected
+auth and UI behavior, but does not prove production email delivery or provider
+execution; see [Verification](VERIFICATION.md).
+
+If a session remains queued, inspect the worker logs and heartbeat freshness,
+then workspace readiness and available capacity. If it has started but stops
+making progress, inspect the latest run error/activity and provider access.
+There is no public worker-health endpoint; a responsive web page alone does
+not establish that the worker is healthy.
 
 ## Upgrading
 
