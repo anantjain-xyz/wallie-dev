@@ -1,5 +1,6 @@
 import "server-only";
 
+import { SessionActivityFailure } from "@/features/sessions/detail/session-activity-failure";
 import { SessionActivityPanel } from "@/features/sessions/detail/session-activity-client";
 import { loadWallieSessionData } from "@/features/wallie/server";
 import type { WallieSessionData } from "@/features/wallie/types";
@@ -74,14 +75,6 @@ export function SessionActivityFallback() {
     <div aria-label="Loading run activity" className="space-y-2" role="status">
       <div className="h-4 w-40 animate-pulse rounded bg-control-muted" />
       <div className="h-12 animate-pulse rounded border border-border bg-control-muted" />
-    </div>
-  );
-}
-
-export function SessionActivityFailure() {
-  return (
-    <div className="rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning">
-      Run activity is temporarily unavailable. Session review is still available.
     </div>
   );
 }

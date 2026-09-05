@@ -22,6 +22,8 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(async () => ({})),
 }));
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
 const props = {
   archivedAt: null,
   context: {
@@ -43,6 +45,7 @@ describe("SessionActivity", () => {
 
     expect(html).toContain("Run activity is temporarily unavailable");
     expect(html).toContain("Session review is still available");
+    expect(html).toContain("Retry loading history");
   });
 
   it("provides a stable streamed loading state", () => {
