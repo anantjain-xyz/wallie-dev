@@ -2,13 +2,15 @@
 
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Profiler, type ProfilerOnRenderCallback } from "react";
+import { Suspense, Profiler, type ProfilerOnRenderCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => {
   const refresh = vi.fn();
   return {
     cardLinkRenders: new Map<string, number>(),
+    suspendCard: null as Promise<void> | null,
+    suspendedRenders: 0,
     createSupabaseBrowserClient: vi.fn(),
     refresh,
     router: { refresh },
@@ -35,6 +37,10 @@ vi.mock("@/features/sessions/components/session-detail-link", () => ({
     className?: string;
     href: string;
   }) => {
+    if (ariaLabel.includes("Snapshot title") && mocked.suspendCard) {
+      mocked.suspendedRenders += 1;
+      throw mocked.suspendCard;
+    }
     mocked.cardLinkRenders.set(ariaLabel, (mocked.cardLinkRenders.get(ariaLabel) ?? 0) + 1);
     return (
       <a aria-label={ariaLabel} className={className} href={href}>
@@ -231,6 +237,7 @@ describe("PipelinePageClient", () => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
     mocked.refresh.mockReset();
+    mocked.suspendCard = null;
   });
 
   it("recovers missed removals and independent run state without an initial refresh", async () => {
@@ -283,6 +290,38 @@ describe("PipelinePageClient", () => {
     act(() => window.dispatchEvent(new Event("online")));
     await act(async () => vi.advanceTimersByTime(10_000));
     expect(mocked.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains live events while the recovery render is suspended", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    let resume!: () => void;
+    mocked.suspendedRenders = 0;
+    mocked.suspendCard = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const renderBoard = (value: PipelineDashboardData) => (
+      <Suspense fallback={<p>Waiting for board</p>}>
+        <PipelinePageClient initialData={value} />
+      </Suspense>
+    );
+    const view = render(renderBoard(initialData()));
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    view.rerender(renderBoard(initialData([card(1, PLAN_STAGE_ID, { title: "Snapshot title" })])));
+    expect(mocked.suspendedRenders).toBeGreaterThan(0);
+    act(() =>
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow(card(1, PLAN_STAGE_ID, { title: "Live after snapshot" })),
+      }),
+    );
+    await act(async () => {
+      mocked.suspendCard = null;
+      resume();
+    });
+    expect(screen.getByText("Live after snapshot")).toBeTruthy();
+    expect(screen.queryByText("Snapshot title")).toBeNull();
   });
 
   it("visibly disables pagination until recovery finishes", async () => {

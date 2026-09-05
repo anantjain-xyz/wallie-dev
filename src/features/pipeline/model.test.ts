@@ -66,7 +66,12 @@ describe("pipelineBoardReducer", () => {
     const next = pipelineBoardReducer(board(), {
       type: "recover",
       lanes: [lane(PLAN_STAGE_ID, "Plan", [card(1)]), lane(BUILD_STAGE_ID, "Build", [])],
-      changes: { sessions: new Map([[live.id, live]]), runs: new Map(), pullRequests: new Set() },
+      changes: {
+        insertedSessionIds: new Set(),
+        sessions: new Map([[live.id, live]]),
+        runs: new Map(),
+        pullRequests: new Set(),
+      },
     });
     expect(next.cardsById[live.id]?.title).toBe("Live title");
     expect(next.cardsById[live.id]?.latestRunId).toBeNull();
@@ -80,6 +85,7 @@ describe("pipelineBoardReducer", () => {
       type: "recover",
       lanes: [lane(PLAN_STAGE_ID, "Plan", [card(1), newer])],
       changes: {
+        insertedSessionIds: new Set(),
         sessions: new Map([
           [card(1).id, null],
           [card(2).id, card(2)],
@@ -105,6 +111,7 @@ describe("pipelineBoardReducer", () => {
       type: "recover",
       lanes: [lane(PLAN_STAGE_ID, "Plan", [{ ...card(1), title: "Refreshed" }])],
       changes: {
+        insertedSessionIds: new Set(),
         sessions: new Map(),
         runs: new Map([[card(1).id, { runId: "new-run", runStatus: "running", isInsert: true }]]),
         pullRequests: new Set(),
@@ -117,11 +124,37 @@ describe("pipelineBoardReducer", () => {
     });
   });
 
+  it("counts a new session arriving after a partial recovery snapshot", () => {
+    const next = pipelineBoardReducer(board(), {
+      type: "recover",
+      lanes: [{ ...lane(PLAN_STAGE_ID, "Plan", [card(1)]), totalCount: 20 }],
+      changes: {
+        sessions: new Map([[card(4).id, card(4)]]),
+        insertedSessionIds: new Set([card(4).id]),
+        runs: new Map(),
+        pullRequests: new Set(),
+      },
+    });
+    expect(next.lanes[0]?.totalCount).toBe(21);
+    const alreadyIncluded = pipelineBoardReducer(board(), {
+      type: "recover",
+      lanes: [{ ...lane(PLAN_STAGE_ID, "Plan", [card(1), card(4)]), totalCount: 21 }],
+      changes: {
+        sessions: new Map([[card(4).id, card(4)]]),
+        insertedSessionIds: new Set([card(4).id]),
+        runs: new Map(),
+        pullRequests: new Set(),
+      },
+    });
+    expect(alreadyIncluded.lanes[0]?.totalCount).toBe(21);
+  });
+
   it("does not double count a concurrent update to an off-page card", () => {
     const next = pipelineBoardReducer(board(), {
       type: "recover",
       lanes: [{ ...lane(PLAN_STAGE_ID, "Plan", [card(1)]), totalCount: 20 }],
       changes: {
+        insertedSessionIds: new Set(),
         sessions: new Map([[card(2).id, card(2)]]),
         runs: new Map(),
         pullRequests: new Set(),

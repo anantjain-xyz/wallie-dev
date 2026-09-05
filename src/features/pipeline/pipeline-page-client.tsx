@@ -217,7 +217,12 @@ function PipelinePageContent({
     if (refreshInFlight.current || loadingLaneKeyRef.current) return;
     refreshInFlight.current = true;
     refreshGeneration.current += 1;
-    recoveryChanges.current = { sessions: new Map(), runs: new Map(), pullRequests: new Set() };
+    recoveryChanges.current = {
+      sessions: new Map(),
+      insertedSessionIds: new Set(),
+      runs: new Map(),
+      pullRequests: new Set(),
+    };
     startRefresh(() => router.refresh());
   }, [router]);
 
@@ -233,6 +238,8 @@ function PipelinePageContent({
       recoveryChanges.current = null;
       // Rebuild bounded first pages: retained pages may contain missed archives/deletes.
       const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
+      // Later live dispatches share this reducer queue and replay after recovery
+      // if React rebases the transition; they need no detached-accumulator entry.
       startTransition(() => {
         if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
         dispatch({ lanes: initialData.lanes, changes, type: "recover" });
@@ -392,6 +399,8 @@ function PipelinePageContent({
             workspaceId: row.workspace_id,
           };
           recoveryChanges.current?.sessions.set(next.id, next);
+          if (payload.eventType === "INSERT")
+            recoveryChanges.current?.insertedSessionIds.add(next.id);
           const hasTargetLane = currentBoard.lanes.some(
             (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
           );

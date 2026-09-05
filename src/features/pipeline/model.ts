@@ -11,6 +11,7 @@ import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 
 export type PipelineRecoveryChanges = {
   sessions: Map<string, PipelineDashboardCard | null>;
+  insertedSessionIds: Set<string>;
   runs: Map<
     string,
     { runId: string; runStatus: PipelineDashboardCard["latestRunStatus"]; isInsert: boolean }
@@ -445,7 +446,8 @@ export function recoverPipelineBoard(
     const target = recovered.lanes.find(
       (lane) => lane.pipeline.id === live.pipelineId && lane.id === live.currentStageId,
     );
-    const possiblyCountedOffPage = !fresh && Boolean(target?.cursor);
+    const possiblyCountedOffPage =
+      !fresh && !changes.insertedSessionIds.has(id) && Boolean(target?.cursor);
     const next = {
       ...live,
       latestRunId: fresh ? fresh.latestRunId : live.latestRunId,
