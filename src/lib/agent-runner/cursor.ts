@@ -119,8 +119,10 @@ export function parseCursorStreamJsonLine(
       return { event: parseCursorToolCallEvent(value, secrets), sessionId };
     }
     if (value.type === "result") {
+      const finalOutput = redactSecrets(extractText(value.result), secrets).trim();
       return {
         event: {
+          ...(finalOutput ? { finalOutput } : {}),
           summary: redactSecrets(
             extractText(value.result ?? value.summary) || "Cursor session completed",
             secrets,

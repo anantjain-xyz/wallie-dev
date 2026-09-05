@@ -871,7 +871,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(artifact.version).toBe(1);
     expect(artifact.artifact_json).toContain("Drafted spec body");
     expect(artifact.artifact_json).not.toContain("Done");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "text",
         message_md: "Drafted spec body",
@@ -1061,6 +1061,54 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.runId).toBeNull();
   });
 
+  it("publishes explicit final output while retaining commentary and startup in history", async () => {
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        { type: "text", text: "Inspecting the repository…" },
+        { type: "text", text: "The final deliverable" },
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "The final deliverable",
+        },
+        { type: "completion", taskComplete: true, summary: "Cursor session completed" },
+      ]),
+    );
+    const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+      session: baseSession(),
+      agentConfig: [],
+    });
+    await processPipelineJob({ admin, job: baseJob() });
+    expect(insertedArtifacts[0]?.artifact_json).toBe("The final deliverable");
+    expect(insertedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "text", message_md: "Inspecting the repository…" }),
+        expect.objectContaining({
+          kind: "progress",
+          message_md: "Preparing sandbox and repository…",
+        }),
+        expect.objectContaining({ kind: "progress", message_md: "Starting agent…" }),
+      ]),
+    );
+  });
+
+  it.each(["Preparing sandbox and repository…", "Starting agent…"])(
+    "continues execution when the startup hint cannot be recorded: %s",
+    async (message) => {
+      mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Deliverable" }]));
+      const { admin, insertedArtifacts } = buildAdminMock({
+        session: baseSession(),
+        agentConfig: [],
+        messageInsertError: { message: "Progress log unavailable" },
+        messageInsertErrorOnMessage: message,
+      });
+      const result = await processPipelineJob({ admin, job: baseJob() });
+      expect(result.result).toBe("success");
+      expect(insertedArtifacts[0]?.artifact_json).toBe("Deliverable");
+    },
+  );
+
   it("fails the stage when the runner only emits completion bookkeeping", async () => {
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([{ type: "completion", taskComplete: true, summary: "Codex session completed" }]),
@@ -1082,7 +1130,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md:
@@ -1146,7 +1194,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       runId: "run-1",
     });
     expect(insertedRuns).toHaveLength(0);
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md: "**Error:** Unsupported state or unable to authenticate data",
@@ -1183,7 +1231,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     await processPipelineJob({ admin, job: baseJob() });
 
     const activityUpdates = updatedRuns.filter((patch) => "last_activity_at" in patch);
-    expect(activityUpdates).toHaveLength(2);
+    expect(activityUpdates).toHaveLength(4);
     expect(activityUpdates[0]).toEqual({ last_activity_at: expect.any(String) });
     expect(activityUpdates[1]).toEqual({ last_activity_at: expect.any(String) });
   });
@@ -1504,7 +1552,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "text",
         message_md: "Drafted spec body",
@@ -1552,7 +1600,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts[0]).toMatchObject({
       version: 3,
     });
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "text",
         message_md: "Drafted spec body",
@@ -1600,7 +1648,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md:
@@ -1630,7 +1678,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md: "**Error:** Connect a Vercel Sandbox account before starting Wallie runs.",
@@ -1717,7 +1765,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md:
@@ -1750,7 +1798,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md: [
@@ -1761,9 +1809,15 @@ describe("processPipelineJob (generic stage runner)", () => {
         ].join("\n"),
       }),
     ]);
-    expect(insertedMessages[0]!.message_md).not.toContain("BEGIN PRIVATE KEY");
-    expect(insertedMessages[0]!.message_md).not.toContain("abc def ghi");
-    expect(insertedMessages[0]!.message_md).not.toContain("first second third");
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "BEGIN PRIVATE KEY",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "abc def ghi",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "first second third",
+    );
   });
 
   it("redacts escaped quoted secret assignments before persisting sandbox failures", async () => {
@@ -1778,7 +1832,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md: [
@@ -1788,8 +1842,12 @@ describe("processPipelineJob (generic stage runner)", () => {
         ].join("\n"),
       }),
     ]);
-    expect(insertedMessages[0]!.message_md).not.toContain("abc");
-    expect(insertedMessages[0]!.message_md).not.toContain("def-secret");
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "abc",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "def-secret",
+    );
   });
 
   it("redacts quoted JSON secret fields before persisting sandbox failures", async () => {
@@ -1804,16 +1862,22 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md:
           '**Error:** sandbox config rejected: {"token": "[redacted]","password": "[redacted]","safe":"visible"}',
       }),
     ]);
-    expect(insertedMessages[0]!.message_md).not.toContain("plain-secret-12345");
-    expect(insertedMessages[0]!.message_md).not.toContain("hunter2");
-    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "plain-secret-12345",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "hunter2",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).toContain(
+      '"safe":"visible"',
+    );
   });
 
   it("redacts camelCase JSON secret fields before persisting sandbox failures", async () => {
@@ -1828,17 +1892,25 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md:
           '**Error:** sandbox config rejected: {"apiKey": "[redacted]","privateKey": "[redacted]","clientSecret": "[redacted]","safe":"visible"}',
       }),
     ]);
-    expect(insertedMessages[0]!.message_md).not.toContain("plain-api-key");
-    expect(insertedMessages[0]!.message_md).not.toContain("plain-private-key");
-    expect(insertedMessages[0]!.message_md).not.toContain("plain-client-secret");
-    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "plain-api-key",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "plain-private-key",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "plain-client-secret",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).toContain(
+      '"safe":"visible"',
+    );
   });
 
   it("redacts object-valued JSON secret fields before persisting sandbox failures", async () => {
@@ -1853,17 +1925,25 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md:
           '**Error:** sandbox config rejected: {"token": "[redacted]","privateKey": "[redacted]","safe":"visible"}',
       }),
     ]);
-    expect(insertedMessages[0]!.message_md).not.toContain("plain-secret-12345");
-    expect(insertedMessages[0]!.message_md).not.toContain("line1");
-    expect(insertedMessages[0]!.message_md).not.toContain("line2");
-    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "plain-secret-12345",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "line1",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
+      "line2",
+    );
+    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).toContain(
+      '"safe":"visible"',
+    );
   });
 
   it("aborts the stage when persisting the sandbox id fails", async () => {
@@ -1879,14 +1959,14 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("error");
     expect(result.runId).toBe("run-1");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "error",
         message_md: "**Error:** sandbox id write failed",
       }),
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(updatedRuns[1]).toEqual({
+    expect(updatedRuns.find((patch) => "sandbox_id" in patch)).toEqual({
       sandbox_connection_revision: "revision-1",
       sandbox_id: "sandbox-1",
       sandbox_provider: "vercel",
@@ -1942,7 +2022,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
       expect.objectContaining({
         kind: "text",
         message_md: "partial output",

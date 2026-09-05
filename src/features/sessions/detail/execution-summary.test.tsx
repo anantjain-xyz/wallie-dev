@@ -126,6 +126,29 @@ describe("execution summary", () => {
     expect(screen.queryByText(/trying again/)).toBeNull();
   });
 
+  it("shows live startup progress above the artifact", () => {
+    render(
+      <SessionExecutionProvider>
+        <Publisher
+          value={{
+            ...run,
+            status: "running",
+            messages: [
+              {
+                id: "progress-1",
+                kind: "progress",
+                messageMd: "Preparing sandbox and repository…",
+                createdAt: run.createdAt,
+              },
+            ],
+          }}
+        />
+        <SessionExecutionSummary {...props} />
+      </SessionExecutionProvider>,
+    );
+    expect(screen.getByText("Preparing sandbox and repository…")).toBeTruthy();
+  });
+
   it("updates from existing live history and preserves the last known state on disconnect", () => {
     const view = render(
       <SessionExecutionProvider>

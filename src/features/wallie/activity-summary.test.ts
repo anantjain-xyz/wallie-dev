@@ -92,6 +92,25 @@ describe("activity-summary helpers", () => {
     expect(connectionStateCopy("recovered")).toContain("restored");
   });
 
+  it.each([
+    ["shell", "Running a command"],
+    ["read", "Reading files"],
+    ["glob", "Searching the repository"],
+    ["unknown-provider-tool", "Using a tool"],
+  ])("summarizes %s without exposing its payload", (tool, expected) => {
+    const active = run({
+      messages: [
+        {
+          id: "message-1",
+          kind: "tool_use",
+          messageMd: `**Tool:** ${tool}\n\n\`\`\`\n{"command":"pnpm check"}\n\`\`\``,
+          createdAt: "2026-07-18T12:00:00.000Z",
+        },
+      ],
+    });
+    expect(currentOperationLabel({ run: active, stalled: false })).toBe(expected);
+  });
+
   it("prefers the newest activity timestamp for last-event display", () => {
     expect(
       lastActivityTimestamp(
