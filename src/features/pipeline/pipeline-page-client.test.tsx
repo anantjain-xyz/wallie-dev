@@ -162,6 +162,7 @@ function sessionRow(session: PipelineDashboardCard) {
 
 function installSupabaseMock() {
   let agentRunsHandler: ((payload: RealtimePayload) => void) | undefined;
+  let pullRequestsHandler: ((payload: RealtimePayload) => void) | undefined;
   let sessionsHandler: ((payload: RealtimePayload) => void) | undefined;
   const channel = {
     on: vi.fn(),
@@ -171,16 +172,29 @@ function installSupabaseMock() {
     (_event: string, filter: { table: string }, handler: (payload: RealtimePayload) => void) => {
       if (filter.table === "sessions") sessionsHandler = handler;
       if (filter.table === "agent_runs") agentRunsHandler = handler;
+      if (filter.table === "session_pull_requests") pullRequestsHandler = handler;
       return channel;
     },
   );
   channel.subscribe.mockReturnValue(channel);
+  const query = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    not: vi.fn(),
+    order: vi.fn().mockResolvedValue({ data: [], error: null }),
+  };
+  query.select.mockReturnValue(query);
+  query.eq.mockReturnValue(query);
+  query.not.mockReturnValue(query);
   mocked.createSupabaseBrowserClient.mockReturnValue({
+    from: vi.fn(() => query),
     channel: () => channel,
     removeChannel: vi.fn(),
   });
 
   return {
+    query,
+    getPullRequestsHandler: () => pullRequestsHandler,
     getStatusHandler: () => channel.subscribe.mock.calls[0]?.[0] as (status: string) => void,
     getAgentRunsHandler: () => agentRunsHandler,
     getSessionsHandler: () => sessionsHandler,
@@ -291,6 +305,79 @@ describe("PipelinePageClient", () => {
     await act(async () => vi.advanceTimersByTime(10_000));
     expect(mocked.refresh).toHaveBeenCalledTimes(1);
   });
+
+  it("retains a fetched PR when recovery first introduces the card", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    supabase.query.order.mockResolvedValue({
+      data: [
+        {
+          id: "pr",
+          pull_request_number: 42,
+          pull_request_url: "https://github.com/acme/repo/pull/42",
+        },
+      ],
+      error: null,
+    });
+    const view = render(<PipelinePageClient initialData={initialData()} />);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    await act(async () =>
+      supabase.getPullRequestsHandler()?.({
+        eventType: "INSERT",
+        new: { session_id: card(4, PLAN_STAGE_ID).id },
+      }),
+    );
+    view.rerender(<PipelinePageClient initialData={initialData([card(4, PLAN_STAGE_ID)])} />);
+    expect(screen.getByRole("link", { name: /PR #42/ }).getAttribute("href")).toBe(
+      "https://github.com/acme/repo/pull/42",
+    );
+  });
+
+  it.each(["DELETE", "ARCHIVE", "MOVE"])(
+    "recovers authoritative counts after a concurrent off-page %s",
+    async (event) => {
+      vi.useFakeTimers();
+      const supabase = installSupabaseMock();
+      const before = initialData();
+      before.lanes[0]!.totalCount = 30;
+      before.lanes[1]!.totalCount = 20;
+      before.lanes[1]!.cursor = "partial-build";
+      const view = render(<PipelinePageClient initialData={before} />);
+      act(() => window.dispatchEvent(new Event("online")));
+      await act(async () => vi.advanceTimersByTime(200));
+      const row = sessionRow(card(9, event === "MOVE" ? BUILD_STAGE_ID : PLAN_STAGE_ID));
+      act(() =>
+        supabase.getSessionsHandler()?.(
+          event === "DELETE"
+            ? { eventType: "DELETE", old: { id: row.id }, new: {} }
+            : {
+                eventType: "UPDATE",
+                new: { ...row, archived_at: event === "ARCHIVE" ? "2026-07-19T00:00:00Z" : null },
+              },
+        ),
+      );
+      view.rerender(<PipelinePageClient initialData={{ ...before, lanes: [...before.lanes] }} />);
+      expect(screen.getByText("Session 1")).toBeTruthy();
+      await act(async () => vi.advanceTimersByTime(9999));
+      expect(mocked.refresh).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(mocked.refresh).toHaveBeenCalledTimes(2);
+      const corrected = initialData();
+      corrected.lanes[0]!.totalCount = 29;
+      corrected.lanes[1]!.totalCount = event === "MOVE" ? 21 : 20;
+      corrected.lanes[1]!.cursor = "new-build-cursor";
+      view.rerender(<PipelinePageClient initialData={corrected} />);
+      expect(screen.getByRole("button", { name: "Load more Plan sessions" }).textContent).toContain(
+        "of 29",
+      );
+      expect(
+        screen.getByRole("button", { name: "Load more Build sessions" }).textContent,
+      ).toContain(event === "MOVE" ? "of 21" : "of 20");
+      await act(async () => vi.advanceTimersByTime(20000));
+      expect(mocked.refresh).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("retains live events while the recovery render is suspended", async () => {
     vi.useFakeTimers();

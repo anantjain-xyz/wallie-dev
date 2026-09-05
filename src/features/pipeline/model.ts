@@ -16,7 +16,7 @@ export type PipelineRecoveryChanges = {
     string,
     { runId: string; runStatus: PipelineDashboardCard["latestRunStatus"]; isInsert: boolean }
   >;
-  pullRequests: Set<string>;
+  pullRequests: Map<string, PipelineDashboardPullRequest[]>;
 };
 
 export type PipelineBoardAction =
@@ -428,9 +428,24 @@ function updatePipelineCardRun(
   };
 }
 
+/** A bounded snapshot cannot prove the lane/count of a concurrently changed off-page row. */
+export function pipelineRecoveryNeedsFollowup(
+  lanes: PipelineDashboardLane[],
+  changes: PipelineRecoveryChanges,
+) {
+  const snapshotIds = new Set(lanes.flatMap((lane) => lane.cards.map((card) => card.id)));
+  return [...changes.sessions].some(
+    ([id, card]) =>
+      !snapshotIds.has(id) ||
+      (card !== null &&
+        !lanes.some(
+          (lane) => lane.pipeline.id === card.pipelineId && lane.id === card.currentStageId,
+        )),
+  );
+}
+
 /** Apply the snapshot now, retaining only entities changed while it was in flight. */
 export function recoverPipelineBoard(
-  current: PipelineBoardState,
   lanes: PipelineDashboardLane[],
   changes?: PipelineRecoveryChanges,
 ): PipelineBoardState {
@@ -470,9 +485,8 @@ export function recoverPipelineBoard(
   for (const [sessionId, update] of changes.runs) {
     recovered = updatePipelineCardRun(recovered, { sessionId, ...update });
   }
-  for (const id of changes.pullRequests) {
-    const live = current.cardsById[id];
-    if (live) recovered = updatePipelineCardPullRequests(recovered, id, live.pullRequests);
+  for (const [id, pullRequests] of changes.pullRequests) {
+    recovered = updatePipelineCardPullRequests(recovered, id, pullRequests);
   }
   return recovered;
 }
@@ -483,7 +497,7 @@ export function pipelineBoardReducer(
 ): PipelineBoardState {
   switch (action.type) {
     case "recover":
-      return recoverPipelineBoard(state, action.lanes, action.changes);
+      return recoverPipelineBoard(action.lanes, action.changes);
     case "append-page":
       return appendPipelineBoardLanePage(state, action.page);
     case "reconcile":

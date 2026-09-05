@@ -55,6 +55,34 @@ function board() {
 }
 
 describe("pipelineBoardReducer", () => {
+  it("keeps fetched PRs when recovery introduces their previously unloaded card", () => {
+    const pullRequests = [
+      { id: "pr", pullRequestNumber: 42, pullRequestUrl: "https://github.com/acme/repo/pull/42" },
+    ];
+    const next = pipelineBoardReducer(board(), {
+      type: "recover",
+      lanes: [lane(PLAN_STAGE_ID, "Plan", [card(4)])],
+      changes: {
+        sessions: new Map(),
+        insertedSessionIds: new Set(),
+        runs: new Map(),
+        pullRequests: new Map([[card(4).id, pullRequests]]),
+      },
+    });
+    expect(next.cardsById[card(4).id]?.pullRequests).toEqual(pullRequests);
+    const removed = pipelineBoardReducer(next, {
+      type: "recover",
+      lanes: [lane(PLAN_STAGE_ID, "Plan", [{ ...card(4), pullRequests }])],
+      changes: {
+        sessions: new Map(),
+        insertedSessionIds: new Set(),
+        runs: new Map(),
+        pullRequests: new Map([[card(4).id, []]]),
+      },
+    });
+    expect(removed.cardsById[card(4).id]?.pullRequests).toEqual([]);
+  });
+
   it("recovers independent changes while retaining only concurrent session changes", () => {
     const live = {
       ...card(1),
@@ -70,7 +98,7 @@ describe("pipelineBoardReducer", () => {
         insertedSessionIds: new Set(),
         sessions: new Map([[live.id, live]]),
         runs: new Map(),
-        pullRequests: new Set(),
+        pullRequests: new Map(),
       },
     });
     expect(next.cardsById[live.id]?.title).toBe("Live title");
@@ -91,7 +119,7 @@ describe("pipelineBoardReducer", () => {
           [card(2).id, card(2)],
         ]),
         runs: new Map(),
-        pullRequests: new Set(),
+        pullRequests: new Map(),
       },
     });
     expect(next.cardsById[card(1).id]).toBeUndefined();
@@ -114,7 +142,7 @@ describe("pipelineBoardReducer", () => {
         insertedSessionIds: new Set(),
         sessions: new Map(),
         runs: new Map([[card(1).id, { runId: "new-run", runStatus: "running", isInsert: true }]]),
-        pullRequests: new Set(),
+        pullRequests: new Map(),
       },
     });
     expect(next.cardsById[card(1).id]).toMatchObject({
@@ -132,7 +160,7 @@ describe("pipelineBoardReducer", () => {
         sessions: new Map([[card(4).id, card(4)]]),
         insertedSessionIds: new Set([card(4).id]),
         runs: new Map(),
-        pullRequests: new Set(),
+        pullRequests: new Map(),
       },
     });
     expect(next.lanes[0]?.totalCount).toBe(21);
@@ -143,7 +171,7 @@ describe("pipelineBoardReducer", () => {
         sessions: new Map([[card(4).id, card(4)]]),
         insertedSessionIds: new Set([card(4).id]),
         runs: new Map(),
-        pullRequests: new Set(),
+        pullRequests: new Map(),
       },
     });
     expect(alreadyIncluded.lanes[0]?.totalCount).toBe(21);
@@ -157,7 +185,7 @@ describe("pipelineBoardReducer", () => {
         insertedSessionIds: new Set(),
         sessions: new Map([[card(2).id, card(2)]]),
         runs: new Map(),
-        pullRequests: new Set(),
+        pullRequests: new Map(),
       },
     });
     expect(next.lanes[0]?.totalCount).toBe(20);
