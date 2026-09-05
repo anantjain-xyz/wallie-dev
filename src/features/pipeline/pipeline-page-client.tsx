@@ -28,6 +28,7 @@ import {
 import {
   createPipelineBoardState,
   pipelineBoardReducer,
+  pipelineRecoveryNeedsFollowup,
   pipelineLaneKey,
   type PipelineRecoveryChanges,
 } from "@/features/pipeline/model";
@@ -221,7 +222,7 @@ function PipelinePageContent({
       sessions: new Map(),
       insertedSessionIds: new Set(),
       runs: new Map(),
-      pullRequests: new Set(),
+      pullRequests: new Map(),
     };
     startRefresh(() => router.refresh());
   }, [router]);
@@ -245,16 +246,9 @@ function PipelinePageContent({
         dispatch({ lanes: initialData.lanes, changes, type: "recover" });
       });
       invalidatedCardIds.current.clear();
-      if (
-        [...changes.sessions.values()].some(
-          (card) =>
-            card &&
-            !initialData.lanes.some(
-              (lane) => lane.id === card.currentStageId && lane.pipeline.id === card.pipelineId,
-            ),
-        )
-      )
-        recoveryRef.current?.request();
+      // Apply this snapshot even during continuous traffic. Only unresolved
+      // off-page/structural changes request a coalesced, cooldown-limited follow-up.
+      if (pipelineRecoveryNeedsFollowup(initialData.lanes, changes)) recoveryRef.current?.request();
       return;
     }
     const invalidated = new Set(invalidatedCardIds.current);
@@ -340,7 +334,6 @@ function PipelinePageContent({
         recovery.request();
         return;
       }
-      recoveryChanges.current?.pullRequests.add(sessionId);
 
       const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
         id: row.id,
@@ -348,6 +341,7 @@ function PipelinePageContent({
         pullRequestUrl: row.pull_request_url,
       }));
 
+      recoveryChanges.current?.pullRequests.set(sessionId, pullRequests);
       dispatch({ pullRequests, sessionId, type: "update-pull-requests" });
     }
 
