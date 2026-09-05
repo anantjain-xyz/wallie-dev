@@ -88,6 +88,22 @@ describe("execution summary", () => {
       ),
     ).toBe("No recent activity");
   });
+  it("shows an active rerun while the session still has rejected status", () => {
+    expect(executionStateLabel("rejected", snapshot, "stage")).toBe("Queued");
+    expect(
+      executionStateLabel("rejected", { ...snapshot, run: { ...run, status: "running" } }, "stage"),
+    ).toBe("Run in progress");
+    render(
+      <SessionExecutionProvider>
+        <Publisher />
+        <SessionExecutionSummary {...props} phaseStatus="rejected" />
+      </SessionExecutionProvider>,
+    );
+    expect(screen.getByText("Custom stage · Queued")).toBeTruthy();
+    expect(screen.getByText("The worker has not started this run yet.")).toBeTruthy();
+    expect(screen.queryByText(/trying again/)).toBeNull();
+  });
+
   it("updates from existing live history and preserves the last known state on disconnect", () => {
     const view = render(
       <SessionExecutionProvider>

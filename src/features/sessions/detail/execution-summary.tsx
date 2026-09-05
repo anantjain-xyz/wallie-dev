@@ -86,7 +86,7 @@ export function executionStateLabel(
   if (phaseStatus === "awaiting_review") return "Ready for your review";
   if (phaseStatus === "approved") return "Stage approved";
   const run = snapshot?.run?.stageId === stageId ? snapshot.run : null;
-  if (phaseStatus === "rejected")
+  if (phaseStatus === "rejected" && !run?.isActive)
     return run?.status === "error" ? "Run failed" : "Changes requested";
   if (!snapshot) return "Loading run status…";
   if (!run) return "Waiting for a run";
@@ -126,8 +126,8 @@ export function SessionExecutionSummary({
   const description =
     phaseStatus === "awaiting_review"
       ? "Review the artifact below to approve it or request changes."
-      : phaseStatus === "rejected"
-        ? "Check the latest run and feedback before trying again."
+      : phaseStatus === "rejected" && !run?.isActive
+        ? "Check the latest run and feedback for the next step."
         : run?.status === "queued"
           ? "The worker has not started this run yet."
           : "Follow the latest run for execution details and recovery actions.";
