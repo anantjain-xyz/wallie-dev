@@ -192,7 +192,7 @@ the repository unless the artifact is intentionally reviewed and owned.
 ## Browser release check
 
 Use the separate release configuration to run the responsive/accessibility matrix,
-auth-session checks, and navigation recovery in Chromium and WebKit:
+auth-session checks, invitation-link recovery, and navigation recovery in Chromium and WebKit:
 
 ```bash
 pnpm exec playwright install chromium webkit
@@ -221,7 +221,8 @@ Chromium configuration.
 
 Each engine covers 110 route/viewport/theme combinations, including an active
 session, plus selected axe scans and keyboard/touch/reduced-motion scenarios.
-Readiness waits only for initial route-loading fallbacks, not ongoing agent work.
+Readiness waits for route and nested loading fallbacks, excluding the ongoing
+agent-run progress indicator.
 WebKit coverage is a browser-engine check, not certification of shipping Safari,
 iOS keyboards, device safe areas, email delivery, or real provider execution.
 Those still require the corresponding release rehearsal.
@@ -231,3 +232,5 @@ links and controls in Safari's tab order. The layout matrix lets background
 reads settle before intentionally reloading for a theme change or leaving a
 sample; interruption behavior is exercised separately in the route-recovery
 suite. Application console errors and page errors still fail the layout matrix.
+
+Invitation recovery checks cover signed-out redirect preservation, invalid-link layouts at 320/390/1440px, and returning to the workspace without signing out. They do not send invitations or verify production email delivery or successful membership acceptance.
