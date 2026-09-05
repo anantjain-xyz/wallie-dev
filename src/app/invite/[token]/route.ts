@@ -110,7 +110,7 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
       h1 { margin: 0 0 10px; font-size: 22px; line-height: 1.25; }
       p { margin: 0; color: #5b616b; font-size: 14px; line-height: 1.6; }
       nav { display: grid; gap: 12px; margin-top: 22px; }
-      a { color: #4338ca; font-size: 14px; text-underline-offset: 3px; }
+      a { display: inline-flex; align-items: center; min-height: 44px; color: #4338ca; font-size: 14px; text-underline-offset: 3px; }
       form { margin: 0; }
       button { min-height: 44px; border: 1px solid #7f8793; border-radius: 6px; background: #fff; color: #1d2027; cursor: pointer; font: inherit; font-size: 14px; font-weight: 650; padding: 8px 12px; transition: background-color 150ms ease, transform 150ms ease; }
       button:hover { background: #f7f8fa; }

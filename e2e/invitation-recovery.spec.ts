@@ -18,7 +18,9 @@ test("invalid invitation preserves sign-in destination and offers a usable retur
     await expect(
       page.getByRole("button", { name: "Sign out and try another account" }),
     ).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Back to Wallie" })).toBeVisible();
+    const returnLink = page.getByRole("link", { name: "Back to Wallie" });
+    await expect(returnLink).toBeVisible();
+    expect((await returnLink.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,
     );
