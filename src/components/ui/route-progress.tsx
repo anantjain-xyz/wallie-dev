@@ -69,13 +69,11 @@ export function shouldTrackRouteClick(
   return destinationKey(destination.href) !== browserRouteKey();
 }
 
-/** Initial route skeletons are busy status regions; active runs are not. */
+/** Only route fallbacks block readiness; active runs and local actions stay usable. */
 export function hasUsableRouteContent() {
   const main = document.getElementById("main-content");
   return Boolean(
-    main &&
-    document.querySelector("h1") &&
-    !main.querySelector('[role="status"][aria-busy="true"]'),
+    main && document.querySelector("h1") && !main.querySelector("[data-route-loading]"),
   );
 }
 

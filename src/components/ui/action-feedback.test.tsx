@@ -44,6 +44,27 @@ describe("shared action feedback", () => {
     expect(document.querySelector("[data-route-progress]")).toBeNull();
   });
 
+  it("treats an active run as usable while route skeletons still block readiness", () => {
+    const view = render(
+      <main id="main-content">
+        <h1>Task</h1>
+        <section role="status" aria-busy="true">
+          Agent is working
+        </section>
+      </main>,
+    );
+    expect(hasUsableRouteContent()).toBe(true);
+    view.rerender(
+      <main id="main-content">
+        <h1>Task</h1>
+        <section data-route-loading role="status" aria-busy="true">
+          Loading task
+        </section>
+      </main>,
+    );
+    expect(hasUsableRouteContent()).toBe(false);
+  });
+
   it("recognizes onboarding content with its heading outside main", () => {
     const view = render(
       <>
@@ -62,7 +83,7 @@ describe("shared action feedback", () => {
           <h1>Set up your workspace</h1>
         </header>
         <main id="main-content">
-          <section role="status" aria-busy="true">
+          <section data-route-loading role="status" aria-busy="true">
             Loading
           </section>
         </main>
@@ -133,6 +154,7 @@ describe("shared action feedback", () => {
     const skeleton = document.createElement("section");
     skeleton.setAttribute("role", "status");
     skeleton.setAttribute("aria-busy", "true");
+    skeleton.setAttribute("data-route-loading", "");
     document.getElementById("main-content")!.append(skeleton);
     act(() => frames.shift()?.(32));
     expect(document.querySelector("[data-route-progress]")).not.toBeNull();
@@ -169,6 +191,7 @@ describe("shared action feedback", () => {
     const busy = document.createElement("section");
     busy.setAttribute("role", "status");
     busy.setAttribute("aria-busy", "true");
+    busy.setAttribute("data-route-loading", "");
     document.getElementById("main-content")!.append(busy);
     window.history.replaceState({ entry: "redirect committed" }, "", "/current");
     act(() => frames.shift()?.(32));

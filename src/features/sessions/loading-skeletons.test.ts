@@ -33,6 +33,7 @@ describe("SessionsListLoadingSkeleton", () => {
     const html = renderToStaticMarkup(createElement(SessionsListLoadingSkeleton));
 
     expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("data-route-loading");
     expect(html).toContain('aria-label="Loading sessions"');
     expect(html).toContain("divide-y divide-border");
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
@@ -46,6 +47,7 @@ describe("SessionDetailLoadingSkeleton", () => {
     const html = renderToStaticMarkup(createElement(SessionDetailLoadingSkeleton));
 
     expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("data-route-loading");
     expect(html).toContain('aria-label="Loading session"');
     expect(html).toContain("border-b border-border");
     expect(html).toContain("bg-control-muted");
