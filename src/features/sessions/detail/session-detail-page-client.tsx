@@ -1,7 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -25,6 +34,7 @@ import type {
   SessionReviewRepository,
   SessionReviewSession,
 } from "@/features/sessions/detail/data";
+import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
 import { createSessionRecoveryRefresh } from "@/features/sessions/detail/recovery-refresh";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
@@ -37,6 +47,7 @@ import type {
   SessionPhaseMutationResult,
 } from "@/features/sessions/mutation-contracts";
 import {
+  reconcileSessionRecoverySnapshot,
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
@@ -164,6 +175,29 @@ export function SessionDetailPageClient({
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
   const capabilitiesEffectSkipRef = useRef(true);
   const appliedSnapshotRef = useRef(initialData.session);
+  const refreshBaselineRef = useRef<SessionReviewSession | null>(null);
+  const refreshChangesRef = useRef({
+    artifacts: new Set<string>(),
+    phaseCompletions: new Set<string>(),
+    pullRequests: new Set<string>(),
+  });
+  const refreshInFlightRef = useRef(false);
+  const [refreshPending, startRefresh] = useTransition();
+  const actionPending = phaseActionPending !== null || archivePending !== null || stopPending;
+  const refreshSession = useCallback(() => {
+    if (refreshInFlightRef.current || actionPending) return;
+    refreshInFlightRef.current = true;
+    refreshBaselineRef.current = latestSessionRef.current;
+    refreshChangesRef.current = {
+      artifacts: new Set(),
+      phaseCompletions: new Set(),
+      pullRequests: new Set(),
+    };
+    startRefresh(() => router.refresh());
+  }, [actionPending, router]);
+  useEffect(() => {
+    if (!refreshPending) refreshInFlightRef.current = false;
+  }, [refreshPending]);
 
   const stageTimeline = useMemo(
     () => buildStageTimeline(session, { failedStageSlug }),
@@ -228,24 +262,29 @@ export function SessionDetailPageClient({
     // Realtime event is updating this page. Never roll either back with RSC.
     if (phaseActionPending || archivePending || stopPending) return;
     if (appliedSnapshotRef.current === initialData.session) return;
+    const baseline = refreshBaselineRef.current ?? appliedSnapshotRef.current;
+    refreshBaselineRef.current = null;
     appliedSnapshotRef.current = initialData.session;
     const current = latestSessionRef.current;
-    if (
-      current.id === initialData.session.id &&
-      compareSessionTimestamps(initialData.session.updatedAt, current.updatedAt) < 0
-    )
-      return;
-    setSession(initialData.session);
-    setCanApprove(canReview);
-    setHasFailedRun(initialHasFailedRun);
-    setFailedStageSlug(initialFailedStageSlug);
+    const recovered = reconcileSessionRecoverySnapshot(
+      baseline,
+      current,
+      initialData.session,
+      refreshChangesRef.current,
+    );
+    setSession(recovered);
+    if (compareSessionTimestamps(initialData.session.updatedAt, current.updatedAt) >= 0) {
+      setCanApprove(canReview);
+      setHasFailedRun(initialHasFailedRun);
+      setFailedStageSlug(initialFailedStageSlug);
+    }
     setSelectedStageSlug((currentSlug) => {
-      const stageStillExists = initialData.session.pipeline.stages.some(
+      const stageStillExists = recovered.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
       );
       return stageStillExists && currentSlug !== current.currentStageSlug
         ? currentSlug
-        : initialData.session.currentStageSlug;
+        : recovered.currentStageSlug;
     });
   }, [
     archivePending,
@@ -370,13 +409,13 @@ export function SessionDetailPageClient({
     },
   );
 
-  const recoveryIsBusy = useEffectEvent(
-    () => phaseActionPending !== null || archivePending !== null || stopPending,
-  );
+  const recoveryIsBusy = useEffectEvent(() => actionPending || refreshInFlightRef.current);
+
+  const refreshAfterRecovery = useEffectEvent(() => refreshSession());
 
   useEffect(() => {
     const recovery = createSessionRecoveryRefresh({
-      refresh: () => router.refresh(),
+      refresh: () => refreshAfterRecovery(),
       isAvailable: () => document.visibilityState === "visible" && navigator.onLine,
       isBusy: () => recoveryIsBusy(),
     });
@@ -416,10 +455,19 @@ export function SessionDetailPageClient({
           if (payload.eventType === "DELETE") {
             const deleted = payload.old as Pick<Tables<"session_artifacts">, "id"> &
               Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>;
+            if (refreshBaselineRef.current) {
+              refreshChangesRef.current.artifacts.add(deleted.id);
+              refreshChangesRef.current.artifacts.add(`${deleted.stage_slug}:${deleted.version}`);
+            }
             setSession((current) => removeArtifactRealtimeRow(current, deleted));
             return;
           }
 
+          if (refreshBaselineRef.current) {
+            const row = payload.new as Tables<"session_artifacts">;
+            refreshChangesRef.current.artifacts.add(row.id);
+            refreshChangesRef.current.artifacts.add(`${row.stage_slug}:${row.version}`);
+          }
           handleArtifactRealtimeUpdate(payload.new as Tables<"session_artifacts">);
         },
       )
@@ -435,10 +483,20 @@ export function SessionDetailPageClient({
           if (payload.eventType === "DELETE") {
             const deleted = payload.old as Pick<Tables<"session_phase_completions">, "id"> &
               Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>;
+            if (refreshBaselineRef.current) {
+              refreshChangesRef.current.phaseCompletions.add(deleted.id);
+              if (deleted.stage_slug)
+                refreshChangesRef.current.phaseCompletions.add(deleted.stage_slug);
+            }
             setSession((current) => removeCompletionRealtimeRow(current, deleted));
             return;
           }
 
+          if (refreshBaselineRef.current) {
+            const row = payload.new as Tables<"session_phase_completions">;
+            refreshChangesRef.current.phaseCompletions.add(row.id);
+            refreshChangesRef.current.phaseCompletions.add(row.stage_id ?? row.stage_slug);
+          }
           handleCompletionRealtimeUpdate(payload.new as Tables<"session_phase_completions">);
         },
       )
@@ -455,6 +513,7 @@ export function SessionDetailPageClient({
             Tables<"session_pull_requests">,
             "id" | "pull_request_number" | "pull_request_url" | "updated_at"
           >;
+          if (refreshBaselineRef.current) refreshChangesRef.current.pullRequests.add(row.id);
           setSession((current) => {
             const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
 
@@ -797,7 +856,7 @@ export function SessionDetailPageClient({
         title: `Session #${currentSession.number} unarchived.`,
         tone: "success",
       });
-      if (refreshActiveRoute) router.refresh();
+      if (refreshActiveRoute) refreshSession();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to unarchive session.";
       setArchiveError(message);
@@ -966,9 +1025,13 @@ export function SessionDetailPageClient({
           </p>
         </div>
         <div className="p-4">
-          <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
-            {activity}
-          </SessionActivityArchivedAtProvider>
+          <SessionRefreshContext.Provider
+            value={{ refresh: refreshSession, pending: refreshPending || actionPending }}
+          >
+            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+              {activity}
+            </SessionActivityArchivedAtProvider>
+          </SessionRefreshContext.Provider>
         </div>
       </section>
 

@@ -183,3 +183,65 @@ export function removePullRequestRealtimeRow(
     ? session
     : { ...session, pullRequests };
 }
+
+/** Keep changes received after the refresh began; accept the server's other rows,
+ * including deletions missed while disconnected. Child tables do not share the
+ * session row's update timestamp. */
+function reconcileRecoveryRows<T>(
+  baseline: T[],
+  current: T[],
+  incoming: T[],
+  key: (row: T) => string,
+  touched: ReadonlySet<string> = new Set(),
+) {
+  const before = new Map(baseline.map((row) => [key(row), row]));
+  const live = new Map(current.map((row) => [key(row), row]));
+  const merged = new Map(incoming.map((row) => [key(row), row]));
+  for (const [id, row] of live) {
+    if (touched.has(id) || JSON.stringify(row) !== JSON.stringify(before.get(id)))
+      merged.set(id, row);
+  }
+  for (const id of new Set([...before.keys(), ...touched])) {
+    if (!live.has(id)) merged.delete(id);
+  }
+  return [...merged.values()];
+}
+
+export function reconcileSessionRecoverySnapshot(
+  baseline: SessionReviewSession,
+  current: SessionReviewSession,
+  incoming: SessionReviewSession,
+  touched: {
+    artifacts?: ReadonlySet<string>;
+    phaseCompletions?: ReadonlySet<string>;
+    pullRequests?: ReadonlySet<string>;
+  } = {},
+): SessionReviewSession {
+  if (current.id !== incoming.id || baseline.id !== incoming.id) return incoming;
+  const core =
+    compareSessionTimestamps(incoming.updatedAt, current.updatedAt) < 0 ? current : incoming;
+  return {
+    ...core,
+    artifacts: reconcileRecoveryRows(
+      baseline.artifacts,
+      current.artifacts,
+      incoming.artifacts,
+      (row) => row.id ?? `${row.stageSlug}:${row.version}`,
+      touched.artifacts,
+    ),
+    phaseCompletions: reconcileRecoveryRows(
+      baseline.phaseCompletions,
+      current.phaseCompletions,
+      incoming.phaseCompletions,
+      (row) => row.id ?? row.stageId ?? row.stageSlug,
+      touched.phaseCompletions,
+    ),
+    pullRequests: reconcileRecoveryRows(
+      baseline.pullRequests,
+      current.pullRequests,
+      incoming.pullRequests,
+      (row) => row.id,
+      touched.pullRequests,
+    ),
+  };
+}
