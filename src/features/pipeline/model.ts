@@ -10,6 +10,7 @@ import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 
 export type PipelineBoardAction =
+  | { lanes: PipelineDashboardLane[]; type: "recover" }
   | {
       invalidatedCardIds?: ReadonlySet<string>;
       lanes: PipelineDashboardLane[];
@@ -422,6 +423,8 @@ export function pipelineBoardReducer(
   action: PipelineBoardAction,
 ): PipelineBoardState {
   switch (action.type) {
+    case "recover":
+      return createPipelineBoardState(action.lanes);
     case "append-page":
       return appendPipelineBoardLanePage(state, action.page);
     case "reconcile":

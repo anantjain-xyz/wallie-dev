@@ -5,14 +5,18 @@ import userEvent from "@testing-library/user-event";
 import { Profiler, type ProfilerOnRenderCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocked = vi.hoisted(() => ({
-  cardLinkRenders: new Map<string, number>(),
-  createSupabaseBrowserClient: vi.fn(),
-  refresh: vi.fn(),
-}));
+const mocked = vi.hoisted(() => {
+  const refresh = vi.fn();
+  return {
+    cardLinkRenders: new Map<string, number>(),
+    createSupabaseBrowserClient: vi.fn(),
+    refresh,
+    router: { refresh },
+  };
+});
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: mocked.refresh }),
+  useRouter: () => mocked.router,
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -171,6 +175,7 @@ function installSupabaseMock() {
   });
 
   return {
+    getStatusHandler: () => channel.subscribe.mock.calls[0]?.[0] as (status: string) => void,
     getAgentRunsHandler: () => agentRunsHandler,
     getSessionsHandler: () => sessionsHandler,
   };
@@ -224,6 +229,61 @@ describe("PipelinePageClient", () => {
     mocked.cardLinkRenders.clear();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+    mocked.refresh.mockReset();
+  });
+
+  it("recovers missed removals and independent run state without an initial refresh", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const original = initialData();
+    const view = render(<PipelinePageClient initialData={original} />);
+    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(mocked.refresh).not.toHaveBeenCalled();
+    act(() => {
+      supabase.getStatusHandler()("CHANNEL_ERROR");
+      supabase.getStatusHandler()("SUBSCRIBED");
+      window.dispatchEvent(new Event("online"));
+    });
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+    const recovered = initialData(
+      [],
+      [card(3, BUILD_STAGE_ID, { latestRunId: "run-3", latestRunStatus: "error" })],
+    );
+    view.rerender(<PipelinePageClient initialData={recovered} />);
+    expect(screen.queryByText("Session 1")).toBeNull();
+    expect(screen.getByText("Session 3")).toBeTruthy();
+    expect(
+      view.container.querySelector(`[data-session-id="${card(3, BUILD_STAGE_ID).id}"]`)
+        ?.textContent,
+    ).toContain("Failed");
+  });
+
+  it("keeps live changes when they race recovery and retries for a quiet snapshot", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const original = initialData();
+    const view = render(<PipelinePageClient initialData={original} />);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    act(() =>
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow(card(1, PLAN_STAGE_ID, { title: "Live title" })),
+      }),
+    );
+    view.rerender(<PipelinePageClient initialData={initialData()} />);
+    expect(screen.getByText("Live title")).toBeTruthy();
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(mocked.refresh).toHaveBeenCalledTimes(2);
+    view.rerender(<PipelinePageClient initialData={initialData([], [])} />);
+    expect(screen.queryByText("Live title")).toBeNull();
+    view.unmount();
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(mocked.refresh).toHaveBeenCalledTimes(2);
   });
 
   it("distinguishes an archived-only workspace from first run", () => {
@@ -687,7 +747,7 @@ describe("PipelinePageClient", () => {
       supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(movedCard) });
     });
 
-    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocked.refresh).toHaveBeenCalledTimes(1));
     expect(screen.getByText("Session 1")).toBeTruthy();
 
     const refreshedData: PipelineDashboardData = {

@@ -10,6 +10,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useTransition,
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
@@ -42,6 +43,7 @@ import {
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
+import { createSessionRecoveryRefresh } from "@/features/sessions/detail/recovery-refresh";
 import { type SessionPhaseStatus } from "@/features/sessions/types";
 import { workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -197,7 +199,6 @@ function PipelinePageContent({
   const boardRef = useRef<PipelineBoardState>(board);
   const initialLanesRef = useRef(initialData.lanes);
   const invalidatedCardIds = useRef(new Set<string>());
-  const laneRefreshPending = useRef(false);
   const loadingLaneKeyRef = useRef<string | null>(null);
   const pendingCardFocus = useRef<PendingCardFocus | null>(null);
   const router = useRouter();
@@ -206,10 +207,39 @@ function PipelinePageContent({
     [enableRealtime],
   );
   boardRef.current = board;
+  const [refreshPending, startRefresh] = useTransition();
+  const refreshInFlight = useRef(false);
+  const eventVersion = useRef(0);
+  const refreshGeneration = useRef(0);
+  const recoveryVersion = useRef<number | null>(null);
+  const recoveryRef = useRef<ReturnType<typeof createSessionRecoveryRefresh> | null>(null);
+  const refreshBoard = useCallback(() => {
+    if (refreshInFlight.current || loadingLaneKeyRef.current) return;
+    refreshInFlight.current = true;
+    refreshGeneration.current += 1;
+    recoveryVersion.current = eventVersion.current;
+    startRefresh(() => router.refresh());
+  }, [router]);
+
+  useEffect(() => {
+    if (!refreshPending) refreshInFlight.current = false;
+  }, [refreshPending]);
 
   useEffect(() => {
     if (initialLanesRef.current === initialData.lanes) return;
     initialLanesRef.current = initialData.lanes;
+    if (recoveryVersion.current !== null) {
+      const racedWithLiveUpdate = recoveryVersion.current !== eventVersion.current;
+      recoveryVersion.current = null;
+      if (racedWithLiveUpdate) {
+        recoveryRef.current?.request();
+        return;
+      }
+      // Rebuild bounded first pages: retained pages may contain missed archives/deletes.
+      dispatch({ lanes: initialData.lanes, type: "recover" });
+      invalidatedCardIds.current.clear();
+      return;
+    }
     const invalidated = new Set(invalidatedCardIds.current);
     const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
 
@@ -218,7 +248,6 @@ function PipelinePageContent({
       dispatch({ invalidatedCardIds: invalidated, lanes: initialData.lanes, type: "reconcile" });
     });
     invalidatedCardIds.current.clear();
-    laneRefreshPending.current = false;
   }, [initialData.lanes]);
 
   useEffect(() => {
@@ -258,8 +287,25 @@ function PipelinePageContent({
 
   useEffect(() => {
     if (!supabase) return;
+    let disposed = false;
+    const prRequests = new Map<string, number>();
+    const recovery = createSessionRecoveryRefresh({
+      refresh: refreshBoard,
+      isAvailable: () => document.visibilityState === "visible" && navigator.onLine,
+      isBusy: () => refreshInFlight.current || loadingLaneKeyRef.current !== null,
+    });
+    recoveryRef.current = recovery;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recovery.request();
+    };
+    window.addEventListener("online", recovery.request);
+    document.addEventListener("visibilitychange", onVisible);
 
     async function refreshSessionPullRequests(sessionId: string) {
+      const requestId = (prRequests.get(sessionId) ?? 0) + 1;
+      prRequests.set(sessionId, requestId);
+      const startedAtVersion = eventVersion.current;
+      const startedAtGeneration = refreshGeneration.current;
       const { data, error } = await supabase!
         .from("session_pull_requests")
         .select("id, pull_request_number, pull_request_url")
@@ -268,7 +314,17 @@ function PipelinePageContent({
         .not("pull_request_url", "is", null)
         .order("created_at", { ascending: false });
 
-      if (error) return;
+      if (
+        disposed ||
+        prRequests.get(sessionId) !== requestId ||
+        startedAtGeneration !== refreshGeneration.current
+      )
+        return;
+      if (error || startedAtVersion !== eventVersion.current || refreshInFlight.current) {
+        recovery.request();
+        return;
+      }
+      eventVersion.current += 1;
 
       const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
         id: row.id,
@@ -290,6 +346,7 @@ function PipelinePageContent({
           table: "sessions",
         },
         (payload) => {
+          eventVersion.current += 1;
           if (payload.eventType === "DELETE") {
             const oldId = (payload.old as { id?: string } | null)?.id;
             if (oldId) dispatch({ cardId: oldId, type: "remove" });
@@ -331,10 +388,7 @@ function PipelinePageContent({
 
           if (!hasTargetLane) {
             invalidatedCardIds.current.add(next.id);
-            if (!laneRefreshPending.current) {
-              laneRefreshPending.current = true;
-              router.refresh();
-            }
+            recovery.request();
             return;
           }
 
@@ -362,12 +416,13 @@ function PipelinePageContent({
           table: "agent_runs",
         },
         (payload) => {
+          eventVersion.current += 1;
           if (payload.eventType === "DELETE") {
             const deletedRun = payload.old as { id?: string; session_id?: string } | null;
             const card = deletedRun?.session_id
               ? boardRef.current.cardsById[deletedRun.session_id]
               : null;
-            if (card?.latestRunId === deletedRun?.id) router.refresh();
+            if (card?.latestRunId === deletedRun?.id) recovery.request();
             return;
           }
 
@@ -390,6 +445,7 @@ function PipelinePageContent({
           table: "session_pull_requests",
         },
         (payload) => {
+          eventVersion.current += 1;
           const row =
             payload.eventType === "DELETE"
               ? (payload.old as { session_id?: string } | null)
@@ -397,16 +453,21 @@ function PipelinePageContent({
           if (row?.session_id) void refreshSessionPullRequests(row.session_id);
         },
       )
-      .subscribe();
+      .subscribe(recovery.onStatus);
 
     return () => {
+      disposed = true;
+      recovery.dispose();
+      recoveryRef.current = null;
+      window.removeEventListener("online", recovery.request);
+      document.removeEventListener("visibilitychange", onVisible);
       void supabase.removeChannel(channel);
     };
-  }, [initialData.workspace.id, router, supabase]);
+  }, [initialData.workspace.id, refreshBoard, supabase]);
 
   const loadMore = useCallback(
     async (requestedLaneKey: string) => {
-      if (loadingLaneKeyRef.current) return;
+      if (loadingLaneKeyRef.current || refreshInFlight.current) return;
       const lane = boardRef.current.lanes.find(
         (candidate) => pipelineLaneKey(candidate) === requestedLaneKey,
       );
