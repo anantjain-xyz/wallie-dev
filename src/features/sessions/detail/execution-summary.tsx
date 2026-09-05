@@ -86,6 +86,7 @@ export function executionStateLabel(
   if (phaseStatus === "awaiting_review") return "Ready for your review";
   if (phaseStatus === "approved") return "Stage approved";
   const run = snapshot?.run?.stageId === stageId ? snapshot.run : null;
+  if (run?.status === "canceled") return "Run canceled";
   if (phaseStatus === "rejected" && !run?.isActive)
     return run?.status === "error" ? "Run failed" : "Changes requested";
   if (!snapshot) return "Loading run status…";
@@ -171,7 +172,7 @@ export function SessionExecutionSummary({
       ) : null}
       {disconnected ? (
         <p className="mt-2 text-sm text-warning" role="status">
-          Live updates are paused. This is the last known state; the run may still be progressing.
+          Live updates are paused. Showing the last known state.
         </p>
       ) : null}
     </section>

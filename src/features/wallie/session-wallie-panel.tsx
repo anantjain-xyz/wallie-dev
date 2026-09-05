@@ -388,6 +388,17 @@ export function SessionWalliePanel({
     );
   });
 
+  useEffect(() => {
+    const invalidate = () => {
+      reconcileGenerationRef.current += 1;
+    };
+    window.addEventListener("pagehide", invalidate);
+    return () => {
+      invalidate();
+      window.removeEventListener("pagehide", invalidate);
+    };
+  }, [session.id]);
+
   const reconcileLatestRuns = useEffectEvent(async () => {
     const requestSessionId = session.id;
     const generation = ++reconcileGenerationRef.current;
@@ -415,7 +426,10 @@ export function SessionWalliePanel({
       setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
       setNextRunCursor(payload.nextCursor);
     } catch (error) {
-      if (sessionIdRef.current !== requestSessionId) {
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        generation !== reconcileGenerationRef.current
+      ) {
         return;
       }
 

@@ -88,6 +88,28 @@ describe("execution summary", () => {
       ),
     ).toBe("No recent activity");
   });
+  it("describes cancellation without implying requested changes or ongoing work", () => {
+    render(
+      <SessionExecutionProvider>
+        <Publisher value={{ ...run, status: "canceled", isActive: false }} disconnected />
+        <SessionExecutionSummary {...props} phaseStatus="rejected" />
+      </SessionExecutionProvider>,
+    );
+    expect(screen.getByText("Custom stage · Run canceled")).toBeTruthy();
+    expect(screen.getByText("Live updates are paused. Showing the last known state.")).toBeTruthy();
+    expect(screen.queryByText(/may still be progressing/)).toBeNull();
+  });
+  it("keeps review-ready disconnect copy neutral even if history lags", () => {
+    render(
+      <SessionExecutionProvider>
+        <Publisher disconnected />
+        <SessionExecutionSummary {...props} phaseStatus="awaiting_review" />
+      </SessionExecutionProvider>,
+    );
+    expect(screen.getByText("Custom stage · Ready for your review")).toBeTruthy();
+    expect(screen.getByText("Live updates are paused. Showing the last known state.")).toBeTruthy();
+  });
+
   it("shows an active rerun while the session still has rejected status", () => {
     expect(executionStateLabel("rejected", snapshot, "stage")).toBe("Queued");
     expect(
