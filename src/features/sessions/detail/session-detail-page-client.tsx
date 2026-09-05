@@ -263,6 +263,12 @@ export function SessionDetailPageClient({
     if (phaseActionPending || archivePending || stopPending) return;
     if (appliedSnapshotRef.current === initialData.session) return;
     const baseline = refreshBaselineRef.current ?? appliedSnapshotRef.current;
+    const changes = refreshChangesRef.current;
+    refreshChangesRef.current = {
+      artifacts: new Set(),
+      phaseCompletions: new Set(),
+      pullRequests: new Set(),
+    };
     refreshBaselineRef.current = null;
     appliedSnapshotRef.current = initialData.session;
     const current = latestSessionRef.current;
@@ -270,13 +276,15 @@ export function SessionDetailPageClient({
       baseline,
       current,
       initialData.session,
-      refreshChangesRef.current,
+      changes,
     );
     setSession(recovered);
-    if (compareSessionTimestamps(initialData.session.updatedAt, current.updatedAt) >= 0) {
+    if (initialData.session.currentStageId === recovered.currentStageId) {
       setCanApprove(canReview);
-      setHasFailedRun(initialHasFailedRun);
-      setFailedStageSlug(initialFailedStageSlug);
+      if (initialData.session.phaseStatus === recovered.phaseStatus) {
+        setHasFailedRun(initialHasFailedRun);
+        setFailedStageSlug(initialFailedStageSlug);
+      }
     }
     setSelectedStageSlug((currentSlug) => {
       const stageStillExists = recovered.pipeline.stages.some(

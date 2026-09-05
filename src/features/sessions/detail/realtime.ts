@@ -220,8 +220,23 @@ export function reconcileSessionRecoverySnapshot(
   if (current.id !== incoming.id || baseline.id !== incoming.id) return incoming;
   const core =
     compareSessionTimestamps(incoming.updatedAt, current.updatedAt) < 0 ? current : incoming;
+  const stages = reconcileRecoveryRows(
+    baseline.pipeline.stages,
+    current.pipeline.stages,
+    incoming.pipeline.stages,
+    (row) => row.id,
+  ).sort((left, right) => left.position - right.position);
   return {
     ...core,
+    pipeline: { stages },
+    currentStageSlug:
+      stages.find((stage) => stage.id === core.currentStageId)?.slug ?? core.currentStageSlug,
+    attachments: reconcileRecoveryRows(
+      baseline.attachments,
+      current.attachments,
+      incoming.attachments,
+      (row) => row.id,
+    ),
     artifacts: reconcileRecoveryRows(
       baseline.artifacts,
       current.artifacts,

@@ -122,8 +122,9 @@ describe("SessionDetailPageClient", () => {
   it("reconciles recovered snapshots without overwriting newer session state", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
     const data = makeSessionDetailData();
-    const element = (value: SessionReviewData) =>
+    const element = (value: SessionReviewData, canReview = true) =>
       createElement(SessionDetailPageClient, {
+        canReview,
         activity: null,
         initialData: value,
         initialFormattedArtifact: null,
@@ -136,7 +137,8 @@ describe("SessionDetailPageClient", () => {
     };
     await act(async () => view.rerender(element(fresh)));
     expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Recovered title");
-    await act(async () => view.rerender(element({ ...data, session: { ...data.session } })));
+    await act(async () => view.rerender(element({ ...data, session: { ...data.session } }, false)));
+    expect(view.queryByRole("button", { name: "Approve stage" })).toBeNull();
     expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Recovered title");
     const withPr = {
       ...fresh,

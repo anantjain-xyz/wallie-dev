@@ -297,3 +297,54 @@ describe("recovery snapshots", () => {
     );
   });
 });
+
+it("recovers independent pipeline and attachment edits despite a newer core event", () => {
+  const baseline = baseSession;
+  const liveStage = {
+    ...baseline.pipeline.stages[0]!,
+    id: "live-stage",
+    slug: "live",
+    position: 4,
+  };
+  const current = {
+    ...baseline,
+    title: "New title",
+    updatedAt: "2026-05-21T18:00:00Z",
+    pipeline: { stages: [...baseline.pipeline.stages, liveStage] },
+  };
+  const incoming = {
+    ...baseline,
+    pipeline: {
+      stages: [
+        {
+          ...baseline.pipeline.stages[0]!,
+          name: "Renamed planning",
+          slug: "planning",
+          position: 3,
+        },
+        { ...baseline.pipeline.stages[1]!, position: 1 },
+        { ...baseline.pipeline.stages[0]!, id: "new-stage", slug: "new", position: 2 },
+      ],
+    },
+    attachments: [
+      {
+        id: "attachment",
+        fileName: "task.png",
+        contentType: "image/png",
+        sizeBytes: 100,
+        position: 0,
+      },
+    ],
+  };
+  const recovered = reconcileSessionRecoverySnapshot(baseline, current, incoming);
+  expect(recovered.title).toBe("New title");
+  expect(recovered.pipeline.stages.map((stage) => stage.id)).toEqual([
+    "stage-design",
+    "new-stage",
+    "stage-product",
+    "live-stage",
+  ]);
+  expect(recovered.pipeline.stages[2]?.name).toBe("Renamed planning");
+  expect(recovered.currentStageSlug).toBe("planning");
+  expect(recovered.attachments).toEqual(incoming.attachments);
+});
