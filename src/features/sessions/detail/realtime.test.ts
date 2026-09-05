@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  reconcileSessionRecoverySnapshot,
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
@@ -214,4 +215,136 @@ it("upserts a renamed stage completion by durable identity and preserves distinc
     "other-completion",
     "new-completion",
   ]);
+});
+
+describe("recovery snapshots", () => {
+  const pr = (id: string, number = 1) => ({
+    id,
+    pullRequestNumber: number,
+    pullRequestUrl: `https://github.com/acme/app/pull/${number}`,
+  });
+
+  it("keeps live child changes while accepting missed changes despite a newer session row", () => {
+    const baseline = {
+      ...baseSession,
+      pullRequests: [pr("updated"), pr("deleted"), pr("missed-delete")],
+    };
+    const current = {
+      ...baseline,
+      title: "New live title",
+      updatedAt: "2026-05-21T16:00:00.000Z",
+      pullRequests: [pr("updated", 2), pr("live-add"), pr("missed-delete")],
+    };
+    const incoming = {
+      ...baseline,
+      pullRequests: [pr("updated"), pr("deleted"), pr("missed-add")],
+    };
+    const result = reconcileSessionRecoverySnapshot(baseline, current, incoming);
+    expect(result.title).toBe("New live title");
+    expect(result.pullRequests).toEqual([pr("updated", 2), pr("missed-add"), pr("live-add")]);
+  });
+
+  it("does not resurrect a child added and deleted during an in-flight refresh", () => {
+    const incoming = { ...baseSession, pullRequests: [pr("transient")] };
+    const result = reconcileSessionRecoverySnapshot(baseSession, baseSession, incoming, {
+      pullRequests: new Set(["transient"]),
+    });
+    expect(result.pullRequests).toEqual([]);
+  });
+
+  it("preserves a live restoration even when the current row matches the baseline", () => {
+    const baseline = { ...baseSession, pullRequests: [pr("restored")] };
+    const result = reconcileSessionRecoverySnapshot(baseline, baseline, baseSession, {
+      pullRequests: new Set(["restored"]),
+    });
+    expect(result.pullRequests).toEqual([pr("restored")]);
+  });
+
+  it("reconciles artifacts and completions independently of the core timestamp", () => {
+    const artifact = {
+      id: "artifact",
+      stageSlug: "product",
+      version: 1,
+      payload: "old",
+      createdAt: "2026-05-21T13:00:00Z",
+    };
+    const completion = {
+      id: "completion",
+      stageId: "stage-product",
+      stageSlug: "product",
+      completedAt: "2026-05-21T13:00:00Z",
+    };
+    const baseline = { ...baseSession, artifacts: [artifact], phaseCompletions: [completion] };
+    const current = {
+      ...baseline,
+      artifacts: [{ ...artifact, payload: "live" }],
+      phaseCompletions: [],
+    };
+    const incoming = {
+      ...baseline,
+      artifacts: [artifact, { ...artifact, id: "missed-artifact", version: 2 }],
+      phaseCompletions: [
+        completion,
+        { ...completion, id: "missed-completion", stageId: "stage-design", stageSlug: "design" },
+      ],
+    };
+    const result = reconcileSessionRecoverySnapshot(baseline, current, incoming);
+    expect(result.artifacts.map((row) => row.payload)).toEqual(["live", "old"]);
+    expect(result.phaseCompletions.map((row) => row.id)).toEqual(["missed-completion"]);
+    // A later quiet refresh must be allowed to supersede the prior live edit.
+    expect(reconcileSessionRecoverySnapshot(result, result, incoming).artifacts[0]?.payload).toBe(
+      "old",
+    );
+  });
+});
+
+it("recovers independent pipeline and attachment edits despite a newer core event", () => {
+  const baseline = baseSession;
+  const liveStage = {
+    ...baseline.pipeline.stages[0]!,
+    id: "live-stage",
+    slug: "live",
+    position: 4,
+  };
+  const current = {
+    ...baseline,
+    title: "New title",
+    updatedAt: "2026-05-21T18:00:00Z",
+    pipeline: { stages: [...baseline.pipeline.stages, liveStage] },
+  };
+  const incoming = {
+    ...baseline,
+    pipeline: {
+      stages: [
+        {
+          ...baseline.pipeline.stages[0]!,
+          name: "Renamed planning",
+          slug: "planning",
+          position: 3,
+        },
+        { ...baseline.pipeline.stages[1]!, position: 1 },
+        { ...baseline.pipeline.stages[0]!, id: "new-stage", slug: "new", position: 2 },
+      ],
+    },
+    attachments: [
+      {
+        id: "attachment",
+        fileName: "task.png",
+        contentType: "image/png",
+        sizeBytes: 100,
+        position: 0,
+      },
+    ],
+  };
+  const recovered = reconcileSessionRecoverySnapshot(baseline, current, incoming);
+  expect(recovered.title).toBe("New title");
+  expect(recovered.pipeline.stages.map((stage) => stage.id)).toEqual([
+    "stage-design",
+    "new-stage",
+    "stage-product",
+    "live-stage",
+  ]);
+  expect(recovered.pipeline.stages[2]?.name).toBe("Renamed planning");
+  expect(recovered.currentStageSlug).toBe("planning");
+  expect(recovered.attachments).toEqual(incoming.attachments);
 });
