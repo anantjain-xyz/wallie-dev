@@ -2,7 +2,7 @@
 
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,11 +10,16 @@ import {
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
+import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
 const mocked = vi.hoisted(() => {
   const refresh = vi.fn();
-  return { refresh, router: { refresh, replace: vi.fn() } };
+  return {
+    refresh,
+    router: { refresh, replace: vi.fn() },
+    handlers: new Map<string, (payload: unknown) => void>(),
+  };
 });
 
 vi.mock("next/navigation", () => ({
@@ -26,7 +31,12 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/supabase/browser", () => ({
   createSupabaseBrowserClient: () => ({
     channel: () => ({
-      on: function on() {
+      on: function on(
+        _event: string,
+        config: { table: string },
+        callback: (payload: unknown) => void,
+      ) {
+        mocked.handlers.set(config.table, callback);
         return this;
       },
       subscribe: () => undefined,
@@ -105,6 +115,8 @@ describe("SessionDetailPageClient", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    mocked.refresh.mockReset();
+    mocked.handlers.clear();
   });
 
   it("reconciles recovered snapshots without overwriting newer session state", async () => {
@@ -144,6 +156,54 @@ describe("SessionDetailPageClient", () => {
     expect(view.getByRole("link", { name: /Open PR #99/ }).getAttribute("href")).toBe(
       "https://github.com/acme/app/pull/99",
     );
+  });
+
+  it("preserves a live PR during a tracked refresh and accepts a later quiet deletion", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    let finish!: () => void;
+    mocked.refresh.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    function RefreshTrigger() {
+      const { refresh } = useSessionRefresh();
+      return createElement("button", { onClick: refresh }, "Refresh test");
+    }
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "approved";
+    const element = (value: SessionReviewData) =>
+      createElement(SessionDetailPageClient, {
+        activity: createElement(RefreshTrigger),
+        initialData: value,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      });
+    const view = render(element(data));
+    fireEvent.click(view.getByText("Refresh test"));
+    act(() =>
+      mocked.handlers.get("session_pull_requests")!({
+        eventType: "INSERT",
+        new: {
+          id: "live-pr",
+          pull_request_number: 42,
+          pull_request_url: "https://github.com/acme/app/pull/42",
+          updated_at: "2026-06-07T12:00:00.000Z",
+        },
+      }),
+    );
+    await act(async () => {
+      view.rerender(element({ ...data, session: { ...data.session } }));
+      finish();
+    });
+    expect(view.getByRole("link", { name: /Open PR #42/ })).toBeTruthy();
+    fireEvent.click(view.getByText("Refresh test"));
+    await act(async () => {
+      view.rerender(element({ ...data, session: { ...data.session } }));
+      finish();
+    });
+    expect(view.queryByRole("link", { name: /Open PR #42/ })).toBeNull();
   });
 
   it("shows completion only after terminal approval, with each result link", () => {
