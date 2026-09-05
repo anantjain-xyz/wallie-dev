@@ -5,7 +5,11 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import { RouteProgressProvider, useRouteProgress } from "@/components/ui/route-progress";
+import {
+  hasUsableRouteContent,
+  RouteProgressProvider,
+  useRouteProgress,
+} from "@/components/ui/route-progress";
 
 afterEach(() => {
   cleanup();
@@ -38,6 +42,33 @@ describe("shared action feedback", () => {
     expect(screen.getByRole("link", { name: "Open page again" })).toHaveAttribute("href", "/slow");
     fireEvent.click(screen.getByText("Dismiss"));
     expect(document.querySelector("[data-route-progress]")).toBeNull();
+  });
+
+  it("recognizes onboarding content with its heading outside main", () => {
+    const view = render(
+      <>
+        <header>
+          <h1>Set up your workspace</h1>
+        </header>
+        <main id="main-content">
+          <button>Continue</button>
+        </main>
+      </>,
+    );
+    expect(hasUsableRouteContent()).toBe(true);
+    view.rerender(
+      <>
+        <header>
+          <h1>Set up your workspace</h1>
+        </header>
+        <main id="main-content">
+          <section role="status" aria-busy="true">
+            Loading
+          </section>
+        </main>
+      </>,
+    );
+    expect(hasUsableRouteContent()).toBe(false);
   });
 
   it("keeps pending copy in layout and exposes text without relying on animation", () => {

@@ -35,7 +35,7 @@ test("slow navigation keeps feedback until the destination is usable", async ({
     await page
       .getByRole("navigation", { name: "Workspace navigation" })
       .getByRole("link", { name: "Sessions", exact: true })
-      .click();
+      .evaluate((element: HTMLAnchorElement) => element.click());
     await expect(page.locator("[data-route-progress]")).toBeVisible();
     await expect(page.getByText("This page is taking longer than usual.")).toBeVisible({
       timeout: 20_000,

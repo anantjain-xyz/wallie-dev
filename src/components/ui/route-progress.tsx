@@ -73,7 +73,9 @@ export function shouldTrackRouteClick(
 export function hasUsableRouteContent() {
   const main = document.getElementById("main-content");
   return Boolean(
-    main?.querySelector("h1") && !main.querySelector('[role="status"][aria-busy="true"]'),
+    main &&
+    document.querySelector("h1") &&
+    !main.querySelector('[role="status"][aria-busy="true"]'),
   );
 }
 
