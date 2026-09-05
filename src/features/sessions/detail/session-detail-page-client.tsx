@@ -183,6 +183,9 @@ export function SessionDetailPageClient({
   });
   const refreshInFlightRef = useRef(false);
   const [refreshPending, startRefresh] = useTransition();
+  const [postMutationRefreshRequested, setPostMutationRefreshRequested] = useState(false);
+  const mountedRef = useRef(false);
+  const queuedMutationRefreshRef = useRef(false);
   const actionPending = phaseActionPending !== null || archivePending !== null || stopPending;
   const refreshSession = useCallback(() => {
     if (refreshInFlightRef.current || actionPending) return;
@@ -198,6 +201,23 @@ export function SessionDetailPageClient({
   useEffect(() => {
     if (!refreshPending) refreshInFlightRef.current = false;
   }, [refreshPending]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // The global Undo toast can outlive this detail page.
+      if (queuedMutationRefreshRef.current) {
+        queuedMutationRefreshRef.current = false;
+        router.refresh();
+      }
+    };
+  }, [router]);
+  useEffect(() => {
+    if (!postMutationRefreshRequested || actionPending || refreshPending) return;
+    queuedMutationRefreshRef.current = false;
+    setPostMutationRefreshRequested(false);
+    refreshSession();
+  }, [actionPending, postMutationRefreshRequested, refreshPending, refreshSession]);
 
   const stageTimeline = useMemo(
     () => buildStageTimeline(session, { failedStageSlug }),
@@ -864,7 +884,14 @@ export function SessionDetailPageClient({
         title: `Session #${currentSession.number} unarchived.`,
         tone: "success",
       });
-      if (refreshActiveRoute) refreshSession();
+      if (refreshActiveRoute) {
+        if (mountedRef.current) {
+          queuedMutationRefreshRef.current = true;
+          setPostMutationRefreshRequested(true);
+        } else {
+          router.refresh();
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to unarchive session.";
       setArchiveError(message);
