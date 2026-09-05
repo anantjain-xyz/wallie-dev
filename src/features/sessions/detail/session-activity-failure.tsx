@@ -1,10 +1,13 @@
 "use client";
 
+import { usePublishExecutionUnavailable } from "@/features/sessions/detail/execution-summary";
+
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 
 export function SessionActivityFailure() {
+  usePublishExecutionUnavailable();
   const { refresh, pending } = useSessionRefresh();
 
   return (
