@@ -130,12 +130,13 @@ create a branch and pull request in that repository.
 
 1. Open your origin in a fresh browser session. Request a sign-in email and
    follow its link. Confirm it returns to your origin and the expected account.
-2. Create a workspace and complete onboarding: connect GitHub, select and
+2. Create a workspace and work through onboarding: connect GitHub, select and
    prepare a repository, and connect execution access. A workspace name alone
    does not complete setup. Keep the default Plan → Build pipeline for the
    first rehearsal; Linear is optional.
-3. Run the selected sandbox provider's repository capability check. Resolve
-   any blockers before creating the task. Confirm the worker has started and
+3. In onboarding's Verify step, run the selected sandbox provider's repository
+   capability check and resolve all checklist blockers, then choose **Complete
+   setup**. Before creating the task, confirm the worker has started and
    is publishing fresh heartbeats; see [Worker operations](WORKER-OPERATIONS.md#heartbeats-and-activity).
 4. Describe a bounded change with a clear acceptance condition, such as fixing
    a specific README typo. Start the session once. In Runs, confirm it moves
