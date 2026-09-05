@@ -51,3 +51,64 @@ test("slow navigation keeps feedback until the destination is usable", async ({
     await page.unrouteAll({ behavior: "wait" });
   }
 });
+
+test("home redirect back to workspace creation finishes navigation", async ({ page }) => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SECRET_KEY;
+  test.skip(!supabaseUrl || !serviceKey, "Requires the isolated auth test stack");
+  const headers = {
+    apikey: serviceKey!,
+    Authorization: `Bearer ${serviceKey}`,
+    "Content-Type": "application/json",
+  };
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      type: "magiclink",
+      email: `route-recovery-${crypto.randomUUID()}@example.com`,
+    }),
+  });
+  expect(response.ok).toBe(true);
+  const auth = (await response.json()) as { hashed_token: string; id: string };
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await page.goto(
+      `/auth/confirm?next=${encodeURIComponent("/onboarding/workspace")}&token_hash=${encodeURIComponent(auth.hashed_token)}&type=email`,
+    );
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Create workspace");
+    await page.evaluate(() => {
+      document.documentElement.dataset.redirectProof = "same-document";
+    });
+    await page.route(
+      (url) => url.pathname === "/",
+      async (route) => {
+        await held;
+        await route.continue();
+      },
+    );
+    await page
+      .getByRole("link", { name: "Wallie home" })
+      .evaluate((element: HTMLAnchorElement) => element.click());
+    await expect(page.locator("[data-route-progress]")).toBeVisible();
+    release();
+    await expect(page.locator("[data-route-progress]")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/onboarding\/workspace$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Create workspace");
+    await expect(page.locator("html")).toHaveAttribute("data-redirect-proof", "same-document");
+    await expect(page.getByText("This page is taking longer than usual.")).toHaveCount(0);
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+    if (auth.id) {
+      const removed = await fetch(`${supabaseUrl}/auth/v1/admin/users/${auth.id}`, {
+        method: "DELETE",
+        headers,
+      });
+      expect(removed.ok).toBe(true);
+    }
+  }
+});

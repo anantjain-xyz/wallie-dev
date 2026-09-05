@@ -141,6 +141,45 @@ describe("shared action feedback", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("finishes a redirect back to the current URL only after its history commit and content", () => {
+    vi.useFakeTimers();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    window.history.replaceState({ entry: "before" }, "", "/current");
+    function Trigger() {
+      const { startNavigation } = useRouteProgress();
+      return <button onClick={() => startNavigation("/")}>Home</button>;
+    }
+    render(
+      <RouteProgressProvider>
+        <Trigger />
+        <main id="main-content">
+          <h1>Page</h1>
+        </main>
+      </RouteProgressProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    act(() => frames.shift()?.(16));
+    act(() => vi.advanceTimersByTime(150));
+    expect(document.querySelector("[data-route-progress]")).not.toBeNull();
+    const busy = document.createElement("section");
+    busy.setAttribute("role", "status");
+    busy.setAttribute("aria-busy", "true");
+    document.getElementById("main-content")!.append(busy);
+    window.history.replaceState({ entry: "redirect committed" }, "", "/current");
+    act(() => frames.shift()?.(32));
+    expect(document.querySelector("[data-route-progress]")).not.toBeNull();
+    busy.remove();
+    act(() => frames.shift()?.(48));
+    expect(document.querySelector("[data-route-progress]")).toBeNull();
+    act(() => vi.advanceTimersByTime(15000));
+    expect(screen.queryByText("This page is taking longer than usual.")).toBeNull();
+  });
+
   it("clears an active navigation when a same-route request supersedes it", () => {
     vi.useFakeTimers();
     const frames: FrameRequestCallback[] = [];

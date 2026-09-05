@@ -82,6 +82,7 @@ export function hasUsableRouteContent() {
 export function RouteProgressProvider({ children }: { children: ReactNode }) {
   const startedAtRouteRef = useRef<string | null>(null);
   const activeRef = useRef(false);
+  const initialHistoryStateRef = useRef<unknown>(null);
   const initialErrorRef = useRef<Element | null>(null);
   const frameRef = useRef<number | null>(null);
   const monitorFrameRef = useRef<number | null>(null);
@@ -126,11 +127,18 @@ export function RouteProgressProvider({ children }: { children: ReactNode }) {
       activeRef.current = true;
       initialErrorRef.current = document.querySelector("[data-route-error]");
       startedAtRouteRef.current = browserRouteKey();
+      // App Router commits same-URL redirects with replaceState too. Observe the
+      // committed history entry, without treating old usable content as completion.
+      initialHistoryStateRef.current = window.history.state;
       setVisible(false);
       frameRef.current = window.requestAnimationFrame(() => {
         frameRef.current = null;
         if (!activeRef.current) return;
-        if (startedAtRouteRef.current !== browserRouteKey() && hasUsableRouteContent()) {
+        if (
+          (startedAtRouteRef.current !== browserRouteKey() ||
+            initialHistoryStateRef.current !== window.history.state) &&
+          hasUsableRouteContent()
+        ) {
           stopNavigation();
           return;
         }
@@ -140,7 +148,9 @@ export function RouteProgressProvider({ children }: { children: ReactNode }) {
           if (
             (document.querySelector("[data-route-error]") &&
               document.querySelector("[data-route-error]") !== initialErrorRef.current) ||
-            (startedAtRouteRef.current !== browserRouteKey() && hasUsableRouteContent())
+            ((startedAtRouteRef.current !== browserRouteKey() ||
+              initialHistoryStateRef.current !== window.history.state) &&
+              hasUsableRouteContent())
           ) {
             stopNavigation();
             return;
