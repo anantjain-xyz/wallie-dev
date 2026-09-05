@@ -109,6 +109,17 @@ async function expectNoAxeViolations(page: Page) {
   expect(violations).toEqual([]);
 }
 
+async function expectPageReady(page: Page) {
+  await expect(page.locator("#main-content")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+  await expect(page.locator("[data-route-loading]")).toHaveCount(0);
+  // Nested settings/onboarding fallbacks must settle too. An active run's
+  // progress status stays busy for its entire execution and is not a fallback.
+  await expect(
+    page.locator('[role="status"][aria-busy="true"]:not([data-run-progress])'),
+  ).toHaveCount(0);
+}
+
 async function captureRouteMatrix(
   page: Page,
   routes: ReadonlyArray<{ name: string; path: string }>,
@@ -120,14 +131,7 @@ async function captureRouteMatrix(
       for (const route of routes) {
         await page.goto(route.path);
         await applyTheme(page, theme);
-        await expect(page.locator("#main-content")).toBeVisible();
-        await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-        await expect(page.locator("[data-route-loading]")).toHaveCount(0);
-        // Nested settings/onboarding fallbacks must settle too. An active run's
-        // progress status stays busy for its entire execution and is not a fallback.
-        await expect(
-          page.locator('[role="status"][aria-busy="true"]:not([data-run-progress])'),
-        ).toHaveCount(0);
+        await expectPageReady(page);
         await expectResponsiveContract(page, width);
         if ((width === 390 && theme === "light") || (width === 1440 && theme === "dark")) {
           await expectNoAxeViolations(page);
@@ -181,9 +185,7 @@ test("keyboard, coarse-pointer, reduced-motion, and zoom-critical flows remain u
 
   for (const route of authenticatedRoutes) {
     await page.goto(route.path);
-    await expect(page.locator("#main-content")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-    await expect(page.locator("[data-route-loading]")).toHaveCount(0);
+    await expectPageReady(page);
     // Safari uses Option+Tab to include links and other controls in tab order.
     await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
     await expect
@@ -202,6 +204,7 @@ test("keyboard, coarse-pointer, reduced-motion, and zoom-critical flows remain u
 
   await page.setViewportSize({ height: 450, width: 640 });
   await page.goto(`${workspacePath}/settings?category=integrations`);
+  await expectPageReady(page);
   await expectResponsiveContract(page, 640);
   await context.close();
 });
