@@ -25,6 +25,7 @@ import type {
   SessionReviewRepository,
   SessionReviewSession,
 } from "@/features/sessions/detail/data";
+import { createSessionRecoveryRefresh } from "@/features/sessions/detail/recovery-refresh";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import { SessionInspector } from "@/features/sessions/detail/session-inspector";
@@ -162,6 +163,7 @@ export function SessionDetailPageClient({
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
   const capabilitiesEffectSkipRef = useRef(true);
+  const appliedSnapshotRef = useRef(initialData.session);
 
   const stageTimeline = useMemo(
     () => buildStageTimeline(session, { failedStageSlug }),
@@ -222,6 +224,17 @@ export function SessionDetailPageClient({
         : reviewMode;
 
   useEffect(() => {
+    // A recovery response can arrive while an optimistic action or a newer
+    // Realtime event is updating this page. Never roll either back with RSC.
+    if (phaseActionPending || archivePending || stopPending) return;
+    if (appliedSnapshotRef.current === initialData.session) return;
+    appliedSnapshotRef.current = initialData.session;
+    const current = latestSessionRef.current;
+    if (
+      current.id === initialData.session.id &&
+      compareSessionTimestamps(initialData.session.updatedAt, current.updatedAt) < 0
+    )
+      return;
     setSession(initialData.session);
     setCanApprove(canReview);
     setHasFailedRun(initialHasFailedRun);
@@ -230,10 +243,19 @@ export function SessionDetailPageClient({
       const stageStillExists = initialData.session.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
       );
-
-      return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
+      return stageStillExists && currentSlug !== current.currentStageSlug
+        ? currentSlug
+        : initialData.session.currentStageSlug;
     });
-  }, [canReview, initialData.session, initialFailedStageSlug, initialHasFailedRun]);
+  }, [
+    archivePending,
+    canReview,
+    initialData.session,
+    initialFailedStageSlug,
+    initialHasFailedRun,
+    phaseActionPending,
+    stopPending,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -348,7 +370,21 @@ export function SessionDetailPageClient({
     },
   );
 
+  const recoveryIsBusy = useEffectEvent(
+    () => phaseActionPending !== null || archivePending !== null || stopPending,
+  );
+
   useEffect(() => {
+    const recovery = createSessionRecoveryRefresh({
+      refresh: () => router.refresh(),
+      isAvailable: () => document.visibilityState === "visible" && navigator.onLine,
+      isBusy: () => recoveryIsBusy(),
+    });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recovery.request();
+    };
+    window.addEventListener("online", recovery.request);
+    document.addEventListener("visibilitychange", onVisible);
     const channel = supabase
       .channel(`session-detail:${session.id}`)
       .on(
@@ -456,9 +492,12 @@ export function SessionDetailPageClient({
           });
         },
       )
-      .subscribe();
+      .subscribe(recovery.onStatus);
 
     return () => {
+      recovery.dispose();
+      window.removeEventListener("online", recovery.request);
+      document.removeEventListener("visibilitychange", onVisible);
       void supabase.removeChannel(channel);
     };
   }, [initialData.workspaceSlug, router, session.id, supabase]);
