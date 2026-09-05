@@ -327,6 +327,7 @@ export function ShellHeader({
     <>
       <div className="flex min-h-[100svh] min-w-0">
         <aside
+          aria-label="Workspace sidebar"
           className="ui-shell-rail sticky top-0 z-20 hidden h-svh w-[208px] shrink-0 flex-col border-r border-border bg-sheet lg:flex"
           data-shell-rail=""
         >
