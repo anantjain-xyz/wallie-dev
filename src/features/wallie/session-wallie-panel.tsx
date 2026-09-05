@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
+import { usePublishExecution } from "@/features/sessions/detail/execution-summary";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
@@ -208,6 +209,13 @@ export function SessionWalliePanel({
     summaryMessages: null as boolean | null,
   });
   sessionIdRef.current = session.id;
+  usePublishExecution({
+    sessionId: session.id,
+    run: runs[0],
+    connection: connectionState,
+    nowMs,
+    stallTimeoutMs: initialData.stallTimeoutMs,
+  });
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
 
@@ -380,6 +388,17 @@ export function SessionWalliePanel({
     );
   });
 
+  useEffect(() => {
+    const invalidate = () => {
+      reconcileGenerationRef.current += 1;
+    };
+    window.addEventListener("pagehide", invalidate);
+    return () => {
+      invalidate();
+      window.removeEventListener("pagehide", invalidate);
+    };
+  }, [session.id]);
+
   const reconcileLatestRuns = useEffectEvent(async () => {
     const requestSessionId = session.id;
     const generation = ++reconcileGenerationRef.current;
@@ -407,7 +426,10 @@ export function SessionWalliePanel({
       setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
       setNextRunCursor(payload.nextCursor);
     } catch (error) {
-      if (sessionIdRef.current !== requestSessionId) {
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        generation !== reconcileGenerationRef.current
+      ) {
         return;
       }
 
