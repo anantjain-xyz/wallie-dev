@@ -211,6 +211,7 @@ async function runStage(input: {
   let branch: string | null = null;
   let installationToken: string | undefined;
   const collectedText: string[] = [];
+  let finalOutput: string | undefined;
   let artifactInserted = false;
   let runFailureMessageRecorded = false;
   let sessionPointerAdvanced = false;
@@ -252,6 +253,12 @@ async function runStage(input: {
 
     // CLI-backed runners require a GitHub repo to clone into the sandbox.
     if (resolvedRunner.runner.requiresSandbox) {
+      if (runId) {
+        await persistStartupProgress(admin, runId, session.workspace_id, {
+          type: "progress",
+          text: "Preparing sandbox and repository…",
+        });
+      }
       github = await loadGitHubContext(admin, session.workspace_id, session.id);
       if (!github) {
         const message =
@@ -373,6 +380,12 @@ async function runStage(input: {
       },
     );
 
+    if (runId) {
+      await persistStartupProgress(admin, runId, session.workspace_id, {
+        type: "progress",
+        text: "Starting agent…",
+      });
+    }
     for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,
@@ -393,12 +406,15 @@ async function runStage(input: {
         collectedText.push(event.text);
       } else if (event.type === "completion") {
         if (event.usage) usage = event.usage;
+        if (event.taskComplete && event.finalOutput?.trim()) {
+          finalOutput = event.finalOutput.trim();
+        }
       } else if (event.type === "error") {
         throw new Error(event.message);
       }
     }
 
-    const artifactMarkdown = collectedText.join("\n").trim();
+    const artifactMarkdown = finalOutput ?? collectedText.join("\n").trim();
     if (!artifactMarkdown) {
       const message = `${stage.name} did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.`;
 
@@ -1357,6 +1373,20 @@ async function markActiveRunsForJobError(admin: AdminClient, jobId: string): Pro
     .in("status", ACTIVE_AGENT_RUN_STATUSES);
 }
 
+/** Startup hints are best effort; a logging outage must not prevent execution. */
+async function persistStartupProgress(
+  admin: AdminClient,
+  runId: string,
+  workspaceId: string,
+  event: Extract<AgentEvent, { type: "progress" }>,
+) {
+  try {
+    await persistEvent(admin, runId, workspaceId, event);
+  } catch {
+    console.warn("Wallie could not record startup progress.");
+  }
+}
+
 async function persistEvent(
   admin: AdminClient,
   runId: string,
@@ -1367,8 +1397,9 @@ async function persistEvent(
   let messageMd: string;
 
   switch (event.type) {
+    case "progress":
     case "text":
-      kind = "text";
+      kind = event.type;
       messageMd = event.text;
       break;
     case "tool_use":

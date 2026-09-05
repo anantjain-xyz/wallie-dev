@@ -6,6 +6,7 @@ import { TimeDisplay } from "@/components/shared/time-display";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 import type { WallieRun } from "@/features/wallie/types";
 import {
+  currentOperationLabel,
   isRunActivityStalled,
   lastActivityTimestamp,
   type WallieRealtimeConnectionState,
@@ -19,6 +20,7 @@ type ExecutionSnapshot = {
   > | null;
   connection: WallieRealtimeConnectionState;
   stalled: boolean;
+  activity?: string;
 };
 type PublishedExecution = ExecutionSnapshot | { unavailable: true } | null;
 const SnapshotContext = createContext<PublishedExecution>(null);
@@ -73,6 +75,7 @@ export function usePublishExecution({
         : null,
       connection,
       stalled,
+      activity: run ? currentOperationLabel({ run, stalled }) : undefined,
     });
   }, [publish, sessionId, run, connection, stalled]);
   useEffect(() => () => publish?.(null), [publish, sessionId]);
@@ -131,7 +134,9 @@ export function SessionExecutionSummary({
         ? "Check the latest run and feedback for the next step."
         : run?.status === "queued"
           ? "The worker has not started this run yet."
-          : "Follow the latest run for execution details and recovery actions.";
+          : run?.isActive && snapshot?.activity
+            ? snapshot.activity
+            : "Follow the latest run for execution details and recovery actions.";
   return (
     <section
       aria-label="Current execution"

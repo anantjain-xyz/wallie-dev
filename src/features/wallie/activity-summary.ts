@@ -54,6 +54,30 @@ export function formatMessageSourceLabel(kind: string) {
 }
 
 function previewMessage(message: WallieRunMessage) {
+  if (message.kind === "tool_use") {
+    const tool = message.messageMd
+      .match(/^\*\*Tool:\*\* ([^\n]+)/)?.[1]
+      ?.trim()
+      .toLowerCase();
+    switch (tool) {
+      case "read":
+      case "read-file":
+        return "Reading files";
+      case "grep":
+      case "glob":
+      case "search":
+        return "Searching the repository";
+      case "shell":
+      case "bash":
+        return "Running a command";
+      case "edit":
+      case "write":
+      case "apply-patch":
+        return "Updating files";
+      default:
+        return "Using a tool";
+    }
+  }
   const preview = message.messageMd.replace(/\s+/g, " ").trim();
   if (!preview) {
     return formatMessageSourceLabel(message.kind);
