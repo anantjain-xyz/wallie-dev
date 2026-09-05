@@ -101,6 +101,33 @@ function renderDetail(
 }
 
 describe("SessionDetailPageClient", () => {
+  it("shows completion only after terminal approval, with each result link", () => {
+    const data = makeSessionDetailData();
+    data.session.pullRequests = [
+      { id: "pr-1", pullRequestNumber: 12, pullRequestUrl: "https://github.com/acme/app/pull/12" },
+      { id: "pr-2", pullRequestNumber: 13, pullRequestUrl: "https://github.com/acme/app/pull/13" },
+    ];
+    expect(renderDetail({ data })).not.toContain("Session complete");
+    data.session.archivedAt = "2026-06-07T12:00:00Z";
+    expect(renderDetail({ data })).not.toContain("Session complete");
+    data.session.phaseStatus = "approved";
+    const html = renderDetail({ data });
+    expect(html).toContain("Session complete");
+    expect(html).toContain("Open PR #12");
+    expect(html).toContain("Open PR #13");
+    expect(html).not.toContain("Review controls are closed");
+    expect(html).not.toContain("sticky bottom-0");
+  });
+
+  it("points to stage outputs for completed pipelines without a PR", () => {
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "approved";
+    const html = renderDetail({ data });
+    expect(html).toContain("Explore the stage outputs and run history below.");
+    expect(html).toContain("No pull request is linked to this session.");
+    expect(html).not.toContain("Open pull request");
+  });
+
   it("centers the selected stage with horizontal rail scrolling only", () => {
     const scrollTo = vi.fn();
     const rail = {
@@ -314,7 +341,7 @@ describe("SessionDetailPageClient", () => {
     const data = makeSessionDetailData();
     data.session.phaseStatus = "approved";
     const html = renderDetail({ data });
-    expect(html).toContain("This session is complete.");
+    expect(html).toContain("Session complete");
     expect(html).not.toContain("Request changes");
   });
 
