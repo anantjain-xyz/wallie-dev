@@ -2,7 +2,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PageFailure } from "./page-failure";
-afterEach(cleanup);
+const mocked = vi.hoisted(() => ({ refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => mocked }));
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 it("retries errors and keeps the workspace return destination", () => {
   const reset = vi.fn();
   render(
@@ -10,6 +15,7 @@ it("retries errors and keeps the workspace return destination", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(reset).toHaveBeenCalledTimes(1);
+  expect(mocked.refresh).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("link", { name: "Back to sessions" }).getAttribute("href")).toBe(
     "/w/acme/sessions",
   );

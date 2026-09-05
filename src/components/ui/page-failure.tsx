@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -17,6 +18,7 @@ export function PageFailure({
   returnLabel?: string;
 }) {
   const [pending, startRetry] = useTransition();
+  const router = useRouter();
   return (
     <section className="mx-auto w-full max-w-xl px-6 py-16 sm:py-24" data-route-error>
       <p className="text-sm font-semibold text-accent">Wallie</p>
@@ -33,7 +35,12 @@ export function PageFailure({
           <button
             className="ui-button-primary"
             disabled={pending}
-            onClick={() => startRetry(reset)}
+            onClick={() =>
+              startRetry(() => {
+                router.refresh();
+                reset();
+              })
+            }
             type="button"
           >
             <ActionButtonLabel idle="Try again" pending={pending} pendingLabel="Trying again…" />
