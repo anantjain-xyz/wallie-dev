@@ -188,3 +188,46 @@ A pull request should state:
 Do not claim the full gate from a focused test, or a deployed outcome from local
 checks. Keep temporary browser output, caches, traces, and screenshots out of
 the repository unless the artifact is intentionally reviewed and owned.
+
+## Browser release check
+
+Use the separate release configuration to run the responsive/accessibility matrix,
+auth-session checks, and navigation recovery in Chromium and WebKit:
+
+```bash
+pnpm exec playwright install chromium webkit
+supabase start
+# Export the API URL, anon/publishable key, and service-role key from this local
+# stack's `supabase status` output as the variables below. Do not use hosted keys.
+export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY='<local-anon-or-publishable-key>'
+export SUPABASE_SECRET_KEY='<local-service-role-key>'
+export NEXT_PUBLIC_APP_URL=http://localhost:3100
+pnpm test:e2e:release
+```
+
+The stack must have this checkout's migrations and demo seed, including
+`anant@example.com` and the Acme Corp workspace. Use a disposable local stack;
+the auth scenarios create and remove a temporary user. The release configuration
+requires explicit local connection settings and rejects hosted Supabase URLs.
+Keep keys out of commits and shared logs.
+
+The command builds once and runs both engines serially against the production
+server. For a single engine after building, run
+`pnpm exec playwright test --config playwright.release.config.ts --project webkit`.
+Screenshots and failure traces are written to `test-results/`, separated by
+project. Existing individual E2E and benchmark commands keep their default
+Chromium configuration.
+
+Each engine covers 110 route/viewport/theme combinations, including an active
+session, plus selected axe scans and keyboard/touch/reduced-motion scenarios.
+Readiness waits only for initial route-loading fallbacks, not ongoing agent work.
+WebKit coverage is a browser-engine check, not certification of shipping Safari,
+iOS keyboards, device safe areas, email delivery, or real provider execution.
+Those still require the corresponding release rehearsal.
+
+The keyboard check uses Tab in Chromium and Option+Tab in WebKit to include
+links and controls in Safari's tab order. The layout matrix lets background
+reads settle before intentionally reloading for a theme change or leaving a
+sample; interruption behavior is exercised separately in the route-recovery
+suite. Application console errors and page errors still fail the layout matrix.

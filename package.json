@@ -51,7 +51,8 @@
     "verify:validation": "tsx scripts/verify-validation-contract.ts",
     "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
     "check": "pnpm check:fast && pnpm test",
-    "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts"
+    "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts",
+    "test:e2e:release": "pnpm build && playwright test --config playwright.release.config.ts"
   },
   "dependencies": {
     "@cursor/sdk": "1.0.30",

@@ -201,6 +201,7 @@ export function SessionWalliePanel({
   const [nowMs, setNowMs] = useState(() => Date.parse(renderNow) || Date.now());
   const sessionIdRef = useRef(session.id);
   const reconcileGenerationRef = useRef(0);
+  const messageGenerationRef = useRef(0);
   const hadDisconnectRef = useRef(false);
   // Track each required realtime channel independently; recovery only when all are live.
   const channelHealthRef = useRef({
@@ -233,6 +234,7 @@ export function SessionWalliePanel({
   }, [initialData.runs, initialData.workspaceMembers]);
   useEffect(() => {
     reconcileGenerationRef.current += 1;
+    messageGenerationRef.current += 1;
     setRuns(initialData.runs);
     setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
@@ -266,6 +268,7 @@ export function SessionWalliePanel({
 
   const loadRunMessages = useCallback(
     async (runId: string) => {
+      const generation = messageGenerationRef.current;
       setMessageLoadErrorRunIds((currentIds) => {
         const nextIds = new Set(currentIds);
         nextIds.delete(runId);
@@ -278,6 +281,7 @@ export function SessionWalliePanel({
         .order("created_at", { ascending: false })
         .limit(WALLIE_RUN_MESSAGE_LIMIT);
 
+      if (generation !== messageGenerationRef.current) return;
       if (error) {
         console.error("Wallie could not load run messages", {
           error,
@@ -391,6 +395,7 @@ export function SessionWalliePanel({
   useEffect(() => {
     const invalidate = () => {
       reconcileGenerationRef.current += 1;
+      messageGenerationRef.current += 1;
     };
     window.addEventListener("pagehide", invalidate);
     return () => {
