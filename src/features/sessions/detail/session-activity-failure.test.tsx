@@ -1,12 +1,23 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
+import { useTransition } from "react";
+import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionActivityFailure } from "@/features/sessions/detail/session-activity-failure";
 
 const mocked = vi.hoisted(() => ({ refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocked.refresh }) }));
+function Harness() {
+  const [pending, startTransition] = useTransition();
+  return (
+    <SessionRefreshContext.Provider
+      value={{ pending, refresh: () => startTransition(() => mocked.refresh()) }}
+    >
+      <SessionActivityFailure />
+    </SessionRefreshContext.Provider>
+  );
+}
 afterEach(() => {
   cleanup();
   mocked.refresh.mockReset();
@@ -21,7 +32,7 @@ describe("SessionActivityFailure", () => {
           finish = resolve;
         }),
     );
-    render(<SessionActivityFailure />);
+    render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Retry loading history" }));
     const pending = screen.getByRole("button", { name: "Loading history…" });
     expect(pending).toBeDisabled();

@@ -1,13 +1,11 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 
 export function SessionActivityFailure() {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const { refresh, pending } = useSessionRefresh();
 
   return (
     <div className="rounded-[6px] border border-border bg-control-muted p-4">
@@ -21,7 +19,7 @@ export function SessionActivityFailure() {
         className="ui-button mt-3 min-h-11 sm:min-h-9"
         type="button"
         disabled={pending}
-        onClick={() => startTransition(() => router.refresh())}
+        onClick={refresh}
       >
         <ActionButtonLabel
           idle="Retry loading history"

@@ -1,3 +1,4 @@
+import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,8 +23,6 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(async () => ({})),
 }));
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-
 const props = {
   archivedAt: null,
   context: {
@@ -41,7 +40,11 @@ describe("SessionActivity", () => {
     mocked.loadWallieSessionData.mockRejectedValueOnce(new Error("activity unavailable"));
 
     const result = await SessionActivity(props);
-    const html = renderToStaticMarkup(result);
+    const html = renderToStaticMarkup(
+      <SessionRefreshContext.Provider value={{ refresh: vi.fn(), pending: false }}>
+        {result}
+      </SessionRefreshContext.Provider>,
+    );
 
     expect(html).toContain("Run activity is temporarily unavailable");
     expect(html).toContain("Session review is still available");
