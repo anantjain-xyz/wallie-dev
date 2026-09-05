@@ -64,7 +64,7 @@ function ArtifactPanelSkeleton() {
 export function SessionsListLoadingSkeleton() {
   return (
     <PageContainer>
-      <section aria-busy="true" aria-label="Loading sessions" role="status">
+      <section data-route-loading aria-busy="true" aria-label="Loading sessions" role="status">
         <SkeletonBlock className="mb-8 h-8 w-36 sm:mb-10" />
 
         <div className="mb-6 flex flex-wrap items-center gap-3" aria-hidden="true">
@@ -96,7 +96,7 @@ export function SessionsListLoadingSkeleton() {
 export function SessionDetailLoadingSkeleton() {
   return (
     <PageContainer className="pb-4">
-      <section aria-busy="true" aria-label="Loading session" role="status">
+      <section data-route-loading aria-busy="true" aria-label="Loading session" role="status">
         <span className="sr-only">Loading session…</span>
         <PageHeader
           actionsRightOnDesktop

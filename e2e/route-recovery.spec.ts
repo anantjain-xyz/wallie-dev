@@ -112,3 +112,39 @@ test("home redirect back to workspace creation finishes navigation", async ({ pa
     }
   }
 });
+
+test("an active run does not keep navigation feedback visible", async ({ page }, testInfo) => {
+  await signIn(page);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sessions");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    (url) => url.pathname === "/w/acme-corp/sessions/8",
+    async (route) => {
+      await held;
+      await route.continue();
+    },
+  );
+  try {
+    await page
+      .locator('a[href="/w/acme-corp/sessions/8"]')
+      .first()
+      .evaluate((element: HTMLAnchorElement) => element.click());
+    await expect(page.locator("[data-route-progress]")).toBeVisible();
+    release();
+    await expect(
+      page.locator('[data-run-id] [role="status"][aria-busy="true"]').first(),
+    ).toBeVisible();
+    await expect(page.locator("[data-route-progress]")).toHaveCount(0);
+    await expect(page.getByText("This page is taking longer than usual.")).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath("active-run-navigation.png"),
+      fullPage: true,
+    });
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
