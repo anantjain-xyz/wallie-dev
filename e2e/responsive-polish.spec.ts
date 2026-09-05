@@ -123,6 +123,11 @@ async function captureRouteMatrix(
         await expect(page.locator("#main-content")).toBeVisible();
         await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
         await expect(page.locator("[data-route-loading]")).toHaveCount(0);
+        // Nested settings/onboarding fallbacks must settle too. An active run's
+        // progress status stays busy for its entire execution and is not a fallback.
+        await expect(
+          page.locator('[role="status"][aria-busy="true"]:not([data-run-progress])'),
+        ).toHaveCount(0);
         await expectResponsiveContract(page, width);
         if ((width === 390 && theme === "light") || (width === 1440 && theme === "dark")) {
           await expectNoAxeViolations(page);

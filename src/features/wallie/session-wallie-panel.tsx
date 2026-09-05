@@ -1229,6 +1229,7 @@ function RunMessageTimeline({
         <div
           aria-busy
           aria-live="polite"
+          data-run-progress
           className="mt-3 flex items-center gap-2 text-sm text-muted"
           role="status"
         >
