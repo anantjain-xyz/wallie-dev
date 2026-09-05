@@ -118,6 +118,8 @@ async function captureRouteMatrix(
         await page.goto(route.path);
         await applyTheme(page, theme);
         await expect(page.locator("#main-content")).toBeVisible();
+        await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+        await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0);
         await expectResponsiveContract(page, width);
         if ((width === 390 && theme === "light") || (width === 1440 && theme === "dark")) {
           await expectNoAxeViolations(page);
@@ -168,6 +170,8 @@ test("keyboard, coarse-pointer, reduced-motion, and zoom-critical flows remain u
   for (const route of authenticatedRoutes) {
     await page.goto(route.path);
     await expect(page.locator("#main-content")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+    await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0);
     await page.keyboard.press("Tab");
     await expect
       .poll(() => page.evaluate(() => document.activeElement !== document.body))

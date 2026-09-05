@@ -120,7 +120,7 @@ describe("SettingsCategoryNav hash routing", () => {
       expect(getByRole("link", { name })).toHaveAttribute("href", href);
     }
     expect(getByRole("link", { name: "GitHub" }).closest("ul")).toHaveClass(
-      "overflow-x-auto",
+      "flex-wrap",
       "lg:border-l",
       "lg:pl-2",
     );
