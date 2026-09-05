@@ -20,6 +20,10 @@ import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
+import {
+  SessionExecutionProvider,
+  SessionExecutionSummary,
+} from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
   archiveSessionFromClient,
@@ -136,7 +140,15 @@ export function reconcilePhaseMutationResult(
 
 export { centerStageTimelineSelection as centerStageRailSelection } from "@/features/sessions/detail/stage-timeline";
 
-export function SessionDetailPageClient({
+export function SessionDetailPageClient(props: SessionDetailPageClientProps) {
+  return (
+    <SessionExecutionProvider key={props.initialData.session.id}>
+      <SessionDetailContent {...props} />
+    </SessionExecutionProvider>
+  );
+}
+
+function SessionDetailContent({
   activity,
   canReview = true,
   failedStageSlug: initialFailedStageSlug = null,
@@ -998,6 +1010,17 @@ export function SessionDetailPageClient({
       </div>
 
       {/* Review workbench: 70/30 on lg+, stacked below 1024px with context after artifact. */}
+      <SessionExecutionSummary
+        sessionId={session.id}
+        stageId={session.currentStageId}
+        stageName={
+          session.pipeline.stages.find((stage) => stage.id === session.currentStageId)?.name ??
+          "Current stage"
+        }
+        phaseStatus={session.phaseStatus}
+        archivedAt={session.archivedAt}
+        initialNow={renderNow}
+      />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0">
         <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
           <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
