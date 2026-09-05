@@ -236,7 +236,11 @@ function PipelinePageContent({
         return;
       }
       // Rebuild bounded first pages: retained pages may contain missed archives/deletes.
-      dispatch({ lanes: initialData.lanes, type: "recover" });
+      const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
+      startTransition(() => {
+        if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
+        dispatch({ lanes: initialData.lanes, type: "recover" });
+      });
       invalidatedCardIds.current.clear();
       return;
     }

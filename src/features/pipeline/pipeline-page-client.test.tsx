@@ -735,12 +735,13 @@ describe("PipelinePageClient", () => {
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
   });
 
-  it("refreshes unknown realtime lanes and reconciles authoritative lane metadata", async () => {
+  it("refreshes unknown realtime lanes and selects the focused card’s destination", async () => {
     const supabase = installSupabaseMock();
     const originalData = initialData();
     const view = render(<PipelinePageClient initialData={originalData} />);
     await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
 
+    screen.getByRole("link", { name: "Open session Session 1" }).focus();
     const movedCard = card(1, REVIEW_STAGE_ID);
     act(() => {
       supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(movedCard) });
@@ -774,6 +775,14 @@ describe("PipelinePageClient", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Review" })).toBeTruthy());
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
     expect(screen.getByText("Session 3")).toBeTruthy();
+    expect(
+      view.container
+        .querySelector(`[data-pipeline-stage-tab="${PIPELINE_ID}:${REVIEW_STAGE_ID}"]`)
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(document.activeElement).toBe(
+      screen.getByRole("link", { name: "Open session Session 1" }),
+    );
   });
 
   it("keeps Profiler commits bounded to one card with 100 seeded sessions", async () => {
