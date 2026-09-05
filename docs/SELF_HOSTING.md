@@ -146,11 +146,16 @@ create a branch and pull request in that repository.
    reviewable. Inspect the revised output before approving it.
 6. Approve the stage and confirm the next configured stage starts. Continue
    through every selected stage and approve the final output. Confirm the
-   session shows **Pipeline complete**.
-7. Open the resulting PR when one was produced and verify its repository,
-   changes, and checks on GitHub. If there is no PR, inspect the final artifact
-   and confirm that matches the task's expected output. Pipeline completion
-   does not mean a PR was merged or deployed.
+   session shows **Session complete**.
+7. For this code-change rehearsal, require a resulting PR. Open it on GitHub
+   and verify the repository, requested change, and checks. A completed session
+   and artifact alone do not verify GitHub access: pushing or PR creation can
+   fail without failing the stage. If the PR is missing, inspect the run and
+   worker diagnostics and fix any push or PR-creation failure before repeating
+   the rehearsal. An intentional no-change result (`no_commits`) is appropriate
+   only for a task that requires no repository edits; it does not satisfy this
+   code-change rehearsal. Session completion does not mean the PR was merged
+   or deployed.
 8. Reload the completed session and open its URL in a second signed-in browser
    session. Confirm the output, artifact history, and completion state remain
    available.
