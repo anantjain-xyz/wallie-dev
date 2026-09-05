@@ -17,7 +17,12 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || !process.env.SUPABASE_S
 /** Browser-engine release checks; provider execution remains a separate rehearsal. */
 export default defineConfig({
   ...base,
-  testMatch: ["responsive-polish.spec.ts", "route-recovery.spec.ts", "auth-session.spec.ts"],
+  testMatch: [
+    "responsive-polish.spec.ts",
+    "route-recovery.spec.ts",
+    "auth-session.spec.ts",
+    "invitation-recovery.spec.ts",
+  ],
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },

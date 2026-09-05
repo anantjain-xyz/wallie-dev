@@ -103,16 +103,20 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${htmlEscape(copy.title)} - Wallie</title>
     <style>
+      * { box-sizing: border-box; }
       body { margin: 0; background: #f4f5f7; color: #1d2027; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+      main { min-height: 100svh; display: grid; place-items: center; padding: 24px; }
       section { width: min(100%, 420px); border: 1px solid #7f8793; border-radius: 8px; background: #fff; padding: 28px; box-shadow: 0 12px 40px rgba(29, 32, 39, 0.08); }
       h1 { margin: 0 0 10px; font-size: 22px; line-height: 1.25; }
       p { margin: 0; color: #5b616b; font-size: 14px; line-height: 1.6; }
-      form { margin-top: 22px; }
+      nav { display: grid; gap: 12px; margin-top: 22px; }
+      a { color: #4338ca; font-size: 14px; text-underline-offset: 3px; }
+      form { margin: 0; }
       button { min-height: 44px; border: 1px solid #7f8793; border-radius: 6px; background: #fff; color: #1d2027; cursor: pointer; font: inherit; font-size: 14px; font-weight: 650; padding: 8px 12px; transition: background-color 150ms ease, transform 150ms ease; }
       button:hover { background: #f7f8fa; }
-      button:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
+      a:focus-visible, button:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
       button:active { background: #eff1f5; transform: translateY(1px); }
+      @media (prefers-reduced-motion: reduce) { button { transition: none; } button:active { transform: none; } }
     </style>
   </head>
   <body>
@@ -120,10 +124,17 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
       <section>
         <h1>${htmlEscape(copy.title)}</h1>
         <p>${htmlEscape(copy.body)}</p>
-        <form action="/auth/signout" method="post">
-          <input type="hidden" name="next" value="${next}" />
-          <button type="submit">Sign out and try another account</button>
-        </form>
+        <nav aria-label="Invitation recovery">
+          ${
+            errorCode === "email_mismatch"
+              ? `<form action="/auth/signout" method="post">
+            <input type="hidden" name="next" value="${next}" />
+            <button type="submit">Sign out and try another account</button>
+          </form>`
+              : ""
+          }
+          <a href="/">Back to Wallie</a>
+        </nav>
       </section>
     </main>
   </body>
