@@ -10,9 +10,36 @@ import { RouteProgressProvider, useRouteProgress } from "@/components/ui/route-p
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("shared action feedback", () => {
+  it("offers recovery after a slow navigation without implying completion", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 1),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    window.history.replaceState({}, "", "/current");
+    function Trigger() {
+      const { startNavigation } = useRouteProgress();
+      return <button onClick={() => startNavigation("/slow")}>Navigate</button>;
+    }
+    render(
+      <RouteProgressProvider>
+        <Trigger />
+      </RouteProgressProvider>,
+    );
+    fireEvent.click(screen.getByText("Navigate"));
+    act(() => vi.advanceTimersByTime(15_000));
+    expect(screen.getByText("This page is taking longer than usual.")).toBeTruthy();
+    expect(document.querySelector("[data-route-progress]")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Open page again" })).toHaveAttribute("href", "/slow");
+    fireEvent.click(screen.getByText("Dismiss"));
+    expect(document.querySelector("[data-route-progress]")).toBeNull();
+  });
+
   it("keeps pending copy in layout and exposes text without relying on animation", () => {
     const view = render(
       <button type="button">
@@ -36,7 +63,8 @@ describe("shared action feedback", () => {
     expect(screen.getByRole("button").querySelectorAll(".animate-spin")).toHaveLength(1);
   });
 
-  it("waits a frame before showing route progress and clears after the URL changes", () => {
+  it("waits before showing progress and keeps it until destination content is ready", () => {
+    vi.useFakeTimers();
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       frames.push(callback);
@@ -57,6 +85,9 @@ describe("shared action feedback", () => {
     render(
       <RouteProgressProvider>
         <NavigationTrigger />
+        <main id="main-content">
+          <h1>Page</h1>
+        </main>
       </RouteProgressProvider>,
     );
 
@@ -64,14 +95,23 @@ describe("shared action feedback", () => {
     expect(screen.queryByRole("status", { name: "Loading page…" })).toBeNull();
 
     act(() => frames.shift()?.(16));
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
 
     window.history.pushState({}, "", "/next");
+    const skeleton = document.createElement("section");
+    skeleton.setAttribute("role", "status");
+    skeleton.setAttribute("aria-busy", "true");
+    document.getElementById("main-content")!.append(skeleton);
     act(() => frames.shift()?.(32));
+    expect(document.querySelector("[data-route-progress]")).not.toBeNull();
+    skeleton.remove();
+    act(() => frames.shift()?.(48));
     expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("clears an active navigation when a same-route request supersedes it", () => {
+    vi.useFakeTimers();
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       frames.push(callback);
@@ -97,11 +137,15 @@ describe("shared action feedback", () => {
     render(
       <RouteProgressProvider>
         <NavigationTrigger />
+        <main id="main-content">
+          <h1>Page</h1>
+        </main>
       </RouteProgressProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     act(() => frames.shift()?.(16));
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
 
     fireEvent.click(screen.getByRole("button", { name: "Current" }));
