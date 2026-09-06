@@ -6,7 +6,6 @@ import {
   CreateSessionDialogLoading,
   isActiveNavItem,
   preloadCreateSessionDialogOnce,
-  resolveShellPageTitle,
   ShellHeader,
 } from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
@@ -81,12 +80,12 @@ describe("ShellHeader", () => {
     expect(html).not.toContain('title="Switch to dark mode"');
   });
 
-  it("keeps workspace identity in the desktop rail", () => {
+  it("keeps workspace identity in the top bar", () => {
     const html = renderShell();
 
     expect(html).not.toContain("Wallie");
     expect(html).toContain("Acme Corp");
-    expect(html).toContain("data-shell-rail");
+    expect(html).not.toContain("data-shell-rail");
     expect(html).toContain(">A<");
     expect(html).not.toContain('title="Acme Corp"');
   });
@@ -108,19 +107,20 @@ describe("ShellHeader", () => {
     expect(html).toContain('aria-label="Account: owner@example.com"');
   });
 
-  it("exposes a mobile navigation trigger without bottom navigation", () => {
+  it("exposes navigation tabs in the top bar on mobile", () => {
     const html = renderShell();
 
-    expect(html).toContain('aria-label="Open workspace navigation"');
+    expect(html).toContain('aria-label="Workspace navigation"');
+    expect(html).not.toContain('aria-label="Open workspace navigation"');
     expect(html).toContain("data-shell-header");
     expect(html).toContain(">Pipeline</");
     expect(html).not.toContain("grid-cols-3");
   });
 
-  it("puts page identity and main content into the document-scroll column", () => {
+  it("renders navigation without a repeated page label above main content", () => {
     const html = renderShell();
 
-    expect(html).toContain(">Pipeline</p>");
+    expect(html).not.toContain(">Pipeline</p>");
     expect(html).toContain('id="main-content"');
     expect(html).toContain("Page body");
     expect(html).not.toContain("overflow-y-auto");
@@ -132,15 +132,6 @@ describe("shell page title helpers", () => {
     expect(isActiveNavItem("/w/acme-corp", "acme-corp", navItems[0]!)).toBe(true);
     expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[0]!)).toBe(false);
     expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[1]!)).toBe(true);
-  });
-
-  it("resolves command-header titles from the active nav section", () => {
-    expect(resolveShellPageTitle("/w/acme-corp", "acme-corp", navItems)).toBe("Pipeline");
-    expect(resolveShellPageTitle("/w/acme-corp/sessions/12", "acme-corp", navItems)).toBe(
-      "Sessions",
-    );
-    expect(resolveShellPageTitle("/w/acme-corp/settings", "acme-corp", navItems)).toBe("Settings");
-    expect(resolveShellPageTitle("/w/acme-corp/onboarding", "acme-corp", navItems)).toBe("Setup");
   });
 });
 

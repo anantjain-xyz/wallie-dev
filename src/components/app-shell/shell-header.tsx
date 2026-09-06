@@ -18,9 +18,8 @@ import {
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
-import { MenuIcon } from "@/components/shared/icons/menu-icon";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
-import { Dialog, DialogContent, DialogSideContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   shouldShowOnboardingResumeCta,
@@ -149,23 +148,6 @@ export function isActiveNavItem(pathname: string, workspaceSlug: string, item: W
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function resolveShellPageTitle(
-  pathname: string,
-  workspaceSlug: string,
-  navItems: readonly WorkspaceNavItem[],
-) {
-  const active = navItems.find((item) => isActiveNavItem(pathname, workspaceSlug, item));
-  if (active) {
-    return active.label;
-  }
-
-  if (pathname.includes("/onboarding")) {
-    return "Setup";
-  }
-
-  return "Workspace";
-}
-
 export function ShellHeader({
   children,
   navItems,
@@ -183,7 +165,6 @@ export function ShellHeader({
   const router = useRouter();
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
-  const pageTitle = resolveShellPageTitle(pathname, workspace.slug, navItems);
 
   // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
   // that auto-opens the dialog regardless of which page in the workspace the
@@ -198,19 +179,7 @@ export function ShellHeader({
   }
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCreateButtonRef = useRef<HTMLButtonElement>(null);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const createDialogPreloadStartedKey = useRef<string | null>(null);
-  const [navOpen, setNavOpen] = useState(false);
-  const [navPathname, setNavPathname] = useState(pathname);
-  const focusMainAfterNavCloseRef = useRef(false);
-
-  if (pathname !== navPathname) {
-    setNavPathname(pathname);
-    if (navOpen) {
-      setNavOpen(false);
-    }
-  }
-
   useEffect(() => {
     if (shouldResumeSetup && createFromUrl) {
       router.replace(onboardingHref);
@@ -227,7 +196,7 @@ export function ShellHeader({
     }
 
     requestAnimationFrame(() => {
-      for (const ref of [createButtonRef, mobileCreateButtonRef, menuButtonRef]) {
+      for (const ref of [createButtonRef, mobileCreateButtonRef]) {
         const element = ref.current;
         if (element && element.getClientRects().length > 0) {
           element.focus();
@@ -246,11 +215,7 @@ export function ShellHeader({
 
   const pipelineHref = workspaceBasePath(workspace.slug);
 
-  function handleNavClick(
-    event: MouseEvent<HTMLAnchorElement>,
-    item: WorkspaceNavItem,
-    options?: { fromSheet?: boolean },
-  ) {
+  function handleNavClick(event: MouseEvent<HTMLAnchorElement>, item: WorkspaceNavItem) {
     if (
       isUnmodifiedPrimaryClick(event) &&
       pathname === pipelineHref &&
@@ -258,14 +223,9 @@ export function ShellHeader({
     ) {
       startInteraction("pipeline_to_sessions", "/w/[workspaceSlug]", "/w/[workspaceSlug]/sessions");
     }
-
-    if (options?.fromSheet) {
-      focusMainAfterNavCloseRef.current = true;
-      setNavOpen(false);
-    }
   }
 
-  function renderNavLinks(options?: { fromSheet?: boolean; onNavigate?: () => void }) {
+  function renderNavLinks() {
     return navItems.map((item) => {
       const active = isActiveNavItem(pathname, workspace.slug, item);
 
@@ -276,8 +236,7 @@ export function ShellHeader({
           aria-current={active ? "page" : undefined}
           className={cn("ui-shell-nav-link", active && "ui-shell-nav-link-active")}
           onClick={(event) => {
-            handleNavClick(event, item, { fromSheet: options?.fromSheet });
-            options?.onNavigate?.();
+            handleNavClick(event, item);
           }}
         >
           {item.label}
@@ -326,70 +285,51 @@ export function ShellHeader({
   return (
     <>
       <div className="flex min-h-[100svh] min-w-0">
-        <aside
-          aria-label="Workspace sidebar"
-          className="ui-shell-rail sticky top-0 z-20 hidden h-svh w-[208px] shrink-0 flex-col border-r border-border bg-sheet lg:flex"
-          data-shell-rail=""
-        >
-          <div className="flex h-12 shrink-0 items-center px-3">
-            <div className="min-w-0 flex-1 px-2">
-              <Tooltip content={workspace.name}>
-                <Link
-                  href={pipelineHref}
-                  className="flex min-w-0 items-center gap-2 rounded-[6px] py-1 hover:opacity-80"
-                >
-                  <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
-                  <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
-                    {workspace.name}
-                  </span>
-                </Link>
-              </Tooltip>
-            </div>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-6 px-3 py-4">
-            <nav aria-label="Workspace navigation" className="min-w-0">
-              <div className="flex flex-col gap-1">{renderNavLinks()}</div>
-            </nav>
-          </div>
-        </aside>
-
         <div className="flex min-w-0 flex-1 flex-col bg-sheet">
           <header
             className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
             data-shell-header=""
           >
-            {/* Mobile / tablet header (<1024px): 56px row + menu sheet entry. */}
+            {/* Mobile / tablet header: workspace and actions above the navigation tabs. */}
             <div className="flex h-14 min-w-0 items-center gap-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] lg:hidden">
-              <button
-                ref={menuButtonRef}
-                type="button"
-                className="ui-icon-button"
-                aria-expanded={navOpen}
-                aria-controls="workspace-nav-sheet"
-                aria-label="Open workspace navigation"
-                onClick={() => setNavOpen(true)}
-              >
-                <MenuIcon className="h-4 w-4" />
-              </button>
-
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-semibold text-foreground">{pageTitle}</p>
-                <p className="truncate type-annotation text-muted">{workspace.name}</p>
+                <p className="truncate text-[15px] font-semibold text-foreground">
+                  {workspace.name}
+                </p>
               </div>
 
               <div className="flex shrink-0 items-center gap-1.5">
                 {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
                 <ThemeToggle />
-                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
+                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} mobileHeader />
               </div>
             </div>
 
-            {/* Desktop command header (≥1024px): 48px page identity + global actions. */}
+            <nav
+              aria-label="Workspace navigation"
+              className="flex items-center gap-1 overflow-x-auto px-3 pb-2 lg:hidden"
+            >
+              {renderNavLinks()}
+            </nav>
+
+            {/* Desktop header: workspace identity, primary navigation, and global actions. */}
             <div className="hidden h-12 min-w-0 items-center justify-between gap-3 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] lg:flex">
-              <p className="min-w-0 truncate text-[15px] font-semibold text-foreground">
-                {pageTitle}
-              </p>
+              <div className="flex min-w-0 items-center gap-6">
+                <Tooltip content={workspace.name}>
+                  <Link
+                    href={pipelineHref}
+                    className="flex min-w-0 max-w-48 items-center gap-2 rounded-[6px] py-1 hover:opacity-80"
+                  >
+                    <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
+                    <span className="truncate text-[13px] font-medium text-foreground">
+                      {workspace.name}
+                    </span>
+                  </Link>
+                </Tooltip>
+                <nav aria-label="Workspace navigation" className="flex shrink-0 items-center gap-1">
+                  {renderNavLinks()}
+                </nav>
+              </div>
               <div className="flex shrink-0 items-center gap-2">
                 {renderPrimaryAction(createButtonRef)}
                 <ThemeToggle />
@@ -407,36 +347,6 @@ export function ShellHeader({
           </main>
         </div>
       </div>
-
-      <Dialog open={navOpen} onOpenChange={setNavOpen}>
-        <DialogSideContent
-          id="workspace-nav-sheet"
-          title="Workspace"
-          description={workspace.name}
-          onCloseAutoFocus={(event) => {
-            if (focusMainAfterNavCloseRef.current) {
-              event.preventDefault();
-              focusMainAfterNavCloseRef.current = false;
-              document.getElementById("main-content")?.focus();
-              return;
-            }
-
-            // Ensure restore lands on the visible menu trigger after Escape/dismiss.
-            event.preventDefault();
-            menuButtonRef.current?.focus();
-          }}
-        >
-          <div className="mb-4 flex min-w-0 items-center gap-2 px-1">
-            <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
-            <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium text-foreground">{workspace.name}</p>
-            </div>
-          </div>
-          <nav aria-label="Workspace navigation">
-            <div className="flex flex-col gap-1">{renderNavLinks({ fromSheet: true })}</div>
-          </nav>
-        </DialogSideContent>
-      </Dialog>
 
       {mountedCreateScope === createScope ? (
         <CreateSessionLoadingCloseContext.Provider

@@ -500,7 +500,7 @@ describe("PipelinePageClient", () => {
 
     expect(view.container.firstElementChild?.classList).toContain("flex");
     expect(view.container.firstElementChild?.classList).toContain(
-      "pipeline-wide:h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
+      "pipeline-wide:h-[calc(100svh-6.75rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
     );
     expect(view.container.querySelector("[data-pipeline-board]")?.getAttribute("style")).toContain(
       "--pipeline-stage-count: 2",

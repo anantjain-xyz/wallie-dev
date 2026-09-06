@@ -9,7 +9,11 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ACCOUNT_MENU_SIDE_OFFSET, AccountMenu } from "@/components/app-shell/account-menu";
+import {
+  ACCOUNT_MENU_SIDE_OFFSET,
+  ACCOUNT_MENU_MOBILE_SIDE_OFFSET,
+  AccountMenu,
+} from "@/components/app-shell/account-menu";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 
 const accountMenuSource = readFileSync(
@@ -61,14 +65,30 @@ describe("AccountMenu", () => {
     expect(results.violations).toEqual([]);
   });
 
-  it("offsets the menu enough to clear the mobile shell header", () => {
-    const headerHeight = 56;
-    const triggerHeight = 32;
-    const remainderBelowTrigger = (headerHeight - triggerHeight) / 2;
-
-    expect(accountMenuSource).toContain("sideOffset={ACCOUNT_MENU_SIDE_OFFSET}");
-    expect(ACCOUNT_MENU_SIDE_OFFSET).toBeGreaterThan(remainderBelowTrigger);
-  });
+  it.each([
+    { headerHeight: 48, triggerRowHeight: 48, triggerHeight: 32, offset: ACCOUNT_MENU_SIDE_OFFSET },
+    {
+      headerHeight: 108,
+      triggerRowHeight: 56,
+      triggerHeight: 44,
+      offset: ACCOUNT_MENU_MOBILE_SIDE_OFFSET,
+    },
+    {
+      headerHeight: 108,
+      triggerRowHeight: 56,
+      triggerHeight: 32,
+      offset: ACCOUNT_MENU_MOBILE_SIDE_OFFSET,
+    },
+  ])(
+    "clears the $headerHeight px header with a $triggerHeight px trigger",
+    ({ headerHeight, triggerRowHeight, triggerHeight, offset }) => {
+      const triggerBottom = (triggerRowHeight + triggerHeight) / 2;
+      expect(triggerBottom + offset - headerHeight).toBeGreaterThanOrEqual(6);
+      expect(accountMenuSource).toContain(
+        "mobileHeader ? ACCOUNT_MENU_MOBILE_SIDE_OFFSET : ACCOUNT_MENU_SIDE_OFFSET",
+      );
+    },
+  );
 
   it("falls back to a generic accessible name when no email is known", () => {
     render(
