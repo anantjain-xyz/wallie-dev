@@ -38,14 +38,36 @@ function footerButton(name: string) {
 }
 
 describe("onboarding verification", () => {
-  it("shows recommended agent defaults when no explicit config values were saved", () => {
+  it("shows recommended agent defaults when provider and model were not explicitly saved", () => {
     const data = verificationData();
-    data.agentConfig = {};
+    data.agentConfig = { agent_effort: "high" };
     render(<OnboardingPageClient initialData={data} />);
     const agentSummary = screen.getByRole("button", { name: "Edit Agent" }).closest("li")!;
     expect(agentSummary).toHaveTextContent("codex · gpt-5.6-sol");
     expect(agentSummary).not.toHaveTextContent("undefined");
   });
+
+  it.each([false, true])(
+    "uses saved Agent configuration after completed setup clears skip history (configured: %s)",
+    (configured) => {
+      const data = verificationData();
+      data.onboarding.status = "completed";
+      data.onboarding.completedSteps = [...WORKSPACE_ONBOARDING_STEPS];
+      data.onboarding.skippedSteps = [];
+      if (!configured) data.agentConfig = {};
+      data.setupHealth.agentConfig = {
+        configured,
+        configuredKeys: configured ? ["agent_provider", "agent_model"] : [],
+        status: configured ? "present" : "missing",
+        values: data.agentConfig,
+      };
+      render(<OnboardingPageClient initialData={data} />);
+      const agentSummary = screen.getByRole("button", { name: "Edit Agent" }).closest("li")!;
+      expect(agentSummary).toHaveTextContent(configured ? "Configured" : "Skipped");
+      expect(agentSummary).not.toHaveTextContent(configured ? "Skipped" : "Configured");
+      if (!configured) expect(agentSummary).not.toHaveTextContent("codex");
+    },
+  );
 
   it.each([false, true])(
     "uses Linear configuration health after completed setup clears skip history (configured: %s)",
@@ -294,5 +316,73 @@ describe("onboarding verification", () => {
     expect(
       screen.getByText("A workspace owner or admin can verify and complete setup."),
     ).toBeVisible();
+  });
+
+  describe.each(["owner", "member"] as const)("completed setup for a %s", (role) => {
+    it.each(["stale", "error", "missing", "running", "blocked"] as const)(
+      "cannot bypass %s verification by selecting another step",
+      async (state) => {
+        const data = verificationData();
+        data.currentMember.role = role;
+        data.canManage = role === "owner";
+        data.onboarding.status = "completed";
+        data.setupHealth.latestSandboxCapabilityCheck =
+          state === "missing"
+            ? null
+            : verificationCheck(state === "error" || state === "running" ? state : "success");
+        if (state === "stale") {
+          data.setupHealth.latestSandboxCapabilityCheck!.agentModel = "old-model";
+        }
+        if (state === "blocked") data.setupHealth.codexConnection.connected = false;
+        render(<OnboardingPageClient initialData={data} />);
+
+        await act(async () =>
+          fireEvent.click(screen.getByRole("button", { name: /Agent\s*Completed/ })),
+        );
+        expect(screen.getByText("Editing runtime")).toBeVisible();
+        expect(
+          within(screen.getByRole("contentinfo")).queryByRole("button", {
+            name: "Create your first task",
+          }),
+        ).not.toBeInTheDocument();
+        expect(footerButton("Review setup")).toBeEnabled();
+        expect(footerButton("Review setup")).not.toHaveAttribute("form");
+        await act(async () => fireEvent.click(footerButton("Review setup")));
+
+        expect(screen.getByRole("heading", { name: "Verify setup" })).toBeVisible();
+        const action = footerButton(
+          state === "running"
+            ? "Checking…"
+            : state === "error"
+              ? "Retry verification"
+              : "Verify setup",
+        );
+        if (role === "member" || state === "running" || state === "blocked") {
+          expect(action).toBeDisabled();
+        } else {
+          expect(action).toBeEnabled();
+          expect(action).toHaveAttribute("form", "onboarding-verification");
+        }
+        expect(router.push).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("can open the composer from another step when the current setup is verified", async () => {
+      const data = verificationData();
+      data.currentMember.role = role;
+      data.canManage = role === "owner";
+      data.onboarding.status = "completed";
+      data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
+      render(<OnboardingPageClient initialData={data} />);
+
+      await act(async () =>
+        fireEvent.click(screen.getByRole("button", { name: /Agent\s*Completed/ })),
+      );
+      expect(footerButton("Create your first task")).toBeEnabled();
+      fireEvent.click(footerButton("Create your first task"));
+      expect(router.push).toHaveBeenCalledWith("/w/northwind?create=1");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });

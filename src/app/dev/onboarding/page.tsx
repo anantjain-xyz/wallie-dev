@@ -3,14 +3,15 @@ import { notFound } from "next/navigation";
 import { isProductionDeploy } from "@/env/deploy";
 import { verificationCheck, verificationData } from "@/features/onboarding/fixtures";
 import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
+import { WORKSPACE_ONBOARDING_STEPS } from "@/lib/onboarding/contracts";
 
 export default async function OnboardingPreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string }>;
+  searchParams: Promise<{ completed?: string; state?: string }>;
 }) {
   if (isProductionDeploy()) notFound();
-  const { state } = await searchParams;
+  const { completed, state } = await searchParams;
   const data = verificationData();
   if (state === "success" || state === "completed" || state === "stale") {
     data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
@@ -21,7 +22,11 @@ export default async function OnboardingPreviewPage({
   } else if (state === "read-only") {
     data.canManage = false;
   }
-  if (state === "completed") data.onboarding.status = "completed";
+  if (state === "completed" || completed === "true") {
+    data.onboarding.status = "completed";
+    data.onboarding.completedSteps = [...WORKSPACE_ONBOARDING_STEPS];
+    data.onboarding.skippedSteps = [];
+  }
   if (state === "stale") data.setupHealth.latestSandboxCapabilityCheck!.agentModel = "old-model";
 
   return <OnboardingPageClient initialData={data} />;

@@ -283,7 +283,8 @@ export default function VerifyStep({
                 group.steps.some((step) => data.onboarding.skippedSteps.includes(step)) ||
                 (group.steps.includes("linear") &&
                   (!data.setupHealth.linearKey.configured ||
-                    !data.setupHealth.linearRouting.configured));
+                    !data.setupHealth.linearRouting.configured)) ||
+                (group.steps.includes("runtime") && !data.setupHealth.agentConfig.configured);
               return (
                 <li key={group.label} className="flex items-center gap-3 py-3">
                   {skipped ? (

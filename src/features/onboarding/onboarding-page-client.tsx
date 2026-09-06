@@ -757,13 +757,14 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     health: data.setupHealth,
     onboarding: data.onboarding,
   });
-  const verifyCompletionBlocked =
-    activeStep.id === "verify" && verifyChecklist.some((item) => !item.passed);
+  const verifyCompletionBlocked = verifyChecklist.some((item) => !item.passed);
   const verificationPrerequisitesMissing = verifyChecklist.some(
     (item) => item.step !== "verify" && !item.passed,
   );
   const verificationRunning = data.setupHealth.latestSandboxCapabilityCheck?.status === "running";
-  const needsVerification = isVerifyingStep && verifyCompletionBlocked;
+  const needsVerification = (isCompleted || isVerifyingStep) && verifyCompletionBlocked;
+  const reviewVerification = needsVerification && !isVerifyingStep;
+  const submitVerification = needsVerification && isVerifyingStep;
   const firstTaskDestination = `${workspaceBasePath(data.workspace.slug)}?create=1`;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
 
@@ -1202,24 +1203,31 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               </button>
             ) : null}
             <button
-              type={needsVerification ? "submit" : "button"}
+              type={submitVerification ? "submit" : "button"}
               className="ui-button-primary"
-              form={needsVerification ? "onboarding-verification" : undefined}
+              form={submitVerification ? "onboarding-verification" : undefined}
               disabled={
-                (!data.canManage && (!isCompleted || needsVerification)) ||
                 isSaving ||
-                githubContinueBlocked ||
-                repositoryContinueBlocked ||
-                sandboxContinueBlocked ||
-                runtimeCompletionBlocked ||
-                (needsVerification && (verificationPrerequisitesMissing || verificationRunning)) ||
-                requiresInlineCompletion
+                (!reviewVerification &&
+                  ((!data.canManage && (!isCompleted || needsVerification)) ||
+                    (!isCompleted &&
+                      (githubContinueBlocked ||
+                        repositoryContinueBlocked ||
+                        sandboxContinueBlocked ||
+                        runtimeCompletionBlocked ||
+                        requiresInlineCompletion)) ||
+                    (submitVerification &&
+                      (verificationPrerequisitesMissing || verificationRunning))))
               }
               onClick={
-                needsVerification
+                submitVerification
                   ? undefined
-                  : () => {
-                      if (isCompleted) {
+                  : (event) => {
+                      if (reviewVerification) {
+                        event.preventDefault();
+                        void selectStep("verify");
+                      } else if (isCompleted) {
+                        if (verifyCompletionBlocked) return;
                         startNavigation(firstTaskDestination);
                         router.push(firstTaskDestination);
                       } else {
@@ -1230,20 +1238,22 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
             >
               <ActionButtonLabel
                 idle={
-                  needsVerification
-                    ? verificationRunning
-                      ? "Checking…"
-                      : verificationPrerequisitesMissing
-                        ? "Verify setup"
-                        : verifyChecklist.find((item) => item.id === "sandbox")?.statusLabel ===
-                            "Failed"
-                          ? "Retry verification"
-                          : "Verify setup"
-                    : isCompleted || isVerifyingStep
-                      ? "Create your first task"
-                      : requiresInlineCompletion
-                        ? inlineCompletionLabel
-                        : "Continue"
+                  reviewVerification
+                    ? "Review setup"
+                    : needsVerification
+                      ? verificationRunning
+                        ? "Checking…"
+                        : verificationPrerequisitesMissing
+                          ? "Verify setup"
+                          : verifyChecklist.find((item) => item.id === "sandbox")?.statusLabel ===
+                              "Failed"
+                            ? "Retry verification"
+                            : "Verify setup"
+                      : isCompleted || isVerifyingStep
+                        ? "Create your first task"
+                        : requiresInlineCompletion
+                          ? inlineCompletionLabel
+                          : "Continue"
                 }
                 pending={
                   savingAction === "continue" ||
