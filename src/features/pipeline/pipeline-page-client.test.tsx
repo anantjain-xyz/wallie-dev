@@ -500,7 +500,7 @@ describe("PipelinePageClient", () => {
 
     expect(view.container.firstElementChild?.classList).toContain("flex");
     expect(view.container.firstElementChild?.classList).toContain(
-      "h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
+      "pipeline-wide:h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
     );
     expect(view.container.querySelector("[data-pipeline-board]")?.getAttribute("style")).toContain(
       "--pipeline-stage-count: 2",
@@ -511,7 +511,8 @@ describe("PipelinePageClient", () => {
     const boardRegion = screen.getByRole("region", { name: "Pipeline board" });
     expect(boardRegion.className).toContain("min-h-0");
     expect(boardRegion.className).toContain("flex-1");
-    expect(boardRegion.className).toContain("overflow-auto");
+    expect(boardRegion.classList).toContain("pipeline-wide:overflow-auto");
+    expect(boardRegion.classList).not.toContain("overflow-auto");
     expect(boardRegion.className).not.toContain("max-h-");
     expect(boardRegion.getAttribute("tabindex")).toBe("0");
 
@@ -721,12 +722,25 @@ describe("PipelinePageClient", () => {
     expect(screen.getByText("Needs review")).toBeTruthy();
     expect(screen.queryByText("Still generating")).toBeNull();
 
+    const mobileStatus = screen.getByRole("combobox", { name: "Filter by status" });
+    expect((mobileStatus as HTMLSelectElement).value).toBe("awaiting_review");
+    await userEvent.selectOptions(mobileStatus, "in_progress");
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("Still generating")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "In progress" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+
     await userEvent.click(screen.getByRole("button", { name: "All statuses" }));
     await userEvent.type(
       screen.getByRole("searchbox", { name: "Search pipeline sessions" }),
       "changes",
     );
     expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("Needs changes")).toBeTruthy();
+    await userEvent.selectOptions(mobileStatus, "in_progress");
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    await userEvent.selectOptions(mobileStatus, "all");
     expect(screen.getByText("Needs changes")).toBeTruthy();
   });
 

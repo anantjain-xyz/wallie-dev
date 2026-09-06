@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Landscape phones and short windows need document scrolling even at tablet widths. */
+@custom-variant pipeline-wide (@media (min-width: 48rem) and (min-height: 32rem));
+
 /* Codex-style two-second sweep: a soft ten-character band travels across the
    text, with room outside each end. CSS keeps timers out of React renders. */
 @keyframes activity-shimmer {

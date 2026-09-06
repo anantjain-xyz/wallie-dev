@@ -12,11 +12,11 @@ describe("PipelineLoadingSkeleton", () => {
     expect(html).toContain("data-route-loading");
     expect(html).toContain('aria-label="Loading pipeline"');
     expect(html).toContain(
-      "h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas",
+      "min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas",
     );
     expect(html).toContain("minmax(280px,1fr)");
     expect(html).toContain("--pipeline-stage-count");
-    expect(html).toContain("min-h-0 flex-1 overflow-auto");
+    expect(html).toContain("pipeline-wide:overflow-auto");
     expect(html).not.toContain("max-h-");
     expect((html.match(/<article/g) ?? []).length).toBe(3);
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
@@ -27,7 +27,7 @@ describe("PipelineLoadingSkeleton", () => {
     const html = renderToStaticMarkup(createElement(PipelineLoadingSkeleton, { stageCount: 7 }));
     expect(html).toContain("--pipeline-stage-count:7");
     expect((html.match(/<article/g) ?? []).length).toBe(7);
-    expect(html).toContain("hidden md:flex");
-    expect((html.match(/hidden md:flex/g) ?? []).length).toBe(6);
+    expect(html).toContain("hidden pipeline-wide:flex");
+    expect((html.match(/hidden pipeline-wide:flex/g) ?? []).length).toBe(6);
   });
 });
