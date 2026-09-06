@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
+import {
+  SessionExecutionProvider,
+  SessionExecutionSummary,
+  usePublishExecution,
+} from "@/features/sessions/detail/execution-summary";
+import type { WallieRealtimeConnectionState } from "@/features/wallie/activity-summary";
 import { WallieRunCard } from "@/features/wallie/run-activity";
 import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
 
@@ -29,7 +35,10 @@ const states = [
   "Completed",
   "Failed",
   "Canceled",
-  "Disconnected",
+  "Reconnecting",
+  "Refreshing",
+  "Offline",
+  "Refresh failed",
   "Stalled",
   "Loading",
   "Empty",
@@ -37,11 +46,28 @@ const states = [
 type PreviewState = (typeof states)[number];
 
 export function AgentActivityPreview({ initialNow }: { initialNow: string }) {
+  return (
+    <SessionExecutionProvider>
+      <ActivityPreview initialNow={initialNow} />
+    </SessionExecutionProvider>
+  );
+}
+
+function ActivityPreview({ initialNow }: { initialNow: string }) {
   const [state, setState] = useState<PreviewState>("Working");
   const [expanded, setExpanded] = useState(false);
   const now = initialNow;
+  const reconnect = useCallback(() => setState("Working"), []);
   const [extraMessages, setExtraMessages] = useState<WallieRunMessage[]>([]);
-  const active = ["Working", "Queued", "Disconnected", "Stalled"].includes(state);
+  const active = [
+    "Working",
+    "Queued",
+    "Reconnecting",
+    "Refreshing",
+    "Offline",
+    "Refresh failed",
+    "Stalled",
+  ].includes(state);
   const status =
     state === "Failed"
       ? "error"
@@ -93,6 +119,24 @@ export function AgentActivityPreview({ initialNow }: { initialNow: string }) {
     updatedAt: now,
   };
 
+  const connection: WallieRealtimeConnectionState =
+    state === "Reconnecting"
+      ? "reconnecting"
+      : state === "Refreshing"
+        ? "degraded"
+        : state === "Offline"
+          ? "offline"
+          : state === "Refresh failed"
+            ? "failed"
+            : "live";
+  usePublishExecution({
+    sessionId: "preview",
+    run,
+    connection,
+    retryConnection: reconnect,
+    nowMs: Date.parse(now),
+    stallTimeoutMs: 900_000,
+  });
   return (
     <main id="main-content" className="mx-auto max-w-3xl space-y-8 px-5 py-12">
       <div className="space-y-3">
@@ -129,19 +173,28 @@ export function AgentActivityPreview({ initialNow }: { initialNow: string }) {
           </button>
         </div>
       </div>
+      <SessionExecutionSummary
+        sessionId="preview"
+        stageId="build"
+        stageName="Build"
+        phaseStatus={state === "Completed" ? "awaiting_review" : "in_progress"}
+        archivedAt={null}
+        initialNow={now}
+      />
       <section className="rounded-[6px] border border-border/40 bg-sheet p-5">
         <h2 className="mb-3 text-sm font-semibold">Agent activity</h2>
         <WallieRunCard
           actionPending={false}
           branchName="wallie/preview/build"
           cancelLocked={false}
-          connectionState={state === "Disconnected" ? "disconnected" : "live"}
+          connectionState={connection}
           isExpanded={expanded}
           isPrimary
           messagesLoaded={state !== "Loading"}
           messagesLoadFailed={false}
           nowMs={Date.parse(now) + (state === "Stalled" ? 900_000 : 0)}
           onCancel={async () => setState("Canceled")}
+          onReconnect={reconnect}
           onRetry={async () => setState("Queued")}
           onToggle={() => setExpanded((open) => !open)}
           renderNow={now}
