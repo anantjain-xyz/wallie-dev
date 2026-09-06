@@ -18,6 +18,7 @@ type RouteProgressContextValue = {
 
 const RouteProgressContext = createContext<RouteProgressContextValue | null>(null);
 const optionalRouteProgressContext: RouteProgressContextValue = { startNavigation: () => {} };
+export const ROUTE_NAVIGATION_STARTED_EVENT = "wallie:route-navigation-started";
 
 export function useRouteProgress() {
   const context = useContext(RouteProgressContext);
@@ -107,6 +108,7 @@ export function RouteProgressProvider({ children }: { children: ReactNode }) {
 
   const startNavigation = useCallback(
     (href?: string) => {
+      window.dispatchEvent(new Event(ROUTE_NAVIGATION_STARTED_EVENT));
       if (href && destinationKey(href) === browserRouteKey()) {
         if (hasUsableRouteContent()) stopNavigation();
         return;

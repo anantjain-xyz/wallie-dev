@@ -351,6 +351,9 @@ export function ShellHeader({
                 <Tooltip content={workspace.name}>
                   <Link
                     href={pipelineHref}
+                    onClick={(event) => {
+                      if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
+                    }}
                     className="flex min-w-0 max-w-48 items-center gap-2 rounded-[6px] py-1 hover:opacity-80"
                   >
                     <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />

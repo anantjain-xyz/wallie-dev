@@ -6,7 +6,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { MultiSelectField } from "@/components/ui/multi-select-field";
-import { useOptionalRouteProgress } from "@/components/ui/route-progress";
+import {
+  ROUTE_NAVIGATION_STARTED_EVENT,
+  useOptionalRouteProgress,
+} from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
@@ -122,7 +125,14 @@ function CreateSessionDialogBody({
 }: CreateSessionDialogProps & { onReset: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { pushToast } = useOptionalToast();
+  const { dismissToast, pushToast } = useOptionalToast();
+  const recoveryToastRef = useRef<number | null>(null);
+  const clearRecoveryToast = useCallback(() => {
+    if (recoveryToastRef.current !== null) {
+      dismissToast(recoveryToastRef.current);
+      recoveryToastRef.current = null;
+    }
+  }, [dismissToast]);
   const { startNavigation } = useOptionalRouteProgress();
   const errorRef = useRef<HTMLDivElement>(null);
   const submitInFlightRef = useRef(false);
@@ -136,6 +146,7 @@ function CreateSessionDialogBody({
   const [unconfirmed, setUnconfirmed] = useState(false);
 
   const refreshImagesOnOpen = useEffectEvent(() => {
+    clearRecoveryToast();
     if (sessionCommittedRef.current) {
       onPreviewChange?.(null);
       onReset();
@@ -154,6 +165,21 @@ function CreateSessionDialogBody({
       onPreviewChange?.(null);
     }
   }, [pathname, onPreviewChange, onReset]);
+
+  useEffect(() => {
+    const dismissForNavigation = () => {
+      if (previewVisibleRef.current && !sessionCommittedRef.current) {
+        previewVisibleRef.current = false;
+        onPreviewChange?.(null);
+      }
+    };
+    window.addEventListener(ROUTE_NAVIGATION_STARTED_EVENT, dismissForNavigation);
+    window.addEventListener("popstate", dismissForNavigation);
+    return () => {
+      window.removeEventListener(ROUTE_NAVIGATION_STARTED_EVENT, dismissForNavigation);
+      window.removeEventListener("popstate", dismissForNavigation);
+    };
+  }, [onPreviewChange]);
 
   useEffect(() => {
     if (open) {
@@ -190,6 +216,7 @@ function CreateSessionDialogBody({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
+      clearRecoveryToast();
       for (const image of imageDraftsRef.current) {
         URL.revokeObjectURL(image.previewUrl);
         if (!sessionCommittedRef.current && !attemptRef.current && image.attachmentId) {
@@ -200,7 +227,7 @@ function CreateSessionDialogBody({
         }
       }
     };
-  }, [workspaceId]);
+  }, [workspaceId, clearRecoveryToast]);
 
   function updateImageDrafts(
     update: SessionImageDraft[] | ((current: SessionImageDraft[]) => SessionImageDraft[]),
@@ -505,7 +532,12 @@ function CreateSessionDialogBody({
     const dismiss = () => {
       previewVisibleRef.current = false;
       onPreviewChange(null);
-      if (sessionCommittedRef.current) onReset();
+      if (sessionCommittedRef.current) {
+        // Returning to the workspace also cancels a canonical route handoff
+        // whose response has not arrived yet, preserving the current filters.
+        router.replace(`${window.location.pathname}${window.location.search}`);
+        onReset();
+      }
     };
     onPreviewChange({
       content: <PendingSessionCreation snapshot={snapshot} onDismiss={dismiss} />,
@@ -514,6 +546,7 @@ function CreateSessionDialogBody({
   }
 
   async function submitAttempt(attempt: NonNullable<typeof attemptRef.current>) {
+    clearRecoveryToast();
     attemptRef.current = attempt;
     setErrorMessage(null);
     submitInFlightRef.current = true;
@@ -529,6 +562,7 @@ function CreateSessionDialogBody({
       // previous page-scoped mounting closed it implicitly on navigation.
       sessionCommittedRef.current = true;
       if (disposedRef.current) return;
+      clearRecoveryToast();
       const navigateToSession = !onPreviewChange || previewVisibleRef.current;
       previewVisibleRef.current = false;
       // Keep the preview visible until the canonical route commits. Otherwise
@@ -591,8 +625,9 @@ function CreateSessionDialogBody({
       previewVisibleRef.current = false;
       onPreviewChange?.(null);
       if (reopen) onReopen?.();
-      else if (onPreviewChange)
-        pushToast({
+      else if (onPreviewChange) {
+        clearRecoveryToast();
+        recoveryToastRef.current = pushToast({
           title: "Session creation needs attention.",
           description: "Your draft is saved.",
           tone: "danger",
@@ -603,6 +638,7 @@ function CreateSessionDialogBody({
             onClick: () => onReopen?.(),
           },
         });
+      }
     }
   }
 

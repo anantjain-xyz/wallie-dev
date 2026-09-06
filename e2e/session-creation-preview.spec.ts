@@ -5,6 +5,80 @@ import { signIn } from "./helpers/auth";
 
 const workspacePath = "/w/acme-corp";
 
+test("workspace-logo navigation wins while its route response is delayed", async ({ page }) => {
+  const createGate = deferred();
+  const navigationGate = deferred();
+  await page.route(`**${workspacePath}?*`, async (route) => {
+    if (route.request().headers().rsc === "1") await navigationGate.promise;
+    await route.continue();
+  });
+  await page.reload();
+  await page.route("**/api/sessions", async (route) => {
+    await createGate.promise;
+    await route.fulfill({
+      status: 201,
+      json: { canonicalUrl: `${workspacePath}/sessions/1`, number: 1 },
+    });
+  });
+  const canonicalRequests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname === `${workspacePath}/sessions/1` &&
+      request.headers().rsc === "1"
+    )
+      canonicalRequests.push(request.url());
+  });
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.getByLabel("Prompt", { exact: true }).fill("Respect workspace-logo navigation intent");
+  await page.getByRole("button", { name: "Start session" }).click();
+  await expect(page.locator("[data-session-creation]")).toBeVisible();
+  await page.getByRole("link", { name: "Acme Corp", exact: true }).click();
+  createGate.release();
+  await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
+  expect(canonicalRequests).toHaveLength(0);
+  navigationGate.release();
+  await expect(page).toHaveURL(workspacePath);
+  await expect(page.getByRole("heading", { name: "Pipeline", exact: true })).toBeVisible();
+});
+
+test("returning to the workspace cancels a confirmed session's pending route handoff", async ({
+  page,
+}) => {
+  const navigationGate = deferred();
+  const navigationStarted = deferred();
+  const navigationReleased = deferred();
+  await page.route("**/api/sessions", (route) =>
+    route.fulfill({
+      status: 201,
+      json: { canonicalUrl: `${workspacePath}/sessions/1`, number: 1 },
+    }),
+  );
+  await page.route(`**${workspacePath}/sessions/1?*`, async (route) => {
+    if (route.request().headers().rsc === "1") {
+      navigationStarted.release();
+      await navigationGate.promise;
+    }
+    try {
+      await route.continue();
+    } finally {
+      navigationReleased.release();
+    }
+  });
+  await page.getByRole("button", { name: "New session" }).click();
+  await page
+    .getByLabel("Prompt", { exact: true })
+    .fill("Allow returning to the workspace during handoff");
+  await page.getByRole("button", { name: "Start session" }).click();
+  await navigationStarted.promise;
+  await page.getByRole("button", { name: /Back to workspace/ }).click();
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeFocused();
+  navigationGate.release();
+  await navigationReleased.promise;
+  await page.waitForLoadState("networkidle");
+  await expect(page).toHaveURL(`${workspacePath}/sessions`);
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+});
+
 function deferred() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {

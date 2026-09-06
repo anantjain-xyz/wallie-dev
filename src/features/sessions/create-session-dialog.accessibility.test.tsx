@@ -678,6 +678,51 @@ function OptimisticDraftHarness() {
 }
 
 describe("optimistic session creation", () => {
+  it("lets browser history navigation win before the new pathname commits", async () => {
+    prepareDraftOptions();
+    let finish!: (value: unknown) => void;
+    clientMocks.createSessionFromClient.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(<OptimisticDraftHarness />);
+    await fillImageDraft(user);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await act(async () => finish({ canonicalUrl: "/w/acme/sessions/42", number: 42 }));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Open session" })).toBeVisible();
+  });
+
+  it("clears a recovery toast when New session reopens the draft, including after retry succeeds", async () => {
+    prepareDraftOptions();
+    let fail!: (error: Error) => void;
+    clientMocks.createSessionFromClient.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const user = userEvent.setup();
+    render(<OptimisticDraftHarness />);
+    await fillImageDraft(user);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await user.click(await screen.findByRole("button", { name: /Back to workspace/ }));
+    await act(async () => fail(new TypeError("Failed to fetch")));
+    expect(await screen.findByText("Session creation needs attention.")).toBeVisible();
+    await user.click(screen.getByText("Reopen composer"));
+    await waitFor(() => expect(screen.queryByText("Session creation needs attention.")).toBeNull());
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    await user.click(screen.getByRole("button", { name: "Retry creation" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/w/acme/sessions/42"));
+    expect(screen.queryByRole("button", { name: "Open draft" })).toBeNull();
+  });
   it("shows the submitted work immediately, focuses it, and navigates only after confirmation", async () => {
     prepareDraftOptions();
     let finish!: (value: unknown) => void;
