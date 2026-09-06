@@ -77,15 +77,11 @@ export const SKIPPABLE_ONBOARDING_STEPS = ["linear", "runtime"] as const;
 
 type OnboardingResumeRow = { current_step: string; status: string } | null;
 
-export type OnboardingStepDisplayState =
-  | "active"
-  | "available"
-  | "blocked"
-  | "completed"
-  | "skipped";
+export type OnboardingStepDisplayState = "available" | "blocked" | "completed" | "skipped";
 
 export type OnboardingStepRailItem = OnboardingStepDefinition & {
   displayState: OnboardingStepDisplayState;
+  isActive: boolean;
   isNavigable: boolean;
   position: number;
 };
@@ -148,9 +144,7 @@ export function getOnboardingStepRailItems(
   return ONBOARDING_STEPS.map((step, index) => {
     let displayState: OnboardingStepDisplayState = "blocked";
 
-    if (step.id === onboarding.currentStep) {
-      displayState = "active";
-    } else if (skipped.has(step.id)) {
+    if (skipped.has(step.id)) {
       displayState = "skipped";
     } else if (completed.has(step.id)) {
       displayState = "completed";
@@ -161,6 +155,7 @@ export function getOnboardingStepRailItems(
     return {
       ...step,
       displayState,
+      isActive: step.id === onboarding.currentStep,
       isNavigable: true,
       position: index + 1,
     };

@@ -98,7 +98,6 @@ type SetupHealthItemsOptions = {
 };
 
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
-  active: "bg-accent-soft text-accent",
   available: "text-muted hover:bg-control-hover hover:text-foreground",
   blocked: "text-muted opacity-55",
   completed: "text-muted hover:bg-control-hover hover:text-foreground",
@@ -391,7 +390,7 @@ function StepNavigation({
         <select
           id="onboarding-step-picker"
           className="mt-2 min-h-11 w-full rounded-[6px] border border-border bg-sheet px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          value={items.find((step) => step.displayState === "active")?.id}
+          value={items.find((step) => step.isActive)?.id}
           disabled={!canSelect}
           onChange={(event) => {
             const step = items.find((item) => item.id === event.target.value);
@@ -430,10 +429,12 @@ function StepNavigation({
                   <li className="min-w-0" key={step.id}>
                     <button
                       type="button"
-                      aria-current={step.displayState === "active" ? "step" : undefined}
+                      aria-current={step.isActive ? "step" : undefined}
                       className={cn(
                         "flex min-h-11 w-full min-w-0 items-center justify-between gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
-                        railStateClasses[step.displayState],
+                        step.isActive
+                          ? "bg-accent-soft text-accent"
+                          : railStateClasses[step.displayState],
                         (!canSelect || !step.isNavigable) && "cursor-not-allowed",
                       )}
                       disabled={!canSelect || !step.isNavigable}

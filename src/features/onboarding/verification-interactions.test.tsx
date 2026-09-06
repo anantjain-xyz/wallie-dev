@@ -20,6 +20,7 @@ const fetchMock = vi.fn<typeof fetch>();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
 });
@@ -47,6 +48,63 @@ describe("onboarding verification", () => {
     ).not.toBeInTheDocument();
     const linearStep = screen.getByRole("button", { name: /Linear.*optional.*Skipped/ });
     expect(linearStep).not.toHaveTextContent("Completed");
+    expect(screen.getByRole("button", { name: "Verify", current: "step" })).not.toHaveTextContent(
+      "Completed",
+    );
+  });
+
+  it.each(["in_progress", "completed"] as const)(
+    "keeps the checkmark when selecting a completed step during %s setup",
+    async (status) => {
+      const data = verificationData();
+      data.onboarding.status = status;
+      if (status === "in_progress") {
+        fetchMock.mockResolvedValueOnce(
+          Response.json({
+            kind: "onboarding-mutation",
+            onboarding: { ...data.onboarding, currentStep: "github" },
+          }),
+        );
+      }
+      render(<OnboardingPageClient initialData={data} />);
+
+      await act(async () =>
+        fireEvent.click(screen.getByRole("button", { name: /GitHub\s*Completed/ })),
+      );
+
+      const selectedStep = screen.getByRole("button", {
+        name: /GitHub\s*Completed/,
+        current: "step",
+      });
+      expect(selectedStep).toHaveClass("bg-accent-soft", "text-accent");
+      expect(within(selectedStep).getByText("Completed")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Setup step" })).toHaveValue("github");
+      expect(
+        screen.getByRole("option", { name: "GitHub — Completed", selected: true }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("keeps skipped status when selecting an optional step from the mobile picker", async () => {
+    const data = verificationData();
+    data.onboarding.status = "completed";
+    render(<OnboardingPageClient initialData={data} />);
+
+    await act(async () =>
+      fireEvent.change(screen.getByRole("combobox", { name: "Setup step" }), {
+        target: { value: "linear" },
+      }),
+    );
+
+    const selectedStep = screen.getByRole("button", {
+      name: /Linear.*optional.*Skipped/,
+      current: "step",
+    });
+    expect(selectedStep).toHaveClass("bg-accent-soft", "text-accent");
+    expect(selectedStep).not.toHaveTextContent("Completed");
+    expect(
+      screen.getByRole("option", { name: "Linear (optional) — Skipped", selected: true }),
+    ).toBeInTheDocument();
   });
 
   it("submits verification from the footer once, polls, and completes into the task composer", async () => {
