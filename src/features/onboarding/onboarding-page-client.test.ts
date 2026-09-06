@@ -602,6 +602,15 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("grid-cols-2");
     expect(html).not.toContain("overflow-x-auto");
     expect(html).toContain("env(safe-area-inset-bottom)");
+
+    const groupHeaderClass =
+      'class="mb-2 px-2 text-[13px] font-semibold tracking-tight text-foreground lg:px-3"';
+    expect(setupNavigation).toContain(`${groupHeaderClass}>1. Repository</p>`);
+    expect(setupNavigation).toContain(`${groupHeaderClass}>2. Execution access</p>`);
+    expect(setupNavigation).toContain(`${groupHeaderClass}>3. First task</p>`);
+    expect(setupNavigation).toMatch(
+      /<button[^>]*text-xs font-medium[^>]*>[\s\S]*Connect GitHub<\/span>/u,
+    );
   });
 
   it("merges a saved repository profile into the latest GitHub state", () => {

@@ -418,7 +418,7 @@ function StepNavigation({
       <ol className="hidden space-y-5 lg:block">
         {ONBOARDING_GROUPS.map((group, index) => (
           <li key={group.title}>
-            <p className="mb-2 px-2 type-label text-muted lg:px-3">
+            <p className="mb-2 px-2 text-[13px] font-semibold tracking-tight text-foreground lg:px-3">
               {index + 1}. {group.title}
             </p>
             <ol className="grid grid-cols-2 gap-1 lg:grid-cols-1">
