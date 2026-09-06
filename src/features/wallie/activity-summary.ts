@@ -1,6 +1,7 @@
 import { STATUS_DEFINITIONS, agentRunStatusValue } from "@/components/ui/status";
 import { timestampMs } from "@/components/shared/time-format";
 import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
+import { summarizeToolUse } from "@/features/wallie/run-message-body";
 
 export type WallieRealtimeConnectionState = "connecting" | "live" | "disconnected" | "recovered";
 
@@ -53,13 +54,12 @@ export function formatMessageSourceLabel(kind: string) {
   }
 }
 
-function previewMessage(message: WallieRunMessage) {
-  const preview = message.messageMd.replace(/\s+/g, " ").trim();
-  if (!preview) {
-    return formatMessageSourceLabel(message.kind);
-  }
-
-  return preview.length > 96 ? `${preview.slice(0, 93)}…` : preview;
+export function compactActivityText(text: string, limit = 180) {
+  const preview = text
+    .replace(/^\*\*Error:\*\*\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return preview.length > limit ? `${preview.slice(0, limit - 1)}…` : preview;
 }
 
 export function currentOperationLabel(input: { run: WallieRun; stalled: boolean }): string {
@@ -82,16 +82,52 @@ export function currentOperationLabel(input: { run: WallieRun; stalled: boolean 
       break;
   }
 
-  const latestMessage = run.messages.at(-1);
-  if (latestMessage) {
-    return previewMessage(latestMessage);
-  }
-
   if (run.status === "running" || run.status === "started") {
-    return "Wallie is working…";
+    return "Working";
   }
 
   return STATUS_DEFINITIONS[agentRunStatusValue(run.status)].label;
+}
+
+export type ActivityMessageGroup = {
+  id: string;
+  messages: WallieRunMessage[];
+  summary: string | null;
+};
+
+/** Group adjacent exploration only, preserving chronology and the first event's identity. */
+export function groupActivityMessages(messages: WallieRunMessage[]): ActivityMessageGroup[] {
+  const groups: ActivityMessageGroup[] = [];
+  let pending: WallieRunMessage[] = [];
+  let counts = { read: 0, search: 0, list: 0 };
+  const flush = () => {
+    if (!pending.length) return;
+    groups.push({
+      id: pending[0].id,
+      messages: pending,
+      summary: Object.entries(counts)
+        .filter(([, count]) => count > 0)
+        .map(
+          ([name, count]) => `${count} ${name}${count === 1 ? "" : name === "search" ? "es" : "s"}`,
+        )
+        .join(", "),
+    });
+    pending = [];
+    counts = { read: 0, search: 0, list: 0 };
+  };
+  for (const message of messages) {
+    const category =
+      message.kind === "tool_use" ? summarizeToolUse(message.messageMd).category : null;
+    if (category) {
+      pending.push(message);
+      counts[category] += 1;
+    } else {
+      flush();
+      groups.push({ id: message.id, messages: [message], summary: null });
+    }
+  }
+  flush();
+  return groups;
 }
 
 export function connectionStateCopy(state: WallieRealtimeConnectionState) {
