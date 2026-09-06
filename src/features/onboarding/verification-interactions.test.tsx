@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { verificationCheck, verificationData } from "@/features/onboarding/fixtures";
+import { WORKSPACE_ONBOARDING_STEPS } from "@/lib/onboarding/contracts";
 import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
 import VerifyStep from "@/features/onboarding/steps/verify-step";
 import type { OnboardingStepProps } from "@/features/onboarding/steps/types";
@@ -37,6 +38,33 @@ function footerButton(name: string) {
 }
 
 describe("onboarding verification", () => {
+  it("shows recommended agent defaults when no explicit config values were saved", () => {
+    const data = verificationData();
+    data.agentConfig = {};
+    render(<OnboardingPageClient initialData={data} />);
+    const agentSummary = screen.getByRole("button", { name: "Edit Agent" }).closest("li")!;
+    expect(agentSummary).toHaveTextContent("codex · gpt-5.6-sol");
+    expect(agentSummary).not.toHaveTextContent("undefined");
+  });
+
+  it.each([false, true])(
+    "uses Linear configuration health after completed setup clears skip history (configured: %s)",
+    (configured) => {
+      const data = verificationData();
+      data.onboarding.status = "completed";
+      data.onboarding.completedSteps = [...WORKSPACE_ONBOARDING_STEPS];
+      data.onboarding.skippedSteps = [];
+      data.setupHealth.linearKey.configured = configured;
+      data.setupHealth.linearRouting.configured = configured;
+      render(<OnboardingPageClient initialData={data} />);
+      const linearSummary = screen
+        .getByRole("button", { name: "Edit Linear (optional)" })
+        .closest("li")!;
+      expect(linearSummary).toHaveTextContent(configured ? "Configured" : "Skipped");
+      expect(linearSummary).not.toHaveTextContent(configured ? "Skipped" : "Configured");
+    },
+  );
+
   it("keeps saved connections distinct from verification and collapses configuration", () => {
     render(<OnboardingPageClient initialData={verificationData()} />);
     expect(screen.getByText("Your connections are saved")).toBeVisible();

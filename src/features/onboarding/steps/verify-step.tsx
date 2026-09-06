@@ -8,6 +8,7 @@ import { ONBOARDING_STEPS } from "@/features/onboarding/flow";
 import {
   buildVerifyChecklist,
   capabilityCheckMatchesCurrentSetup,
+  resolveAgentConfigValue,
   type VerifyChecklistItem,
 } from "@/features/onboarding/runtime-readiness";
 import type { WorkspaceOnboardingStep } from "@/lib/onboarding/contracts";
@@ -47,7 +48,7 @@ function configurationDetail(data: WorkspaceOnboardingData, label: string) {
     case "Pipeline":
       return `${data.setupHealth.defaultPipeline.stageCount} ${data.setupHealth.defaultPipeline.stageCount === 1 ? "stage" : "stages"}`;
     case "Agent":
-      return `${data.agentConfig.agent_provider} · ${data.agentConfig.agent_model}`;
+      return `${resolveAgentConfigValue("agent_provider", data.agentConfig)} · ${resolveAgentConfigValue("agent_model", data.agentConfig)}`;
     case "Sandbox":
       return data.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox";
     default:
@@ -278,9 +279,11 @@ export default function VerifyStep({
           </summary>
           <ul className="divide-y divide-border">
             {configuredGroups.map((group) => {
-              const skipped = group.steps.some((step) =>
-                data.onboarding.skippedSteps.includes(step),
-              );
+              const skipped =
+                group.steps.some((step) => data.onboarding.skippedSteps.includes(step)) ||
+                (group.steps.includes("linear") &&
+                  (!data.setupHealth.linearKey.configured ||
+                    !data.setupHealth.linearRouting.configured));
               return (
                 <li key={group.label} className="flex items-center gap-3 py-3">
                   {skipped ? (
