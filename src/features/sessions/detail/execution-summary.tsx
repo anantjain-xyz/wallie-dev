@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
+import { RealtimeRecoveryProvider } from "@/features/wallie/realtime-recovery-context";
+import { LiveConnectionNotice } from "@/features/wallie/live-connection-notice";
 import { TimeDisplay } from "@/components/shared/time-display";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 import type { WallieRun } from "@/features/wallie/types";
@@ -20,6 +22,7 @@ type ExecutionSnapshot = {
   > | null;
   connection: WallieRealtimeConnectionState;
   stalled: boolean;
+  retryConnection?: () => void;
   activity?: string;
 };
 type PublishedExecution = ExecutionSnapshot | { unavailable: true } | null;
@@ -29,9 +32,11 @@ const PublishContext = createContext<((snapshot: PublishedExecution) => void) | 
 export function SessionExecutionProvider({ children }: { children: ReactNode }) {
   const [snapshot, publish] = useState<PublishedExecution>(null);
   return (
-    <PublishContext value={publish}>
-      <SnapshotContext value={snapshot}>{children}</SnapshotContext>
-    </PublishContext>
+    <RealtimeRecoveryProvider>
+      <PublishContext value={publish}>
+        <SnapshotContext value={snapshot}>{children}</SnapshotContext>
+      </PublishContext>
+    </RealtimeRecoveryProvider>
   );
 }
 
@@ -50,12 +55,14 @@ export function usePublishExecution({
   connection,
   nowMs,
   stallTimeoutMs,
+  retryConnection,
 }: {
   sessionId: string;
   run: WallieRun | undefined;
   connection: WallieRealtimeConnectionState;
   nowMs: number;
   stallTimeoutMs: number;
+  retryConnection?: () => void;
 }) {
   const publish = useContext(PublishContext);
   const stalled = run ? isRunActivityStalled({ ...run, nowMs, stallTimeoutMs }) : false;
@@ -74,10 +81,11 @@ export function usePublishExecution({
           }
         : null,
       connection,
+      retryConnection,
       stalled,
       activity: run ? currentOperationLabel({ run, stalled }) : undefined,
     });
-  }, [publish, sessionId, run, connection, stalled]);
+  }, [publish, sessionId, run, connection, stalled, retryConnection]);
   useEffect(() => () => publish?.(null), [publish, sessionId]);
 }
 
@@ -126,7 +134,6 @@ export function SessionExecutionSummary({
       ? "Run status unavailable"
       : executionStateLabel(phaseStatus, snapshot, stageId);
   const run = snapshot?.run?.stageId === stageId ? snapshot.run : null;
-  const disconnected = snapshot?.connection === "disconnected";
   const description =
     phaseStatus === "awaiting_review"
       ? "Review the artifact below to approve it or request changes."
@@ -166,7 +173,7 @@ export function SessionExecutionSummary({
       ) : null}
       {run?.isActive && run.lastActivityAt ? (
         <p className="mt-2 text-xs text-muted">
-          Last update{" "}
+          Last activity{" "}
           <TimeDisplay
             active
             variant="relative"
@@ -175,10 +182,8 @@ export function SessionExecutionSummary({
           />
         </p>
       ) : null}
-      {disconnected ? (
-        <p className="mt-2 text-sm text-warning" role="status">
-          Live updates are paused. Showing the last known state.
-        </p>
+      {snapshot ? (
+        <LiveConnectionNotice state={snapshot.connection} onRetry={snapshot.retryConnection} />
       ) : null}
     </section>
   );

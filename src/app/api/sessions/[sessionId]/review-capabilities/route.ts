@@ -48,5 +48,5 @@ export async function GET(_request: Request, { params }: Params) {
     workspaceId: session.workspace_id,
   });
 
-  return NextResponse.json(capabilities);
+  return NextResponse.json({ ...capabilities, stageId: session.current_stage_id });
 }

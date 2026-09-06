@@ -118,7 +118,7 @@ describe("activity-summary helpers", () => {
     expect(messagesLoadingCopy()).toBe("Loading run messages…");
     expect(messagesEmptyCopy()).toContain("No messages");
     expect(messagesFailedCopy()).toContain("Collapse and expand");
-    expect(connectionStateCopy("disconnected")).toContain("Disconnected");
+    expect(connectionStateCopy("reconnecting")).toContain("Reconnecting");
     expect(connectionStateCopy("recovered")).toContain("restored");
   });
 
