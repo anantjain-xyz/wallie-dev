@@ -60,7 +60,7 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     title: "Connect Agent",
   },
   {
-    description: "Confirm the setup health signals before starting work.",
+    description: "Check that everything is ready to run your first task.",
     id: "verify",
     shortTitle: "Verify",
     title: "Verify setup",
@@ -70,22 +70,18 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
 export const ONBOARDING_GROUPS: { title: string; steps: WorkspaceOnboardingStep[] }[] = [
   { title: "Repository", steps: ["github", "repository", "pipeline"] },
   { title: "Execution access", steps: ["linear", "sandbox", "runtime"] },
-  { title: "First task", steps: ["verify"] },
+  { title: "Verification", steps: ["verify"] },
 ];
 
 export const SKIPPABLE_ONBOARDING_STEPS = ["linear", "runtime"] as const;
 
 type OnboardingResumeRow = { current_step: string; status: string } | null;
 
-export type OnboardingStepDisplayState =
-  | "active"
-  | "available"
-  | "blocked"
-  | "completed"
-  | "skipped";
+export type OnboardingStepDisplayState = "available" | "blocked" | "completed" | "skipped";
 
 export type OnboardingStepRailItem = OnboardingStepDefinition & {
   displayState: OnboardingStepDisplayState;
+  isActive: boolean;
   isNavigable: boolean;
   position: number;
 };
@@ -148,9 +144,7 @@ export function getOnboardingStepRailItems(
   return ONBOARDING_STEPS.map((step, index) => {
     let displayState: OnboardingStepDisplayState = "blocked";
 
-    if (step.id === onboarding.currentStep) {
-      displayState = "active";
-    } else if (skipped.has(step.id)) {
+    if (skipped.has(step.id)) {
       displayState = "skipped";
     } else if (completed.has(step.id)) {
       displayState = "completed";
@@ -161,6 +155,7 @@ export function getOnboardingStepRailItems(
     return {
       ...step,
       displayState,
+      isActive: step.id === onboarding.currentStep,
       isNavigable: true,
       position: index + 1,
     };

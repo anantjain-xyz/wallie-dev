@@ -15,8 +15,6 @@ import VerifyStep, {
 } from "@/features/onboarding/steps/verify-step";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
-import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
-import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import { CURRENT_WALLIE_SKILL_VERSION } from "@/lib/repo-onboarding/contracts";
 
 const router = vi.hoisted(() => ({
@@ -76,246 +74,13 @@ import {
   setupHealthItems,
 } from "@/features/onboarding/onboarding-page-client";
 
-const configuredPipeline = {
-  id: "pipeline-1",
-  isDefault: true,
-  name: "Default",
-  operatingRulesMd: "",
-  stages: [
-    {
-      anyoneCanApprove: false,
-      approverMemberIds: [],
-      description: "Product",
-      id: "stage-product",
-      name: "Product",
-      pipelineId: "pipeline-1",
-      position: 1,
-      promptTemplateMd: "Product prompt",
-      slug: "product",
-    },
-  ],
-};
-
-function repository(id: string, overrides: Partial<WorkspaceGitHubRepository> = {}) {
-  return {
-    defaultBranch: "main",
-    defaultProgrammingLanguage: "TypeScript",
-    description: null,
-    fullName: `acme/${id}`,
-    htmlUrl: `https://github.com/acme/${id}`,
-    id,
-    isArchived: false,
-    isPrivate: false,
-    name: id,
-    onboarding: {
-      conflictReport: [],
-      githubRepositoryId: id,
-      installedSkillHash: null,
-      installedSkillVersion: null,
-      lastError: null,
-      setupBranchName: null,
-      setupPrNumber: null,
-      setupPrUrl: null,
-      status: "not_set_up",
-      updatedAt: null,
-    },
-    profile: null,
-    repoId: 100,
-    ...overrides,
-  } satisfies WorkspaceGitHubRepository;
-}
-
-function profile(githubRepositoryId: string, overrides: Partial<RepositoryProfileState> = {}) {
-  return {
-    buildCommand: "pnpm build",
-    createdAt: "2026-05-16T18:00:00.000Z",
-    envKeySuggestions: [],
-    frameworkHints: ["next"],
-    githubRepositoryId,
-    id: `profile-${githubRepositoryId}`,
-    inferenceConfidence: "manual",
-    inferenceSources: [{ path: "package.json", reason: "Read package metadata" }],
-    installCommand: "pnpm install",
-    isPrimary: true,
-    languageHints: ["typescript"],
-    packageManager: "pnpm",
-    setupNotes: "",
-    testCommand: "pnpm test",
-    updatedAt: "2026-05-16T18:00:00.000Z",
-    workspaceId: "workspace-1",
-    ...overrides,
-  } satisfies RepositoryProfileState;
-}
-
-function workspaceSecret(
-  key: string,
-  overrides: Partial<WorkspaceOnboardingData["workspaceSecrets"][number]> = {},
-) {
-  return {
-    createdAt: "2026-05-16T18:00:00.000Z",
-    createdByMemberId: "member-1",
-    id: `secret-${key.toLowerCase()}`,
-    key,
-    updatedAt: "2026-05-16T18:00:00.000Z",
-    valuePreview: "...value",
-    workspaceId: "workspace-1",
-    ...overrides,
-  } satisfies WorkspaceOnboardingData["workspaceSecrets"][number];
-}
-
-type OnboardingDataOverrides = Omit<
-  Partial<WorkspaceOnboardingData>,
-  "onboarding" | "setupHealth" | "workspace"
-> & {
-  onboarding?: Partial<WorkspaceOnboardingData["onboarding"]>;
-  setupHealth?: Partial<WorkspaceOnboardingData["setupHealth"]>;
-  workspace?: Partial<WorkspaceOnboardingData["workspace"]>;
-};
-
-function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboardingData {
-  const pipeline = overrides.pipeline === undefined ? configuredPipeline : overrides.pipeline;
-  const {
-    onboarding: onboardingOverride,
-    setupHealth: setupHealthOverride,
-    workspace: workspaceOverride,
-    ...topLevelOverrides
-  } = overrides;
-
-  return {
-    agentConfig: {
-      agent_model: "gpt-5.6-sol",
-      agent_provider: "codex",
-    },
-    canManage: true,
-    currentMember: { id: "member-1", role: "owner" },
-    github: {
-      installation: null,
-      missingAppKeys: [],
-      missingWebhookKeys: [],
-      primaryProfile: null,
-      repositories: [],
-    },
-    linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
-    linearSecret: null,
-    onboarding: {
-      completedAt: null,
-      completedSteps: ["github", "repository"],
-      createdAt: "2026-05-16T18:00:00.000Z",
-      currentStep: "pipeline",
-      dismissedAt: null,
-      id: "onboarding-1",
-      selectedGithubRepositoryId: null,
-      skippedSteps: [],
-      status: "in_progress",
-      updatedAt: "2026-05-16T18:00:00.000Z",
-      workspaceId: "workspace-1",
-      ...onboardingOverride,
-    },
-    pipeline,
-    setupHealth: {
-      agentConfig: {
-        configured: true,
-        configuredKeys: ["agent_model", "agent_provider"],
-        status: "present",
-        values: {
-          agent_model: "gpt-5.6-sol",
-          agent_provider: "codex",
-        },
-      },
-      codexConnection: {
-        accountEmail: null,
-        checkedAt: "2026-05-16T18:00:01.000Z",
-        connected: false,
-        credentialType: null,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        status: "missing",
-        updatedAt: null,
-      },
-      claudeCodeConnection: {
-        checkedAt: "2026-05-16T18:00:01.000Z",
-        connected: false,
-        status: "missing",
-        updatedAt: null,
-      },
-      openCodeConnection: {
-        checkedAt: "2026-05-16T18:00:01.000Z",
-        connected: false,
-        providers: [],
-        status: "missing",
-        updatedAt: null,
-      },
-      defaultPipeline: pipeline
-        ? {
-            configured: true,
-            pipelineId: pipeline.id,
-            stageCount: pipeline.stages.length,
-            status: "ready",
-          }
-        : {
-            configured: false,
-            pipelineId: null,
-            stageCount: 0,
-            status: "missing",
-          },
-      githubInstallation: {
-        connected: true,
-        installationId: 123,
-        status: "present",
-        suspended: false,
-        targetName: "wallie",
-        updatedAt: "2026-05-16T18:00:00.000Z",
-      },
-      latestSandboxCapabilityCheck: null,
-      vercelSandboxConnection: {
-        connected: true,
-        lastValidationError: null,
-        projectId: "prj_123",
-        projectName: "wallie-sandboxes",
-        status: "connected",
-        teamId: "team_123",
-        updatedAt: "2026-05-16T18:00:00.000Z",
-      },
-      selectedRepository: {
-        configured: false,
-        fullName: null,
-        repositoryId: null,
-        status: "missing",
-      },
-      linearKey: { configured: false, status: "missing", updatedAt: null },
-      linearRouting: { configured: false, status: "missing", updatedAt: null },
-      workspaceSecrets: { configuredKeys: [] },
-      primaryRepositoryProfile: {
-        configured: false,
-        fullName: null,
-        repositoryId: null,
-        status: "missing",
-      },
-      repositorySetup: {
-        configured: false,
-        repositoryId: null,
-        status: "placeholder",
-      },
-      ...setupHealthOverride,
-    },
-    vercelSandboxConnection: {
-      lastValidatedAt: "2026-05-16T18:00:00.000Z",
-      lastValidationError: null,
-      projectId: "prj_123",
-      projectName: "wallie-sandboxes",
-      status: "connected",
-      teamId: "team_123",
-      tokenPreview: "vca_...123",
-      updatedAt: "2026-05-16T18:00:00.000Z",
-      workspaceId: "workspace-1",
-    },
-    workspace: { id: "workspace-1", name: "Northwind", slug: "northwind", ...workspaceOverride },
-    workspaceMembers: [],
-    workspaceSecrets: [],
-    ...topLevelOverrides,
-  };
-}
+import {
+  configuredPipeline,
+  repository,
+  profile,
+  workspaceSecret,
+  onboardingData,
+} from "@/features/onboarding/fixtures";
 
 function primaryFooterButton(html: string) {
   const matches = [...html.matchAll(/<button[^>]*class="ui-button-primary"[^>]*>.*?<\/button>/g)];
@@ -348,7 +113,7 @@ function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html
     .match(/<button\b[^]*?<\/button>/g)
-    ?.find((button) => new RegExp(`<span>${escapedLabel}<\\/span>`).test(button));
+    ?.find((button) => new RegExp(`<span[^>]*>${escapedLabel}(?:<|$)`).test(button));
   if (!match) {
     throw new Error(`${label} rail button was not rendered.`);
   }
@@ -607,10 +372,8 @@ describe("OnboardingPageClient", () => {
       'class="mb-2 px-2 text-[13px] font-semibold tracking-tight text-foreground lg:px-3"';
     expect(setupNavigation).toContain(`${groupHeaderClass}>1. Repository</p>`);
     expect(setupNavigation).toContain(`${groupHeaderClass}>2. Execution access</p>`);
-    expect(setupNavigation).toContain(`${groupHeaderClass}>3. First task</p>`);
-    expect(setupNavigation).toMatch(
-      /<button[^>]*text-xs font-medium[^>]*>[\s\S]*Connect GitHub<\/span>/u,
-    );
+    expect(setupNavigation).toContain(`${groupHeaderClass}>3. Verification</p>`);
+    expect(setupNavigation).toMatch(/<button[^>]*text-xs font-medium[^>]*>[\s\S]*GitHub<\/span>/u);
   });
 
   it("merges a saved repository profile into the latest GitHub state", () => {
@@ -908,8 +671,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const futureButton = desktopRailButton(managerHtml, "Verify setup");
-    const readOnlyButton = desktopRailButton(readOnlyHtml, "Prepare repository");
+    const futureButton = desktopRailButton(managerHtml, "Verify");
+    const readOnlyButton = desktopRailButton(readOnlyHtml, "Repository");
     expect(futureButton).not.toContain("disabled");
     expect(futureButton).not.toContain("cursor-not-allowed");
     expect(readOnlyButton).not.toContain("disabled");
@@ -938,13 +701,11 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(desktopRailButton(linearHtml, "Connect Linear (optional)")).toContain(
-      'aria-current="step"',
-    );
+    expect(desktopRailButton(linearHtml, "Linear")).toContain('aria-current="step"');
     expect(linearHtml).toContain(">Connect Linear (optional)</h2>");
-    expect(desktopRailButton(runtimeHtml, "Connect Agent")).toContain('aria-current="step"');
+    expect(desktopRailButton(runtimeHtml, "Agent")).toContain('aria-current="step"');
     expect(runtimeHtml).toContain(">Connect Agent</h2>");
-    expect(runtimeHtml).toContain("<span>Connect Agent</span>");
+    expect(runtimeHtml).toContain(">Agent</span>");
     expect(runtimeHtml).not.toContain(">Runtime</span>");
   });
 
@@ -1659,12 +1420,13 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(html).toContain("Readiness checklist");
+    expect(html).toContain("Needs attention");
+    expect(html).not.toContain("Setup status");
     expect(html).toContain('data-step-link="linear"');
     expect(html).toContain('data-step-link="runtime"');
-    expect(html).toContain("Save a repository profile before running a sandbox capability check.");
+    expect(html).toContain("Select a repository before saving a repository profile.");
     expect(button).toContain("disabled");
-    expect(button).toContain(">Complete setup</span>");
+    expect(button).toContain(">Verify setup</span>");
   });
 
   it("routes the Vercel Sandbox blocker back into the Connect Sandbox step", () => {
@@ -1698,8 +1460,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const vercelRow = html.slice(html.indexOf("Vercel Sandbox connected"));
-    expect(html).toContain("Vercel Sandbox connected");
+    const vercelRow = html.slice(html.indexOf("Sandbox connection"));
+    expect(html).toContain("Sandbox connection");
     // The blocker stays inside the wizard (Connect Sandbox step), not Settings.
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
     expect(html).not.toContain("Open Vercel");
@@ -1869,13 +1631,9 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(running).toContain("Checking…");
-    expect(running).toContain(">Running</span>");
-    expect(running).toMatch(/data-status="running" data-tone="progress"/);
-    expect(running).toContain("disabled");
-    expect(failed).toContain(">Failed</span>");
-    expect(failed).toContain("Retry capability check");
-    expect(failed).toContain("sandbox failed");
+    expect(running).toContain("Checking your setup…");
+    expect(running).toContain('role="status"');
+    expect(failed).toContain("A few things need attention");
   });
 
   it("disables sandbox capability checks for non-managers", () => {
@@ -1908,7 +1666,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const match = html.match(/<button[^>]*>Run capability check<\/button>/)?.[0];
+    const match = primaryFooterButton(html);
     expect(match).toContain("disabled");
   });
 

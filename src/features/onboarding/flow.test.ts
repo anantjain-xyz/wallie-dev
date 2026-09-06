@@ -52,7 +52,7 @@ describe("onboarding flow helpers", () => {
     ]);
   });
 
-  it("maps completed, skipped, active, and available rail states from server state", () => {
+  it("maps progress independently from the selected step", () => {
     const items = getOnboardingStepRailItems(
       onboardingState({
         completedSteps: ["github"],
@@ -65,12 +65,13 @@ describe("onboarding flow helpers", () => {
     expect(items.map((item) => [item.id, item.displayState])).toEqual([
       ["github", "completed"],
       ["repository", "skipped"],
-      ["pipeline", "active"],
+      ["pipeline", "available"],
       ["linear", "available"],
       ["sandbox", "available"],
       ["runtime", "available"],
       ["verify", "available"],
     ]);
+    expect(items.filter((item) => item.isActive).map((item) => item.id)).toEqual(["pipeline"]);
   });
 
   it("keeps skipped steps distinct after setup is marked completed", () => {
