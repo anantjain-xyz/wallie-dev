@@ -22,9 +22,9 @@ type AccountMenuProps = {
 /**
  * Shared dropdowns sit 6px from their trigger. The account trigger is shorter
  * than the sticky header, so that default lands the menu on (or over) the
- * header divider. 16px clears the chrome and leaves a visible gap.
+ * header divider. 20px clears the 48–56px chrome and leaves a visible gap.
  */
-export const ACCOUNT_MENU_SIDE_OFFSET = 16;
+export const ACCOUNT_MENU_SIDE_OFFSET = 20;
 
 export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
   const signOutFormRef = useRef<HTMLFormElement>(null);
