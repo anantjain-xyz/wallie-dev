@@ -10,8 +10,18 @@ semantics live in
 
 ## Runtime entry
 
-`pnpm worker` preloads process crash handlers and the `server-only` registration
-shim before importing [`src/worker/index.ts`](../src/worker/index.ts).
+Production starts Node directly so the worker receives the host's `SIGTERM`
+signal. The command preloads process crash handlers and the `server-only`
+registration shim before importing [`src/worker/index.ts`](../src/worker/index.ts):
+
+```bash
+node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts
+```
+
+`pnpm worker` remains a local development convenience with the same startup
+flags. Keep the production command in `railway.json` aligned with those flags.
+Package-manager wrappers can intercept shutdown signals, preventing the worker
+from entering its graceful drain.
 
 Startup performs:
 
@@ -175,8 +185,29 @@ still rely on stale-heartbeat detection, retries, provider TTLs, and the reaper.
 - Confirm the deployment system watches every transitive worker owner, not only
   `src/worker/**`.
 
-Railway currently starts `pnpm worker`, restarts it unconditionally, and defines
-no health endpoint.
+Railway starts Node directly, restarts it unconditionally, and defines no health
+endpoint. The version-controlled settings in `railway.json` set
+`overlapSeconds: 0` and `drainingSeconds: 2700`. Once the replacement deployment
+is active, the outgoing worker receives `SIGTERM` immediately and has up to 45
+minutes to finish before Railway sends `SIGKILL`. During that drain, it stops
+new claims and keeps heartbeating while its existing jobs finish.
+
+The budget covers the current 30-minute Vercel/E2B sandbox lifetime and Daytona's
+40-minute lifetime, including its extra 10-minute allowance, with at least five
+minutes for finalization and cleanup. Revisit the budget if execution lifetimes
+increase. It does not guarantee completion when provider or database calls hang.
+Keep these settings in `railway.json` rather than adding Railway variable
+overrides.
+
+### First deployment of direct Node startup
+
+Deploy this change during an idle window: pause new session submissions and
+retries, let queued, scheduled, and active jobs finish, and allow no new work
+before replacing the worker. The outgoing revision still uses `pnpm worker`
+and cannot benefit from the new signal handling until it has been replaced.
+Avoid additional worker deployments while an earlier deployment is still
+draining. This change protects planned rollouts; crash recovery still uses the
+existing stall and cleanup paths.
 
 ## Safe troubleshooting
 
