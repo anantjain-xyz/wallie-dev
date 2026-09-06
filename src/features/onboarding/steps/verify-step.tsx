@@ -222,7 +222,7 @@ export default function VerifyStep({
                     ? "Verify again to check your current repository, agent, and sandbox."
                     : "Run one final check to make sure your repository, agent, and sandbox work together."}
         </p>
-        {!data.canManage ? (
+        {!data.canManage && (data.onboarding.status !== "completed" || !ready) ? (
           <p className="mt-2 text-[13px] leading-6 text-muted">
             A workspace owner or admin can verify and complete setup.
           </p>

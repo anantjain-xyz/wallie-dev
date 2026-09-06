@@ -160,13 +160,53 @@ describe("onboarding verification", () => {
     ).toBeVisible();
   });
 
-  it("lets completed onboarding open the task composer without completing again", () => {
+  it.each(["owner", "admin", "member"] as const)(
+    "lets a %s open the task composer after setup is completed",
+    (role) => {
+      const data = verificationData();
+      data.currentMember.role = role;
+      data.canManage = role !== "member";
+      data.onboarding.status = "completed";
+      data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
+      render(<OnboardingPageClient initialData={data} />);
+      expect(footerButton("Create your first task")).toBeEnabled();
+      fireEvent.click(footerButton("Create your first task"));
+      expect(router.push).toHaveBeenCalledWith("/w/northwind?create=1");
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText("A workspace owner or admin can verify and complete setup."),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not let a member complete setup after verification passes", () => {
     const data = verificationData();
-    data.onboarding.status = "completed";
+    data.currentMember.role = "member";
+    data.canManage = false;
     data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
     render(<OnboardingPageClient initialData={data} />);
+    expect(footerButton("Create your first task")).toBeDisabled();
     fireEvent.click(footerButton("Create your first task"));
-    expect(router.push).toHaveBeenCalledWith("/w/northwind?create=1");
+    expect(router.push).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps reverification restricted when a member revisits completed setup with stale results", () => {
+    const data = verificationData();
+    data.currentMember.role = "member";
+    data.canManage = false;
+    data.onboarding.status = "completed";
+    data.setupHealth.latestSandboxCapabilityCheck = {
+      ...verificationCheck(),
+      agentModel: "old-model",
+    };
+    render(<OnboardingPageClient initialData={data} />);
+    expect(footerButton("Verify setup")).toBeDisabled();
+    fireEvent.submit(document.getElementById("onboarding-verification")!);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("A workspace owner or admin can verify and complete setup."),
+    ).toBeVisible();
   });
 });

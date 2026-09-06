@@ -1205,7 +1205,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               className="ui-button-primary"
               form={needsVerification ? "onboarding-verification" : undefined}
               disabled={
-                !data.canManage ||
+                (!data.canManage && (!isCompleted || needsVerification)) ||
                 isSaving ||
                 githubContinueBlocked ||
                 repositoryContinueBlocked ||
