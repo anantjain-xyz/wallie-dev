@@ -15,6 +15,7 @@ export type CreateSessionInput = {
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
   promptMd?: string | null;
+  requestId?: string;
   selectedStageIds?: string[];
   title?: string | null;
   workspaceId: string;
@@ -198,6 +199,7 @@ export async function createSessionFromClient(
 
   const payload = {
     ...(input.attachmentIds ? { attachmentIds: input.attachmentIds } : {}),
+    ...(input.requestId ? { requestId: input.requestId } : {}),
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl,
     promptMd: trimmedPrompt,

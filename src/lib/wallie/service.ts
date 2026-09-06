@@ -306,6 +306,7 @@ export async function assertSessionSandboxCapabilityReady(input: {
 export async function createSessionWithFirstJob(input: {
   admin?: AdminClient;
   attachmentIds?: string[];
+  creationRequest?: { id: string; fingerprint: string };
   creatorMemberId: string;
   githubRepositoryId: string | null;
   linearIssueId: string | null;
@@ -319,22 +320,28 @@ export async function createSessionWithFirstJob(input: {
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const { data, error } = await admin
-    .rpc("create_session_with_first_job_and_attachments", {
-      agent_model_name: input.modelName,
-      agent_model_provider: input.modelProvider,
-      creator_member_id: input.creatorMemberId,
-      selected_pipeline_id: input.pipelineId ?? undefined,
-      selected_stage_ids: input.selectedStageIds,
-      session_attachment_ids: input.attachmentIds ?? [],
-      session_github_repository_id: input.githubRepositoryId ?? undefined,
-      session_linear_issue_id: input.linearIssueId ?? undefined,
-      session_linear_issue_url: input.linearIssueUrl ?? undefined,
-      session_prompt_md: input.promptMd,
-      session_title: input.title,
-      target_workspace_id: input.workspaceId,
-    })
-    .single();
+  const args = {
+    agent_model_name: input.modelName,
+    agent_model_provider: input.modelProvider,
+    creator_member_id: input.creatorMemberId,
+    selected_pipeline_id: input.pipelineId ?? undefined,
+    selected_stage_ids: input.selectedStageIds,
+    session_attachment_ids: input.attachmentIds ?? [],
+    session_github_repository_id: input.githubRepositoryId ?? undefined,
+    session_linear_issue_id: input.linearIssueId ?? undefined,
+    session_linear_issue_url: input.linearIssueUrl ?? undefined,
+    session_prompt_md: input.promptMd,
+    session_title: input.title,
+    target_workspace_id: input.workspaceId,
+  };
+  const query = input.creationRequest
+    ? admin.rpc("create_session_once_with_first_job", {
+        ...args,
+        target_request_id: input.creationRequest.id,
+        target_request_hash: input.creationRequest.fingerprint,
+      })
+    : admin.rpc("create_session_with_first_job_and_attachments", args);
+  const { data, error } = await query.single();
 
   if (error || !data) {
     throw error ?? new Error("Wallie could not create that session.");
@@ -347,6 +354,33 @@ export async function createSessionWithFirstJob(input: {
     sessionId: data.session_id,
     workspaceSlug: data.workspace_slug,
   };
+}
+
+/** Replay before external preflight: a committed request remains successful. */
+export async function findSessionCreationRequest(input: {
+  admin: AdminClient;
+  creationRequest: { id: string; fingerprint: string };
+  creatorMemberId: string;
+  workspaceId: string;
+}): Promise<CreateSessionWithFirstJobResult | null> {
+  const { data, error } = await input.admin
+    .rpc("find_session_creation_request", {
+      target_workspace_id: input.workspaceId,
+      creator_member_id: input.creatorMemberId,
+      target_request_id: input.creationRequest.id,
+      target_request_hash: input.creationRequest.fingerprint,
+    })
+    .maybeSingle();
+  if (error) throw error;
+  return data
+    ? {
+        jobId: data.job_id,
+        number: data.session_number,
+        runId: data.run_id,
+        sessionId: data.session_id,
+        workspaceSlug: data.workspace_slug,
+      }
+    : null;
 }
 
 function createRunInsert(input: {
