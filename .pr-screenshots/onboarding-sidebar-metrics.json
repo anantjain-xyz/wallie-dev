@@ -1,0 +1,266 @@
+[
+  {
+    "name": "onboarding-sidebar-desktop",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "metrics": {
+      "headers": [
+        {
+          "text": "1. Repository",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": true
+        },
+        {
+          "text": "2. Execution access",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": true
+        },
+        {
+          "text": "3. First task",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": true
+        }
+      ],
+      "steps": [
+        {
+          "text": "Connect GitHub",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(79, 70, 229)",
+          "visible": true
+        },
+        {
+          "text": "Prepare repositoryDone",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Review pipelineDone",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Connect Linear (optional)Done",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Connect SandboxDone",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Connect Agent",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Verify setup",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        }
+      ],
+      "viewportWidth": 1280
+    },
+    "shotPath": "/vercel/sandbox/.wallie/screenshots/onboarding-sidebar-desktop.png"
+  },
+  {
+    "name": "onboarding-sidebar-desktop-wide",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "metrics": {
+      "headers": [
+        {
+          "text": "1. Repository",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": true
+        },
+        {
+          "text": "2. Execution access",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": true
+        },
+        {
+          "text": "3. First task",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": true
+        }
+      ],
+      "steps": [
+        {
+          "text": "Connect GitHub",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(79, 70, 229)",
+          "visible": true
+        },
+        {
+          "text": "Prepare repositoryDone",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Review pipelineDone",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Connect Linear (optional)Done",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Connect SandboxDone",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Connect Agent",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        },
+        {
+          "text": "Verify setup",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": true
+        }
+      ],
+      "viewportWidth": 1440
+    },
+    "shotPath": "/vercel/sandbox/.wallie/screenshots/onboarding-sidebar-desktop-wide.png"
+  },
+  {
+    "name": "onboarding-sidebar-mobile",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "metrics": {
+      "headers": [
+        {
+          "text": "1. Repository",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": false
+        },
+        {
+          "text": "2. Execution access",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": false
+        },
+        {
+          "text": "3. First task",
+          "fontSize": "13px",
+          "fontWeight": "600",
+          "color": "rgb(29, 32, 39)",
+          "letterSpacing": "-0.325px",
+          "visible": false
+        }
+      ],
+      "steps": [
+        {
+          "text": "Connect GitHub",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(79, 70, 229)",
+          "visible": false
+        },
+        {
+          "text": "Prepare repositoryDone",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": false
+        },
+        {
+          "text": "Review pipelineDone",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": false
+        },
+        {
+          "text": "Connect Linear (optional)Done",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": false
+        },
+        {
+          "text": "Connect SandboxDone",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": false
+        },
+        {
+          "text": "Connect Agent",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": false
+        },
+        {
+          "text": "Verify setup",
+          "fontSize": "12px",
+          "fontWeight": "500",
+          "color": "rgb(91, 97, 107)",
+          "visible": false
+        }
+      ],
+      "viewportWidth": 390
+    },
+    "shotPath": "/vercel/sandbox/.wallie/screenshots/onboarding-sidebar-mobile.png"
+  }
+]
