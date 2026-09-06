@@ -301,13 +301,13 @@ export function ShellHeader({
               <div className="flex shrink-0 items-center gap-1.5">
                 {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
                 <ThemeToggle />
-                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
+                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} mobileHeader />
               </div>
             </div>
 
             <nav
               aria-label="Workspace navigation"
-              className="flex items-center gap-1 px-3 pb-2 lg:hidden"
+              className="flex items-center gap-1 overflow-x-auto px-3 pb-2 lg:hidden"
             >
               {renderNavLinks()}
             </nav>
