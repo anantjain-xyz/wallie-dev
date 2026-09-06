@@ -78,7 +78,7 @@ test("desktop uses the document scroller and keeps overlays above sticky chrome"
     menu.evaluate((element) => Number(getComputedStyle(element).zIndex)),
     shellHeader.evaluate((element) => Number(getComputedStyle(element).zIndex)),
   ]);
-  expect(menuPosition[0]).toBeGreaterThanOrEqual(menuPosition[1] - 1);
+  expect(menuPosition[0] - menuPosition[1]).toBeGreaterThanOrEqual(6);
   expect(menuPosition[2]).toBeGreaterThan(menuPosition[3]);
 
   await page.keyboard.press("Escape");

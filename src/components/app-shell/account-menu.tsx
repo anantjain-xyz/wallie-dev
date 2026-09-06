@@ -19,6 +19,13 @@ type AccountMenuProps = {
   email: string | null;
 };
 
+/**
+ * Shared dropdowns sit 6px from their trigger. The account trigger is shorter
+ * than the sticky header, so that default lands the menu on (or over) the
+ * header divider. 20px clears the 48–56px chrome and leaves a visible gap.
+ */
+export const ACCOUNT_MENU_SIDE_OFFSET = 20;
+
 export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
   const signOutFormRef = useRef<HTMLFormElement>(null);
   const triggerLabel = email ? `Account: ${email}` : "Account";
@@ -32,7 +39,12 @@ export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
           </button>
         </DropdownMenuTrigger>
       </Tooltip>
-      <DropdownMenuContent align="end" className="min-w-56" label="Account">
+      <DropdownMenuContent
+        align="end"
+        className="min-w-56"
+        label="Account"
+        sideOffset={ACCOUNT_MENU_SIDE_OFFSET}
+      >
         <DropdownMenuLabel className="normal-case tracking-normal">
           <span className="block type-annotation font-medium uppercase tracking-wide text-muted">
             Signed in as
