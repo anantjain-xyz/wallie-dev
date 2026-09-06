@@ -35,6 +35,7 @@ import {
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
 import { ActiveOnboardingStep } from "@/features/onboarding/steps/active-step";
+import { SetupCheck } from "@/features/onboarding/setup-check";
 import {
   mergeRepositoryOnboardingState,
   repositorySetupCanAdvance,
@@ -403,9 +404,10 @@ function StepNavigation({
                 .filter((step) => group.steps.includes(step.id))
                 .map((step) => (
                   <option key={step.id} value={step.id} disabled={!step.isNavigable}>
-                    {step.title}
+                    {step.shortTitle}
+                    {step.id === "linear" ? " (optional)" : ""}
                     {step.displayState === "completed"
-                      ? " — Done"
+                      ? " — Completed"
                       : step.displayState === "skipped"
                         ? " — Skipped"
                         : ""}
@@ -430,18 +432,23 @@ function StepNavigation({
                       type="button"
                       aria-current={step.displayState === "active" ? "step" : undefined}
                       className={cn(
-                        "flex min-h-11 w-full min-w-0 flex-wrap items-center justify-between gap-1 rounded-[6px] px-2 py-2 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
+                        "flex min-h-11 w-full min-w-0 items-center justify-between gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
                         railStateClasses[step.displayState],
                         (!canSelect || !step.isNavigable) && "cursor-not-allowed",
                       )}
                       disabled={!canSelect || !step.isNavigable}
                       onClick={() => onSelect(step.id)}
                     >
-                      <span>{step.title}</span>
-                      {step.displayState === "completed" || step.displayState === "skipped" ? (
-                        <span className="type-annotation">
-                          {step.displayState === "completed" ? "Done" : "Skipped"}
-                        </span>
+                      <span className="min-w-0">
+                        {step.shortTitle}
+                        {step.id === "linear" ? (
+                          <span className="text-xs font-normal text-muted"> (optional)</span>
+                        ) : null}
+                      </span>
+                      {step.displayState === "completed" ? (
+                        <SetupCheck />
+                      ) : step.displayState === "skipped" ? (
+                        <span className="type-annotation shrink-0">Skipped</span>
                       ) : null}
                     </button>
                   </li>
@@ -692,6 +699,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     },
   );
   const [savingAction, setSavingAction] = useState<string | null>(null);
+  const [isStartingVerification, setIsStartingVerification] = useState(false);
   const saveInFlightRef = useRef(false);
   const latestDataRef = useRef(data);
   const previousStepRef = useRef(initialData.onboarding.currentStep);
@@ -708,7 +716,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
-  const isSaving = savingAction !== null;
+  const isSaving = savingAction !== null || isStartingVerification;
+  const isVerifyingStep = activeStep.id === "verify";
   const activeStepAlreadyResolved =
     onboarding.completedSteps.includes(activeStep.id) ||
     onboarding.skippedSteps.includes(activeStep.id);
@@ -749,6 +758,12 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   });
   const verifyCompletionBlocked =
     activeStep.id === "verify" && verifyChecklist.some((item) => !item.passed);
+  const verificationPrerequisitesMissing = verifyChecklist.some(
+    (item) => item.step !== "verify" && !item.passed,
+  );
+  const verificationRunning = data.setupHealth.latestSandboxCapabilityCheck?.status === "running";
+  const needsVerification = isVerifyingStep && verifyCompletionBlocked;
+  const firstTaskDestination = `${workspaceBasePath(data.workspace.slug)}?create=1`;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
 
   useEffect(() => {
@@ -941,7 +956,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
       latestDataRef.current = nextData;
       setData(nextData);
-      const destination = workspaceBasePath(data.workspace.slug);
+      const destination = firstTaskDestination;
       startNavigation(destination);
       router.push(destination);
     } catch (caught) {
@@ -1059,7 +1074,12 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
 
   return (
     <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
-      <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10">
+      <header
+        className={cn(
+          "mx-auto flex w-full flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10",
+          isVerifyingStep ? "max-w-[1040px]" : "max-w-[1180px]",
+        )}
+      >
         <div className="min-w-0 space-y-2">
           <h1 className="type-page-title">Set up {data.workspace.name}</h1>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">
@@ -1085,7 +1105,12 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
 
       <main
         id="main-content"
-        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
+        className={cn(
+          "mx-auto grid w-full flex-1 grid-cols-1 gap-8 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-8 lg:gap-12",
+          isVerifyingStep
+            ? "max-w-[1040px] lg:grid-cols-[180px_minmax(0,1fr)]"
+            : "max-w-[1180px] lg:grid-cols-[180px_minmax(0,1fr)_260px]",
+        )}
       >
         <StepNavigation canSelect={!isSaving} items={railItems} onSelect={selectStep} />
 
@@ -1122,6 +1147,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               onRepositoryOnboardingChange={updateRepositoryOnboarding}
               onRepositorySetupMessage={handleRepositorySetupMessage}
               onRuntimeStateChange={setRuntimeCompletionState}
+              onVerificationPendingChange={setIsStartingVerification}
               onSelectStep={(step) => void selectStep(step)}
               onSelectGithubRepository={selectGithubRepository}
               step={activeStep.id}
@@ -1129,22 +1155,29 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           </div>
         </section>
 
-        <SetupHealthSummary
-          canSelect={!isSaving}
-          onSelect={(step) => void selectStep(step)}
-          health={data.setupHealth}
-          initialNow={renderNow}
-          pipelineReviewed={isCompleted || onboarding.completedSteps.includes("pipeline")}
-        />
+        {!isVerifyingStep ? (
+          <SetupHealthSummary
+            canSelect={!isSaving}
+            onSelect={(step) => void selectStep(step)}
+            health={data.setupHealth}
+            initialNow={renderNow}
+            pipelineReviewed={isCompleted || onboarding.completedSteps.includes("pipeline")}
+          />
+        ) : null}
       </main>
 
       <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
-        <div className="mx-auto flex max-w-[1180px] justify-end">
+        <div
+          className={cn(
+            "mx-auto flex justify-end",
+            isVerifyingStep ? "max-w-[1040px] sm:px-8" : "max-w-[1180px]",
+          )}
+        >
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className="ui-button"
-              disabled={!data.canManage || !canGoBack || isSaving}
+              disabled={!data.canManage || !canGoBack || isSaving || isCompleted}
               onClick={() => void goBack()}
             >
               <ActionButtonLabel
@@ -1168,33 +1201,55 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               </button>
             ) : null}
             <button
-              type="button"
+              type={needsVerification ? "submit" : "button"}
               className="ui-button-primary"
+              form={needsVerification ? "onboarding-verification" : undefined}
               disabled={
                 !data.canManage ||
-                isCompleted ||
                 isSaving ||
                 githubContinueBlocked ||
                 repositoryContinueBlocked ||
                 sandboxContinueBlocked ||
                 runtimeCompletionBlocked ||
-                verifyCompletionBlocked ||
+                (needsVerification && (verificationPrerequisitesMissing || verificationRunning)) ||
                 requiresInlineCompletion
               }
-              onClick={() => void continueSetup()}
+              onClick={
+                needsVerification
+                  ? undefined
+                  : () => {
+                      if (isCompleted) {
+                        startNavigation(firstTaskDestination);
+                        router.push(firstTaskDestination);
+                      } else {
+                        void continueSetup();
+                      }
+                    }
+              }
             >
               <ActionButtonLabel
                 idle={
-                  isCompleted
-                    ? "Setup complete"
-                    : requiresInlineCompletion
-                      ? inlineCompletionLabel
-                      : activeStep.id === "verify"
-                        ? "Complete setup"
+                  needsVerification
+                    ? verificationRunning
+                      ? "Checking…"
+                      : verificationPrerequisitesMissing
+                        ? "Verify setup"
+                        : verifyChecklist.find((item) => item.id === "sandbox")?.statusLabel ===
+                            "Failed"
+                          ? "Retry verification"
+                          : "Verify setup"
+                    : isCompleted || isVerifyingStep
+                      ? "Create your first task"
+                      : requiresInlineCompletion
+                        ? inlineCompletionLabel
                         : "Continue"
                 }
-                pending={savingAction === "continue" || savingAction === "complete"}
-                pendingLabel="Saving…"
+                pending={
+                  savingAction === "continue" ||
+                  savingAction === "complete" ||
+                  isStartingVerification
+                }
+                pendingLabel={isStartingVerification ? "Starting…" : "Saving…"}
               />
             </button>
           </div>

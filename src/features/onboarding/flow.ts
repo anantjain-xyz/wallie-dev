@@ -60,7 +60,7 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     title: "Connect Agent",
   },
   {
-    description: "Confirm the setup health signals before starting work.",
+    description: "Check that everything is ready to run your first task.",
     id: "verify",
     shortTitle: "Verify",
     title: "Verify setup",
@@ -70,7 +70,7 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
 export const ONBOARDING_GROUPS: { title: string; steps: WorkspaceOnboardingStep[] }[] = [
   { title: "Repository", steps: ["github", "repository", "pipeline"] },
   { title: "Execution access", steps: ["linear", "sandbox", "runtime"] },
-  { title: "First task", steps: ["verify"] },
+  { title: "Verification", steps: ["verify"] },
 ];
 
 export const SKIPPABLE_ONBOARDING_STEPS = ["linear", "runtime"] as const;

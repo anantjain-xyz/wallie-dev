@@ -33,6 +33,7 @@ export type OnboardingStepProps = {
   ) => void;
   onRepositorySetupMessage: (message: FlashMessage) => void;
   onRuntimeStateChange: (state: RuntimeCompletionState) => void;
+  onVerificationPendingChange?: (pending: boolean) => void;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
   onSelectGithubRepository: (repository: WorkspaceGitHubRepository) => Promise<boolean>;
 };
