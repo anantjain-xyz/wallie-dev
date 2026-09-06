@@ -570,31 +570,57 @@ function PipelinePageContent({
   }
 
   return (
-    <div className="flex h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
-      <div className="shrink-0 px-4 pb-4 pt-8 sm:px-8 sm:pt-10">
-        <PageHeader
-          description="Sessions move through these stages in order, gated by approval at each step."
-          title="Pipeline"
-        />
+    <div className="flex min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas md:h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:min-h-0 lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
+      <div className="shrink-0 px-4 py-3 md:px-8 md:pb-4 md:pt-10">
+        <div className="sr-only md:not-sr-only">
+          <PageHeader
+            description="Sessions move through these stages in order, gated by approval at each step."
+            title="Pipeline"
+          />
+        </div>
 
         {hasActiveSessions ? (
-          <CommandBar aria-label="Pipeline filters" className="mb-5">
-            <label className="min-w-[14rem] flex-1 space-y-1.5">
-              <span className="text-[13px] font-medium text-foreground">Search</span>
+          <CommandBar
+            aria-label="Pipeline filters"
+            className="grid grid-cols-1 gap-2 border-0 py-0 min-[380px]:grid-cols-[minmax(0,1fr)_auto] md:mb-5 md:flex md:gap-3 md:border-y md:py-3"
+          >
+            <label className="min-w-0 flex-1 md:min-w-[14rem] md:space-y-1.5">
+              <span className="sr-only text-[13px] font-medium text-foreground md:not-sr-only">
+                Search
+              </span>
               <span className="relative block">
                 <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
                 <input
                   aria-label="Search pipeline sessions"
-                  className="ui-input pl-8"
+                  className="ui-input pl-8 text-base md:text-sm"
                   onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Title, session #, or Linear ID"
+                  placeholder="Search…"
+                  title="Search by title, session #, or Linear ID"
                   type="search"
                   value={searchQuery}
                 />
               </span>
             </label>
 
-            <fieldset className="space-y-1.5">
+            <label className="min-w-0 md:hidden">
+              <span className="sr-only">Filter by status</span>
+              <select
+                className={cn(
+                  "ui-select text-base min-[380px]:w-48",
+                  statusFilter !== "all" && "border-accent bg-accent-soft",
+                )}
+                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                value={statusFilter}
+              >
+                {STATUS_FILTER_OPTIONS.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <fieldset className="hidden space-y-1.5 md:block">
               <legend className="text-[13px] font-medium text-foreground">Status</legend>
               <div className="flex flex-wrap items-center gap-1.5">
                 {STATUS_FILTER_OPTIONS.map((option) => {
@@ -630,13 +656,13 @@ function PipelinePageContent({
         </div>
       ) : (
         <>
-          <div className="shrink-0 px-4 pb-4 md:hidden">
-            <p className="text-[13px] font-medium text-foreground" id="pipeline-stage-label">
+          <div className="shrink-0 px-4 pb-2 md:hidden">
+            <p className="sr-only" id="pipeline-stage-label">
               Pipeline stage
             </p>
             <div
               aria-labelledby="pipeline-stage-label"
-              className="mt-2 flex gap-2 overflow-x-auto overscroll-x-contain pb-1"
+              className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1"
               onKeyDown={handleStageTabKeyDown}
               role="tablist"
             >
@@ -670,7 +696,7 @@ function PipelinePageContent({
 
           <div
             aria-label="Pipeline board"
-            className="min-h-0 flex-1 overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
+            className="min-h-0 flex-1 px-4 pb-10 md:overflow-auto md:overscroll-contain md:px-6 md:pb-12"
             role="region"
             tabIndex={0}
           >
@@ -753,14 +779,14 @@ const PipelineLane = memo(
       <section
         aria-labelledby={headingId}
         className={cn(
-          "min-h-[calc(100vh-230px)] w-full flex-col border-t border-border/70 pt-4 md:border-l md:border-t-0 md:px-3 md:pt-0 md:first:border-l-0 md:first:pl-0 md:last:pr-0",
+          "w-full flex-col border-t border-border/70 pt-3 md:min-h-[calc(100vh-230px)] md:border-l md:border-t-0 md:px-3 md:pt-0 md:first:border-l-0 md:first:pl-0 md:last:pr-0",
           isMobileActive ? "flex" : "hidden md:flex",
         )}
         data-pipeline-lane={key}
         id={`pipeline-lane-panel-${key}`}
         role="tabpanel"
       >
-        <header className="sticky top-0 z-10 -mx-1 mb-3 border-b border-border/60 bg-canvas/95 px-1 pb-3 backdrop-blur-sm">
+        <header className="z-10 -mx-1 mb-3 border-b border-border/60 bg-canvas/95 px-1 pb-3 backdrop-blur-sm md:sticky md:top-0">
           <div className="flex items-baseline justify-between gap-3">
             <h2 className="truncate text-[15px] font-semibold text-foreground" id={headingId}>
               {lane.name}
