@@ -209,6 +209,59 @@ describe("page realtime recovery", () => {
     expect(run.remove).toHaveBeenCalledTimes(1);
   });
 
+  it("requires a fresh subscription after offline even without an SDK failure", async () => {
+    const { recovery, source, online, report } = setup();
+    const run = source("run");
+    run.status("SUBSCRIBED");
+    await vi.advanceTimersByTimeAsync(200);
+    const oldStatus = run.callbacks[0];
+
+    online.mockReturnValue(false);
+    window.dispatchEvent(new Event("offline"));
+    expect(run.guards[0]()).toBe(false);
+    oldStatus("SUBSCRIBED");
+    online.mockReturnValue(true);
+    window.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(run.callbacks).toHaveLength(2);
+    expect(recovery.getSnapshot().connection).toBe("degraded");
+    expect(report).not.toHaveBeenCalledWith(expect.objectContaining({ event: "recovered" }));
+    oldStatus("SUBSCRIBED");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(run.refresh).toHaveBeenCalledTimes(3);
+    expect(recovery.getSnapshot().connection).toBe("degraded");
+
+    run.status("SUBSCRIBED");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(recovery.getSnapshot().connection).toBe("recovered");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run.refresh).toHaveBeenCalledTimes(4);
+  });
+
+  it("invalidates an in-flight catch-up on offline and refreshes immediately on return", async () => {
+    const { recovery, source, online } = setup();
+    const run = source("run");
+    let finishOldRead!: () => void;
+    run.refresh.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishOldRead = resolve;
+        }),
+    );
+    run.status("SUBSCRIBED");
+    await vi.advanceTimersByTimeAsync(200);
+    const signal = run.refresh.mock.calls[0][0];
+    online.mockReturnValue(false);
+    window.dispatchEvent(new Event("offline"));
+    expect(signal.aborted).toBe(true);
+    online.mockReturnValue(true);
+    window.dispatchEvent(new Event("online"));
+    finishOldRead();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(run.refresh).toHaveBeenCalledTimes(2);
+    expect(recovery.getSnapshot().connection).toBe("degraded");
+  });
+
   it("defers busy optimistic actions without reporting a refresh failure", async () => {
     const { recovery, source, report } = setup();
     const run = source("run");

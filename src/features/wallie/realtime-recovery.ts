@@ -280,13 +280,23 @@ export function createRealtimeRecovery(
   }
 
   function resume() {
-    publish();
     if (!online()) {
+      // Offline can precede (or entirely replace) the SDK's failure callback.
+      // Invalidate old acknowledgements and reads; replace only these channels
+      // once visible and online, then require a fresh acknowledgement + catch-up.
       for (const entry of entries.values()) {
         interrupt(entry);
+        entry.generation++;
+        entry.subscribed = false;
         entry.synced = false;
+        entry.retryAt = Date.now();
       }
+      flight?.abort();
+      flight = null;
+      clearTimeout(refreshTimer);
+      refreshTimer = undefined;
     }
+    publish();
     if (available()) requestRefresh();
     schedule();
   }

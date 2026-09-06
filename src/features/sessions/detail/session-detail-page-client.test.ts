@@ -123,15 +123,19 @@ function renderDetail(
   );
 }
 
-describe("SessionDetailPageClient", () => {
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-    mocked.refresh.mockReset();
-    mocked.pushToast.mockReset();
-    mocked.handlers.clear();
-  });
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  mocked.refresh.mockReset();
+  mocked.pushToast.mockReset();
+  mocked.rpc.mockReset();
+  mocked.statuses.clear();
+  mocked.handlers.clear();
+});
 
+describe("SessionDetailPageClient", () => {
   it("refreshes after a successful archive Undo has cleared its pending state", async () => {
     const data = makeSessionDetailData();
     const archivedAt = "2026-06-07T12:00:00.000Z";
@@ -588,7 +592,12 @@ it("discovers an artifact completed during a subscription outage without a route
           JSON.stringify(
             url.includes("/artifacts")
               ? { artifact }
-              : { canApprove: true, hasFailedRun: false, failedStageSlug: null },
+              : {
+                  stageId: incoming.session.currentStageId,
+                  canApprove: true,
+                  hasFailedRun: false,
+                  failedStageSlug: null,
+                },
           ),
         ),
     ),
@@ -610,4 +619,93 @@ it("discovers an artifact completed during a subscription outage without a route
     target_session_number: 7,
     target_workspace_slug: "acme",
   });
+});
+
+it.each([null, { access: { hasAnyWorkspace: false } }, { access: { hasAnyWorkspace: true } }])(
+  "leaves the stale detail page when recovery returns %j",
+  async (payload) => {
+    const initial = makeSessionDetailData();
+    mocked.rpc.mockImplementation((name: string) => ({
+      abortSignal: () =>
+        Promise.resolve({
+          data: name === "get_session_prompt_attachments" ? [] : payload,
+          error: null,
+        }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          stageId: initial.session.currentStageId,
+          canApprove: true,
+          hasFailedRun: false,
+        }),
+      ),
+    );
+    mocked.router.replace.mockClear();
+    const view = render(
+      createElement(SessionDetailPageClient, {
+        activity: null,
+        initialData: initial,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      }),
+    );
+    act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
+    await waitFor(() => expect(mocked.router.replace).toHaveBeenCalledWith("/w/acme/sessions"));
+    view.unmount();
+    vi.unstubAllGlobals();
+  },
+);
+
+it("waits for matching stage data before enabling recovered approval permissions", async () => {
+  vi.useFakeTimers();
+  const initial = makeSessionDetailData();
+  let incoming = initial;
+  mocked.rpc.mockImplementation((name: string) => ({
+    abortSignal: () =>
+      Promise.resolve({
+        data: name === "get_session_prompt_attachments" ? [] : incoming,
+        error: null,
+      }),
+  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        stageId: "stage-2",
+        canApprove: true,
+        hasFailedRun: false,
+        failedStageSlug: null,
+      }),
+    ),
+  );
+  render(
+    createElement(SessionDetailPageClient, {
+      activity: null,
+      canReview: false,
+      initialData: initial,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+    }),
+  );
+  act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
+  await act(async () => vi.advanceTimersByTimeAsync(200));
+  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+  expect(screen.getByText("Product artifact")).toBeTruthy();
+
+  incoming = makeSessionDetailData();
+  incoming.session.currentStageId = "stage-2";
+  incoming.session.currentStageSlug = "build";
+  incoming.session.updatedAt = "2026-06-07T12:00:00.000Z";
+  incoming.session.pipeline.stages.push({
+    id: "stage-2",
+    slug: "build",
+    name: "Build",
+    description: "Build the change",
+    position: 1,
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(1_000));
+  expect(screen.getByText("Build artifact")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
 });

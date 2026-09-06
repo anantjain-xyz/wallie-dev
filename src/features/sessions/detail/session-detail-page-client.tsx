@@ -39,7 +39,7 @@ import type {
   SessionReviewSession,
 } from "@/features/sessions/detail/data";
 import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
-import { loadSessionRecoverySnapshot } from "./recovery-snapshot";
+import { loadSessionRecoverySnapshot, SessionRecoveryAccessError } from "./recovery-snapshot";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
 import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
@@ -166,6 +166,7 @@ function SessionDetailContent({
   const searchParams = useSearchParams();
   const { pushToast } = useOptionalToast();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
+  const { recovery } = useRealtimeRecovery();
   const [session, setSession] = useState(initialData.session);
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
@@ -373,11 +374,17 @@ function SessionDetailContent({
     })
       .then(async (response) => {
         const body = (await response.json().catch(() => null)) as {
+          stageId?: string;
           canApprove?: boolean;
           failedStageSlug?: string | null;
           hasFailedRun?: boolean;
         } | null;
         if (!response.ok || !body || cancelled) return;
+        if (body.stageId !== session.currentStageId) {
+          setCanApprove(false);
+          recovery.retry();
+          return;
+        }
         if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
         // Generating / awaiting_review clear failure UI immediately (sibling effect).
         // Ignore a stale error run so refetch-on-phaseStatus cannot resurrect it.
@@ -397,7 +404,7 @@ function SessionDetailContent({
       cancelled = true;
       controller.abort();
     };
-  }, [phaseActionPending, session.currentStageId, session.id, session.phaseStatus]);
+  }, [phaseActionPending, recovery, session.currentStageId, session.id, session.phaseStatus]);
 
   useEffect(() => {
     if (session.phaseStatus === "in_progress" || session.phaseStatus === "awaiting_review") {
@@ -457,7 +464,6 @@ function SessionDetailContent({
     },
   );
 
-  const { recovery } = useRealtimeRecovery();
   const catchUpSession = useEffectEvent(async (signal: AbortSignal) => {
     if (actionPending || refreshInFlightRef.current) throw new RecoveryDeferredError();
     const baseline = latestSessionRef.current;
@@ -500,13 +506,18 @@ function SessionDetailContent({
           ? slug
           : recovered.currentStageSlug,
       );
+    } catch (error) {
+      if (!signal.aborted && error instanceof SessionRecoveryAccessError) {
+        leaveUnavailableSession();
+      }
+      throw error;
     } finally {
       if (recoveryBaselineRef.current === baseline) recoveryBaselineRef.current = null;
     }
   });
   const recoveryIsBusy = useEffectEvent(() => actionPending || refreshInFlightRef.current);
 
-  const leaveDeletedSession = useEffectEvent(() =>
+  const leaveUnavailableSession = useEffectEvent(() =>
     router.replace(workspaceSessionsPath(initialData.workspaceSlug)),
   );
 
@@ -540,7 +551,7 @@ function SessionDetailContent({
               (payload) => {
                 if (!isCurrent()) return;
                 if (payload.eventType === "DELETE") {
-                  leaveDeletedSession();
+                  leaveUnavailableSession();
                   return;
                 }
 
