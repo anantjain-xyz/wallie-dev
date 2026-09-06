@@ -3,7 +3,14 @@ import { timestampMs } from "@/components/shared/time-format";
 import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
 import { summarizeToolUse } from "@/features/wallie/run-message-body";
 
-export type WallieRealtimeConnectionState = "connecting" | "live" | "disconnected" | "recovered";
+export type WallieRealtimeConnectionState =
+  | "connecting"
+  | "live"
+  | "reconnecting"
+  | "offline"
+  | "degraded"
+  | "failed"
+  | "recovered";
 
 export function isRunActivityStalled(input: {
   createdAt: string;
@@ -177,8 +184,14 @@ export function connectionStateCopy(state: WallieRealtimeConnectionState) {
       return "Connecting…";
     case "live":
       return "Live";
-    case "disconnected":
-      return "Disconnected — history preserved";
+    case "reconnecting":
+      return "Reconnecting to live updates…";
+    case "offline":
+      return "You’re offline. Showing saved progress.";
+    case "degraded":
+      return "Live connection unavailable. Refreshing every 10 seconds.";
+    case "failed":
+      return "Could not refresh progress. Retrying automatically…";
     case "recovered":
       return "Live updates restored";
   }
@@ -197,7 +210,7 @@ export function messagesFailedCopy() {
 }
 
 export function messagesDisconnectedCopy() {
-  return "Live updates paused. History is preserved.";
+  return connectionStateCopy("reconnecting");
 }
 
 export function lastActivityTimestamp(run: WallieRun) {
@@ -213,4 +226,8 @@ export function lastActivityTimestamp(run: WallieRun) {
     .sort((left, right) => right.localeCompare(left));
 
   return candidates[0] ?? run.createdAt;
+}
+
+export function isConnectionInterrupted(state: WallieRealtimeConnectionState) {
+  return !["connecting", "live", "recovered"].includes(state);
 }

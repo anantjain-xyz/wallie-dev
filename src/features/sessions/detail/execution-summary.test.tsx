@@ -47,7 +47,7 @@ function Publisher({
   usePublishExecution({
     sessionId: "session",
     run: value,
-    connection: disconnected ? "disconnected" : "live",
+    connection: disconnected ? "reconnecting" : "live",
     nowMs: Date.parse(now),
     stallTimeoutMs: 60000,
   });
@@ -69,7 +69,7 @@ afterEach(cleanup);
 describe("execution summary", () => {
   it("keeps authoritative review state separate from run and transport state", () => {
     expect(
-      executionStateLabel("awaiting_review", { ...snapshot, connection: "disconnected" }, "stage"),
+      executionStateLabel("awaiting_review", { ...snapshot, connection: "reconnecting" }, "stage"),
     ).toBe("Ready for your review");
     expect(executionStateLabel("in_progress", snapshot, "stage")).toBe("Queued");
     expect(executionStateLabel("in_progress", snapshot, "other-stage")).toBe("Waiting for a run");
@@ -96,7 +96,7 @@ describe("execution summary", () => {
       </SessionExecutionProvider>,
     );
     expect(screen.getByText("Custom stage · Run canceled")).toBeTruthy();
-    expect(screen.getByText("Live updates are paused. Showing the last known state.")).toBeTruthy();
+    expect(screen.getByText("Reconnecting to live updates…")).toBeTruthy();
     expect(screen.queryByText(/may still be progressing/)).toBeNull();
   });
   it("keeps review-ready disconnect copy neutral even if history lags", () => {
@@ -107,7 +107,7 @@ describe("execution summary", () => {
       </SessionExecutionProvider>,
     );
     expect(screen.getByText("Custom stage · Ready for your review")).toBeTruthy();
-    expect(screen.getByText("Live updates are paused. Showing the last known state.")).toBeTruthy();
+    expect(screen.getByText("Reconnecting to live updates…")).toBeTruthy();
   });
 
   it("shows an active rerun while the session still has rejected status", () => {
@@ -165,7 +165,7 @@ describe("execution summary", () => {
       </SessionExecutionProvider>,
     );
     expect(screen.getByText("Custom stage · Run in progress")).toBeTruthy();
-    expect(screen.getByText(/Live updates are paused/)).toBeTruthy();
+    expect(screen.getByText(/Reconnecting to live updates/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "View run history" }).getAttribute("href")).toBe(
       "#session-runs-heading",
     );

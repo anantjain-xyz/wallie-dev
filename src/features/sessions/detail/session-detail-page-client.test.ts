@@ -2,7 +2,7 @@
 
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -20,6 +20,8 @@ const mocked = vi.hoisted(() => {
     refresh,
     pushToast: vi.fn<(toast: ToastInput) => number>(),
     router: { refresh, replace: vi.fn() },
+    statuses: new Map<string, (status: string) => void>(),
+    rpc: vi.fn(),
     handlers: new Map<string, (payload: unknown) => void>(),
   };
 });
@@ -36,7 +38,8 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/supabase/browser", () => ({
   createSupabaseBrowserClient: () => ({
-    channel: () => ({
+    rpc: mocked.rpc,
+    channel: (name: string) => ({
       on: function on(
         _event: string,
         config: { table: string },
@@ -45,7 +48,10 @@ vi.mock("@/lib/supabase/browser", () => ({
         mocked.handlers.set(config.table, callback);
         return this;
       },
-      subscribe: () => undefined,
+      subscribe: function subscribe(callback: (status: string) => void) {
+        mocked.statuses.set(name, callback);
+        return this;
+      },
     }),
     removeChannel: vi.fn(),
   }),
@@ -551,4 +557,57 @@ it("does not promise automatic archival for a Linear-linked manual-merge workflo
   const html = renderDetail({ data });
   expect(html).toContain("Final-stage approval may also archive the session.");
   expect(html).not.toContain("completes and archives");
+});
+
+it("discovers an artifact completed during a subscription outage without a route refresh", async () => {
+  const initial = makeSessionDetailData();
+  initial.session.phaseStatus = "in_progress";
+  initial.session.currentArtifactVersion = 0;
+  const incoming = makeSessionDetailData();
+  const artifact = {
+    createdAt: "2026-06-07T12:00:00.000Z",
+    stageSlug: "product",
+    version: 1,
+    payload: "Artifact saved while offline",
+    sanitizedHtml: "<p>Artifact saved while offline</p>",
+  };
+  incoming.session.updatedAt = artifact.createdAt;
+  incoming.session.artifacts = [artifact];
+  mocked.rpc.mockImplementation((name: string) => ({
+    abortSignal: () =>
+      Promise.resolve({
+        data: name === "get_session_prompt_attachments" ? [] : incoming,
+        error: null,
+      }),
+  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.includes("/artifacts")
+              ? { artifact }
+              : { canApprove: true, hasFailedRun: false, failedStageSlug: null },
+          ),
+        ),
+    ),
+  );
+  mocked.refresh.mockClear();
+  render(
+    createElement(SessionDetailPageClient, {
+      activity: null,
+      initialData: initial,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+    }),
+  );
+  act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
+  await waitFor(() => expect(screen.getByText("Artifact saved while offline")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
+  expect(mocked.refresh).not.toHaveBeenCalled();
+  expect(mocked.rpc).toHaveBeenCalledWith("get_session_detail_page", {
+    target_session_number: 7,
+    target_workspace_slug: "acme",
+  });
 });
