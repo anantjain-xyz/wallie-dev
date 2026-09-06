@@ -9,6 +9,7 @@ import { agentRunStatusValue } from "@/components/ui/status";
 import {
   compactActivityText,
   connectionStateCopy,
+  isConnectionInterrupted,
   runStatusLabel,
   formatMessageSourceLabel,
   groupActivityMessages,
@@ -21,6 +22,7 @@ import {
 } from "@/features/wallie/activity-summary";
 import { parseToolUseMessage, summarizeToolUse } from "@/features/wallie/run-message-body";
 import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
+import { LiveConnectionNotice } from "./live-connection-notice";
 import { cn } from "@/lib/utils";
 
 function formatStageRunLabel(run: WallieRun) {
@@ -59,6 +61,7 @@ export type WallieRunCardProps = {
   onCancel: (runId: string) => Promise<void>;
   onRetry: (runId: string) => Promise<void>;
   onToggle: (runId: string) => void;
+  onReconnect?: () => void;
   renderNow: string;
   retryLocked: boolean;
   run: WallieRun;
@@ -78,6 +81,7 @@ export const WallieRunCard = memo(function WallieRunCard({
   onCancel,
   onRetry,
   onToggle,
+  onReconnect,
   renderNow,
   retryLocked,
   run,
@@ -92,10 +96,9 @@ export const WallieRunCard = memo(function WallieRunCard({
     stallTimeoutMs,
     status: run.status,
   });
-  const disconnected = connectionState === "disconnected";
+  const disconnected = isConnectionInterrupted(connectionState);
   const working = run.isActive && (run.status === "running" || run.status === "started");
-  const operation =
-    disconnected && run.isActive ? "Live updates paused" : runStatusLabel({ run, stalled });
+  const operation = runStatusLabel({ run, stalled });
   const progress = run.messages.findLast(
     (message) => ["text", "progress", "status"].includes(message.kind) && message.messageMd.trim(),
   );
@@ -195,10 +198,8 @@ export const WallieRunCard = memo(function WallieRunCard({
             : "This run failed. Expand activity for details."}
         </p>
       ) : null}
-      {isPrimary && disconnected ? (
-        <p className="mt-2 pl-6 text-sm text-warning" role="status">
-          Live updates paused. History is preserved.
-        </p>
+      {isPrimary || isExpanded ? (
+        <LiveConnectionNotice state={connectionState} onRetry={onReconnect} className="pl-6" />
       ) : null}
       {stalled ? (
         <p className="mt-2 pl-6 text-sm text-warning" role="status">

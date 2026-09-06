@@ -3,6 +3,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  SessionExecutionProvider,
+  SessionExecutionSummary,
+} from "@/features/sessions/detail/execution-summary";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
@@ -126,9 +130,10 @@ function fakeSupabase(messages: Record<string, Array<Record<string, string>>> = 
       select: () => ({
         eq: (_column: string, runId: string) => ({
           order: () => ({
-            limit: async () => {
+            limit: () => {
+              const result = Promise.resolve({ data: messages[runId] ?? [], error: null });
               messageQueries.push(runId);
-              return { data: messages[runId] ?? [], error: null };
+              return Object.assign(result, { abortSignal: () => result });
             },
           }),
         }),
@@ -136,6 +141,7 @@ function fakeSupabase(messages: Record<string, Array<Record<string, string>>> = 
     })),
     removeChannel: vi.fn(async (channel: FakeChannel) => {
       activeChannels.delete(channel);
+      queueMicrotask(() => channel.statusCallback?.("CLOSED"));
       return "ok";
     }),
   };
@@ -152,9 +158,14 @@ async function subscribeChannels(
   fake: ReturnType<typeof fakeSupabase>,
   predicate: (name: string) => boolean = () => true,
 ) {
-  for (const channel of fake.channels.filter((entry) => predicate(entry.name))) {
+  for (const channel of [...fake.activeChannels].filter((entry) => predicate(entry.name))) {
     await act(async () => channel.statusCallback?.("SUBSCRIBED"));
   }
+  await settleRecovery();
+}
+
+async function settleRecovery() {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 250)));
 }
 
 let idleCallback: (() => void) | null;
@@ -176,6 +187,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -282,7 +294,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
       finish = resolve;
     });
     vi.spyOn(fake.supabase, "from").mockReturnValue({
-      select: () => ({ eq: () => ({ order: () => ({ limit: () => pending }) }) }),
+      select: () => ({
+        eq: () => ({ order: () => ({ limit: () => ({ abortSignal: () => pending }) }) }),
+      }),
     } as never);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const view = panel(data([run(1)]), fake.supabase);
@@ -310,6 +324,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     await act(async () => idleCallback?.());
     const channel = fake.channels.find((item) => item.name.startsWith("wallie-runs:"));
     act(() => channel?.statusCallback?.("SUBSCRIBED"));
+    await settleRecovery();
     if (departure === "unmount") view.unmount();
     else act(() => window.dispatchEvent(new Event("pagehide")));
     await act(async () => reject(new TypeError("Failed to fetch")));
@@ -317,81 +332,38 @@ describe("SessionWalliePanel run history lifecycle", () => {
     log.mockRestore();
   });
 
-  it("ignores stale reconcile snapshots when updating the pagination cursor", async () => {
-    const olderFirstPage = Array.from({ length: 20 }, (_, index) => run(index + 21));
-    const newerFirstPage = Array.from({ length: 20 }, (_, index) => run(index + 1));
-    const olderCursor = {
-      createdAt: olderFirstPage.at(-1)!.createdAt,
-      id: olderFirstPage.at(-1)!.id,
-    };
-    const newerCursor = {
-      createdAt: newerFirstPage.at(-1)!.createdAt,
-      id: newerFirstPage.at(-1)!.id,
-    };
-    const gapPage = [run(41)];
+  it("coalesces recovery reads and preserves pagination loaded before refreshed props", async () => {
+    const first = Array.from({ length: 20 }, (_, index) => run(index + 1));
+    const older = Array.from({ length: 20 }, (_, index) => run(index + 21));
+    const cursor = { createdAt: older.at(-1)!.createdAt, id: older.at(-1)!.id };
     const fake = fakeSupabase();
-    let resolveOlder!: (value: Response) => void;
-    let resolveNewer!: (value: Response) => void;
-    const olderPromise = new Promise<Response>((resolve) => {
-      resolveOlder = resolve;
-    });
-    const newerPromise = new Promise<Response>((resolve) => {
-      resolveNewer = resolve;
-    });
-    let reconcileCalls = 0;
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("createdAt=")) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ nextCursor: null, runs: gapPage }), { status: 200 }),
-        );
-      }
-
-      reconcileCalls += 1;
-      return reconcileCalls === 1 ? olderPromise : newerPromise;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const view = panel(data(olderFirstPage, true), fake.supabase);
-
-    await act(async () => idleCallback?.());
-    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
-    await act(async () => {
-      sessionChannel?.statusCallback?.("SUBSCRIBED");
-      sessionChannel?.statusCallback?.("SUBSCRIBED");
-    });
-
-    await act(async () => {
-      resolveNewer(
-        new Response(JSON.stringify({ nextCursor: newerCursor, runs: newerFirstPage }), {
-          status: 200,
-        }),
-      );
-    });
-    await waitFor(() =>
-      expect(view.container.querySelector('[data-run-id="run-1"]')).not.toBeNull(),
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ runs: older, nextCursor: cursor })),
     );
-
-    await act(async () => {
-      resolveOlder(
-        new Response(JSON.stringify({ nextCursor: olderCursor, runs: olderFirstPage }), {
-          status: 200,
-        }),
-      );
-    });
-
+    vi.stubGlobal("fetch", fetchMock);
+    const view = panel(data(first, true), fake.supabase);
     fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
     await waitFor(() =>
-      expect(view.container.querySelector('[data-run-id="run-41"]')).not.toBeNull(),
+      expect(view.container.querySelector('[data-run-id="run-40"]')).not.toBeNull(),
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `createdAt=${encodeURIComponent(newerCursor.createdAt)}&id=${newerCursor.id}`,
-      ),
+    fireEvent.click(view.container.querySelector('[data-run-id="run-21"] button[aria-expanded]')!);
+    view.rerender(
+      <SessionWalliePanel
+        initialData={data([...first], true)}
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
     );
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      expect.stringContaining(
-        `createdAt=${encodeURIComponent(olderCursor.createdAt)}&id=${olderCursor.id}`,
-      ),
+    expect(
+      view.container
+        .querySelector('[data-run-id="run-21"] button[aria-expanded]')
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(view.container.querySelector('[data-run-id="run-40"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(expect.stringContaining(`id=${cursor.id}`)),
     );
   });
 
@@ -684,11 +656,11 @@ describe("SessionWalliePanel activity states", () => {
 
     await act(async () => idleCallback?.());
     await subscribeChannels(fake);
-    expect(screen.queryByText("Live updates paused. History is preserved.")).toBeNull();
+    expect(screen.queryByText("Reconnecting to live updates…")).toBeNull();
 
     const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
     await act(async () => sessionChannel?.statusCallback?.("CHANNEL_ERROR"));
-    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Reconnecting to live updates…").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
 
     await subscribeChannels(fake, (name) => name.startsWith("wallie-runs:"));
@@ -811,17 +783,17 @@ describe("SessionWalliePanel activity states", () => {
 
     await act(async () => idleCallback?.());
     await subscribeChannels(fake);
-    expect(screen.queryByText("Live updates paused. History is preserved.")).toBeNull();
+    expect(screen.queryByText("Reconnecting to live updates…")).toBeNull();
 
     const messageChannel = fake.channels.find((channel) =>
       channel.name.startsWith("wallie-summary-messages:"),
     );
     await act(async () => messageChannel?.statusCallback?.("CHANNEL_ERROR"));
-    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Reconnecting to live updates…").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
   });
 
-  it("stays disconnected until every required message channel recovers", async () => {
+  it("scopes historical message failures to the expanded historical run", async () => {
     const active = run(1, {
       finishedAt: null,
       isActive: true,
@@ -851,22 +823,24 @@ describe("SessionWalliePanel activity states", () => {
     fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
     await act(async () => idleCallback?.());
     await subscribeChannels(fake);
-    expect(screen.queryByText("Live updates paused. History is preserved.")).toBeNull();
+    expect(screen.queryByText("Reconnecting to live updates…")).toBeNull();
 
     const expandedMessageChannel = fake.channels.find((channel) =>
       channel.name.startsWith("wallie-run-messages:run-2"),
     );
     await act(async () => expandedMessageChannel?.statusCallback?.("CHANNEL_ERROR"));
-    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Reconnecting to live updates…").length).toBeGreaterThan(0);
 
+    const primary = view.container.querySelector("[data-wallie-summary]") as HTMLElement;
+    expect(within(primary).queryByText("Reconnecting to live updates…")).toBeNull();
     await subscribeChannels(
       fake,
       (name) => name.startsWith("wallie-runs:") || name.startsWith("wallie-summary-messages:"),
     );
-    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+    expect(within(primary).queryByText("Reconnecting to live updates…")).toBeNull();
 
     await subscribeChannels(fake, (name) => name.startsWith("wallie-run-messages:run-2"));
-    expect(screen.getAllByText("Live updates restored").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Reconnecting to live updates…")).toBeNull();
   });
 
   it("does not resubscribe the summary channel when summary run messages upsert", async () => {
@@ -1019,5 +993,142 @@ describe("SessionWalliePanel activity states", () => {
     fireEvent.click(within(details as HTMLElement).getByText("Run details"));
     expect(within(details as HTMLElement).queryByText("Branch")).toBeNull();
     expect(within(details as HTMLElement).getByText("Run ID")).not.toBeNull();
+  });
+});
+
+describe("live update recovery regression", () => {
+  it("keeps the primary subscription healthy through disclosure and delayed cleanup callbacks", async () => {
+    const active = run(1, {
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      status: "running",
+    });
+    const older = run(2);
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ nextCursor: null, runs: [active, older] }))),
+    );
+    const initial = data([active, older], false, { loadedMessageRunIds: [active.id] });
+    const view = panel(initial, fake.supabase);
+    await act(async () => idleCallback?.());
+    await subscribeChannels(fake);
+    const primary = fake.channels.find((channel) =>
+      channel.name.startsWith("wallie-summary-messages:"),
+    );
+    const toggle = (id: string) =>
+      fireEvent.click(view.container.querySelector(`[data-run-id="${id}"] button[aria-expanded]`)!);
+    toggle(active.id);
+    toggle(active.id);
+    toggle(older.id);
+    await subscribeChannels(fake);
+    const retired = fake.channels.find((channel) =>
+      channel.name.startsWith("wallie-run-messages:"),
+    );
+    toggle(older.id);
+    await act(async () => {
+      retired?.statusCallback?.("CHANNEL_ERROR");
+      retired?.statusCallback?.("SUBSCRIBED");
+      retired?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          agent_run_id: active.id,
+          id: "stale",
+          created_at: active.createdAt,
+          kind: "text",
+          message_md: "Obsolete callback",
+        },
+      });
+    });
+    view.rerender(
+      <SessionWalliePanel
+        initialData={{ ...initial, runs: [...initial.runs] }}
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+    expect(fake.activeChannels.has(primary!)).toBe(true);
+    expect(fake.activeChannels.size).toBe(2);
+    expect(
+      screen.queryByText(/Reconnecting|Live connection unavailable|Could not refresh/),
+    ).toBeNull();
+    expect(screen.queryByText("Obsolete callback")).toBeNull();
+  });
+
+  it("shows identical notices above and below, then discovers completion through the 10-second fallback", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
+    vi.setSystemTime(new Date("2026-07-18T13:00:00.000Z"));
+    const active = run(1, {
+      stageId: "build",
+      stageName: "Build",
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      status: "running",
+    });
+    let persisted = active;
+    const messages: Record<string, Array<Record<string, string>>> = {};
+    const fake = fakeSupabase(messages);
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ nextCursor: null, runs: [persisted] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <SessionExecutionProvider>
+        <SessionExecutionSummary
+          sessionId="session-1"
+          stageId="build"
+          stageName="Build"
+          phaseStatus="in_progress"
+          archivedAt={null}
+          initialNow="2026-07-18T13:00:00.000Z"
+        />
+        <SessionWalliePanel
+          initialData={data([active])}
+          session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+          supabase={fake.supabase}
+          workspaceSlug="acme"
+        />
+      </SessionExecutionProvider>,
+    );
+    await act(async () => idleCallback?.());
+    await act(async () => {
+      for (const channel of fake.activeChannels) channel.statusCallback?.("SUBSCRIBED");
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    const channel = fake.channels.find((entry) => entry.name.startsWith("wallie-runs:"));
+    await act(async () => channel?.statusCallback?.("CHANNEL_ERROR"));
+    expect(screen.getAllByText("Reconnecting to live updates…")).toHaveLength(2);
+    expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(
+      screen.getAllByText("Live connection unavailable. Refreshing every 10 seconds."),
+    ).toHaveLength(2);
+    persisted = {
+      ...active,
+      status: "success",
+      isActive: false,
+      isTerminal: true,
+      finishedAt: "2026-07-18T13:02:00.000Z",
+      updatedAt: "2026-07-18T13:02:00.000Z",
+    };
+    messages[active.id] = [
+      {
+        agent_run_id: active.id,
+        id: "completed",
+        created_at: persisted.updatedAt,
+        kind: "completion",
+        message_md: "Saved during the outage",
+      },
+    ];
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByText("Completed")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Build run activity/ }));
+    expect(screen.getByText("Saved during the outage")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

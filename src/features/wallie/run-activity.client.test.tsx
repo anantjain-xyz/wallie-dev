@@ -87,9 +87,9 @@ describe("concise run activity", () => {
       );
       expect(view.container.querySelector(".activity-shimmer")).toBeNull();
     }
-    view.rerender(<WallieRunCard {...props} connectionState="disconnected" />);
+    view.rerender(<WallieRunCard {...props} connectionState="reconnecting" />);
     expect(view.container.querySelector(".activity-shimmer")).toBeNull();
-    expect(screen.getByText("Live updates paused. History is preserved.")).toBeTruthy();
+    expect(screen.getByText("Reconnecting to live updates…")).toBeTruthy();
   });
 
   it("keeps failure diagnostics and retry available with activity collapsed", () => {
