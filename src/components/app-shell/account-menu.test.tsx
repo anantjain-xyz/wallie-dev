@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AccountMenu } from "@/components/app-shell/account-menu";
+import { ACCOUNT_MENU_SIDE_OFFSET, AccountMenu } from "@/components/app-shell/account-menu";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 
 beforeEach(() => {
@@ -24,6 +24,10 @@ afterEach(() => {
 });
 
 describe("AccountMenu", () => {
+  it("offsets the menu far enough to clear sticky header chrome", () => {
+    expect(ACCOUNT_MENU_SIDE_OFFSET).toBeGreaterThan(6);
+  });
+
   it("uses the shared menu, focuses its first action, and restores trigger focus", async () => {
     const user = userEvent.setup();
     const { container } = render(

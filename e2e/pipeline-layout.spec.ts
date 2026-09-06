@@ -1,5 +1,19 @@
 import { expect, test, type Page } from "@playwright/test";
 
+async function accountMenuHeaderGap(page: Page) {
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  const menu = page.getByRole("menu", { name: "Account" });
+  await expect(menu).toBeVisible();
+  return page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>("[data-shell-header]");
+    const menuEl = document.querySelector<HTMLElement>('[role="menu"][aria-label="Account"]');
+    if (!header || !menuEl) {
+      throw new Error("account menu or shell header was not in the document");
+    }
+    return menuEl.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+  });
+}
+
 async function layoutGeometry(page: Page) {
   return page.evaluate(() => {
     const grid = document.querySelector<HTMLElement>(".pipeline-board")!;
@@ -86,3 +100,29 @@ for (const viewport of [
     await expect(page.getByRole("button", { name: "All statuses", exact: true })).toBeVisible();
   });
 }
+
+test("account menu sits below the header with a visible gap on a 390px phone", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    baseURL: test.info().project.use.baseURL,
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto("/dev/pipeline-layout");
+    expect(await accountMenuHeaderGap(page)).toBeGreaterThanOrEqual(6);
+  } finally {
+    await context.close();
+  }
+});
+
+test("account menu sits below the header with a visible gap on a 1280px desktop", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/dev/pipeline-layout");
+  expect(await accountMenuHeaderGap(page)).toBeGreaterThanOrEqual(6);
+});
