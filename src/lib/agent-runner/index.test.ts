@@ -71,8 +71,18 @@ describe("createAgentRunner", () => {
     expect(runner.provider).toBe("opencode");
   });
 
+  it("creates an OpenCodeRunner for a custom provider key", () => {
+    const runner = createAgentRunner("opencode", {
+      openCode: {
+        model: "opencode-go/glm-5.3",
+        providerCredentials: { "opencode-go": { secret: "go-key" } },
+      },
+    });
+    expect(runner).toBeInstanceOf(OpenCodeRunner);
+  });
+
   it("throws when OpenCode is selected without credentials", () => {
-    expect(() => createAgentRunner("opencode")).toThrow(/OpenCode Zen API key/);
+    expect(() => createAgentRunner("opencode")).toThrow(/OpenCode credentials/);
   });
 
   it("throws for unknown provider", () => {

@@ -12,14 +12,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip } from "@/components/ui/tooltip";
+import { ProfileAvatar } from "@/features/settings/profile-avatar";
 
 type AccountMenuProps = {
+  avatarUrl?: string | null;
   email: string | null;
 };
 
-export function AccountMenu({ email }: AccountMenuProps) {
+export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
   const signOutFormRef = useRef<HTMLFormElement>(null);
-  const initial = (email?.trim().charAt(0) ?? "").toUpperCase() || "?";
   const triggerLabel = email ? `Account: ${email}` : "Account";
 
   return (
@@ -27,12 +28,7 @@ export function AccountMenu({ email }: AccountMenuProps) {
       <Tooltip content={triggerLabel}>
         <DropdownMenuTrigger asChild>
           <button type="button" className="ui-icon-button" aria-label={triggerLabel}>
-            <span
-              aria-hidden="true"
-              className="flex h-5 w-5 items-center justify-center rounded-full bg-control-hover type-annotation font-semibold text-foreground"
-            >
-              {initial}
-            </span>
+            <ProfileAvatar className="h-5 w-5 type-annotation" name={email ?? ""} url={avatarUrl} />
           </button>
         </DropdownMenuTrigger>
       </Tooltip>

@@ -1,8 +1,10 @@
 import { notFound } from "next/navigation";
 
+import { isProductionDeploy } from "@/env/deploy";
+
 import { AgentActivityPreview } from "./preview-client";
 
 export default function AgentActivityPreviewPage() {
-  if (process.env.NODE_ENV !== "development") notFound();
+  if (isProductionDeploy()) notFound();
   return <AgentActivityPreview initialNow={new Date().toISOString()} />;
 }

@@ -10,7 +10,7 @@ import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { getClaudeCodeCredentialForUser } from "@/lib/claude-code/tokens";
 import { getCodexCredentialForUser } from "@/lib/codex/tokens";
 import { getCursorCredentialForUser } from "@/lib/cursor/tokens";
-import { getOpenCodeCredentialForUser } from "@/lib/opencode/tokens";
+import { getOpenCodeAuthForUser } from "@/lib/opencode/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection } from "@/lib/sandbox/types";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
@@ -263,7 +263,7 @@ export async function completeSandboxCapabilityCheck(input: {
     } else if (provider === "cursor") {
       await getCursorCredentialForUser(input.admin, input.userId);
     } else if (provider === "opencode") {
-      await getOpenCodeCredentialForUser(input.admin, input.userId);
+      await getOpenCodeAuthForUser(input.admin, input.userId, agentConfig.model);
     } else {
       await getClaudeCodeCredentialForUser(input.admin, input.userId);
     }

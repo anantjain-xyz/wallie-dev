@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   encryptSecretValue: vi.fn((value: string) => `encrypted:${value}`),
   getSupabaseUserOrNull: vi.fn(),
+  listOpenCodeProviderCredentialMeta: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -23,6 +24,10 @@ vi.mock("@/lib/secrets/crypto", () => ({
   encryptSecretValue: mocked.encryptSecretValue,
 }));
 
+vi.mock("@/lib/opencode/tokens", () => ({
+  listOpenCodeProviderCredentialMeta: mocked.listOpenCodeProviderCredentialMeta,
+}));
+
 import { DELETE, GET, POST } from "./route";
 
 const USER_ID = "user-1";
@@ -39,6 +44,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocked.createSupabaseServerClient.mockResolvedValue({});
   mocked.getSupabaseUserOrNull.mockResolvedValue({ id: USER_ID });
+  mocked.listOpenCodeProviderCredentialMeta.mockResolvedValue([]);
 });
 
 describe("/api/opencode/connection", () => {
@@ -51,7 +57,11 @@ describe("/api/opencode/connection", () => {
     const response = await GET();
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ checkedAt: expect.any(String), connected: false });
+    expect(await response.json()).toEqual({
+      checkedAt: expect.any(String),
+      connected: false,
+      providers: [],
+    });
   });
 
   it("returns saved metadata without returning the secret", async () => {
@@ -62,24 +72,34 @@ describe("/api/opencode/connection", () => {
     mocked.createSupabaseAdminClient.mockReturnValue({
       from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }),
     });
+    mocked.listOpenCodeProviderCredentialMeta.mockResolvedValue([
+      { providerId: "opencode-go", updatedAt: "2026-09-01T00:00:00.000Z" },
+    ]);
 
     const response = await GET();
 
     expect(await response.json()).toEqual({
       checkedAt: expect.any(String),
       connected: true,
+      providers: [{ providerId: "opencode-go", updatedAt: "2026-09-01T00:00:00.000Z" }],
       updatedAt: "2026-08-30T00:00:00.000Z",
     });
   });
 
   it("applies length-only validation and stores the key encrypted", async () => {
-    const single = vi.fn().mockResolvedValue({
-      data: { updated_at: "2026-08-30T00:00:00.000Z" },
-      error: null,
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: () => ({
+        upsert,
+        select: () => ({
+          eq: () => ({
+            maybeSingle: vi
+              .fn()
+              .mockResolvedValue({ data: { updated_at: "2026-08-30T00:00:00.000Z" }, error: null }),
+          }),
+        }),
+      }),
     });
-    const select = vi.fn(() => ({ single }));
-    const upsert = vi.fn(() => ({ select }));
-    mocked.createSupabaseAdminClient.mockReturnValue({ from: () => ({ upsert }) });
     const arbitraryKey = "any-zen-key-format-12345";
 
     const response = await POST(request({ credential: arbitraryKey }));

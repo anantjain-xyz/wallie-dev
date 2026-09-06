@@ -111,6 +111,26 @@ describe("GET /invite/[token]", () => {
     const response = await GET(requestWith(), routeContext());
 
     expect(response.status).toBe(403);
-    await expect(response.text()).resolves.toContain("Use the invited email");
+    const html = await response.text();
+    expect(html).toContain("Use the invited email");
+    expect(html).toContain('action="/auth/signout"');
+    expect(html).toContain('name="next" value="/invite/invite-token"');
+    expect(html).toContain('href="/"');
+  });
+  it.each([
+    ["expired", 410],
+    ["revoked", 410],
+    ["already_accepted", 409],
+    ["not_found", 404],
+  ])("offers a return destination without signing out for %s", async (errorCode, status) => {
+    mocked.createSupabaseServerClient.mockResolvedValue({});
+    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1", email: "user@example.com" });
+    mocked.createSupabaseAdminClient.mockReturnValue({ rpc: mocked.rpc });
+    mocked.rpc.mockResolvedValue({ data: { ok: false, error_code: errorCode }, error: null });
+    const response = await GET(requestWith(), routeContext());
+    expect(response.status).toBe(status);
+    const html = await response.text();
+    expect(html).toContain('href="/"');
+    expect(html).not.toContain('action="/auth/signout"');
   });
 });

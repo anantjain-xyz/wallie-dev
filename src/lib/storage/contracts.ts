@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const maxSessionAttachmentBytes = 4 * 1024 * 1024;
 export const maxSessionAttachments = 5;
+export const sessionAttachmentExpiryMs = 24 * 60 * 60 * 1000;
 export const allowedSessionAttachmentMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
 export type SessionAttachmentMimeType = (typeof allowedSessionAttachmentMimeTypes)[number];
 

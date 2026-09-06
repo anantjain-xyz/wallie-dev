@@ -142,6 +142,10 @@ export type OnboardingSetupHealth = {
   openCodeConnection: {
     checkedAt: string;
     connected: boolean;
+    providers: Array<{
+      providerId: string;
+      updatedAt: string;
+    }>;
     status: "connected" | "missing";
     updatedAt: string | null;
   };

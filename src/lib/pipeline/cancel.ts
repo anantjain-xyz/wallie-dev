@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { AgentJobStatus, AgentRunStatus } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 import { stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
@@ -7,8 +8,35 @@ import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server
 
 type AdminClient = SupabaseClient<Database>;
 
-export const ACTIVE_AGENT_JOB_STATUSES = ["queued", "started", "running"] as const;
-export const ACTIVE_AGENT_RUN_STATUSES = ["queued", "started", "running"] as const;
+/**
+ * The single source of truth for "this job/run is still live". Every
+ * active-status guard in the processor, worker, and Wallie service imports
+ * these instead of spelling the list out — the sets must match the partial
+ * unique index `agent_jobs_active_dedupe_key_idx` (`status in ('queued',
+ * 'started', 'running')`), and an inline copy that drifts (as one did to
+ * `["queued", "running"]`) silently disables a dedupe or cancel guard.
+ */
+export const ACTIVE_AGENT_JOB_STATUSES = [
+  "queued",
+  "started",
+  "running",
+] as const satisfies readonly AgentJobStatus[];
+export const ACTIVE_AGENT_RUN_STATUSES = [
+  "queued",
+  "started",
+  "running",
+] as const satisfies readonly AgentRunStatus[];
+
+export type ActiveAgentJobStatus = (typeof ACTIVE_AGENT_JOB_STATUSES)[number];
+export type ActiveAgentRunStatus = (typeof ACTIVE_AGENT_RUN_STATUSES)[number];
+
+export function isActiveAgentJobStatus(status: AgentJobStatus): status is ActiveAgentJobStatus {
+  return (ACTIVE_AGENT_JOB_STATUSES as readonly AgentJobStatus[]).includes(status);
+}
+
+export function isActiveAgentRunStatus(status: AgentRunStatus): status is ActiveAgentRunStatus {
+  return (ACTIVE_AGENT_RUN_STATUSES as readonly AgentRunStatus[]).includes(status);
+}
 
 /**
  * The subset of an agent_run row needed to stop its sandbox. Both the stall

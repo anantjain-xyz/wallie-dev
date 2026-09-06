@@ -324,6 +324,7 @@ export function RuntimeIntegrationIsland({
             ? {
                 checkedAt: initialData.setupHealth.openCodeConnection.checkedAt,
                 connected: initialData.setupHealth.openCodeConnection.connected,
+                providers: initialData.setupHealth.openCodeConnection.providers,
                 updatedAt: initialData.setupHealth.openCodeConnection.updatedAt,
               }
             : undefined

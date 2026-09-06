@@ -66,6 +66,23 @@ export async function ensureProfileForUser(supabase: SupabaseServerClient, user:
   }
 }
 
+export async function loadOwnProfileDisplay(supabase: SupabaseServerClient, userId: string) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("avatar_url")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return {
+    avatarUrl: data?.avatar_url ?? null,
+    found: data !== null,
+  };
+}
+
 export async function getDefaultWorkspace(supabase: SupabaseServerClient) {
   const { data, error } = await supabase
     .from("workspaces")

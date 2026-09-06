@@ -1,13 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
-import { stopRunSandbox } from "@/lib/pipeline/cancel";
+import {
+  ACTIVE_AGENT_RUN_STATUSES,
+  stopRunSandbox,
+  type ActiveAgentRunStatus,
+} from "@/lib/pipeline/cancel";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
 
 const ACTIVE_RUN_PAGE_SIZE = 100;
 const FRESH_WORKER_HEARTBEAT_MS = 60_000;
+/** Jobs that have been claimed. Must not include `queued`. */
+const CLAIMED_AGENT_JOB_STATUSES = ["started", "running"] as const;
 
 type ActiveRunRow = {
   agent_job_id: string | null;
@@ -19,7 +25,7 @@ type ActiveRunRow = {
   sandbox_provider: string | null;
   sandbox_vercel_project_id: string | null;
   sandbox_vercel_team_id: string | null;
-  status: "queued" | "started" | "running";
+  status: ActiveAgentRunStatus;
   workspace_id: string;
 };
 
@@ -40,6 +46,16 @@ export interface StallSweepOptions {
  * provided default). Marks them as errored, stops their orphaned sandbox,
  * and either reschedules the parent job for retry (attempts remaining) or
  * marks it terminally errored (attempts exhausted).
+ *
+ * A second pass then closes claimed (`started` / `running`) jobs whose
+ * runs are all already terminal. `markRunSuccess` lands before
+ * `sandbox.stop()` in a `finally`, and `markPipelineJobSuccess` is after
+ * that network call; a crash there leaves the run `success`, the job
+ * claimed, and the session already `awaiting_review`. That job is marked
+ * `success` so the active-session dedupe key is released without
+ * regenerating a published artifact. Jobs whose runs are all `error` /
+ * `canceled` (or that have no runs) keep the stalled-run
+ * retry-or-terminal-error policy.
  */
 export async function sweepStalledRuns(
   admin: AdminClient,
@@ -56,6 +72,7 @@ export async function sweepStalledRuns(
   const activeRuns = await loadActiveRuns(admin, options);
 
   if (activeRuns.length === 0) {
+    await sweepRunningJobsWithTerminalRuns(admin, options, result, defaultStallTimeoutMs);
     return result;
   }
 
@@ -107,7 +124,7 @@ export async function sweepStalledRuns(
         status: "error" as const,
       })
       .eq("id", run.id)
-      .in("status", ["queued", "started", "running"]);
+      .in("status", ACTIVE_AGENT_RUN_STATUSES);
 
     if (updateError) {
       console.error("[stall-detector] failed to error stalled run", {
@@ -154,11 +171,7 @@ export async function sweepStalledRuns(
         .maybeSingle();
 
       if (jobRow?.session_id) {
-        await admin
-          .from("sessions")
-          .update({ phase_status: "rejected" })
-          .eq("id", jobRow.session_id)
-          .eq("phase_status", "in_progress");
+        await parkSessionForStalledJob(admin, jobRow.session_id);
       }
     }
 
@@ -171,10 +184,298 @@ export async function sweepStalledRuns(
     });
   }
 
+  await sweepRunningJobsWithTerminalRuns(admin, options, result, defaultStallTimeoutMs);
   return result;
 }
 
 const DEFAULT_MAX_RETRIES = 3;
+const TERMINAL_RUNS_JOB_STALL_REASON = "Stalled: running job has no active runs";
+
+type RunningJobRow = {
+  created_at: string;
+  id: string;
+  session_id: string;
+  started_at: string | null;
+  workspace_id: string;
+};
+
+/**
+ * Close claimed jobs that the active-run sweep cannot see: every attached
+ * run is already terminal (or the job has no runs).
+ *
+ * A crash after `publishArtifact` looks like run `success` + job still
+ * claimed + session `awaiting_review`. Retrying would re-claim that
+ * session and mint another artifact, so those jobs are marked `success`
+ * with the same claimed-row CAS as a live `markPipelineJobSuccess`. Jobs
+ * whose runs are all `error` / `canceled` (or that have no runs) still go
+ * through `resolveStalledJob` and park an `in_progress` session.
+ *
+ * Jobs still listed on a fresh worker heartbeat are left alone — that is
+ * the live `sandbox.stop()` window after `markRunSuccess`.
+ *
+ * Claimed jobs with no `agent_runs` row at all (Linear-routed enqueue, or
+ * the gap between claim and `startAgentRun`) must also be older than the
+ * workspace stall timeout, measured from this attempt's `started_at`
+ * (`claim_next_agent_job` refreshes it on every claim). The scheduler
+ * heartbeats only after claim, so a concurrent sweep can otherwise retry
+ * a live job before its run exists.
+ */
+async function sweepRunningJobsWithTerminalRuns(
+  admin: AdminClient,
+  options: StallSweepOptions,
+  result: StallSweepResult,
+  defaultStallTimeoutMs: number,
+): Promise<void> {
+  const runningJobs = await loadRunningJobs(admin, options);
+  if (runningJobs.length === 0) {
+    return;
+  }
+
+  const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, Date.now());
+  const candidates = runningJobs.filter((job) => !freshWorkerJobIds.has(job.id));
+  if (candidates.length === 0) {
+    return;
+  }
+
+  const jobsWithActiveRuns = await loadJobIdsWithActiveRuns(
+    admin,
+    candidates.map((job) => job.id),
+  );
+  const stalled = candidates.filter((job) => !jobsWithActiveRuns.has(job.id));
+  if (stalled.length === 0) {
+    return;
+  }
+
+  const jobsWithSuccessfulRuns = await loadJobIdsWithSuccessfulRuns(
+    admin,
+    stalled.map((job) => job.id),
+  );
+  if (jobsWithSuccessfulRuns === null) {
+    return;
+  }
+
+  const completedWithoutAck = stalled.filter((job) => jobsWithSuccessfulRuns.has(job.id));
+  const failedWithoutActiveRuns = stalled.filter((job) => !jobsWithSuccessfulRuns.has(job.id));
+
+  for (const job of completedWithoutAck) {
+    const { error } = await admin
+      .from("agent_jobs")
+      .update({
+        finished_at: new Date().toISOString(),
+        status: "success",
+      })
+      .eq("id", job.id)
+      .in("status", CLAIMED_AGENT_JOB_STATUSES);
+    if (error) {
+      console.error("[stall-detector] failed to acknowledge successful job", {
+        error: error.message,
+        jobId: job.id,
+      });
+      continue;
+    }
+
+    console.log("[stall-detector] acknowledged running job whose run already succeeded", {
+      jobId: job.id,
+      workspaceId: job.workspace_id,
+    });
+  }
+
+  if (failedWithoutActiveRuns.length === 0) {
+    return;
+  }
+
+  const jobsWithAnyRuns = await loadJobIdsWithAnyRuns(
+    admin,
+    failedWithoutActiveRuns.map((job) => job.id),
+  );
+  if (jobsWithAnyRuns === null) {
+    return;
+  }
+
+  const failedWithTerminalRuns = failedWithoutActiveRuns.filter((job) =>
+    jobsWithAnyRuns.has(job.id),
+  );
+  const runlessJobs = failedWithoutActiveRuns.filter((job) => !jobsWithAnyRuns.has(job.id));
+  const agedRunlessJobs = await selectAgedRunlessJobs(admin, runlessJobs, defaultStallTimeoutMs);
+  const stalledJobs = [...failedWithTerminalRuns, ...agedRunlessJobs];
+  if (stalledJobs.length === 0) {
+    return;
+  }
+
+  const maxRetries = await loadMaxRetries(admin, [
+    ...new Set(stalledJobs.map((job) => job.workspace_id)),
+  ]);
+
+  for (const job of stalledJobs) {
+    await resolveStalledJob({
+      admin,
+      jobId: job.id,
+      maxRetries: maxRetries.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
+      result,
+      stallReason: TERMINAL_RUNS_JOB_STALL_REASON,
+    });
+    await parkSessionForStalledJob(admin, job.session_id);
+
+    console.log("[stall-detector] closed claimed job with no active runs", {
+      jobId: job.id,
+      workspaceId: job.workspace_id,
+    });
+  }
+}
+
+async function parkSessionForStalledJob(admin: AdminClient, sessionId: string): Promise<void> {
+  await admin
+    .from("sessions")
+    .update({ phase_status: "rejected" })
+    .eq("id", sessionId)
+    .eq("phase_status", "in_progress");
+}
+
+async function loadRunningJobs(
+  admin: AdminClient,
+  options: StallSweepOptions,
+): Promise<RunningJobRow[]> {
+  const jobs: RunningJobRow[] = [];
+
+  for (let offset = 0; ; offset += ACTIVE_RUN_PAGE_SIZE) {
+    const runningJobQuery = admin
+      .from("agent_jobs")
+      .select("id, session_id, workspace_id, started_at, created_at")
+      .in("status", CLAIMED_AGENT_JOB_STATUSES);
+    const scopedRunningJobQuery = options.workspaceId
+      ? runningJobQuery.eq("workspace_id", options.workspaceId)
+      : runningJobQuery;
+    const { data, error } = await scopedRunningJobQuery
+      .order("created_at", { ascending: true })
+      .range(offset, offset + ACTIVE_RUN_PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("[stall-detector] failed to fetch running jobs", { error: error.message });
+      return jobs;
+    }
+
+    if (!data || data.length === 0) {
+      return jobs;
+    }
+
+    jobs.push(...(data as RunningJobRow[]));
+
+    if (data.length < ACTIVE_RUN_PAGE_SIZE) {
+      return jobs;
+    }
+  }
+}
+
+async function loadJobIdsWithActiveRuns(
+  admin: AdminClient,
+  jobIds: string[],
+): Promise<Set<string>> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("agent_job_id")
+    .in("agent_job_id", [...new Set(jobIds)])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
+
+  if (error) {
+    console.error("[stall-detector] failed to load active runs for running jobs", {
+      error: error.message,
+    });
+    // Fail closed: a read error must not look like "no active runs" or we
+    // would retry/error live jobs that still have work in flight.
+    return new Set(jobIds);
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+}
+
+async function loadJobIdsWithSuccessfulRuns(
+  admin: AdminClient,
+  jobIds: string[],
+): Promise<Set<string> | null> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("agent_job_id")
+    .in("agent_job_id", [...new Set(jobIds)])
+    .eq("status", "success");
+
+  if (error) {
+    console.error("[stall-detector] failed to load successful runs for running jobs", {
+      error: error.message,
+    });
+    // Fail closed: a read error must not look like "no success run" or we
+    // would retry a generation that already published its artifact.
+    return null;
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+}
+
+async function loadJobIdsWithAnyRuns(
+  admin: AdminClient,
+  jobIds: string[],
+): Promise<Set<string> | null> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("agent_job_id")
+    .in("agent_job_id", [...new Set(jobIds)]);
+
+  if (error) {
+    console.error("[stall-detector] failed to load runs for running jobs", {
+      error: error.message,
+    });
+    // Fail closed: a read error must not classify a live job as runless or we
+    // would retry it during the claim → startAgentRun gap.
+    return null;
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+}
+
+async function selectAgedRunlessJobs(
+  admin: AdminClient,
+  jobs: RunningJobRow[],
+  defaultStallTimeoutMs: number,
+): Promise<RunningJobRow[]> {
+  if (jobs.length === 0) {
+    return [];
+  }
+
+  const now = Date.now();
+  const stallTimeouts = await loadStallTimeouts(admin, [
+    ...new Set(jobs.map((job) => job.workspace_id)),
+  ]);
+
+  return jobs.filter((job) => {
+    const timeoutMs = stallTimeouts.get(job.workspace_id) ?? defaultStallTimeoutMs;
+    const startedAt = job.started_at ?? job.created_at;
+    const elapsed = now - new Date(startedAt).getTime();
+    return Number.isFinite(elapsed) && elapsed >= timeoutMs;
+  });
+}
 
 async function loadActiveRuns(
   admin: AdminClient,
@@ -192,7 +493,7 @@ async function loadActiveRuns(
       .select(
         "id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
       )
-      .in("status", ["queued", "started", "running"]);
+      .in("status", ACTIVE_AGENT_RUN_STATUSES);
     const scopedActiveRunQuery = options.workspaceId
       ? activeRunQuery.eq("workspace_id", options.workspaceId)
       : activeRunQuery;
@@ -268,7 +569,7 @@ async function loadRunningJobIds(admin: AdminClient, jobIds: string[]): Promise<
     .from("agent_jobs")
     .select("id")
     .in("id", [...new Set(jobIds)])
-    .eq("status", "running");
+    .in("status", CLAIMED_AGENT_JOB_STATUSES);
 
   if (error) {
     console.error("[stall-detector] failed to load running jobs", { error: error.message });
@@ -331,7 +632,7 @@ async function resolveStalledJob(input: {
       status: "error",
     })
     .eq("id", jobId)
-    .eq("status", "running");
+    .in("status", CLAIMED_AGENT_JOB_STATUSES);
 
   if (!jobError) {
     result.stalledJobIds.push(jobId);

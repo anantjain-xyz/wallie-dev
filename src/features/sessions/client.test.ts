@@ -4,6 +4,7 @@ import {
   createSessionFromClient,
   loadSessionRepositoryOptionsFromClient,
   SessionOptionsChangedError,
+  SessionAttachmentsChangedError,
   updateSessionTitleFromClient,
 } from "./client";
 
@@ -131,6 +132,21 @@ describe("createSessionFromClient", () => {
 
     await expect(request).rejects.toBeInstanceOf(SessionOptionsChangedError);
     await expect(request).rejects.toMatchObject({ code: "session_options_changed" });
+  });
+
+  it("preserves an attachment conflict so retained files can be renewed", async () => {
+    mockFetch({
+      body: { code: "session_attachments_changed", error: "Images expired" },
+      ok: false,
+      status: 409,
+    });
+    const request = createSessionFromClient({
+      promptMd: "Add SSO",
+      attachmentIds: [ATTACHMENT_ID],
+      workspaceId: WORKSPACE_ID,
+    });
+    await expect(request).rejects.toBeInstanceOf(SessionAttachmentsChangedError);
+    await expect(request).rejects.toMatchObject({ code: "session_attachments_changed" });
   });
 
   it("rejects malformed success responses", async () => {

@@ -42,6 +42,14 @@ describe("SessionReviewBar", () => {
     expect(onApprove).toHaveBeenCalledTimes(1);
   });
 
+  it("announces the archive consequence when focusing the approval action", () => {
+    const description = "Final-stage approval may also archive the session.";
+    renderBar({ approveLabel: "Approve stage", approveDescription: description });
+    expect(screen.getByRole("button", { name: "Approve stage" })).toHaveAccessibleDescription(
+      description,
+    );
+  });
+
   it("rejects whitespace-only feedback and keeps the dialog open", async () => {
     const { onReject } = renderBar();
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
@@ -53,6 +61,14 @@ describe("SessionReviewBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
     expect(onReject).not.toHaveBeenCalled();
     expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAccessibleDescription(
+      "Feedback is required. Whitespace-only notes are not accepted.",
+    );
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Fix the copy" },
+    });
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "false");
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
@@ -105,6 +121,14 @@ describe("SessionReviewBar", () => {
 
     expect(onReject).not.toHaveBeenCalled();
     expect(await screen.findByText(/Feedback is required/)).toBeTruthy();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAccessibleDescription(
+      "Feedback is required. Whitespace-only notes are not accepted.",
+    );
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Fix the copy" },
+    });
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveAttribute("aria-invalid", "false");
     expect(feedback).toHaveFocus();
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
@@ -208,16 +232,15 @@ describe("SessionReviewBar", () => {
     expect(container.innerHTML).toContain("sticky bottom-0");
   });
 
-  it.each([
-    { canApprove: true, kind: "reviewable" } as const,
-    {
-      kind: "completed",
-      reason: "This session is complete. Review controls are closed.",
-    } as const,
-  ])("keeps the bottom section borderless for $kind mode", (mode) => {
-    const { container } = renderBar({ mode });
-
+  it("keeps the actionable bottom section borderless", () => {
+    const { container } = renderBar();
     expect(container.firstElementChild).not.toHaveClass("border-t");
+  });
+
+  it("leaves completed history unobstructed by a sticky notice", () => {
+    const { container } = renderBar({ mode: { kind: "completed", reason: "Session complete" } });
+    expect(container.innerHTML).not.toContain("sticky bottom-0");
+    expect(screen.queryByText("Session complete")).toBeNull();
   });
 
   it("restores focus to Request changes when the dialog closes", async () => {

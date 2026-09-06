@@ -9,6 +9,7 @@ describe("SettingsLoadingSkeleton", () => {
     const html = renderToStaticMarkup(createElement(SettingsLoadingSkeleton));
 
     expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("data-route-loading");
     expect(html).toContain('aria-label="Loading settings"');
     expect(html).toContain("lg:grid-cols-[180px_minmax(0,1fr)]");
     expect(html).toContain("top-[var(--shell-scroll-padding)]");

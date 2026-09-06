@@ -74,6 +74,6 @@ Validation for implementation: disclosure survives live inserts; collapsed summa
 
 The activity view now lives in `src/features/wallie/run-activity.tsx`, with the existing panel retaining ownership of queries, subscriptions, and recovery actions. Runs start collapsed; payload formatting and rendering wait until the tool is opened. Exploration groups keep the first event ID even when they contain only one event, preserving disclosure state as later reads arrive.
 
-`ShimmerText` uses a two-second CSS sweep inspired by [Codex's motion implementation](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/tui/src/shimmer.rs), with static text for reduced motion and forced colors. Tool events never receive an inferred running/success state.
+`ShimmerText` uses a two-second CSS sweep inspired by [Codex's motion implementation](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/tui/src/shimmer.rs), with static text for reduced motion and forced colors. Tool rows never receive an inferred running/success state. The existing session execution summary retains its startup and progress descriptions.
 
-The development-only `/dev/agent-activity` route exercises the production component with working, queued, completed, failed, canceled, disconnected, stalled, loading, and empty fixtures.
+The development/preview-only `/dev/agent-activity` route exercises the production component with working, queued, completed, failed, canceled, disconnected, stalled, loading, and empty fixtures.

@@ -34,6 +34,7 @@ function renderShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "chi
       {
         navItems,
         onboarding: { currentStep: "verify", status: "completed" } as const,
+        viewerAvatarUrl: null,
         viewerEmail: "owner@example.com",
         viewerId: "user-1",
         workspace,
@@ -96,6 +97,15 @@ describe("ShellHeader", () => {
     expect(html).toContain('aria-label="Account: owner@example.com"');
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("renders the signed-in user's profile photo in the account trigger", () => {
+    const html = renderShell({
+      viewerAvatarUrl: "https://cdn.example.com/owner.png",
+    });
+
+    expect(html).toContain('src="https://cdn.example.com/owner.png"');
+    expect(html).toContain('aria-label="Account: owner@example.com"');
   });
 
   it("exposes a mobile navigation trigger without bottom navigation", () => {

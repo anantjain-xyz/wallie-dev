@@ -30,24 +30,50 @@ not part of either canonical profile.
 
 ## Verification lanes
 
-| Lane                       | Command                                                  | What it proves                                                            | What it does not prove                                    |
-| -------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Focused unit or contract   | `pnpm test path/to/file.test.ts`                         | The selected Vitest file in the Node test environment                     | Unrelated tests, formatting, types, browser behavior      |
-| Focused behavior           | `pnpm test -t "name"`                                    | Tests matching one title                                                  | That the intended file was the only match                 |
-| Formatting                 | `pnpm format:check`                                      | Tracked and nonignored files match Prettier                               | Types or behavior                                         |
-| Static analysis            | `pnpm lint`                                              | ESLint and repository custom rules pass with zero warnings                | TypeScript or runtime behavior                            |
-| Types                      | `pnpm typecheck`                                         | TypeScript compiles with no emit                                          | Database runtime compatibility                            |
-| Unit suite                 | `pnpm test`                                              | All colocated Vitest tests pass                                           | A real browser, worker, provider, or hosted database      |
-| Canonical fast profile     | `pnpm check:fast`                                        | Validation contract, format, lint, types, and privileged imports pass     | Unit tests, production build, route budgets, E2E          |
-| Canonical full profile     | `pnpm check`                                             | The fast profile and all unit tests pass together                         | Production build, route budgets, E2E, hosted integrations |
-| Production route budget    | `pnpm build && pnpm check:route-budgets`                 | Next production build succeeds and committed route ceilings hold          | Interaction latency or user-perceived behavior            |
-| Authenticated bundle check | `pnpm build && pnpm analyze:authenticated-bundle`        | Selected authenticated chunks omit the script's prohibited bundle markers | A general dependency audit or runtime correctness         |
-| Local schema reset         | `supabase db reset`                                      | The full migration chain and seed apply to a clean local stack            | Upgrade compatibility from an older deployed schema       |
-| SQL test suite             | `SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local` | The checked-in pgTAP tests pass against local Supabase                    | Complete RLS/RPC coverage                                 |
-| Generated types            | `pnpm db:types` followed by a clean diff                 | Applied local schema projects to the committed TypeScript types           | RLS behavior for multiple identities                      |
+| Lane                       | Command                                           | What it proves                                                                                                | What it does not prove                                     |
+| -------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Focused unit or contract   | `pnpm test path/to/file.test.ts`                  | The selected Vitest file in the Node test environment                                                         | Unrelated tests, formatting, types, browser behavior       |
+| Focused behavior           | `pnpm test -t "name"`                             | Tests matching one title                                                                                      | That the intended file was the only match                  |
+| Formatting                 | `pnpm format:check`                               | Tracked and nonignored files match Prettier                                                                   | Types or behavior                                          |
+| Static analysis            | `pnpm lint`                                       | ESLint and repository custom rules pass with zero warnings                                                    | TypeScript or runtime behavior                             |
+| Types                      | `pnpm typecheck`                                  | TypeScript compiles with no emit                                                                              | Database runtime compatibility                             |
+| Unit suite                 | `pnpm test`                                       | All colocated Vitest tests pass                                                                               | A real browser, worker, provider, or hosted database       |
+| Canonical fast profile     | `pnpm check:fast`                                 | Validation contract, format, lint, types, and privileged imports pass                                         | Unit tests, production build, route budgets, E2E           |
+| Canonical full profile     | `pnpm check`                                      | The fast profile and all unit tests pass together                                                             | Production build, route budgets, E2E, hosted integrations  |
+| Production route budget    | `pnpm build && pnpm check:route-budgets`          | Next production build succeeds and committed route ceilings hold                                              | Interaction latency or user-perceived behavior             |
+| Authenticated bundle check | `pnpm build && pnpm analyze:authenticated-bundle` | Selected authenticated chunks omit the script's prohibited bundle markers                                     | A general dependency audit or runtime correctness          |
+| Local schema reset         | `supabase db reset`                               | The full migration chain and seed apply to a clean local stack                                                | Upgrade compatibility from an older deployed schema        |
+| SQL test suite             | `pnpm check:db-tests`                             | The checked-in pgTAP tests pass against local Supabase                                                        | Complete RLS/RPC coverage beyond the checked-in assertions |
+| Generated-types heuristic  | `pnpm db:types:check` / `pnpm check:types-drift`  | Types file exists; git timestamps do not show types older than the latest migration when history is available | A full regen; shallow CI checkouts often cannot compare    |
+| Generated types            | `pnpm db:types` followed by a clean diff          | Applied local schema projects to the committed TypeScript types                                               | RLS behavior for multiple identities                       |
 
 `pnpm db:types` rewrites a generated file. Run it only against the intended
 local Supabase schema and inspect the diff.
+
+`pnpm db:types:check` (`pnpm check:types-drift`) is a heuristic, not a full
+regen. `src/lib/supabase/database.types.ts` has no version header, so the
+script cannot match the latest migration filename to a stamp. When the latest
+migration cannot change generated types, the timestamp comparison is skipped.
+When git history is complete it compares commit timestamps of the types file
+and a type-changing latest migration and fails if types look older. A shallow
+clone cannot trust those timestamps, so a type-changing latest migration fails
+the heuristic instead of printing OK. It is **not** part of `check:fast`. The
+live-repo Vitest skips the timestamp assertion on shallow checkouts; a fixture
+covers the fail path.
+
+The Test workflow runs the SQL suite in a separate `database-tests` job on every
+pull request and main push. It installs a pinned Supabase CLI, starts disposable
+local services with migrations and seed data, and runs `pnpm check:db-tests`.
+The job uses no hosted database or production credentials. Studio, the Edge
+runtime, analytics, and the pooler are excluded because the SQL tests do not need
+them. Failure diagnostics print local container status and database logs, and
+cleanup runs even when tests fail. The validation contract rejects skipped or
+non-blocking variants of this job.
+
+Locally, continue to run `pnpm check:db-tests` after `supabase start`. The SQL suite
+is an additional CI check; `pnpm check` remains usable without Docker. Repository
+owners can require the `database-tests` check in branch protection after its
+first successful run.
 
 Database, browser, sandbox-provider, and hosted-integration checks depend on
 additional local services, credentials, or external environments. Run the
@@ -162,3 +188,49 @@ A pull request should state:
 Do not claim the full gate from a focused test, or a deployed outcome from local
 checks. Keep temporary browser output, caches, traces, and screenshots out of
 the repository unless the artifact is intentionally reviewed and owned.
+
+## Browser release check
+
+Use the separate release configuration to run the responsive/accessibility matrix,
+auth-session checks, invitation-link recovery, and navigation recovery in Chromium and WebKit:
+
+```bash
+pnpm exec playwright install chromium webkit
+supabase start
+# Export the API URL, anon/publishable key, and service-role key from this local
+# stack's `supabase status` output as the variables below. Do not use hosted keys.
+export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY='<local-anon-or-publishable-key>'
+export SUPABASE_SECRET_KEY='<local-service-role-key>'
+export NEXT_PUBLIC_APP_URL=http://localhost:3100
+pnpm test:e2e:release
+```
+
+The stack must have this checkout's migrations and demo seed, including
+`anant@example.com` and the Acme Corp workspace. Use a disposable local stack;
+the auth scenarios create and remove a temporary user. The release configuration
+requires explicit local connection settings and rejects hosted Supabase URLs.
+Keep keys out of commits and shared logs.
+
+The command builds once and runs both engines serially against the production
+server. For a single engine after building, run
+`pnpm exec playwright test --config playwright.release.config.ts --project webkit`.
+Screenshots and failure traces are written to `test-results/`, separated by
+project. Existing individual E2E and benchmark commands keep their default
+Chromium configuration.
+
+Each engine covers 110 route/viewport/theme combinations, including an active
+session, plus selected axe scans and keyboard/touch/reduced-motion scenarios.
+Readiness waits for route and nested loading fallbacks, excluding the ongoing
+agent-run progress indicator.
+WebKit coverage is a browser-engine check, not certification of shipping Safari,
+iOS keyboards, device safe areas, email delivery, or real provider execution.
+Those still require the corresponding release rehearsal.
+
+The keyboard check uses Tab in Chromium and Option+Tab in WebKit to include
+links and controls in Safari's tab order. The layout matrix lets background
+reads settle before intentionally reloading for a theme change or leaving a
+sample; interruption behavior is exercised separately in the route-recovery
+suite. Application console errors and page errors still fail the layout matrix.
+
+Invitation recovery checks cover signed-out redirect preservation, invalid-link layouts at 320/390/1440px, and returning to the workspace without signing out. They do not send invitations or verify production email delivery or successful membership acceptance.

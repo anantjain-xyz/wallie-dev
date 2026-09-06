@@ -2,15 +2,18 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   StageTimeline,
   buildStageTimeline,
   centerStageTimelineSelection,
+  stageTimelineLabel,
 } from "@/features/sessions/detail/stage-timeline";
 import type { SessionReviewSession } from "@/features/sessions/detail/data";
+
+afterEach(cleanup);
 
 function makeSession(overrides: Partial<SessionReviewSession> = {}): SessionReviewSession {
   return {
@@ -48,9 +51,9 @@ describe("buildStageTimeline", () => {
     expect(timeline.map((entry) => entry.status)).toEqual(["completed", "current", "upcoming"]);
   });
 
-  it("marks changes_requested when the current stage is rejected", () => {
+  it("uses neutral wording for rejected or stopped stages", () => {
     const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }));
-    expect(timeline[1]?.status).toBe("changes_requested");
+    expect(timeline[1]?.status).toBe("not_running");
   });
 
   it("marks failed when a failed stage slug is provided", () => {
@@ -58,6 +61,35 @@ describe("buildStageTimeline", () => {
     expect(timeline[1]?.status).toBe("failed");
   });
 });
+
+it("does not infer completion for an unapproved stage moved before the current stage", () => {
+  const session = makeSession();
+  const [plan, build, land] = session.pipeline.stages;
+  session.pipeline.stages = [plan!, land!, build!];
+  const timeline = buildStageTimeline(session);
+  expect(timeline.map(stageTimelineLabel)).toEqual([
+    "Completed",
+    "Not approved",
+    "Awaiting review",
+  ]);
+});
+
+it.each(["in_progress", "awaiting_review"] as const)(
+  "shows an active %s revisit instead of its historical completion",
+  (phaseStatus) => {
+    const session = makeSession({ phaseStatus });
+    session.phaseCompletions.push({ stageSlug: "build", completedAt: "2026-06-07T11:30:00.000Z" });
+    const timeline = buildStageTimeline(session);
+    expect(timeline[1]?.status).toBe("current");
+    render(
+      createElement(StageTimeline, { onSelect: vi.fn(), selectedStageSlug: "build", timeline }),
+    );
+    const label = phaseStatus === "in_progress" ? "In progress" : "Awaiting review";
+    expect(
+      screen.getByRole("button", { name: `Build: ${label}` }).getAttribute("aria-current"),
+    ).toBe("step");
+  },
+);
 
 describe("centerStageTimelineSelection", () => {
   it("centers the selected stage with horizontal rail scrolling only", () => {
@@ -89,26 +121,55 @@ describe("StageTimeline", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Land" }));
+    fireEvent.click(screen.getByRole("button", { name: "Land: Upcoming" }));
 
     expect(onSelect).toHaveBeenCalledWith("land");
   });
 
-  it("renders selectable stage names without status pills", () => {
-    const html = renderToStaticMarkup(
+  it("distinguishes the stage being viewed from the current pipeline stage", () => {
+    render(
       createElement(StageTimeline, {
         onSelect: vi.fn(),
-        selectedStageSlug: "build",
+        selectedStageSlug: "plan",
         timeline: buildStageTimeline(makeSession()),
       }),
     );
+    const completed = screen.getByRole("button", { name: "Plan: Completed" });
+    const current = screen.getByRole("button", { name: "Build: Awaiting review" });
+    expect(completed.getAttribute("aria-pressed")).toBe("true");
+    expect(completed.hasAttribute("aria-current")).toBe(false);
+    expect(current.getAttribute("aria-current")).toBe("step");
+    expect(current.getAttribute("aria-pressed")).toBe("false");
+  });
 
-    expect(html).toContain(">Plan</span>");
-    expect(html).toContain(">Build</span>");
-    expect(html).toContain(">Land</span>");
-    expect(html).toContain('aria-current="step"');
-    expect(html).not.toContain("data-status=");
-    expect(html).not.toMatch(/Complete|Awaiting review|Upcoming/);
+  it("shows failure and stopped states as text as well as visual indicators", () => {
+    expect(
+      stageTimelineLabel(buildStageTimeline(makeSession(), { failedStageSlug: "build" })[1]!),
+    ).toBe("Failed");
+    expect(
+      stageTimelineLabel(buildStageTimeline(makeSession({ phaseStatus: "rejected" }))[1]!),
+    ).toBe("Not running");
+    expect(
+      stageTimelineLabel(buildStageTimeline(makeSession({ phaseStatus: "in_progress" }))[1]!),
+    ).toBe("In progress");
+  });
+
+  it("marks a terminal approved stage completed before its completion event arrives", () => {
+    const timeline = buildStageTimeline(
+      makeSession({ currentStageId: "stage-3", currentStageSlug: "land", phaseStatus: "approved" }),
+    );
+    expect(timeline.map(stageTimelineLabel)).toEqual(["Completed", "Not approved", "Completed"]);
+  });
+
+  it("does not mark an earlier failed stage as the current step", () => {
+    const html = renderToStaticMarkup(
+      createElement(StageTimeline, {
+        onSelect: vi.fn(),
+        selectedStageSlug: "plan",
+        timeline: buildStageTimeline(makeSession(), { failedStageSlug: "plan" }),
+      }),
+    );
+    expect(html.match(/aria-current="step"/g)).toHaveLength(1);
   });
 
   it("contains long unbroken stage names at narrow widths", () => {
@@ -136,4 +197,33 @@ describe("StageTimeline", () => {
     expect(html).toContain("min-w-0 max-w-full");
     expect(html).toContain("[overflow-wrap:anywhere]");
   });
+});
+
+it("has no upcoming work after terminal approval despite a stage reorder", () => {
+  const session = makeSession({ phaseStatus: "approved" });
+  expect(buildStageTimeline(session).map(stageTimelineLabel)).toEqual([
+    "Completed",
+    "Completed",
+    "Not approved",
+  ]);
+});
+
+it("matches renamed stages by ID and does not transfer approval to a reused slug", () => {
+  const session = makeSession();
+  session.phaseCompletions = [
+    { stageId: "stage-1", stageSlug: "plan", completedAt: "2026-06-07T11:00:00.000Z" },
+  ];
+  session.pipeline.stages[0]!.slug = "discovery";
+  session.pipeline.stages[2]!.slug = "plan";
+  expect(buildStageTimeline(session).map(stageTimelineLabel)).toEqual([
+    "Completed",
+    "Awaiting review",
+    "Upcoming",
+  ]);
+});
+
+it("keeps the current step after its slug changes", () => {
+  const session = makeSession();
+  session.pipeline.stages[1]!.slug = "implement";
+  expect(buildStageTimeline(session)[1]?.status).toBe("current");
 });

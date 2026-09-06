@@ -13,6 +13,12 @@ import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
 import { maxProfileAvatarBytes } from "@/lib/storage/profile-avatar-contracts";
 
+const refresh = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh }),
+}));
+
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const timestamp = "2026-07-17T12:00:00.000Z";
 const axeOptions = { rules: { "color-contrast": { enabled: false } } };
@@ -64,6 +70,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  refresh.mockClear();
   document.body.removeAttribute("data-scroll-locked");
   document.body.removeAttribute("style");
 });
@@ -214,6 +221,7 @@ describe("destructive settings dialogs", () => {
     const body = request?.body as FormData;
     expect(body.get("avatarAction")).toBe("keep");
     expect(body.get("fullName")).toBe("Anant Jain");
+    expect(refresh).toHaveBeenCalledOnce();
   });
 
   it("previews a replacement locally and cancels without saving", async () => {

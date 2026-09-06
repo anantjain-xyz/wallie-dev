@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { listOpenCodeProviderCredentialMeta } from "@/lib/opencode/tokens";
 import { encryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
 
 const requestSchema = z.object({
   credential: z
@@ -21,27 +24,12 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("user_opencode_credentials")
-    .select("updated_at")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    return NextResponse.json(await loadOpenCodeConnectionStatus(user.id));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load OpenCode connection.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  const checkedAt = new Date().toISOString();
-  if (!data) {
-    return NextResponse.json({ checkedAt, connected: false });
-  }
-
-  return NextResponse.json({
-    checkedAt,
-    connected: true,
-    updatedAt: data.updated_at,
-  });
 }
 
 export async function POST(request: Request) {
@@ -68,28 +56,26 @@ export async function POST(request: Request) {
 
   const now = new Date().toISOString();
   const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("user_opencode_credentials")
-    .upsert(
-      {
-        encrypted_api_key: encryptSecretValue(parsed.data.credential),
-        updated_at: now,
-        user_id: user.id,
-      },
-      { onConflict: "user_id" },
-    )
-    .select("updated_at")
-    .single();
+  const { error } = await admin.from("user_opencode_credentials").upsert(
+    {
+      encrypted_api_key: encryptSecretValue(parsed.data.credential),
+      updated_at: now,
+      user_id: user.id,
+    },
+    { onConflict: "user_id" },
+  );
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({
-    checkedAt: new Date().toISOString(),
-    connected: true,
-    updatedAt: data.updated_at,
-  });
+  try {
+    return NextResponse.json(await loadOpenCodeConnectionStatus(user.id, admin));
+  } catch (loadError) {
+    const message =
+      loadError instanceof Error ? loadError.message : "Failed to load OpenCode connection.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function DELETE() {
@@ -107,4 +93,32 @@ export async function DELETE() {
   }
 
   return new NextResponse(null, { status: 204 });
+}
+
+async function loadOpenCodeConnectionStatus(
+  userId: string,
+  admin: SupabaseClient<Database> = createSupabaseAdminClient(),
+) {
+  const [{ data, error }, providers] = await Promise.all([
+    admin
+      .from("user_opencode_credentials")
+      .select("updated_at")
+      .eq("user_id", userId)
+      .maybeSingle(),
+    listOpenCodeProviderCredentialMeta(admin, userId),
+  ]);
+
+  if (error) throw error;
+
+  const checkedAt = new Date().toISOString();
+  if (!data) {
+    return { checkedAt, connected: false, providers };
+  }
+
+  return {
+    checkedAt,
+    connected: true,
+    providers,
+    updatedAt: data.updated_at,
+  };
 }

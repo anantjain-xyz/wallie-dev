@@ -1364,6 +1364,30 @@ export type Database = {
         }
         Relationships: []
       }
+      user_opencode_provider_credentials: {
+        Row: {
+          created_at: string
+          encrypted_api_key: string
+          provider_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_api_key: string
+          provider_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_api_key?: string
+          provider_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       worker_heartbeats: {
         Row: {
           active_job_ids: string[]
@@ -2454,25 +2478,6 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "sandbox_capability_checks"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
-      update_user_display_name: {
-        Args: { actor_full_name: string; actor_user_id: string }
-        Returns: {
-          avatar_overridden: boolean
-          avatar_path: string | null
-          avatar_url: string | null
-          created_at: string
-          full_name: string | null
-          id: string
-          primary_email: string | null
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "profiles"
           isOneToOne: true
           isSetofReturn: false
         }

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 
 import type { WorkerConfig } from "./config";
@@ -38,7 +39,7 @@ export async function claimNextJob(
     return { outcome: "idle" };
   }
 
-  return { job: row as AgentJobRow, outcome: "claimed" };
+  return { job: row, outcome: "claimed" };
 }
 
 /**
@@ -55,7 +56,7 @@ export async function runClaimedJob(admin: AdminClient, job: AgentJobRow): Promi
     .from("agent_runs")
     .update({ last_activity_at: new Date().toISOString() })
     .eq("agent_job_id", job.id)
-    .in("status", ["queued", "started", "running"]);
+    .in("status", ACTIVE_AGENT_RUN_STATUSES);
 
   try {
     await processPipelineJob({ admin, job });

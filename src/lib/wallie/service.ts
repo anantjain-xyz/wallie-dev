@@ -3,10 +3,15 @@ import "server-only";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
-import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import {
+  ACTIVE_AGENT_JOB_STATUSES,
+  ACTIVE_AGENT_RUN_STATUSES,
+  cancelSessionWork,
+  isActiveAgentRunStatus,
+} from "@/lib/pipeline/cancel";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
@@ -46,6 +51,7 @@ type SessionForRun = Pick<
 type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
+type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "workspace_id">;
 
 const sessionSelect =
   "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
@@ -109,6 +115,21 @@ export type EnqueueWallieRunResult = {
   created: boolean;
   jobId: string | null;
   run: AgentRunRow;
+};
+
+export type EnqueueSessionJobWithRunInput = {
+  admin: AdminClient;
+  requestedByMemberId: string | null;
+  /** Retry budget while waiting for a concurrently enqueued run to become visible. */
+  runLookupRetry?: WallieRunLookupRetryOptions;
+  /**
+   * Mode stamped on the queued run. Defaults to the mode inferred from the
+   * session's effective repository — the same resolution the processor
+   * performs at run time.
+   */
+  runType?: WallieRunMode;
+  session: SessionForEnqueue;
+  triggerType: Enums<"agent_trigger_type">;
 };
 
 export type CreateSessionWithFirstJobResult = {
@@ -333,7 +354,7 @@ function createRunInsert(input: {
   jobId: string;
   modelName: string;
   modelProvider: string;
-  requestedByMemberId: string;
+  requestedByMemberId: string | null;
   runType: WallieRunMode;
   stage: StageSnapshot | null;
   workspaceId: string;
@@ -354,7 +375,7 @@ function createRunInsert(input: {
 
 function createJobInsert(input: {
   sessionId: string;
-  requestedByMemberId: string;
+  requestedByMemberId: string | null;
   stage: StageSnapshot | null;
   triggerType: Enums<"agent_trigger_type">;
   workspaceId: string;
@@ -479,7 +500,7 @@ async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
     .from("agent_runs")
     .select(runSelect)
     .eq("session_id", sessionId)
-    .in("status", ["queued", "started", "running"])
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -501,7 +522,10 @@ async function loadActiveJobByDedupeKey(
     .select(jobSelect)
     .eq("workspace_id", workspaceId)
     .eq("dedupe_key", dedupeKey)
-    .in("status", ["queued", "running"])
+    // Must match the partial unique index that raised the 23505 we are
+    // recovering from; a narrower set here made the dedupe lookup miss a
+    // `started` job and rethrow the violation as a hard failure.
+    .in("status", ACTIVE_AGENT_JOB_STATUSES)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -733,32 +757,78 @@ async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
   }
 }
 
-async function createQueuedRun(input: {
-  admin: AdminClient;
-  runLookupRetry?: WallieRunLookupRetryOptions;
-  session: SessionForRun;
-  requestedByMemberId: string;
+async function inferSessionRunType(
+  admin: AdminClient,
+  session: Pick<SessionForEnqueue, "id" | "workspace_id">,
+): Promise<WallieRunMode> {
+  const resolution = await resolveEffectiveSessionRepository({
+    sessionId: session.id,
+    supabase: admin,
+    workspaceId: session.workspace_id,
+  });
+  return inferWallieRunMode(resolution.repositoryId);
+}
+
+export type QueuedRunConfig = {
+  modelName: string;
+  modelProvider: string;
   runType: WallieRunMode;
-  triggerType: Enums<"agent_trigger_type">;
-  workspace: WorkspaceAccessWorkspace;
-}) {
-  // Resolve the workspace's configured model so the queued row matches what
-  // the executor will actually run. Source-of-truth is the same lookup
-  // pipeline/processor.ts uses; drift between the two re-introduces the
-  // original placeholder bug.
-  const [agentConfig, stage] = await Promise.all([
-    loadWorkspaceAgentConfig(input.admin, input.workspace.id),
-    loadStageSnapshot(input.admin, input.session.current_stage_id),
+};
+
+/**
+ * Model and run mode the next queued run for `session` must carry. Both the
+ * TypeScript enqueue path and the `reject_session_stage` RPC caller stamp their
+ * run rows from this so the worker sees the same shape regardless of which
+ * transition queued the work. The model lookup is the same one
+ * pipeline/processor.ts performs at execution time; drift between the two
+ * re-introduces the original placeholder-model bug.
+ */
+export async function resolveQueuedRunConfig(
+  admin: AdminClient,
+  session: Pick<SessionForEnqueue, "id" | "workspace_id">,
+  runType?: WallieRunMode,
+): Promise<QueuedRunConfig> {
+  const [agentConfig, resolvedRunType] = await Promise.all([
+    loadWorkspaceAgentConfig(admin, session.workspace_id),
+    runType ?? inferSessionRunType(admin, session),
+  ]);
+  return {
+    modelName: agentConfig.model,
+    modelProvider: agentConfig.provider,
+    runType: resolvedRunType,
+  };
+}
+
+/**
+ * The one TypeScript enqueue path: insert a `queued` job under the session's
+ * `session:<id>:active` dedupe key and its matching `queued` run in the shape
+ * `create_session_with_first_job` produces, so the worker sees an identical row
+ * pair regardless of whether a session was created, approved into its next
+ * stage, or retried by hand.
+ *
+ * Losing the dedupe race is an idempotent success: the partial unique index
+ * rejects the second active job, so we return the live job and wait (bounded)
+ * for its run row to become visible. A run-insert failure deletes the orphaned
+ * queued job before rethrowing so a retry is not deduped against a job that
+ * has no run.
+ */
+export async function enqueueSessionJobWithRun(
+  input: EnqueueSessionJobWithRunInput,
+): Promise<EnqueueWallieRunResult> {
+  const { admin, session } = input;
+  const [runConfig, stage] = await Promise.all([
+    resolveQueuedRunConfig(admin, session, input.runType),
+    loadStageSnapshot(admin, session.current_stage_id),
   ]);
 
   const jobInsert = createJobInsert({
-    sessionId: input.session.id,
+    sessionId: session.id,
     requestedByMemberId: input.requestedByMemberId,
     stage,
     triggerType: input.triggerType,
-    workspaceId: input.workspace.id,
+    workspaceId: session.workspace_id,
   });
-  const { data: job, error: jobError } = await input.admin
+  const { data: job, error: jobError } = await admin
     .from("agent_jobs")
     .insert(jobInsert)
     .select(jobSelect)
@@ -766,16 +836,16 @@ async function createQueuedRun(input: {
 
   if (isUniqueViolation(jobError)) {
     const activeJob = await loadActiveJobByDedupeKey(
-      input.admin,
-      input.workspace.id,
-      buildWallieJobDedupeKey(input.session.id),
+      admin,
+      session.workspace_id,
+      buildWallieJobDedupeKey(session.id),
     );
 
     if (!activeJob) {
       throw jobError;
     }
 
-    const activeRun = await waitForRunByJobId(input.admin, activeJob.id, input.runLookupRetry);
+    const activeRun = await waitForRunByJobId(admin, activeJob.id, input.runLookupRetry);
 
     return {
       created: false,
@@ -788,25 +858,25 @@ async function createQueuedRun(input: {
     throw jobError;
   }
 
-  const { data: run, error: runError } = await input.admin
+  const { data: run, error: runError } = await admin
     .from("agent_runs")
     .insert(
       createRunInsert({
-        sessionId: input.session.id,
+        sessionId: session.id,
         jobId: job.id,
-        modelName: agentConfig.model,
-        modelProvider: agentConfig.provider,
+        modelName: runConfig.modelName,
+        modelProvider: runConfig.modelProvider,
         requestedByMemberId: input.requestedByMemberId,
-        runType: input.runType,
+        runType: runConfig.runType,
         stage,
-        workspaceId: input.workspace.id,
+        workspaceId: session.workspace_id,
       }),
     )
     .select(runSelect)
     .single();
 
   if (runError) {
-    await cleanupQueuedJob(input.admin, job.id);
+    await cleanupQueuedJob(admin, job.id);
     throw runError;
   }
 
@@ -860,14 +930,13 @@ export async function retryWallieRun(input: {
     } satisfies EnqueueWallieRunResult;
   }
 
-  return createQueuedRun({
+  return enqueueSessionJobWithRun({
     admin,
-    runLookupRetry: input.runLookupRetry,
-    session: validated.session,
     requestedByMemberId: input.requestedByMemberId,
+    runLookupRetry: input.runLookupRetry,
     runType: validated.runType,
+    session: validated.session,
     triggerType: "manual_retry",
-    workspace: validated.workspace,
   });
 }
 
@@ -902,7 +971,7 @@ export async function cancelWallieRun(input: {
 
   // A run that already reached a terminal state has nothing to cancel. Return
   // it unchanged so the caller can treat a double-click as a no-op.
-  if (!["queued", "started", "running"].includes(existingRun.status)) {
+  if (!isActiveAgentRunStatus(existingRun.status)) {
     return { canceled: false, run: existingRun } satisfies CancelWallieRunResult;
   }
 

@@ -212,7 +212,7 @@ export function SettingsCategoryNav({
                 </span>
               </Link>
               {isActive ? (
-                <ul className="mt-2 flex gap-1 overflow-x-auto pb-1 lg:ml-3 lg:mt-1 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:border-l lg:border-border lg:pb-0 lg:pl-2">
+                <ul className="mt-2 flex flex-wrap gap-1 pb-1 lg:ml-3 lg:mt-1 lg:flex-col lg:flex-nowrap lg:gap-0.5 lg:border-l lg:border-border lg:pb-0 lg:pl-2">
                   {settingsCategorySubmenu(category.id, canManage).map((item) => {
                     const isSubmenuActive = item.id === activeAnchor;
                     return (

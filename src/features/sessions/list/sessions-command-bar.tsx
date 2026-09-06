@@ -125,7 +125,7 @@ export function SessionsCommandBar({
 
   return (
     <div className="mb-6 border-y border-border py-2.5">
-      <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:gap-2.5">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-2.5">
         <form
           onSubmit={handleSearchSubmit}
           className="flex w-full shrink-0 items-center gap-1.5 sm:max-w-[300px] lg:w-[300px]"
@@ -174,8 +174,6 @@ export function SessionsCommandBar({
             );
           })}
         </div>
-
-        <div aria-hidden="true" className="hidden h-4 w-px shrink-0 bg-border lg:block" />
 
         <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:gap-2.5">
           <Select

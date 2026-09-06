@@ -4,6 +4,7 @@ import {
   ensureProfileForUser,
   getWorkspaceBySlugForUser,
   isWorkspaceInvitationPath,
+  loadOwnProfileDisplay,
   normalizeNextPath,
   resolveAuthenticatedHomePath,
   workspaceLoginRedirectPath,
@@ -68,6 +69,59 @@ describe("auth helpers", () => {
       actor_avatar_url: "https://example.com/ada.png",
       actor_email: "ada@example.com",
       actor_full_name: "Ada Lovelace",
+    });
+  });
+
+  it("reads the signed-in user's profile photo from profiles", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { avatar_url: "https://cdn.example.com/ada.png" },
+      error: null,
+    });
+    const eq = vi.fn(() => ({ maybeSingle }));
+    const select = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ select }));
+
+    await expect(loadOwnProfileDisplay({ from } as never, "user-1")).resolves.toEqual({
+      avatarUrl: "https://cdn.example.com/ada.png",
+      found: true,
+    });
+    expect(from).toHaveBeenCalledWith("profiles");
+    expect(select).toHaveBeenCalledWith("avatar_url");
+    expect(eq).toHaveBeenCalledWith("id", "user-1");
+  });
+
+  it("returns a null photo when the profile row is missing", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({ maybeSingle }),
+        }),
+      }),
+    };
+
+    await expect(loadOwnProfileDisplay(supabase as never, "user-1")).resolves.toEqual({
+      avatarUrl: null,
+      found: false,
+    });
+  });
+
+  it("keeps found true when the profile row exists without a photo", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { avatar_url: null },
+      error: null,
+    });
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({ maybeSingle }),
+        }),
+      }),
+    };
+
+    await expect(loadOwnProfileDisplay(supabase as never, "user-1")).resolves.toEqual({
+      avatarUrl: null,
+      found: true,
     });
   });
 

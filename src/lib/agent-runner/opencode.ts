@@ -1,3 +1,4 @@
+import { OPENCODE_ZEN_PROVIDER_ID, parseOpenCodeModelId } from "@/lib/agent-config/contracts";
 import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets } from "@/lib/sandbox/command";
@@ -5,8 +6,10 @@ import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 
 export interface OpenCodeRunnerOptions {
-  /** User-supplied OpenCode Zen API key resolved by getOpenCodeCredentialForUser. */
-  credential: OpenCodeCredential;
+  /** User-supplied OpenCode Zen API key, if connected. */
+  credential?: OpenCodeCredential | null;
+  /** Custom provider keys keyed by OpenCode provider id. Never includes `opencode`. */
+  providerCredentials?: Readonly<Record<string, OpenCodeCredential>>;
   /** OpenCode model identifier in provider/model form. */
   model?: string;
 }
@@ -21,20 +24,34 @@ export type ParsedOpenCodeLine = {
 };
 
 /**
- * OpenCode CLI runner for OpenCode Zen.
+ * OpenCode CLI runner.
  *
- * The Zen key is materialized in an isolated XDG data directory rather than
- * passed through the process environment or command line. OpenCode emits one
- * JSON object per line in `--format json` mode; those objects are translated
- * into Wallie's provider-neutral AgentEvent contract.
+ * Keys are materialized in an isolated XDG data directory rather than passed
+ * through the process environment or command line. `auth.json` is keyed by
+ * OpenCode provider id (the segment before the first slash of `--model`).
+ * OpenCode emits one JSON object per line in `--format json` mode; those
+ * objects are translated into Wallie's provider-neutral AgentEvent contract.
  */
 export class OpenCodeRunner implements AgentRunner {
   readonly provider = "opencode";
   readonly requiresSandbox = true;
 
+  private readonly model: string;
+  private readonly modelProviderId: string;
+  private readonly authEntries: Record<string, { type: "api"; key: string }>;
+
   constructor(private readonly options: OpenCodeRunnerOptions) {
-    if (!options.credential?.secret) {
-      throw new Error("OpenCodeRunner requires an OpenCode Zen API key.");
+    this.model = options.model ?? DEFAULT_OPENCODE_MODEL;
+    const parsed = parseOpenCodeModelId(this.model);
+    if (!parsed) {
+      throw new Error(
+        `OpenCodeRunner requires a "<provider-id>/<model-id>" model, got "${this.model}".`,
+      );
+    }
+    this.modelProviderId = parsed.providerId;
+    this.authEntries = buildOpenCodeAuthEntries(options, parsed.providerId);
+    if (!secretForProvider(options, parsed.providerId)) {
+      throw missingProviderCredentialError(parsed.providerId);
     }
   }
 
@@ -44,6 +61,10 @@ export class OpenCodeRunner implements AgentRunner {
       throw new Error("OpenCodeRunner requires a sandbox.");
     }
 
+    if (!secretForProvider(this.options, this.modelProviderId)) {
+      throw missingProviderCredentialError(this.modelProviderId);
+    }
+
     const token = safePathToken(input.runId ?? input.sessionId);
     const root = `/tmp/wallie-opencode-${token}`;
     const dataHome = `${root}/data`;
@@ -51,16 +72,11 @@ export class OpenCodeRunner implements AgentRunner {
     const promptFile = `${root}/prompt.txt`;
 
     await Promise.all([
-      sandbox.writeFile(
-        authFile,
-        `${JSON.stringify({ opencode: { type: "api", key: this.options.credential.secret } })}\n`,
-        { mode: 0o600 },
-      ),
+      sandbox.writeFile(authFile, `${JSON.stringify(this.authEntries)}\n`, { mode: 0o600 }),
       sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 }),
     ]);
 
-    const model = this.options.model ?? DEFAULT_OPENCODE_MODEL;
-    const cliArgs = ["run", "--format", "json", "--model", model];
+    const cliArgs = ["run", "--format", "json", "--model", this.model];
     if (input.continueSessionId) {
       cliArgs.push("--session", input.continueSessionId);
     }
@@ -72,7 +88,13 @@ export class OpenCodeRunner implements AgentRunner {
       signal: input.signal,
     });
 
-    const secrets = [this.options.credential.secret, ...(input.secrets ?? [])];
+    const secrets = [
+      this.options.credential?.secret,
+      ...Object.values(this.options.providerCredentials ?? {}).map(
+        (credential) => credential.secret,
+      ),
+      ...(input.secrets ?? []),
+    ];
     let stdoutBuf = "";
     let stderrBuf = "";
     let lastSessionId: string | undefined;
@@ -251,6 +273,40 @@ export function parseOpenCodeLine(
   }
 
   return { events: [], sessionId };
+}
+
+function buildOpenCodeAuthEntries(
+  options: OpenCodeRunnerOptions,
+  modelProviderId: string,
+): Record<string, { type: "api"; key: string }> {
+  const entries: Record<string, { type: "api"; key: string }> = {};
+  const zenSecret = options.credential?.secret;
+  if (zenSecret) {
+    entries[OPENCODE_ZEN_PROVIDER_ID] = { type: "api", key: zenSecret };
+  }
+  if (modelProviderId !== OPENCODE_ZEN_PROVIDER_ID) {
+    const providerSecret = options.providerCredentials?.[modelProviderId]?.secret;
+    if (providerSecret) {
+      entries[modelProviderId] = { type: "api", key: providerSecret };
+    }
+  }
+  return entries;
+}
+
+function secretForProvider(options: OpenCodeRunnerOptions, providerId: string): string | undefined {
+  if (providerId === OPENCODE_ZEN_PROVIDER_ID) {
+    return options.credential?.secret || undefined;
+  }
+  return options.providerCredentials?.[providerId]?.secret || undefined;
+}
+
+function missingProviderCredentialError(providerId: string): Error {
+  if (providerId === OPENCODE_ZEN_PROVIDER_ID) {
+    return new Error("OpenCodeRunner requires an OpenCode Zen API key.");
+  }
+  return new Error(
+    `OpenCodeRunner requires an API key for provider "${providerId}". Add it in Settings before running this model.`,
+  );
 }
 
 function openCodeErrorMessage(error: unknown): string {

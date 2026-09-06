@@ -275,6 +275,48 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["unmount", "pagehide"])("ignores canceled message reads after %s", async (departure) => {
+    const fake = fakeSupabase();
+    let finish!: (value: { data: null; error: { message: string } }) => void;
+    const pending = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+      finish = resolve;
+    });
+    vi.spyOn(fake.supabase, "from").mockReturnValue({
+      select: () => ({ eq: () => ({ order: () => ({ limit: () => pending }) }) }),
+    } as never);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = panel(data([run(1)]), fake.supabase);
+    if (departure === "unmount") view.unmount();
+    else act(() => window.dispatchEvent(new Event("pagehide")));
+    await act(async () => finish({ data: null, error: { message: "cancelled" } }));
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it.each(["unmount", "pagehide"])("ignores canceled history reads after %s", async (departure) => {
+    const fake = fakeSupabase();
+    let reject!: (error: Error) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((_resolve, fail) => {
+            reject = fail;
+          }),
+      ),
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = panel(data([run(1)]), fake.supabase);
+    await act(async () => idleCallback?.());
+    const channel = fake.channels.find((item) => item.name.startsWith("wallie-runs:"));
+    act(() => channel?.statusCallback?.("SUBSCRIBED"));
+    if (departure === "unmount") view.unmount();
+    else act(() => window.dispatchEvent(new Event("pagehide")));
+    await act(async () => reject(new TypeError("Failed to fetch")));
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
   it("ignores stale reconcile snapshots when updating the pagination cursor", async () => {
     const olderFirstPage = Array.from({ length: 20 }, (_, index) => run(index + 21));
     const newerFirstPage = Array.from({ length: 20 }, (_, index) => run(index + 1));

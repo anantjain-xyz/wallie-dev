@@ -8,6 +8,7 @@ import type {
 import {
   compareSessionTimestamps,
   reconcileSessionMutationPatch,
+  sameCompletionStage,
 } from "@/features/sessions/optimistic";
 
 type SessionRealtimeRow = Pick<
@@ -34,7 +35,7 @@ type ArtifactRealtimeRow = Pick<
 
 type CompletionRealtimeRow = Pick<
   Tables<"session_phase_completions">,
-  "completed_at" | "id" | "session_id" | "stage_slug"
+  "completed_at" | "id" | "session_id" | "stage_id" | "stage_slug"
 >;
 
 export function mergeSessionRealtimeRow(
@@ -129,19 +130,24 @@ export function mergeCompletionRealtimeRow(
   const completion: SessionPhaseCompletion = {
     completedAt: row.completed_at,
     id: row.id,
+    stageId: row.stage_id,
     stageSlug: row.stage_slug,
   };
   const existingCompletion = session.phaseCompletions.find(
-    (current) => current.stageSlug === completion.stageSlug,
+    (current) => current.id === completion.id || sameCompletionStage(current, completion),
   );
   if (
     existingCompletion &&
-    compareSessionTimestamps(existingCompletion.completedAt, completion.completedAt) >= 0
+    (compareSessionTimestamps(existingCompletion.completedAt, completion.completedAt) > 0 ||
+      (existingCompletion.completedAt === completion.completedAt &&
+        existingCompletion.id === completion.id &&
+        existingCompletion.stageId === completion.stageId &&
+        existingCompletion.stageSlug === completion.stageSlug))
   ) {
     return session;
   }
   const phaseCompletions = session.phaseCompletions.filter(
-    (current) => current.stageSlug !== completion.stageSlug,
+    (current) => current.id !== completion.id && !sameCompletionStage(current, completion),
   );
 
   phaseCompletions.push(completion);
@@ -176,4 +182,81 @@ export function removePullRequestRealtimeRow(
   return pullRequests.length === session.pullRequests.length
     ? session
     : { ...session, pullRequests };
+}
+
+/** Keep changes received after the refresh began; accept the server's other rows,
+ * including deletions missed while disconnected. Child tables do not share the
+ * session row's update timestamp. */
+function reconcileRecoveryRows<T>(
+  baseline: T[],
+  current: T[],
+  incoming: T[],
+  key: (row: T) => string,
+  touched: ReadonlySet<string> = new Set(),
+) {
+  const before = new Map(baseline.map((row) => [key(row), row]));
+  const live = new Map(current.map((row) => [key(row), row]));
+  const merged = new Map(incoming.map((row) => [key(row), row]));
+  for (const [id, row] of live) {
+    if (touched.has(id) || JSON.stringify(row) !== JSON.stringify(before.get(id)))
+      merged.set(id, row);
+  }
+  for (const id of new Set([...before.keys(), ...touched])) {
+    if (!live.has(id)) merged.delete(id);
+  }
+  return [...merged.values()];
+}
+
+export function reconcileSessionRecoverySnapshot(
+  baseline: SessionReviewSession,
+  current: SessionReviewSession,
+  incoming: SessionReviewSession,
+  touched: {
+    artifacts?: ReadonlySet<string>;
+    phaseCompletions?: ReadonlySet<string>;
+    pullRequests?: ReadonlySet<string>;
+  } = {},
+): SessionReviewSession {
+  if (current.id !== incoming.id || baseline.id !== incoming.id) return incoming;
+  const core =
+    compareSessionTimestamps(incoming.updatedAt, current.updatedAt) < 0 ? current : incoming;
+  const stages = reconcileRecoveryRows(
+    baseline.pipeline.stages,
+    current.pipeline.stages,
+    incoming.pipeline.stages,
+    (row) => row.id,
+  ).sort((left, right) => left.position - right.position);
+  return {
+    ...core,
+    pipeline: { stages },
+    currentStageSlug:
+      stages.find((stage) => stage.id === core.currentStageId)?.slug ?? core.currentStageSlug,
+    attachments: reconcileRecoveryRows(
+      baseline.attachments,
+      current.attachments,
+      incoming.attachments,
+      (row) => row.id,
+    ),
+    artifacts: reconcileRecoveryRows(
+      baseline.artifacts,
+      current.artifacts,
+      incoming.artifacts,
+      (row) => row.id ?? `${row.stageSlug}:${row.version}`,
+      touched.artifacts,
+    ),
+    phaseCompletions: reconcileRecoveryRows(
+      baseline.phaseCompletions,
+      current.phaseCompletions,
+      incoming.phaseCompletions,
+      (row) => row.id ?? row.stageId ?? row.stageSlug,
+      touched.phaseCompletions,
+    ),
+    pullRequests: reconcileRecoveryRows(
+      baseline.pullRequests,
+      current.pullRequests,
+      incoming.pullRequests,
+      (row) => row.id,
+      touched.pullRequests,
+    ),
+  };
 }

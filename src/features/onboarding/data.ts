@@ -299,11 +299,16 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null, checkedA
   };
 }
 
-function openCodeConnectionStatus(row: { updated_at: string } | null, checkedAt: string) {
+function openCodeConnectionStatus(
+  row: { updated_at: string } | null,
+  checkedAt: string,
+  providers: Array<{ providerId: string; updatedAt: string }> = [],
+) {
   if (!row) {
     return {
       checkedAt,
       connected: false,
+      providers,
       status: "missing" as const,
       updatedAt: null,
     };
@@ -312,6 +317,7 @@ function openCodeConnectionStatus(row: { updated_at: string } | null, checkedAt:
   return {
     checkedAt,
     connected: true,
+    providers,
     status: "connected" as const,
     updatedAt: row.updated_at,
   };
@@ -462,6 +468,7 @@ type OnboardingSnapshot = {
   cursorCredentialsCheckedAt: string;
   openCodeCredentials: { updated_at: string } | null;
   openCodeCredentialsCheckedAt: string;
+  openCodeProviderCredentials: Array<{ providerId: string; updatedAt: string }>;
   github: WorkspaceGitHubData;
   linearRoutingRow: LinearRoutingRow | null;
   onboardingRow: Tables<"workspace_onboarding">;
@@ -592,6 +599,13 @@ function createOnboardingSnapshot(
               .eq("user_id", context.user.id)
               .maybeSingle(),
           ),
+          timestampQueryResult(
+            admin
+              .from("user_opencode_provider_credentials")
+              .select("provider_id, updated_at")
+              .eq("user_id", context.user.id)
+              .order("provider_id", { ascending: true }),
+          ),
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
@@ -616,11 +630,13 @@ function createOnboardingSnapshot(
       claudeCodeProviderResult,
       cursorProviderResult,
       openCodeProviderResult,
+      openCodeCustomProviderResult,
     ] = providerResults;
     const codexResult = codexProviderResult.result;
     const claudeCodeResult = claudeCodeProviderResult.result;
     const cursorResult = cursorProviderResult.result;
     const openCodeResult = openCodeProviderResult.result;
+    const openCodeCustomResult = openCodeCustomProviderResult.result;
     for (const error of [
       pipelineResult.error,
       stageResult.error,
@@ -631,6 +647,7 @@ function createOnboardingSnapshot(
       claudeCodeResult.error,
       cursorResult.error,
       openCodeResult.error,
+      openCodeCustomResult.error,
       sandboxResult.error,
       memberResult.error,
     ]) {
@@ -647,6 +664,12 @@ function createOnboardingSnapshot(
       cursorCredentialsCheckedAt: cursorProviderResult.checkedAt,
       openCodeCredentials: openCodeResult.data,
       openCodeCredentialsCheckedAt: openCodeProviderResult.checkedAt,
+      openCodeProviderCredentials: (
+        (openCodeCustomResult.data ?? []) as Array<{ provider_id: string; updated_at: string }>
+      ).map((row) => ({
+        providerId: row.provider_id,
+        updatedAt: row.updated_at,
+      })),
       github,
       linearRoutingRow: routingResult.data as LinearRoutingRow | null,
       onboardingRow,
@@ -792,6 +815,7 @@ function deriveSetupHealth(
     openCodeConnection: openCodeConnectionStatus(
       snapshot.openCodeCredentials,
       snapshot.openCodeCredentialsCheckedAt,
+      snapshot.openCodeProviderCredentials,
     ),
     defaultPipeline: {
       configured: Boolean(pipeline && pipeline.stages.length > 0),

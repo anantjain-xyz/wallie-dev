@@ -5,7 +5,11 @@ import { AccountMenu } from "@/components/app-shell/account-menu";
 import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
 import { WallieMark } from "@/components/shared/wallie-mark";
 import { PageHeader } from "@/components/ui/page-shell";
-import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
+import {
+  ensureProfileForUser,
+  loadOwnProfileDisplay,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -26,6 +30,8 @@ export default async function WorkspaceOnboardingPage() {
     redirect(landingPath);
   }
 
+  const { avatarUrl: viewerAvatarUrl } = await loadOwnProfileDisplay(supabase, user.id);
+
   return (
     <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
       <header className="sticky top-0 z-20 border-b border-border bg-sheet pt-[env(safe-area-inset-top)]">
@@ -38,7 +44,7 @@ export default async function WorkspaceOnboardingPage() {
             <WallieMark className="size-7 shrink-0" />
             Wallie
           </Link>
-          <AccountMenu email={user.email ?? null} />
+          <AccountMenu avatarUrl={viewerAvatarUrl} email={user.email ?? null} />
         </div>
       </header>
 

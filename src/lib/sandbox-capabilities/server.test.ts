@@ -6,7 +6,7 @@ const mocked = vi.hoisted(() => ({
   getClaudeCodeCredentialForUser: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
   getCursorCredentialForUser: vi.fn(),
-  getOpenCodeCredentialForUser: vi.fn(),
+  getOpenCodeAuthForUser: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceAgentConfig: vi.fn(),
   octokitRequest: vi.fn(),
@@ -44,7 +44,7 @@ vi.mock("@/lib/cursor/tokens", () => ({
 }));
 
 vi.mock("@/lib/opencode/tokens", () => ({
-  getOpenCodeCredentialForUser: mocked.getOpenCodeCredentialForUser,
+  getOpenCodeAuthForUser: mocked.getOpenCodeAuthForUser,
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -197,7 +197,10 @@ beforeEach(() => {
   mocked.getClaudeCodeCredentialForUser.mockResolvedValue({ secret: "claude-token" });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
   mocked.getCursorCredentialForUser.mockResolvedValue({ secret: "cursor-token" });
-  mocked.getOpenCodeCredentialForUser.mockResolvedValue({ secret: "zen-token" });
+  mocked.getOpenCodeAuthForUser.mockResolvedValue({
+    credential: { secret: "zen-token" },
+    providerCredentials: {},
+  });
   mocked.createSessionSandbox.mockImplementation(async (input) => {
     await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
     return {
@@ -263,7 +266,11 @@ describe("completeSandboxCapabilityCheck", () => {
       workspaceId: "workspace-1",
     });
 
-    expect(mocked.getOpenCodeCredentialForUser).toHaveBeenCalledWith(admin, "user-1");
+    expect(mocked.getOpenCodeAuthForUser).toHaveBeenCalledWith(
+      admin,
+      "user-1",
+      "opencode/gpt-5.6-sol",
+    );
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ agentProvider: "opencode" }),
     );

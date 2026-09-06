@@ -235,9 +235,8 @@ async function pushSandboxBranch(sandbox: SandboxHandle, branch: string): Promis
   // Plain --force, not --force-with-lease: the sandbox is a fresh clone of the
   // base branch with no remote-tracking ref for `wallie/<stage>-<session>`, so
   // a lease without an explicit expected SHA fails as "stale info" on every
-  // retry and blocks the PR refresh. Wallie owns these branches by
-  // construction (one stage branch per session, one writer), so there is no
-  // concurrent pusher to protect against.
+  // retry and blocks the PR refresh. The processor claims the session pointer
+  // before this push, so a losing generation never reaches here.
   const proc = await sandbox.exec("bash", ["-lc", `git push --force origin ${shellQuote(branch)}`]);
   const stderr: string[] = [];
   for await (const log of proc.logs()) {

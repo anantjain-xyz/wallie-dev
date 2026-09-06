@@ -28,6 +28,8 @@ export interface AgentEventCompletion {
   /** Whether the agent signalled it finished its task (vs. hitting turn limit). */
   taskComplete: boolean;
   summary: string;
+  /** Explicit final deliverable, distinct from progress and bookkeeping summaries. */
+  finalOutput?: string;
   /** Token usage reported by the agent, if available. */
   usage?: {
     inputTokens: number;
@@ -42,6 +44,7 @@ export interface AgentEventError {
 
 export type AgentEvent =
   | AgentEventText
+  | { type: "progress"; text: string }
   | AgentEventToolUse
   | AgentEventCompletion
   | AgentEventError;

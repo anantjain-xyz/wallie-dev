@@ -152,7 +152,8 @@ export function ProviderAccessPanel({
           <div className="mb-3 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
             <p className="mt-1 text-xs leading-5 text-muted">
-              Sessions run with the OpenCode Zen API key saved by the session creator.
+              Sessions run with the OpenCode API key saved by the session creator. Zen models use
+              the OpenCode Zen key; custom provider ids need a matching provider key.
             </p>
           </div>
           <OpenCodeConnectionPanel

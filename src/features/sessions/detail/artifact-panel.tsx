@@ -1003,7 +1003,7 @@ function ArtifactPanelStage({
           role="tabpanel"
         >
           {isDrafting && visibleBody ? (
-            <ProgressHint text="Wallie is drafting the next artifact version." />
+            <ProgressHint text="Waiting for the next artifact version. Follow progress in Runs below." />
           ) : null}
           {bodyError ? <FailureHint message={bodyError} onRetry={retryBody} /> : null}
           {bodyLoading && !visibleBody ? <ProgressHint text="Loading the artifact." /> : null}
@@ -1033,7 +1033,7 @@ function ArtifactPanelStage({
               showLatestBadge={viewingIsLatest}
             />
           ) : bodyLoading ? null : isDrafting ? (
-            <ProgressHint text="Wallie is drafting the artifact for this stage." />
+            <ProgressHint text="Waiting for this stage’s artifact. Follow progress in Runs below." />
           ) : !bodyError ? (
             <EmptyHint text={emptyText} />
           ) : null}

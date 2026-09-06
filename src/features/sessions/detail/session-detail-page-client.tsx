@@ -1,7 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -11,6 +20,10 @@ import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
+import {
+  SessionExecutionProvider,
+  SessionExecutionSummary,
+} from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
   archiveSessionFromClient,
@@ -25,9 +38,12 @@ import type {
   SessionReviewRepository,
   SessionReviewSession,
 } from "@/features/sessions/detail/data";
+import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
+import { createSessionRecoveryRefresh } from "@/features/sessions/detail/recovery-refresh";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import { SessionInspector } from "@/features/sessions/detail/session-inspector";
+import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
 import { buildStageTimeline, StageTimeline } from "@/features/sessions/detail/stage-timeline";
 import type {
@@ -35,6 +51,7 @@ import type {
   SessionPhaseMutationResult,
 } from "@/features/sessions/mutation-contracts";
 import {
+  reconcileSessionRecoverySnapshot,
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
@@ -48,6 +65,7 @@ import {
   reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
+  sameCompletionStage,
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
@@ -82,11 +100,6 @@ function isCurrentArchiveVersion(
 
 function stageIndex(pipeline: SessionReviewSession["pipeline"], stageSlug: string): number {
   return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
-}
-
-function isTerminalStage(pipeline: SessionReviewSession["pipeline"], stageSlug: string): boolean {
-  const terminalStage = pipeline.stages[pipeline.stages.length - 1];
-  return terminalStage?.slug === stageSlug;
 }
 
 function mergeSessionReviewStage(
@@ -127,7 +140,15 @@ export function reconcilePhaseMutationResult(
 
 export { centerStageTimelineSelection as centerStageRailSelection } from "@/features/sessions/detail/stage-timeline";
 
-export function SessionDetailPageClient({
+export function SessionDetailPageClient(props: SessionDetailPageClientProps) {
+  return (
+    <SessionExecutionProvider key={props.initialData.session.id}>
+      <SessionDetailContent {...props} />
+    </SessionExecutionProvider>
+  );
+}
+
+function SessionDetailContent({
   activity,
   canReview = true,
   failedStageSlug: initialFailedStageSlug = null,
@@ -165,6 +186,50 @@ export function SessionDetailPageClient({
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
   const capabilitiesEffectSkipRef = useRef(true);
+  const appliedSnapshotRef = useRef(initialData.session);
+  const refreshBaselineRef = useRef<SessionReviewSession | null>(null);
+  const refreshChangesRef = useRef({
+    artifacts: new Set<string>(),
+    phaseCompletions: new Set<string>(),
+    pullRequests: new Set<string>(),
+  });
+  const refreshInFlightRef = useRef(false);
+  const [refreshPending, startRefresh] = useTransition();
+  const [postMutationRefreshRequested, setPostMutationRefreshRequested] = useState(false);
+  const mountedRef = useRef(false);
+  const queuedMutationRefreshRef = useRef(false);
+  const actionPending = phaseActionPending !== null || archivePending !== null || stopPending;
+  const refreshSession = useCallback(() => {
+    if (refreshInFlightRef.current || actionPending) return;
+    refreshInFlightRef.current = true;
+    refreshBaselineRef.current = latestSessionRef.current;
+    refreshChangesRef.current = {
+      artifacts: new Set(),
+      phaseCompletions: new Set(),
+      pullRequests: new Set(),
+    };
+    startRefresh(() => router.refresh());
+  }, [actionPending, router]);
+  useEffect(() => {
+    if (!refreshPending) refreshInFlightRef.current = false;
+  }, [refreshPending]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // The global Undo toast can outlive this detail page.
+      if (queuedMutationRefreshRef.current) {
+        queuedMutationRefreshRef.current = false;
+        router.refresh();
+      }
+    };
+  }, [router]);
+  useEffect(() => {
+    if (!postMutationRefreshRequested || actionPending || refreshPending) return;
+    queuedMutationRefreshRef.current = false;
+    setPostMutationRefreshRequested(false);
+    refreshSession();
+  }, [actionPending, postMutationRefreshRequested, refreshPending, refreshSession]);
 
   const stageTimeline = useMemo(
     () => buildStageTimeline(session, { failedStageSlug }),
@@ -225,18 +290,51 @@ export function SessionDetailPageClient({
         : reviewMode;
 
   useEffect(() => {
-    setSession(initialData.session);
-    setCanApprove(canReview);
-    setHasFailedRun(initialHasFailedRun);
-    setFailedStageSlug(initialFailedStageSlug);
+    // A recovery response can arrive while an optimistic action or a newer
+    // Realtime event is updating this page. Never roll either back with RSC.
+    if (phaseActionPending || archivePending || stopPending) return;
+    if (appliedSnapshotRef.current === initialData.session) return;
+    const baseline = refreshBaselineRef.current ?? appliedSnapshotRef.current;
+    const changes = refreshChangesRef.current;
+    refreshChangesRef.current = {
+      artifacts: new Set(),
+      phaseCompletions: new Set(),
+      pullRequests: new Set(),
+    };
+    refreshBaselineRef.current = null;
+    appliedSnapshotRef.current = initialData.session;
+    const current = latestSessionRef.current;
+    const recovered = reconcileSessionRecoverySnapshot(
+      baseline,
+      current,
+      initialData.session,
+      changes,
+    );
+    setSession(recovered);
+    if (initialData.session.currentStageId === recovered.currentStageId) {
+      setCanApprove(canReview);
+      if (initialData.session.phaseStatus === recovered.phaseStatus) {
+        setHasFailedRun(initialHasFailedRun);
+        setFailedStageSlug(initialFailedStageSlug);
+      }
+    }
     setSelectedStageSlug((currentSlug) => {
-      const stageStillExists = initialData.session.pipeline.stages.some(
+      const stageStillExists = recovered.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
       );
-
-      return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
+      return stageStillExists && currentSlug !== current.currentStageSlug
+        ? currentSlug
+        : recovered.currentStageSlug;
     });
-  }, [canReview, initialData.session, initialFailedStageSlug, initialHasFailedRun]);
+  }, [
+    archivePending,
+    canReview,
+    initialData.session,
+    initialFailedStageSlug,
+    initialHasFailedRun,
+    phaseActionPending,
+    stopPending,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -351,7 +449,21 @@ export function SessionDetailPageClient({
     },
   );
 
+  const recoveryIsBusy = useEffectEvent(() => actionPending || refreshInFlightRef.current);
+
+  const refreshAfterRecovery = useEffectEvent(() => refreshSession());
+
   useEffect(() => {
+    const recovery = createSessionRecoveryRefresh({
+      refresh: () => refreshAfterRecovery(),
+      isAvailable: () => document.visibilityState === "visible" && navigator.onLine,
+      isBusy: () => recoveryIsBusy(),
+    });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recovery.request();
+    };
+    window.addEventListener("online", recovery.request);
+    document.addEventListener("visibilitychange", onVisible);
     const channel = supabase
       .channel(`session-detail:${session.id}`)
       .on(
@@ -383,10 +495,19 @@ export function SessionDetailPageClient({
           if (payload.eventType === "DELETE") {
             const deleted = payload.old as Pick<Tables<"session_artifacts">, "id"> &
               Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>;
+            if (refreshBaselineRef.current) {
+              refreshChangesRef.current.artifacts.add(deleted.id);
+              refreshChangesRef.current.artifacts.add(`${deleted.stage_slug}:${deleted.version}`);
+            }
             setSession((current) => removeArtifactRealtimeRow(current, deleted));
             return;
           }
 
+          if (refreshBaselineRef.current) {
+            const row = payload.new as Tables<"session_artifacts">;
+            refreshChangesRef.current.artifacts.add(row.id);
+            refreshChangesRef.current.artifacts.add(`${row.stage_slug}:${row.version}`);
+          }
           handleArtifactRealtimeUpdate(payload.new as Tables<"session_artifacts">);
         },
       )
@@ -402,10 +523,20 @@ export function SessionDetailPageClient({
           if (payload.eventType === "DELETE") {
             const deleted = payload.old as Pick<Tables<"session_phase_completions">, "id"> &
               Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>;
+            if (refreshBaselineRef.current) {
+              refreshChangesRef.current.phaseCompletions.add(deleted.id);
+              if (deleted.stage_slug)
+                refreshChangesRef.current.phaseCompletions.add(deleted.stage_slug);
+            }
             setSession((current) => removeCompletionRealtimeRow(current, deleted));
             return;
           }
 
+          if (refreshBaselineRef.current) {
+            const row = payload.new as Tables<"session_phase_completions">;
+            refreshChangesRef.current.phaseCompletions.add(row.id);
+            refreshChangesRef.current.phaseCompletions.add(row.stage_id ?? row.stage_slug);
+          }
           handleCompletionRealtimeUpdate(payload.new as Tables<"session_phase_completions">);
         },
       )
@@ -422,6 +553,7 @@ export function SessionDetailPageClient({
             Tables<"session_pull_requests">,
             "id" | "pull_request_number" | "pull_request_url" | "updated_at"
           >;
+          if (refreshBaselineRef.current) refreshChangesRef.current.pullRequests.add(row.id);
           setSession((current) => {
             const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
 
@@ -459,9 +591,12 @@ export function SessionDetailPageClient({
           });
         },
       )
-      .subscribe();
+      .subscribe(recovery.onStatus);
 
     return () => {
+      recovery.dispose();
+      window.removeEventListener("online", recovery.request);
+      document.removeEventListener("visibilitychange", onVisible);
       void supabase.removeChannel(channel);
     };
   }, [initialData.workspaceSlug, router, session.id, supabase]);
@@ -497,11 +632,12 @@ export function SessionDetailPageClient({
         : null;
     const optimisticCompletion = {
       completedAt: new Date().toISOString(),
+      stageId: session.currentStageId,
       stageSlug: session.currentStageSlug,
     };
     const optimisticPhaseCompletions = [
       ...session.phaseCompletions.filter(
-        (completion) => completion.stageSlug !== session.currentStageSlug,
+        (completion) => !sameCompletionStage(completion, optimisticCompletion),
       ),
       optimisticCompletion,
     ];
@@ -760,7 +896,14 @@ export function SessionDetailPageClient({
         title: `Session #${currentSession.number} unarchived.`,
         tone: "success",
       });
-      if (refreshActiveRoute) router.refresh();
+      if (refreshActiveRoute) {
+        if (mountedRef.current) {
+          queuedMutationRefreshRef.current = true;
+          setPostMutationRefreshRequested(true);
+        } else {
+          router.refresh();
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to unarchive session.";
       setArchiveError(message);
@@ -825,15 +968,11 @@ export function SessionDetailPageClient({
     </div>
   );
 
-  const approveLabel = isTerminalStage(session.pipeline, session.currentStageSlug)
-    ? "Approve & archive"
-    : "Approve & advance";
-
   return (
     <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
-        actionsAlwaysRight
+        actionsRightOnDesktop
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             <Link
@@ -860,6 +999,8 @@ export function SessionDetailPageClient({
         actions={headerActions}
       />
 
+      <SessionCompletionSummary session={session} />
+
       <div className="mb-4">
         <StageTimeline
           onSelect={setSelectedStageSlug}
@@ -869,6 +1010,17 @@ export function SessionDetailPageClient({
       </div>
 
       {/* Review workbench: 70/30 on lg+, stacked below 1024px with context after artifact. */}
+      <SessionExecutionSummary
+        sessionId={session.id}
+        stageId={session.currentStageId}
+        stageName={
+          session.pipeline.stages.find((stage) => stage.id === session.currentStageId)?.name ??
+          "Current stage"
+        }
+        phaseStatus={session.phaseStatus}
+        archivedAt={session.archivedAt}
+        initialNow={renderNow}
+      />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0">
         <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
           <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -931,14 +1083,21 @@ export function SessionDetailPageClient({
           </p>
         </div>
         <div className="p-4">
-          <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
-            {activity}
-          </SessionActivityArchivedAtProvider>
+          <SessionRefreshContext.Provider
+            value={{ refresh: refreshSession, pending: refreshPending || actionPending }}
+          >
+            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+              {activity}
+            </SessionActivityArchivedAtProvider>
+          </SessionRefreshContext.Provider>
         </div>
       </section>
 
       <SessionReviewBar
-        approveLabel={approveLabel}
+        approveLabel="Approve stage"
+        approveDescription={
+          phaseActionPending ? undefined : "Final-stage approval may also archive the session."
+        }
         mode={stickyReviewMode}
         onApprove={() => {
           void handlePhaseAction("approve");

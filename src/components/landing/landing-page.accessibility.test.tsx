@@ -22,14 +22,14 @@ describe("LandingPage accessibility", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "Run coding agents through your team's workflow",
+      "Turn a task into a pull request you can trust",
     );
   });
 
   it("keeps CTA links keyboard-focusable and names their destinations", () => {
     render(<LandingPage />);
 
-    const signIn = screen.getByRole("link", { name: "Sign in to Wallie" });
+    const signIn = screen.getByRole("link", { name: "Get started" });
     signIn.focus();
     expect(signIn).toHaveFocus();
     expect(signIn).toHaveAttribute("href", "/login");

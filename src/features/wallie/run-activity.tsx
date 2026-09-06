@@ -9,7 +9,7 @@ import { agentRunStatusValue } from "@/components/ui/status";
 import {
   compactActivityText,
   connectionStateCopy,
-  currentOperationLabel,
+  runStatusLabel,
   formatMessageSourceLabel,
   groupActivityMessages,
   isRunActivityStalled,
@@ -95,7 +95,7 @@ export const WallieRunCard = memo(function WallieRunCard({
   const disconnected = connectionState === "disconnected";
   const working = run.isActive && (run.status === "running" || run.status === "started");
   const operation =
-    disconnected && run.isActive ? "Live updates paused" : currentOperationLabel({ run, stalled });
+    disconnected && run.isActive ? "Live updates paused" : runStatusLabel({ run, stalled });
   const progress = run.messages.findLast(
     (message) => ["text", "progress", "status"].includes(message.kind) && message.messageMd.trim(),
   );

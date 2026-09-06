@@ -54,6 +54,15 @@ export function compareSessionTimestamps(left: string, right: string): number {
   return Math.sign(leftNanoseconds - rightNanoseconds);
 }
 
+export function sameCompletionStage(
+  left: Pick<SessionPhaseCompletion, "stageId" | "stageSlug">,
+  right: Pick<SessionPhaseCompletion, "stageId" | "stageSlug">,
+): boolean {
+  return left.stageId && right.stageId
+    ? left.stageId === right.stageId
+    : left.stageSlug === right.stageSlug;
+}
+
 export function applySessionMutationPatch<Session extends OptimisticSession>(
   session: Session,
   patch: SessionMutationPatch,
@@ -66,7 +75,7 @@ export function applySessionMutationPatch<Session extends OptimisticSession>(
     (patch.phaseCompletion
       ? [
           ...session.phaseCompletions.filter(
-            (completion) => completion.stageSlug !== patch.phaseCompletion!.stageSlug,
+            (completion) => !sameCompletionStage(completion, patch.phaseCompletion!),
           ),
           patch.phaseCompletion,
         ]

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -61,6 +61,36 @@ describe("AccountMenu", () => {
     );
 
     expect(screen.getByRole("button", { name: "Account" })).toHaveTextContent("?");
+  });
+
+  it("shows the profile photo in the trigger when an avatar URL is provided", () => {
+    render(
+      <OverlayProvider>
+        <AccountMenu avatarUrl="https://cdn.example.com/owner.png" email="owner@example.com" />
+      </OverlayProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Account: owner@example.com" });
+    const image = trigger.querySelector("img");
+    expect(image).toHaveAttribute("src", "https://cdn.example.com/owner.png");
+    expect(image).toHaveAttribute("alt", "");
+    expect(trigger).not.toHaveTextContent("O");
+  });
+
+  it("falls back to the email initial when the photo fails to load", () => {
+    render(
+      <OverlayProvider>
+        <AccountMenu avatarUrl="https://cdn.example.com/broken.png" email="owner@example.com" />
+      </OverlayProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Account: owner@example.com" });
+    const image = trigger.querySelector("img");
+    expect(image).not.toBeNull();
+    fireEvent.error(image!);
+
+    expect(trigger.querySelector("img")).toBeNull();
+    expect(trigger).toHaveTextContent("O");
   });
 
   it("starts sign-out before the menu can unmount its form", async () => {

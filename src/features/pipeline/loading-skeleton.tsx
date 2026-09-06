@@ -50,6 +50,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
   return (
     <div className="flex h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
       <section
+        data-route-loading
         aria-busy="true"
         aria-label="Loading pipeline"
         className="flex min-h-0 flex-1 flex-col"

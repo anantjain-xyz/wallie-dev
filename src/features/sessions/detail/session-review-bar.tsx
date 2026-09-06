@@ -15,6 +15,7 @@ const FEEDBACK_MAX = 4_000;
 
 type SessionReviewBarProps = {
   approveLabel: string;
+  approveDescription?: string;
   mode: ReviewMode;
   onApprove: () => void;
   onReject: (feedback: string) => Promise<boolean>;
@@ -23,6 +24,7 @@ type SessionReviewBarProps = {
 
 export function SessionReviewBar({
   approveLabel,
+  approveDescription,
   mode,
   onApprove,
   onReject,
@@ -32,6 +34,9 @@ export function SessionReviewBar({
   const [feedbackDraft, setFeedbackDraft] = useState("");
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const feedbackFieldId = useId();
+  const approveDescriptionId = useId();
+  const feedbackErrorId = useId();
+  const feedbackCountId = useId();
   const feedbackRef = useRef<HTMLTextAreaElement | null>(null);
   const rejectInFlightRef = useRef(false);
   const requestChangesTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -45,13 +50,12 @@ export function SessionReviewBar({
     return () => window.cancelAnimationFrame(frame);
   }, [dialogOpen]);
 
-  if (mode.kind === "other_stage") {
+  if (mode.kind === "other_stage" || mode.kind === "completed") {
     return null;
   }
 
   if (
     mode.kind === "archived" ||
-    mode.kind === "completed" ||
     mode.kind === "canceled" ||
     mode.kind === "unauthorized" ||
     mode.kind === "failed" ||
@@ -105,11 +109,16 @@ export function SessionReviewBar({
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
       >
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <div
+          className={cn(
+            "gap-2 sm:flex sm:items-center sm:justify-end",
+            mode.canApprove ? "grid grid-cols-2 items-stretch" : "flex flex-col",
+          )}
+        >
           <button
             ref={requestChangesTriggerRef}
             type="button"
-            className="ui-button"
+            className="ui-button min-h-11 sm:min-h-9"
             disabled={phaseActionBusy}
             onClick={() => {
               setFeedbackError(null);
@@ -121,7 +130,8 @@ export function SessionReviewBar({
           {mode.canApprove ? (
             <button
               type="button"
-              className="ui-button-primary"
+              aria-describedby={approveDescription ? approveDescriptionId : undefined}
+              className="ui-button-primary min-h-11 min-w-0 whitespace-normal [overflow-wrap:anywhere] sm:min-h-9"
               disabled={phaseActionBusy}
               onClick={() => {
                 if (phaseActionBusy) return;
@@ -140,6 +150,11 @@ export function SessionReviewBar({
             </p>
           )}
         </div>
+        {mode.canApprove && approveDescription ? (
+          <p id={approveDescriptionId} className="mt-2 text-xs leading-5 text-muted sm:text-right">
+            {approveDescription}
+          </p>
+        ) : null}
       </div>
 
       <Dialog
@@ -151,7 +166,7 @@ export function SessionReviewBar({
         }}
       >
         <DialogContent
-          description="Wallie will rerun the current stage with your feedback injected into the prompt."
+          description="Describe what should change. Wallie will use your feedback to run this stage again."
           dismissible={!phaseActionBusy}
           onKeyDown={(event) => {
             if (!isSessionSubmitShortcut(event)) return;
@@ -172,6 +187,8 @@ export function SessionReviewBar({
             id={feedbackFieldId}
             value={feedbackDraft}
             maxLength={FEEDBACK_MAX}
+            aria-invalid={Boolean(feedbackError)}
+            aria-describedby={feedbackError ? feedbackErrorId : feedbackCountId}
             onChange={(event) => {
               setFeedbackDraft(event.target.value);
               if (feedbackError) setFeedbackError(null);
@@ -181,11 +198,11 @@ export function SessionReviewBar({
             disabled={phaseActionBusy}
           />
           <div className="mt-2 flex items-center justify-between gap-3">
-            <p className="type-annotation text-muted">
+            <p id={feedbackCountId} className="type-annotation text-muted">
               {feedbackDraft.trim().length}/{FEEDBACK_MAX}
             </p>
             {feedbackError ? (
-              <p className="text-xs text-danger" role="alert">
+              <p id={feedbackErrorId} className="text-xs text-danger" role="alert">
                 {feedbackError}
               </p>
             ) : null}

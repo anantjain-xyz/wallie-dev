@@ -170,9 +170,12 @@ async function AdvancedDetails({ initialData, setupData }: SettingsServerShellPr
     >
       <ul className="ui-sheet divide-y divide-border">
         {data.rateLimits.map((limit) => (
-          <li className="flex justify-between gap-4 px-5 py-4" key={limit.endpoint}>
-            <div>
-              <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
+          <li
+            className="flex flex-col justify-between gap-2 px-5 py-4 sm:flex-row sm:gap-4"
+            key={limit.endpoint}
+          >
+            <div className="min-w-0">
+              <code className="break-all font-mono text-xs text-foreground">{limit.endpoint}</code>
               <p className="mt-1 text-xs text-muted">{limit.description}</p>
             </div>
             <span className="shrink-0 font-mono type-annotation text-muted">

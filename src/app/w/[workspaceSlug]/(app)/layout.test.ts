@@ -23,6 +23,7 @@ describe("workspace app route group layout", () => {
     mocked.loadWorkspaceLayoutContext.mockResolvedValue({
       onboarding,
       user: { email: "owner@example.com", id: "user-1" },
+      viewerAvatarUrl: "https://cdn.example.com/owner.png",
       workspace,
       workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
     });
@@ -33,6 +34,7 @@ describe("workspace app route group layout", () => {
     })) as ReactElement<{
       children: string;
       onboarding: typeof onboarding;
+      viewerAvatarUrl: string | null;
       viewerEmail: string;
       viewerId: string;
       workspace: typeof workspace;
@@ -43,6 +45,7 @@ describe("workspace app route group layout", () => {
     expect(element.props).toMatchObject({
       children: "app-page",
       onboarding,
+      viewerAvatarUrl: "https://cdn.example.com/owner.png",
       viewerEmail: "owner@example.com",
       viewerId: "user-1",
       workspace,

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { usePublishExecution } from "@/features/sessions/detail/execution-summary";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
@@ -155,6 +156,7 @@ export function SessionWalliePanel({
   const [nowMs, setNowMs] = useState(() => Date.parse(renderNow) || Date.now());
   const sessionIdRef = useRef(session.id);
   const reconcileGenerationRef = useRef(0);
+  const messageGenerationRef = useRef(0);
   const hadDisconnectRef = useRef(false);
   // Track each required realtime channel independently; recovery only when all are live.
   const channelHealthRef = useRef({
@@ -163,6 +165,13 @@ export function SessionWalliePanel({
     summaryMessages: null as boolean | null,
   });
   sessionIdRef.current = session.id;
+  usePublishExecution({
+    sessionId: session.id,
+    run: runs[0],
+    connection: connectionState,
+    nowMs,
+    stallTimeoutMs: initialData.stallTimeoutMs,
+  });
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
 
@@ -180,6 +189,7 @@ export function SessionWalliePanel({
   }, [initialData.runs, initialData.workspaceMembers]);
   useEffect(() => {
     reconcileGenerationRef.current += 1;
+    messageGenerationRef.current += 1;
     setRuns(initialData.runs);
     setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
@@ -213,6 +223,7 @@ export function SessionWalliePanel({
 
   const loadRunMessages = useCallback(
     async (runId: string) => {
+      const generation = messageGenerationRef.current;
       setMessageLoadErrorRunIds((currentIds) => {
         const nextIds = new Set(currentIds);
         nextIds.delete(runId);
@@ -225,6 +236,7 @@ export function SessionWalliePanel({
         .order("created_at", { ascending: false })
         .limit(WALLIE_RUN_MESSAGE_LIMIT);
 
+      if (generation !== messageGenerationRef.current) return;
       if (error) {
         console.error("Wallie could not load run messages", {
           error,
@@ -335,6 +347,18 @@ export function SessionWalliePanel({
     );
   });
 
+  useEffect(() => {
+    const invalidate = () => {
+      reconcileGenerationRef.current += 1;
+      messageGenerationRef.current += 1;
+    };
+    window.addEventListener("pagehide", invalidate);
+    return () => {
+      invalidate();
+      window.removeEventListener("pagehide", invalidate);
+    };
+  }, [session.id]);
+
   const reconcileLatestRuns = useEffectEvent(async () => {
     const requestSessionId = session.id;
     const generation = ++reconcileGenerationRef.current;
@@ -362,7 +386,10 @@ export function SessionWalliePanel({
       setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
       setNextRunCursor(payload.nextCursor);
     } catch (error) {
-      if (sessionIdRef.current !== requestSessionId) {
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        generation !== reconcileGenerationRef.current
+      ) {
         return;
       }
 
@@ -709,16 +736,21 @@ export function SessionWalliePanel({
       {isArchived ? (
         <div
           aria-live="polite"
-          className="rounded-[6px] border border-border bg-control-muted p-5 text-sm leading-7 text-muted"
+          className="rounded-[6px] border border-border bg-control-muted p-3 text-sm leading-5 text-muted"
           role="status"
         >
           This session is archived. Unarchive it to run Wallie again.
         </div>
       ) : null}
 
-      {blockingReasons.length > 0 ? (
-        <div className="rounded-[6px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
-          <p className="font-semibold">Wallie is not ready to run.</p>
+      {!isArchived && blockingReasons.length > 0 ? (
+        <details
+          className="rounded-[6px] border border-border bg-control-muted p-4 text-sm leading-6 text-muted"
+          open={runs.length === 0 || Boolean(summaryRun?.canRetry)}
+        >
+          <summary className="cursor-pointer font-medium text-foreground">
+            Setup needed before {runs.length === 0 ? "the first run" : "another run"}
+          </summary>
           <ul className="mt-3 space-y-2">
             {blockingReasons.map((reason) => (
               <li key={reason.code}>{reason.message}</li>
@@ -729,7 +761,7 @@ export function SessionWalliePanel({
               Open Workspace Settings
             </Link>
           </div>
-        </div>
+        </details>
       ) : null}
 
       <div className="min-w-0 space-y-5">

@@ -17,7 +17,10 @@ import {
   isAgentProvider,
   modelMatchesProvider,
   normalizeAgentProviderName,
+  OPENCODE_ZEN_PROVIDER_ID,
   parseAgentConfigValue,
+  parseOpenCodeModelId,
+  parseOpenCodeProviderId,
   parseStallTimeoutMinutes,
   stallTimeoutMinutesToMs,
   stallTimeoutMsToMinutes,
@@ -446,5 +449,58 @@ describe("isAgentConfigKey / isAgentProvider", () => {
     expect(isAgentProvider("claude-code")).toBe(true);
     expect(isAgentProvider("opencode")).toBe(true);
     expect(isAgentProvider("openai")).toBe(false);
+  });
+});
+
+describe("parseOpenCodeModelId", () => {
+  it("splits at the first slash and accepts multi-slash model remainders", () => {
+    expect(parseOpenCodeModelId("opencode/gpt-5.6-sol")).toEqual({
+      providerId: OPENCODE_ZEN_PROVIDER_ID,
+      modelId: "gpt-5.6-sol",
+    });
+    expect(parseOpenCodeModelId("opencode-go/glm-5.3")).toEqual({
+      providerId: "opencode-go",
+      modelId: "glm-5.3",
+    });
+    expect(parseOpenCodeModelId("openrouter/anthropic/claude-sonnet-4")).toEqual({
+      providerId: "openrouter",
+      modelId: "anthropic/claude-sonnet-4",
+    });
+  });
+
+  it("rejects empty or uppercase segments", () => {
+    expect(parseOpenCodeModelId("opencode-go/glm-5.3/")).toBeNull();
+    expect(parseOpenCodeModelId("OpenRouter/gpt-5")).toBeNull();
+    expect(parseOpenCodeModelId("gpt-5.6-sol")).toBeNull();
+  });
+});
+
+describe("parseOpenCodeProviderId", () => {
+  it("accepts a lowercase slug and rejects the reserved Zen prefix", () => {
+    expect(parseOpenCodeProviderId("opencode-go")).toEqual({ ok: true, value: "opencode-go" });
+    expect(parseOpenCodeProviderId("  openrouter  ")).toEqual({ ok: true, value: "openrouter" });
+    expect(parseOpenCodeProviderId(OPENCODE_ZEN_PROVIDER_ID)).toEqual({
+      ok: false,
+      error: expect.stringContaining("reserved"),
+    });
+  });
+
+  it("rejects malformed slugs", () => {
+    expect(parseOpenCodeProviderId("")).toEqual({
+      ok: false,
+      error: "Provider id is required.",
+    });
+    expect(parseOpenCodeProviderId("OpenRouter")).toEqual({
+      ok: false,
+      error: expect.stringContaining("lowercase slug"),
+    });
+    expect(parseOpenCodeProviderId("open/router")).toEqual({
+      ok: false,
+      error: expect.stringContaining("lowercase slug"),
+    });
+    expect(parseOpenCodeProviderId(12)).toEqual({
+      ok: false,
+      error: "Provider id must be a string.",
+    });
   });
 });

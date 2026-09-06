@@ -14,8 +14,6 @@ async function transferredBytes(requests: Request[]) {
   const sizes = await Promise.all(
     requests.map(async (request) => {
       try {
-        const response = await request.response();
-        await response?.finished();
         const size = await request.sizes();
         return (
           size.requestBodySize +
@@ -37,18 +35,36 @@ async function measureClickToVisible(
   visible: () => Promise<void>,
 ) {
   const requests: Request[] = [];
+  const completed = new Set<Request>();
+  const failed = new Set<Request>();
   const onRequest = (request: Request) => requests.push(request);
+  const onFinished = (request: Request) => completed.add(request);
+  const onFailed = (request: Request) => failed.add(request);
   page.on("request", onRequest);
-  const startedAt = await page.evaluate(() => performance.now());
-  await click();
-  await visible();
-  const durationMs = await page.evaluate((start) => performance.now() - start, startedAt);
-  await page.waitForTimeout(250);
-  page.off("request", onRequest);
+  page.on("requestfinished", onFinished);
+  page.on("requestfailed", onFailed);
+  let durationMs: number;
+  try {
+    const startedAt = await page.evaluate(() => performance.now());
+    await click();
+    await visible();
+    durationMs = await page.evaluate((start) => performance.now() - start, startedAt);
+    // Observe trailing requests without waiting for open-ended RSC/prefetch streams.
+    await page.waitForTimeout(250);
+  } finally {
+    page.off("request", onRequest);
+    page.off("requestfinished", onFinished);
+    page.off("requestfailed", onFailed);
+  }
+  const completedRequests = requests.filter((request) => completed.has(request));
+  const failedRequestCount = requests.filter((request) => failed.has(request)).length;
   return {
     durationMs: Math.round(durationMs),
     requestCount: requests.length,
-    transferredBytes: await transferredBytes(requests),
+    completedRequestCount: completedRequests.length,
+    failedRequestCount,
+    pendingRequestCount: requests.length - completedRequests.length - failedRequestCount,
+    completedTransferredBytes: await transferredBytes(completedRequests),
   };
 }
 
@@ -67,7 +83,9 @@ test("reports fixed-seed production interaction baselines without an elapsed-tim
   });
 
   await page.goto(workspacePath);
-  await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Pipeline", exact: true }),
+  ).toBeVisible();
   await page.waitForTimeout(750);
   expect(idleDetailRequests, "Pipeline must make zero idle detail prefetches").toHaveLength(0);
 
@@ -76,7 +94,9 @@ test("reports fixed-seed production interaction baselines without an elapsed-tim
     () => page.getByRole("link", { name: "Sessions" }).first().click(),
     async () => {
       await expect(page).toHaveURL(`${workspacePath}/sessions`);
-      await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Sessions", exact: true }),
+      ).toBeVisible();
     },
   );
   await page.waitForTimeout(750);
@@ -84,6 +104,8 @@ test("reports fixed-seed production interaction baselines without an elapsed-tim
 
   const firstDetailLink = page.locator(`a[href^="${workspacePath}/sessions/"]`).first();
   const destination = await firstDetailLink.getAttribute("href");
+  const sessionTitle = (await firstDetailLink.innerText()).trim();
+  expect(sessionTitle).not.toBe("");
   expect(destination).toMatch(detailPath);
   if (!destination) throw new Error("Fixed seed did not provide a session detail link.");
 
@@ -92,7 +114,12 @@ test("reports fixed-seed production interaction baselines without an elapsed-tim
     () => firstDetailLink.click(),
     async () => {
       await expect(page).toHaveURL(destination);
-      await expect(page.getByRole("heading", { name: /Session #\d+/ })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { level: 1, name: sessionTitle, exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("navigation", { name: "Pipeline stages" }).getByRole("button").first(),
+      ).toBeVisible();
     },
   );
 

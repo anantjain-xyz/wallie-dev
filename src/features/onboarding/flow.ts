@@ -23,28 +23,29 @@ export type OnboardingStepDefinition = {
 
 export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
   {
-    description: "Connect GitHub and sync the repositories Wallie can read.",
+    description: "Choose which GitHub repositories Wallie can prepare and work on.",
     id: "github",
     shortTitle: "GitHub",
     title: "Connect GitHub",
   },
   {
-    description: "Prepare repositories by installing skills and saving inferred setup profiles.",
+    description: "Choose a repository, review its setup commands, and prepare it for your agent.",
     id: "repository",
-    shortTitle: "Analyze",
-    title: "Analyze repositories",
+    shortTitle: "Repository",
+    title: "Prepare repository",
   },
   {
-    description: "Review the default phase pipeline before sessions start.",
+    description: "Start with Plan → Build, or customize the stages and reviewers for your team.",
     id: "pipeline",
     shortTitle: "Pipeline",
     title: "Review pipeline",
   },
   {
-    description: "Add Linear credentials and routing for status updates.",
+    description:
+      "Optional: attach issue context and sync status updates. You can start with a prompt alone.",
     id: "linear",
     shortTitle: "Linear",
-    title: "Connect Linear",
+    title: "Connect Linear (optional)",
   },
   {
     description: "Choose and connect a sandbox provider for running agents.",
@@ -64,6 +65,12 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     shortTitle: "Verify",
     title: "Verify setup",
   },
+];
+
+export const ONBOARDING_GROUPS: { title: string; steps: WorkspaceOnboardingStep[] }[] = [
+  { title: "Repository", steps: ["github", "repository", "pipeline"] },
+  { title: "Execution access", steps: ["linear", "sandbox", "runtime"] },
+  { title: "First task", steps: ["verify"] },
 ];
 
 export const SKIPPABLE_ONBOARDING_STEPS = ["linear", "runtime"] as const;
@@ -143,10 +150,10 @@ export function getOnboardingStepRailItems(
 
     if (step.id === onboarding.currentStep) {
       displayState = "active";
-    } else if (completed.has(step.id)) {
-      displayState = "completed";
     } else if (skipped.has(step.id)) {
       displayState = "skipped";
+    } else if (completed.has(step.id)) {
+      displayState = "completed";
     } else {
       displayState = "available";
     }

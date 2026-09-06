@@ -12,6 +12,7 @@ describe("AppShell", () => {
     const element = AppShell({
       children: "Settings",
       onboarding: null,
+      viewerAvatarUrl: null,
       viewerEmail: "owner@example.com",
       viewerId: "user-1",
       workspace: { id: "workspace-1", name: "Acme", slug: "acme" },

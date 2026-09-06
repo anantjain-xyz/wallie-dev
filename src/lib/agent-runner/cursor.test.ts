@@ -37,7 +37,7 @@ describe("CursorRunner", () => {
 
     expect(events).toEqual([
       { text: "working", type: "text" },
-      { summary: "done", taskComplete: true, type: "completion" },
+      { summary: "done", finalOutput: "done", taskComplete: true, type: "completion" },
     ]);
     expect(await sandbox.readFile("/vercel/sandbox/.wallie-cursor-prompt.txt")).toBe(
       "Implement this",
@@ -236,9 +236,21 @@ describe("parseCursorStreamJsonLine", () => {
     ).toEqual({ input: '{"cmd":"ls"}', tool: "shell", type: "tool_use" });
     expect(parseCursorStreamJsonLine('{"type":"result","result":"done"}').event).toEqual({
       summary: "done",
+      finalOutput: "done",
       taskComplete: true,
       type: "completion",
     });
+  });
+
+  it("redacts explicit final output and never promotes fallback bookkeeping", () => {
+    expect(
+      parseCursorStreamJsonLine(JSON.stringify({ type: "result", result: "Final secret-token" }), [
+        "secret-token",
+      ]).event,
+    ).toMatchObject({ finalOutput: "Final [REDACTED]" });
+    expect(parseCursorStreamJsonLine(JSON.stringify({ type: "result" })).event).not.toHaveProperty(
+      "finalOutput",
+    );
   });
 
   it("extracts nested *ToolCall names and args from official stream-json", () => {

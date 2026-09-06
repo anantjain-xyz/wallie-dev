@@ -43,3 +43,6 @@ yarn-error.log*
 .gstack/
 .omo/
 .playwright-mcp/
+
+# local verification / screenshot proof artifacts
+.wallie/

@@ -5,9 +5,11 @@
 
 AI-powered product development automation. Wallie turns a work prompt -- optionally linked to a Linear issue -- into reviewed, staged work. It runs Codex, Claude Code, Cursor, or OpenCode in a GitHub-backed sandbox, preserves a versioned artifact for every stage, and keeps the human approval loop in the dashboard.
 
-> **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance — sign up and start in minutes, no setup required. It's actively maintained, so you can use it for real work.
+> **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance. To run your first task, connect a GitHub repository, a sandbox provider, and your agent credentials. Linear is optional.
 >
 > **Want to run your own?** Wallie is open source (MIT). Follow the [Self-Hosting guide](docs/SELF_HOSTING.md) to deploy your own instance, or the [Local Setup](#local-setup-end-to-end) section below to hack on it.
+>
+> After setup, follow the [first-task verification walkthrough](docs/SELF_HOSTING.md#7-verify-the-first-task-through-completion) to review the output and verify the resulting PR.
 
 ## How It Works
 
@@ -429,7 +431,7 @@ Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and Verce
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex, Claude Code, Cursor, and OpenCode. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`; Cursor defaults to `auto` and discovers the models available to the connected account; OpenCode defaults to `opencode/gpt-5.6-sol`. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key; Cursor users complete **Sign in with Cursor**, which mints an encrypted, expiring user API key through the Cursor SDK; OpenCode users save an OpenCode Zen API key. The Wallie worker must be running for Cursor sign-in to progress.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex, Claude Code, Cursor, and OpenCode. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`; Cursor defaults to `auto` and discovers the models available to the connected account; OpenCode defaults to `opencode/gpt-5.6-sol`. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key; Cursor users complete **Sign in with Cursor**, which mints an encrypted, expiring user API key through the Cursor SDK; OpenCode users save an OpenCode Zen API key and, for custom provider ids such as `opencode-go/glm-5.3`, a matching per-provider API key. The Wallie worker must be running for Cursor sign-in to progress.
 
 ### 5. Create a GitHub App
 
@@ -535,7 +537,7 @@ Tenant-owned data rows are scoped to a `workspace_id`, and Supabase RLS policies
 
 ### Concurrency
 
-Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection CAS-claims the status, version, and rejection count before recording feedback, but its later enqueue and status update are a multi-step workflow rather than one atomic transaction.
+Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection uses `reject_session_stage`: it locks the session row and applies feedback, enqueue, and `rejected` in one transaction, so a concurrent approval serializes on that lock and re-validates phase.
 
 ### Deduplication
 

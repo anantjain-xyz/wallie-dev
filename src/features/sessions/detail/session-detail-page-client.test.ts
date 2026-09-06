@@ -1,31 +1,48 @@
+// @vitest-environment jsdom
+
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   centerStageRailSelection,
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
+import type { ToastInput } from "@/components/ui/toast";
+import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
-const mocked = vi.hoisted(() => ({
-  refresh: vi.fn(),
+const mocked = vi.hoisted(() => {
+  const refresh = vi.fn();
+  return {
+    refresh,
+    pushToast: vi.fn<(toast: ToastInput) => number>(),
+    router: { refresh, replace: vi.fn() },
+    handlers: new Map<string, (payload: unknown) => void>(),
+  };
+});
+
+vi.mock("@/components/ui/toast", () => ({
+  useOptionalToast: () => ({ pushToast: mocked.pushToast }),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/w/acme/sessions/7",
-  useRouter: () => ({
-    refresh: mocked.refresh,
-    replace: vi.fn(),
-  }),
+  useRouter: () => mocked.router,
   useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
   createSupabaseBrowserClient: () => ({
     channel: () => ({
-      on: function on() {
+      on: function on(
+        _event: string,
+        config: { table: string },
+        callback: (payload: unknown) => void,
+      ) {
+        mocked.handlers.set(config.table, callback);
         return this;
       },
       subscribe: () => undefined,
@@ -101,6 +118,183 @@ function renderDetail(
 }
 
 describe("SessionDetailPageClient", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    mocked.refresh.mockReset();
+    mocked.pushToast.mockReset();
+    mocked.handlers.clear();
+  });
+
+  it("refreshes after a successful archive Undo has cleared its pending state", async () => {
+    const data = makeSessionDetailData();
+    const archivedAt = "2026-06-07T12:00:00.000Z";
+    let finishUndo!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "DELETE") {
+        return new Promise<Response>((resolve) => {
+          finishUndo = resolve;
+        });
+      }
+      return Response.json({
+        id: data.session.id,
+        archivedAt,
+        phaseStatus: "awaiting_review",
+        updatedAt: archivedAt,
+      });
+    });
+    const view = render(
+      createElement(SessionDetailPageClient, {
+        canReview: true,
+        activity: null,
+        initialData: data,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      }),
+    );
+    await act(async () => fireEvent.click(view.getByRole("button", { name: "Archive" })));
+    const undo = mocked.pushToast.mock.calls.find(([toast]) => toast.action?.label === "Undo")?.[0]
+      .action;
+    expect(undo).toBeDefined();
+    await act(async () => undo!.onClick());
+    expect((view.getByRole("button", { name: "Archive" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(mocked.refresh).not.toHaveBeenCalled();
+    mocked.refresh.mockImplementation(() => {
+      expect((view.getByRole("button", { name: "Archive" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    await act(async () =>
+      finishUndo(
+        Response.json({
+          id: data.session.id,
+          archivedAt: null,
+          phaseStatus: "awaiting_review",
+          updatedAt: "2026-06-07T12:01:00.000Z",
+        }),
+      ),
+    );
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles recovered snapshots without overwriting newer session state", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const data = makeSessionDetailData();
+    const element = (value: SessionReviewData, canReview = true) =>
+      createElement(SessionDetailPageClient, {
+        canReview,
+        activity: null,
+        initialData: value,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      });
+    const view = render(element(data));
+    const fresh = {
+      ...data,
+      session: { ...data.session, title: "Recovered title", updatedAt: "2026-06-07T12:00:00.000Z" },
+    };
+    await act(async () => view.rerender(element(fresh)));
+    expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Recovered title");
+    await act(async () => view.rerender(element({ ...data, session: { ...data.session } }, false)));
+    expect(view.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Recovered title");
+    const withPr = {
+      ...fresh,
+      session: {
+        ...fresh.session,
+        phaseStatus: "approved" as const,
+        pullRequests: [
+          {
+            id: "recovered-pr",
+            pullRequestNumber: 99,
+            pullRequestUrl: "https://github.com/acme/app/pull/99",
+          },
+        ],
+      },
+    };
+    await act(async () => view.rerender(element(withPr)));
+    expect(view.getByRole("link", { name: /Open PR #99/ }).getAttribute("href")).toBe(
+      "https://github.com/acme/app/pull/99",
+    );
+  });
+
+  it("preserves a live PR during a tracked refresh and accepts a later quiet deletion", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    let finish!: () => void;
+    mocked.refresh.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    function RefreshTrigger() {
+      const { refresh } = useSessionRefresh();
+      return createElement("button", { onClick: refresh }, "Refresh test");
+    }
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "approved";
+    const element = (value: SessionReviewData) =>
+      createElement(SessionDetailPageClient, {
+        activity: createElement(RefreshTrigger),
+        initialData: value,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      });
+    const view = render(element(data));
+    fireEvent.click(view.getByText("Refresh test"));
+    act(() =>
+      mocked.handlers.get("session_pull_requests")!({
+        eventType: "INSERT",
+        new: {
+          id: "live-pr",
+          pull_request_number: 42,
+          pull_request_url: "https://github.com/acme/app/pull/42",
+          updated_at: "2026-06-07T12:00:00.000Z",
+        },
+      }),
+    );
+    await act(async () => {
+      view.rerender(element({ ...data, session: { ...data.session } }));
+      finish();
+    });
+    expect(view.getByRole("link", { name: /Open PR #42/ })).toBeTruthy();
+    fireEvent.click(view.getByText("Refresh test"));
+    await act(async () => {
+      view.rerender(element({ ...data, session: { ...data.session } }));
+      finish();
+    });
+    expect(view.queryByRole("link", { name: /Open PR #42/ })).toBeNull();
+  });
+
+  it("shows completion only after terminal approval, with each result link", () => {
+    const data = makeSessionDetailData();
+    data.session.pullRequests = [
+      { id: "pr-1", pullRequestNumber: 12, pullRequestUrl: "https://github.com/acme/app/pull/12" },
+      { id: "pr-2", pullRequestNumber: 13, pullRequestUrl: "https://github.com/acme/app/pull/13" },
+    ];
+    expect(renderDetail({ data })).not.toContain("Session complete");
+    data.session.archivedAt = "2026-06-07T12:00:00Z";
+    expect(renderDetail({ data })).not.toContain("Session complete");
+    data.session.phaseStatus = "approved";
+    const html = renderDetail({ data });
+    expect(html).toContain("Session complete");
+    expect(html).toContain("Open PR #12");
+    expect(html).toContain("Open PR #13");
+    expect(html).not.toContain("Review controls are closed");
+    expect(html).not.toContain("sticky bottom-0");
+  });
+
+  it("points to stage outputs for completed pipelines without a PR", () => {
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "approved";
+    const html = renderDetail({ data });
+    expect(html).toContain("Explore the stage outputs and run history below.");
+    expect(html).toContain("No pull request is linked to this session.");
+    expect(html).not.toContain("Open pull request");
+  });
+
   it("centers the selected stage with horizontal rail scrolling only", () => {
     const scrollTo = vi.fn();
     const rail = {
@@ -158,7 +352,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("Cancel title edit");
   });
 
-  it("keeps a long title untruncated while actions stay in a right-hand column", () => {
+  it("gives mobile titles full width and keeps desktop actions on the right", () => {
     const data = makeSessionDetailData();
     data.session.title =
       "A deliberately long session title that must wrap in full without displacing archive actions";
@@ -166,8 +360,8 @@ describe("SessionDetailPageClient", () => {
     const headerMatch = html.match(/<header class="([^"]+)">([\s\S]*?)<\/header>/);
 
     expect(headerMatch).not.toBeNull();
-    expect(headerMatch?.[1]).toContain("grid-cols-[minmax(0,1fr)_auto]");
-    expect(headerMatch?.[2]).toContain("col-span-2");
+    expect(headerMatch?.[1]).toContain("grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]");
+    expect(headerMatch?.[2]).toContain("sm:col-span-2");
     expect(headerMatch?.[2]).toContain(data.session.title);
     expect(headerMatch?.[2]).toContain("Archive");
     expect(headerMatch?.[2]).not.toMatch(/line-clamp|overflow-hidden|truncate/);
@@ -194,6 +388,21 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("acme/app");
   });
 
+  it("does not promise a next stage that live pipeline edits could change", () => {
+    const data = makeSessionDetailData();
+    data.session.pipeline.stages.push({
+      id: "custom-stage",
+      slug: "security-check",
+      name: "Security check",
+      description: "Review security",
+      position: 10,
+    });
+    const html = renderDetail({ data });
+    expect(html).toContain("Approve stage");
+    expect(html).not.toContain("Approve &amp; start Security check");
+    expect(html).toContain("Final-stage approval may also archive the session.");
+  });
+
   it("uses a 70/30 workbench grid with sticky review controls", () => {
     const html = renderDetail();
 
@@ -202,7 +411,8 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("lg:pl-5");
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain("Approve stage");
+    expect(html).toContain("Final-stage approval may also archive the session.");
     expect(html).toContain('aria-label="Pipeline stages"');
     expect(html).not.toContain("max-h-[480px]");
     expect(html).not.toContain(">Prompt<");
@@ -244,13 +454,13 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Product artifact");
     expect(html).toContain("Rendered artifact");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain("Approve stage");
   });
 
   it("shows reviewable controls when awaiting review", () => {
     const html = renderDetail();
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve &amp; archive");
+    expect(html).toContain("Approve stage");
   });
 
   it("shows stop run while generating", () => {
@@ -282,21 +492,23 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain(">Product</span>");
     expect(html).toContain(">Land</span>");
     expect(html).toContain("Product artifact");
-    expect(html).toContain("Wallie is drafting the artifact for this stage.");
+    expect(html).toContain("Waiting for this stage’s artifact. Follow progress in Runs below.");
     expect(html).toContain("Stop run");
     expect(html.indexOf("Stop run")).toBeLessThan(html.indexOf("Archive"));
     expect(html).not.toContain("Wallie is generating this stage’s artifact.");
     expect(html).not.toContain("sticky bottom-0");
     expect(html).not.toContain("Request changes");
     expect(html).not.toContain("data-status=");
-    expect(html).not.toMatch(/In progress|Complete|Upcoming/);
+    expect(html).toContain("In progress");
+    expect(html).toContain("Completed");
+    expect(html).toContain("Upcoming");
   });
 
   it("shows an explicit completed reason", () => {
     const data = makeSessionDetailData();
     data.session.phaseStatus = "approved";
     const html = renderDetail({ data });
-    expect(html).toContain("This session is complete.");
+    expect(html).toContain("Session complete");
     expect(html).not.toContain("Request changes");
   });
 
@@ -314,7 +526,7 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ canReview: false });
     expect(html).toContain("Request changes");
     expect(html).toContain("You are not authorized to approve this stage.");
-    expect(html).not.toContain("Approve &amp; archive");
+    expect(html).not.toContain("Approve stage");
   });
 
   it("shows an explicit read-only reason when the stage is not ready for review", () => {
@@ -331,4 +543,12 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Collapsed — expand to inspect the original session input");
     expect(html).not.toContain("Build the title editor");
   });
+});
+
+it("does not promise automatic archival for a Linear-linked manual-merge workflow", () => {
+  const data = makeSessionDetailData();
+  data.session.linearIssueId = "TEAM-123";
+  const html = renderDetail({ data });
+  expect(html).toContain("Final-stage approval may also archive the session.");
+  expect(html).not.toContain("completes and archives");
 });

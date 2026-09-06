@@ -87,7 +87,7 @@ export function createAgentRunner(
     case "opencode":
       if (!opts.openCode) {
         throw new Error(
-          "opencode provider requires an OpenCode Zen API key (pass opts.openCode to createAgentRunner).",
+          "opencode provider requires OpenCode credentials (pass opts.openCode to createAgentRunner).",
         );
       }
       return new OpenCodeRunner(opts.openCode);

@@ -202,6 +202,7 @@ export function updateOpenCodeConnectionInSettingsData(
       openCodeConnection: {
         checkedAt: status.checkedAt,
         connected: status.connected,
+        providers: status.providers ?? currentData.setupHealth.openCodeConnection.providers,
         status: status.connected ? "connected" : "missing",
         updatedAt: status.updatedAt ?? null,
       },

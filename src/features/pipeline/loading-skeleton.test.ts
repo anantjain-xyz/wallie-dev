@@ -9,6 +9,7 @@ describe("PipelineLoadingSkeleton", () => {
     const html = renderToStaticMarkup(createElement(PipelineLoadingSkeleton));
 
     expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("data-route-loading");
     expect(html).toContain('aria-label="Loading pipeline"');
     expect(html).toContain(
       "h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas",

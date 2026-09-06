@@ -343,6 +343,7 @@ function updateOpenCodeConnectionInData(
       openCodeConnection: {
         checkedAt: status.checkedAt,
         connected: status.connected,
+        providers: status.providers ?? currentData.setupHealth.openCodeConnection.providers,
         status: status.connected ? "connected" : "missing",
         updatedAt: status.updatedAt ?? null,
       },
@@ -954,6 +955,7 @@ export default function RuntimeStep({
             initialOpenCodeStatus={{
               checkedAt: data.setupHealth.openCodeConnection.checkedAt,
               connected: data.setupHealth.openCodeConnection.connected,
+              providers: data.setupHealth.openCodeConnection.providers,
               updatedAt: data.setupHealth.openCodeConnection.updatedAt,
             }}
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}

@@ -34,6 +34,15 @@ export class SessionOptionsChangedError extends Error {
   }
 }
 
+export class SessionAttachmentsChangedError extends Error {
+  readonly code = "session_attachments_changed";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionAttachmentsChangedError";
+  }
+}
+
 export type UpdateSessionTitleInput = {
   sessionId: string;
   title: string;
@@ -210,6 +219,11 @@ export async function createSessionFromClient(
   } | null;
 
   if (!response.ok) {
+    if (responsePayload?.code === "session_attachments_changed") {
+      throw new SessionAttachmentsChangedError(
+        responsePayload.error ?? "Session images changed. Refresh and try again.",
+      );
+    }
     if (responsePayload?.code === "session_options_changed") {
       throw new SessionOptionsChangedError(
         responsePayload.error ?? "The workspace pipeline changed. Refresh and try again.",

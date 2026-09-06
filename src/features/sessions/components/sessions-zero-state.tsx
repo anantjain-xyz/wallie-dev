@@ -49,7 +49,7 @@ export function SessionsZeroState({
             : "All sessions have been archived. Start a new session to move more work through your pipeline."
           : shouldResumeSetup
             ? "Finish workspace setup before starting the first session."
-            : "Turn a Linear issue into a session and Wallie drives it through your pipeline, one approval at a time."}
+            : "Describe a task and Wallie drives it through your pipeline, one approval at a time. You can also attach a Linear issue."}
       </p>
       <div className="mt-5">
         {shouldResumeSetup ? (

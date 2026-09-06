@@ -42,6 +42,7 @@ type ShellHeaderProps = {
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
+  viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
   workspace: WorkspaceSummary;
@@ -73,7 +74,10 @@ export function preloadCreateSessionDialogOnce(
     });
 }
 
-const CreateSessionLoadingCloseContext = createContext<(() => void) | null>(null);
+const CreateSessionLoadingCloseContext = createContext<{
+  onClose: () => void;
+  open: boolean;
+} | null>(null);
 
 export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void } = {}) {
   const closeFromShell = useContext(CreateSessionLoadingCloseContext);
@@ -82,11 +86,13 @@ export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void }
     finishInteraction("open_create_dialog", "success");
   }, []);
 
+  if (closeFromShell && !closeFromShell.open) return null;
+
   return (
     <Dialog
       defaultOpen
       onOpenChange={(open) => {
-        if (!open) (onClose ?? closeFromShell)?.();
+        if (!open) (onClose ?? closeFromShell?.onClose)?.();
       }}
     >
       <DialogContent description="The session form is loading." title="Start a new session">
@@ -165,6 +171,7 @@ export function ShellHeader({
   navItems,
   onboarding,
   pathnameOverride,
+  viewerAvatarUrl,
   viewerEmail,
   viewerId,
   workspace,
@@ -184,6 +191,11 @@ export function ShellHeader({
   const createFromUrl = searchParams?.get("create") === "1";
   const [userCreateOpen, setUserCreateOpen] = useState(false);
   const createOpen = !shouldResumeSetup && (userCreateOpen || createFromUrl);
+  const createScope = `${viewerId}:${workspace.id}`;
+  const [mountedCreateScope, setMountedCreateScope] = useState<string | null>(null);
+  if (createOpen && mountedCreateScope !== createScope) {
+    setMountedCreateScope(createScope);
+  }
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCreateButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -315,6 +327,7 @@ export function ShellHeader({
     <>
       <div className="flex min-h-[100svh] min-w-0">
         <aside
+          aria-label="Workspace sidebar"
           className="ui-shell-rail sticky top-0 z-20 hidden h-svh w-[208px] shrink-0 flex-col border-r border-border bg-sheet lg:flex"
           data-shell-rail=""
         >
@@ -368,7 +381,7 @@ export function ShellHeader({
               <div className="flex shrink-0 items-center gap-1.5">
                 {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
                 <ThemeToggle />
-                <AccountMenu email={viewerEmail} />
+                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
               </div>
             </div>
 
@@ -380,7 +393,7 @@ export function ShellHeader({
               <div className="flex shrink-0 items-center gap-2">
                 {renderPrimaryAction(createButtonRef)}
                 <ThemeToggle />
-                <AccountMenu email={viewerEmail} />
+                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
               </div>
             </div>
           </header>
@@ -425,10 +438,13 @@ export function ShellHeader({
         </DialogSideContent>
       </Dialog>
 
-      {createOpen ? (
-        <CreateSessionLoadingCloseContext.Provider value={handleCreateClose}>
+      {mountedCreateScope === createScope ? (
+        <CreateSessionLoadingCloseContext.Provider
+          value={{ onClose: handleCreateClose, open: createOpen }}
+        >
           <CreateSessionDialog
-            open
+            key={createScope}
+            open={createOpen}
             onClose={handleCreateClose}
             userId={viewerId}
             workspaceId={workspace.id}

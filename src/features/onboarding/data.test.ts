@@ -116,6 +116,7 @@ function createFixture(options: {
   codexCredentials?: unknown;
   memberRole?: "member" | "owner";
   memberRows?: unknown[];
+  openCodeProviderCredentials?: unknown[];
   pipeline?: unknown;
   routing?: unknown;
   sandboxChecks?: unknown[];
@@ -141,6 +142,7 @@ function createFixture(options: {
   const adminRows: Record<string, unknown> = {
     user_claude_code_credentials: options.claudeCredentials ?? null,
     user_codex_credentials: options.codexCredentials ?? null,
+    user_opencode_provider_credentials: options.openCodeProviderCredentials ?? [],
     workspace_agent_config: options.agentConfig ?? [],
     workspace_linear_routing: options.routing ?? null,
   };
@@ -258,6 +260,7 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.codexConnection.accountEmail).toBe("owner@example.com");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
     expect(result.data.setupHealth.openCodeConnection.status).toBe("missing");
+    expect(result.data.setupHealth.openCodeConnection.providers).toEqual([]);
     expect(result.data.setupHealth.codexConnection.checkedAt).toMatch(/Z$/);
     expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toMatch(/Z$/);
 
@@ -272,6 +275,7 @@ describe("canonical onboarding snapshot", () => {
       "user_claude_code_credentials",
       "user_cursor_credentials",
       "user_opencode_credentials",
+      "user_opencode_provider_credentials",
       "load_workspace_onboarding_secret_previews",
       "load_workspace_onboarding_sandbox_checks",
     ]) {
@@ -279,6 +283,25 @@ describe("canonical onboarding snapshot", () => {
     }
     expect(mocked.github).toHaveBeenCalledTimes(1);
     expect(mocked.sandboxOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes OpenCode per-provider credential metadata without secrets", async () => {
+    const fixture = createFixture({
+      openCodeProviderCredentials: [
+        { provider_id: "opencode-go", updated_at: NOW },
+        { provider_id: "openrouter", updated_at: NOW },
+      ],
+    });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.setupHealth.openCodeConnection.providers).toEqual([
+      { providerId: "opencode-go", updatedAt: NOW },
+      { providerId: "openrouter", updatedAt: NOW },
+    ]);
+    expect(JSON.stringify(result.data.setupHealth.openCodeConnection)).not.toContain("encrypted");
   });
 
   it("preserves Codex reconnect metadata in the server setup snapshot", async () => {

@@ -2,17 +2,23 @@
 
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Profiler, type ProfilerOnRenderCallback } from "react";
+import { Suspense, Profiler, type ProfilerOnRenderCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocked = vi.hoisted(() => ({
-  cardLinkRenders: new Map<string, number>(),
-  createSupabaseBrowserClient: vi.fn(),
-  refresh: vi.fn(),
-}));
+const mocked = vi.hoisted(() => {
+  const refresh = vi.fn();
+  return {
+    cardLinkRenders: new Map<string, number>(),
+    suspendCard: null as Promise<void> | null,
+    suspendedRenders: 0,
+    createSupabaseBrowserClient: vi.fn(),
+    refresh,
+    router: { refresh },
+  };
+});
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: mocked.refresh }),
+  useRouter: () => mocked.router,
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -31,6 +37,10 @@ vi.mock("@/features/sessions/components/session-detail-link", () => ({
     className?: string;
     href: string;
   }) => {
+    if (ariaLabel.includes("Snapshot title") && mocked.suspendCard) {
+      mocked.suspendedRenders += 1;
+      throw mocked.suspendCard;
+    }
     mocked.cardLinkRenders.set(ariaLabel, (mocked.cardLinkRenders.get(ariaLabel) ?? 0) + 1);
     return (
       <a aria-label={ariaLabel} className={className} href={href}>
@@ -152,6 +162,7 @@ function sessionRow(session: PipelineDashboardCard) {
 
 function installSupabaseMock() {
   let agentRunsHandler: ((payload: RealtimePayload) => void) | undefined;
+  let pullRequestsHandler: ((payload: RealtimePayload) => void) | undefined;
   let sessionsHandler: ((payload: RealtimePayload) => void) | undefined;
   const channel = {
     on: vi.fn(),
@@ -161,16 +172,30 @@ function installSupabaseMock() {
     (_event: string, filter: { table: string }, handler: (payload: RealtimePayload) => void) => {
       if (filter.table === "sessions") sessionsHandler = handler;
       if (filter.table === "agent_runs") agentRunsHandler = handler;
+      if (filter.table === "session_pull_requests") pullRequestsHandler = handler;
       return channel;
     },
   );
   channel.subscribe.mockReturnValue(channel);
+  const query = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    not: vi.fn(),
+    order: vi.fn().mockResolvedValue({ data: [], error: null }),
+  };
+  query.select.mockReturnValue(query);
+  query.eq.mockReturnValue(query);
+  query.not.mockReturnValue(query);
   mocked.createSupabaseBrowserClient.mockReturnValue({
+    from: vi.fn(() => query),
     channel: () => channel,
     removeChannel: vi.fn(),
   });
 
   return {
+    query,
+    getPullRequestsHandler: () => pullRequestsHandler,
+    getStatusHandler: () => channel.subscribe.mock.calls[0]?.[0] as (status: string) => void,
     getAgentRunsHandler: () => agentRunsHandler,
     getSessionsHandler: () => sessionsHandler,
   };
@@ -224,6 +249,190 @@ describe("PipelinePageClient", () => {
     mocked.cardLinkRenders.clear();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+    mocked.refresh.mockReset();
+    mocked.suspendCard = null;
+  });
+
+  it("recovers missed removals and independent run state without an initial refresh", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const original = initialData();
+    const view = render(<PipelinePageClient initialData={original} />);
+    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(mocked.refresh).not.toHaveBeenCalled();
+    act(() => {
+      supabase.getStatusHandler()("CHANNEL_ERROR");
+      supabase.getStatusHandler()("SUBSCRIBED");
+      window.dispatchEvent(new Event("online"));
+    });
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+    const recovered = initialData(
+      [],
+      [card(3, BUILD_STAGE_ID, { latestRunId: "run-3", latestRunStatus: "error" })],
+    );
+    view.rerender(<PipelinePageClient initialData={recovered} />);
+    expect(screen.queryByText("Session 1")).toBeNull();
+    expect(screen.getByText("Session 3")).toBeTruthy();
+    expect(
+      view.container.querySelector(`[data-session-id="${card(3, BUILD_STAGE_ID).id}"]`)
+        ?.textContent,
+    ).toContain("Failed");
+  });
+
+  it("applies missed changes even when live traffic races recovery", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const original = initialData();
+    const view = render(<PipelinePageClient initialData={original} />);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    act(() =>
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow(card(1, PLAN_STAGE_ID, { title: "Live title" })),
+      }),
+    );
+    view.rerender(<PipelinePageClient initialData={initialData([card(1, PLAN_STAGE_ID)], [])} />);
+    expect(screen.getByText("Live title")).toBeTruthy();
+    expect(screen.queryByText("Session 3")).toBeNull();
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+    view.unmount();
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a fetched PR when recovery first introduces the card", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    supabase.query.order.mockResolvedValue({
+      data: [
+        {
+          id: "pr",
+          pull_request_number: 42,
+          pull_request_url: "https://github.com/acme/repo/pull/42",
+        },
+      ],
+      error: null,
+    });
+    const view = render(<PipelinePageClient initialData={initialData()} />);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    await act(async () =>
+      supabase.getPullRequestsHandler()?.({
+        eventType: "INSERT",
+        new: { session_id: card(4, PLAN_STAGE_ID).id },
+      }),
+    );
+    view.rerender(<PipelinePageClient initialData={initialData([card(4, PLAN_STAGE_ID)])} />);
+    expect(screen.getByRole("link", { name: /PR #42/ }).getAttribute("href")).toBe(
+      "https://github.com/acme/repo/pull/42",
+    );
+  });
+
+  it.each(["DELETE", "ARCHIVE", "MOVE"])(
+    "recovers authoritative counts after a concurrent off-page %s",
+    async (event) => {
+      vi.useFakeTimers();
+      const supabase = installSupabaseMock();
+      const before = initialData();
+      before.lanes[0]!.totalCount = 30;
+      before.lanes[1]!.totalCount = 20;
+      before.lanes[1]!.cursor = "partial-build";
+      const view = render(<PipelinePageClient initialData={before} />);
+      act(() => window.dispatchEvent(new Event("online")));
+      await act(async () => vi.advanceTimersByTime(200));
+      const row = sessionRow(card(9, event === "MOVE" ? BUILD_STAGE_ID : PLAN_STAGE_ID));
+      act(() =>
+        supabase.getSessionsHandler()?.(
+          event === "DELETE"
+            ? { eventType: "DELETE", old: { id: row.id }, new: {} }
+            : {
+                eventType: "UPDATE",
+                new: { ...row, archived_at: event === "ARCHIVE" ? "2026-07-19T00:00:00Z" : null },
+              },
+        ),
+      );
+      view.rerender(<PipelinePageClient initialData={{ ...before, lanes: [...before.lanes] }} />);
+      expect(screen.getByText("Session 1")).toBeTruthy();
+      await act(async () => vi.advanceTimersByTime(9999));
+      expect(mocked.refresh).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(mocked.refresh).toHaveBeenCalledTimes(2);
+      const corrected = initialData();
+      corrected.lanes[0]!.totalCount = 29;
+      corrected.lanes[1]!.totalCount = event === "MOVE" ? 21 : 20;
+      corrected.lanes[1]!.cursor = "new-build-cursor";
+      view.rerender(<PipelinePageClient initialData={corrected} />);
+      expect(screen.getByRole("button", { name: "Load more Plan sessions" }).textContent).toContain(
+        "of 29",
+      );
+      expect(
+        screen.getByRole("button", { name: "Load more Build sessions" }).textContent,
+      ).toContain(event === "MOVE" ? "of 21" : "of 20");
+      await act(async () => vi.advanceTimersByTime(20000));
+      expect(mocked.refresh).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("retains live events while the recovery render is suspended", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    let resume!: () => void;
+    mocked.suspendedRenders = 0;
+    mocked.suspendCard = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const renderBoard = (value: PipelineDashboardData) => (
+      <Suspense fallback={<p>Waiting for board</p>}>
+        <PipelinePageClient initialData={value} />
+      </Suspense>
+    );
+    const view = render(renderBoard(initialData()));
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    view.rerender(renderBoard(initialData([card(1, PLAN_STAGE_ID, { title: "Snapshot title" })])));
+    expect(mocked.suspendedRenders).toBeGreaterThan(0);
+    act(() =>
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow(card(1, PLAN_STAGE_ID, { title: "Live after snapshot" })),
+      }),
+    );
+    await act(async () => {
+      mocked.suspendCard = null;
+      resume();
+    });
+    expect(screen.getByText("Live after snapshot")).toBeTruthy();
+    expect(screen.queryByText("Snapshot title")).toBeNull();
+  });
+
+  it("visibly disables pagination until recovery finishes", async () => {
+    vi.useFakeTimers();
+    installSupabaseMock();
+    let finish!: () => void;
+    mocked.refresh.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={initialData()} />);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => vi.advanceTimersByTime(200));
+    const button = screen.getByRole("button", { name: "Load more Plan sessions" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.textContent).toBe("Loading…");
+    act(() => button.click());
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("distinguishes an archived-only workspace from first run", () => {
@@ -675,19 +884,20 @@ describe("PipelinePageClient", () => {
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
   });
 
-  it("refreshes unknown realtime lanes and reconciles authoritative lane metadata", async () => {
+  it("refreshes unknown realtime lanes and selects the focused card’s destination", async () => {
     const supabase = installSupabaseMock();
     const originalData = initialData();
     const view = render(<PipelinePageClient initialData={originalData} />);
     await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
 
+    screen.getByRole("link", { name: "Open session Session 1" }).focus();
     const movedCard = card(1, REVIEW_STAGE_ID);
     act(() => {
       supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(movedCard) });
       supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(movedCard) });
     });
 
-    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocked.refresh).toHaveBeenCalledTimes(1));
     expect(screen.getByText("Session 1")).toBeTruthy();
 
     const refreshedData: PipelineDashboardData = {
@@ -714,6 +924,14 @@ describe("PipelinePageClient", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Review" })).toBeTruthy());
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
     expect(screen.getByText("Session 3")).toBeTruthy();
+    expect(
+      view.container
+        .querySelector(`[data-pipeline-stage-tab="${PIPELINE_ID}:${REVIEW_STAGE_ID}"]`)
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(document.activeElement).toBe(
+      screen.getByRole("link", { name: "Open session Session 1" }),
+    );
   });
 
   it("keeps Profiler commits bounded to one card with 100 seeded sessions", async () => {
