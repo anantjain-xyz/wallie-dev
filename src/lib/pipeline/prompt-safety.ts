@@ -7,6 +7,7 @@ export type TrustedPromptSource =
   | "session.attachmentInstructions"
   | "stage.promptTemplate"
   | "stage.slug"
+  | "wallie.titleInstructions"
   | "wallie.buildGitPublicationPolicy";
 
 export type UntrustedPromptSource =

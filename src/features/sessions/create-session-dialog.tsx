@@ -30,7 +30,6 @@ import {
   type SessionRepositoryCacheKey,
   type SessionRepositorySnapshot,
 } from "@/features/sessions/session-repository-cache";
-import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
 import {
   allowedSessionAttachmentMimeTypes,
   maxSessionAttachmentBytes,
@@ -357,7 +356,6 @@ function CreateSessionDialogBody({
     }
   }
 
-  const derivedTitle = deriveSessionTitleFromPrompt(prompt);
   const hasLinearIssue = Boolean(extractLinearIssueId(linearUrl.trim()));
   const repositorySelectOptions = repositoryOptions.map((repository) => ({
     label: repository.fullName,
@@ -588,11 +586,7 @@ function CreateSessionDialogBody({
               className="ui-input"
               disabled={hasLinearIssue}
               placeholder={
-                hasLinearIssue
-                  ? "From the linked Linear issue"
-                  : prompt.trim()
-                    ? derivedTitle
-                    : "Generated from the prompt"
+                hasLinearIssue ? "From the linked Linear issue" : "Generated from the prompt"
               }
             />
             {hasLinearIssue ? (
