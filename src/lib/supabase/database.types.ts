@@ -2173,6 +2173,31 @@ export type Database = {
         }
         Returns: boolean
       }
+      create_session_once_with_first_job: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
       create_session_with_first_job: {
         Args: {
           agent_model_name: string
@@ -2266,6 +2291,21 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      find_session_creation_request: {
+        Args: {
+          creator_member_id: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
       get_pipeline_dashboard_page: {
         Args: {
           cursor_seen_ids?: string[]
@@ -2342,6 +2382,42 @@ export type Database = {
         }
         Returns: {
           credential_version: number
+        }[]
+      }
+      publish_session_stage_artifact: {
+        Args: {
+          p_artifact_json: string
+          p_expected_artifact_version: number
+          p_session_id: string
+          p_stage_id: string
+          p_stage_slug: string
+          p_version: number
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      reject_session_stage: {
+        Args: {
+          p_agent_model_name: string
+          p_agent_model_provider: string
+          p_artifact_version: number
+          p_feedback_text: string
+          p_requested_by_member_id?: string
+          p_run_type?: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string
+          current_artifact_version: number
+          current_stage_id: string
+          job_created: boolean
+          job_id: string
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          rejection_count: number
+          run_id: string
+          session_id: string
+          workspace_id: string
         }[]
       }
       remove_workspace_member: {

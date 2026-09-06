@@ -27,6 +27,21 @@ function mockFetch(response: { body: Record<string, unknown>; ok: boolean; statu
 }
 
 describe("createSessionFromClient", () => {
+  it("keeps the caller's request identity across retries", async () => {
+    const fetchMock = mockFetch({
+      body: { number: 7, canonicalUrl: "/w/acme/sessions/7" },
+      ok: true,
+    });
+    const input = { requestId: SESSION_ID, promptMd: "Create once", workspaceId: WORKSPACE_ID };
+    await createSessionFromClient(input);
+    await createSessionFromClient(input);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(
+        JSON.parse((call as unknown as [string, RequestInit])[1].body as string),
+      ).toMatchObject({ requestId: SESSION_ID });
+    }
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });

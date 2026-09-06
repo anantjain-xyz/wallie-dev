@@ -9,6 +9,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   decryptSecretValue: vi.fn(),
   fetchLinearIssue: vi.fn(),
+  findSessionCreationRequest: vi.fn(),
   generateSessionTitle: vi.fn(),
   loadSessionFirstRunPrerequisites: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/lib/wallie/service", async () => {
     assertSessionFirstRunReady: mocked.assertSessionFirstRunReady,
     assertSessionSandboxCapabilityReady: mocked.assertSessionSandboxCapabilityReady,
     createSessionWithFirstJob: mocked.createSessionWithFirstJob,
+    findSessionCreationRequest: mocked.findSessionCreationRequest,
     loadSessionFirstRunPrerequisites: mocked.loadSessionFirstRunPrerequisites,
   };
 });
@@ -227,6 +229,7 @@ describe("POST /api/sessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.generateSessionTitle.mockResolvedValue(null);
+    mocked.findSessionCreationRequest.mockResolvedValue(null);
     setupAccess();
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
@@ -263,6 +266,100 @@ describe("POST /api/sessions", () => {
       title: "Linear issue title",
       url: "https://linear.app/acme/issue/TEAM-42/canonical-title",
     });
+  });
+
+  it("replays a committed request before setup checks or external calls", async () => {
+    setupAccess({ status: "in_progress", selected_github_repository_id: null });
+    mocked.findSessionCreationRequest.mockResolvedValue({
+      jobId: "original-job",
+      number: 42,
+      runId: "original-run",
+      sessionId: "original-session",
+      workspaceSlug: "acme",
+    });
+    const response = await POST(
+      makeRequest({
+        requestId: ATTACHMENT_ID,
+        promptMd: "Add SSO",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+      processScheduled: true,
+    });
+    expect(mocked.findSessionCreationRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creatorMemberId: MEMBER_ID,
+        workspaceId: WORKSPACE_ID,
+        creationRequest: {
+          id: ATTACHMENT_ID,
+          fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      }),
+    );
+    expect(mocked.loadSessionFirstRunPrerequisites).not.toHaveBeenCalled();
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it("passes the same fingerprint to the replay check and atomic creation", async () => {
+    const response = await POST(
+      makeRequest({ requestId: ATTACHMENT_ID, promptMd: "Add SSO", workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(201);
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creationRequest: mocked.findSessionCreationRequest.mock.calls[0][0].creationRequest,
+      }),
+    );
+  });
+
+  it("checks workspace access before looking up a creation request", async () => {
+    mocked.requireWorkspaceAccessById.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Forbidden",
+    });
+    const response = await POST(
+      makeRequest({ requestId: ATTACHMENT_ID, promptMd: "Add SSO", workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(403);
+    expect(mocked.findSessionCreationRequest).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it.each(["lookup", "creation"])(
+    "rejects changed input for an existing request during %s",
+    async (source) => {
+      const failure = { code: "P0005", message: "Request input changed" };
+      if (source === "lookup") mocked.findSessionCreationRequest.mockRejectedValueOnce(failure);
+      else mocked.createSessionWithFirstJob.mockRejectedValueOnce(failure);
+      const response = await POST(
+        makeRequest({ requestId: ATTACHMENT_ID, promptMd: "Add SSO", workspaceId: WORKSPACE_ID }),
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "session_request_conflict" });
+    },
+  );
+
+  it("does not create when the replay lookup is unavailable", async () => {
+    mocked.findSessionCreationRequest.mockRejectedValueOnce(new Error("Database unavailable"));
+    const response = await POST(
+      makeRequest({ requestId: ATTACHMENT_ID, promptMd: "Add SSO", workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(500);
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed creation request ids before accessing the workspace", async () => {
+    const response = await POST(
+      makeRequest({ requestId: "invalid", promptMd: "Add SSO", workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(400);
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
   });
 
   it("creates the session and first job through one transactional service mutation", async () => {
