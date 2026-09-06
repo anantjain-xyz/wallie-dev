@@ -53,10 +53,15 @@ const data: PipelineDashboardData = {
 export default async function PipelineLayoutPreview({
   searchParams,
 }: {
-  searchParams: Promise<{ loading?: string }>;
+  searchParams: Promise<{ loading?: string; empty?: string }>;
 }) {
   if (isProductionDeploy()) notFound();
-  const loading = (await searchParams).loading === "1";
+  const params = await searchParams;
+  const loading = params.loading === "1";
+  const previewData =
+    params.empty === "1"
+      ? { ...data, lanes: data.lanes.map((lane) => ({ ...lane, cards: [], totalCount: 0 })) }
+      : data;
   return (
     <AppShell
       workspace={workspace}
@@ -70,7 +75,7 @@ export default async function PipelineLayoutPreview({
       {loading ? (
         <PipelineLoadingSkeleton stageCount={data.lanes.length} />
       ) : (
-        <PipelinePageClient enableRealtime={false} initialData={data} initialNow={now} />
+        <PipelinePageClient enableRealtime={false} initialData={previewData} initialNow={now} />
       )}
     </AppShell>
   );
