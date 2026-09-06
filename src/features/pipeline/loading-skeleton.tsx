@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { pipelineLayout } from "@/features/pipeline/layout";
 import { cn } from "@/lib/utils";
 
 const LANE_MIN_WIDTH_PX = 280;
@@ -22,18 +23,15 @@ function PipelineCardSkeleton({ index }: { index: number }) {
 function PipelineLaneSkeleton({ index, mobileVisible }: { index: number; mobileVisible: boolean }) {
   return (
     <section
-      className={cn(
-        "border-t border-border/70 pt-4 md:flex md:min-h-[calc(100vh-230px)] md:flex-col md:border-l md:border-t-0 md:px-3 md:pt-0 md:first:border-l-0 md:first:pl-0 md:last:pr-0",
-        mobileVisible ? "flex" : "hidden md:flex",
-      )}
+      className={cn(pipelineLayout.lane, mobileVisible ? "flex" : "hidden pipeline-wide:flex")}
     >
-      <header className="sticky top-0 z-10 mb-3 border-b border-border/60 bg-canvas/95 pb-3">
+      <header className={pipelineLayout.laneHeader}>
         <div className="flex items-baseline justify-between gap-3">
-          <SkeletonBlock className="h-4 w-24" />
+          <SkeletonBlock className="h-[23px] w-24" />
           <SkeletonBlock className="h-3 w-5" />
         </div>
-        <div className="mt-2">
-          <SkeletonBlock className="h-3 w-8/12" />
+        <div className="mt-1">
+          <SkeletonBlock className="h-4 w-8/12" />
         </div>
       </header>
 
@@ -48,7 +46,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
   const lanes = Math.max(1, stageCount);
 
   return (
-    <div className="flex h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
+    <div className={pipelineLayout.page}>
       <section
         data-route-loading
         aria-busy="true"
@@ -56,36 +54,35 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
         className="flex min-h-0 flex-1 flex-col"
         role="status"
       >
-        <div className="shrink-0 px-4 pb-4 pt-8 sm:px-8 sm:pt-10">
-          <div className="mb-8 space-y-3 sm:mb-10">
+        <div className={pipelineLayout.controlsArea}>
+          <div className="hidden space-y-3 pipeline-wide:mb-10 pipeline-wide:block">
             <SkeletonBlock className="h-8 w-32" />
             <SkeletonBlock className="h-4 w-full max-w-[520px]" />
             <SkeletonBlock className="h-4 w-8/12 max-w-[420px]" />
           </div>
 
-          <div aria-hidden="true" className="mb-5 flex flex-wrap gap-3 border-y border-border py-3">
-            <SkeletonBlock className="h-10 min-w-[14rem] flex-1" />
-            <SkeletonBlock className="h-8 w-28" />
-            <SkeletonBlock className="h-8 w-32" />
-            <SkeletonBlock className="h-8 w-28" />
+          <div aria-hidden="true" className={pipelineLayout.controls}>
+            <SkeletonBlock className="h-[46px] min-w-0 pipeline-wide:h-10 pipeline-wide:min-w-[14rem] pipeline-wide:flex-1" />
+            <SkeletonBlock className="h-[46px] min-[380px]:w-48 pipeline-wide:hidden" />
+            <div className="hidden gap-3 pipeline-wide:flex">
+              <SkeletonBlock className="h-8 w-28" />
+              <SkeletonBlock className="h-8 w-32" />
+              <SkeletonBlock className="h-8 w-28" />
+            </div>
           </div>
         </div>
 
-        <div aria-hidden="true" className="shrink-0 px-4 pb-4 md:hidden">
-          <SkeletonBlock className="h-4 w-28" />
-          <div className="mt-2 flex gap-2 overflow-hidden">
-            <SkeletonBlock className="h-8 w-24 shrink-0" />
-            <SkeletonBlock className="h-8 w-24 shrink-0" />
-            <SkeletonBlock className="h-8 w-24 shrink-0" />
+        <div aria-hidden="true" className={pipelineLayout.stageTabs}>
+          <div className="flex gap-2 overflow-hidden pb-1">
+            {Array.from({ length: lanes }, (_, index) => (
+              <SkeletonBlock key={index} className="h-11 w-24 shrink-0" />
+            ))}
           </div>
         </div>
 
-        <div
-          aria-hidden="true"
-          className="min-h-0 flex-1 overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
-        >
+        <div aria-hidden="true" className={pipelineLayout.board}>
           <div
-            className="pipeline-board grid w-full grid-cols-1 md:[grid-template-columns:repeat(var(--pipeline-stage-count),minmax(280px,1fr))]"
+            className={pipelineLayout.grid}
             style={
               {
                 "--pipeline-lane-min": `${LANE_MIN_WIDTH_PX}px`,

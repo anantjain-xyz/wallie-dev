@@ -500,7 +500,7 @@ describe("PipelinePageClient", () => {
 
     expect(view.container.firstElementChild?.classList).toContain("flex");
     expect(view.container.firstElementChild?.classList).toContain(
-      "md:h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
+      "pipeline-wide:h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
     );
     expect(view.container.querySelector("[data-pipeline-board]")?.getAttribute("style")).toContain(
       "--pipeline-stage-count: 2",
@@ -511,7 +511,7 @@ describe("PipelinePageClient", () => {
     const boardRegion = screen.getByRole("region", { name: "Pipeline board" });
     expect(boardRegion.className).toContain("min-h-0");
     expect(boardRegion.className).toContain("flex-1");
-    expect(boardRegion.classList).toContain("md:overflow-auto");
+    expect(boardRegion.classList).toContain("pipeline-wide:overflow-auto");
     expect(boardRegion.classList).not.toContain("overflow-auto");
     expect(boardRegion.className).not.toContain("max-h-");
     expect(boardRegion.getAttribute("tabindex")).toBe("0");
