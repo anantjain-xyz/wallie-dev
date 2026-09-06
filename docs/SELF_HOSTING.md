@@ -78,7 +78,13 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
 
 ## 4. Deploy the worker
 
-The worker runs `pnpm worker` continuously and needs the **same environment variables as the web app** (it talks to Supabase and reaches the web origin). A `railway.json` is included that sets `startCommand: pnpm worker` with an always-restart policy.
+The worker runs continuously and needs the **same environment variables as the web app** (it talks to Supabase and reaches the web origin). Production starts Node directly so the worker receives `SIGTERM` and can finish active jobs during deployment:
+
+```bash
+node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts
+```
+
+The included `railway.json` uses this command with an always-restart policy, `overlapSeconds: 0`, and `drainingSeconds: 2700`. The outgoing worker receives `SIGTERM` as soon as the replacement is active, stops new claims, and has up to 45 minutes to finish existing jobs while continuing to heartbeat. This covers the current Vercel/E2B 30-minute and Daytona 40-minute sandbox lifetimes with at least five minutes for cleanup. Revisit the drain budget if those lifetimes increase. Keep these settings in `railway.json` rather than adding Railway variable overrides. `pnpm worker` remains available for local development.
 
 **Railway (uses the included config):**
 
@@ -89,9 +95,11 @@ The worker runs `pnpm worker` continuously and needs the **same environment vari
    - `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`
 4. Deploy. The worker registers a heartbeat and starts draining `agent_jobs`.
 
+> **First upgrade from `pnpm worker`: deploy while idle.** Pause new session submissions and retries, let queued, scheduled, and active jobs finish, and allow no new work before deployment. The outgoing worker still uses the old startup command and cannot benefit from the fix. Avoid another worker deployment while an earlier one is still draining. See [Worker operations](WORKER-OPERATIONS.md#first-deployment-of-direct-node-startup).
+
 > **Session sandboxes need a per-workspace connection, not provider API keys in env.** At job start the worker loads the workspace's selected Vercel, E2B, or Daytona connection and fails closed if it is missing, invalid, or has a stale capability check. `VERCEL_*` only covers legacy operator/helper sandboxes. Each workspace connects and tests its provider in **Settings** before sessions can run.
 
-**Any other always-on host (Fly, Render, a VM, Docker):** run the same repo with `pnpm install && pnpm worker` and the same environment. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `in_progress` and never progress.
+**Any other always-on host (Fly, Render, a VM, Docker):** install dependencies with `pnpm install`, then use the direct Node command above with the same environment. Configure the host to deliver `SIGTERM` to Node and allow the same 45-minute drain before forcing termination. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `in_progress` and never progress.
 
 ## 5. Create the production GitHub App
 

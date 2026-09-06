@@ -32,7 +32,9 @@
     ]
   },
   "deploy": {
-    "startCommand": "pnpm worker",
+    "startCommand": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts",
+    "drainingSeconds": 2700,
+    "overlapSeconds": 0,
     "healthcheckPath": null,
     "restartPolicyType": "ALWAYS"
   }
