@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
+import { CompletionMark } from "@/features/onboarding/completion-mark";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { ONBOARDING_STEPS } from "@/features/onboarding/flow";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
@@ -153,12 +154,16 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
                 <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Status
-                  label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
-                  value={configurationStatusFromTone(
-                    item.statusTone ?? (item.passed ? "success" : "warning"),
-                  )}
-                />
+                {item.passed && (item.statusTone ?? "success") === "success" ? (
+                  <CompletionMark />
+                ) : (
+                  <Status
+                    label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
+                    value={configurationStatusFromTone(
+                      item.statusTone ?? (item.passed ? "success" : "warning"),
+                    )}
+                  />
+                )}
                 {!item.passed && item.step !== "verify" ? (
                   <button
                     className="ui-button"
@@ -183,7 +188,11 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
               Checks run against the selected repository.
             </p>
           </div>
-          <Status label={check ? undefined : "No check"} value={sandboxStatusValue(check)} />
+          {check?.status === "success" ? (
+            <CompletionMark />
+          ) : (
+            <Status label={check ? undefined : "No check"} value={sandboxStatusValue(check)} />
+          )}
         </div>
         {check?.errorText ? (
           <p className="mt-3 text-xs leading-5 text-danger">{check.errorText}</p>
@@ -191,12 +200,11 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
         {check ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {Object.entries(check.capabilities).map(([name, result]) => {
-              const value: StatusValue = result?.ok ? "healthy" : "blocked";
               return (
                 <div className="rounded-[6px] border border-border px-3 py-2" key={name}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-foreground">{name}</p>
-                    <Status compact value={value} />
+                    {result?.ok ? <CompletionMark /> : <Status compact value="blocked" />}
                   </div>
                   <p className="mt-1 text-xs leading-5 text-muted">
                     {result?.detail ?? "No detail recorded."}

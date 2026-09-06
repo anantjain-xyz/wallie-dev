@@ -613,6 +613,58 @@ describe("OnboardingPageClient", () => {
     );
   });
 
+  it("marks completed rail steps with a checkmark and keeps skipped as a word", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository"],
+            currentStep: "pipeline",
+            skippedSteps: ["linear"],
+          },
+        }),
+      }),
+    );
+    const setupNavigation = html.match(/<nav aria-label="Setup steps"[\s\S]*?<\/nav>/u)?.[0];
+
+    expect(setupNavigation).toBeDefined();
+    expect(setupNavigation).not.toContain("data-status");
+
+    const github = desktopRailButton(html, "Connect GitHub");
+    expect(github).toContain('class="sr-only">Done</span>');
+    expect(github).not.toContain("type-annotation");
+    expect(github).not.toContain('data-tone="success"');
+
+    const linear = desktopRailButton(html, "Connect Linear (optional)");
+    expect(linear).toContain(">Skipped</span>");
+    expect(linear).not.toContain('class="sr-only">Done</span>');
+
+    expect(setupNavigation).toContain("Connect GitHub — Done");
+    expect(setupNavigation).toContain("Connect Linear (optional) — Skipped");
+  });
+
+  it("uses a checkmark for successful setup-status rows and labeled chips otherwise", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, { initialData: onboardingData() }),
+    );
+    const setupStatus = html.match(/<aside[\s\S]*?<\/aside>/u)?.[0];
+
+    expect(setupStatus).toBeDefined();
+    expect(setupStatus).toContain('aria-label="Open GitHub setup: Done"');
+    expect(setupStatus).toContain('class="sr-only">Done</span>');
+    expect(setupStatus).not.toContain('aria-label="Open GitHub setup: Connected"');
+    expect(setupStatus).not.toContain(">Connected</span>");
+    expect(setupStatus).not.toContain(">Saved</span>");
+    expect(setupStatus).not.toContain(">Selected</span>");
+    expect(setupStatus).not.toContain(">Ready</span>");
+    expect(setupStatus).not.toContain('data-tone="success"');
+    expect(setupStatus).toContain(">Missing</span>");
+    expect(setupStatus).toContain(">Defaults</span>");
+    expect(setupStatus).toContain(">Optional</span>");
+    expect(setupStatus).toContain(">No check</span>");
+    expect(setupStatus).toMatch(/data-status="[^"]+" data-tone="(?:warning|neutral)"/);
+  });
+
   it("merges a saved repository profile into the latest GitHub state", () => {
     const previousPrimary = profile("repo-b");
     const currentData = onboardingData({
@@ -1638,6 +1690,25 @@ describe("OnboardingPageClient", () => {
     );
   });
 
+  it("marks passed runtime requirements with a checkmark and keeps blocked labeled", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Agent configuration values are valid.");
+    expect(html).toContain("Connect the current user&#x27;s Codex credential.");
+    expect(html).toContain('class="sr-only">Done</span>');
+    expect(html).toContain(">Blocked</span>");
+    expect(html).not.toContain(">Ready</span>");
+  });
+
   it("renders Verify blockers with links to owning steps and disables completion", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
@@ -1663,6 +1734,11 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain('data-step-link="linear"');
     expect(html).toContain('data-step-link="runtime"');
     expect(html).toContain("Save a repository profile before running a sandbox capability check.");
+    expect(html).toContain('class="sr-only">Done</span>');
+    expect(html).toContain(">Not finished</span>");
+    expect(html).toContain(">No check</span>");
+    expect(html).not.toContain(">Ready</span>");
+    expect(html).not.toContain('data-tone="success"');
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete setup</span>");
   });
@@ -1791,6 +1867,13 @@ describe("OnboardingPageClient", () => {
     expect(checklist.find((item) => item.id === "sandbox")?.detail).toBe(
       "Latest selected-repository sandbox capability check succeeded.",
     );
+
+    const html = renderVerifyStep(data);
+    expect(html).toContain('class="sr-only">Done</span>');
+    expect(html).not.toContain('data-tone="success"');
+    expect(html).not.toContain(">Ready</span>");
+    expect(html).not.toContain(">Blocked</span>");
+    expect(html).not.toContain(">No check</span>");
   });
 
   it("renders sandbox polling and retry states", () => {
@@ -1873,9 +1956,13 @@ describe("OnboardingPageClient", () => {
     expect(running).toContain(">Running</span>");
     expect(running).toMatch(/data-status="running" data-tone="progress"/);
     expect(running).toContain("disabled");
+    expect(running).toContain('class="sr-only">Done</span>');
+    expect(running).not.toContain('data-tone="success"');
+    expect(running).not.toContain(">Ready</span>");
     expect(failed).toContain(">Failed</span>");
     expect(failed).toContain("Retry capability check");
     expect(failed).toContain("sandbox failed");
+    expect(failed).not.toContain('data-tone="success"');
   });
 
   it("disables sandbox capability checks for non-managers", () => {

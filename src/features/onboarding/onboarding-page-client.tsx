@@ -9,6 +9,7 @@ import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
+import { CompletionMark } from "@/features/onboarding/completion-mark";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
   buildOnboardingAdvancePatch,
@@ -438,10 +439,10 @@ function StepNavigation({
                       onClick={() => onSelect(step.id)}
                     >
                       <span>{step.title}</span>
-                      {step.displayState === "completed" || step.displayState === "skipped" ? (
-                        <span className="type-annotation">
-                          {step.displayState === "completed" ? "Done" : "Skipped"}
-                        </span>
+                      {step.displayState === "completed" ? (
+                        <CompletionMark />
+                      ) : step.displayState === "skipped" ? (
+                        <span className="type-annotation">Skipped</span>
                       ) : null}
                     </button>
                   </li>
@@ -493,14 +494,18 @@ function SetupHealthSummary({
           <li key={item.label} className="py-1 first:pt-0">
             <button
               type="button"
-              aria-label={`Open ${item.label} setup: ${item.value}`}
+              aria-label={`Open ${item.label} setup: ${item.tone === "success" ? "Done" : item.value}`}
               className="min-h-11 w-full rounded-[6px] px-2 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
               disabled={!canSelect}
               onClick={() => onSelect(healthSetupSteps[item.label])}
             >
               <span className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[13px] font-medium text-foreground">{item.label}</span>
-                <Status label={item.value} value={configurationStatusFromTone(item.tone)} />
+                {item.tone === "success" ? (
+                  <CompletionMark />
+                ) : (
+                  <Status label={item.value} value={configurationStatusFromTone(item.tone)} />
+                )}
               </span>
               <span className="mt-1 block break-words text-xs leading-5 text-muted">
                 {item.detail}

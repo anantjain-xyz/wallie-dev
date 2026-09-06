@@ -20,6 +20,7 @@ import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status } from "@/components/ui/status";
 import { Tooltip } from "@/components/ui/tooltip";
+import { CompletionMark } from "@/features/onboarding/completion-mark";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
   buildRuntimeReadiness,
@@ -415,10 +416,7 @@ function RuntimeRequirementList({
             <p className="text-xs font-medium text-foreground">{requirement.label}</p>
             <p className="mt-0.5 text-xs leading-5 text-muted">{requirement.detail}</p>
           </div>
-          <Status
-            label={requirement.passed ? "Ready" : "Blocked"}
-            value={requirement.passed ? "healthy" : "blocked"}
-          />
+          {requirement.passed ? <CompletionMark /> : <Status label="Blocked" value="blocked" />}
         </div>
       ))}
     </div>
