@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AccountMenu } from "@/components/app-shell/account-menu";
+import { ACCOUNT_MENU_SIDE_OFFSET, AccountMenu } from "@/components/app-shell/account-menu";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+
+const accountMenuSource = readFileSync(
+  join(process.cwd(), "src/components/app-shell/account-menu.tsx"),
+  "utf8",
+);
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -51,6 +59,15 @@ describe("AccountMenu", () => {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("offsets the menu enough to clear the mobile shell header", () => {
+    const headerHeight = 56;
+    const triggerHeight = 32;
+    const remainderBelowTrigger = (headerHeight - triggerHeight) / 2;
+
+    expect(accountMenuSource).toContain("sideOffset={ACCOUNT_MENU_SIDE_OFFSET}");
+    expect(ACCOUNT_MENU_SIDE_OFFSET).toBeGreaterThan(remainderBelowTrigger);
   });
 
   it("falls back to a generic accessible name when no email is known", () => {

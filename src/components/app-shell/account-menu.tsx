@@ -19,6 +19,9 @@ type AccountMenuProps = {
   email: string | null;
 };
 
+/** Clears the 48–56px header under a 32–44px trigger (default 6px offset sits on the bar). */
+export const ACCOUNT_MENU_SIDE_OFFSET = 20;
+
 export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
   const signOutFormRef = useRef<HTMLFormElement>(null);
   const triggerLabel = email ? `Account: ${email}` : "Account";
@@ -32,7 +35,12 @@ export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
           </button>
         </DropdownMenuTrigger>
       </Tooltip>
-      <DropdownMenuContent align="end" className="min-w-56" label="Account">
+      <DropdownMenuContent
+        align="end"
+        className="min-w-56"
+        label="Account"
+        sideOffset={ACCOUNT_MENU_SIDE_OFFSET}
+      >
         <DropdownMenuLabel className="normal-case tracking-normal">
           <span className="block type-annotation font-medium uppercase tracking-wide text-muted">
             Signed in as
