@@ -34,6 +34,7 @@ import {
   startInteraction,
 } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
+import type { SessionCreationPreview } from "@/features/sessions/pending-session-creation";
 
 type ShellHeaderProps = {
   children?: ReactNode;
@@ -171,8 +172,33 @@ export function ShellHeader({
   // user lands on.
   const createFromUrl = searchParams?.get("create") === "1";
   const [userCreateOpen, setUserCreateOpen] = useState(false);
-  const createOpen = !shouldResumeSetup && (userCreateOpen || createFromUrl);
   const createScope = `${viewerId}:${workspace.id}`;
+  const createUrlKey = `${createScope}:${pathname}`;
+  const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
+  if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
+  const createOpen =
+    !shouldResumeSetup &&
+    (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
+  const [creationPreview, setCreationPreview] = useState<{
+    scope: string;
+    pathname: string;
+    preview: SessionCreationPreview;
+  } | null>(null);
+  const creationPreviewRef = useRef(creationPreview);
+  const visibleCreationPreview =
+    creationPreview?.scope === createScope && creationPreview.pathname === pathname
+      ? creationPreview.preview
+      : null;
+  if (creationPreview && creationPreview.pathname !== pathname) setCreationPreview(null);
+  const handleCreationPreview = useCallback(
+    (preview: SessionCreationPreview | null) => {
+      const next = preview ? { scope: createScope, pathname, preview } : null;
+      creationPreviewRef.current = next;
+      setCreationPreview(next);
+    },
+    [createScope, pathname],
+  );
+  const handleCreateReopen = useCallback(() => setUserCreateOpen(true), []);
   const [mountedCreateScope, setMountedCreateScope] = useState<string | null>(null);
   if (createOpen && mountedCreateScope !== createScope) {
     setMountedCreateScope(createScope);
@@ -189,6 +215,7 @@ export function ShellHeader({
   const handleCreateClose = useCallback(() => {
     setUserCreateOpen(false);
     if (createFromUrl) {
+      setDismissedCreateUrlKey(createUrlKey);
       const params = new URLSearchParams(searchParams?.toString() ?? "");
       params.delete("create");
       const qs = params.toString();
@@ -196,6 +223,11 @@ export function ShellHeader({
     }
 
     requestAnimationFrame(() => {
+      if (
+        creationPreviewRef.current?.scope === createScope &&
+        creationPreviewRef.current.pathname === pathname
+      )
+        return;
       for (const ref of [createButtonRef, mobileCreateButtonRef]) {
         const element = ref.current;
         if (element && element.getClientRects().length > 0) {
@@ -204,7 +236,7 @@ export function ShellHeader({
         }
       }
     });
-  }, [createFromUrl, pathname, router, searchParams]);
+  }, [createFromUrl, createScope, createUrlKey, pathname, router, searchParams]);
 
   function preloadCreateDialog() {
     preloadCreateSessionDialogOnce(createDialogPreloadStartedKey, {
@@ -216,6 +248,7 @@ export function ShellHeader({
   const pipelineHref = workspaceBasePath(workspace.slug);
 
   function handleNavClick(event: MouseEvent<HTMLAnchorElement>, item: WorkspaceNavItem) {
+    if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
     if (
       isUnmodifiedPrimaryClick(event) &&
       pathname === pipelineHref &&
@@ -343,7 +376,13 @@ export function ShellHeader({
             tabIndex={-1}
             className="min-w-0 flex-1 outline-none pb-[env(safe-area-inset-bottom)]"
           >
-            {children}
+            {visibleCreationPreview?.content}
+            <div
+              className={visibleCreationPreview ? "hidden" : "contents"}
+              hidden={Boolean(visibleCreationPreview)}
+            >
+              {children}
+            </div>
           </main>
         </div>
       </div>
@@ -356,6 +395,8 @@ export function ShellHeader({
             key={createScope}
             open={createOpen}
             onClose={handleCreateClose}
+            onPreviewChange={handleCreationPreview}
+            onReopen={handleCreateReopen}
             userId={viewerId}
             workspaceId={workspace.id}
             workspaceSlug={workspace.slug}

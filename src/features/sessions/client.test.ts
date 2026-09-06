@@ -5,6 +5,7 @@ import {
   loadSessionRepositoryOptionsFromClient,
   SessionOptionsChangedError,
   SessionAttachmentsChangedError,
+  SessionCreationRejectedError,
   updateSessionTitleFromClient,
 } from "./client";
 
@@ -27,6 +28,33 @@ function mockFetch(response: { body: Record<string, unknown>; ok: boolean; statu
 }
 
 describe("createSessionFromClient", () => {
+  it.each([400, 401, 403, 409, 429])(
+    "identifies a definitive HTTP %s rejection",
+    async (status) => {
+      mockFetch({ body: { error: "Rejected" }, ok: false, status });
+      await expect(
+        createSessionFromClient({ promptMd: "Create once", workspaceId: WORKSPACE_ID }),
+      ).rejects.toBeInstanceOf(SessionCreationRejectedError);
+    },
+  );
+
+  it.each([
+    { status: 408 },
+    { status: 500 },
+    { status: 502 },
+    { status: 409, code: "session_request_conflict" },
+  ])(
+    "leaves uncertain outcomes retryable with the original request: %o",
+    async ({ status, code }) => {
+      mockFetch({ body: { error: "Unconfirmed", code }, ok: false, status });
+      const error = await createSessionFromClient({
+        promptMd: "Create once",
+        workspaceId: WORKSPACE_ID,
+      }).catch((error) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(SessionCreationRejectedError);
+    },
+  );
   it("keeps the caller's request identity across retries", async () => {
     const fetchMock = mockFetch({
       body: { number: 7, canonicalUrl: "/w/acme/sessions/7" },

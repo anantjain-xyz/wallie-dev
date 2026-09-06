@@ -1328,6 +1328,21 @@
   animation: wallie-completion-check 240ms ease-out;
 }
 
+.ui-session-creation-enter {
+  animation: wallie-session-creation-enter 180ms var(--overlay-motion-easing);
+}
+
+@keyframes wallie-session-creation-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes wallie-completion-check {
   from {
     stroke-dashoffset: 1;

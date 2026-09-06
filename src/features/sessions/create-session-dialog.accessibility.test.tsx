@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { useState } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -23,10 +23,14 @@ const clientMocks = vi.hoisted(() => ({
 }));
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+  usePathname: () => "/w/acme/sessions",
+}));
 vi.mock("@/features/sessions/client", () => clientMocks);
 
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
+import type { SessionCreationPreview } from "@/features/sessions/pending-session-creation";
 
 beforeAll(() => {
   class ResizeObserverStub {
@@ -202,6 +206,7 @@ describe("CreateSessionDialog accessibility", () => {
     await waitFor(() =>
       expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith({
         attachmentIds: [],
+        requestId: expect.any(String),
         githubRepositoryId: null,
         linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/title",
         promptMd: "",
@@ -652,6 +657,180 @@ function prepareDraftOptions() {
   });
 }
 
+function OptimisticDraftHarness() {
+  const [open, setOpen] = useState(true);
+  const [preview, setPreview] = useState<SessionCreationPreview | null>(null);
+  return (
+    <OverlayProvider>
+      <button onClick={() => setOpen(true)}>Reopen composer</button>
+      <main>{preview?.content ?? <h1>Workspace</h1>}</main>
+      <CreateSessionDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        onReopen={() => setOpen(true)}
+        onPreviewChange={setPreview}
+        userId="user-1"
+        workspaceId="workspace-1"
+        workspaceSlug="acme"
+      />
+    </OverlayProvider>
+  );
+}
+
+describe("optimistic session creation", () => {
+  it("shows the submitted work immediately, focuses it, and navigates only after confirmation", async () => {
+    prepareDraftOptions();
+    let finish!: (value: unknown) => void;
+    clientMocks.createSessionFromClient.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(<OptimisticDraftHarness />);
+    await fillImageDraft(user);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const heading = await screen.findByRole("heading", { name: "My draft title" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(screen.getByText("Build a useful thing")).toBeVisible();
+    expect(screen.getByRole("img", { name: "draft.png" })).toBeVisible();
+    expect(screen.getByText("Creating session…")).toBeVisible();
+    expect(router.push).not.toHaveBeenCalled();
+    const result = await axe.run(screen.getByRole("main"), {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(result.violations).toEqual([]);
+    await user.click(screen.getByText("Reopen composer"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
+    await act(async () => finish({ canonicalUrl: "/w/acme/sessions/42", number: 42 }));
+    expect(router.push).toHaveBeenCalledWith("/w/acme/sessions/42");
+    // The shell clears this view when the destination route commits.
+    expect(heading).toBeVisible();
+    expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+  });
+
+  it("restores an editable draft after rejection and starts a fresh request after correction", async () => {
+    prepareDraftOptions();
+    clientMocks.createSessionFromClient.mockRejectedValueOnce(
+      Object.assign(new Error("Choose another repository"), { creationRejected: true }),
+    );
+    const user = userEvent.setup();
+    render(<OptimisticDraftHarness />);
+    await fillImageDraft(user);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await screen.findByText("Choose another repository");
+    expect(screen.getByLabelText("Prompt")).toBeEnabled();
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Build a useful thing");
+    expect(screen.getByText(/8 B · Ready/)).toBeVisible();
+    const original = clientMocks.createSessionFromClient.mock.calls[0]![0];
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    await user.type(screen.getByLabelText("Prompt"), " with tests");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(2));
+    expect(clientMocks.createSessionFromClient.mock.calls[1]![0].requestId).not.toBe(
+      original.requestId,
+    );
+    expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+  });
+
+  it("replays an uncertain request exactly, even after attachment expiry and an options refresh", async () => {
+    prepareDraftOptions();
+    clientMocks.createSessionFromClient.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const user = userEvent.setup();
+    render(<OptimisticDraftHarness />);
+    await fillImageDraft(user);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await screen.findByText(/We couldn’t confirm whether/);
+    expect(screen.getByLabelText("Prompt")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard draft" })).toBeDisabled();
+    const original = clientMocks.createSessionFromClient.mock.calls[0]![0];
+    expect(original.requestId).toEqual(expect.any(String));
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 25 * 60 * 60 * 1000);
+    try {
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      act(() => invalidateSessionRepositoryCache("workspace-1"));
+      await user.click(screen.getByText("Reopen composer"));
+      clientMocks.createSessionFromClient.mockResolvedValueOnce({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
+      await user.click(await screen.findByRole("button", { name: "Retry creation" }));
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(2));
+      expect(clientMocks.createSessionFromClient.mock.calls[1]![0]).toEqual(original);
+      expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledOnce();
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it.each(["success", "failure"])(
+    "keeps the user in the workspace after leaving the preview on %s",
+    async (outcome) => {
+      prepareDraftOptions();
+      let finish!: (value: unknown) => void;
+      let fail!: (error: Error) => void;
+      clientMocks.createSessionFromClient.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          }),
+      );
+      const user = userEvent.setup();
+      render(<OptimisticDraftHarness />);
+      await fillImageDraft(user);
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      await user.click(await screen.findByRole("button", { name: /Back to workspace/ }));
+      await act(async () => {
+        if (outcome === "success") finish({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
+        else fail(new TypeError("Failed to fetch"));
+      });
+      expect(screen.getByRole("heading", { name: "Workspace" })).toBeVisible();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(router.push).not.toHaveBeenCalled();
+      if (outcome === "success") {
+        await user.click(await screen.findByRole("button", { name: "Open session" }));
+        expect(router.push).toHaveBeenCalledWith("/w/acme/sessions/42");
+      } else {
+        await user.click(await screen.findByRole("button", { name: "Open draft" }));
+        expect(await screen.findByLabelText("Prompt")).toHaveValue("Build a useful thing");
+      }
+    },
+  );
+
+  it.each(["pending", "unconfirmed"])(
+    "does not delete possibly committed attachments when unmounting a %s request",
+    async (state) => {
+      prepareDraftOptions();
+      let finish!: (value: unknown) => void;
+      clientMocks.createSessionFromClient.mockImplementationOnce(() =>
+        state === "unconfirmed"
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : new Promise((resolve) => {
+              finish = resolve;
+            }),
+      );
+      const user = userEvent.setup();
+      const view = render(<OptimisticDraftHarness />);
+      await fillImageDraft(user);
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      if (state === "unconfirmed") await screen.findByText(/We couldn’t confirm whether/);
+      view.unmount();
+      if (state === "pending")
+        await act(async () => finish({ canonicalUrl: "/w/acme/sessions/42", number: 42 }));
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+      expect(router.push).not.toHaveBeenCalled();
+    },
+  );
+});
+
 async function fillImageDraft(user: ReturnType<typeof userEvent.setup>) {
   await user.type(await screen.findByLabelText("Prompt"), "Build a useful thing");
   await user.type(screen.getByLabelText("Title (optional)"), "My draft title");
@@ -693,7 +872,7 @@ describe("session draft lifetime", () => {
   it("retains a failed submission and clears a successful one without deleting committed images", async () => {
     prepareDraftOptions();
     clientMocks.createSessionFromClient
-      .mockRejectedValueOnce(new Error("Try again"))
+      .mockRejectedValueOnce(Object.assign(new Error("Try again"), { creationRejected: true }))
       .mockResolvedValueOnce({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
     const user = userEvent.setup();
     render(<DraftHarness />);
