@@ -223,10 +223,12 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(fake.activeChannels.size).toBe(0);
     expect(
       view.container.querySelector('[data-run-id="run-1"] button')?.getAttribute("aria-expanded"),
-    ).toBe("true");
+    ).toBe("false");
 
     await waitFor(() => expect(fake.messageQueries.length).toBeGreaterThanOrEqual(1));
     expect(fake.messageQueries[0]).toBe("run-1");
+    expect(screen.queryByText("Cached message")).toBeNull();
+    fireEvent.click(view.container.querySelector('[data-run-id="run-1"] button[aria-expanded]')!);
     await screen.findByText("Cached message");
 
     await act(async () => idleCallback?.());
@@ -268,7 +270,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
 
     reconciled = { ...initialRun, status: "success" };
     await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
-    await screen.findAllByText("Complete");
+    await screen.findAllByText("Completed");
     expect(view.container.querySelectorAll('[data-run-id="run-1"]')).toHaveLength(1);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
@@ -579,6 +581,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     await waitFor(() =>
       expect(view.container.querySelector('[data-run-id="run-new"]')).not.toBeNull(),
     );
+    fireEvent.click(view.container.querySelector('[data-run-id="run-new"] button[aria-expanded]')!);
     expect(screen.getByText("Requested by Riley Offline")).not.toBeNull();
   });
 
@@ -616,7 +619,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
       expect(view.container.querySelector('[data-run-id="run-21"]')).not.toBeNull(),
     );
     const olderArticle = view.container.querySelector('[data-run-id="run-21"]') as HTMLElement;
-    fireEvent.click(within(olderArticle).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(olderArticle).getByRole("button", { name: "Cancel run" }));
 
     await waitFor(() => {
       const updatedArticle = view.container.querySelector('[data-run-id="run-21"]');
@@ -677,11 +680,11 @@ describe("SessionWalliePanel activity states", () => {
     );
 
     expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
-    expect(screen.getByText("Connecting…")).not.toBeNull();
+    expect(screen.queryByText("Connecting…")).toBeNull();
 
     await act(async () => idleCallback?.());
     await subscribeChannels(fake);
-    expect(screen.getByText("Live")).not.toBeNull();
+    expect(screen.queryByText("Live updates paused. History is preserved.")).toBeNull();
 
     const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
     await act(async () => sessionChannel?.statusCallback?.("CHANNEL_ERROR"));
@@ -768,8 +771,9 @@ describe("SessionWalliePanel activity states", () => {
     );
 
     expect(screen.getByText("Waiting in queue")).not.toBeNull();
+    expect(screen.queryByText("Attempt 3")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Waiting in queue/ }));
     expect(screen.getByText("Attempt 3")).not.toBeNull();
-    expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
   });
 
   it("marks the connection disconnected when the message channel fails", async () => {
@@ -807,10 +811,10 @@ describe("SessionWalliePanel activity states", () => {
 
     await act(async () => idleCallback?.());
     await subscribeChannels(fake);
-    expect(screen.getByText("Live")).not.toBeNull();
+    expect(screen.queryByText("Live updates paused. History is preserved.")).toBeNull();
 
     const messageChannel = fake.channels.find((channel) =>
-      channel.name.startsWith("wallie-run-messages:"),
+      channel.name.startsWith("wallie-summary-messages:"),
     );
     await act(async () => messageChannel?.statusCallback?.("CHANNEL_ERROR"));
     expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
@@ -847,7 +851,7 @@ describe("SessionWalliePanel activity states", () => {
     fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
     await act(async () => idleCallback?.());
     await subscribeChannels(fake);
-    expect(screen.getByText("Live")).not.toBeNull();
+    expect(screen.queryByText("Live updates paused. History is preserved.")).toBeNull();
 
     const expandedMessageChannel = fake.channels.find((channel) =>
       channel.name.startsWith("wallie-run-messages:run-2"),
@@ -983,6 +987,9 @@ describe("SessionWalliePanel activity states", () => {
     });
 
     expect(view.container.querySelector('[data-run-id="run-retry-live"]')).not.toBeNull();
+    fireEvent.click(
+      view.container.querySelector('[data-run-id="run-retry-live"] button[aria-expanded]')!,
+    );
     expect(
       within(
         view.container.querySelector('[data-run-id="run-retry-live"]') as HTMLElement,
@@ -1006,6 +1013,7 @@ describe("SessionWalliePanel activity states", () => {
       />,
     );
 
+    fireEvent.click(view.container.querySelector('[data-run-id="run-1"] button[aria-expanded]')!);
     const details = view.container.querySelector('[data-run-id="run-1"] details');
     expect(details).not.toBeNull();
     fireEvent.click(within(details as HTMLElement).getByText("Run details"));

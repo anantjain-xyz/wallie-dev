@@ -1,6 +1,7 @@
 import { STATUS_DEFINITIONS, agentRunStatusValue } from "@/components/ui/status";
 import { timestampMs } from "@/components/shared/time-format";
 import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
+import { summarizeToolUse } from "@/features/wallie/run-message-body";
 
 export type WallieRealtimeConnectionState = "connecting" | "live" | "disconnected" | "recovered";
 
@@ -53,6 +54,41 @@ export function formatMessageSourceLabel(kind: string) {
   }
 }
 
+export function compactActivityText(text: string, limit = 180) {
+  const preview = text
+    .replace(/^\*\*Error:\*\*\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return preview.length > limit ? `${preview.slice(0, limit - 1)}…` : preview;
+}
+
+export function runStatusLabel(input: { run: WallieRun; stalled: boolean }): string {
+  const { run, stalled } = input;
+
+  if (stalled) {
+    return "No recent activity";
+  }
+
+  switch (run.status) {
+    case "queued":
+      return "Waiting in queue";
+    case "canceled":
+      return "Canceled";
+    case "error":
+      return "Failed";
+    case "success":
+      return "Completed";
+    default:
+      break;
+  }
+
+  if (run.status === "running" || run.status === "started") {
+    return "Working";
+  }
+
+  return STATUS_DEFINITIONS[agentRunStatusValue(run.status)].label;
+}
+
 function previewMessage(message: WallieRunMessage) {
   if (message.kind === "tool_use") {
     const tool = message.messageMd
@@ -86,36 +122,53 @@ function previewMessage(message: WallieRunMessage) {
   return preview.length > 96 ? `${preview.slice(0, 93)}…` : preview;
 }
 
+/** Keep the session execution summary's startup/progress copy independent of the compact run label. */
 export function currentOperationLabel(input: { run: WallieRun; stalled: boolean }): string {
-  const { run, stalled } = input;
+  const status = runStatusLabel(input);
+  if (input.stalled || !["running", "started"].includes(input.run.status)) return status;
+  const latest = input.run.messages.at(-1);
+  return latest ? previewMessage(latest) : status;
+}
 
-  if (stalled) {
-    return "No recent activity";
+export type ActivityMessageGroup = {
+  id: string;
+  messages: WallieRunMessage[];
+  summary: string | null;
+};
+
+/** Group adjacent exploration only, preserving chronology and the first event's identity. */
+export function groupActivityMessages(messages: WallieRunMessage[]): ActivityMessageGroup[] {
+  const groups: ActivityMessageGroup[] = [];
+  let pending: WallieRunMessage[] = [];
+  let counts = { read: 0, search: 0, list: 0 };
+  const flush = () => {
+    if (!pending.length) return;
+    groups.push({
+      id: pending[0].id,
+      messages: pending,
+      summary: Object.entries(counts)
+        .filter(([, count]) => count > 0)
+        .map(
+          ([name, count]) => `${count} ${name}${count === 1 ? "" : name === "search" ? "es" : "s"}`,
+        )
+        .join(", "),
+    });
+    pending = [];
+    counts = { read: 0, search: 0, list: 0 };
+  };
+  for (const message of messages) {
+    const category =
+      message.kind === "tool_use" ? summarizeToolUse(message.messageMd).category : null;
+    if (category) {
+      pending.push(message);
+      counts[category] += 1;
+    } else {
+      flush();
+      groups.push({ id: message.id, messages: [message], summary: null });
+    }
   }
-
-  switch (run.status) {
-    case "queued":
-      return "Waiting in queue";
-    case "canceled":
-      return "Canceled";
-    case "error":
-      return "Failed";
-    case "success":
-      return "Completed";
-    default:
-      break;
-  }
-
-  const latestMessage = run.messages.at(-1);
-  if (latestMessage) {
-    return previewMessage(latestMessage);
-  }
-
-  if (run.status === "running" || run.status === "started") {
-    return "Wallie is working…";
-  }
-
-  return STATUS_DEFINITIONS[agentRunStatusValue(run.status)].label;
+  flush();
+  return groups;
 }
 
 export function connectionStateCopy(state: WallieRealtimeConnectionState) {

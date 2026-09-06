@@ -4,6 +4,7 @@ import {
   connectionStateCopy,
   currentOperationLabel,
   formatMessageSourceLabel,
+  groupActivityMessages,
   isRunActivityStalled,
   lastActivityTimestamp,
   messagesEmptyCopy,
@@ -42,6 +43,35 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
 }
 
 describe("activity-summary helpers", () => {
+  it("groups only adjacent exploration and keeps stable event IDs as the group grows", () => {
+    const tool = (id: string, name: string) => ({
+      id,
+      kind: "tool_use",
+      createdAt: "2026-07-18T12:00:00.000Z",
+      messageMd: `**Tool:** ${name}\n\n\`\`\`\n{}\n\`\`\``,
+    });
+    const read = tool("read", "read_file");
+    expect(groupActivityMessages([read])[0].id).toBe("read");
+    const groups = groupActivityMessages([
+      read,
+      tool("search-1", "grep"),
+      tool("search-2", "grep"),
+      tool("shell", "bash"),
+      tool("list", "list"),
+    ]);
+    expect(groups.map(({ id, summary }) => ({ id, summary }))).toEqual([
+      { id: "read", summary: "1 read, 2 searches" },
+      { id: "shell", summary: null },
+      { id: "list", summary: "1 list" },
+    ]);
+    expect(groups.flatMap((group) => group.messages.map((message) => message.id))).toEqual([
+      "read",
+      "search-1",
+      "search-2",
+      "shell",
+      "list",
+    ]);
+  });
   it("detects stalled active runs at the workspace stall threshold", () => {
     const nowMs = Date.parse("2026-07-18T12:15:00.000Z");
     expect(
@@ -81,7 +111,7 @@ describe("activity-summary helpers", () => {
       "Waiting in queue",
     );
     expect(currentOperationLabel({ run: run(), stalled: true })).toBe("No recent activity");
-    expect(currentOperationLabel({ run: run(), stalled: false })).toBe("Wallie is working…");
+    expect(currentOperationLabel({ run: run(), stalled: false })).toBe("Working");
     expect(formatMessageSourceLabel("progress")).toBe("Progress");
     expect(formatMessageSourceLabel("error")).toBe("Error");
     expect(formatMessageSourceLabel("tool_use")).toBe("Tool use");

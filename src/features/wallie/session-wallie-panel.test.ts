@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
+import { WallieRunCard } from "@/features/wallie/run-activity";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
@@ -101,12 +102,36 @@ function renderPanel(initialData: WallieSessionData, archivedAt: string | null =
   );
 }
 
+function renderExpandedCard(initialData: WallieSessionData) {
+  return renderToStaticMarkup(
+    createElement(WallieRunCard, {
+      actionPending: false,
+      branchName: null,
+      cancelLocked: false,
+      connectionState: "live",
+      isExpanded: true,
+      isPrimary: true,
+      messagesLoaded: initialData.loadedMessageRunIds.includes(initialData.runs[0].id),
+      messagesLoadFailed: false,
+      nowMs: Date.parse("2026-05-20T20:10:00.000Z"),
+      onCancel: async () => {},
+      onRetry: async () => {},
+      onToggle: () => {},
+      renderNow: "2026-05-20T20:10:00.000Z",
+      retryLocked: false,
+      run: initialData.runs[0],
+      stallTimeoutMs: initialData.stallTimeoutMs,
+    }),
+  );
+}
+
 describe("SessionWalliePanel", () => {
   it("uses stage/requester labels and hides internal execution controls", () => {
     const html = renderPanel(data());
 
     expect(html).toContain("Product run");
-    expect(html).toContain("Requested by Anant Jain");
+    expect(html).not.toContain("Requested by Anant Jain");
+    expect(renderExpandedCard(data())).toContain("Requested by Anant Jain");
     expect(html).not.toContain("Code mode");
     expect(html).not.toContain("Run With Wallie");
     expect(html).not.toContain("Required:");
@@ -122,7 +147,7 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    // Latest run auto-expands; the older collapsed run remains a history group.
+    // The primary run is distinct from the compact history rows.
     expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
   });
 
@@ -208,12 +233,12 @@ describe("SessionWalliePanel", () => {
     expect(html).toContain("data-wallie-summary");
     expect(html).not.toContain("Current activity");
     expect((html.match(/data-run-id="run-1"/g) ?? []).length).toBe(1);
-    expect((html.match(/Product run/g) ?? []).length).toBe(1);
-    expect(html).toContain("Wallie is working…");
-    expect(html).toContain("Connecting…");
-    expect(html).toContain("Attempt 2");
-    expect(html).toContain("Running");
-    expect(html).toContain("animate-spin");
+    expect((html.match(/>Product run</g) ?? []).length).toBe(1);
+    expect(html).toContain("Working");
+    expect(html).not.toContain("Connecting…");
+    expect(html).not.toContain("Attempt 2");
+    expect(html).toContain("activity-shimmer");
+    expect(html).not.toContain("animate-spin");
   });
 
   it("places only older records under Previous runs", () => {
@@ -229,7 +254,7 @@ describe("SessionWalliePanel", () => {
     expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
   });
 
-  it("expands the latest run by default and keeps older runs collapsed", () => {
+  it("collapses all runs by default and does not mount their transcripts", () => {
     const html = renderPanel(
       data({
         runs: [
@@ -260,13 +285,13 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).toContain("Latest completion body");
+    expect(html).not.toContain("Latest completion body");
     expect(html).not.toContain("Older completion body");
-    expect(html).toContain('aria-expanded="true"');
+    expect(html).not.toContain('aria-expanded="true"');
   });
 
   it("uses the typographic ellipsis for loading copy", () => {
-    const html = renderPanel(
+    const html = renderExpandedCard(
       data({
         loadedMessageRunIds: [],
         runs: [run({ messages: [], status: "success" })],
@@ -279,7 +304,7 @@ describe("SessionWalliePanel", () => {
 
   it("renders queued, failed, canceled, and completed status fixtures with shared grammar", () => {
     const fixtures: Array<{ status: WallieRun["status"]; label: string }> = [
-      { status: "queued", label: "Queued" },
+      { status: "queued", label: "Waiting in queue" },
       { status: "error", label: "Failed" },
       { status: "canceled", label: "Canceled" },
       { status: "success", label: "Complete" },
@@ -326,7 +351,7 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("No recent activity");
-    expect(html).toContain(">Cancel</button>");
+    expect(html).toContain(">Stop</button>");
     expect(html).toContain("This run may be stalled. Cancel it before retrying.");
     expect(html).not.toContain("Wallie is working…");
   });
@@ -359,11 +384,11 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("Cloning repository");
-    expect(html).toContain("No new messages recently.");
+    expect(html).toContain("No recent activity");
     expect(html).not.toContain("No messages recorded yet.");
   });
 
-  it("does not include cached error messages before expansion of non-latest runs", () => {
+  it("keeps cached failures visible even in collapsed previous runs", () => {
     const html = renderPanel(
       data({
         runs: [
@@ -385,7 +410,7 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).not.toContain("Vercel Sandbox credentials are required.");
+    expect(html).toContain("Vercel Sandbox credentials are required.");
   });
 
   it("falls back to a human-readable requester label when member names are blank", () => {
@@ -395,7 +420,7 @@ describe("SessionWalliePanel", () => {
       username: null,
     };
 
-    const html = renderPanel(
+    const html = renderExpandedCard(
       data({
         runs: [
           run({
@@ -410,122 +435,27 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("unavailable member");
   });
 
-  it("labels tool-use rows as Tool use and shows the parsed tool payload", () => {
-    const html = renderPanel(
-      data({
-        runs: [
-          run({
-            id: "run-cursor",
-            messages: [
-              {
-                createdAt: "2026-05-20T20:05:00.000Z",
-                id: "msg-read",
-                kind: "tool_use",
-                messageMd: '**Tool:** read\n\n```\n{"path":"src/lib/agent-runner/cursor.ts"}\n```',
-              },
-              {
-                createdAt: "2026-05-20T20:05:01.000Z",
-                id: "msg-shell",
-                kind: "tool_use",
-                messageMd:
-                  '**Tool:** shell\n\n```\n{"command":"ls","result":{"exitCode":0,"stdout":"cursor.ts"}}\n```',
-              },
-            ],
-            modelName: "cursor/grok-4.6",
-            modelProvider: "cursor",
-            stageName: "Build",
-            stageSlug: "build",
-          }),
-        ],
-      }),
-    );
-
-    expect(html).toContain("Tool use");
-    expect(html).not.toContain("Tool_use");
-    expect(html).not.toContain("**Tool:**");
-    expect(html).not.toContain("```");
-    expect(html).toContain('<strong class="font-semibold text-foreground">Tool:</strong> read');
-    expect(html).toContain('<strong class="font-semibold text-foreground">Tool:</strong> shell');
-    expect(html).toContain("artifact-pre");
-    expect(html).toContain("artifact-code-block");
-    expect(html).toContain('aria-label="Code block"');
-    expect(html).toContain("src/lib/agent-runner/cursor.ts");
-    expect(html).toContain("&quot;exitCode&quot;: 0");
-  });
-
-  it("keeps Codex tool-use rows on the existing Tool name plus input JSON format", () => {
-    const html = renderPanel(
-      data({
-        runs: [
-          run({
-            messages: [
-              {
-                createdAt: "2026-05-20T20:05:00.000Z",
-                id: "msg-codex-tool",
-                kind: "tool_use",
-                messageMd: '**Tool:** bash\n\n```\n{"cmd":"ls"}\n```',
-              },
-            ],
-          }),
-        ],
-      }),
-    );
-
-    expect(html).toContain("Tool use");
-    expect(html).not.toContain("**Tool:**");
-    expect(html).not.toContain("```");
-    expect(html).toContain('<strong class="font-semibold text-foreground">Tool:</strong> bash');
-    expect(html).toContain("artifact-pre");
-    expect(html).toContain("artifact-code-block");
-    expect(html).toContain("&quot;cmd&quot;: &quot;ls&quot;");
-  });
-
-  it("falls back to pre-wrap text when a tool-use body is not the persisted template", () => {
-    const html = renderPanel(
-      data({
-        runs: [
-          run({
-            messages: [
-              {
-                createdAt: "2026-05-20T20:05:00.000Z",
-                id: "msg-malformed",
-                kind: "tool_use",
-                messageMd: "read src/lib/agent-runner/cursor.ts",
-              },
-            ],
-          }),
-        ],
-      }),
-    );
-
-    expect(html).toContain("Tool use");
-    expect(html).toContain("read src/lib/agent-runner/cursor.ts");
-    expect(html).not.toContain("artifact-pre");
-    expect(html).toContain("whitespace-pre-wrap");
-  });
-
-  it("keeps long log bodies from introducing unconstrained width", () => {
-    const longLog = `path/${"segment/".repeat(40)}file.ts:${"x".repeat(200)}`;
-    const html = renderPanel(
-      data({
-        runs: [
-          run({
-            messages: [
-              {
-                createdAt: "2026-05-20T20:05:00.000Z",
-                id: "msg-long",
-                kind: "log",
-                messageMd: longLog,
-              },
-            ],
-          }),
-        ],
-      }),
-    );
-
-    expect(html).toContain("overflow-x-clip");
-    expect(html).toContain("[overflow-wrap:anywhere]");
-    expect(html).toContain("min-w-0");
-    expect(html).toContain(longLog);
+  it("keeps tool payloads out of the initial markup, including an expanded timeline", () => {
+    const initialData = data({
+      runs: [
+        run({
+          messages: [
+            {
+              id: "tool-1",
+              kind: "tool_use",
+              createdAt: "2026-05-20T20:05:00.000Z",
+              messageMd:
+                '**Tool:** bash\n\n```\n{"cmd":"pnpm check","internal":"large payload"}\n```',
+            },
+          ],
+        }),
+      ],
+    });
+    expect(renderPanel(initialData)).not.toContain("pnpm check");
+    const expanded = renderExpandedCard(initialData);
+    expect(expanded).toContain("Shell");
+    expect(expanded).toContain("pnpm check");
+    expect(expanded).not.toContain("large payload");
+    expect(expanded).not.toContain("artifact-pre");
   });
 });

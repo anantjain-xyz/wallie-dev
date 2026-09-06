@@ -1,6 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { parseToolUseMessage } from "@/features/wallie/run-message-body";
+import { parseToolUseMessage, summarizeToolUse } from "@/features/wallie/run-message-body";
+
+describe("summarizeToolUse", () => {
+  it.each([
+    ["Read", '{"file_path":"src/a.ts"}', "Read", "src/a.ts", "read"],
+    ["read_file", '{"path":"src/b.ts"}', "Read", "src/b.ts", "read"],
+    ["functions.exec_command", '{"cmd":"pnpm test\\n--run"}', "Shell", "pnpm test --run", null],
+    ["grep", '{"pattern":"tool_use","path":"src"}', "Search", "tool_use", "search"],
+    ["write_file", '{"path":"a.ts","content":"large body"}', "Write", "a.ts", null],
+    ["mcp.custom", '{"url":"https://example.com"}', "mcp.custom", "https://example.com", null],
+    ["bash", '{"result":{"exitCode":0}}', "Shell", "", null],
+    ["unknown", '"not an object"', "unknown", "", null],
+    ["unknown", "not JSON", "unknown", "", null],
+  ])("summarizes %s without deriving a lifecycle state", (name, input, title, target, category) => {
+    expect(summarizeToolUse(`**Tool:** ${name}\n\n\`\`\`\n${input}\n\`\`\``)).toEqual({
+      title,
+      target,
+      category,
+    });
+  });
+});
 
 describe("parseToolUseMessage", () => {
   it("parses a Cursor-style Tool name plus fenced JSON and pretty-prints the payload", () => {

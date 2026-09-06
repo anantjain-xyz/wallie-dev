@@ -1,5 +1,47 @@
 @import "tailwindcss";
 
+/* Codex-style two-second sweep: a soft ten-character band travels across the
+   text, with room outside each end. CSS keeps timers out of React renders. */
+@keyframes activity-shimmer {
+  from {
+    background-position:
+      -10ch 0,
+      0 0;
+  }
+  to {
+    background-position:
+      calc(100% + 10ch) 0,
+      0 0;
+  }
+}
+
+.activity-shimmer {
+  color: var(--foreground);
+}
+
+@supports (background-clip: text) {
+  .activity-shimmer {
+    background-image:
+      linear-gradient(90deg, transparent, var(--foreground) 50%, transparent),
+      linear-gradient(var(--muted), var(--muted));
+    background-size:
+      10ch 100%,
+      100% 100%;
+    background-repeat: no-repeat;
+    background-clip: text;
+    color: transparent;
+    animation: activity-shimmer 2s linear infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .activity-shimmer {
+    animation: none;
+    background: none;
+    color: var(--foreground);
+  }
+}
+
 /* The app toggles themes via `<html data-theme="dark">` (see the bootstrap
    script in layout.tsx), not the class/media default. Wire Tailwind's `dark:`
    variant to that attribute so `dark:` utilities track the active theme. */

@@ -1,13 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { Spinner } from "@/components/shared/spinner";
-import { TimeDisplay } from "@/components/shared/time-display";
 import { usePublishExecution } from "@/features/sessions/detail/execution-summary";
-import { Status, agentRunStatusValue } from "@/components/ui/status";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
@@ -18,16 +15,9 @@ import type {
 } from "@/features/wallie/contracts";
 import {
   connectionStateCopy,
-  currentOperationLabel,
-  formatMessageSourceLabel,
-  isRunActivityStalled,
-  lastActivityTimestamp,
-  messagesDisconnectedCopy,
-  messagesEmptyCopy,
-  messagesFailedCopy,
-  messagesLoadingCopy,
   type WallieRealtimeConnectionState,
 } from "@/features/wallie/activity-summary";
+import { WallieRunCard } from "@/features/wallie/run-activity";
 import {
   mapAgentRunMessageRow,
   mapAgentRunRow,
@@ -36,8 +26,7 @@ import {
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import { parseToolUseMessage } from "@/features/wallie/run-message-body";
-import type { WallieRun, WallieRunMessage, WallieSessionData } from "@/features/wallie/types";
+import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
@@ -123,38 +112,6 @@ function hydrateRequestedByMember(
   };
 }
 
-function formatStageRunLabel(run: WallieRun) {
-  if (run.stageName) {
-    return `${run.stageName} run`;
-  }
-
-  if (run.stageSlug) {
-    const words = run.stageSlug
-      .split(/[-_\s]+/g)
-      .filter(Boolean)
-      .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`);
-    return `${words.join(" ") || "Session"} run`;
-  }
-
-  return "Session run";
-}
-
-function formatRequestedBy(run: WallieRun) {
-  if (run.requestedByMember) {
-    const fullName = run.requestedByMember.fullName?.trim();
-    const username = run.requestedByMember.username?.trim();
-
-    if (fullName) return fullName;
-    if (username) return username;
-    if (run.requestedByMember.kind === "system") return "Wallie";
-    if (run.requestedByMember.role === "owner") return "workspace owner";
-    if (run.requestedByMember.role === "admin") return "workspace admin";
-    return "workspace member";
-  }
-
-  return run.requestedByMemberId ? "workspace member" : "Wallie";
-}
-
 function mapRealtimeStatus(status: string): WallieRealtimeConnectionState | null {
   switch (status) {
     case "SUBSCRIBED":
@@ -183,9 +140,7 @@ export function SessionWalliePanel({
   const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(
-    () => initialData.runs[0]?.id ?? null,
-  );
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
     () => new Set(initialData.loadedMessageRunIds),
   );
@@ -239,7 +194,7 @@ export function SessionWalliePanel({
     setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
     setPendingActionId(null);
-    setExpandedRunId(initialData.runs[0]?.id ?? null);
+    setExpandedRunId(null);
     setLoadedMessageRunIds(new Set(initialData.loadedMessageRunIds));
     setMessageLoadErrorRunIds(new Set());
     setIsLoadingOlderRuns(false);
@@ -636,7 +591,7 @@ export function SessionWalliePanel({
             ),
           }),
         );
-        setExpandedRunId(run.id);
+        setExpandedRunId(null);
         setFlashMessage(
           payload.created
             ? {
@@ -812,6 +767,7 @@ export function SessionWalliePanel({
       <div className="min-w-0 space-y-5">
         {summaryRun ? (
           <WallieRunCard
+            key={summaryRun.id}
             actionPending={pendingActionId === summaryRun.id}
             branchName={
               summaryRun.sandboxId && summaryRun.stageSlug
@@ -889,364 +845,6 @@ export function SessionWalliePanel({
         >
           {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
         </button>
-      ) : null}
-    </div>
-  );
-}
-
-type WallieRunCardProps = {
-  actionPending: boolean;
-  branchName: string | null;
-  cancelLocked: boolean;
-  connectionState: WallieRealtimeConnectionState;
-  isExpanded: boolean;
-  isPrimary?: boolean;
-  messagesLoaded: boolean;
-  messagesLoadFailed: boolean;
-  nowMs: number;
-  onCancel: (runId: string) => Promise<void>;
-  onRetry: (runId: string) => Promise<void>;
-  onToggle: (runId: string) => void;
-  renderNow: string;
-  retryLocked: boolean;
-  run: WallieRun;
-  stallTimeoutMs: number;
-};
-
-const WallieRunCard = memo(function WallieRunCard({
-  actionPending,
-  branchName,
-  cancelLocked,
-  connectionState,
-  isExpanded,
-  isPrimary = false,
-  messagesLoaded,
-  messagesLoadFailed,
-  nowMs,
-  onCancel,
-  onRetry,
-  onToggle,
-  renderNow,
-  retryLocked,
-  run,
-  stallTimeoutMs,
-}: WallieRunCardProps) {
-  const runDetailsId = `wallie-run-details-${run.id}`;
-  const stalled = isRunActivityStalled({
-    createdAt: run.createdAt,
-    isActive: run.isActive,
-    lastActivityAt: run.lastActivityAt,
-    nowMs,
-    stallTimeoutMs,
-    status: run.status,
-  });
-  const lastActivityAt = lastActivityTimestamp(run);
-  const operation = run.isActive ? currentOperationLabel({ run, stalled }) : null;
-
-  return (
-    <article
-      aria-busy={run.isActive}
-      aria-label={isPrimary ? "Current Wallie run" : undefined}
-      className={cn(
-        "min-w-0",
-        isPrimary ? "rounded-[8px] border border-border bg-control-muted/30 p-4 sm:p-5" : "py-5",
-        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
-      )}
-      data-run-id={run.id}
-      data-wallie-summary={isPrimary ? "" : undefined}
-    >
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
-        <button
-          aria-controls={runDetailsId}
-          aria-expanded={isExpanded}
-          className="min-w-0 flex-1 text-left"
-          onClick={() => onToggle(run.id)}
-          type="button"
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-            {isPrimary ? (
-              <p className="text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
-            ) : (
-              <Status value={agentRunStatusValue(run.status)} />
-            )}
-            {isPrimary ? <Status value={agentRunStatusValue(run.status)} /> : null}
-            <span className="type-annotation text-muted">Attempt {run.attemptCount}</span>
-            <span className="min-w-0 break-all font-mono type-annotation text-foreground">
-              {run.modelProvider}/{run.modelName}
-            </span>
-          </div>
-
-          {isPrimary ? null : (
-            <p className="mt-3 text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
-          )}
-          <p className={cn("mt-1 text-sm text-muted", isPrimary && "type-secondary")}>
-            {run.startedAt ? (
-              <>
-                Started{" "}
-                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.startedAt} />
-                {isPrimary ? null : (
-                  <>
-                    {" · Duration "}
-                    <TimeDisplay
-                      active={run.isActive}
-                      endValue={run.finishedAt}
-                      initialNow={renderNow}
-                      value={run.startedAt}
-                      variant="elapsed"
-                    />
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                Created{" "}
-                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.createdAt} />
-              </>
-            )}
-            {run.finishedAt ? (
-              <>
-                {" · Ended "}
-                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.finishedAt} />
-              </>
-            ) : null}
-          </p>
-          <p className={cn("mt-1 text-sm text-muted", isPrimary && "type-secondary")}>
-            Requested by {formatRequestedBy(run)}
-          </p>
-        </button>
-
-        {run.canCancel ? (
-          <button
-            className="ui-button-danger"
-            disabled={cancelLocked}
-            onClick={() => void onCancel(run.id)}
-            type="button"
-          >
-            {actionPending ? "Canceling…" : "Cancel"}
-          </button>
-        ) : null}
-
-        {run.canRetry ? (
-          <button
-            className="ui-button"
-            disabled={retryLocked}
-            onClick={() => void onRetry(run.id)}
-            type="button"
-          >
-            {actionPending ? "Retrying…" : "Retry Run"}
-          </button>
-        ) : null}
-      </div>
-
-      {isPrimary && operation ? (
-        <p className="mt-4 min-w-0 break-words text-sm font-medium text-foreground [overflow-wrap:anywhere]">
-          {operation}
-        </p>
-      ) : null}
-
-      {isPrimary ? (
-        <dl className="mt-4 grid min-w-0 grid-cols-2 gap-x-5 gap-y-3 border-y border-border/70 py-3 text-sm sm:grid-cols-3">
-          <div className="min-w-0">
-            <dt className="type-annotation text-muted">Elapsed</dt>
-            <dd className="mt-0.5 tabular-nums text-foreground">
-              {run.startedAt ? (
-                <TimeDisplay
-                  active={run.isActive}
-                  endValue={run.finishedAt}
-                  initialNow={renderNow}
-                  value={run.startedAt}
-                  variant="elapsed"
-                />
-              ) : (
-                "—"
-              )}
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="type-annotation text-muted">Last event</dt>
-            <dd className="mt-0.5 text-foreground">
-              <TimeDisplay
-                absoluteStyle="short"
-                initialNow={renderNow}
-                value={lastActivityAt}
-                variant="relative"
-              />
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="type-annotation text-muted">Connection</dt>
-            <dd className="mt-0.5 text-foreground">{connectionStateCopy(connectionState)}</dd>
-          </div>
-        </dl>
-      ) : null}
-
-      {isPrimary && stalled ? (
-        <p aria-live="polite" className="mt-3 text-sm text-warning" role="status">
-          This run may be stalled. Cancel it before retrying.
-        </p>
-      ) : null}
-
-      {isExpanded ? (
-        <div
-          id={runDetailsId}
-          className={cn("mt-4 min-w-0 space-y-4", !isPrimary && "border-t border-border/70 pt-4")}
-        >
-          <details className="min-w-0 text-sm">
-            <summary className="cursor-pointer type-annotation font-semibold text-muted">
-              Run details
-            </summary>
-            <dl className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
-              <div className="min-w-0">
-                <dt className="type-annotation text-muted">Run ID</dt>
-                <dd className="break-all font-mono text-foreground">{run.id}</dd>
-              </div>
-              {branchName ? (
-                <div className="min-w-0">
-                  <dt className="type-annotation text-muted">Branch</dt>
-                  <dd className="break-all font-mono text-foreground">{branchName}</dd>
-                </div>
-              ) : null}
-              {run.sandboxId ? (
-                <div className="min-w-0">
-                  <dt className="type-annotation text-muted">Sandbox</dt>
-                  <dd className="break-all font-mono text-foreground">
-                    {run.sandboxProvider ? `${run.sandboxProvider}/` : ""}
-                    {run.sandboxId}
-                  </dd>
-                </div>
-              ) : null}
-            </dl>
-          </details>
-
-          <RunMessageTimeline
-            connectionState={connectionState}
-            messages={run.messages}
-            messagesLoadFailed={messagesLoadFailed}
-            messagesLoaded={messagesLoaded}
-            renderNow={renderNow}
-            run={run}
-            stalled={stalled}
-          />
-        </div>
-      ) : null}
-    </article>
-  );
-});
-
-const RunMessageBody = memo(function RunMessageBody({ message }: { message: WallieRunMessage }) {
-  const parsed = useMemo(
-    () => (message.kind === "tool_use" ? parseToolUseMessage(message.messageMd) : null),
-    [message.kind, message.messageMd],
-  );
-
-  if (parsed) {
-    return (
-      <div className="mt-2 min-w-0 break-words text-sm leading-7 text-foreground [overflow-wrap:anywhere]">
-        <p>
-          <strong className="font-semibold text-foreground">Tool:</strong> {parsed.tool}
-        </p>
-        <pre
-          aria-label="Code block"
-          className="artifact-pre first:mt-0 last:mb-0"
-          role="group"
-          tabIndex={0}
-        >
-          <code className="artifact-code-block">{parsed.payload}</code>
-        </pre>
-      </div>
-    );
-  }
-
-  return (
-    <p
-      className={cn(
-        "mt-2 min-w-0 whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]",
-        message.kind === "error" ? "text-danger" : "text-foreground",
-      )}
-    >
-      {message.messageMd}
-    </p>
-  );
-});
-
-function RunMessageTimeline({
-  connectionState,
-  messages,
-  messagesLoadFailed,
-  messagesLoaded,
-  renderNow,
-  run,
-  stalled,
-}: {
-  connectionState: WallieRealtimeConnectionState;
-  messages: WallieRun["messages"];
-  messagesLoadFailed: boolean;
-  messagesLoaded: boolean;
-  renderNow: string;
-  run: WallieRun;
-  stalled: boolean;
-}) {
-  const disconnected = connectionState === "disconnected";
-
-  return (
-    <div className="min-w-0">
-      <p className="ui-label">Messages</p>
-
-      {messages.length > 0 ? (
-        <ol className="mt-3 min-w-0 divide-y divide-border border-y border-border">
-          {messages.map((message) => (
-            <li key={message.id} className="min-w-0 py-3">
-              <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2 type-annotation text-muted">
-                <span>{formatMessageSourceLabel(message.kind)}</span>
-                <TimeDisplay
-                  absoluteStyle="short"
-                  initialNow={renderNow}
-                  value={message.createdAt}
-                />
-              </div>
-              <RunMessageBody message={message} />
-            </li>
-          ))}
-        </ol>
-      ) : null}
-
-      {messages.length === 0 && !run.isActive && messagesLoadFailed ? (
-        <div aria-live="polite" className="mt-3 text-sm text-danger" role="status">
-          {messagesFailedCopy()}
-        </div>
-      ) : null}
-      {messages.length === 0 && !run.isActive && !messagesLoaded && !messagesLoadFailed ? (
-        <div aria-live="polite" className="mt-3 text-sm text-muted" role="status">
-          {messagesLoadingCopy()}
-        </div>
-      ) : null}
-      {messages.length === 0 && !run.isActive && messagesLoaded ? (
-        <div aria-live="polite" className="mt-3 text-sm text-muted" role="status">
-          {messagesEmptyCopy()}
-        </div>
-      ) : null}
-      {run.isActive ? (
-        <div
-          aria-busy
-          aria-live="polite"
-          data-run-progress
-          className="mt-3 flex items-center gap-2 text-sm text-muted"
-          role="status"
-        >
-          {stalled ? null : <Spinner />}
-          <span>
-            {stalled
-              ? messages.length > 0
-                ? "No new messages recently."
-                : "No messages recorded yet."
-              : disconnected
-                ? messagesDisconnectedCopy()
-                : "Waiting for run messages…"}
-          </span>
-        </div>
-      ) : null}
-      {disconnected && messages.length > 0 ? (
-        <p className="mt-3 text-sm text-muted">{messagesDisconnectedCopy()}</p>
       ) : null}
     </div>
   );
