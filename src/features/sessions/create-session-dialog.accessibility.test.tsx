@@ -193,6 +193,10 @@ describe("CreateSessionDialog accessibility", () => {
       "https://linear.app/acme/issue/TEAM-42/title",
     );
     expect(screen.getByLabelText("Title (optional)")).toBeDisabled();
+    expect(screen.getByLabelText("Title (optional)")).toHaveAttribute(
+      "placeholder",
+      "From the linked Linear issue",
+    );
     await user.click(screen.getByRole("button", { name: "Start session" }));
 
     await waitFor(() =>
@@ -429,11 +433,18 @@ describe("CreateSessionDialog accessibility", () => {
 
     await user.click(planCheckbox);
     await user.type(screen.getByLabelText("Prompt"), "Build the dashboard");
+    const titleInput = screen.getByLabelText("Title (optional)");
+    expect(titleInput).toHaveAttribute("placeholder", "Generated from the prompt");
+    await user.type(titleInput, "My dashboard title");
     await user.click(screen.getByRole("button", { name: "Start session" }));
 
     await waitFor(() =>
       expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
-        expect.objectContaining({ selectedStageIds: [planStageId], workspaceId }),
+        expect.objectContaining({
+          selectedStageIds: [planStageId],
+          title: "My dashboard title",
+          workspaceId,
+        }),
       ),
     );
   });

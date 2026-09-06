@@ -7,6 +7,7 @@ import {
 import type { WallieSessionRepository } from "@/features/wallie/types";
 import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { generateSessionTitle } from "@/lib/sessions/generate-title";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import {
@@ -330,6 +331,11 @@ export async function POST(request: Request) {
   }
 
   try {
+    const title =
+      linearIssue?.title ??
+      (parsed.data.title?.trim() ||
+        (await generateSessionTitle(normalized.promptMd)) ||
+        normalized.title);
     const result = await createSessionWithFirstJob({
       admin,
       attachmentIds: normalized.attachmentIds,
@@ -341,7 +347,7 @@ export async function POST(request: Request) {
       modelProvider: agentConfig.provider,
       promptMd: normalized.promptMd || linearIssue?.description.trim() || linearIssue?.title || "",
       selectedStageIds: normalized.selectedStageIds,
-      title: linearIssue?.title ?? normalized.title,
+      title,
       workspaceId: normalized.workspaceId,
     });
 

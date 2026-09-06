@@ -24,7 +24,19 @@ const base64EncryptionKeyShape = /^[A-Za-z0-9+/_-]{43,}={0,2}$/;
 const encryptionKeyShapeMessage =
   "WALLIE_ENCRYPTION_KEY must be hex-encoded (>=64 chars) or base64-encoded (>=43 chars). Generate with `openssl rand -hex 32`.";
 
+export const titleGenerationEnvSchema = z.object({
+  OPENROUTER_API_KEY: optionalEnvStringSchema,
+  WALLIE_TITLE_MODEL: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || undefined : value),
+    z
+      .string()
+      .regex(/^[^\s/]+\/[^\s]+$/, "Use an explicit OpenRouter model ID.")
+      .optional(),
+  ),
+});
+
 export const serverEnvSchema = z.object({
+  ...titleGenerationEnvSchema.shape,
   GITHUB_APP_ID: optionalEnvStringSchema,
   GITHUB_APP_PRIVATE_KEY: optionalEnvStringSchema,
   GITHUB_WEBHOOK_SECRET: optionalEnvStringSchema,
@@ -68,6 +80,8 @@ export function parseSupabaseAdminEnv(input: EnvInput = process.env): SupabaseAd
 export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
   const clientEnv = parseClientEnv(input);
   const serverEnv = serverEnvSchema.parse({
+    OPENROUTER_API_KEY: input.OPENROUTER_API_KEY,
+    WALLIE_TITLE_MODEL: input.WALLIE_TITLE_MODEL,
     GITHUB_APP_ID: input.GITHUB_APP_ID,
     GITHUB_APP_PRIVATE_KEY: input.GITHUB_APP_PRIVATE_KEY,
     GITHUB_WEBHOOK_SECRET: input.GITHUB_WEBHOOK_SECRET,

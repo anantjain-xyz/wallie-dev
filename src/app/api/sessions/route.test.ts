@@ -9,12 +9,17 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   decryptSecretValue: vi.fn(),
   fetchLinearIssue: vi.fn(),
+  generateSessionTitle: vi.fn(),
   loadSessionFirstRunPrerequisites: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
 
 vi.mock("@/lib/linear/client", () => ({
   fetchLinearIssue: mocked.fetchLinearIssue,
+}));
+
+vi.mock("@/lib/sessions/generate-title", () => ({
+  generateSessionTitle: mocked.generateSessionTitle,
 }));
 
 vi.mock("@/lib/secrets/crypto", () => ({
@@ -221,6 +226,7 @@ function setupAccess(onboardingRow?: Parameters<typeof buildSupabaseMock>[0]) {
 describe("POST /api/sessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.generateSessionTitle.mockResolvedValue(null);
     setupAccess();
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
@@ -305,6 +311,72 @@ describe("POST /api/sessions", () => {
       }),
     );
     expect(mocked.fetchLinearIssue).toHaveBeenCalledWith("linear-api-key", "TEAM-42");
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it("saves a generated title with the first job after readiness checks", async () => {
+    const promptMd =
+      "On the onboarding setup, clarify the left sidebar main headers.\nMore details.";
+    mocked.generateSessionTitle.mockResolvedValue("Clarify onboarding sidebar step headings");
+    const response = await POST(
+      makeRequest({
+        promptMd,
+        attachmentIds: [ATTACHMENT_ID],
+        title: "  ",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocked.generateSessionTitle).toHaveBeenCalledExactlyOnceWith(promptMd);
+    expect(mocked.assertSessionSandboxCapabilityReady.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.generateSessionTitle.mock.invocationCallOrder[0]!,
+    );
+    expect(mocked.generateSessionTitle.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.createSessionWithFirstJob.mock.invocationCallOrder[0]!,
+    );
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: "Clarify onboarding sidebar step headings",
+        promptMd,
+        attachmentIds: [ATTACHMENT_ID],
+      }),
+    );
+  });
+
+  it("preserves the complete prompt when generation falls back to the first line", async () => {
+    const promptMd = `${"A".repeat(100)}\n${"Further detail ".repeat(1_000)}`.trim();
+    const response = await POST(makeRequest({ promptMd, workspaceId: WORKSPACE_ID }));
+
+    expect(response.status).toBe(201);
+    expect(mocked.generateSessionTitle).toHaveBeenCalledExactlyOnceWith(promptMd);
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({ title: `${"A".repeat(77)}…`, promptMd }),
+    );
+  });
+
+  it("preserves explicit titles without calling the model", async () => {
+    const response = await POST(
+      makeRequest({ promptMd: "Add SSO", title: "  My chosen title  ", workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "My chosen title" }),
+    );
+  });
+
+  it("skips generation when workspace access is denied", async () => {
+    mocked.requireWorkspaceAccessById.mockResolvedValue({
+      ok: false,
+      error: "Forbidden",
+      status: 403,
+    });
+    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
+    expect(response.status).toBe(403);
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
   it("uses the Linear issue description when no prompt is provided", async () => {
@@ -459,6 +531,7 @@ describe("POST /api/sessions", () => {
       code: "repository_archived",
       error: "Wallie cannot start a run against an archived repository.",
     });
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
     expect(mocked.assertSessionFirstRunReady).toHaveBeenCalledWith(
       expect.objectContaining({
         repository: expect.objectContaining({
@@ -488,6 +561,7 @@ describe("POST /api/sessions", () => {
       error: "Run a successful E2B capability check before starting Wallie.",
       provider: "e2b",
     });
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
@@ -497,6 +571,7 @@ describe("POST /api/sessions", () => {
     const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
 
     expect(response.status).toBe(409);
+    expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
