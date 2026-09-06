@@ -21,12 +21,38 @@ describe("parseServerEnv", () => {
       GITHUB_APP_ID: "",
       GITHUB_APP_PRIVATE_KEY: "",
       GITHUB_WEBHOOK_SECRET: "",
+      OPENROUTER_API_KEY: "   ",
+      WALLIE_TITLE_MODEL: "",
     });
 
     expect(parsed.GITHUB_APP_ID).toBeUndefined();
     expect(parsed.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
     expect(parsed.GITHUB_WEBHOOK_SECRET).toBeUndefined();
+    expect(parsed.OPENROUTER_API_KEY).toBeUndefined();
+    expect(parsed.WALLIE_TITLE_MODEL).toBeUndefined();
   });
+
+  it("accepts optional title generation credentials and trims the model ID", () => {
+    expect(
+      parseServerEnv({
+        ...validEnv,
+        OPENROUTER_API_KEY: "openrouter-key",
+        WALLIE_TITLE_MODEL: " provider/fast-model ",
+      }),
+    ).toMatchObject({
+      OPENROUTER_API_KEY: "openrouter-key",
+      WALLIE_TITLE_MODEL: "provider/fast-model",
+    });
+  });
+
+  it.each(["fast-model", "/fast-model", "provider/", "provider/fast model"])(
+    "rejects a title model without an explicit provider/model ID: %s",
+    (model) => {
+      expect(() => parseServerEnv({ ...validEnv, WALLIE_TITLE_MODEL: model })).toThrow(
+        "Use an explicit OpenRouter model ID.",
+      );
+    },
+  );
 
   it("rejects short encryption keys", () => {
     expect(() =>
