@@ -5,7 +5,11 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { StageTimeline, type StageTimelineEntry } from "@/features/sessions/detail/stage-timeline";
-import { SessionExecutionSummary } from "@/features/sessions/detail/execution-summary";
+import {
+  SessionExecutionProvider,
+  SessionExecutionSummary,
+  usePublishExecution,
+} from "@/features/sessions/detail/execution-summary";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 
 const stages = [
@@ -15,6 +19,21 @@ const stages = [
 
 /** Exercise real UI components without launching runs or changing workspace data. */
 export function InteractionMotionPreview({ initialNow }: { initialNow: string }) {
+  return (
+    <SessionExecutionProvider>
+      <InteractionMotionContent initialNow={initialNow} />
+    </SessionExecutionProvider>
+  );
+}
+
+function InteractionMotionContent({ initialNow }: { initialNow: string }) {
+  usePublishExecution({
+    sessionId: "preview",
+    run: undefined,
+    connection: "live",
+    nowMs: Date.parse(initialNow),
+    stallTimeoutMs: 60000,
+  });
   const [phaseStatus, setPhaseStatus] = useState<SessionPhaseStatus>("in_progress");
   const [version, setVersion] = useState(1);
   const [refresh, setRefresh] = useState(0);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   executionStateLabel,
   SessionExecutionProvider,
@@ -193,4 +193,38 @@ describe("execution summary", () => {
     );
     expect(screen.queryByRole("region", { name: "Current execution" })).toBeNull();
   });
+});
+
+it("skips the initial run publication and activity refreshes but animates subsequent state changes", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "animate");
+  const animate = vi.fn(() => ({ cancel: vi.fn() }));
+  Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+  vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  const view = (
+    value: WallieRun,
+    phaseStatus: "in_progress" | "awaiting_review" = "in_progress",
+  ) => (
+    <SessionExecutionProvider>
+      <Publisher value={value} />
+      <SessionExecutionSummary {...props} phaseStatus={phaseStatus} />
+    </SessionExecutionProvider>
+  );
+  try {
+    const result = render(view(run));
+    expect(screen.getByText("Custom stage · Queued")).toBeTruthy();
+    expect(animate).not.toHaveBeenCalled();
+    const running = { ...run, status: "running" as const };
+    result.rerender(view(running));
+    expect(screen.getByText("Custom stage · Run in progress")).toBeTruthy();
+    expect(animate).toHaveBeenCalledOnce();
+    result.rerender(view({ ...running, lastActivityAt: "2026-09-04T12:00:01Z" }));
+    expect(animate).toHaveBeenCalledOnce();
+    result.rerender(view(running, "awaiting_review"));
+    expect(animate).toHaveBeenCalledTimes(2);
+  } finally {
+    cleanup();
+    vi.unstubAllGlobals();
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, "animate", descriptor);
+    else Reflect.deleteProperty(HTMLElement.prototype, "animate");
+  }
 });

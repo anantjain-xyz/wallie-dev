@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { enterContent } from "@/components/ui/motion";
 import { cn } from "@/lib/utils";
 
@@ -60,7 +60,7 @@ export function WorkspaceNavigation({
 /** Animate the committed page once its streamed content is usable, preserving its mounted state. */
 export function RouteEntrance({ pathname }: { pathname: string }) {
   const previousPath = useRef(pathname);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (previousPath.current === pathname) return;
     previousPath.current = pathname;
     const main = document.getElementById("main-content");

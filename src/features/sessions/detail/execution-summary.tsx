@@ -134,7 +134,9 @@ export function SessionExecutionSummary({
       ? "Run status unavailable"
       : executionStateLabel(phaseStatus, snapshot, stageId);
   const motionRef = useChangeMotion<HTMLElement>(
-    `${sessionId}:${stageId}:${phaseStatus}:${title}:${Boolean(archivedAt)}`,
+    !snapshot && !unavailable && phaseStatus === "in_progress"
+      ? null
+      : `${sessionId}:${stageId}:${phaseStatus}:${title}:${Boolean(archivedAt)}`,
   );
   if (archivedAt || phaseStatus === "approved") return null;
   const run = snapshot?.run?.stageId === stageId ? snapshot.run : null;
