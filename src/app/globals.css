@@ -1250,13 +1250,22 @@
   }
 }
 
-/* Unlayered so one focus contract overrides component-level utility rings. */
+/* Unlayered so one focus contract overrides component-level utility rings.
+   Text entry is excluded here — those controls use the quieter in-control
+   rule below. Non-text input types stay on the chrome ring. */
 :where(
   a,
   button,
-  input,
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="file"],
+  input[type="range"],
+  input[type="color"],
+  input[type="image"],
   select,
-  textarea,
   summary,
   [role="button"],
   [role="combobox"],
@@ -1270,6 +1279,42 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   box-shadow: 0 0 0 2px var(--focus-ring-contrast);
+}
+
+/* Unlayered text-entry: kill leftover focus-visible:ring-* halos and keep a
+   2px-equivalent on-control indicator (accent border + 1px inset). */
+:where(
+  input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not(
+      [type="radio"]
+    ):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]):not(
+      [type="hidden"]
+    ),
+  textarea,
+  [contenteditable="true"],
+  [role="textbox"]
+):focus-visible {
+  outline: none;
+  outline-offset: 0;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Border colors flatten in forced-colors; restore a visible text-field ring. */
+@media (forced-colors: active) {
+  :where(
+    input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not(
+        [type="radio"]
+      ):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]):not(
+        [type="hidden"]
+      ),
+    textarea,
+    [contenteditable="true"],
+    [role="textbox"]
+  ):focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
 }
 
 :where(
