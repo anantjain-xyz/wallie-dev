@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 const FEEDBACK_MAX = 4_000;
 
 type SessionReviewBarProps = {
+  attached?: boolean;
   approveLabel: string;
   approveDescription?: string;
   mode: ReviewMode;
@@ -23,6 +24,7 @@ type SessionReviewBarProps = {
 };
 
 export function SessionReviewBar({
+  attached = false,
   approveLabel,
   approveDescription,
   mode,
@@ -64,7 +66,8 @@ export function SessionReviewBar({
     return (
       <div
         className={cn(
-          "sticky bottom-0 z-20 bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
+          "bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
+          attached ? "rounded-b-[6px] border-t border-border" : "sticky bottom-0 z-20",
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
         role="status"
@@ -105,7 +108,8 @@ export function SessionReviewBar({
     <>
       <div
         className={cn(
-          "sticky bottom-0 z-20 bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
+          "bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
+          attached ? "rounded-b-[6px] border-t border-border" : "sticky bottom-0 z-20",
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
       >
