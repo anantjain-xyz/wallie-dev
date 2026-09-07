@@ -582,7 +582,7 @@ describe("optimistic session interactions", () => {
     fireEvent.click(undoButtons[0]!);
 
     expect(mocked.fetch).toHaveBeenCalledTimes(3);
-    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Unarchive" })).toBeTruthy();
   });
 
   it("keeps detail Undo valid after an unrelated title update", async () => {
@@ -812,7 +812,7 @@ describe("optimistic session interactions", () => {
       body: JSON.stringify({ expectedArchivedAt: firstArchivedAt }),
       method: "DELETE",
     });
-    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Unarchive" })).toBeTruthy();
   });
 
   it("keeps a newer server title when an older save response arrives late", async () => {
