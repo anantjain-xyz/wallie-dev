@@ -19,6 +19,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
+import { Tooltip } from "@/components/ui/tooltip";
 import { SessionExecutionProvider } from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
@@ -1037,19 +1038,22 @@ function SessionDetailContent({
   ) : (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="ui-button gap-1.5"
-          disabled={archivePending !== null || phaseActionPending !== null || stopPending}
-          onClick={() => void handleArchive()}
-        >
-          <ArchiveIcon className="h-3.5 w-3.5" />
-          <ActionButtonLabel
-            idle="Archive"
-            pending={archivePending === "archive"}
-            pendingLabel="Archiving…"
-          />
-        </button>
+        <Tooltip content="Archive">
+          <button
+            type="button"
+            className="ui-icon-button"
+            aria-label="Archive"
+            aria-busy={archivePending === "archive" || undefined}
+            disabled={archivePending !== null || phaseActionPending !== null || stopPending}
+            onClick={() => void handleArchive()}
+          >
+            {archivePending === "archive" ? (
+              <Spinner className="h-3.5 w-3.5" />
+            ) : (
+              <ArchiveIcon className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </Tooltip>
       </div>
       {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>
