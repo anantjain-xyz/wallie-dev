@@ -679,11 +679,11 @@
   }
 
   .ui-menu-item {
-    @apply relative flex min-h-9 cursor-default select-none items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-foreground outline-none;
+    @apply relative flex min-h-9 cursor-pointer select-none items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-foreground outline-none;
   }
 
   .ui-select-item {
-    @apply relative flex min-h-9 cursor-default select-none items-center gap-2 rounded-[6px] pl-8 pr-3 py-2 text-sm text-foreground outline-none;
+    @apply relative flex min-h-9 cursor-pointer select-none items-center gap-2 rounded-[6px] pl-8 pr-3 py-2 text-sm text-foreground outline-none;
   }
 
   .ui-menu-item[data-highlighted],
