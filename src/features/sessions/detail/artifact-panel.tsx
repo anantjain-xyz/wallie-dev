@@ -1,8 +1,18 @@
 "use client";
 
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
+import { useChangeMotion } from "@/components/ui/use-change-motion";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { useOptionalToast } from "@/components/ui/toast";
@@ -887,6 +897,17 @@ function ArtifactPanelStage({
     : selectedBody?.version === viewingVersion
       ? selectedBody
       : cachedSelectedBody;
+  const bodyHasContent =
+    visibleBody &&
+    (activeTab === "raw" ||
+      typeof visibleBody.payload !== "string" ||
+      typeof visibleBody.sanitizedHtml === "string" ||
+      (artifactBodyCacheKey(sessionId, visibleBody.stageSlug, visibleBody.version) ===
+        initialFormattedArtifactKey &&
+        initialFormattedArtifact !== null));
+  const bodyMotionRef = useChangeMotion<HTMLDivElement>(
+    `${sessionId}:${visibleBody?.stageSlug ?? stageSlug}:${activeTab}:${bodyHasContent ? visibleBody.version : "loading"}`,
+  );
   const bodyLoading = viewingIsLatest ? latestLoading : selectedBodyLoading;
   const bodyError = viewingIsLatest ? latestError : selectedBodyError;
   const retryBody = () => {
@@ -1009,6 +1030,7 @@ function ArtifactPanelStage({
           {bodyLoading && !visibleBody ? <ProgressHint text="Loading the artifact." /> : null}
           {visibleBody ? (
             <ArtifactBodyView
+              motionRef={bodyHasContent ? bodyMotionRef : undefined}
               artifact={visibleBody}
               displayMode={activeTab}
               initialFormattedArtifact={initialFormattedArtifact}
@@ -1076,6 +1098,7 @@ function TabButton({ active, controls, label, onClick, onKeyDown, ref, tabId }: 
 }
 
 function ArtifactBodyView({
+  motionRef,
   artifact,
   displayMode,
   initialFormattedArtifact,
@@ -1085,6 +1108,7 @@ function ArtifactBodyView({
   sessionId,
   showLatestBadge,
 }: {
+  motionRef?: RefObject<HTMLDivElement | null>;
   artifact: CachedArtifactBody;
   displayMode: "rendered" | "raw";
   initialFormattedArtifact: ReactNode | null;
@@ -1100,22 +1124,38 @@ function ArtifactBodyView({
   const serverTree = key === initialFormattedArtifactKey ? initialFormattedArtifact : null;
   const showRaw = !isMarkdown || displayMode === "raw";
   const [copyPending, setCopyPending] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    };
+  }, []);
 
   async function handleCopyMarkdown() {
     if (copyPending) return;
     setCopyPending(true);
     try {
       await navigator.clipboard.writeText(formatted);
+      if (mounted.current) {
+        setCopiedKey(key);
+        if (copyTimer.current) clearTimeout(copyTimer.current);
+        copyTimer.current = setTimeout(() => setCopiedKey(null), 1800);
+      }
       onCopyResult("success");
     } catch {
+      if (mounted.current) setCopiedKey(null);
       onCopyResult("failure");
     } finally {
-      setCopyPending(false);
+      if (mounted.current) setCopyPending(false);
     }
   }
 
   return (
-    <div>
+    <div ref={motionRef}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="type-annotation uppercase tracking-wide text-muted">
           v{artifact.version}
@@ -1125,13 +1165,22 @@ function ArtifactBodyView({
         {showRaw && isMarkdown ? (
           <button
             type="button"
-            className="rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted"
-            disabled={copyPending}
+            className="inline-grid items-center justify-center rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted"
+            aria-disabled={copyPending}
+            aria-busy={copyPending}
             onClick={() => {
               void handleCopyMarkdown();
             }}
           >
-            {copyPending ? "Copying…" : "Copy Markdown"}
+            <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+              Copy Markdown
+            </span>
+            <span className="col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5">
+              {copiedKey === key && !copyPending ? <CheckIcon className="h-3.5 w-3.5" /> : null}
+              <span aria-live="polite">
+                {copyPending ? "Copying…" : copiedKey === key ? "Copied" : "Copy Markdown"}
+              </span>
+            </span>
           </button>
         ) : null}
       </div>
