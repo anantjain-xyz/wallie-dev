@@ -50,15 +50,11 @@ export function AuthEntryPanel({
     (statusCode === "check_email" || (errorCode ? emailCodeFallbackErrors.has(errorCode) : false));
   const requestAnotherCodeHref = loginPath(next);
   const emailStatusMessage = showEmailCodeForm ? null : statusMessage;
-  const codeFeedback = errorMessage
-    ? { kind: "error" as const, message: errorMessage }
-    : statusMessage
-      ? { kind: "status" as const, message: statusMessage }
-      : null;
+  const codeFeedback = errorMessage ? { kind: "error" as const, message: errorMessage } : null;
 
   return (
     <div className="w-full max-w-[400px]">
-      <div className="mb-6 text-center">
+      <div className="mb-10 text-center">
         <WallieMark className="mx-auto mb-4 size-14 text-foreground" />
         <h1 className="text-balance text-2xl font-semibold tracking-tight text-foreground">
           Sign in to Wallie
@@ -68,7 +64,7 @@ export function AuthEntryPanel({
         </p>
       </div>
 
-      <div className="ui-sheet p-4 sm:p-6">
+      <div>
         {!showEmailCodeForm ? (
           <div>
             <div className="mb-4">
@@ -87,16 +83,16 @@ export function AuthEntryPanel({
 
         {showEmailCodeForm ? (
           <div>
-            <h2 id="email-code-heading" className="text-base font-semibold text-foreground">
+            <h2 id="email-code-heading" className="text-xl font-semibold text-foreground">
               Check your email
             </h2>
-            <p className="mt-1 text-sm leading-5 text-muted">
-              Enter the six-digit code from your Wallie sign-in email.
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Enter the six-digit code from your email, or use the sign-in link inside.
             </p>
             <AuthForm
               action="/auth/code"
               ariaLabelledBy="email-code-heading"
-              className="email-code-form mt-4 grid gap-3"
+              className="email-code-form mt-8 grid gap-6"
               feedback={codeFeedback}
               pendingLabel="Verifying code…"
               submitLabel={errorMessage ? "Try code again" : "Continue with code"}
@@ -106,7 +102,7 @@ export function AuthEntryPanel({
             </AuthForm>
             <Link
               href={requestAnotherCodeHref}
-              className="ui-touch-target mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-[6px] text-sm font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+              className="ui-touch-target mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[6px] text-sm font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
             >
               Request a new email
             </Link>
@@ -114,7 +110,7 @@ export function AuthEntryPanel({
         ) : null}
       </div>
 
-      <p className="mt-5 text-center text-xs leading-5 text-muted">
+      <p className="mt-8 text-center text-xs leading-5 text-muted">
         Looking for Wallie?{" "}
         <Link
           href="/"

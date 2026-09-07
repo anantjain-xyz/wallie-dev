@@ -1346,9 +1346,9 @@
   container-type: inline-size;
 }
 
-/* Six h-11 targets plus five gap-1 spaces total 17.75rem. Keep the tracks and
+/* Six min-w-11 targets plus five gap-2 spaces total 19rem. Keep the tracks and
    wrap threshold root-relative so browser text scaling cannot cause overflow. */
-@container email-code-form (max-width: 17.75rem) {
+@container email-code-form (max-width: 19rem) {
   .email-code-grid {
     grid-template-columns: repeat(3, minmax(2.75rem, 1fr));
   }
