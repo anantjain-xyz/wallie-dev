@@ -116,10 +116,12 @@ describe("SessionsPage accessibility", () => {
       name: "Search prompts, titles, or Linear IDs",
     });
     await user.type(search, "OP-339{Enter}");
-    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&q=OP-339");
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&q=OP-339", {
+      scroll: false,
+    });
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
-    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions");
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions", { scroll: false });
     expect(search).toHaveValue("");
     expect(search).toHaveFocus();
 
@@ -162,7 +164,7 @@ describe("SessionsPage accessibility", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
-    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions");
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions", { scroll: false });
 
     rerender(
       <OverlayProvider>
@@ -213,16 +215,19 @@ describe("SessionsPage accessibility", () => {
     await user.click(screen.getByRole("button", { name: "Archived" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=archived&sort=oldest",
+      { scroll: false },
     );
 
     await user.click(screen.getByRole("button", { name: "All" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=all&sort=oldest",
+      { scroll: false },
     );
 
     await user.click(screen.getByRole("button", { name: "Active" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&sort=oldest",
+      { scroll: false },
     );
   });
 

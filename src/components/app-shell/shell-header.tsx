@@ -18,6 +18,7 @@ import {
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
+import { RouteEntrance, WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -338,12 +339,12 @@ export function ShellHeader({
               </div>
             </div>
 
-            <nav
-              aria-label="Workspace navigation"
+            <WorkspaceNavigation
+              pathname={pathname}
               className="flex items-center gap-1 overflow-x-auto px-3 pb-2 lg:hidden"
             >
               {renderNavLinks()}
-            </nav>
+            </WorkspaceNavigation>
 
             {/* Desktop header: workspace identity, primary navigation, and global actions. */}
             <div className="hidden h-12 min-w-0 items-center justify-between gap-3 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] lg:flex">
@@ -362,9 +363,12 @@ export function ShellHeader({
                     </span>
                   </Link>
                 </Tooltip>
-                <nav aria-label="Workspace navigation" className="flex shrink-0 items-center gap-1">
+                <WorkspaceNavigation
+                  pathname={pathname}
+                  className="flex shrink-0 items-center gap-1"
+                >
                   {renderNavLinks()}
-                </nav>
+                </WorkspaceNavigation>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {renderPrimaryAction(createButtonRef)}
@@ -379,6 +383,7 @@ export function ShellHeader({
             tabIndex={-1}
             className="min-w-0 flex-1 outline-none pb-[env(safe-area-inset-bottom)]"
           >
+            <RouteEntrance pathname={pathname} />
             {visibleCreationPreview?.content}
             <div
               className={visibleCreationPreview ? "hidden" : "contents"}
