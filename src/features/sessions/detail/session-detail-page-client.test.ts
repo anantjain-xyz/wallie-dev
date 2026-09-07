@@ -673,8 +673,7 @@ describe("SessionDetailPageClient", () => {
       button.textContent?.includes("Unarchive"),
     );
     expect(html).toContain("This session is archived.");
-    expect(html).toContain('data-status="archived"');
-    expect(html).toContain(">Archived</span>");
+    expect(document.querySelector('header [data-status="archived"]')).toBeNull();
     expect(html).not.toContain("Request changes");
     expect(unarchive).toBeDefined();
     expect(unarchive?.className.split(/\s+/)).toContain("ui-button");
