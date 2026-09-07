@@ -18,7 +18,7 @@ export function LandingPage() {
       className={`${styles.page} flex min-h-[100svh] flex-col bg-canvas text-foreground`}
     >
       <header className="pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-4 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
+        <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-2 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:gap-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
           <Link
             href="/"
             aria-label="Wallie home"
@@ -27,15 +27,23 @@ export function LandingPage() {
             <WallieMark className="size-7 shrink-0" />
             Wallie
           </Link>
-          <a
-            href={githubUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="ui-touch-target inline-flex min-h-11 items-center gap-2 rounded-[6px] px-2 text-[14px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
-            <GitHubIcon className="h-4 w-4" />
-            GitHub
-          </a>
+          <nav aria-label="Main navigation" className="flex shrink-0 items-center gap-2 sm:gap-4">
+            <a
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="ui-touch-target inline-flex min-h-11 items-center gap-2 rounded-[6px] px-2 text-[14px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            >
+              <GitHubIcon className="h-4 w-4" />
+              GitHub
+            </a>
+            <Link
+              href="/login"
+              className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-3 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:px-4"
+            >
+              Sign in
+            </Link>
+          </nav>
         </div>
       </header>
 
@@ -59,12 +67,9 @@ export function LandingPage() {
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/login"
-                className={`${styles.primaryCta} ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas`}
+                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
               >
                 Get started
-                <span className={styles.ctaArrow} aria-hidden="true">
-                  →
-                </span>
               </Link>
               <a
                 href={selfHostingUrl}

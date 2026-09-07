@@ -22,15 +22,6 @@
   content: "";
 }
 
-.ctaArrow {
-  margin-left: 14px;
-  transition: transform 180ms ease;
-}
-
-.primaryCta:hover .ctaArrow {
-  transform: translateX(3px);
-}
-
 .illustrations {
   min-width: 0;
   padding: 4px 16px;
