@@ -2,6 +2,7 @@
 
 import { memo, type ReactNode, useMemo, useState } from "react";
 
+import { useSessionRunFocus } from "@/features/sessions/detail/session-activity-presentation";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { ShimmerText } from "@/components/shared/shimmer-text";
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -90,6 +91,8 @@ export const WallieRunCard = memo(function WallieRunCard({
   run,
   stallTimeoutMs,
 }: WallieRunCardProps) {
+  const focused = useSessionRunFocus();
+  const prominent = isPrimary && focused;
   const runDetailsId = `wallie-run-details-${run.id}`;
   const stalled = isRunActivityStalled({
     createdAt: run.createdAt,
@@ -113,7 +116,7 @@ export const WallieRunCard = memo(function WallieRunCard({
     <span
       className={cn(
         "font-medium",
-        isPrimary && "rounded-full bg-control-muted px-2 py-0.5 text-xs",
+        prominent && "rounded-full bg-control-muted px-2 py-0.5 text-xs",
         run.status === "error" && "text-danger",
       )}
       data-status={agentRunStatusValue(run.status)}
@@ -129,12 +132,12 @@ export const WallieRunCard = memo(function WallieRunCard({
       ) : run.canCancel ? (
         <button
           aria-label="Cancel run"
-          className={cn("ui-button", isPrimary && "text-danger")}
+          className={cn("ui-button", prominent && "text-danger")}
           disabled={cancelLocked}
           onClick={() => void onCancel(run.id)}
           type="button"
         >
-          {actionPending ? "Stopping…" : isPrimary ? "Stop run" : "Stop"}
+          {actionPending ? "Stopping…" : prominent ? "Stop run" : "Stop"}
         </button>
       ) : null}
       {run.canRetry ? (
@@ -156,7 +159,7 @@ export const WallieRunCard = memo(function WallieRunCard({
       aria-label={`${formatStageRunLabel(run)} activity: ${operation}`}
       className={cn(
         "flex min-h-9 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-[4px] py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-        isPrimary ? "text-xs text-muted" : "flex-1 text-sm",
+        prominent ? "text-xs text-muted" : "flex-1 text-sm",
       )}
       onClick={() => onToggle(run.id)}
       type="button"
@@ -167,7 +170,7 @@ export const WallieRunCard = memo(function WallieRunCard({
           !isExpanded && "-rotate-90",
         )}
       />
-      {isPrimary ? (
+      {prominent ? (
         isExpanded ? (
           "Hide full log"
         ) : (
@@ -199,13 +202,13 @@ export const WallieRunCard = memo(function WallieRunCard({
       aria-label={isPrimary ? "Current Wallie run" : undefined}
       className={cn(
         "min-w-0",
-        isPrimary ? "py-1" : "py-3",
-        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
+        prominent ? "py-1" : "py-3",
+        !prominent && !isExpanded && !run.isActive && "run-history-group",
       )}
       data-run-id={run.id}
       data-wallie-summary={isPrimary ? "" : undefined}
     >
-      {isPrimary ? (
+      {prominent ? (
         <>
           <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -280,7 +283,7 @@ export const WallieRunCard = memo(function WallieRunCard({
         <p
           className={cn(
             "mt-3 break-words rounded-[6px] text-sm text-danger [overflow-wrap:anywhere]",
-            isPrimary ? "bg-danger-soft p-3" : "pl-6",
+            prominent ? "bg-danger-soft p-3" : "pl-6",
           )}
           role="status"
         >
@@ -293,22 +296,22 @@ export const WallieRunCard = memo(function WallieRunCard({
         <LiveConnectionNotice
           state={connectionState}
           onRetry={onReconnect}
-          className={isPrimary ? undefined : "pl-6"}
+          className={prominent ? undefined : "pl-6"}
         />
       ) : null}
       {stalled ? (
-        <p className={cn("mt-2 text-sm text-warning", !isPrimary && "pl-6")} role="status">
+        <p className={cn("mt-2 text-sm text-warning", !prominent && "pl-6")} role="status">
           This run may be stalled. Cancel it before retrying.
         </p>
       ) : null}
 
-      {isPrimary ? <div className="mt-3">{toggle}</div> : null}
+      {prominent ? <div className="mt-3">{toggle}</div> : null}
       <div id={runDetailsId} hidden={!isExpanded}>
         {isExpanded ? (
           <div
             className={cn(
               "mt-3 min-w-0 space-y-3 border-t border-border/40 pt-3",
-              !isPrimary && "sm:ml-6",
+              !prominent && "sm:ml-6",
             )}
           >
             <RunMessageTimeline messages={run.messages} renderNow={renderNow} />
@@ -336,7 +339,7 @@ export const WallieRunCard = memo(function WallieRunCard({
                     {run.modelProvider}/{run.modelName}
                   </dd>
                 </div>
-                {!isPrimary ? (
+                {!prominent ? (
                   <div>
                     <dt>Attempt</dt>
                     <dd className="text-foreground">Attempt {run.attemptCount}</dd>

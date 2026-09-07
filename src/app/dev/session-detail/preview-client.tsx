@@ -331,10 +331,22 @@ export function SessionDetailPreview({
                 ) : mode === "Unavailable" ? (
                   <SessionActivityFailure />
                 ) : (
-                  <div className="space-y-4">
+                  <div
+                    className={
+                      showRun ? "space-y-5" : "divide-y divide-border border-y border-border"
+                    }
+                  >
                     <SessionRunSurface>{renderRun(run, true)}</SessionRunSurface>
                     <SessionRunHistory count={historicalRuns.length}>
-                      {historicalRuns.map((pastRun) => renderRun(pastRun, false))}
+                      <div
+                        className={
+                          showRun
+                            ? "divide-y divide-border border-y border-border"
+                            : "divide-y divide-border"
+                        }
+                      >
+                        {historicalRuns.map((pastRun) => renderRun(pastRun, false))}
+                      </div>
                     </SessionRunHistory>
                   </div>
                 )}

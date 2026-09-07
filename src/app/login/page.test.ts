@@ -128,7 +128,7 @@ describe("/login page", () => {
       }),
     );
 
-    expect(html).toContain("Check your inbox for a secure sign-in link");
+    expect(html).toContain("Enter the six-digit code from your email");
     expect(html).toContain("Check your email");
     expect(html).toContain("Continue with code");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');

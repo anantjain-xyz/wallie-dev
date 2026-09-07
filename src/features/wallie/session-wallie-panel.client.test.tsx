@@ -272,9 +272,10 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByRole("button", { name: "Stop run" })).toBeTruthy();
     expect(screen.getByText("Waiting for this stage’s run to start.")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="Current Wallie run"]')).toBeNull();
-    expect(view.container.querySelector('[data-run-id="run-1"]')?.closest("details")?.open).toBe(
-      false,
-    );
+    expect(view.container.querySelector('[data-run-id="run-1"]')?.closest("details")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Plan run activity/ }).getAttribute("aria-expanded"),
+    ).toBe("false");
     expect(fake.messageQueries).toEqual([]);
   });
 

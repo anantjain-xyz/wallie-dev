@@ -24,7 +24,6 @@ export function SessionStageWorkspace({
   stageName: string;
   stageSlug: string;
 }) {
-  const [historyOpen, setHistoryOpen] = useState(false);
   const showingArtifact = focus === "artifact";
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -48,26 +47,16 @@ export function SessionStageWorkspace({
           <p className="mt-1 text-sm text-muted">{emptyText}</p>
         </section>
       ) : null}
-      <details
-        aria-label="Session runs"
-        className="group/session-history min-w-0"
-        open={focus === "run" || historyOpen}
-        onToggle={(event) => {
-          if (focus !== "run") setHistoryOpen(event.currentTarget.open);
-        }}
-      >
-        <summary
-          id="session-runs-heading"
-          hidden={focus === "run"}
-          className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
-        >
-          <ChevronDownIcon className="size-3.5 -rotate-90 group-open/session-history:rotate-0" />
-          Run history
-        </summary>
+      <section aria-label="Session runs" className="min-w-0">
+        {focus !== "run" ? (
+          <h2 id="session-runs-heading" className="text-base font-semibold text-foreground">
+            Run history
+          </h2>
+        ) : null}
         <div className={focus === "run" ? "min-w-0" : "mt-3 min-w-0"}>
           <SessionRunFocusProvider value={focus === "run"}>{activity}</SessionRunFocusProvider>
         </div>
-      </details>
+      </section>
       {focus === "run" && artifact ? (
         <PreviousArtifact key={stageSlug}>{artifact}</PreviousArtifact>
       ) : null}
