@@ -76,6 +76,7 @@ beforeEach(() => {
     unobserve() {}
   }
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -83,6 +84,7 @@ afterEach(() => {
   mocked.push.mockReset();
   mocked.refresh.mockReset();
   mocked.replace.mockReset();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 

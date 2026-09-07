@@ -4,7 +4,11 @@ import type { WorkspaceSummary } from "@/lib/auth";
 import type { OnboardingResumeState } from "@/features/onboarding/resume";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 import {
-  type SessionFilterKey,
+  parseSessionListQueryState,
+  parseSessionListSort,
+  type SessionListSearchParams,
+} from "@/features/sessions/list/sessions-list-query-state";
+import {
   type SessionListItem,
   type SessionListQueryState,
   type SessionListSortKey,
@@ -30,7 +34,6 @@ export type SessionStageFacet = {
   slug: string;
 };
 
-type SearchParamInput = Record<string, string | string[] | undefined>;
 type Cursor = {
   id: string;
   number?: number;
@@ -46,41 +49,6 @@ type SessionListRpcPayload = {
 
 const SESSION_LIST_PAGE_SIZE = 50;
 
-function readSingle(searchParams: SearchParamInput, key: string): string | null {
-  const value = searchParams[key];
-  if (Array.isArray(value)) {
-    return value[0] ?? null;
-  }
-  return value ?? null;
-}
-
-function parseScope(raw: string | null): SessionFilterKey {
-  if (raw === "active" || raw === "archived" || raw === "all") {
-    return raw;
-  }
-  return "active";
-}
-
-function parseSort(raw: string | null): SessionListSortKey {
-  if (raw === "oldest" || raw === "number") {
-    return raw;
-  }
-  return "updated";
-}
-
-export function parseSessionListQueryState(searchParams: SearchParamInput): SessionListQueryState {
-  // Stage filter is a free-form slug now (workspaces can define their own
-  // stages); we surface whatever's in the URL and let the dashboard decide
-  // what to render for unknown slugs.
-  return {
-    cursor: readSingle(searchParams, "cursor"),
-    query: readSingle(searchParams, "q") ?? "",
-    scope: parseScope(readSingle(searchParams, "scope")),
-    sort: parseSort(readSingle(searchParams, "sort")),
-    stageSlug: readSingle(searchParams, "stage"),
-  };
-}
-
 function decodeCursor(raw: string | null, sort: SessionListSortKey): Cursor | null {
   if (!raw) return null;
 
@@ -89,7 +57,9 @@ function decodeCursor(raw: string | null, sort: SessionListSortKey): Cursor | nu
     if (typeof parsed.id !== "string" || typeof parsed.updatedAt !== "string") {
       return null;
     }
-    const cursorSort = parseSort(typeof parsed.sort === "string" ? parsed.sort : "updated");
+    const cursorSort = parseSessionListSort(
+      typeof parsed.sort === "string" ? parsed.sort : "updated",
+    );
     // Drop cursors from a different sort so pagination never skips or loops.
     if (cursorSort !== sort) {
       return null;
@@ -121,7 +91,7 @@ function encodeCursor(
 
 export async function loadSessionListPageData(
   workspaceSlug: string,
-  searchParams: SearchParamInput,
+  searchParams: SessionListSearchParams,
 ): Promise<SessionListPageData> {
   const queryState = parseSessionListQueryState(searchParams);
   const cursor = decodeCursor(queryState.cursor, queryState.sort);
