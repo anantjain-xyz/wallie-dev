@@ -36,7 +36,7 @@ node .cursor/skills/verify-wallie/scripts/control-wallie.mjs launch
 # node .cursor/skills/verify-wallie/scripts/control-wallie.mjs launch --worker --manage-supabase
 ```
 
-**Ready signal:** helper prints `ready baseUrl=http://127.0.0.1:<port>` after the spawned Next process is still alive, `GET /` returns 200, and the HTML contains `Sign in to Wallie` or `Wallie`. `--manage-supabase` waits for `supabase start` to exit 0 and probes `http://127.0.0.1:54321` before starting Next. Dev server logs `✓ Ready` / `Local:`.
+**Ready signal:** helper prints `ready baseUrl=http://127.0.0.1:<port>` after the spawned Next process is still alive, `GET /` returns 200, and the HTML contains `Wallie` (logged-out landing brand) or `Sign in to Wallie` (login) or workspace chrome. `--manage-supabase` waits for `supabase start` to exit 0 and probes `http://127.0.0.1:54321` before starting Next. Dev server logs `✓ Ready` / `Local:`.
 
 **Default port:** `3000` (`WALLIE_VERIFY_PORT` to override). Playwright's packaged e2e server uses `3100` separately; do not point this skill at a foreign Playwright webServer unless you own it.
 
@@ -52,7 +52,7 @@ Read-only health check before any drive:
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs doctor
 ```
 
-Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Sign in to Wallie` (logged-out landing) **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. If launch used `--manage-supabase`, Auth `http://127.0.0.1:54321/auth/v1/health` must return 200. The Playwright sidecar must be recorded (PID, identity, port) and answer `/health`.
+Requires: a run state file from `launch`, the Next PID still alive, `GET <baseUrl>/` → 200, body contains `Wallie` (logged-out landing) **or** `Sign in to Wallie` **or** workspace chrome such as `Workspace navigation` (already signed in). `GET <baseUrl>/login` must return 200 with `Sign in to Wallie` and `Work email`. If the run was launched with `--worker`, the worker PID must still be alive. If launch used `--manage-supabase`, Auth `http://127.0.0.1:54321/auth/v1/health` must return 200. The Playwright sidecar must be recorded (PID, identity, port) and answer `/health`.
 
 If doctor fails, stop and relaunch. Never drive an instance you did not start.
 
@@ -65,7 +65,7 @@ Harness: **Playwright** (`@playwright/test` Chromium) via `control-wallie`. `lau
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser goto /
 
 # Click by role + accessible name (add --wait-for-role heading --wait-for-name, --wait-for-text, --wait-for-url, --wait-hidden)
-node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "Sign in to Wallie"
+node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser click --role link --name "Get started"
 
 # Fill (add --submit to press Enter in the same live page, e.g. Sessions search)
 node .cursor/skills/verify-wallie/scripts/control-wallie.mjs browser fill --role textbox --name "Work email" --value "anant@example.com"
@@ -85,7 +85,7 @@ Feature recipes live in [`features/`](./features/). Drive from the map; one feat
 ## Evidence
 
 - **Location:** `.wallie/verify/<run-id>/` (gitignored). Helper prints the path on launch.
-- **Minimum proof:** action + resulting state (e.g. click Sign in → URL `/login` + heading `Sign in to Wallie`), not only a final screenshot.
+- **Minimum proof:** action + resulting state (e.g. click `Get started` → URL `/login` + heading `Sign in to Wallie`), not only a final screenshot.
 - **UI:** screenshot + ARIA snapshot with Wallie identity visible (`Wallie` mark/heading).
 - **Auth mutations:** after magic-link/OTP, prove landing on `/w/acme-corp/...` and workspace nav.
 - **Pipeline mutations:** prove visible stage/status change; worker must be running for real progress. Mocks only at production boundaries (`WALLIE_SANDBOX_IMPL=fake` for sandboxes).
