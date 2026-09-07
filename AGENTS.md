@@ -85,9 +85,3 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 - **Stage** — a row in `pipeline_stages` (slug, position, name, prompt template, approver list). User-configurable; new workspaces are seeded with `plan → build`. The legacy term "phase" survives in column names like `phase_status`.
 - **Artifact** — versioned markdown output per stage. Stored in `session_artifacts`, keyed on `(session_id, stage_slug, version)`.
 - **Run** — one agent execution within a stage. A rejected artifact triggers a new run of the same stage.
-
-## gstack
-
-Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
-
-Available skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/retro`, `/investigate`, `/document-release`, `/codex`, `/cso`, `/autoplan`, `/plan-devex-review`, `/devex-review`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`, `/learn`.
