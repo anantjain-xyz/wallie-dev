@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { SessionRunFocusProvider } from "@/features/sessions/detail/session-activity-presentation";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import { WallieRunCard } from "@/features/wallie/run-activity";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
@@ -90,15 +91,23 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
   };
 }
 
-function renderPanel(initialData: WallieSessionData, archivedAt: string | null = null) {
+function renderPanel(
+  initialData: WallieSessionData,
+  archivedAt: string | null = null,
+  focused = true,
+) {
   return renderToStaticMarkup(
-    createElement(SessionWalliePanel, {
-      initialData,
-      initialNow: "2026-05-20T20:10:00.000Z",
-      session: { archivedAt, id: "sess-1", workspaceId: "ws-1" },
-      supabase: {} as SupabaseClient<Database>,
-      workspaceSlug: "acme",
-    }),
+    createElement(
+      SessionRunFocusProvider,
+      { value: focused },
+      createElement(SessionWalliePanel, {
+        initialData,
+        initialNow: "2026-05-20T20:10:00.000Z",
+        session: { archivedAt, id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    ),
   );
 }
 
@@ -140,14 +149,18 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Codex session completed");
   });
 
-  it("marks every collapsed inactive row as a run history group", () => {
+  it("uses compact collapsed rows for current and older runs below an artifact", () => {
     const html = renderPanel(
       data({
         runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
       }),
+      null,
+      false,
     );
 
     expect((html.match(/run-history-group/g) ?? []).length).toBe(2);
+    expect(html).not.toContain("View full log");
+    expect(html).not.toContain('aria-expanded="true"');
   });
 
   it("allows retry only when the run is retryable", () => {
@@ -235,22 +248,22 @@ describe("SessionWalliePanel", () => {
     expect((html.match(/>Product run</g) ?? []).length).toBe(1);
     expect(html).toContain("Working");
     expect(html).not.toContain("Connecting…");
-    expect(html).not.toContain("Attempt 2");
+    expect(html).toContain("Attempt 2");
     expect(html).toContain("activity-shimmer");
     expect(html).not.toContain("animate-spin");
   });
 
-  it("places the latest and older records in one compact run list", () => {
+  it("places only older records under Run history", () => {
     const html = renderPanel(
       data({
         runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
       }),
     );
 
-    expect(html).not.toContain("Previous runs");
+    expect(html).toContain("Run history");
     expect((html.match(/data-wallie-summary/g) ?? []).length).toBe(1);
     expect((html.match(/data-run-id=/g) ?? []).length).toBe(2);
-    expect((html.match(/run-history-group/g) ?? []).length).toBe(2);
+    expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
   });
 
   it("collapses all runs by default and does not mount their transcripts", () => {
@@ -350,7 +363,7 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("No recent activity");
-    expect(html).toContain(">Stop</button>");
+    expect(html).toContain(">Stop run</button>");
     expect(html).toContain("This run may be stalled. Cancel it before retrying.");
     expect(html).not.toContain("Wallie is working…");
   });

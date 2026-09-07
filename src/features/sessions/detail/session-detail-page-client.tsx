@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   type ReactNode,
   useCallback,
@@ -14,16 +13,13 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { PAGE_HEADER_TITLE_CLASS, PageContainer } from "@/components/ui/page-shell";
 import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
-import {
-  SessionExecutionProvider,
-  SessionExecutionSummary,
-} from "@/features/sessions/detail/execution-summary";
+import { SessionExecutionProvider } from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
   archiveSessionFromClient,
@@ -32,7 +28,11 @@ import {
   unarchiveSessionFromClient,
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
-import { ARTIFACT_STAGE_PARAM, ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import {
+  ARTIFACT_STAGE_PARAM,
+  ARTIFACT_VERSION_PARAM,
+  ArtifactPanel,
+} from "@/features/sessions/detail/artifact-panel";
 import type {
   SessionReviewData,
   SessionReviewRepository,
@@ -44,7 +44,9 @@ import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context
 import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
-import { SessionInspector } from "@/features/sessions/detail/session-inspector";
+import { SessionDetailHeader } from "./session-detail-header";
+import { SessionStageWorkspace } from "./session-stage-workspace";
+import { SessionActivityPresentationProvider } from "./session-activity-presentation";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
 import { buildStageTimeline, StageTimeline } from "@/features/sessions/detail/stage-timeline";
@@ -268,10 +270,6 @@ function SessionDetailContent({
   const shouldLoadLatestArtifact =
     selectedStagePosition < currentStagePosition ||
     (selectedStageIsCurrent && (session.currentArtifactVersion ?? 0) > 0);
-  const isDraftingSelectedStage =
-    selectedStageIsCurrent &&
-    (session.phaseStatus === "in_progress" || stopPending) &&
-    !session.archivedAt;
 
   const reviewMode = resolveReviewMode({
     archivedAt: session.archivedAt,
@@ -284,9 +282,7 @@ function SessionDetailContent({
   // Keep the reviewable pending surface so Stop/dialog cannot race the action.
   // Historical version selections disable approve/reject — those actions always
   // target session.currentArtifactVersion, not the on-screen older body.
-  const pendingKeepsReviewable =
-    (phaseActionPending === "approve" || phaseActionPending === "reject") &&
-    (reviewMode.kind === "running" || reviewMode.kind === "canceled");
+  const pendingKeepsReviewable = phaseActionPending !== null;
   const stickyReviewMode =
     viewingHistoricalArtifact && (reviewMode.kind === "reviewable" || pendingKeepsReviewable)
       ? ({
@@ -297,6 +293,32 @@ function SessionDetailContent({
       : pendingKeepsReviewable
         ? ({ canApprove, kind: "reviewable" } as const)
         : reviewMode;
+
+  const runIsFocus =
+    selectedStageIsCurrent &&
+    phaseActionPending === null &&
+    (session.phaseStatus === "in_progress" ||
+      session.phaseStatus === "rejected" ||
+      (hasFailedRun && session.phaseStatus !== "approved") ||
+      stopPending);
+  const artifactAvailable = latestArtifact !== null || shouldLoadLatestArtifact;
+  const stageFocus = runIsFocus ? "run" : artifactAvailable ? "artifact" : "empty";
+
+  function handleSelectStage(stageSlug: string) {
+    if (stageSlug === selectedStageSlug) return;
+    setSelectedStageSlug(stageSlug);
+    setViewingHistoricalArtifact(false);
+    // Stage selection must survive refresh even when no artifact viewer is mounted.
+    const url = new URL(window.location.href);
+    url.searchParams.delete(ARTIFACT_VERSION_PARAM);
+    if (stageSlug === session.currentStageSlug) url.searchParams.delete(ARTIFACT_STAGE_PARAM);
+    else url.searchParams.set(ARTIFACT_STAGE_PARAM, stageSlug);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }
 
   useEffect(() => {
     // A recovery response can arrive while an optimistic action or a newer
@@ -739,7 +761,8 @@ function SessionDetailContent({
       await runOptimisticMutation({
         optimistic: () => {
           setSession((current) => applySessionMutationPatch(current, optimisticPatch));
-          if (nextStage) setSelectedStageSlug(nextStage.slug);
+          // Keep the reviewed artifact and pending controls visible until the action settles.
+          // A successful commit selects the next stage below.
         },
         mutate: async () => {
           const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
@@ -1014,16 +1037,6 @@ function SessionDetailContent({
   ) : (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        {session.phaseStatus === "in_progress" && phaseActionPending === null ? (
-          <button
-            type="button"
-            className="ui-button-danger"
-            disabled={stopPending || archivePending !== null || phaseActionPending !== null}
-            onClick={() => void handleStopRun()}
-          >
-            <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
-          </button>
-        ) : null}
         <button
           type="button"
           className="ui-button gap-1.5"
@@ -1042,26 +1055,50 @@ function SessionDetailContent({
     </div>
   );
 
+  const artifactViewer = artifactAvailable ? (
+    <ArtifactPanel
+      emptyText="No artifact recorded for this stage."
+      initialFormattedArtifact={initialFormattedArtifact}
+      initialFormattedArtifactKey={initialFormattedArtifactKey}
+      initialNow={renderNow}
+      isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
+      isDrafting={false}
+      latestArtifact={latestArtifact}
+      loadLatest={shouldLoadLatestArtifact}
+      onViewingHistoricalChange={setViewingHistoricalArtifact}
+      persistStageInUrl={!selectedStageIsCurrent}
+      rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
+      sessionId={session.id}
+      stageSlug={selectedStageSlug}
+    />
+  ) : null;
+  const stopControl =
+    !session.archivedAt &&
+    (session.phaseStatus === "in_progress" || stopPending) &&
+    phaseActionPending === null ? (
+      <button
+        type="button"
+        className="ui-button text-danger"
+        disabled={stopPending || archivePending !== null}
+        onClick={() => void handleStopRun()}
+      >
+        <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
+      </button>
+    ) : !session.archivedAt &&
+      session.phaseStatus === "rejected" &&
+      phaseActionPending === null &&
+      archivePending === null ? undefined : null;
+
   return (
     <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
-      <PageHeader
-        actionsRightOnDesktop
-        eyebrow={
-          <span className="inline-flex items-center gap-1.5">
-            <Link
-              href={workspaceSessionsPath(initialData.workspaceSlug)}
-              className="hover:text-foreground"
-            >
-              ← Sessions
-            </Link>
-            <span aria-hidden="true" className="text-muted/60">
-              /
-            </span>
-            <span className="font-mono tracking-normal">#{session.number}</span>
-          </span>
-        }
-        titleAsChild
+      <SessionDetailHeader
+        actions={headerActions}
+        creatorDisplayName={creatorDisplayName}
+        initialNow={renderNow}
+        repository={repository}
+        session={session}
+        workspaceSlug={initialData.workspaceSlug}
         title={
           <EditableSessionTitle
             onTitleChanged={handleTitleChanged}
@@ -1070,114 +1107,60 @@ function SessionDetailContent({
             title={session.title}
           />
         }
-        actions={headerActions}
       />
-
       <SessionCompletionSummary session={session} />
-
-      <div className="mb-4">
+      <div className="mb-5">
         <StageTimeline
-          onSelect={setSelectedStageSlug}
+          onSelect={handleSelectStage}
           selectedStageSlug={selectedStageSlug}
           timeline={stageTimeline}
         />
       </div>
-
-      {/* Review workbench: 70/30 on lg+, stacked below 1024px with context after artifact. */}
-      <SessionExecutionSummary
-        sessionId={session.id}
-        stageId={session.currentStageId}
-        stageName={
-          session.pipeline.stages.find((stage) => stage.id === session.currentStageId)?.name ??
-          "Current stage"
+      <SessionStageWorkspace
+        stageName={selectedStage?.name ?? selectedStageSlug}
+        stageSlug={selectedStageSlug}
+        focus={stageFocus}
+        emptyText={
+          selectedStagePosition > currentStagePosition
+            ? "This stage has not started yet."
+            : "No output was recorded for this stage."
         }
-        phaseStatus={session.phaseStatus}
-        archivedAt={session.archivedAt}
-        initialNow={renderNow}
-      />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0">
-        <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
-          <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h2 className="text-[13px] font-semibold text-foreground">
-                {selectedStage?.name ?? selectedStageSlug} artifact
-              </h2>
-              <p className="mt-0.5 type-annotation text-muted">
-                {latestArtifact && stickyReviewMode.kind === "reviewable"
-                  ? "Review this output before approving."
-                  : (selectedStage?.description ?? "")}
-              </p>
-            </div>
-          </div>
-
-          <div
-            aria-busy={isDraftingSelectedStage}
-            aria-live="polite"
-            className="min-h-0 flex-1 p-4"
-          >
-            <ArtifactPanel
-              emptyText={
-                selectedStagePosition > currentStagePosition
-                  ? "This stage has not started yet."
-                  : "No artifact recorded for this stage."
-              }
-              initialFormattedArtifact={initialFormattedArtifact}
-              initialFormattedArtifactKey={initialFormattedArtifactKey}
-              initialNow={renderNow}
-              isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
-              isDrafting={isDraftingSelectedStage}
-              latestArtifact={latestArtifact}
-              loadLatest={shouldLoadLatestArtifact}
-              onViewingHistoricalChange={setViewingHistoricalArtifact}
-              persistStageInUrl={!selectedStageIsCurrent}
-              rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
-              sessionId={session.id}
-              stageSlug={selectedStageSlug}
-            />
-          </div>
-        </section>
-
-        <aside className="ui-sheet p-4 lg:rounded-l-none">
-          <SessionInspector
-            creatorDisplayName={creatorDisplayName}
-            initialNow={renderNow}
-            repository={repository}
-            session={session}
+        artifact={artifactViewer}
+        reviewControls={
+          <SessionReviewBar
+            attached
+            approveLabel="Approve stage"
+            approveDescription={
+              phaseActionPending ? undefined : "Final-stage approval may also archive the session."
+            }
+            mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
+            onApprove={() => void handlePhaseAction("approve")}
+            onReject={(feedback) => handlePhaseAction("reject", feedback)}
+            phaseActionPending={phaseActionPending}
           />
-        </aside>
-      </div>
-
-      <section aria-labelledby="session-runs-heading" className="ui-sheet mt-6">
-        <div className="border-b border-border px-4 py-3">
-          <h2 id="session-runs-heading" className="text-base font-semibold text-foreground">
-            Run history
-          </h2>
-          <p className="mt-0.5 type-annotation text-muted">
-            Review agent run history, status, and messages for this session.
-          </p>
-        </div>
-        <div className="p-4">
+        }
+        activity={
           <SessionRefreshContext.Provider
             value={{ refresh: refreshSession, pending: refreshPending || actionPending }}
           >
-            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
-              {activity}
-            </SessionActivityArchivedAtProvider>
+            <SessionActivityPresentationProvider
+              value={{
+                currentStage: {
+                  id: session.currentStageId,
+                  name:
+                    session.pipeline.stages.find((stage) => stage.id === session.currentStageId)
+                      ?.name ?? "Current stage",
+                  phaseStatus: session.phaseStatus,
+                },
+                stopControl,
+              }}
+            >
+              <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+                {activity}
+              </SessionActivityArchivedAtProvider>
+            </SessionActivityPresentationProvider>
           </SessionRefreshContext.Provider>
-        </div>
-      </section>
-
-      <SessionReviewBar
-        approveLabel="Approve stage"
-        approveDescription={
-          phaseActionPending ? undefined : "Final-stage approval may also archive the session."
         }
-        mode={stickyReviewMode}
-        onApprove={() => {
-          void handlePhaseAction("approve");
-        }}
-        onReject={(feedback) => handlePhaseAction("reject", feedback)}
-        phaseActionPending={phaseActionPending}
       />
     </PageContainer>
   );

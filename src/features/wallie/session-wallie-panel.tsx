@@ -4,6 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  SessionActivityPlaceholder,
+  SessionRunSurface,
+  SessionRunHistory,
+  useSessionRunFocus,
+  type SessionActivityPresentation,
+} from "@/features/sessions/detail/session-activity-presentation";
+
 import { usePublishExecution } from "@/features/sessions/detail/execution-summary";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
@@ -48,6 +56,7 @@ export type WalliePanelSession = {
 type SessionWalliePanelProps = {
   initialData: WallieSessionData;
   initialNow?: string;
+  presentation?: SessionActivityPresentation;
   session: WalliePanelSession;
   supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
@@ -116,10 +125,12 @@ export function SessionWalliePanel(props: SessionWalliePanelProps) {
 function SessionWalliePanelContent({
   initialData,
   initialNow,
+  presentation,
   session,
   supabase: injectedSupabase,
   workspaceSlug,
 }: SessionWalliePanelProps) {
+  const focused = useSessionRunFocus();
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const [supabase] = useState<SupabaseClient<Database>>(
     () => injectedSupabase ?? createSupabaseBrowserClient(),
@@ -149,7 +160,11 @@ function SessionWalliePanelContent({
     new Map<string, { promise: Promise<void>; controller: AbortController }>(),
   );
   sessionIdRef.current = session.id;
-  const summaryRun = useMemo(() => runs.find((run) => run.isActive) ?? runs[0] ?? null, [runs]);
+  const currentStageId = presentation?.currentStage.id;
+  const summaryRun = useMemo(() => {
+    const stageRuns = currentStageId ? runs.filter((run) => run.stageId === currentStageId) : runs;
+    return stageRuns.find((run) => run.isActive) ?? stageRuns[0] ?? null;
+  }, [currentStageId, runs]);
   const summaryRunId = summaryRun?.id ?? null;
   usePublishExecution({
     sessionId: session.id,
@@ -486,9 +501,9 @@ function SessionWalliePanelContent({
   // for archived sessions; mirror that here so the Retry button is disabled
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
-  const displayedRuns = useMemo(
-    () => (summaryRun ? [summaryRun, ...runs.filter((run) => run.id !== summaryRun.id)] : []),
-    [runs, summaryRun],
+  const historicalRuns = useMemo(
+    () => runs.filter((run) => run.id !== summaryRunId),
+    [runs, summaryRunId],
   );
 
   const handleRetryRun = useCallback(
@@ -680,25 +695,29 @@ function SessionWalliePanelContent({
         </details>
       ) : null}
 
-      {displayedRuns.length > 0 ? (
-        <div className="min-w-0 divide-y divide-border border-y border-border">
-          {displayedRuns.map((run) => (
+      <div
+        className={cn(
+          "min-w-0",
+          focused ? "space-y-5" : "divide-y divide-border border-y border-border",
+        )}
+      >
+        {summaryRun ? (
+          <SessionRunSurface>
             <WallieRunCard
-              key={run.id}
-              actionPending={pendingActionId === run.id}
+              key={summaryRun.id}
+              actionPending={pendingActionId === summaryRun.id}
               branchName={
-                run.sandboxId && run.stageSlug
-                  ? buildStageBranchName(session.id, run.stageSlug)
+                summaryRun.sandboxId && summaryRun.stageSlug
+                  ? buildStageBranchName(session.id, summaryRun.stageSlug)
                   : null
               }
               cancelLocked={pendingActionId !== null}
-              connectionState={
-                run.id === summaryRunId ? connectionState : (sources[`history:${run.id}`] ?? "live")
-              }
-              isExpanded={expandedRunId === run.id}
-              isPrimary={run.id === summaryRunId}
-              messagesLoaded={loadedMessageRunIds.has(run.id)}
-              messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+              cancelControl={presentation?.stopControl}
+              connectionState={connectionState}
+              isExpanded={expandedRunId === summaryRun.id}
+              isPrimary
+              messagesLoaded={loadedMessageRunIds.has(summaryRun.id)}
+              messagesLoadFailed={messageLoadErrorRunIds.has(summaryRun.id)}
               nowMs={nowMs}
               onCancel={handleCancelRun}
               onReconnect={recovery.retry}
@@ -706,33 +725,70 @@ function SessionWalliePanelContent({
               onToggle={handleToggleRun}
               renderNow={renderNow}
               retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-              run={run}
+              run={summaryRun}
               stallTimeoutMs={initialData.stallTimeoutMs}
             />
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-[6px] border border-dashed border-border px-4 py-8 text-center text-sm leading-7 text-muted">
-          No runs recorded yet.
-        </div>
-      )}
+          </SessionRunSurface>
+        ) : (
+          <SessionActivityPlaceholder>
+            <p className="py-3 text-sm text-muted" role="status">
+              {presentation?.currentStage.phaseStatus === "in_progress"
+                ? "Waiting for this stage’s run to start."
+                : "No runs recorded for this stage yet."}
+            </p>
+          </SessionActivityPlaceholder>
+        )}
 
-      {olderRunsError ? (
-        <p aria-live="polite" className="text-sm text-danger" role="status">
-          {olderRunsError}
-        </p>
-      ) : null}
+        {historicalRuns.length > 0 || nextRunCursor ? (
+          <SessionRunHistory count={historicalRuns.length} hasMore={Boolean(nextRunCursor)}>
+            <div
+              className={cn("min-w-0 divide-y divide-border", focused && "border-y border-border")}
+            >
+              {historicalRuns.map((run) => (
+                <WallieRunCard
+                  key={run.id}
+                  actionPending={pendingActionId === run.id}
+                  branchName={
+                    run.sandboxId && run.stageSlug
+                      ? buildStageBranchName(session.id, run.stageSlug)
+                      : null
+                  }
+                  cancelLocked={pendingActionId !== null}
+                  connectionState={sources[`history:${run.id}`] ?? "live"}
+                  isExpanded={expandedRunId === run.id}
+                  messagesLoaded={loadedMessageRunIds.has(run.id)}
+                  messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+                  nowMs={nowMs}
+                  onCancel={handleCancelRun}
+                  onReconnect={recovery.retry}
+                  onRetry={handleRetryRun}
+                  onToggle={handleToggleRun}
+                  renderNow={renderNow}
+                  retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+                  run={run}
+                  stallTimeoutMs={initialData.stallTimeoutMs}
+                />
+              ))}
+            </div>
+            {olderRunsError ? (
+              <p aria-live="polite" className="text-sm text-danger" role="status">
+                {olderRunsError}
+              </p>
+            ) : null}
 
-      {nextRunCursor ? (
-        <button
-          className="ui-button"
-          disabled={isLoadingOlderRuns}
-          onClick={() => void handleLoadOlderRuns()}
-          type="button"
-        >
-          {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
-        </button>
-      ) : null}
+            {nextRunCursor ? (
+              <button
+                className="ui-button"
+                disabled={isLoadingOlderRuns}
+                onClick={() => void handleLoadOlderRuns()}
+                type="button"
+              >
+                {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
+              </button>
+            ) : null}
+          </SessionRunHistory>
+        ) : null}
+      </div>
     </div>
   );
 }

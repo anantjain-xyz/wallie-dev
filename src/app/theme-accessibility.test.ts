@@ -183,6 +183,19 @@ describe("shared interaction accessibility tokens", () => {
     },
   );
 
+  it.each([".ui-menu-item", ".ui-select-item"])(
+    "uses a pointer cursor on enabled %s overlay items",
+    (selector) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = stylesheet.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`, "u"));
+
+      if (!match?.[1]) throw new Error(`Missing ${selector} rule`);
+
+      expect(match[1]).toContain("cursor-pointer");
+      expect(match[1]).not.toContain("cursor-default");
+    },
+  );
+
   it("keeps the two-layer ring on chrome controls, not text entry", () => {
     const chromeSelector = chromeFocusSelector();
 
