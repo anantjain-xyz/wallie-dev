@@ -1296,7 +1296,13 @@ describe("ArtifactPanel", () => {
   });
 
   it("copies Markdown through the shared toast feedback system", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
+    let finishCopy!: () => void;
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCopy = resolve;
+        }),
+    );
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
@@ -1307,6 +1313,13 @@ describe("ArtifactPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("# Latest"));
+    expect(screen.getByRole("button", { name: "Copying…" }).getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
+    expect(mockedToast.pushToast).not.toHaveBeenCalled();
+    finishCopy();
+    await screen.findByRole("button", { name: "Copied" });
     expect(mockedToast.pushToast).toHaveBeenCalledWith({
       priority: "polite",
       title: "Markdown copied.",

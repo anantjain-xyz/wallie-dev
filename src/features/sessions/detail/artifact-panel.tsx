@@ -3,6 +3,8 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
+import { useChangeMotion } from "@/components/ui/use-change-motion";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { useOptionalToast } from "@/components/ui/toast";
@@ -1100,22 +1102,39 @@ function ArtifactBodyView({
   const serverTree = key === initialFormattedArtifactKey ? initialFormattedArtifact : null;
   const showRaw = !isMarkdown || displayMode === "raw";
   const [copyPending, setCopyPending] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(false);
+  const motionRef = useChangeMotion<HTMLDivElement>(`${key}:${displayMode}`);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    };
+  }, []);
 
   async function handleCopyMarkdown() {
     if (copyPending) return;
     setCopyPending(true);
     try {
       await navigator.clipboard.writeText(formatted);
+      if (mounted.current) {
+        setCopiedKey(key);
+        if (copyTimer.current) clearTimeout(copyTimer.current);
+        copyTimer.current = setTimeout(() => setCopiedKey(null), 1800);
+      }
       onCopyResult("success");
     } catch {
+      if (mounted.current) setCopiedKey(null);
       onCopyResult("failure");
     } finally {
-      setCopyPending(false);
+      if (mounted.current) setCopyPending(false);
     }
   }
 
   return (
-    <div>
+    <div ref={motionRef}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="type-annotation uppercase tracking-wide text-muted">
           v{artifact.version}
@@ -1125,13 +1144,22 @@ function ArtifactBodyView({
         {showRaw && isMarkdown ? (
           <button
             type="button"
-            className="rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted"
-            disabled={copyPending}
+            className="inline-grid items-center justify-center rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted"
+            aria-disabled={copyPending}
+            aria-busy={copyPending}
             onClick={() => {
               void handleCopyMarkdown();
             }}
           >
-            {copyPending ? "Copying…" : "Copy Markdown"}
+            <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+              Copy Markdown
+            </span>
+            <span className="col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5">
+              {copiedKey === key && !copyPending ? <CheckIcon className="h-3.5 w-3.5" /> : null}
+              <span aria-live="polite">
+                {copyPending ? "Copying…" : copiedKey === key ? "Copied" : "Copy Markdown"}
+              </span>
+            </span>
           </button>
         ) : null}
       </div>

@@ -7,7 +7,7 @@ export function allowsMotion() {
 }
 
 export function enterContent(element: HTMLElement) {
-  if (!allowsMotion() || typeof element.animate !== "function") return null;
+  if (typeof element.animate !== "function" || !allowsMotion()) return null;
   return element.animate(
     [
       { opacity: 0.65, transform: "translateY(4px)" },

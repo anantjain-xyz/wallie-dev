@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import type { SessionReviewPipeline, SessionReviewSession } from "@/features/sessions/detail/data";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
@@ -154,29 +155,7 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                 aria-current={isCurrent ? "step" : undefined}
                 aria-pressed={isSelected}
               >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs",
-                    entry.status === "completed"
-                      ? "border-success/30 bg-success-soft text-success"
-                      : entry.status === "failed"
-                        ? "border-danger/30 bg-danger-soft text-danger"
-                        : entry.status === "not_running"
-                          ? "border-warning/30 bg-warning-soft text-warning"
-                          : isCurrent
-                            ? "border-accent bg-accent-soft text-accent"
-                            : "border-border text-muted",
-                  )}
-                >
-                  {entry.status === "completed" ? (
-                    <CheckIcon className="h-3.5 w-3.5" />
-                  ) : entry.status === "failed" || entry.status === "not_running" ? (
-                    "!"
-                  ) : (
-                    index + 1
-                  )}
-                </span>
+                <StageMarker entry={entry} index={index} />
                 <span className="min-w-0 [overflow-wrap:anywhere]">
                   <span className="block text-foreground">{entry.stage.name}</span>
                   <span className="block font-normal">{label}</span>
@@ -190,5 +169,36 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
         })}
       </ol>
     </nav>
+  );
+}
+
+function StageMarker({ entry, index }: { entry: StageTimelineEntry; index: number }) {
+  const ref = useChangeMotion<HTMLSpanElement>(`${entry.status}:${entry.phaseStatus}`);
+  const isCurrent = entry.phaseStatus !== null && entry.status !== "completed";
+  return (
+    <span
+      ref={ref}
+      aria-hidden="true"
+      className={cn(
+        "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs",
+        entry.status === "completed"
+          ? "border-success/30 bg-success-soft text-success"
+          : entry.status === "failed"
+            ? "border-danger/30 bg-danger-soft text-danger"
+            : entry.status === "not_running"
+              ? "border-warning/30 bg-warning-soft text-warning"
+              : isCurrent
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-border text-muted",
+      )}
+    >
+      {entry.status === "completed" ? (
+        <CheckIcon className="h-3.5 w-3.5" />
+      ) : entry.status === "failed" || entry.status === "not_running" ? (
+        "!"
+      ) : (
+        index + 1
+      )}
+    </span>
   );
 }

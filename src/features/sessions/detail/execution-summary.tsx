@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
+import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { RealtimeRecoveryProvider } from "@/features/wallie/realtime-recovery-context";
 import { LiveConnectionNotice } from "@/features/wallie/live-connection-notice";
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -128,11 +129,14 @@ export function SessionExecutionSummary({
   const unavailable = published !== null && "unavailable" in published;
   const snapshot =
     published && "sessionId" in published && published.sessionId === sessionId ? published : null;
-  if (archivedAt || phaseStatus === "approved") return null;
   const title =
     unavailable && phaseStatus === "in_progress"
       ? "Run status unavailable"
       : executionStateLabel(phaseStatus, snapshot, stageId);
+  const motionRef = useChangeMotion<HTMLElement>(
+    `${sessionId}:${stageId}:${phaseStatus}:${title}:${Boolean(archivedAt)}`,
+  );
+  if (archivedAt || phaseStatus === "approved") return null;
   const run = snapshot?.run?.stageId === stageId ? snapshot.run : null;
   const description =
     phaseStatus === "awaiting_review"
@@ -146,6 +150,7 @@ export function SessionExecutionSummary({
             : "Follow the latest run for execution details and recovery actions.";
   return (
     <section
+      ref={motionRef}
       aria-label="Current execution"
       className="mb-4 rounded-[6px] border border-border bg-sheet px-4 py-3"
     >

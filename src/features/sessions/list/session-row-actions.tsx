@@ -1,5 +1,7 @@
 "use client";
 
+import { useChangeMotion } from "@/components/ui/use-change-motion";
+
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
@@ -396,12 +398,15 @@ export function SessionRowIsland({
     (scope === "active" && Boolean(archivedAt)) ||
     (scope === "archived" && !archivedAt);
 
+  const motionRef = useChangeMotion<HTMLDivElement>(hiddenFromCurrentScope ? "hidden" : "visible");
+
   if (hiddenFromCurrentScope) {
     return null;
   }
 
   return (
     <div
+      ref={motionRef}
       role="row"
       className={cn(
         "session-list-row sessions-ledger-row group",
