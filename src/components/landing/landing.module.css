@@ -2,26 +2,6 @@
   isolation: isolate;
 }
 
-.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 22px;
-  color: var(--muted);
-  font-family: var(--font-ibm-plex-mono), monospace;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-}
-
-.eyebrow::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  content: "";
-}
-
 .illustrations {
   min-width: 0;
   padding: 4px 16px;
@@ -91,20 +71,23 @@
 }
 
 .workflow {
-  --workflow-cycle: 10s;
+  --workflow-cycle: 16s;
   margin-top: 38px;
-  padding-top: 30px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 25%, transparent);
+}
+
+.workflowCanvas {
+  position: relative;
+  height: 108px;
+  margin-top: 24px;
 }
 
 .stages {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding-top: 28px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.stage {
-  position: relative;
+.stage,
+.addStage {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -112,103 +95,113 @@
   text-align: center;
 }
 
-.stage:not(:last-child)::after,
-.stage:not(:last-child)::before {
+.stage {
+  position: relative;
+  animation: plan-added var(--workflow-cycle) ease-out infinite;
+}
+
+.reviewStage {
+  animation-name: review-added;
+}
+.buildStage {
+  animation-name: build-added;
+}
+
+.stage::after {
   position: absolute;
-  top: 18px;
-  left: calc(50% + 28px);
-  width: calc(100% - 56px);
+  top: 19px;
+  left: calc(50% + 25px);
+  width: calc(100% - 50px);
   height: 1px;
-  background: color-mix(in srgb, var(--border) 32%, transparent);
+  background: color-mix(in srgb, var(--border) 45%, transparent);
   content: "";
 }
 
-.stage:not(:last-child)::before {
-  z-index: 1;
-  background: var(--accent);
-  transform-origin: left;
+.planStage::after {
+  animation: review-added var(--workflow-cycle) ease-out infinite;
+}
+.reviewStage::after {
+  animation: build-added var(--workflow-cycle) ease-out infinite;
+}
+.buildStage::after {
+  background: none;
+  border-top: 1px dashed var(--muted);
+  opacity: 0.5;
 }
 
-.stage:first-child::before {
-  animation: advance-plan var(--workflow-cycle) ease-out infinite;
-}
-
-.reviewStage::before {
-  animation: advance-review var(--workflow-cycle) ease-out infinite;
-}
-
-.stageNode {
+.stageNode,
+.addNode {
   display: grid;
-  width: 37px;
-  height: 37px;
+  width: 39px;
+  height: 39px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 50%;
+  border-radius: 11px;
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
-.stageNode > * {
-  grid-area: 1 / 1;
+.planStage .stageNode {
+  animation: agent-working var(--workflow-cycle) ease-out infinite;
 }
 
 .reviewStage .stageNode {
-  background: var(--accent-soft);
-  animation: await-review var(--workflow-cycle) ease-out infinite;
-}
-
-.reviewDot {
-  width: 6px;
-  height: 6px;
   border-radius: 50%;
-  background: currentColor;
-  opacity: 0;
-  animation: review-pending var(--workflow-cycle) ease-out infinite;
-}
-
-.reviewCheck,
-.buildCheck {
-  display: grid;
-  place-items: center;
-}
-
-.reviewCheck {
-  animation: review-complete var(--workflow-cycle) ease-out infinite;
-}
-
-.buildStage .stageNode {
-  animation: build-active var(--workflow-cycle) ease-out infinite;
-}
-
-.buildIdle {
-  font-size: 18px;
-  opacity: 0;
-  animation: build-pending var(--workflow-cycle) ease-out infinite;
-}
-
-.buildSpinner {
-  width: 15px;
-  height: 15px;
-  border: 1.5px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  opacity: 0;
-  animation: build-progress var(--workflow-cycle) linear infinite;
-}
-
-.buildCheck {
-  animation: build-complete var(--workflow-cycle) ease-out infinite;
+  border-color: color-mix(in srgb, var(--foreground) 35%, transparent);
+  background: var(--canvas);
+  color: var(--foreground);
+  animation: human-waiting var(--workflow-cycle) ease-out infinite;
 }
 
 .stageName {
-  margin-top: 12px;
-  font-size: 13px;
+  margin-top: 9px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
 }
 
+.stageOwner {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.addStage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 25%;
+  transform: translateX(300%);
+  color: var(--muted);
+  animation: add-position var(--workflow-cycle) ease-in-out infinite;
+}
+
+.addNode {
+  border: 1px dashed color-mix(in srgb, var(--muted) 65%, transparent);
+  background: transparent;
+  color: var(--muted);
+  font-size: 23px;
+  font-weight: 300;
+}
+
+.workflowCursor {
+  position: absolute;
+  top: 27px;
+  left: 0;
+  width: 25%;
+  padding-left: calc(12.5% + 9px);
+  opacity: 0;
+  pointer-events: none;
+  animation: user-adds-stage var(--workflow-cycle) ease-in-out infinite;
+}
+
+.workflowCursor svg {
+  max-width: none;
+}
+
 .workflowStatus {
   display: grid;
-  margin-top: 25px;
   color: var(--muted);
   font-family: var(--font-ibm-plex-mono), monospace;
   font-size: 11px;
@@ -219,204 +212,281 @@
 .workflowStatus > span {
   grid-area: 1 / 1;
 }
-
-.reviewStatus,
-.buildStatus {
+.workflowStatus > span:not(.workflowSummary) {
   opacity: 0;
 }
-
+.startStatus {
+  animation: start-caption var(--workflow-cycle) linear infinite;
+}
+.planStatus {
+  animation: plan-caption var(--workflow-cycle) linear infinite;
+}
 .reviewStatus {
-  animation: review-caption var(--workflow-cycle) ease-out infinite;
+  animation: review-caption var(--workflow-cycle) linear infinite;
 }
 .buildStatus {
-  animation: build-caption var(--workflow-cycle) ease-out infinite;
+  animation: build-caption var(--workflow-cycle) linear infinite;
 }
-.readyStatus {
-  animation: ready-caption var(--workflow-cycle) ease-out infinite;
+.workingStatus {
+  animation: working-caption var(--workflow-cycle) linear infinite;
+}
+.waitingStatus {
+  animation: waiting-caption var(--workflow-cycle) linear infinite;
+}
+.workflowSummary {
+  animation: summary-caption var(--workflow-cycle) linear infinite;
 }
 
-/* This independent loop explains the approval handoff. Its base styles show
-   the completed workflow when reduced motion is enabled or JS is unavailable. */
-@keyframes advance-plan {
+/* Build the workflow before demonstrating execution. The unanimated state is a
+   complete, readable example for reduced motion and server-rendered content. */
+@keyframes plan-added {
   0%,
-  8% {
-    opacity: 1;
-    transform: scaleX(0);
-  }
-  18%,
-  94% {
-    opacity: 1;
-    transform: scaleX(1);
-  }
-  99%,
+  10%,
   100% {
     opacity: 0;
-    transform: scaleX(1);
+    transform: translateY(6px) scale(0.9);
+  }
+  14%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  98% {
+    opacity: 0;
+    transform: none;
   }
 }
-
-@keyframes await-review {
+@keyframes review-added {
   0%,
-  18%,
-  40%,
+  28%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.9);
+  }
+  32%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  98% {
+    opacity: 0;
+    transform: none;
+  }
+}
+@keyframes build-added {
+  0%,
+  46%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.9);
+  }
+  50%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  98% {
+    opacity: 0;
+    transform: none;
+  }
+}
+@keyframes add-position {
+  0%,
+  10%,
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  15%,
+  28% {
+    transform: translateX(100%);
+    opacity: 1;
+  }
+  33%,
+  46% {
+    transform: translateX(200%);
+    opacity: 1;
+  }
+  51%,
+  94% {
+    transform: translateX(300%);
+    opacity: 1;
+  }
+  98% {
+    transform: translateX(300%);
+    opacity: 0;
+  }
+  99% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+}
+@keyframes user-adds-stage {
+  0%,
+  3% {
+    opacity: 0;
+    transform: translate(0, 12px);
+  }
+  7%,
+  9% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(0, 0) scale(0.85);
+  }
+  13%,
+  19% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  25%,
+  27% {
+    opacity: 1;
+    transform: translateX(100%);
+  }
+  28% {
+    opacity: 1;
+    transform: translateX(100%) scale(0.85);
+  }
+  31%,
+  37% {
+    opacity: 1;
+    transform: translateX(100%);
+  }
+  43%,
+  45% {
+    opacity: 1;
+    transform: translateX(200%);
+  }
+  46% {
+    opacity: 1;
+    transform: translateX(200%) scale(0.85);
+  }
+  49%,
+  52% {
+    opacity: 1;
+    transform: translateX(200%);
+  }
+  57%,
+  100% {
+    opacity: 0;
+    transform: translate(200%, 12px);
+  }
+}
+@keyframes agent-working {
+  0%,
+  58%,
+  72%,
   100% {
     box-shadow: 0 0 0 0 transparent;
   }
-  28% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 12%, transparent);
+  62%,
+  68% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  65% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
   }
 }
-
-@keyframes review-pending {
+@keyframes human-waiting {
   0%,
-  36%,
+  73%,
+  94%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  78%,
+  88% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--foreground) 8%, transparent);
+  }
+  83% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+  }
+}
+@keyframes start-caption {
+  0%,
+  9%,
   100% {
     opacity: 1;
   }
-  40%,
+  10%,
   98% {
     opacity: 0;
   }
 }
-
-@keyframes review-complete {
+@keyframes plan-caption {
   0%,
-  36%,
+  10%,
+  28%,
   100% {
     opacity: 0;
-    transform: scale(0.6);
   }
-  40%,
-  94% {
+  12%,
+  26% {
     opacity: 1;
-    transform: scale(1);
-  }
-  98% {
-    opacity: 0;
-    transform: scale(0.6);
   }
 }
-
-@keyframes advance-review {
-  0%,
-  40% {
-    opacity: 1;
-    transform: scaleX(0);
-  }
-  48%,
-  94% {
-    opacity: 1;
-    transform: scaleX(1);
-  }
-  99%,
-  100% {
-    opacity: 0;
-    transform: scaleX(1);
-  }
-}
-
-@keyframes build-active {
-  0%,
-  46%,
-  100% {
-    border-color: color-mix(in srgb, var(--border) 32%, transparent);
-    background: transparent;
-    color: var(--muted);
-  }
-  50%,
-  94% {
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-}
-
-@keyframes build-pending {
-  0%,
-  46%,
-  100% {
-    opacity: 1;
-  }
-  50%,
-  98% {
-    opacity: 0;
-  }
-}
-
-@keyframes build-progress {
-  0%,
-  48% {
-    opacity: 0;
-    transform: rotate(0deg);
-  }
-  50% {
-    opacity: 1;
-    transform: rotate(0deg);
-  }
-  76% {
-    opacity: 1;
-    transform: rotate(1080deg);
-  }
-  77%,
-  100% {
-    opacity: 0;
-    transform: rotate(1080deg);
-  }
-}
-
-@keyframes build-complete {
-  0%,
-  77%,
-  100% {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-  80%,
-  94% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  98% {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-}
-
 @keyframes review-caption {
   0%,
-  43%,
+  28%,
+  46%,
   100% {
-    opacity: 1;
-  }
-  47%,
-  96% {
     opacity: 0;
   }
+  30%,
+  44% {
+    opacity: 1;
+  }
 }
-
 @keyframes build-caption {
   0%,
-  47%,
-  79%,
+  46%,
+  59%,
   100% {
     opacity: 0;
   }
-  51%,
-  76% {
+  48%,
+  57% {
     opacity: 1;
   }
 }
-
-@keyframes ready-caption {
+@keyframes working-caption {
   0%,
-  79%,
+  59%,
+  73%,
   100% {
     opacity: 0;
   }
-  83%,
+  61%,
+  71% {
+    opacity: 1;
+  }
+}
+@keyframes waiting-caption {
+  0%,
+  73%,
+  98%,
+  100% {
+    opacity: 0;
+  }
+  75%,
   94% {
     opacity: 1;
   }
+}
+@keyframes summary-caption {
+  0%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Re-entering the viewport always starts with adding the first stage. */
+.workflow[data-animation="offscreen"] *,
+.workflow[data-animation="offscreen"] *::after {
+  animation: none;
 }
 
 .animatedFigure[data-animation="waiting"] *,
@@ -434,11 +504,6 @@
 @media (max-width: 479px) {
   .illustrations {
     padding-inline: 0;
-  }
-  .stage:not(:last-child)::after,
-  .stage:not(:last-child)::before {
-    left: calc(50% + 24px);
-    width: calc(100% - 48px);
   }
 }
 

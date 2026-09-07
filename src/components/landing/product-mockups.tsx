@@ -2,7 +2,7 @@ import {
   AgentProviderLogo,
   AGENT_PROVIDER_LABELS,
 } from "@/components/shared/agent-provider-options";
-import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { WallieMark } from "@/components/shared/wallie-mark";
 
 import { AnimatedFigure } from "./animated-figure";
 import { AnimatedProviderRow } from "./animated-provider-row";
@@ -44,40 +44,67 @@ export function LandingIllustrations() {
       </AnimatedFigure>
 
       <AnimatedFigure caption="Design your workflow" className={styles.workflow}>
-        <ol className={styles.stages}>
-          <li className={styles.stage}>
-            <span className={styles.stageNode} aria-hidden="true">
-              <CheckIcon className="size-4" />
-            </span>
-            <span className={styles.stageName}>Plan</span>
-          </li>
-          <li className={`${styles.stage} ${styles.reviewStage}`}>
-            <span className={styles.stageNode} aria-hidden="true">
-              <span className={styles.reviewDot} />
-              <span className={styles.reviewCheck}>
-                <CheckIcon className="size-4" />
+        <div className={styles.workflowCanvas} aria-hidden="true">
+          <ol className={styles.stages}>
+            <li className={`${styles.stage} ${styles.planStage}`}>
+              <span className={styles.stageNode}>
+                <WallieMark className="size-5" />
               </span>
-            </span>
-            <span className={styles.stageName}>Your review</span>
-          </li>
-          <li className={`${styles.stage} ${styles.buildStage}`}>
-            <span className={styles.stageNode} aria-hidden="true">
-              <span className={styles.buildIdle}>↗</span>
-              <span className={styles.buildSpinner} />
-              <span className={styles.buildCheck}>
-                <CheckIcon className="size-4" />
+              <span className={styles.stageName}>Plan</span>
+              <span className={styles.stageOwner}>Wallie</span>
+            </li>
+            <li className={`${styles.stage} ${styles.reviewStage}`}>
+              <span className={styles.stageNode}>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+                  <path
+                    d="M5 21v-2a7 7 0 0 1 14 0v2"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
               </span>
-            </span>
-            <span className={styles.stageName}>Build</span>
-          </li>
-        </ol>
+              <span className={styles.stageName}>Review</span>
+              <span className={styles.stageOwner}>You</span>
+            </li>
+            <li className={`${styles.stage} ${styles.buildStage}`}>
+              <span className={styles.stageNode}>
+                <WallieMark className="size-5" />
+              </span>
+              <span className={styles.stageName}>Build</span>
+              <span className={styles.stageOwner}>Wallie</span>
+            </li>
+          </ol>
+          <div className={styles.addStage}>
+            <span className={styles.addNode}>+</span>
+            <span className={styles.stageName}>Add stage</span>
+          </div>
+          <div className={styles.workflowCursor}>
+            <svg width="22" height="26" viewBox="0 0 22 26" fill="none">
+              <path
+                d="m3 2 15 13-7 1 4 7-3 2-4-8-5 5V2Z"
+                fill="var(--foreground)"
+                stroke="var(--canvas)"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
         <div className={styles.workflowStatus} aria-hidden="true">
-          <span className={styles.reviewStatus}>Waiting for your review</span>
-          <span className={styles.buildStatus}>Your agent is building</span>
-          <span className={styles.readyStatus}>Ready for your review</span>
+          <span className={styles.startStatus}>Start with your first stage</span>
+          <span className={styles.planStatus}>You add a planning stage</span>
+          <span className={styles.reviewStatus}>You add a human review</span>
+          <span className={styles.buildStatus}>You add a build stage</span>
+          <span className={styles.workingStatus}>Wallie is working on the plan</span>
+          <span className={styles.waitingStatus}>Waiting for your review</span>
+          <span className={styles.workflowSummary}>Wallie works. You review.</span>
         </div>
         <p className="sr-only">
-          Example workflow: plan, wait for your approval, build, then review the result.
+          Build your own workflow by adding as many stages as you need. In this example, you add
+          Plan, a human Review, and Build. Wallie agents work on the square nodes; human review
+          steps use round nodes and wait for your approval.
         </p>
       </AnimatedFigure>
     </div>

@@ -53,7 +53,6 @@ export function LandingPage() {
       >
         <div className="mx-auto grid w-full max-w-[1120px] gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
           <div>
-            <p className={styles.eyebrow}>YOUR AGENT. YOUR PROCESS.</p>
             <h1
               id="landing-title"
               className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground sm:text-[48px] lg:text-[54px]"
