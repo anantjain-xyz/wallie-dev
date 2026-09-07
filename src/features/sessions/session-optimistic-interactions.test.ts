@@ -167,6 +167,7 @@ describe("optimistic session interactions", () => {
     mocked.channel.subscribe.mockReturnValue(mocked.channel);
     delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("does not expose Stop while a delayed approval is still pending", async () => {
@@ -360,7 +361,9 @@ describe("optimistic session interactions", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
       key: "ArrowDown",
     });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Unarchive session" }));
+    const unarchiveItem = screen.getByRole("menuitem", { name: "Unarchive session" });
+    expect(unarchiveItem.querySelector("svg")).not.toBeNull();
+    fireEvent.click(unarchiveItem);
 
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
   });

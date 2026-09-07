@@ -5,6 +5,7 @@ import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
+import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { PencilIcon } from "@/components/shared/icons/pencil-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
@@ -527,6 +528,7 @@ export function SessionRowIsland({
                   else setArchiveDialogOpen(true);
                 }}
               >
+                <ArchiveIcon className="h-3.5 w-3.5" />
                 {isArchived ? "Unarchive" : "Archive"} session
               </DropdownMenuItem>
             </ActionMenu>

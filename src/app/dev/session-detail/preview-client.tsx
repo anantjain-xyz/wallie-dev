@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer } from "@/components/ui/page-shell";
+import { Tooltip } from "@/components/ui/tooltip";
 import { SessionDetailHeader } from "@/features/sessions/detail/session-detail-header";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { SessionStageWorkspace } from "@/features/sessions/detail/session-stage-workspace";
@@ -256,14 +257,22 @@ export function SessionDetailPreview({
       <PageContainer className="pb-8">
         <SessionDetailHeader
           actions={
-            <button
-              className="ui-button gap-1.5"
-              type="button"
-              onClick={() => setArchived((value) => !value)}
-            >
-              <ArchiveIcon className="size-3.5" />
-              {archived ? "Unarchive" : "Archive"}
-            </button>
+            archived ? (
+              <button className="ui-button" type="button" onClick={() => setArchived(false)}>
+                Unarchive
+              </button>
+            ) : (
+              <Tooltip content="Archive">
+                <button
+                  type="button"
+                  className="ui-icon-button"
+                  aria-label="Archive"
+                  onClick={() => setArchived(true)}
+                >
+                  <ArchiveIcon className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            )
           }
           creatorDisplayName="Anant Jain"
           initialNow={initialNow}

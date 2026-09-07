@@ -15,9 +15,18 @@ import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import type { SessionStageFacet } from "@/features/sessions/list/data";
 import {
-  buildSessionsListHref,
   SESSION_LIST_SORT_OPTIONS,
+  buildSessionsListHref,
 } from "@/features/sessions/list/sessions-list-mutations";
+import {
+  readSessionListPreferences,
+  shouldRestoreSessionListPreferences,
+  writeSessionListPreferences,
+} from "@/features/sessions/list/sessions-list-preferences";
+import {
+  SESSION_LIST_DEFAULT_FILTERS,
+  areDefaultSessionListFilters,
+} from "@/features/sessions/list/sessions-list-query-state";
 import {
   type SessionFilterKey,
   type SessionListQueryState,
@@ -44,18 +53,11 @@ const DEFAULT_QUERY_STATE: Pick<
 > = {
   cursor: null,
   query: "",
-  scope: "active",
-  sort: "updated",
-  stageSlug: null,
+  ...SESSION_LIST_DEFAULT_FILTERS,
 };
 
 function hasActiveFilters(queryState: SessionListQueryState) {
-  return (
-    queryState.query.trim().length > 0 ||
-    queryState.scope !== "active" ||
-    queryState.stageSlug !== null ||
-    queryState.sort !== "updated"
-  );
+  return queryState.query.trim().length > 0 || !areDefaultSessionListFilters(queryState);
 }
 
 export function SessionsCommandBar({
@@ -68,6 +70,7 @@ export function SessionsCommandBar({
   const [isPending, startTransition] = useTransition();
   const [optimisticQuery, setOptimisticQuery] = useOptimistic(queryState);
   const latestQueryRef = useRef(queryState);
+  const restoreAttemptedRef = useRef(false);
   const submittedSearchRef = useRef<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -77,6 +80,34 @@ export function SessionsCommandBar({
   useEffect(() => {
     if (!isPending) latestQueryRef.current = queryState;
   }, [isPending, queryState]);
+
+  useEffect(() => {
+    if (restoreAttemptedRef.current) {
+      return;
+    }
+    restoreAttemptedRef.current = true;
+
+    const search = new URLSearchParams(window.location.search);
+    const stored = readSessionListPreferences(workspaceSlug);
+    if (!stored || !shouldRestoreSessionListPreferences({ queryState, search, stored })) {
+      return;
+    }
+
+    const merged: SessionListQueryState = {
+      cursor: null,
+      query: queryState.query,
+      scope: stored.scope,
+      sort: stored.sort,
+      stageSlug: stored.stageSlug,
+    };
+    latestQueryRef.current = merged;
+    const href = buildSessionsListHref(basePath, merged, search);
+    startNavigation(href);
+    startTransition(() => {
+      setOptimisticQuery(merged);
+      router.replace(href, { scroll: false });
+    });
+  }, [basePath, queryState, router, setOptimisticQuery, startNavigation, workspaceSlug]);
 
   useEffect(() => {
     const input = searchInputRef.current;
@@ -95,6 +126,11 @@ export function SessionsCommandBar({
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : current.stageSlug,
     };
     latestQueryRef.current = merged;
+    writeSessionListPreferences(workspaceSlug, {
+      scope: merged.scope,
+      sort: merged.sort,
+      stageSlug: merged.stageSlug,
+    });
     const href = buildSessionsListHref(basePath, merged);
     startNavigation(href);
     startTransition(() => {
