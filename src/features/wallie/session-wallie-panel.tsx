@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import {
   SessionActivityPlaceholder,
+  SessionRunSurface,
+  SessionRunHistory,
   type SessionActivityPresentation,
 } from "@/features/sessions/detail/session-activity-presentation";
 
@@ -694,31 +695,33 @@ function SessionWalliePanelContent({
 
       <div className="min-w-0 space-y-5">
         {summaryRun ? (
-          <WallieRunCard
-            key={summaryRun.id}
-            actionPending={pendingActionId === summaryRun.id}
-            branchName={
-              summaryRun.sandboxId && summaryRun.stageSlug
-                ? buildStageBranchName(session.id, summaryRun.stageSlug)
-                : null
-            }
-            cancelLocked={pendingActionId !== null}
-            cancelControl={presentation?.stopControl}
-            connectionState={connectionState}
-            isExpanded={expandedRunId === summaryRun.id}
-            isPrimary
-            messagesLoaded={loadedMessageRunIds.has(summaryRun.id)}
-            messagesLoadFailed={messageLoadErrorRunIds.has(summaryRun.id)}
-            nowMs={nowMs}
-            onCancel={handleCancelRun}
-            onReconnect={recovery.retry}
-            onRetry={handleRetryRun}
-            onToggle={handleToggleRun}
-            renderNow={renderNow}
-            retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-            run={summaryRun}
-            stallTimeoutMs={initialData.stallTimeoutMs}
-          />
+          <SessionRunSurface>
+            <WallieRunCard
+              key={summaryRun.id}
+              actionPending={pendingActionId === summaryRun.id}
+              branchName={
+                summaryRun.sandboxId && summaryRun.stageSlug
+                  ? buildStageBranchName(session.id, summaryRun.stageSlug)
+                  : null
+              }
+              cancelLocked={pendingActionId !== null}
+              cancelControl={presentation?.stopControl}
+              connectionState={connectionState}
+              isExpanded={expandedRunId === summaryRun.id}
+              isPrimary
+              messagesLoaded={loadedMessageRunIds.has(summaryRun.id)}
+              messagesLoadFailed={messageLoadErrorRunIds.has(summaryRun.id)}
+              nowMs={nowMs}
+              onCancel={handleCancelRun}
+              onReconnect={recovery.retry}
+              onRetry={handleRetryRun}
+              onToggle={handleToggleRun}
+              renderNow={renderNow}
+              retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+              run={summaryRun}
+              stallTimeoutMs={initialData.stallTimeoutMs}
+            />
+          </SessionRunSurface>
         ) : (
           <SessionActivityPlaceholder>
             <p className="py-3 text-sm text-muted" role="status">
@@ -730,18 +733,7 @@ function SessionWalliePanelContent({
         )}
 
         {historicalRuns.length > 0 || nextRunCursor ? (
-          <details className="group/previous-runs min-w-0 border-t border-border pt-3">
-            <summary
-              id="previous-runs-heading"
-              className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
-            >
-              <ChevronDownIcon className="size-3.5 -rotate-90 group-open/previous-runs:rotate-0" />
-              Previous runs{" "}
-              <span className="type-annotation">
-                {historicalRuns.length}
-                {nextRunCursor ? "+" : ""}
-              </span>
-            </summary>
+          <SessionRunHistory count={historicalRuns.length} hasMore={Boolean(nextRunCursor)}>
             <div className="mt-2 min-w-0 divide-y divide-border border-y border-border">
               {historicalRuns.map((run) => (
                 <WallieRunCard
@@ -785,7 +777,7 @@ function SessionWalliePanelContent({
                 {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
               </button>
             ) : null}
-          </details>
+          </SessionRunHistory>
         ) : null}
       </div>
     </div>

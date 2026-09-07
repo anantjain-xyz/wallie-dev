@@ -12,6 +12,8 @@ import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import { SessionActivityFailure } from "@/features/sessions/detail/session-activity-failure";
 import {
   SessionActivityPlaceholder,
+  SessionRunSurface,
+  SessionRunHistory,
   SessionActivityPresentationProvider,
 } from "@/features/sessions/detail/session-activity-presentation";
 import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
@@ -152,6 +154,24 @@ export function SessionDetailPreview({
     sandboxId: "preview-sandbox",
     sandboxProvider: "vercel",
   };
+  const historicalRuns: WallieRun[] = [
+    {
+      ...run,
+      id: "preview-plan",
+      stageId: "plan",
+      stageSlug: "plan",
+      stageName: "Plan",
+      status: "success",
+      isActive: false,
+      isTerminal: true,
+      canCancel: false,
+      canRetry: false,
+      attemptCount: 1,
+      messages: [],
+      startedAt: at(650),
+      finishedAt: at(505),
+    },
+  ];
   const stopControl = run.canCancel ? (
     <button className="ui-button text-danger" onClick={() => setMode("Failed")} type="button">
       Stop run
@@ -312,31 +332,10 @@ export function SessionDetailPreview({
                   <SessionActivityFailure />
                 ) : (
                   <div className="space-y-4">
-                    {renderRun(run, true)}
-                    <details className="border-t border-border pt-3">
-                      <summary className="cursor-pointer py-2 text-xs text-muted">
-                        Previous runs · 1
-                      </summary>
-                      {renderRun(
-                        {
-                          ...run,
-                          id: "preview-plan",
-                          stageId: "plan",
-                          stageSlug: "plan",
-                          stageName: "Plan",
-                          status: "success",
-                          isActive: false,
-                          isTerminal: true,
-                          canCancel: false,
-                          canRetry: false,
-                          attemptCount: 1,
-                          messages: [],
-                          startedAt: at(650),
-                          finishedAt: at(505),
-                        },
-                        false,
-                      )}
-                    </details>
+                    <SessionRunSurface>{renderRun(run, true)}</SessionRunSurface>
+                    <SessionRunHistory count={historicalRuns.length}>
+                      {historicalRuns.map((pastRun) => renderRun(pastRun, false))}
+                    </SessionRunHistory>
                   </div>
                 )}
               </SessionRefreshContext.Provider>

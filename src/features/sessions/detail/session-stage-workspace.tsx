@@ -2,7 +2,7 @@
 
 import { type ReactNode, useState } from "react";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
-import { cn } from "@/lib/utils";
+import { SessionRunFocusProvider } from "./session-activity-presentation";
 
 export type SessionStageFocus = "run" | "artifact" | "empty";
 
@@ -50,7 +50,7 @@ export function SessionStageWorkspace({
       ) : null}
       <details
         aria-label="Session runs"
-        className={cn("min-w-0", focus === "run" ? "ui-sheet p-4 sm:p-5" : "group/session-history")}
+        className="group/session-history min-w-0"
         open={focus === "run" || historyOpen}
         onToggle={(event) => {
           if (focus !== "run") setHistoryOpen(event.currentTarget.open);
@@ -64,7 +64,9 @@ export function SessionStageWorkspace({
           <ChevronDownIcon className="size-3.5 -rotate-90 group-open/session-history:rotate-0" />
           Run history
         </summary>
-        <div className={focus === "run" ? "min-w-0" : "mt-3 min-w-0"}>{activity}</div>
+        <div className={focus === "run" ? "min-w-0" : "mt-3 min-w-0"}>
+          <SessionRunFocusProvider value={focus === "run"}>{activity}</SessionRunFocusProvider>
+        </div>
       </details>
       {focus === "run" && artifact ? (
         <PreviousArtifact key={stageSlug}>{artifact}</PreviousArtifact>

@@ -10,7 +10,10 @@ import {
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
-import { SessionActivityPlaceholder } from "./session-activity-presentation";
+import {
+  SessionActivityPlaceholder,
+  useSessionActivityPresentation,
+} from "./session-activity-presentation";
 
 import type { ToastInput } from "@/components/ui/toast";
 import { PortalRootProvider } from "@/components/ui/portal-root";
@@ -139,6 +142,28 @@ afterEach(() => {
 });
 
 describe("SessionDetailPageClient", () => {
+  it("allows run-level cancellation for rejected reruns but suppresses it when archived", () => {
+    function CancellationProbe() {
+      const presentation = useSessionActivityPresentation();
+      return createElement(
+        "span",
+        null,
+        presentation?.stopControl === undefined
+          ? "Run cancellation available"
+          : "Run cancellation suppressed",
+      );
+    }
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "rejected";
+    expect(renderDetail({ data, activity: createElement(CancellationProbe) })).toContain(
+      "Run cancellation available",
+    );
+    data.session.archivedAt = data.session.updatedAt;
+    expect(renderDetail({ data, activity: createElement(CancellationProbe) })).toContain(
+      "Run cancellation suppressed",
+    );
+  });
+
   it("keeps session context and input independent of the selected stage, including stages without output", async () => {
     const data = makeSessionDetailData();
     data.creatorDisplayName = "Ada Lovelace";

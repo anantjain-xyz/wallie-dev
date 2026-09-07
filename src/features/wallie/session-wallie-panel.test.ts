@@ -241,14 +241,14 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("animate-spin");
   });
 
-  it("places only older records under Previous runs", () => {
+  it("places only older records under Run history", () => {
     const html = renderPanel(
       data({
         runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
       }),
     );
 
-    expect(html).toContain("Previous runs");
+    expect(html).toContain("Run history");
     expect((html.match(/data-wallie-summary/g) ?? []).length).toBe(1);
     expect((html.match(/data-run-id=/g) ?? []).length).toBe(2);
     expect((html.match(/run-history-group/g) ?? []).length).toBe(1);

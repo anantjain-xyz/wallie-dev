@@ -1084,7 +1084,10 @@ function SessionDetailContent({
       >
         <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
       </button>
-    ) : null;
+    ) : !session.archivedAt &&
+      session.phaseStatus === "rejected" &&
+      phaseActionPending === null &&
+      archivePending === null ? undefined : null;
 
   return (
     <PageContainer className="pb-4">

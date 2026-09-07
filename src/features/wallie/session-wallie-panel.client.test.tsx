@@ -205,6 +205,52 @@ function panel(initialData: WallieSessionData, supabase: SupabaseClient<Database
 }
 
 describe("SessionWalliePanel run history lifecycle", () => {
+  it("cancels a queued rejected-stage rerun through the run fallback", async () => {
+    const queued = run(1, {
+      stageId: "build",
+      stageName: "Build",
+      status: "queued",
+      isActive: true,
+      isTerminal: false,
+      canCancel: true,
+      startedAt: null,
+      finishedAt: null,
+    });
+    const canceled = {
+      ...queued,
+      status: "canceled",
+      isActive: false,
+      isTerminal: true,
+      canCancel: false,
+    };
+    const fetchMock = vi.fn(async () => Response.json({ canceled: true, run: canceled }));
+    vi.stubGlobal("fetch", fetchMock);
+    const fake = fakeSupabase();
+    const props = {
+      initialData: data([queued]),
+      presentation: {
+        currentStage: { id: "build", name: "Build", phaseStatus: "rejected" as const },
+        stopControl: undefined,
+      },
+      session: { archivedAt: null, id: "session-1", workspaceId: "workspace-1" },
+      supabase: fake.supabase,
+      workspaceSlug: "acme",
+    };
+    const view = render(<SessionWalliePanel {...props} />);
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
+    view.rerender(
+      <SessionWalliePanel {...props} presentation={{ ...props.presentation, stopControl: null }} />,
+    );
+    expect(screen.queryByRole("button", { name: "Cancel run" })).toBeNull();
+    view.rerender(<SessionWalliePanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+    await screen.findByText("Canceled");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/agent-runs/run-1/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("keeps the completed stage in history while the current stage waits for its first run", () => {
     const fake = fakeSupabase();
     const presentation = {
