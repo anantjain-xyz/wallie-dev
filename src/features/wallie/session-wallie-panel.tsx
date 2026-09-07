@@ -8,6 +8,7 @@ import {
   SessionActivityPlaceholder,
   SessionRunSurface,
   SessionRunHistory,
+  useSessionRunFocus,
   type SessionActivityPresentation,
 } from "@/features/sessions/detail/session-activity-presentation";
 
@@ -129,6 +130,7 @@ function SessionWalliePanelContent({
   supabase: injectedSupabase,
   workspaceSlug,
 }: SessionWalliePanelProps) {
+  const focused = useSessionRunFocus();
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const [supabase] = useState<SupabaseClient<Database>>(
     () => injectedSupabase ?? createSupabaseBrowserClient(),
@@ -693,7 +695,12 @@ function SessionWalliePanelContent({
         </details>
       ) : null}
 
-      <div className="min-w-0 space-y-5">
+      <div
+        className={cn(
+          "min-w-0",
+          focused ? "space-y-5" : "divide-y divide-border border-y border-border",
+        )}
+      >
         {summaryRun ? (
           <SessionRunSurface>
             <WallieRunCard
@@ -734,7 +741,9 @@ function SessionWalliePanelContent({
 
         {historicalRuns.length > 0 || nextRunCursor ? (
           <SessionRunHistory count={historicalRuns.length} hasMore={Boolean(nextRunCursor)}>
-            <div className="mt-2 min-w-0 divide-y divide-border border-y border-border">
+            <div
+              className={cn("min-w-0 divide-y divide-border", focused && "border-y border-border")}
+            >
               {historicalRuns.map((run) => (
                 <WallieRunCard
                   key={run.id}

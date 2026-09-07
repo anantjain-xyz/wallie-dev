@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { useEffect } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionStageWorkspace, type SessionStageFocus } from "./session-stage-workspace";
 
@@ -10,7 +10,7 @@ import { SessionRunSurface, SessionRunHistory } from "./session-activity-present
 afterEach(cleanup);
 
 describe("SessionStageWorkspace", () => {
-  it("places counted history outside the run surface and removes nested disclosure for artifacts", async () => {
+  it("keeps counted history visible outside the run surface and uses one heading for artifacts", () => {
     const content = (focus: SessionStageFocus, count: number) => (
       <SessionStageWorkspace
         focus={focus}
@@ -32,19 +32,19 @@ describe("SessionStageWorkspace", () => {
       />
     );
     const view = render(content("run", 2));
-    const older = screen.getByText("Older runs").closest("details")!;
+    const older = screen.getByText("Older runs").closest("section")!;
     expect(older.closest(".ui-sheet")).toBeNull();
     expect(screen.getByText("Current run").closest(".ui-sheet")).not.toBeNull();
-    expect(older.querySelector("summary")?.textContent).toBe("Run history 2+");
-    expect(older.open).toBe(false);
+    expect(older.querySelector("h2")?.textContent).toBe("Run history2+");
+    expect(older.closest("details")).toBeNull();
     view.rerender(content("artifact", 4));
-    await waitFor(() => expect(older.open).toBe(true));
-    expect(older.querySelector("summary")?.hidden).toBe(true);
-    expect(older.querySelector("summary")?.textContent).toBe("Run history 4+");
+    expect(older.querySelector("h2")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Run history" })).toBeTruthy();
+    expect(older.closest("details")).toBeNull();
     expect(screen.getByText("Current run").closest(".ui-sheet")).toBeNull();
   });
 
-  it("keeps live activity and review state mounted when the artifact arrives or a rerun starts", async () => {
+  it("keeps live activity and review state mounted when the artifact arrives or a rerun starts", () => {
     const activityMount = vi.fn();
     const activityUnmount = vi.fn();
     const reviewMount = vi.fn();
@@ -73,15 +73,15 @@ describe("SessionStageWorkspace", () => {
       />
     );
     const view = render(content("run"));
-    const history = screen.getByText("Run history").closest("details")!;
-    expect(history.open).toBe(true);
+    const history = screen.getByRole("region", { name: "Session runs" });
+    expect(history.tagName).toBe("SECTION");
     expect(screen.queryByText("Artifact body")).toBeNull();
     view.rerender(content("artifact"));
-    await waitFor(() => expect(history.open).toBe(false));
+    expect(screen.getByRole("heading", { name: "Run history" })).toBeTruthy();
     expect(screen.getByText("Artifact body")).toBeTruthy();
     expect(screen.getByText("Live activity")).toBeTruthy();
     view.rerender(content("run"));
-    expect(history.open).toBe(true);
+    expect(screen.getByRole("region", { name: "Session runs" })).toBe(history);
     expect(activityMount).toHaveBeenCalledTimes(1);
     expect(activityUnmount).not.toHaveBeenCalled();
     expect(reviewMount).toHaveBeenCalledTimes(1);

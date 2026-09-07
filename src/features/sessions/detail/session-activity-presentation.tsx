@@ -1,7 +1,6 @@
 "use client";
 
-import { createContext, type ReactNode, useContext, useState } from "react";
-import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
+import { createContext, type ReactNode, useContext } from "react";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 
 export type SessionActivityPresentation = {
@@ -18,13 +17,16 @@ export function useSessionActivityPresentation() {
 
 const RunFocusContext = createContext(true);
 export const SessionRunFocusProvider = RunFocusContext.Provider;
+export function useSessionRunFocus() {
+  return useContext(RunFocusContext);
+}
 
 export function SessionRunSurface({ children }: { children: ReactNode }) {
   const focused = useContext(RunFocusContext);
   return <div className={focused ? "ui-sheet min-w-0 p-4 sm:p-5" : "min-w-0"}>{children}</div>;
 }
 
-/** Keep history mounted and avoid a second disclosure inside the artifact view's history. */
+/** Keep older runs visible; each run owns its own disclosure. */
 export function SessionRunHistory({
   children,
   count,
@@ -35,29 +37,22 @@ export function SessionRunHistory({
   hasMore?: boolean;
 }) {
   const focused = useContext(RunFocusContext);
-  const [open, setOpen] = useState(false);
   return (
-    <details
-      className="group/previous-runs min-w-0"
-      open={!focused || open}
-      onToggle={(event) => {
-        if (focused) setOpen(event.currentTarget.open);
-      }}
-    >
-      <summary
-        id="previous-runs-heading"
-        hidden={!focused}
-        className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
-      >
-        <ChevronDownIcon className="size-3.5 -rotate-90 group-open/previous-runs:rotate-0" />
-        Run history{" "}
-        <span className="type-annotation">
-          {count}
-          {hasMore ? "+" : ""}
-        </span>
-      </summary>
+    <section aria-labelledby={focused ? "previous-runs-heading" : undefined} className="min-w-0">
+      {focused ? (
+        <h2
+          id="previous-runs-heading"
+          className="mb-2 flex items-center gap-2 text-base font-semibold text-foreground"
+        >
+          Run history
+          <span className="type-annotation font-normal text-muted">
+            {count}
+            {hasMore ? "+" : ""}
+          </span>
+        </h2>
+      ) : null}
       {children}
-    </details>
+    </section>
   );
 }
 

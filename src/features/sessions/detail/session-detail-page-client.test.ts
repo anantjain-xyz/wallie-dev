@@ -550,12 +550,12 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain('aria-label="Current execution"');
   });
 
-  it("collapses run history below a reviewable artifact without discarding its content", () => {
+  it("shows run history below a reviewable artifact with a section heading", () => {
     const html = renderDetail({ activity: createElement("div", null, "Loaded run activity") });
     const document = new DOMParser().parseFromString(html, "text/html");
-    const runs = document.querySelector('details[aria-label="Session runs"]')!;
-    expect(runs.hasAttribute("open")).toBe(false);
-    expect(runs.querySelector("summary")?.textContent).toBe("Run history");
+    const runs = document.querySelector('section[aria-label="Session runs"]')!;
+    expect(runs.querySelector("h2")?.textContent).toBe("Run history");
+    expect(runs.querySelector("summary")).toBeNull();
     expect(runs.textContent).toContain("Loaded run activity");
     expect(html.indexOf('aria-label="Session runs"')).toBeGreaterThan(
       html.indexOf("Product artifact"),
