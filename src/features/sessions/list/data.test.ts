@@ -81,3 +81,29 @@ describe("sessions list server filter restoration", () => {
     },
   );
 });
+
+describe("list run-status payload compatibility", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.getCookie.mockReturnValue(undefined);
+  });
+
+  it("normalizes older payloads and preserves latest run states", async () => {
+    mocked.rpc.mockResolvedValue({
+      data: {
+        sessions: [
+          { id: "old", number: 1 },
+          { id: "failed", number: 2, latestRunStatus: "error" },
+          { id: "retry", number: 3, latestRunStatus: "running" },
+        ],
+      },
+      error: null,
+    });
+    const data = await loadSessionListPageData("acme", {});
+    expect(data.sessions.map((session) => session.latestRunStatus)).toEqual([
+      null,
+      "error",
+      "running",
+    ]);
+  });
+});

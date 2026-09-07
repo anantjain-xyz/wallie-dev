@@ -10,7 +10,7 @@ import {
   reconcileListMutations,
 } from "@/features/sessions/list/sessions-list-mutations";
 import type { SessionListPageData, SessionStageFacet } from "@/features/sessions/list/data";
-import type { SessionSummary } from "@/features/sessions/types";
+import type { SessionSummary, SessionListItem } from "@/features/sessions/types";
 
 const mocked = vi.hoisted(() => ({
   push: vi.fn(),
@@ -32,9 +32,10 @@ function renderPage(initialData: SessionListPageData) {
   );
 }
 
-function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary & SessionListItem {
   return {
     archivedAt: null,
+    latestRunStatus: null,
     createdAt: "2026-06-07T10:00:00.000Z",
     currentArtifactVersion: 1,
     currentStageId: "stage-1",
@@ -59,7 +60,7 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
   };
 }
 
-function makeStageFacets(sessions: SessionSummary[]): SessionStageFacet[] {
+function makeStageFacets(sessions: (SessionSummary & SessionListItem)[]): SessionStageFacet[] {
   const facets = new Map<string, SessionStageFacet>();
   for (const session of sessions) {
     const facet = facets.get(session.currentStageSlug);
@@ -80,7 +81,7 @@ function makeStageFacets(sessions: SessionSummary[]): SessionStageFacet[] {
 }
 
 function makeSessionListData(
-  sessions: SessionSummary[] = [makeSession()],
+  sessions: (SessionSummary & SessionListItem)[] = [makeSession()],
   overrides: Partial<SessionListPageData> = {},
 ): SessionListPageData {
   return {
@@ -120,7 +121,7 @@ describe("SessionsPage", () => {
   });
 
   it("orders stage filter chips by pipeline position, not session arrival order", () => {
-    const sessions: SessionSummary[] = [
+    const sessions: (SessionSummary & SessionListItem)[] = [
       makeSession({
         id: "11111111-1111-4111-8111-111111111111",
         number: 1,

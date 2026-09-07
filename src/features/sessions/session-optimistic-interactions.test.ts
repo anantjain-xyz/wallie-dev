@@ -134,7 +134,7 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
     nextCursor: null,
     onboarding: null,
     queryState: { cursor: null, query: "", scope, sort: "updated", stageSlug: null },
-    sessions: [summary],
+    sessions: [{ ...summary, latestRunStatus: null }],
     stageFacets: [{ count: 1, name: "Plan", position: 0, slug: "plan" }],
     totalCount: 1,
     workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
@@ -582,7 +582,7 @@ describe("optimistic session interactions", () => {
     fireEvent.click(undoButtons[0]!);
 
     expect(mocked.fetch).toHaveBeenCalledTimes(3);
-    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Unarchive" })).toBeTruthy();
   });
 
   it("keeps detail Undo valid after an unrelated title update", async () => {
@@ -812,7 +812,7 @@ describe("optimistic session interactions", () => {
       body: JSON.stringify({ expectedArchivedAt: firstArchivedAt }),
       method: "DELETE",
     });
-    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Unarchive" })).toBeTruthy();
   });
 
   it("keeps a newer server title when an older save response arrives late", async () => {

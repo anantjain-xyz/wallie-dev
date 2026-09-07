@@ -9,7 +9,7 @@ import type { PipelineDashboardData } from "@/features/pipeline/types";
 const now = "2026-09-06T14:00:00.000Z";
 const workspace = { id: "proof-workspace", name: "Wallie", slug: "proof" };
 const titles = [
-  "Make the pipeline usable on mobile",
+  "Make the pipeline usable on mobile while preserving review feedback, long session titles, and keyboard navigation",
   "Add separation to the profile dropdown",
   "Show the latest run in session details",
   "Improve keyboard navigation",
@@ -41,7 +41,7 @@ const data: PipelineDashboardData = {
       phaseStatus:
         index % 3 === 0 ? "awaiting_review" : index % 3 === 1 ? "in_progress" : "rejected",
       latestRunId: null,
-      latestRunStatus: null,
+      latestRunStatus: index === 5 ? "error" : null,
       linearIssueId: null,
       linearIssueUrl: null,
       pullRequests: [],

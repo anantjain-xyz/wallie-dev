@@ -19,6 +19,7 @@ function makeSession(index: number): SessionListItem {
       : `Seeded ledger session ${index}`;
   return {
     archivedAt: null,
+    latestRunStatus: index % 5 === 0 ? "error" : null,
     createdAt: "2026-07-18T10:00:00.000Z",
     currentArtifactVersion: 1,
     currentStageId: "stage-plan",
@@ -29,7 +30,13 @@ function makeSession(index: number): SessionListItem {
     linearIssueId: index % 7 === 0 ? `OP-${index}` : null,
     linearIssueUrl: index % 7 === 0 ? `https://linear.app/issue/OP-${index}` : null,
     number: index,
-    phaseStatus: awaiting ? "awaiting_review" : "in_progress",
+    phaseStatus: awaiting
+      ? "awaiting_review"
+      : index % 4 === 0
+        ? "rejected"
+        : index % 7 === 0
+          ? "approved"
+          : "in_progress",
     pipelineId: "pipeline-1",
     pullRequestCount: index % 5 === 0 ? 1 : 0,
     pullRequests:

@@ -74,7 +74,8 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar();
 
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
+    await user.click(screen.getByRole("option", { name: "All" }));
 
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
     expect(readSessionListPreferences("acme")).toEqual({
@@ -93,7 +94,7 @@ describe("SessionsCommandBar sticky filters", () => {
     renderCommandBar({ ...defaultQueryState, scope: "all", sort: "oldest", stageSlug: "build" });
 
     await waitFor(() => expect(window.location.search).toBe("?stage=build&scope=all&sort=oldest"));
-    expect(screen.getByRole("button", { name: "All", pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Session scope" })).toHaveTextContent("All");
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -112,7 +113,7 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(document.cookie).toContain(sessionListPreferencesCookieName("acme"));
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Session scope" })).toHaveTextContent("Active");
   });
 
   it("does not restore when the URL already has a sticky key", async () => {
@@ -124,9 +125,12 @@ describe("SessionsCommandBar sticky filters", () => {
     setListUrl("scope=archived");
     renderCommandBar({ ...defaultQueryState, scope: "archived" });
 
-    await screen.findByRole("button", { name: "Archived", pressed: true });
+    const scope = await screen.findByRole("combobox", { name: "Session scope" });
+    expect(scope).toHaveTextContent("Archived");
     expect(mocked.replace).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "All", pressed: false })).toBeInTheDocument();
+    await userEvent.click(scope);
+    expect(screen.getByRole("option", { name: "Archived", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "All", selected: false })).toBeInTheDocument();
   });
 
   it("writes defaults on Clear and pushes the bare sessions path", async () => {

@@ -18,7 +18,6 @@ import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import { Status } from "@/components/ui/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import { SessionExecutionProvider } from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
@@ -1019,18 +1018,20 @@ function SessionDetailContent({
   const headerActions = session.archivedAt ? (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        <Status value="archived" />
         <button
           type="button"
           className="ui-button gap-1.5"
           disabled={archivePending !== null || phaseActionPending !== null}
           onClick={() => void handleUnarchive()}
         >
-          <ActionButtonLabel
-            idle="Unarchive"
-            pending={archivePending !== null}
-            pendingLabel={archivePending === "archive" ? "Archiving…" : "Unarchiving…"}
-          />
+          {archivePending !== null ? (
+            <>
+              <Spinner />
+              {archivePending === "archive" ? "Archiving…" : "Unarchiving…"}
+            </>
+          ) : (
+            "Unarchive"
+          )}
         </button>
       </div>
       {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}

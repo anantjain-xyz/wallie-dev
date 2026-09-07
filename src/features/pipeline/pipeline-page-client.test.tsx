@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render as testingRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Suspense, Profiler, type ProfilerOnRenderCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,6 +73,12 @@ import {
 import { formatUtcTimestamp } from "@/components/shared/time-display";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/types";
+
+import { OverlayProvider } from "@/components/ui/overlay-provider";
+
+function render(ui: React.ReactNode) {
+  return testingRender(ui, { wrapper: OverlayProvider });
+}
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
@@ -689,7 +702,8 @@ describe("PipelinePageClient", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Awaiting review" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Filter by status" }));
+    await userEvent.click(screen.getByRole("option", { name: "Awaiting review" }));
     const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
     expect(within(planLane).getByText("No matching sessions in loaded results")).toBeTruthy();
     expect(
@@ -717,31 +731,34 @@ describe("PipelinePageClient", () => {
     expect(screen.getByRole("link", { name: "Review session Needs review" })).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(3);
 
-    await userEvent.click(screen.getByRole("button", { name: "Awaiting review" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Filter by status" }));
+    await userEvent.click(screen.getByRole("option", { name: "Awaiting review" }));
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByText("Needs review")).toBeTruthy();
     expect(screen.queryByText("Still generating")).toBeNull();
 
-    const mobileStatus = screen.getByRole("combobox", { name: "Filter by status" });
-    expect((mobileStatus as HTMLSelectElement).value).toBe("awaiting_review");
-    await userEvent.selectOptions(mobileStatus, "in_progress");
+    const status = screen.getByRole("combobox", { name: "Filter by status" });
+    expect(status.textContent).toBe("Awaiting review");
+    await userEvent.click(status);
+    await userEvent.keyboard("{ArrowDown}{Enter}");
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByText("Still generating")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "In progress" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
+    expect(status.textContent).toBe("In progress");
 
-    await userEvent.click(screen.getByRole("button", { name: "All statuses" }));
-    await userEvent.type(
-      screen.getByRole("searchbox", { name: "Search pipeline sessions" }),
-      "changes",
-    );
+    await userEvent.click(status);
+    await userEvent.click(screen.getByRole("option", { name: "All statuses" }));
+    const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
+    await userEvent.type(search, "changes");
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByText("Needs changes")).toBeTruthy();
-    await userEvent.selectOptions(mobileStatus, "in_progress");
+    await userEvent.click(status);
+    await userEvent.click(screen.getByRole("option", { name: "In progress" }));
     expect(screen.queryAllByRole("article")).toHaveLength(0);
-    await userEvent.selectOptions(mobileStatus, "all");
-    expect(screen.getByText("Needs changes")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(search);
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
   it("explains empty lanes with stage entry copy", () => {
