@@ -110,11 +110,7 @@ export const WallieRunCard = memo(function WallieRunCard({
   return (
     <article
       aria-label={isPrimary ? "Current Wallie run" : undefined}
-      className={cn(
-        "min-w-0",
-        isPrimary ? "py-2" : "py-3",
-        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
-      )}
+      className={cn("min-w-0 py-3", !isExpanded && !run.isActive && "run-history-group")}
       data-run-id={run.id}
       data-wallie-summary={isPrimary ? "" : undefined}
     >

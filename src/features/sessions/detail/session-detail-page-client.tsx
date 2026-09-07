@@ -1149,8 +1149,8 @@ function SessionDetailContent({
 
       <section aria-labelledby="session-runs-heading" className="ui-sheet mt-6">
         <div className="border-b border-border px-4 py-3">
-          <h2 id="session-runs-heading" className="text-[13px] font-semibold text-foreground">
-            Runs
+          <h2 id="session-runs-heading" className="text-base font-semibold text-foreground">
+            Run history
           </h2>
           <p className="mt-0.5 type-annotation text-muted">
             Review agent run history, status, and messages for this session.

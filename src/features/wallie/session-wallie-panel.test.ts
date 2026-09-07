@@ -147,8 +147,7 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    // The primary run is distinct from the compact history rows.
-    expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
+    expect((html.match(/run-history-group/g) ?? []).length).toBe(2);
   });
 
   it("allows retry only when the run is retryable", () => {
@@ -241,17 +240,17 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("animate-spin");
   });
 
-  it("places only older records under Previous runs", () => {
+  it("places the latest and older records in one compact run list", () => {
     const html = renderPanel(
       data({
         runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
       }),
     );
 
-    expect(html).toContain("Previous runs");
+    expect(html).not.toContain("Previous runs");
     expect((html.match(/data-wallie-summary/g) ?? []).length).toBe(1);
     expect((html.match(/data-run-id=/g) ?? []).length).toBe(2);
-    expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
+    expect((html.match(/run-history-group/g) ?? []).length).toBe(2);
   });
 
   it("collapses all runs by default and does not mount their transcripts", () => {

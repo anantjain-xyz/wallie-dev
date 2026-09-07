@@ -486,9 +486,9 @@ function SessionWalliePanelContent({
   // for archived sessions; mirror that here so the Retry button is disabled
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
-  const historicalRuns = useMemo(
-    () => runs.filter((run) => run.id !== summaryRunId),
-    [runs, summaryRunId],
+  const displayedRuns = useMemo(
+    () => (summaryRun ? [summaryRun, ...runs.filter((run) => run.id !== summaryRun.id)] : []),
+    [runs, summaryRun],
   );
 
   const handleRetryRun = useCallback(
@@ -680,73 +680,42 @@ function SessionWalliePanelContent({
         </details>
       ) : null}
 
-      <div className="min-w-0 space-y-5">
-        {summaryRun ? (
-          <WallieRunCard
-            key={summaryRun.id}
-            actionPending={pendingActionId === summaryRun.id}
-            branchName={
-              summaryRun.sandboxId && summaryRun.stageSlug
-                ? buildStageBranchName(session.id, summaryRun.stageSlug)
-                : null
-            }
-            cancelLocked={pendingActionId !== null}
-            connectionState={connectionState}
-            isExpanded={expandedRunId === summaryRun.id}
-            isPrimary
-            messagesLoaded={loadedMessageRunIds.has(summaryRun.id)}
-            messagesLoadFailed={messageLoadErrorRunIds.has(summaryRun.id)}
-            nowMs={nowMs}
-            onCancel={handleCancelRun}
-            onReconnect={recovery.retry}
-            onRetry={handleRetryRun}
-            onToggle={handleToggleRun}
-            renderNow={renderNow}
-            retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-            run={summaryRun}
-            stallTimeoutMs={initialData.stallTimeoutMs}
-          />
-        ) : (
-          <div className="rounded-[6px] border border-dashed border-border px-4 py-8 text-center text-sm leading-7 text-muted">
-            No runs recorded yet.
-          </div>
-        )}
-
-        {historicalRuns.length > 0 ? (
-          <section aria-labelledby="previous-runs-heading" className="min-w-0">
-            <h3 id="previous-runs-heading" className="ui-label">
-              Previous runs
-            </h3>
-            <div className="mt-2 min-w-0 divide-y divide-border border-y border-border">
-              {historicalRuns.map((run) => (
-                <WallieRunCard
-                  key={run.id}
-                  actionPending={pendingActionId === run.id}
-                  branchName={
-                    run.sandboxId && run.stageSlug
-                      ? buildStageBranchName(session.id, run.stageSlug)
-                      : null
-                  }
-                  cancelLocked={pendingActionId !== null}
-                  connectionState={sources[`history:${run.id}`] ?? "live"}
-                  isExpanded={expandedRunId === run.id}
-                  messagesLoaded={loadedMessageRunIds.has(run.id)}
-                  messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
-                  nowMs={nowMs}
-                  onCancel={handleCancelRun}
-                  onReconnect={recovery.retry}
-                  onRetry={handleRetryRun}
-                  onToggle={handleToggleRun}
-                  renderNow={renderNow}
-                  retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
-                  run={run}
-                  stallTimeoutMs={initialData.stallTimeoutMs}
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
-      </div>
+      {displayedRuns.length > 0 ? (
+        <div className="min-w-0 divide-y divide-border border-y border-border">
+          {displayedRuns.map((run) => (
+            <WallieRunCard
+              key={run.id}
+              actionPending={pendingActionId === run.id}
+              branchName={
+                run.sandboxId && run.stageSlug
+                  ? buildStageBranchName(session.id, run.stageSlug)
+                  : null
+              }
+              cancelLocked={pendingActionId !== null}
+              connectionState={
+                run.id === summaryRunId ? connectionState : (sources[`history:${run.id}`] ?? "live")
+              }
+              isExpanded={expandedRunId === run.id}
+              isPrimary={run.id === summaryRunId}
+              messagesLoaded={loadedMessageRunIds.has(run.id)}
+              messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+              nowMs={nowMs}
+              onCancel={handleCancelRun}
+              onReconnect={recovery.retry}
+              onRetry={handleRetryRun}
+              onToggle={handleToggleRun}
+              renderNow={renderNow}
+              retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+              run={run}
+              stallTimeoutMs={initialData.stallTimeoutMs}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-[6px] border border-dashed border-border px-4 py-8 text-center text-sm leading-7 text-muted">
+          No runs recorded yet.
+        </div>
+      )}
 
       {olderRunsError ? (
         <p aria-live="polite" className="text-sm text-danger" role="status">

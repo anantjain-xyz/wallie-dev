@@ -437,7 +437,7 @@ describe("SessionDetailPageClient", () => {
     expect(runsSectionIndex).toBeGreaterThan(workbenchIndex);
     expect(html).toContain('class="ui-sheet mt-6"');
     expect(html).toContain('id="session-runs-heading"');
-    expect(html).toContain(">Runs</h2>");
+    expect(html).toContain(">Run history</h2>");
     expect(html).toContain("Run history");
     expect(html).not.toContain('aria-label="Inspector"');
     expect(html).not.toContain('id="activity-tab"');
