@@ -26,7 +26,7 @@ function FilterEmptyState() {
     <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
       <p className="text-[14px] font-semibold text-foreground">No sessions match these filters</p>
       <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
-        Adjust Status, Stage, Sort, or Search to see more sessions.
+        Adjust session scope, stage, sort, or search to see more sessions.
       </p>
     </div>
   );

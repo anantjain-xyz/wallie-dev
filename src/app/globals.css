@@ -1143,7 +1143,7 @@
   grid-template-columns:
     minmax(12rem, 2.2fr)
     minmax(5.5rem, 0.7fr)
-    minmax(7.5rem, 0.9fr)
+    minmax(10rem, 0.9fr)
     minmax(7rem, 1fr)
     minmax(5.5rem, 0.7fr)
     2.5rem;
@@ -1187,11 +1187,11 @@
 }
 
 /*
-  Card layout when the ledger itself is narrower than the column mins (~760px)
+  Card layout when the ledger itself is narrower than the column mins (~800px)
   plus breathing room. Container query covers padded/zoomed viewports (e.g.
   768–823px CSS width) where a viewport-only md breakpoint would still clip.
 */
-@container sessions-ledger (max-width: 50rem) {
+@container sessions-ledger (max-width: 53rem) {
   .sessions-ledger-header {
     display: none;
   }

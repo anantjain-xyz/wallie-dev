@@ -150,6 +150,7 @@ export async function loadSessionListPageData(
         .map((session) => ({
           ...session,
           repositoryFullName: session.repositoryFullName ?? null,
+          latestRunStatus: session.latestRunStatus ?? null,
         }));
       const stageFacets = payload.stageFacets ?? [];
       const hasMore = payload.hasMore === true;

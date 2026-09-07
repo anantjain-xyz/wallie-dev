@@ -39,6 +39,7 @@ const initialData: SessionListPageData = {
   sessions: [
     {
       archivedAt: null,
+      latestRunStatus: null,
       createdAt: "2026-07-18T10:00:00.000Z",
       currentArtifactVersion: 1,
       currentStageId: "stage-build",
@@ -99,20 +100,21 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("group", { name: "Status filter" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Session scope" })).toBeInTheDocument();
     const stageCombo = screen.getByRole("combobox", { name: "Filter by stage" });
     expect(stageCombo).toBeInTheDocument();
     expect(stageCombo).toHaveTextContent("Build");
     expect(screen.getByRole("combobox", { name: "Sort sessions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All", pressed: false })).toBeInTheDocument();
-    expect(
-      Array.from(
-        screen.getByRole("group", { name: "Status filter" }).querySelectorAll("button"),
-        (button) => button.textContent,
-      ),
-    ).toEqual(["Active", "Archived", "All"]);
+    const scope = screen.getByRole("combobox", { name: "Session scope" });
+    expect(scope).toHaveTextContent("Active");
+    await user.click(scope);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Active",
+      "Archived",
+      "All",
+    ]);
+    await user.keyboard("{Escape}");
 
     const search = screen.getByRole("searchbox", {
       name: "Search prompts, titles, or Linear IDs",
@@ -147,7 +149,7 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Session scope" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
@@ -214,19 +216,22 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Archived" }));
+    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
+    await user.click(screen.getByRole("option", { name: "Archived" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=archived&sort=oldest",
       { scroll: false },
     );
 
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
+    await user.click(screen.getByRole("option", { name: "All" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=all&sort=oldest",
       { scroll: false },
     );
 
-    await user.click(screen.getByRole("button", { name: "Active" }));
+    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
+    await user.click(screen.getByRole("option", { name: "Active" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&sort=oldest",
       { scroll: false },
