@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
-import type { SessionSummary } from "@/features/sessions/types";
+import type { SessionSummary, SessionListItem } from "@/features/sessions/types";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -18,10 +18,11 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-function makeSession(index: number): SessionSummary {
+function makeSession(index: number): SessionSummary & SessionListItem {
   const padded = String(index).padStart(3, "0");
   return {
     archivedAt: null,
+    latestRunStatus: null,
     createdAt: "2026-06-07T10:00:00.000Z",
     currentArtifactVersion: 1,
     currentStageId: "stage-1",
@@ -198,7 +199,7 @@ describe("Sessions ledger server render", () => {
 
     const stylesheet = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
     expect(stylesheet).toContain("container-type: inline-size");
-    expect(stylesheet).toContain("@container sessions-ledger (max-width: 50rem)");
+    expect(stylesheet).toContain("@container sessions-ledger (max-width: 53rem)");
     expect(stylesheet).toContain(".sessions-ledger-cell-label");
     expect(stylesheet).toContain(".sessions-ledger-session-summary");
     expect(stylesheet).toMatch(/\.sessions-ledger-connections,[\s\S]*grid-column: 2/);

@@ -1,4 +1,5 @@
 import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
+import type { Enums } from "@/lib/supabase/database.types";
 
 // Sessions used to be pinned to a hardcoded phase enum. They now reference a
 // workspace's pipeline by id and advance through pipeline_stages by `position`.
@@ -115,7 +116,9 @@ export type SessionSummary = {
   workspaceId: string;
 };
 
-export type SessionListItem = Omit<SessionSummary, "promptMd">;
+export type SessionListItem = Omit<SessionSummary, "promptMd"> & {
+  latestRunStatus: Enums<"agent_run_status"> | null;
+};
 
 export type SessionDetail = SessionSummary & {
   artifacts: SessionArtifactSummary[];

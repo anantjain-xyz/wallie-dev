@@ -16,7 +16,12 @@ import {
   type ReactNode,
 } from "react";
 
-import { SearchIcon } from "@/components/shared/icons/search-icon";
+import { FilterSearch, FilterSelectTrigger, ClearFilters } from "@/components/ui/filter-controls";
+import { Select, SelectContent, SelectItem } from "@/components/ui/select";
+import {
+  sessionDisplayStatus,
+  type SessionDisplayStatus,
+} from "@/features/sessions/display-status";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { CommandBar, PageHeader } from "@/components/ui/page-shell";
 import {
@@ -66,7 +71,7 @@ type PendingCardFocus = {
   targetLaneKey: string;
 };
 
-type DashboardCardStatus = SessionPhaseStatus | "failed";
+type DashboardCardStatus = SessionDisplayStatus;
 type StatusFilter = DashboardCardStatus | "all";
 
 const CARD_FOCUSABLE_SELECTOR =
@@ -91,11 +96,7 @@ const STATUS_SUMMARY_ORDER: DashboardCardStatus[] = [
   "approved",
 ];
 
-export function pipelineDashboardCardStatus(
-  card: Pick<PipelineDashboardCard, "latestRunStatus" | "phaseStatus">,
-): DashboardCardStatus {
-  return card.latestRunStatus === "error" ? "failed" : card.phaseStatus;
-}
+export const pipelineDashboardCardStatus = sessionDisplayStatus;
 
 function captureCardFocus(cardId: string, targetLaneKey: string): PendingCardFocus | null {
   const activeElement = document.activeElement;
@@ -581,63 +582,12 @@ function PipelinePageContent({
         </div>
 
         {hasActiveSessions ? (
-          <CommandBar aria-label="Pipeline filters" className={pipelineLayout.controls}>
-            <label className="min-w-0 flex-1 pipeline-wide:min-w-[14rem] pipeline-wide:space-y-1.5">
-              <span className="sr-only text-[13px] font-medium text-foreground pipeline-wide:not-sr-only">
-                Search
-              </span>
-              <span className="relative block">
-                <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-                <input
-                  aria-label="Search pipeline sessions"
-                  className="ui-input pl-8 text-base pipeline-wide:text-sm"
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Search…"
-                  title="Search by title, session #, or Linear ID"
-                  type="search"
-                  value={searchQuery}
-                />
-              </span>
-            </label>
-
-            <label className="min-w-0 pipeline-wide:hidden">
-              <span className="sr-only">Filter by status</span>
-              <select
-                className={cn(
-                  "ui-select text-base min-[380px]:w-48",
-                  statusFilter !== "all" && "border-accent bg-accent-soft",
-                )}
-                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                value={statusFilter}
-              >
-                {STATUS_FILTER_OPTIONS.map((option) => (
-                  <option key={option.key} value={option.key}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <fieldset className="hidden space-y-1.5 pipeline-wide:block">
-              <legend className="text-[13px] font-medium text-foreground">Status</legend>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {STATUS_FILTER_OPTIONS.map((option) => {
-                  const isSelected = statusFilter === option.key;
-                  return (
-                    <button
-                      aria-pressed={isSelected}
-                      className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
-                      key={option.key}
-                      onClick={() => setStatusFilter(option.key)}
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          </CommandBar>
+          <PipelineFilters
+            searchQuery={searchQuery}
+            statusFilter={statusFilter}
+            setSearchQuery={setSearchQuery}
+            setStatusFilter={setStatusFilter}
+          />
         ) : null}
       </div>
 
@@ -735,6 +685,56 @@ function PipelinePageContent({
     </div>
   );
 }
+
+const PipelineFilters = memo(function PipelineFilters({
+  searchQuery,
+  statusFilter,
+  setSearchQuery,
+  setStatusFilter,
+}: {
+  searchQuery: string;
+  statusFilter: StatusFilter;
+  setSearchQuery: (value: string) => void;
+  setStatusFilter: (value: StatusFilter) => void;
+}) {
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
+  return (
+    <CommandBar aria-label="Pipeline filters" className={pipelineLayout.controls}>
+      <FilterSearch
+        ref={searchInputRef}
+        aria-label="Search pipeline sessions"
+        description="Search by title, session number, or Linear ID. Filters apply to loaded sessions."
+        onChange={(event) => setSearchQuery(event.target.value)}
+        value={searchQuery}
+      />
+      <Select
+        value={statusFilter}
+        onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+      >
+        <FilterSelectTrigger accessibleLabel="Filter by status">
+          {STATUS_FILTER_OPTIONS.find((option) => option.key === statusFilter)?.label}
+        </FilterSelectTrigger>
+        <SelectContent>
+          {STATUS_FILTER_OPTIONS.map((option) => (
+            <SelectItem key={option.key} value={option.key}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {filtersActive ? (
+        <ClearFilters
+          onClick={() => {
+            setSearchQuery("");
+            setStatusFilter("all");
+            searchInputRef.current?.focus();
+          }}
+        />
+      ) : null}
+    </CommandBar>
+  );
+});
 
 type PipelineLaneProps = {
   error: string | undefined;

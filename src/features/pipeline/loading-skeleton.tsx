@@ -62,13 +62,8 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
           </div>
 
           <div aria-hidden="true" className={pipelineLayout.controls}>
-            <SkeletonBlock className="h-[46px] min-w-0 pipeline-wide:h-10 pipeline-wide:min-w-[14rem] pipeline-wide:flex-1" />
-            <SkeletonBlock className="h-[46px] min-[380px]:w-48 pipeline-wide:hidden" />
-            <div className="hidden gap-3 pipeline-wide:flex">
-              <SkeletonBlock className="h-8 w-28" />
-              <SkeletonBlock className="h-8 w-32" />
-              <SkeletonBlock className="h-8 w-28" />
-            </div>
+            <SkeletonBlock className="h-11 min-w-0 flex-1 basis-full sm:basis-60 md:h-9" />
+            <SkeletonBlock className="h-11 w-40 md:h-9" />
           </div>
         </div>
 

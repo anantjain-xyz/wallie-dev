@@ -4,7 +4,7 @@ import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 const listRowTitleWidths = ["w-7/12", "w-5/12", "w-8/12", "w-6/12", "w-9/12", "w-4/12"];
 
 function FilterChipSkeleton({ className = "w-20" }: { className?: string }) {
-  return <SkeletonBlock className={`h-8 rounded-[6px] ${className}`} />;
+  return <SkeletonBlock className={`h-11 md:h-9 rounded-[6px] ${className}`} />;
 }
 
 function SessionRowSkeleton({ index }: { index: number }) {
@@ -65,10 +65,10 @@ export function SessionsListLoadingSkeleton() {
     <PageContainer>
       <section data-route-loading aria-busy="true" aria-label="Loading sessions" role="status">
         <PageHeader title="Sessions" />
-        <div className="mb-6 border-y border-border py-2.5" aria-hidden="true">
-          <div className="flex flex-wrap items-center gap-2 lg:gap-2.5">
-            <SkeletonBlock className="h-8 w-full sm:max-w-[300px] lg:w-[300px]" />
-            <FilterChipSkeleton className="w-[190px]" />
+        <div className="mb-6" aria-hidden="true">
+          <div className="flex flex-wrap items-center gap-2 border-y border-border py-3">
+            <SkeletonBlock className="h-11 min-w-0 flex-1 basis-full sm:basis-60 md:h-9" />
+            <FilterChipSkeleton className="w-24" />
             <FilterChipSkeleton className="w-[136px]" />
             <FilterChipSkeleton className="w-[144px]" />
           </div>
