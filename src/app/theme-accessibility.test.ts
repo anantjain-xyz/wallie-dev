@@ -87,10 +87,38 @@ function contrastRatio(first: string, second: string): number {
   );
 }
 
+function focusVisibleBlocks(): { selector: string; body: string }[] {
+  return [...stylesheet.matchAll(/:where\(([\s\S]*?)\):focus-visible\s*{([\s\S]*?)\}/g)].map(
+    (match) => ({ selector: match[1], body: match[2] }),
+  );
+}
+
 function focusVisibleRules(selector: string): string[] {
-  return [...stylesheet.matchAll(/:where\(([\s\S]*?)\):focus-visible\s*{([\s\S]*?)\}/g)]
-    .filter((match) => match[1].includes(selector))
-    .map((match) => match[2]);
+  return focusVisibleBlocks()
+    .filter((block) => block.selector.includes(selector))
+    .map((block) => block.body);
+}
+
+function chromeFocusSelector(): string {
+  const match = stylesheet.match(
+    /Unlayered so one focus contract[\s\S]*?:where\(([\s\S]*?)\):focus-visible\s*\{/u,
+  );
+
+  if (!match?.[1]) throw new Error("Chrome focus-visible rule missing");
+
+  return match[1];
+}
+
+function textEntryFocusRule(): { selector: string; body: string } {
+  const match = stylesheet.match(
+    /Unlayered text-entry:[\s\S]*?:where\(([\s\S]*?)\):focus-visible\s*\{([\s\S]*?)\}/u,
+  );
+
+  if (!match?.[1] || match[2] === undefined) {
+    throw new Error("text-entry focus-visible rule missing");
+  }
+
+  return { selector: match[1], body: match[2] };
 }
 
 describe.each(["light", "dark"] as const)("%s semantic theme", (theme) => {
@@ -154,6 +182,47 @@ describe("shared interaction accessibility tokens", () => {
       ).toBe(true);
     },
   );
+
+  it("keeps the two-layer ring on chrome controls, not text entry", () => {
+    const chromeSelector = chromeFocusSelector();
+
+    expect(chromeSelector).toMatch(/\bbutton\b/);
+    expect(chromeSelector).toMatch(/\bselect\b/);
+    expect(chromeSelector).toContain('[role="combobox"]');
+    expect(chromeSelector).toContain('input[type="checkbox"]');
+    expect(chromeSelector).toContain('input[type="radio"]');
+    expect(chromeSelector).toContain('input[type="file"]');
+    expect(chromeSelector).not.toMatch(/(?:^|,)\s*input\s*,/u);
+    expect(chromeSelector).not.toMatch(/(?:^|,)\s*textarea\s*(?:,|$)/u);
+  });
+
+  it("uses an in-control text-entry focus indicator without an outer halo", () => {
+    const textEntry = textEntryFocusRule();
+
+    expect(textEntry.selector).toContain("textarea");
+    expect(textEntry.selector).toContain('[role="textbox"]');
+    expect(textEntry.selector).toContain('input:not([type="button"])');
+    expect(textEntry.selector).toContain('[type="checkbox"]');
+    expect(textEntry.selector).toContain('[type="file"]');
+    expect(textEntry.body).toContain("outline: none;");
+    expect(textEntry.body).toContain("outline-offset: 0;");
+    expect(textEntry.body).toContain("border-color: var(--accent);");
+    expect(textEntry.body).toContain("box-shadow: inset 0 0 0 1px var(--accent);");
+    expect(textEntry.body).not.toContain("outline: 2px solid var(--focus-ring);");
+    expect(textEntry.body).not.toContain("box-shadow: 0 0 0 2px var(--focus-ring-contrast);");
+    expect(stylesheet).toContain(".ui-input:focus-visible,");
+    expect(stylesheet).toContain(".ui-textarea:focus-visible {");
+    expect(stylesheet).toContain(".sidebar-input:focus-visible {");
+    expect(stylesheet).toMatch(
+      /\.ui-input:focus-visible,[\s\S]*?\.ui-textarea:focus-visible\s*\{[\s\S]*?border-color: var\(--accent\);/u,
+    );
+  });
+
+  it("restores a CanvasText focus outline on text fields in forced-colors", () => {
+    expect(stylesheet).toMatch(
+      /@media \(forced-colors: active\)\s*\{[\s\S]*textarea[\s\S]*outline: 2px solid CanvasText;[\s\S]*outline-offset: 2px;/u,
+    );
+  });
 
   it("provides pressed feedback and responsive desktop/touch targets", () => {
     expect(stylesheet).toContain(":active:not(:disabled)");
