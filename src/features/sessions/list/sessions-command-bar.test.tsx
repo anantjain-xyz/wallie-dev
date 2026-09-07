@@ -10,6 +10,7 @@ import { SessionsCommandBar } from "@/features/sessions/list/sessions-command-ba
 import {
   readSessionListPreferences,
   sessionListPreferencesStorageKey,
+  sessionListPreferencesCookieName,
   writeSessionListPreferences,
 } from "@/features/sessions/list/sessions-list-preferences";
 import type { SessionListQueryState } from "@/features/sessions/types";
@@ -57,6 +58,7 @@ describe("SessionsCommandBar sticky filters", () => {
   beforeEach(() => {
     window.localStorage.clear();
     setListUrl();
+    document.cookie = `${sessionListPreferencesCookieName("acme")}=; Path=/w/acme; Max-Age=0`;
     mocked.push.mockReset();
     mocked.refresh.mockReset();
     mocked.replace.mockReset();
@@ -68,7 +70,7 @@ describe("SessionsCommandBar sticky filters", () => {
     setListUrl();
   });
 
-  it("persists All to localStorage and pushes scope=all", async () => {
+  it("persists All to a cookie before navigation and pushes scope=all", async () => {
     const user = userEvent.setup();
     renderCommandBar();
 
@@ -82,22 +84,35 @@ describe("SessionsCommandBar sticky filters", () => {
     });
   });
 
-  it("restores stored All, stage, and sort on a bare URL without inventing q or cursor", async () => {
+  it("exposes server-resolved filters in the URL without a second navigation", async () => {
     writeSessionListPreferences("acme", {
       scope: "all",
       sort: "oldest",
       stageSlug: "build",
     });
+    renderCommandBar({ ...defaultQueryState, scope: "all", sort: "oldest", stageSlug: "build" });
+
+    await waitFor(() => expect(window.location.search).toBe("?stage=build&scope=all&sort=oldest"));
+    expect(screen.getByRole("button", { name: "All", pressed: true })).toBeInTheDocument();
+    expect(mocked.replace).not.toHaveBeenCalled();
+    expect(mocked.push).not.toHaveBeenCalled();
+  });
+
+  it("migrates legacy preferences for the next request without reloading the current list", () => {
+    window.localStorage.setItem(
+      sessionListPreferencesStorageKey("acme"),
+      JSON.stringify({
+        scope: "all",
+        sort: "updated",
+        stageSlug: null,
+      }),
+    );
     renderCommandBar();
 
-    await waitFor(() =>
-      expect(mocked.replace).toHaveBeenCalledWith(
-        "/w/acme/sessions?stage=build&scope=all&sort=oldest",
-        { scroll: false },
-      ),
-    );
-    expect(mocked.replace.mock.calls[0]?.[0]).not.toMatch(/(?:^|[?&])q=/);
-    expect(mocked.replace.mock.calls[0]?.[0]).not.toMatch(/(?:^|[?&])cursor=/);
+    expect(document.cookie).toContain(sessionListPreferencesCookieName("acme"));
+    expect(mocked.replace).not.toHaveBeenCalled();
+    expect(mocked.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
   });
 
   it("does not restore when the URL already has a sticky key", async () => {
@@ -131,7 +146,7 @@ describe("SessionsCommandBar sticky filters", () => {
       sort: "updated",
       stageSlug: null,
     });
-    expect(window.localStorage.getItem(sessionListPreferencesStorageKey("acme"))).not.toBeNull();
+    expect(document.cookie).toContain(sessionListPreferencesCookieName("acme"));
   });
 
   it("does not write search text into storage", async () => {
@@ -151,9 +166,7 @@ describe("SessionsCommandBar sticky filters", () => {
       sort: "updated",
       stageSlug: null,
     });
-    expect(
-      JSON.parse(window.localStorage.getItem(sessionListPreferencesStorageKey("acme"))!),
-    ).not.toHaveProperty("query");
+    expect(readSessionListPreferences("acme")).not.toHaveProperty("query");
   });
 
   it("keeps create=1 when restoring sticky filters", async () => {
@@ -163,12 +176,10 @@ describe("SessionsCommandBar sticky filters", () => {
       stageSlug: null,
     });
     setListUrl("create=1");
-    renderCommandBar();
+    renderCommandBar({ ...defaultQueryState, scope: "all" });
 
-    await waitFor(() =>
-      expect(mocked.replace).toHaveBeenCalledWith("/w/acme/sessions?create=1&scope=all", {
-        scroll: false,
-      }),
-    );
+    await waitFor(() => expect(window.location.search).toBe("?create=1&scope=all"));
+    expect(mocked.replace).not.toHaveBeenCalled();
+    expect(mocked.push).not.toHaveBeenCalled();
   });
 });

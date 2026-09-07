@@ -14,12 +14,12 @@ import {
 } from "@/features/sessions/list/sessions-list-mutations";
 import {
   readSessionListPreferences,
-  shouldRestoreSessionListPreferences,
   writeSessionListPreferences,
 } from "@/features/sessions/list/sessions-list-preferences";
 import {
   SESSION_LIST_DEFAULT_FILTERS,
   areDefaultSessionListFilters,
+  sessionListSearchHasStickyParams,
 } from "@/features/sessions/list/sessions-list-query-state";
 import {
   type SessionFilterKey,
@@ -64,7 +64,6 @@ export function SessionsCommandBar({
   const [isPending, startTransition] = useTransition();
   const [optimisticQuery, setOptimisticQuery] = useOptimistic(queryState);
   const latestQueryRef = useRef(queryState);
-  const restoreAttemptedRef = useRef(false);
   const submittedSearchRef = useRef<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -76,32 +75,22 @@ export function SessionsCommandBar({
   }, [isPending, queryState]);
 
   useEffect(() => {
-    if (restoreAttemptedRef.current) {
-      return;
-    }
-    restoreAttemptedRef.current = true;
-
-    const search = new URLSearchParams(window.location.search);
+    // Migrate legacy localStorage preferences for subsequent server requests.
+    // Restoring them here would fetch the list twice on the first visit.
     const stored = readSessionListPreferences(workspaceSlug);
-    if (!stored || !shouldRestoreSessionListPreferences({ queryState, search, stored })) {
-      return;
-    }
+    if (stored) writeSessionListPreferences(workspaceSlug, stored);
+  }, [workspaceSlug]);
 
-    const merged: SessionListQueryState = {
-      cursor: null,
-      query: queryState.query,
-      scope: stored.scope,
-      sort: stored.sort,
-      stageSlug: stored.stageSlug,
-    };
-    latestQueryRef.current = merged;
-    const href = buildSessionsListHref(basePath, merged, search);
-    startNavigation(href);
-    startTransition(() => {
-      setOptimisticQuery(merged);
-      router.replace(href, { scroll: false });
-    });
-  }, [basePath, queryState, router, setOptimisticQuery, startNavigation, workspaceSlug]);
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    if (sessionListSearchHasStickyParams(search) || search.has("cursor")) return;
+    if (areDefaultSessionListFilters(queryState)) return;
+
+    // The server already fetched these filters. Only expose them in the URL;
+    // router.replace would unnecessarily repeat the server render and query.
+    const href = buildSessionsListHref(basePath, queryState, search);
+    window.history.replaceState(null, "", href);
+  }, [basePath, queryState]);
 
   useEffect(() => {
     const input = searchInputRef.current;

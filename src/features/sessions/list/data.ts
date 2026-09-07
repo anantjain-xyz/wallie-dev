@@ -1,5 +1,12 @@
 import "server-only";
 
+import { cookies } from "next/headers";
+
+import {
+  parseSessionListPreferencesCookie,
+  sessionListPreferencesCookieName,
+  shouldRestoreSessionListPreferences,
+} from "@/features/sessions/list/sessions-list-preferences";
 import type { WorkspaceSummary } from "@/lib/auth";
 import type { OnboardingResumeState } from "@/features/onboarding/resume";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
@@ -93,7 +100,22 @@ export async function loadSessionListPageData(
   workspaceSlug: string,
   searchParams: SessionListSearchParams,
 ): Promise<SessionListPageData> {
-  const queryState = parseSessionListQueryState(searchParams);
+  const urlQueryState = parseSessionListQueryState(searchParams);
+  const cookieStore = await cookies();
+  const stored = parseSessionListPreferencesCookie(
+    cookieStore.get(sessionListPreferencesCookieName(workspaceSlug))?.value,
+  );
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (value !== undefined) search.set(key, Array.isArray(value) ? (value[0] ?? "") : value);
+  }
+  const queryState = shouldRestoreSessionListPreferences({
+    queryState: urlQueryState,
+    search,
+    stored,
+  })
+    ? { ...urlQueryState, ...stored }
+    : urlQueryState;
   const cursor = decodeCursor(queryState.cursor, queryState.sort);
 
   return withServerTiming(
