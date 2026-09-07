@@ -270,6 +270,35 @@
     @apply bg-control-muted text-foreground;
   }
 
+  .ui-shell-nav {
+    position: relative;
+    isolation: isolate;
+  }
+  .ui-shell-nav-indicator {
+    position: absolute;
+    pointer-events: none;
+    z-index: -1;
+    left: 0;
+    top: 0;
+    width: var(--nav-width, 0px);
+    height: var(--nav-height, 0px);
+    transform: translate(var(--nav-x, 0px), var(--nav-y, 0px));
+    border-radius: 6px;
+    background: var(--control-muted);
+    visibility: hidden;
+  }
+  .ui-shell-nav[data-indicator-ready] .ui-shell-nav-indicator {
+    visibility: visible;
+  }
+  .ui-shell-nav[data-indicator-animated] .ui-shell-nav-indicator {
+    transition:
+      transform 200ms var(--overlay-motion-easing),
+      width 200ms var(--overlay-motion-easing);
+  }
+  .ui-shell-nav[data-indicator-ready] .ui-shell-nav-link-active {
+    background: transparent;
+  }
+
   .ui-nav-sheet-content {
     position: fixed;
     inset-block: 0;

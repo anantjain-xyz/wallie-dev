@@ -8,27 +8,26 @@ function FilterChipSkeleton({ className = "w-20" }: { className?: string }) {
 }
 
 function SessionRowSkeleton({ index }: { index: number }) {
-  const titleWidth = listRowTitleWidths[index % listRowTitleWidths.length];
-
   return (
-    <li className="flex flex-col gap-3 px-4 py-4 sm:px-5 md:flex-row md:items-center">
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <SkeletonBlock className="h-3 w-8 shrink-0" />
-          <SkeletonBlock className={`h-4 min-w-0 ${titleWidth}`} />
-          <SkeletonBlock className="h-7 w-7 shrink-0 rounded-[6px]" />
-          <SkeletonBlock className="h-7 w-7 shrink-0 rounded-[6px]" />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SkeletonBlock className="h-3 w-16" />
-          <SkeletonBlock className="h-3 w-20" />
-          <SkeletonBlock className="h-3 w-24" />
-        </div>
+    <li className="sessions-ledger-row">
+      <div className="flex min-w-0 items-center gap-2">
+        <SkeletonBlock className="h-3 w-8 shrink-0" />
+        <SkeletonBlock className={`h-4 ${listRowTitleWidths[index % listRowTitleWidths.length]}`} />
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <SkeletonBlock className="h-7 w-20 rounded-full" />
-        <SkeletonBlock className="h-7 w-16 rounded-full" />
-      </div>
+      {["Stage", "Status", "Repository", "Updated"].map((label) => (
+        <div
+          key={label}
+          className={`sessions-ledger-cell sessions-ledger-cell-${label.toLowerCase()}`}
+        >
+          <span className="sessions-ledger-cell-label">{label}</span>
+          <SkeletonBlock
+            className={
+              label === "Status" ? "h-6 w-24 max-w-full rounded-full" : "h-3 w-16 max-w-full"
+            }
+          />
+        </div>
+      ))}
+      <SkeletonBlock className="h-7 w-7" />
     </li>
   );
 }
@@ -65,29 +64,28 @@ export function SessionsListLoadingSkeleton() {
   return (
     <PageContainer>
       <section data-route-loading aria-busy="true" aria-label="Loading sessions" role="status">
-        <SkeletonBlock className="mb-8 h-8 w-36 sm:mb-10" />
-
-        <div className="mb-6 flex flex-wrap items-center gap-3" aria-hidden="true">
-          <SkeletonBlock className="h-10 w-full flex-none sm:min-w-[220px] sm:max-w-md sm:flex-1" />
-          <div className="flex flex-wrap items-center gap-1.5">
-            <FilterChipSkeleton className="w-14" />
-            <FilterChipSkeleton className="w-20" />
-            <FilterChipSkeleton className="w-20" />
-            <FilterChipSkeleton className="w-24" />
+        <PageHeader title="Sessions" />
+        <div className="mb-6 border-y border-border py-2.5" aria-hidden="true">
+          <div className="flex flex-wrap items-center gap-2 lg:gap-2.5">
+            <SkeletonBlock className="h-8 w-full sm:max-w-[300px] lg:w-[300px]" />
+            <FilterChipSkeleton className="w-[190px]" />
+            <FilterChipSkeleton className="w-[136px]" />
+            <FilterChipSkeleton className="w-[144px]" />
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <FilterChipSkeleton className="w-24" />
-            <FilterChipSkeleton className="w-16" />
-            <FilterChipSkeleton className="w-16" />
-            <FilterChipSkeleton className="w-20" />
-          </div>
+          <div className="mt-2 min-h-4" />
         </div>
-
-        <ul aria-hidden="true" className="ui-sheet divide-y divide-border overflow-hidden">
-          {Array.from({ length: 3 }, (_, index) => (
-            <SessionRowSkeleton key={index} index={index} />
-          ))}
-        </ul>
+        <div aria-hidden="true" className="ui-sheet sessions-ledger overflow-hidden">
+          <div className="sessions-ledger-header">
+            {["Session", "Stage", "Status", "Repository", "Updated", ""].map((label) => (
+              <div key={label}>{label}</div>
+            ))}
+          </div>
+          <ul className="divide-y divide-border">
+            {Array.from({ length: 3 }, (_, index) => (
+              <SessionRowSkeleton key={index} index={index} />
+            ))}
+          </ul>
+        </div>
       </section>
     </PageContainer>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useTransition } from "react";
+import { useEffect, useMemo, useOptimistic, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { SearchIcon } from "@/components/shared/icons/search-icon";
@@ -59,50 +59,56 @@ export function SessionsCommandBar({
 }: SessionsCommandBarProps) {
   const router = useRouter();
   const { startNavigation } = useOptionalRouteProgress();
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
+  const [optimisticQuery, setOptimisticQuery] = useOptimistic(queryState);
+  const latestQueryRef = useRef(queryState);
+  const submittedSearchRef = useRef<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const shouldRestoreSearchFocusRef = useRef(false);
 
   const basePath = workspaceSessionsPath(workspaceSlug);
-  const clearEnabled = hasActiveFilters(queryState);
+  const clearEnabled = hasActiveFilters(optimisticQuery);
 
   useEffect(() => {
-    if (!shouldRestoreSearchFocusRef.current) return;
-    shouldRestoreSearchFocusRef.current = false;
-    searchInputRef.current?.focus();
+    if (!isPending) latestQueryRef.current = queryState;
+  }, [isPending, queryState]);
+
+  useEffect(() => {
+    const input = searchInputRef.current;
+    if (input && (document.activeElement !== input || input.value === submittedSearchRef.current)) {
+      input.value = queryState.query;
+    }
   }, [queryState.query]);
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
+    const current = latestQueryRef.current;
     const merged: SessionListQueryState = {
       cursor: next.cursor !== undefined ? next.cursor : null,
-      query: next.query !== undefined ? next.query : queryState.query,
-      scope: next.scope !== undefined ? next.scope : queryState.scope,
-      sort: next.sort !== undefined ? next.sort : queryState.sort,
-      stageSlug: next.stageSlug !== undefined ? next.stageSlug : queryState.stageSlug,
+      query: next.query !== undefined ? next.query : current.query,
+      scope: next.scope !== undefined ? next.scope : current.scope,
+      sort: next.sort !== undefined ? next.sort : current.sort,
+      stageSlug: next.stageSlug !== undefined ? next.stageSlug : current.stageSlug,
     };
+    latestQueryRef.current = merged;
     const href = buildSessionsListHref(basePath, merged);
     startNavigation(href);
     startTransition(() => {
-      router.push(href);
+      setOptimisticQuery(merged);
+      router.push(href, { scroll: false });
     });
   }
 
   function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = searchInputRef.current?.value ?? "";
+    submittedSearchRef.current = value;
     updateQueryState({ query: value });
   }
 
   function handleClear() {
     if (searchInputRef.current) searchInputRef.current.value = "";
-    const willRemountSearch = Boolean(queryState.query);
-    if (willRemountSearch) {
-      shouldRestoreSearchFocusRef.current = true;
-    }
+    submittedSearchRef.current = "";
     updateQueryState({ ...DEFAULT_QUERY_STATE });
-    if (!willRemountSearch) {
-      queueMicrotask(() => searchInputRef.current?.focus());
-    }
+    searchInputRef.current?.focus();
   }
 
   const stageGroups = useMemo(() => {
@@ -115,17 +121,19 @@ export function SessionsCommandBar({
   }, [stageFacets]);
 
   const stageValueLabel = useMemo(() => {
-    if (!queryState.stageSlug) return "All stages";
-    return stageGroups.order.find((stage) => stage.slug === queryState.stageSlug)?.name ?? "Stage";
-  }, [queryState.stageSlug, stageGroups.order]);
+    if (!optimisticQuery.stageSlug) return "All stages";
+    return (
+      stageGroups.order.find((stage) => stage.slug === optimisticQuery.stageSlug)?.name ?? "Stage"
+    );
+  }, [optimisticQuery.stageSlug, stageGroups.order]);
 
   const sortValueLabel =
-    SESSION_LIST_SORT_OPTIONS.find((option) => option.key === queryState.sort)?.label ??
+    SESSION_LIST_SORT_OPTIONS.find((option) => option.key === optimisticQuery.sort)?.label ??
     "Recently updated";
 
   return (
     <div className="mb-6 border-y border-border py-2.5">
-      <div className="flex flex-wrap items-center gap-2 lg:gap-2.5">
+      <div aria-busy={isPending} className="flex flex-wrap items-center gap-2 lg:gap-2.5">
         <form
           onSubmit={handleSearchSubmit}
           className="flex w-full shrink-0 items-center gap-1.5 sm:max-w-[300px] lg:w-[300px]"
@@ -134,7 +142,6 @@ export function SessionsCommandBar({
           <div className="relative flex-1">
             <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
             <input
-              key={queryState.query}
               ref={searchInputRef}
               id="sessions-search"
               type="search"
@@ -155,7 +162,7 @@ export function SessionsCommandBar({
           className="inline-flex shrink-0 items-center gap-0 rounded-[6px] border border-border bg-sheet p-0.5"
         >
           {STATUS_CHIPS.map((chip) => {
-            const isSelected = queryState.scope === chip.key;
+            const isSelected = optimisticQuery.scope === chip.key;
             return (
               <button
                 aria-pressed={isSelected}
@@ -177,7 +184,7 @@ export function SessionsCommandBar({
 
         <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:gap-2.5">
           <Select
-            value={queryState.stageSlug ?? "__all__"}
+            value={optimisticQuery.stageSlug ?? "__all__"}
             onValueChange={(nextValue) =>
               updateQueryState({
                 stageSlug: nextValue === "__all__" ? null : nextValue,
@@ -207,7 +214,7 @@ export function SessionsCommandBar({
           </Select>
 
           <Select
-            value={queryState.sort}
+            value={optimisticQuery.sort}
             onValueChange={(nextValue) =>
               updateQueryState({ sort: nextValue as SessionListSortKey })
             }
@@ -238,6 +245,9 @@ export function SessionsCommandBar({
             </button>
           ) : null}
         </div>
+      </div>
+      <div role="status" aria-live="polite" className="mt-2 min-h-4 text-xs text-muted">
+        {isPending ? "Updating sessions…" : null}
       </div>
     </div>
   );
