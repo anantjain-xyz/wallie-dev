@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("LandingPage accessibility", () => {
-  it("has no detectable axe violations and exposes only real links as controls", async () => {
+  it("has no detectable axe violations and exposes two distinct illustrations", async () => {
     const { container } = render(<LandingPage />);
     const results = await axe.run(container, {
       rules: { "color-contrast": { enabled: false } },
@@ -20,6 +20,9 @@ describe("LandingPage accessibility", () => {
 
     expect(results.violations).toEqual([]);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getAllByRole("figure")).toHaveLength(2);
+    expect(screen.getByRole("figure", { name: "Choose your coding agent" })).toBeInTheDocument();
+    expect(screen.getByRole("figure", { name: "Design your workflow" })).toBeInTheDocument();
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "Turn a task into a pull request you can trust",

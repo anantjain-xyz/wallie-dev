@@ -1,8 +1,10 @@
 import Link from "next/link";
 
-import { StackWorkflowMockup } from "@/components/landing/product-mockups";
+import { LandingIllustrations } from "@/components/landing/product-mockups";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
 import { WallieMark } from "@/components/shared/wallie-mark";
+
+import styles from "./landing.module.css";
 
 const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
 const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";
@@ -11,7 +13,10 @@ const licenseUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/LICENS
 
 export function LandingPage() {
   return (
-    <main id="main-content" className="flex min-h-[100svh] flex-col bg-canvas text-foreground">
+    <main
+      id="main-content"
+      className={`${styles.page} flex min-h-[100svh] flex-col bg-canvas text-foreground`}
+    >
       <header className="pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-4 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
           <Link
@@ -38,8 +43,9 @@ export function LandingPage() {
         aria-labelledby="landing-title"
         className="flex flex-1 items-center px-5 py-10 sm:px-8 lg:px-10"
       >
-        <div className="mx-auto grid w-full max-w-[1120px] gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-16">
+        <div className="mx-auto grid w-full max-w-[1120px] gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
           <div>
+            <p className={styles.eyebrow}>YOUR AGENT. YOUR PROCESS.</p>
             <h1
               id="landing-title"
               className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground sm:text-[48px] lg:text-[54px]"
@@ -53,9 +59,12 @@ export function LandingPage() {
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/login"
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+                className={`${styles.primaryCta} ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas`}
               >
                 Get started
+                <span className={styles.ctaArrow} aria-hidden="true">
+                  →
+                </span>
               </Link>
               <a
                 href={selfHostingUrl}
@@ -68,12 +77,9 @@ export function LandingPage() {
               Connect a GitHub repository, a sandbox provider, and your agent credentials to run
               your first task. Linear is optional.
             </p>
-            <p className="mt-6 text-xs leading-5 text-muted">
-              Works with Codex, Claude Code, Cursor, and OpenCode.
-            </p>
           </div>
 
-          <StackWorkflowMockup />
+          <LandingIllustrations />
         </div>
       </section>
 

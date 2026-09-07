@@ -1,57 +1,85 @@
-const steps = [
-  { name: "Plan", detail: "Review the approach before code changes." },
-  { name: "Build", detail: "Your agent implements and validates the change." },
-];
+import {
+  AgentProviderLogo,
+  AGENT_PROVIDER_LABELS,
+} from "@/components/shared/agent-provider-options";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
 
-export function StackWorkflowMockup() {
+import { AnimatedFigure } from "./animated-figure";
+import { AnimatedProviderRow } from "./animated-provider-row";
+import { SandboxProviderLogo } from "./sandbox-provider-logo";
+import styles from "./landing.module.css";
+
+const agents = ["codex", "claude-code", "cursor", "opencode"] as const;
+const sandboxes = [
+  { id: "vercel", label: "Vercel" },
+  { id: "e2b", label: "E2B" },
+  { id: "daytona", label: "Daytona" },
+] as const;
+
+export function LandingIllustrations() {
   return (
-    <figure className="overflow-hidden rounded-[10px] border border-border/70 bg-sheet shadow-[var(--shadow-elevated)]">
-      <figcaption className="flex items-center justify-between gap-3 border-b border-border/50 px-5 py-4">
-        <span className="text-[13px] font-semibold text-foreground">From task to pull request</span>
-        <span className="rounded-full bg-control-hover px-2 py-1 type-annotation text-muted">
-          Example workflow
-        </span>
-      </figcaption>
-      <div className="p-5 sm:p-6">
-        <div className="rounded-[6px] border border-border/60 bg-canvas p-4">
-          <p className="type-annotation font-medium uppercase tracking-[0.1em] text-muted">
-            Your task
-          </p>
-          <p className="mt-2 text-[16px] font-medium leading-6 text-foreground">
-            Add dark mode and remember my preference
-          </p>
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Start with a prompt. Attach a Linear issue if you have one.
-          </p>
-        </div>
-        <ol className="my-5 space-y-5">
-          {steps.map((step, index) => (
-            <li key={step.name} className="flex gap-3">
-              <span
-                aria-hidden="true"
-                className="flex size-7 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10 text-xs font-semibold text-accent"
-              >
-                {index + 1}
+    <div className={styles.illustrations}>
+      <AnimatedFigure caption="Choose your coding agent">
+        <AnimatedProviderRow
+          className={styles.agents}
+          label="Supported coding agents"
+          intervalMs={1500}
+          choices={agents.map((provider) => ({
+            id: provider,
+            label: AGENT_PROVIDER_LABELS[provider],
+            logo: <AgentProviderLogo provider={provider} className="size-6" />,
+          }))}
+        />
+        <p className={`${styles.figureTitle} ${styles.sandboxTitle}`}>Choose your sandbox</p>
+        <AnimatedProviderRow
+          className={styles.sandboxes}
+          label="Supported sandbox providers"
+          intervalMs={2000}
+          choices={sandboxes.map(({ id, label }) => ({
+            id,
+            label,
+            logo: <SandboxProviderLogo brand={id} />,
+          }))}
+        />
+      </AnimatedFigure>
+
+      <AnimatedFigure caption="Design your workflow" className={styles.workflow}>
+        <ol className={styles.stages}>
+          <li className={styles.stage}>
+            <span className={styles.stageNode} aria-hidden="true">
+              <CheckIcon className="size-4" />
+            </span>
+            <span className={styles.stageName}>Plan</span>
+          </li>
+          <li className={`${styles.stage} ${styles.reviewStage}`}>
+            <span className={styles.stageNode} aria-hidden="true">
+              <span className={styles.reviewDot} />
+              <span className={styles.reviewCheck}>
+                <CheckIcon className="size-4" />
               </span>
-              <div>
-                <p className="text-[13px] font-semibold leading-7 text-foreground">{step.name}</p>
-                <p className="text-xs leading-5 text-muted">{step.detail}</p>
-              </div>
-            </li>
-          ))}
+            </span>
+            <span className={styles.stageName}>Your review</span>
+          </li>
+          <li className={`${styles.stage} ${styles.buildStage}`}>
+            <span className={styles.stageNode} aria-hidden="true">
+              <span className={styles.buildIdle}>↗</span>
+              <span className={styles.buildSpinner} />
+              <span className={styles.buildCheck}>
+                <CheckIcon className="size-4" />
+              </span>
+            </span>
+            <span className={styles.stageName}>Build</span>
+          </li>
         </ol>
-        <div className="rounded-[6px] border border-border/60 bg-control-hover px-4 py-3">
-          <p className="text-[13px] font-semibold text-foreground">
-            A pull request, ready for review
-          </p>
-          <p className="mt-1 text-xs leading-5 text-muted">
-            Inspect the changes in GitHub and merge when you&apos;re ready.
-          </p>
+        <div className={styles.workflowStatus} aria-hidden="true">
+          <span className={styles.reviewStatus}>Waiting for your review</span>
+          <span className={styles.buildStatus}>Your agent is building</span>
+          <span className={styles.readyStatus}>Ready for your review</span>
         </div>
-        <p className="mt-4 type-annotation leading-5 text-muted">
-          Start with Plan → Build. Customize stages and reviewers to fit your team.
+        <p className="sr-only">
+          Example workflow: plan, wait for your approval, build, then review the result.
         </p>
-      </div>
-    </figure>
+      </AnimatedFigure>
+    </div>
   );
 }
