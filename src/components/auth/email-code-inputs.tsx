@@ -109,8 +109,8 @@ export function EmailCodeInputs() {
   }
 
   return (
-    <fieldset className="email-code-grid grid gap-1" aria-label="Six-digit verification code">
-      <legend className="ui-label col-span-full mb-1 text-foreground">Verification code</legend>
+    <fieldset className="email-code-grid grid gap-2" aria-label="Six-digit verification code">
+      <legend className="ui-label col-span-full mb-3 text-foreground">Verification code</legend>
       {Array.from({ length: CODE_LENGTH }, (_, index) => (
         <input
           key={index}
@@ -125,7 +125,7 @@ export function EmailCodeInputs() {
           pattern="[0-9]*"
           maxLength={1}
           aria-label={`Digit ${index + 1} of ${CODE_LENGTH}`}
-          className="ui-input h-11 min-w-11 px-0 text-center font-mono text-[22px] leading-none"
+          className="ui-input h-14 min-w-11 bg-control-hover/50 px-0 text-center font-mono text-[22px] leading-none dark:border-border/75 dark:focus-visible:border-accent"
           onChange={(event) => {
             const value = event.currentTarget.value;
 
