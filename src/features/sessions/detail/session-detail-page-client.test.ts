@@ -16,7 +16,7 @@ import {
 } from "./session-activity-presentation";
 
 import type { ToastInput } from "@/components/ui/toast";
-import { PortalRootProvider } from "@/components/ui/portal-root";
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
@@ -33,6 +33,7 @@ const mocked = vi.hoisted(() => {
 });
 
 vi.mock("@/components/ui/toast", () => ({
+  ToastProvider: ({ children }: { children: ReactNode }) => children,
   useOptionalToast: () => ({ pushToast: mocked.pushToast }),
 }));
 
@@ -243,7 +244,7 @@ describe("SessionDetailPageClient", () => {
         initialFormattedArtifact: createElement("p", null, "Review this"),
         initialFormattedArtifactKey: `${data.session.id}:product:1`,
       }),
-      { wrapper: PortalRootProvider },
+      { wrapper: OverlayProvider },
     );
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Feedback for Wallie" }), {
@@ -499,8 +500,22 @@ describe("SessionDetailPageClient", () => {
       headerMatch?.[2]?.indexOf("<h1") ?? 0,
     );
     expect(headerMatch?.[2]).toContain(data.session.title);
-    expect(headerMatch?.[2]).toContain("Archive");
+    expect(headerMatch?.[2]).toContain('aria-label="Archive"');
     expect(headerMatch?.[2]).not.toMatch(/line-clamp|overflow-hidden|truncate/);
+  });
+
+  it("renders the header Archive control as a compact icon button", () => {
+    const html = renderDetail();
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const archive = document.querySelector('header button[aria-label="Archive"]');
+
+    expect(archive).not.toBeNull();
+    expect(archive?.className.split(/\s+/)).toContain("ui-icon-button");
+    expect(archive?.className.split(/\s+/)).not.toContain("ui-button");
+    expect(archive?.textContent?.trim()).toBe("");
+    expect(archive?.querySelector("[data-action-label]")).toBeNull();
+    expect(archive?.innerHTML).not.toContain(">Archive<");
+    expect(html).not.toContain('idle="Archive"');
   });
 
   it("folds the session number into the breadcrumb instead of an orphaned row", () => {
@@ -626,7 +641,12 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("Product artifact");
     expect(html).not.toContain("Waiting for this stage’s artifact");
     expect(html).toContain("Stop run");
-    expect(html.indexOf("Stop run")).toBeGreaterThan(html.indexOf("Archive"));
+    expect(html).toContain("ui-button text-danger");
+    expect(html.indexOf("Stop run")).toBeGreaterThan(html.indexOf('aria-label="Archive"'));
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const archive = document.querySelector('header button[aria-label="Archive"]');
+    expect(archive?.className.split(/\s+/)).toContain("ui-icon-button");
+    expect(archive?.textContent?.trim()).toBe("");
     expect(html).not.toContain("Wallie is generating this stage’s artifact.");
     expect(html).not.toContain("sticky bottom-0");
     expect(html).not.toContain("Request changes");
@@ -648,10 +668,18 @@ describe("SessionDetailPageClient", () => {
     const data = makeSessionDetailData();
     data.session.archivedAt = "2026-07-01T00:00:00.000Z";
     const html = renderDetail({ data });
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const unarchive = [...document.querySelectorAll("header button")].find((button) =>
+      button.textContent?.includes("Unarchive"),
+    );
     expect(html).toContain("This session is archived.");
     expect(html).toContain('data-status="archived"');
     expect(html).toContain(">Archived</span>");
     expect(html).not.toContain("Request changes");
+    expect(unarchive).toBeDefined();
+    expect(unarchive?.className.split(/\s+/)).toContain("ui-button");
+    expect(unarchive?.textContent).toContain("Unarchive");
+    expect(document.querySelector('header button[aria-label="Archive"]')).toBeNull();
   });
 
   it("keeps Request changes when the viewer cannot approve", () => {
