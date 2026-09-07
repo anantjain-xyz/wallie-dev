@@ -79,7 +79,11 @@
   --control-muted: var(--neutral-100);
   --text-primary: var(--neutral-900);
   --text-secondary: var(--neutral-600);
-  --border: var(--neutral-500);
+  /* Decorative framing stays quiet; fields use a separate identifiable edge. */
+  --border: #e2e5ea;
+  --border-strong: #c4cad3;
+  --border-control: #8a9099;
+  --border-control-hover: var(--neutral-500);
   --primary: var(--indigo-600);
   --primary-foreground: var(--neutral-0);
   --primary-soft: var(--indigo-50);
@@ -93,7 +97,6 @@
   --content-radius: 6px;
   --overlay-radius: 10px;
   --foreground: var(--text-primary);
-  --border-strong: var(--text-secondary);
   --muted: var(--text-secondary);
   --accent: var(--primary);
   --accent-foreground: var(--primary-foreground);
@@ -138,7 +141,10 @@
   --control-muted: var(--neutral-750);
   --text-primary: var(--neutral-50);
   --text-secondary: var(--neutral-300);
-  --border: var(--neutral-500);
+  --border: var(--neutral-750);
+  --border-strong: #4a515e;
+  --border-control: #707784;
+  --border-control-hover: #7b8390;
   --primary: var(--indigo-300);
   --primary-foreground: var(--neutral-950);
   --primary-soft: #2b2b50;
@@ -150,7 +156,6 @@
   --success-soft: #1c392d;
 
   --foreground: var(--text-primary);
-  --border-strong: var(--text-secondary);
   --muted: var(--text-secondary);
   --accent: var(--primary);
   --accent-foreground: var(--primary-foreground);
@@ -178,6 +183,8 @@
   --color-foreground: var(--foreground);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
+  --color-border-control: var(--border-control);
+  --color-border-control-hover: var(--border-control-hover);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
@@ -513,7 +520,7 @@
   .ui-input,
   .ui-select,
   .ui-textarea {
-    @apply border-border w-full rounded-[6px] border bg-sheet px-3 py-2.5 text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150;
+    @apply border-border-control w-full rounded-[6px] border bg-sheet px-3 py-2.5 text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150;
   }
 
   .ui-textarea {
@@ -703,15 +710,16 @@
   }
 
   .ui-select-trigger {
-    @apply flex min-h-10 items-center justify-between gap-3 rounded-[6px] border border-border bg-sheet px-3 py-2.5 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 disabled:cursor-not-allowed disabled:opacity-60;
+    @apply flex min-h-10 items-center justify-between gap-3 rounded-[6px] border border-border-control bg-sheet px-3 py-2.5 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .ui-select-trigger:hover {
-    @apply border-border-strong bg-control-hover;
+    @apply border-border-control-hover bg-control-hover;
   }
 
   .ui-select-trigger:active:not(:disabled) {
     background: var(--control-muted);
+    border-color: var(--border-control-hover);
   }
 
   .ui-select-trigger:focus-visible {
@@ -1031,7 +1039,7 @@
   }
 
   .sidebar-input {
-    @apply rounded-[5px] border border-border bg-sheet px-2 py-1 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] duration-150;
+    @apply rounded-[5px] border border-border-control bg-sheet px-2 py-1 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] duration-150;
   }
 
   .sidebar-input::placeholder {
@@ -1068,7 +1076,7 @@
   }
 
   .issue-textarea:focus {
-    @apply border-border bg-sheet px-3 py-2;
+    @apply border-border-control bg-sheet px-3 py-2;
   }
 }
 

@@ -196,7 +196,7 @@ export default function RepositoryAnalysisStep({
             </div>
 
             {showActionRow ? (
-              <div className="flex flex-wrap items-center justify-start gap-2 border-t border-border pt-3 sm:justify-end">
+              <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
                 {showSetupControls ? (
                   <RepositorySetupControls
                     canManage={data.canManage && !isSaving}
@@ -246,9 +246,7 @@ export default function RepositoryAnalysisStep({
                 profile={profileDraft}
               />
             ) : selected && profileAnalyzing ? (
-              <div className="rounded-[6px] border border-border bg-sheet px-3 py-2 text-[13px] text-muted">
-                Analyzing repository…
-              </div>
+              <div className="py-2 text-[13px] text-muted">Analyzing repository…</div>
             ) : null}
           </li>
         );

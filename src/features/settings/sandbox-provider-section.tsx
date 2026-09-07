@@ -315,7 +315,7 @@ export function SandboxProviderSection({
                       className={`block h-full rounded-[6px] border p-4 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${
                         selectedProvider === provider.id
                           ? "border-accent bg-accent-soft"
-                          : "border-border bg-sheet hover:border-muted"
+                          : "border-border bg-sheet hover:border-border-strong"
                       }`}
                     >
                       <span className="flex items-center justify-between gap-2">
@@ -440,7 +440,7 @@ function SavedConnectionSummary({
   if (!connection) return null;
 
   return (
-    <div className="space-y-3 rounded-[6px] border border-border bg-sheet p-4">
+    <div className="space-y-3">
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
         <div className="min-w-0 space-y-1">
           <h3 className="text-[13px] font-semibold text-foreground">
@@ -607,7 +607,7 @@ function ProviderDisconnectGuidance({ visible }: { visible: boolean }) {
 
 function ProviderForm({ children, title }: { children: ReactNode; title: string }) {
   return (
-    <div className="space-y-3 rounded-[6px] border border-border bg-sheet p-4">
+    <div className="space-y-3">
       <h3 className="text-[13px] font-semibold text-foreground">Connect {title}</h3>
       {children}
     </div>

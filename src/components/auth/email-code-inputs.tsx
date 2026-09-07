@@ -125,7 +125,7 @@ export function EmailCodeInputs() {
           pattern="[0-9]*"
           maxLength={1}
           aria-label={`Digit ${index + 1} of ${CODE_LENGTH}`}
-          className="ui-input h-14 min-w-11 bg-control-hover/50 px-0 text-center font-mono text-[22px] leading-none dark:border-border/75 dark:focus-visible:border-accent"
+          className="ui-input h-14 min-w-11 bg-control-hover/50 px-0 text-center font-mono text-[22px] leading-none"
           onChange={(event) => {
             const value = event.currentTarget.value;
 

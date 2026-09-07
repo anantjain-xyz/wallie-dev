@@ -860,9 +860,7 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain(">Analyze repository</button>");
-    expect(html).toContain(
-      'border-t border-border pt-3 sm:justify-end"><button class="ui-button-primary"',
-    );
+    expect(html).toContain('gap-2 sm:justify-end"><button class="ui-button-primary"');
     expect(html).not.toContain("Install skills");
     expect(html).not.toContain("Mark skills as installed");
   });
