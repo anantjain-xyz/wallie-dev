@@ -18,6 +18,21 @@ export function sessionListPreferencesStorageKey(workspaceSlug: string): string 
   return `wallie-sessions-list-filters:v1:${workspaceSlug}`;
 }
 
+export function sessionListPreferencesCookieName(workspaceSlug: string): string {
+  return `wallie-sessions-list-filters-v1-${encodeURIComponent(workspaceSlug)}`;
+}
+
+export function parseSessionListPreferencesCookie(
+  value: string | undefined,
+): SessionListFilterPreferences | null {
+  if (!value) return null;
+  try {
+    return parseStoredPreferences(JSON.parse(decodeURIComponent(value)));
+  } catch {
+    return null;
+  }
+}
+
 function parseStoredPreferences(value: unknown): SessionListFilterPreferences | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -49,6 +64,12 @@ export function readSessionListPreferences(
   }
 
   try {
+    const prefix = `${sessionListPreferencesCookieName(workspaceSlug)}=`;
+    const cookie = document.cookie.split("; ").find((entry) => entry.startsWith(prefix));
+    const preferences = parseSessionListPreferencesCookie(cookie?.slice(prefix.length));
+    if (preferences) return preferences;
+
+    // Read the old browser-only format solely for migration, never navigation.
     const raw = window.localStorage.getItem(sessionListPreferencesStorageKey(workspaceSlug));
     if (!raw) {
       return null;
@@ -68,16 +89,16 @@ export function writeSessionListPreferences(
   }
 
   try {
-    window.localStorage.setItem(
-      sessionListPreferencesStorageKey(workspaceSlug),
+    const value = encodeURIComponent(
       JSON.stringify({
         scope: preferences.scope,
         sort: preferences.sort,
         stageSlug: preferences.stageSlug,
       } satisfies SessionListFilterPreferences),
     );
+    document.cookie = `${sessionListPreferencesCookieName(workspaceSlug)}=${value}; Path=/w/${encodeURIComponent(workspaceSlug)}; Max-Age=31536000; SameSite=Lax${window.location.protocol === "https:" ? "; Secure" : ""}`;
   } catch {
-    // Match theme persistence: blocked or quota-exceeded storage is a no-op.
+    // Blocked browser storage must not prevent filter navigation.
   }
 }
 
