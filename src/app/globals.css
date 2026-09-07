@@ -631,13 +631,6 @@
     animation: wallie-dialog-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
   }
 
-  .ui-overlay-backdrop[data-state="closed"],
-  .ui-dialog-content[data-state="closed"],
-  .ui-menu-content[data-state="closed"],
-  .ui-tooltip-content[data-state="closed"] {
-    animation: wallie-overlay-fade-out 100ms ease-out forwards;
-  }
-
   .ui-dialog-content:focus {
     outline: none;
   }
@@ -1426,15 +1419,6 @@
   from {
     opacity: 0;
     transform: translateY(8px);
-  }
-}
-
-@keyframes wallie-overlay-fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
   }
 }
 

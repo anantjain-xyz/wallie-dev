@@ -1,6 +1,14 @@
 "use client";
 
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { useChangeMotion } from "@/components/ui/use-change-motion";
@@ -889,6 +897,17 @@ function ArtifactPanelStage({
     : selectedBody?.version === viewingVersion
       ? selectedBody
       : cachedSelectedBody;
+  const bodyHasContent =
+    visibleBody &&
+    (activeTab === "raw" ||
+      typeof visibleBody.payload !== "string" ||
+      typeof visibleBody.sanitizedHtml === "string" ||
+      (artifactBodyCacheKey(sessionId, visibleBody.stageSlug, visibleBody.version) ===
+        initialFormattedArtifactKey &&
+        initialFormattedArtifact !== null));
+  const bodyMotionRef = useChangeMotion<HTMLDivElement>(
+    `${sessionId}:${visibleBody?.stageSlug ?? stageSlug}:${activeTab}:${bodyHasContent ? visibleBody.version : "loading"}`,
+  );
   const bodyLoading = viewingIsLatest ? latestLoading : selectedBodyLoading;
   const bodyError = viewingIsLatest ? latestError : selectedBodyError;
   const retryBody = () => {
@@ -1011,6 +1030,7 @@ function ArtifactPanelStage({
           {bodyLoading && !visibleBody ? <ProgressHint text="Loading the artifact." /> : null}
           {visibleBody ? (
             <ArtifactBodyView
+              motionRef={bodyHasContent ? bodyMotionRef : undefined}
               artifact={visibleBody}
               displayMode={activeTab}
               initialFormattedArtifact={initialFormattedArtifact}
@@ -1078,6 +1098,7 @@ function TabButton({ active, controls, label, onClick, onKeyDown, ref, tabId }: 
 }
 
 function ArtifactBodyView({
+  motionRef,
   artifact,
   displayMode,
   initialFormattedArtifact,
@@ -1087,6 +1108,7 @@ function ArtifactBodyView({
   sessionId,
   showLatestBadge,
 }: {
+  motionRef?: RefObject<HTMLDivElement | null>;
   artifact: CachedArtifactBody;
   displayMode: "rendered" | "raw";
   initialFormattedArtifact: ReactNode | null;
@@ -1105,7 +1127,6 @@ function ArtifactBodyView({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(false);
-  const motionRef = useChangeMotion<HTMLDivElement>(`${key}:${displayMode}`);
   useEffect(() => {
     mounted.current = true;
     return () => {

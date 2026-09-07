@@ -148,3 +148,62 @@ test("a failed archive restores its row with feedback and an entrance", async ({
     release();
   }
 });
+
+test("historical selection animates the loaded artifact across Versions unmounts", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const responseGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/sessions/preview/artifacts?*", async (route) => {
+    const version = new URL(route.request().url()).searchParams.get("version");
+    if (version) {
+      await responseGate;
+      await route.fulfill({
+        json: {
+          artifact: {
+            createdAt: "2026-09-06T12:00:00Z",
+            stageSlug: "build",
+            version: 1,
+            payload: "# Historical artifact",
+            sanitizedHtml: "<h2>Historical artifact</h2>",
+          },
+        },
+      });
+    } else {
+      await route.fulfill({
+        json: {
+          artifacts: [2, 1].map((value) => ({
+            attempt: value,
+            authorLabel: "Codex",
+            changesRequested: false,
+            createdAt: "2026-09-06T12:00:00Z",
+            stageSlug: "build",
+            version: value,
+          })),
+        },
+      });
+    }
+  });
+  try {
+    await page.getByRole("button", { name: "New artifact version" }).click();
+    await expect.poll(() => page.evaluate(() => window.interactionAnimations)).toBe(1);
+    await page.getByRole("tab", { name: "Versions", exact: true }).click();
+    await page.getByRole("button", { name: /Version 1/ }).click();
+    await expect(page.getByRole("tab", { name: "Rendered", exact: true })).toBeFocused();
+    expect(await page.evaluate(() => window.interactionAnimations)).toBe(1);
+    release();
+    await expect(page.getByRole("heading", { name: "Historical artifact" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.interactionAnimations)).toBe(2);
+    await page.getByRole("tab", { name: "Versions", exact: true }).click();
+    await page.getByRole("button", { name: /Version 2/ }).click();
+    await expect.poll(() => page.evaluate(() => window.interactionAnimations)).toBe(3);
+    await page.getByRole("tab", { name: "Versions", exact: true }).click();
+    await page.getByRole("button", { name: /Version 1/ }).click();
+    await expect(page.getByRole("heading", { name: "Historical artifact" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.interactionAnimations)).toBe(4);
+  } finally {
+    release();
+  }
+});
