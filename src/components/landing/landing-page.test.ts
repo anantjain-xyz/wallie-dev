@@ -15,13 +15,16 @@ describe("LandingPage", () => {
     expect(html).toContain("Linear is optional");
   });
 
-  it("presents an accessible example without fake interactive controls", () => {
+  it("separates provider choices from the workflow without demo controls", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain("Example workflow");
+    expect(html.match(/<figure(?:\s|>)/g)).toHaveLength(2);
+    expect(html).toContain("Choose your coding agent");
+    expect(html).toContain("Choose your sandbox");
+    expect(html).toContain("Design your workflow");
     expect(html).toContain("<ol");
-    expect(html).toContain("Review the approach before code changes");
-    expect(html).toContain("merge when you");
+    expect(html).toContain("wait for your approval");
+    expect(html).not.toContain("Add dark mode");
     expect(html).not.toMatch(/<(button|input|select|textarea)(?:\s|>)/);
   });
 });
