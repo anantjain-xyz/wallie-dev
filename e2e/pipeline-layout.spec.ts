@@ -61,7 +61,8 @@ for (const viewport of [
       expect(loaded.boardOverflow).toBe("visible");
       expect(loaded.visibleLanes).toBe(1);
       expect(loaded.horizontalOverflow).toBeLessThanOrEqual(1);
-      expect(loaded.firstCardTop).toBeLessThan(viewport.height - 100);
+      // Keep the first card title/status visible even with the two-row shell in landscape.
+      expect(loaded.firstCardTop).toBeLessThan(viewport.height - 64);
       expect(Math.abs(loaded.firstCardTop - loading.firstCardTop)).toBeLessThan(12);
 
       await page.getByRole("tab", { name: /Build/ }).click();
@@ -125,4 +126,44 @@ test("account menu sits below the header with a visible gap on a 1280px desktop"
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/dev/pipeline-layout");
   expect(await accountMenuHeaderGap(page)).toBeGreaterThanOrEqual(6);
+});
+
+test("mobile scroll targets clear both header rows", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/dev/pipeline-layout");
+  const gap = await page.evaluate(() => {
+    const target = document.querySelectorAll<HTMLElement>("article h3")[3];
+    target.scrollIntoView({ block: "start", behavior: "instant" });
+    const header = document.querySelector<HTMLElement>("[data-shell-header]")!;
+    return target.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+  });
+  expect(gap).toBeGreaterThanOrEqual(-1);
+});
+
+test("mobile navigation can scroll enlarged labels into view", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/dev/pipeline-layout");
+  const nav = page
+    .getByRole("navigation", { name: "Workspace navigation" })
+    .filter({ visible: true });
+  await nav.locator("a").evaluateAll((links) => {
+    links.forEach((link) => {
+      (link as HTMLElement).style.fontSize = "26px";
+    });
+  });
+  const settings = nav.getByRole("link", { name: "Settings" });
+  await settings.evaluate((link) => link.scrollIntoView({ inline: "end", block: "nearest" }));
+  await expect(settings).toBeInViewport({ ratio: 1 });
+  expect(await nav.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+});
+
+test("short desktop pipelines fill the space below the desktop header", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 480 });
+  for (const path of ["/dev/pipeline-layout?loading=1", "/dev/pipeline-layout"]) {
+    await page.goto(path);
+    const minHeight = await page
+      .locator("main > div")
+      .evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
+    expect(minHeight).toBe(432);
+  }
 });

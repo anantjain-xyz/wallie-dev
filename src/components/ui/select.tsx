@@ -519,7 +519,21 @@ export function SelectContent({
 
   useLayoutEffect(() => {
     if (!open || highlightedValue == null) return;
-    document.getElementById(optionId(highlightedValue))?.focus();
+    const option = document.getElementById(optionId(highlightedValue));
+    const listbox = listboxRef.current;
+    // The portal is initially unpositioned until the placement update commits.
+    // Native focus scrolling here can jump the whole page to the portal root.
+    option?.focus({ preventScroll: true });
+    if (option && listbox) {
+      const top =
+        option.getBoundingClientRect().top -
+        listbox.getBoundingClientRect().top +
+        listbox.scrollTop;
+      const bottom = top + option.offsetHeight;
+      if (top < listbox.scrollTop) listbox.scrollTop = top;
+      else if (bottom > listbox.scrollTop + listbox.clientHeight)
+        listbox.scrollTop = bottom - listbox.clientHeight;
+    }
   }, [highlightedValue, open, optionId]);
 
   if (!open || !container) return null;

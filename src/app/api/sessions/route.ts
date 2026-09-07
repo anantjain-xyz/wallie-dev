@@ -8,12 +8,14 @@ import type { WallieSessionRepository } from "@/features/wallie/types";
 import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { generateSessionTitle } from "@/lib/sessions/generate-title";
+import { fingerprintSessionCreation } from "@/lib/sessions/creation-request";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import {
   assertSessionFirstRunReady,
   assertSessionSandboxCapabilityReady,
   createSessionWithFirstJob,
+  findSessionCreationRequest,
   loadSessionFirstRunPrerequisites,
 } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -219,6 +221,31 @@ export async function POST(request: Request) {
   }
 
   const admin = createSupabaseAdminClient();
+  const creationRequest = normalized.requestId
+    ? { id: normalized.requestId, fingerprint: fingerprintSessionCreation(parsed.data) }
+    : undefined;
+  if (creationRequest) {
+    try {
+      const existing = await findSessionCreationRequest({
+        admin,
+        creationRequest,
+        creatorMemberId: access.context.currentMember.id,
+        workspaceId: normalized.workspaceId,
+      });
+      if (existing) {
+        return NextResponse.json(
+          {
+            canonicalUrl: workspaceSessionDetailPath(existing.workspaceSlug, existing.number),
+            number: existing.number,
+            processScheduled: Boolean(existing.jobId),
+          },
+          { status: 201 },
+        );
+      }
+    } catch (error) {
+      return creationRequestErrorResponse(error);
+    }
+  }
   const [onboardingResult, firstRunPrereqsResult, linearIssueResult] = await Promise.all([
     access.context.supabase
       .from("workspace_onboarding")
@@ -339,6 +366,7 @@ export async function POST(request: Request) {
     const result = await createSessionWithFirstJob({
       admin,
       attachmentIds: normalized.attachmentIds,
+      ...(creationRequest ? { creationRequest } : {}),
       creatorMemberId: access.context.currentMember.id,
       githubRepositoryId,
       linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
@@ -360,6 +388,7 @@ export async function POST(request: Request) {
       { status: 201 },
     );
   } catch (error) {
+    if (getErrorCode(error) === "P0005") return creationRequestErrorResponse(error);
     if (getErrorCode(error) === "P0002") {
       return NextResponse.json(
         { error: getErrorMessage(error, "Workspace pipeline is not configured.") },
@@ -401,4 +430,23 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response.body, { status: response.status });
   }
+}
+
+function creationRequestErrorResponse(error: unknown) {
+  if (getErrorCode(error) === "P0005") {
+    return NextResponse.json(
+      {
+        code: "session_request_conflict",
+        error:
+          "This request already created a session with different input. Retry the original request to recover it.",
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: getErrorMessage(error, "Wallie could not check this creation request. Try again."),
+    },
+    { status: 500 },
+  );
 }

@@ -17,16 +17,14 @@ import { ProfileAvatar } from "@/features/settings/profile-avatar";
 type AccountMenuProps = {
   avatarUrl?: string | null;
   email: string | null;
+  mobileHeader?: boolean;
 };
 
-/**
- * Shared dropdowns sit 6px from their trigger. The account trigger is shorter
- * than the sticky header, so that default lands the menu on (or over) the
- * header divider. 20px clears the 48–56px chrome and leaves a visible gap.
- */
+/** Leave a visible gap below the header, including the mobile navigation row. */
 export const ACCOUNT_MENU_SIDE_OFFSET = 20;
+export const ACCOUNT_MENU_MOBILE_SIDE_OFFSET = ACCOUNT_MENU_SIDE_OFFSET + 52;
 
-export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
+export function AccountMenu({ avatarUrl = null, email, mobileHeader = false }: AccountMenuProps) {
   const signOutFormRef = useRef<HTMLFormElement>(null);
   const triggerLabel = email ? `Account: ${email}` : "Account";
 
@@ -43,7 +41,7 @@ export function AccountMenu({ avatarUrl = null, email }: AccountMenuProps) {
         align="end"
         className="min-w-56"
         label="Account"
-        sideOffset={ACCOUNT_MENU_SIDE_OFFSET}
+        sideOffset={mobileHeader ? ACCOUNT_MENU_MOBILE_SIDE_OFFSET : ACCOUNT_MENU_SIDE_OFFSET}
       >
         <DropdownMenuLabel className="normal-case tracking-normal">
           <span className="block type-annotation font-medium uppercase tracking-wide text-muted">

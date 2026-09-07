@@ -571,9 +571,9 @@ function PipelinePageContent({
   }
 
   return (
-    <div className={pipelineLayout.page}>
-      <div className={pipelineLayout.controlsArea}>
-        <div className="sr-only pipeline-wide:not-sr-only">
+    <div className={hasActiveSessions ? pipelineLayout.page : pipelineLayout.emptyPage}>
+      <div className={hasActiveSessions ? pipelineLayout.controlsArea : undefined}>
+        <div className={hasActiveSessions ? "sr-only pipeline-wide:not-sr-only" : undefined}>
           <PageHeader
             description="Sessions move through these stages in order, gated by approval at each step."
             title="Pipeline"
@@ -642,15 +642,13 @@ function PipelinePageContent({
       </div>
 
       {!hasActiveSessions ? (
-        <div className="px-4 pb-12 sm:px-8">
-          <div className="mx-auto max-w-2xl">
-            <SessionsZeroState
-              onboarding={initialData.onboarding}
-              variant={hasEverHadSession ? "archived" : "first-run"}
-              workspaceSlug={initialData.workspace.slug}
-              newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
-            />
-          </div>
+        <div>
+          <SessionsZeroState
+            onboarding={initialData.onboarding}
+            variant={hasEverHadSession ? "archived" : "first-run"}
+            workspaceSlug={initialData.workspace.slug}
+            newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
+          />
         </div>
       ) : (
         <>

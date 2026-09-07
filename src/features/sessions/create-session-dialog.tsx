@@ -1,18 +1,29 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { MultiSelectField } from "@/components/ui/multi-select-field";
-import { useOptionalRouteProgress } from "@/components/ui/route-progress";
+import {
+  ROUTE_NAVIGATION_STARTED_EVENT,
+  useOptionalRouteProgress,
+} from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
+import { useOptionalToast } from "@/components/ui/toast";
 import {
   createSessionFromClient,
   deletePendingSessionAttachmentFromClient,
   uploadSessionAttachmentFromClient,
+  type CreateSessionInput,
 } from "@/features/sessions/client";
+import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
+import {
+  PendingSessionCreation,
+  type PendingSessionSnapshot,
+  type SessionCreationPreview,
+} from "@/features/sessions/pending-session-creation";
 import { extractLinearIssueId } from "@/features/sessions/linear-issue-url";
 import {
   SessionImageAttachments,
@@ -40,6 +51,8 @@ import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 
 type CreateSessionDialogProps = {
   onClose: () => void;
+  onPreviewChange?: (preview: SessionCreationPreview | null) => void;
+  onReopen?: () => void;
   open: boolean;
   userId: string;
   workspaceId: string;
@@ -91,30 +104,82 @@ export function isCreateSessionSubmitDisabled(input: {
 // The key also prevents a draft from crossing account or workspace boundaries.
 export function CreateSessionDialog(props: CreateSessionDialogProps) {
   const [revision, setRevision] = useState(0);
+  const reset = useCallback(() => setRevision((current) => current + 1), []);
   return (
     <CreateSessionDialogBody
       {...props}
       key={`${props.userId}:${props.workspaceId}:${revision}`}
-      onReset={() => setRevision((current) => current + 1)}
+      onReset={reset}
     />
   );
 }
 
 function CreateSessionDialogBody({
   onClose,
+  onPreviewChange,
+  onReopen,
   onReset,
   open,
   userId,
   workspaceId,
 }: CreateSessionDialogProps & { onReset: () => void }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const { dismissToast, pushToast } = useOptionalToast();
+  const recoveryToastRef = useRef<number | null>(null);
+  const clearRecoveryToast = useCallback(() => {
+    if (recoveryToastRef.current !== null) {
+      dismissToast(recoveryToastRef.current);
+      recoveryToastRef.current = null;
+    }
+  }, [dismissToast]);
   const { startNavigation } = useOptionalRouteProgress();
+  const errorRef = useRef<HTMLDivElement>(null);
   const submitInFlightRef = useRef(false);
   const sessionCommittedRef = useRef(false);
   const disposedRef = useRef(false);
   const imageDraftsRef = useRef<SessionImageDraft[]>([]);
+  const attemptRef = useRef<{ input: CreateSessionInput; snapshot: PendingSessionSnapshot } | null>(
+    null,
+  );
+  const previewVisibleRef = useRef(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
 
-  const refreshImagesOnOpen = useEffectEvent(refreshExpiredImages);
+  const refreshImagesOnOpen = useEffectEvent(() => {
+    clearRecoveryToast();
+    if (sessionCommittedRef.current) {
+      onPreviewChange?.(null);
+      onReset();
+    } else if (attemptRef.current && isSubmitting && onPreviewChange) {
+      showPendingPreview(attemptRef.current.snapshot);
+      onClose();
+    } else if (!attemptRef.current) {
+      refreshExpiredImages();
+    }
+  });
+
+  useEffect(() => {
+    if (sessionCommittedRef.current) onReset();
+    if (previewVisibleRef.current) {
+      previewVisibleRef.current = false;
+      onPreviewChange?.(null);
+    }
+  }, [pathname, onPreviewChange, onReset]);
+
+  useEffect(() => {
+    const dismissForNavigation = () => {
+      if (previewVisibleRef.current && !sessionCommittedRef.current) {
+        previewVisibleRef.current = false;
+        onPreviewChange?.(null);
+      }
+    };
+    window.addEventListener(ROUTE_NAVIGATION_STARTED_EVENT, dismissForNavigation);
+    window.addEventListener("popstate", dismissForNavigation);
+    return () => {
+      window.removeEventListener(ROUTE_NAVIGATION_STARTED_EVENT, dismissForNavigation);
+      window.removeEventListener("popstate", dismissForNavigation);
+    };
+  }, [onPreviewChange]);
 
   useEffect(() => {
     if (open) {
@@ -151,9 +216,10 @@ function CreateSessionDialogBody({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
+      clearRecoveryToast();
       for (const image of imageDraftsRef.current) {
         URL.revokeObjectURL(image.previewUrl);
-        if (!sessionCommittedRef.current && image.attachmentId) {
+        if (!sessionCommittedRef.current && !attemptRef.current && image.attachmentId) {
           void deletePendingSessionAttachmentFromClient({
             attachmentId: image.attachmentId,
             workspaceId,
@@ -161,7 +227,7 @@ function CreateSessionDialogBody({
         }
       }
     };
-  }, [workspaceId]);
+  }, [workspaceId, clearRecoveryToast]);
 
   function updateImageDrafts(
     update: SessionImageDraft[] | ((current: SessionImageDraft[]) => SessionImageDraft[]),
@@ -172,6 +238,7 @@ function CreateSessionDialogBody({
   }
 
   function handleImageFiles(files: File[]) {
+    if (submitInFlightRef.current || attemptRef.current) return;
     const availableSlots = maxSessionAttachments - imageDraftsRef.current.length;
     if (availableSlots <= 0) {
       setAttachmentMessage("A session may include at most five images.");
@@ -381,6 +448,13 @@ function CreateSessionDialogBody({
       return;
     }
 
+    // A lost response may have committed and bound the images. Replay the exact
+    // request before refreshing options or uploads that were valid at submission.
+    if (unconfirmed && attemptRef.current) {
+      await submitAttempt(attemptRef.current);
+      return;
+    }
+
     if (!repositorySnapshot.data) {
       setErrorMessage("Wait for repositories to finish loading before starting a session.");
       return;
@@ -418,30 +492,113 @@ function CreateSessionDialogBody({
       return;
     }
 
-    setErrorMessage(null);
-    submitInFlightRef.current = true;
-    setIsSubmitting(true);
-
-    try {
-      const result = await createSessionFromClient({
+    const attempt = {
+      input: {
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
+        requestId: crypto.randomUUID(),
         selectedStageIds,
         title: title.trim() || null,
         workspaceId,
-      });
+      },
+      snapshot: {
+        images: imageDrafts.map(({ clientId, fileName, previewUrl }) => ({
+          clientId,
+          fileName,
+          previewUrl,
+        })),
+        linearIssueUrl: linearUrl.trim() || null,
+        prompt: prompt.trim(),
+        repositoryName:
+          repositoryOptions.find((repository) => repository.id === selectedGithubRepositoryId)
+            ?.fullName ?? null,
+        stages: stageOptions
+          .filter((stage) => selectedStageIds.includes(stage.id))
+          .map(({ id, name }) => ({ id, name })),
+        title:
+          title.trim() ||
+          (linearUrl.trim() ? extractLinearIssueId(linearUrl) : null) ||
+          deriveSessionTitleFromPrompt(prompt),
+      },
+    };
+    await submitAttempt(attempt);
+  }
+
+  function showPendingPreview(snapshot: PendingSessionSnapshot) {
+    if (!onPreviewChange) return;
+    previewVisibleRef.current = true;
+    const dismiss = () => {
+      previewVisibleRef.current = false;
+      onPreviewChange(null);
+      if (sessionCommittedRef.current) {
+        // Returning to the workspace also cancels a canonical route handoff
+        // whose response has not arrived yet, preserving the current filters.
+        router.replace(`${window.location.pathname}${window.location.search}`);
+        onReset();
+      }
+    };
+    onPreviewChange({
+      content: <PendingSessionCreation snapshot={snapshot} onDismiss={dismiss} />,
+      dismiss,
+    });
+  }
+
+  async function submitAttempt(attempt: NonNullable<typeof attemptRef.current>) {
+    clearRecoveryToast();
+    attemptRef.current = attempt;
+    setErrorMessage(null);
+    submitInFlightRef.current = true;
+    setIsSubmitting(true);
+    if (onPreviewChange) {
+      showPendingPreview(attempt.snapshot);
+      onClose();
+    }
+    try {
+      const result = await createSessionFromClient(attempt.input);
       // The dialog now lives in the workspace shell (stays mounted across
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
       sessionCommittedRef.current = true;
-      onClose();
-      onReset();
-      startNavigation(result.canonicalUrl);
-      router.push(result.canonicalUrl);
+      if (disposedRef.current) return;
+      clearRecoveryToast();
+      const navigateToSession = !onPreviewChange || previewVisibleRef.current;
+      previewVisibleRef.current = false;
+      // Keep the preview visible until the canonical route commits. Otherwise
+      // the previous page flashes while Next loads the newly created session.
+      if (!navigateToSession) onPreviewChange?.(null);
+      if (!onPreviewChange) onClose();
+      // Retain the draft's image URLs until the shell removes the preview.
+      if (!onPreviewChange || !navigateToSession) onReset();
+      if (navigateToSession) {
+        startNavigation(result.canonicalUrl);
+        router.push(result.canonicalUrl);
+      } else {
+        pushToast({
+          title: `Session #${result.number} created.`,
+          tone: "success",
+          action: {
+            label: "Open session",
+            altText: "Open the newly created session",
+            onClick: () => {
+              startNavigation(result.canonicalUrl);
+              router.push(result.canonicalUrl);
+            },
+          },
+        });
+      }
     } catch (error) {
+      if (disposedRef.current) return;
       submitInFlightRef.current = false;
+      const rejected =
+        error instanceof Error &&
+        (("creationRejected" in error && error.creationRejected === true) ||
+          ("code" in error &&
+            (error.code === "session_options_changed" ||
+              error.code === "session_attachments_changed")));
+      setUnconfirmed(!rejected);
+      if (rejected) attemptRef.current = null;
       if (isSessionOptionsChangedError(error)) {
         invalidateSessionRepositoryCache(workspaceId);
       }
@@ -455,9 +612,33 @@ function CreateSessionDialogBody({
           "Session images expired or changed. Refreshing them now; start the session once they are ready.",
         );
       } else {
-        setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
+        setErrorMessage(
+          rejected
+            ? error instanceof Error
+              ? error.message
+              : "Failed to create session."
+            : "We couldn’t confirm whether the session was created. Your draft is saved. Retry creation to check the original request.",
+        );
       }
       setIsSubmitting(false);
+      const reopen = previewVisibleRef.current;
+      previewVisibleRef.current = false;
+      onPreviewChange?.(null);
+      if (reopen) onReopen?.();
+      else if (onPreviewChange) {
+        clearRecoveryToast();
+        recoveryToastRef.current = pushToast({
+          title: "Session creation needs attention.",
+          description: "Your draft is saved.",
+          tone: "danger",
+          duration: Infinity,
+          action: {
+            label: "Open draft",
+            altText: "Recover the session creation draft",
+            onClick: () => onReopen?.(),
+          },
+        });
+      }
     }
   }
 
@@ -485,8 +666,26 @@ function CreateSessionDialogBody({
         description="Describe the work or link a Linear issue, then choose where Wallie should run."
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
+        onOpenAutoFocus={(event) => {
+          if (errorMessage) {
+            event.preventDefault();
+            errorRef.current?.focus();
+          }
+        }}
       >
         <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
+          {errorMessage ? (
+            <div
+              aria-live="polite"
+              id="create-session-error"
+              role="status"
+              ref={errorRef}
+              tabIndex={-1}
+              className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+            >
+              {errorMessage}
+            </div>
+          ) : null}
           <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
@@ -494,13 +693,14 @@ function CreateSessionDialogBody({
               </label>
               <textarea
                 id="session-prompt"
+                disabled={isSubmitting || unconfirmed}
                 aria-describedby={
                   ["session-prompt-description", errorMessage ? "create-session-error" : null]
                     .filter(Boolean)
                     .join(" ") || undefined
                 }
                 autoComplete="off"
-                autoFocus
+                autoFocus={!errorMessage}
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -518,7 +718,7 @@ function CreateSessionDialogBody({
                 Required only when no Linear issue is linked.
               </p>
               <SessionImageAttachments
-                disabled={isSubmitting}
+                disabled={isSubmitting || unconfirmed}
                 images={imageDrafts}
                 maxImages={maxSessionAttachments}
                 onFiles={handleImageFiles}
@@ -544,6 +744,7 @@ function CreateSessionDialogBody({
               </label>
               <input
                 id="session-linear"
+                disabled={isSubmitting || unconfirmed}
                 aria-describedby={
                   [
                     "session-linear-description",
@@ -584,7 +785,7 @@ function CreateSessionDialogBody({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               className="ui-input"
-              disabled={hasLinearIssue}
+              disabled={hasLinearIssue || isSubmitting || unconfirmed}
               placeholder={
                 hasLinearIssue ? "From the linked Linear issue" : "Generated from the prompt"
               }
@@ -595,6 +796,7 @@ function CreateSessionDialogBody({
           </div>
 
           <RepositoryField
+            disabled={isSubmitting || unconfirmed}
             cacheKey={repositoryCacheKey}
             onValueChange={setGithubRepositoryId}
             options={repositorySelectOptions}
@@ -605,7 +807,7 @@ function CreateSessionDialogBody({
           {repositorySnapshot.data ? (
             <MultiSelectField
               description="Choose the pipeline stages this session should run."
-              disabled={isSubmitting || repositorySnapshot.isStale}
+              disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
               emptyMessage="No pipeline stages are configured."
               error={
                 stageOptions.length === 0
@@ -645,24 +847,13 @@ function CreateSessionDialogBody({
             </div>
           ) : null}
 
-          {errorMessage ? (
-            <div
-              aria-live="polite"
-              id="create-session-error"
-              role="status"
-              className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
-            >
-              {errorMessage}
-            </div>
-          ) : null}
-
           <p className="text-xs text-muted">
             Closing keeps your draft while you stay in this workspace. Reloading clears it.
           </p>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <button
               type="button"
-              disabled={isSubmitting || hasActiveAttachmentOperation}
+              disabled={isSubmitting || unconfirmed || hasActiveAttachmentOperation}
               onClick={() => {
                 onClose();
                 onReset();
@@ -682,20 +873,24 @@ function CreateSessionDialogBody({
             <button
               type="submit"
               aria-keyshortcuts={SESSION_SUBMIT_KEY_SHORTCUTS}
-              disabled={isCreateSessionSubmitDisabled({
-                hasRepositoryResult: repositorySnapshot.data !== null,
-                hasBlockingAttachments,
-                isRepositoryStale: repositorySnapshot.isStale,
-                isSubmitting,
-                linearUrl,
-                prompt,
-                selectedStageCount: selectedStageIds.length,
-                stageCount: stageOptions.length,
-              })}
+              disabled={
+                unconfirmed
+                  ? isSubmitting
+                  : isCreateSessionSubmitDisabled({
+                      hasRepositoryResult: repositorySnapshot.data !== null,
+                      hasBlockingAttachments,
+                      isRepositoryStale: repositorySnapshot.isStale,
+                      isSubmitting,
+                      linearUrl,
+                      prompt,
+                      selectedStageCount: selectedStageIds.length,
+                      stageCount: stageOptions.length,
+                    })
+              }
               className="ui-button-primary"
             >
               <ActionButtonLabel
-                idle="Start session"
+                idle={unconfirmed ? "Retry creation" : "Start session"}
                 pending={isSubmitting}
                 pendingLabel="Starting…"
               />
@@ -708,6 +903,7 @@ function CreateSessionDialogBody({
 }
 
 type RepositoryFieldProps = {
+  disabled?: boolean;
   cacheKey: SessionRepositoryCacheKey;
   onValueChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
@@ -716,6 +912,7 @@ type RepositoryFieldProps = {
 };
 
 export function RepositoryField({
+  disabled = false,
   cacheKey,
   onValueChange,
   options,
@@ -746,7 +943,7 @@ export function RepositoryField({
         role="alert"
       >
         <span>{snapshot.error}</span>
-        <button className="ui-button min-h-8" onClick={retry} type="button">
+        <button className="ui-button min-h-8" disabled={disabled} onClick={retry} type="button">
           Retry session options
         </button>
       </div>
@@ -765,6 +962,7 @@ export function RepositoryField({
     <div className="space-y-2">
       {options.length > 0 ? (
         <SelectField
+          disabled={disabled}
           label="Repository"
           options={options}
           onValueChange={onValueChange}
@@ -794,7 +992,7 @@ export function RepositoryField({
                 : "Session options may be out of date."}
           </span>
           {!snapshot.isRefreshing ? (
-            <button className="ui-button min-h-8" onClick={retry} type="button">
+            <button className="ui-button min-h-8" disabled={disabled} onClick={retry} type="button">
               Refresh session options
             </button>
           ) : null}

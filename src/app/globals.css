@@ -258,14 +258,8 @@
     padding-top: env(safe-area-inset-top);
   }
 
-  .ui-shell-rail {
-    padding-top: env(safe-area-inset-top);
-    padding-left: env(safe-area-inset-left);
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
   .ui-shell-nav-link {
-    @apply inline-flex min-h-9 w-full items-center rounded-[6px] px-3 text-[13px] font-medium text-muted transition-[color,background-color,transform] duration-150;
+    @apply inline-flex min-h-11 shrink-0 items-center rounded-[6px] px-3 text-[13px] font-medium text-muted transition-[color,background-color,transform] duration-150 lg:min-h-9;
   }
 
   .ui-shell-nav-link:hover {
@@ -274,6 +268,35 @@
 
   .ui-shell-nav-link-active {
     @apply bg-control-muted text-foreground;
+  }
+
+  .ui-shell-nav {
+    position: relative;
+    isolation: isolate;
+  }
+  .ui-shell-nav-indicator {
+    position: absolute;
+    pointer-events: none;
+    z-index: -1;
+    left: 0;
+    top: 0;
+    width: var(--nav-width, 0px);
+    height: var(--nav-height, 0px);
+    transform: translate(var(--nav-x, 0px), var(--nav-y, 0px));
+    border-radius: 6px;
+    background: var(--control-muted);
+    visibility: hidden;
+  }
+  .ui-shell-nav[data-indicator-ready] .ui-shell-nav-indicator {
+    visibility: visible;
+  }
+  .ui-shell-nav[data-indicator-animated] .ui-shell-nav-indicator {
+    transition:
+      transform 200ms var(--overlay-motion-easing),
+      width 200ms var(--overlay-motion-easing);
+  }
+  .ui-shell-nav[data-indicator-ready] .ui-shell-nav-link-active {
+    background: transparent;
   }
 
   .ui-nav-sheet-content {
@@ -1051,7 +1074,7 @@
 
 @media (max-width: 1023px) {
   :root {
-    --shell-scroll-padding: calc(3.5rem + env(safe-area-inset-top));
+    --shell-scroll-padding: calc(6.75rem + env(safe-area-inset-top));
   }
 }
 
@@ -1332,6 +1355,21 @@
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
   animation: wallie-completion-check 240ms ease-out;
+}
+
+.ui-session-creation-enter {
+  animation: wallie-session-creation-enter 180ms var(--overlay-motion-easing);
+}
+
+@keyframes wallie-session-creation-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes wallie-completion-check {
