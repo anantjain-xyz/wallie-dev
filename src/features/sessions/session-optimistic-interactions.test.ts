@@ -360,7 +360,9 @@ describe("optimistic session interactions", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
       key: "ArrowDown",
     });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Unarchive session" }));
+    const unarchiveItem = screen.getByRole("menuitem", { name: "Unarchive session" });
+    expect(unarchiveItem.querySelector("svg")).not.toBeNull();
+    fireEvent.click(unarchiveItem);
 
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
   });

@@ -249,6 +249,9 @@ describe("SessionsPage accessibility", () => {
     await user.click(trigger);
     expect(await screen.findByRole("menu", { name: "Actions for session #339" })).toBeVisible();
     expect(screen.getByRole("menuitem", { name: "Rename" })).toHaveFocus();
+    expect(
+      screen.getByRole("menuitem", { name: "Archive session" }).querySelector("svg"),
+    ).not.toBeNull();
 
     await user.keyboard("{End}{Enter}");
     expect(screen.queryByRole("menu", { name: "Actions for session #339" })).toBeNull();
