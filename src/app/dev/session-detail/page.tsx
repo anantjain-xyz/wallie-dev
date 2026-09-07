@@ -1,6 +1,7 @@
 import { MarkdownContent } from "@/components/shared/markdown-content";
 import { renderMarkdown } from "@/components/shared/markdown-content.server";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { AppShell } from "@/components/app-shell/app-shell";
 import { isProductionDeploy } from "@/env/deploy";
 import { SessionDetailPreview } from "./preview-client";
@@ -14,28 +15,30 @@ const planMarkdown =
 export default function SessionDetailPreviewPage() {
   if (isProductionDeploy()) notFound();
   return (
-    <AppShell
-      workspace={{ id: "preview", name: "Wallie", slug: "preview" }}
-      onboarding={null}
-      pathnameOverride="/w/preview/sessions/37"
-      viewerId="preview-viewer"
-      viewerEmail="preview@example.com"
-      viewerAvatarUrl={null}
-      workspaceAvatarUrl={null}
-    >
-      <SessionDetailPreview
-        initialNow={new Date().toISOString()}
-        artifacts={{
-          plan: {
-            markdown: planMarkdown,
-            rendered: <MarkdownContent html={renderMarkdown(planMarkdown).bodyHtml} />,
-          },
-          build: {
-            markdown: buildMarkdown,
-            rendered: <MarkdownContent html={renderMarkdown(buildMarkdown).bodyHtml} />,
-          },
-        }}
-      />
-    </AppShell>
+    <Suspense fallback={<p className="p-8 text-sm text-muted">Loading session preview…</p>}>
+      <AppShell
+        workspace={{ id: "preview", name: "Wallie", slug: "preview" }}
+        onboarding={null}
+        pathnameOverride="/w/preview/sessions/37"
+        viewerId="preview-viewer"
+        viewerEmail="preview@example.com"
+        viewerAvatarUrl={null}
+        workspaceAvatarUrl={null}
+      >
+        <SessionDetailPreview
+          initialNow={new Date().toISOString()}
+          artifacts={{
+            plan: {
+              markdown: planMarkdown,
+              rendered: <MarkdownContent html={renderMarkdown(planMarkdown).bodyHtml} />,
+            },
+            build: {
+              markdown: buildMarkdown,
+              rendered: <MarkdownContent html={renderMarkdown(buildMarkdown).bodyHtml} />,
+            },
+          }}
+        />
+      </AppShell>
+    </Suspense>
   );
 }
