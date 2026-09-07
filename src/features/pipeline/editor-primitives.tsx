@@ -481,7 +481,7 @@ export function PipelineVariableHelp({
 }) {
   const variables = pipelineVariableHelpItems(priorStages);
   return (
-    <details className="rounded-[6px] border border-border bg-control-hover px-3 py-2 text-xs text-muted">
+    <details className="text-xs text-muted">
       <summary className="cursor-pointer text-foreground">Template variables</summary>
       <ul className="mt-2 space-y-0.5 font-mono">
         {variables.map((variable) => (

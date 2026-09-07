@@ -804,8 +804,8 @@ export default function RuntimeStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-sheet p-4">
-        <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Agent config</h3>
             <p className="mt-1 text-xs leading-5 text-muted">

@@ -28,8 +28,12 @@ const semanticPairings = [
 
 const boundaryPairings = [
   {
-    foreground: "border",
-    backgrounds: ["surface-canvas", "surface-sheet", "surface-overlay", "control-muted"],
+    foreground: "border-control",
+    backgrounds: ["surface-sheet", "surface-overlay", "control-hover"],
+  },
+  {
+    foreground: "border-control-hover",
+    backgrounds: ["surface-sheet", "surface-overlay", "control-hover", "control-muted"],
   },
   {
     foreground: "focus-ring",
@@ -123,6 +127,20 @@ function textEntryFocusRule(): { selector: string; body: string } {
 
 describe.each(["light", "dark"] as const)("%s semantic theme", (theme) => {
   const tokens = themeTokens(theme);
+
+  it.each(["surface-canvas", "surface-sheet", "surface-overlay"])(
+    "keeps decorative borders quiet on %s, below control contrast",
+    (background) => {
+      const surface = resolveToken(background, tokens);
+      const resting = contrastRatio(resolveToken("border", tokens), surface);
+      const emphasized = contrastRatio(resolveToken("border-strong", tokens), surface);
+      const control = contrastRatio(resolveToken("border-control", tokens), surface);
+
+      expect(resting).toBeLessThan(1.6);
+      expect(emphasized).toBeGreaterThan(resting);
+      expect(emphasized).toBeLessThan(control);
+    },
+  );
 
   it.each(
     semanticPairings.flatMap(({ foreground, backgrounds }) =>

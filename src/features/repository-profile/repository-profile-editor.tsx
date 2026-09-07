@@ -91,8 +91,8 @@ export function RepositoryProfileEditor({
   }
 
   return (
-    <div className="rounded-[6px] border border-border bg-sheet p-4">
-      <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="min-w-0 pt-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-foreground">Repository profile</h3>
           <MetadataList className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex">

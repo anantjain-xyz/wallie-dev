@@ -32,3 +32,21 @@ is a first-party listbox (Radix Select has no `modal` API). `DropdownMenu` defau
 The development-only `/dev/ui-primitives` route exercises all six patterns in light, dark, and a
 reduced-motion override. The override exists only for deterministic visual testing; the production
 styles also honor `prefers-reduced-motion: reduce`.
+
+## Quiet borders
+
+Use `border-border` for decorative sheet edges, dividers, navigation rails, overlays, and labelled
+buttons. `border-border-strong` is a gentle hover or selected treatment, independent of text colors.
+Group content inside a sheet with headings and spacing instead of another outlined panel.
+
+Text fields and select triggers use `border-border-control`; selects use `border-border-control-hover`
+on hover and press. These edges retain at least 3:1 contrast on their sheet, overlay, and hover
+surfaces. The pressed select edge also meets that threshold on the muted control fill. Decorative
+lines intentionally have lower contrast and must not be the only way to identify an input or state.
+Keep accent focus indicators, validation colors, and forced-colors treatments intact. Do not add
+per-page opacity overrides to shared field borders.
+
+`/dev/settings` renders the real Settings shell with fixture data for visual review without a database.
+Use `?category=workspace` or `?category=advanced` for other categories, and `?state=empty`,
+`?state=loading`, or `?state=error` for repository and streaming fallback states. Like the other
+development fixtures, it is unavailable on production deployments.

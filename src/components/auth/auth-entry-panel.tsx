@@ -114,7 +114,7 @@ export function AuthEntryPanel({
         Looking for Wallie?{" "}
         <Link
           href="/"
-          className="inline-flex min-h-11 items-center rounded-[6px] font-medium text-foreground underline decoration-border-strong underline-offset-4 hover:decoration-foreground"
+          className="inline-flex min-h-11 items-center rounded-[6px] font-medium text-foreground underline decoration-muted underline-offset-4 hover:decoration-foreground"
         >
           Visit the home page
         </Link>

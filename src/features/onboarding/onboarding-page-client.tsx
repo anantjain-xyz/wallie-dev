@@ -389,7 +389,7 @@ function StepNavigation({
         </label>
         <select
           id="onboarding-step-picker"
-          className="mt-2 min-h-11 w-full rounded-[6px] border border-border bg-sheet px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          className="mt-2 min-h-11 w-full rounded-[6px] border border-border-control bg-sheet px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           value={items.find((step) => step.isActive)?.id}
           disabled={!canSelect}
           onChange={(event) => {
