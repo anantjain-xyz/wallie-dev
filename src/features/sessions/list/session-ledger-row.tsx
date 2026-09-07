@@ -46,6 +46,7 @@ export function SessionLedgerRow({
         id: session.id,
         number: session.number,
         phaseStatus: session.phaseStatus,
+        latestRunStatus: session.latestRunStatus,
         title: session.title,
         updatedAt: session.updatedAt,
       }}

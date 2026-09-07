@@ -12,7 +12,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Status, sessionPhaseStatusValue, resolveStatusDefinition } from "@/components/ui/status";
+import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -33,12 +33,13 @@ import {
 } from "@/features/sessions/list/sessions-list-mutations";
 import { useSessionsLedgerVisibility } from "@/features/sessions/list/sessions-ledger-visibility";
 import type { SessionFilterKey, SessionListItem } from "@/features/sessions/types";
+import { sessionDisplayStatus } from "@/features/sessions/display-status";
 import { cn } from "@/lib/utils";
 
 /** Mutation + display fields only — keep the hydrated payload off full list RPC rows. */
 export type SessionRowIslandSession = Pick<
   SessionListItem,
-  "archivedAt" | "id" | "number" | "phaseStatus" | "title" | "updatedAt"
+  "archivedAt" | "id" | "number" | "phaseStatus" | "latestRunStatus" | "title" | "updatedAt"
 >;
 
 type SessionRowIslandProps = {
@@ -61,22 +62,6 @@ function archiveOverrideFromSession(
     archivedAt: next.archivedAt,
     phaseStatus: next.phaseStatus,
   };
-}
-
-function LedgerStatus({ phaseStatus }: { phaseStatus: SessionRowIslandSession["phaseStatus"] }) {
-  const value = sessionPhaseStatusValue(phaseStatus);
-  // Awaiting review keeps the strongest Status affordance; other statuses stay
-  // text-only so the ledger does not border every Status cell.
-  if (phaseStatus === "awaiting_review") {
-    return <Status compact value={value} />;
-  }
-
-  const definition = resolveStatusDefinition(value);
-  return (
-    <span className="type-annotation text-muted" data-status={value} data-tone={definition.tone}>
-      {definition.label}
-    </span>
-  );
 }
 
 export function SessionRowIsland({
@@ -503,7 +488,10 @@ export function SessionRowIsland({
 
       <div className="sessions-ledger-cell sessions-ledger-cell-status" role="cell">
         <span className="sessions-ledger-cell-label">Status</span>
-        <LedgerStatus phaseStatus={phaseStatus} />
+        <Status
+          compact
+          value={sessionDisplayStatus({ phaseStatus, latestRunStatus: session.latestRunStatus })}
+        />
       </div>
 
       <div className="sessions-ledger-cell sessions-ledger-cell-repository" role="cell">

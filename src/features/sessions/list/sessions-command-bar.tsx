@@ -3,10 +3,16 @@
 import { useEffect, useMemo, useOptimistic, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { SearchIcon } from "@/components/shared/icons/search-icon";
-import { XIcon } from "@/components/shared/icons/x-icon";
+import {
+  FilterSearch,
+  FilterSelectTrigger,
+  ClearFilters,
+  FILTER_BAR_CLASS,
+  FILTER_SEARCH_CLASS,
+} from "@/components/ui/filter-controls";
+import { CommandBar } from "@/components/ui/page-shell";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import type { SessionStageFacet } from "@/features/sessions/list/data";
 import {
   buildSessionsListHref,
@@ -26,7 +32,7 @@ export type SessionsCommandBarProps = {
   workspaceSlug: string;
 };
 
-const STATUS_CHIPS: { key: SessionFilterKey; label: string }[] = [
+const SCOPE_OPTIONS: { key: SessionFilterKey; label: string }[] = [
   { key: "active", label: "Active" },
   { key: "archived", label: "Archived" },
   { key: "all", label: "All" },
@@ -132,123 +138,95 @@ export function SessionsCommandBar({
     "Recently updated";
 
   return (
-    <div className="mb-6 border-y border-border py-2.5">
-      <div aria-busy={isPending} className="flex flex-wrap items-center gap-2 lg:gap-2.5">
+    <CommandBar aria-label="Sessions filters" className="mb-6 block border-0 p-0">
+      <div aria-busy={isPending} className={FILTER_BAR_CLASS}>
         <form
           onSubmit={handleSearchSubmit}
-          className="flex w-full shrink-0 items-center gap-1.5 sm:max-w-[300px] lg:w-[300px]"
+          className={cn("flex items-center", FILTER_SEARCH_CLASS)}
           aria-label="Search sessions"
         >
-          <div className="relative flex-1">
-            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-            <input
-              ref={searchInputRef}
-              id="sessions-search"
-              type="search"
-              defaultValue={queryState.query}
-              placeholder="Search prompts, titles, or IDs"
-              aria-label="Search prompts, titles, or Linear IDs"
-              className="ui-input h-8 py-1.5 pl-8 pr-3 text-[13px]"
-            />
-          </div>
+          <FilterSearch
+            ref={searchInputRef}
+            id="sessions-search"
+            defaultValue={queryState.query}
+            aria-label="Search prompts, titles, or Linear IDs"
+            description="Search prompts, titles, session numbers, or Linear IDs. Press Enter to search."
+          />
           <button type="submit" className="sr-only">
             Search
           </button>
         </form>
 
-        <div
-          role="group"
-          aria-label="Status filter"
-          className="inline-flex shrink-0 items-center gap-0 rounded-[6px] border border-border bg-sheet p-0.5"
+        <Select
+          value={optimisticQuery.scope}
+          onValueChange={(value) => updateQueryState({ scope: value as SessionFilterKey })}
         >
-          {STATUS_CHIPS.map((chip) => {
-            const isSelected = optimisticQuery.scope === chip.key;
-            return (
-              <button
-                aria-pressed={isSelected}
-                key={chip.key}
-                type="button"
-                onClick={() => updateQueryState({ scope: chip.key })}
-                className={cn(
-                  "inline-flex h-7 items-center justify-center rounded-[4px] px-2.5 text-xs font-medium transition-[background-color,color] duration-150",
-                  isSelected
-                    ? "bg-control-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]"
-                    : "text-muted hover:bg-control-hover hover:text-foreground",
-                )}
-              >
-                {chip.label}
-              </button>
-            );
-          })}
-        </div>
+          <FilterSelectTrigger accessibleLabel="Session scope">
+            {SCOPE_OPTIONS.find((option) => option.key === optimisticQuery.scope)?.label}
+          </FilterSelectTrigger>
+          <SelectContent>
+            {SCOPE_OPTIONS.map((option) => (
+              <SelectItem key={option.key} value={option.key}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:gap-2.5">
-          <Select
-            value={optimisticQuery.stageSlug ?? "__all__"}
-            onValueChange={(nextValue) =>
-              updateQueryState({
-                stageSlug: nextValue === "__all__" ? null : nextValue,
-              })
-            }
+        <Select
+          value={optimisticQuery.stageSlug ?? "__all__"}
+          onValueChange={(nextValue) =>
+            updateQueryState({
+              stageSlug: nextValue === "__all__" ? null : nextValue,
+            })
+          }
+        >
+          <FilterSelectTrigger
+            accessibleLabel="Filter by stage"
+            className="min-w-[8.5rem] max-w-[12rem]"
           >
-            <SelectTrigger
-              accessibleLabel="Filter by stage"
-              className="h-8 min-h-0 w-auto min-w-[8.5rem] max-w-[12rem] gap-1.5 px-2.5 text-[13px]"
-            >
-              <span className="truncate">{stageValueLabel}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All stages</SelectItem>
-              {stageGroups.order.map((stage) => {
-                const count = stageGroups.counts.get(stage.slug) ?? 0;
-                return (
-                  <SelectItem key={stage.slug} value={stage.slug}>
-                    <span className="flex w-full items-center justify-between gap-3">
-                      <span className="truncate">{stage.name}</span>
-                      <span className="type-annotation shrink-0 text-muted">{count}</span>
-                    </span>
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={optimisticQuery.sort}
-            onValueChange={(nextValue) =>
-              updateQueryState({ sort: nextValue as SessionListSortKey })
-            }
-          >
-            <SelectTrigger
-              accessibleLabel="Sort sessions"
-              className="h-8 min-h-0 w-auto min-w-[9rem] max-w-[12rem] gap-1.5 px-2.5 text-[13px]"
-            >
-              <span className="truncate">{sortValueLabel}</span>
-            </SelectTrigger>
-            <SelectContent>
-              {SESSION_LIST_SORT_OPTIONS.map((option) => (
-                <SelectItem key={option.key} value={option.key}>
-                  {option.label}
+            <span className="truncate">{stageValueLabel}</span>
+          </FilterSelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All stages</SelectItem>
+            {stageGroups.order.map((stage) => {
+              const count = stageGroups.counts.get(stage.slug) ?? 0;
+              return (
+                <SelectItem key={stage.slug} value={stage.slug}>
+                  <span className="flex w-full items-center justify-between gap-3">
+                    <span className="truncate">{stage.name}</span>
+                    <span className="type-annotation shrink-0 text-muted">{count}</span>
+                  </span>
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              );
+            })}
+          </SelectContent>
+        </Select>
 
-          {clearEnabled ? (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-[6px] border border-border bg-sheet px-2.5 text-[13px] font-medium text-muted transition-[background-color,color,border-color] duration-150 hover:border-border-strong hover:bg-control-hover hover:text-foreground"
-            >
-              <XIcon className="h-3.5 w-3.5" />
-              <span>Clear</span>
-            </button>
-          ) : null}
-        </div>
+        <Select
+          value={optimisticQuery.sort}
+          onValueChange={(nextValue) => updateQueryState({ sort: nextValue as SessionListSortKey })}
+        >
+          <FilterSelectTrigger
+            accessibleLabel="Sort sessions"
+            className="min-w-[9rem] max-w-[12rem]"
+          >
+            <span className="truncate">{sortValueLabel}</span>
+          </FilterSelectTrigger>
+          <SelectContent>
+            {SESSION_LIST_SORT_OPTIONS.map((option) => (
+              <SelectItem key={option.key} value={option.key}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {clearEnabled ? <ClearFilters onClick={handleClear} /> : null}
       </div>
       <div role="status" aria-live="polite" className="mt-2 min-h-4 text-xs text-muted">
         {isPending ? "Updating sessions…" : null}
       </div>
-    </div>
+    </CommandBar>
   );
 }

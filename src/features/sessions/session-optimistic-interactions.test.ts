@@ -134,7 +134,7 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
     nextCursor: null,
     onboarding: null,
     queryState: { cursor: null, query: "", scope, sort: "updated", stageSlug: null },
-    sessions: [summary],
+    sessions: [{ ...summary, latestRunStatus: null }],
     stageFacets: [{ count: 1, name: "Plan", position: 0, slug: "plan" }],
     totalCount: 1,
     workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
