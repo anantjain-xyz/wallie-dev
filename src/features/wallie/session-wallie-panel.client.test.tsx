@@ -7,6 +7,7 @@ import {
   SessionExecutionProvider,
   SessionExecutionSummary,
 } from "@/features/sessions/detail/execution-summary";
+import { SessionActivityPresentationProvider } from "@/features/sessions/detail/session-activity-presentation";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
@@ -204,6 +205,33 @@ function panel(initialData: WallieSessionData, supabase: SupabaseClient<Database
 }
 
 describe("SessionWalliePanel run history lifecycle", () => {
+  it("keeps the completed stage in history while the current stage waits for its first run", () => {
+    const fake = fakeSupabase();
+    const presentation = {
+      currentStage: { id: "build", name: "Build", phaseStatus: "in_progress" as const },
+      stopControl: <button>Stop run</button>,
+    };
+    const view = render(
+      <SessionActivityPresentationProvider value={presentation}>
+        <SessionWalliePanel
+          initialData={data([run(1, { stageId: "plan", stageName: "Plan" })])}
+          presentation={presentation}
+          session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+          supabase={fake.supabase}
+          workspaceSlug="acme"
+        />
+      </SessionActivityPresentationProvider>,
+    );
+    expect(screen.getByRole("heading", { name: "Build run" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop run" })).toBeTruthy();
+    expect(screen.getByText("Waiting for this stage’s run to start.")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="Current Wallie run"]')).toBeNull();
+    expect(view.container.querySelector('[data-run-id="run-1"]')?.closest("details")?.open).toBe(
+      false,
+    );
+    expect(fake.messageQueries).toEqual([]);
+  });
+
   it("bounds the initial DOM/channels, lazily caches one expanded run, and pages explicitly", async () => {
     const initialRuns = Array.from({ length: 20 }, (_, index) => run(index + 1));
     const olderRuns = Array.from({ length: 20 }, (_, index) => run(index + 21));
@@ -743,7 +771,7 @@ describe("SessionWalliePanel activity states", () => {
     );
 
     expect(screen.getByText("Waiting in queue")).not.toBeNull();
-    expect(screen.queryByText("Attempt 3")).toBeNull();
+    expect(screen.getByText("Attempt 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Waiting in queue/ }));
     expect(screen.getByText("Attempt 3")).not.toBeNull();
   });

@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
+import {
+  SessionActivityPlaceholder,
+  type SessionActivityPresentation,
+} from "@/features/sessions/detail/session-activity-presentation";
+
 import { usePublishExecution } from "@/features/sessions/detail/execution-summary";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
@@ -48,6 +54,7 @@ export type WalliePanelSession = {
 type SessionWalliePanelProps = {
   initialData: WallieSessionData;
   initialNow?: string;
+  presentation?: SessionActivityPresentation;
   session: WalliePanelSession;
   supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
@@ -116,6 +123,7 @@ export function SessionWalliePanel(props: SessionWalliePanelProps) {
 function SessionWalliePanelContent({
   initialData,
   initialNow,
+  presentation,
   session,
   supabase: injectedSupabase,
   workspaceSlug,
@@ -149,7 +157,11 @@ function SessionWalliePanelContent({
     new Map<string, { promise: Promise<void>; controller: AbortController }>(),
   );
   sessionIdRef.current = session.id;
-  const summaryRun = useMemo(() => runs.find((run) => run.isActive) ?? runs[0] ?? null, [runs]);
+  const currentStageId = presentation?.currentStage.id;
+  const summaryRun = useMemo(() => {
+    const stageRuns = currentStageId ? runs.filter((run) => run.stageId === currentStageId) : runs;
+    return stageRuns.find((run) => run.isActive) ?? stageRuns[0] ?? null;
+  }, [currentStageId, runs]);
   const summaryRunId = summaryRun?.id ?? null;
   usePublishExecution({
     sessionId: session.id,
@@ -691,6 +703,7 @@ function SessionWalliePanelContent({
                 : null
             }
             cancelLocked={pendingActionId !== null}
+            cancelControl={presentation?.stopControl}
             connectionState={connectionState}
             isExpanded={expandedRunId === summaryRun.id}
             isPrimary
@@ -707,16 +720,28 @@ function SessionWalliePanelContent({
             stallTimeoutMs={initialData.stallTimeoutMs}
           />
         ) : (
-          <div className="rounded-[6px] border border-dashed border-border px-4 py-8 text-center text-sm leading-7 text-muted">
-            No runs recorded yet.
-          </div>
+          <SessionActivityPlaceholder>
+            <p className="py-3 text-sm text-muted" role="status">
+              {presentation?.currentStage.phaseStatus === "in_progress"
+                ? "Waiting for this stage’s run to start."
+                : "No runs recorded for this stage yet."}
+            </p>
+          </SessionActivityPlaceholder>
         )}
 
-        {historicalRuns.length > 0 ? (
-          <section aria-labelledby="previous-runs-heading" className="min-w-0">
-            <h3 id="previous-runs-heading" className="ui-label">
-              Previous runs
-            </h3>
+        {historicalRuns.length > 0 || nextRunCursor ? (
+          <details className="group/previous-runs min-w-0 border-t border-border pt-3">
+            <summary
+              id="previous-runs-heading"
+              className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
+            >
+              <ChevronDownIcon className="size-3.5 -rotate-90 group-open/previous-runs:rotate-0" />
+              Previous runs{" "}
+              <span className="type-annotation">
+                {historicalRuns.length}
+                {nextRunCursor ? "+" : ""}
+              </span>
+            </summary>
             <div className="mt-2 min-w-0 divide-y divide-border border-y border-border">
               {historicalRuns.map((run) => (
                 <WallieRunCard
@@ -744,26 +769,25 @@ function SessionWalliePanelContent({
                 />
               ))}
             </div>
-          </section>
+            {olderRunsError ? (
+              <p aria-live="polite" className="text-sm text-danger" role="status">
+                {olderRunsError}
+              </p>
+            ) : null}
+
+            {nextRunCursor ? (
+              <button
+                className="ui-button"
+                disabled={isLoadingOlderRuns}
+                onClick={() => void handleLoadOlderRuns()}
+                type="button"
+              >
+                {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
+              </button>
+            ) : null}
+          </details>
         ) : null}
       </div>
-
-      {olderRunsError ? (
-        <p aria-live="polite" className="text-sm text-danger" role="status">
-          {olderRunsError}
-        </p>
-      ) : null}
-
-      {nextRunCursor ? (
-        <button
-          className="ui-button"
-          disabled={isLoadingOlderRuns}
-          onClick={() => void handleLoadOlderRuns()}
-          type="button"
-        >
-          {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
-        </button>
-      ) : null}
     </div>
   );
 }

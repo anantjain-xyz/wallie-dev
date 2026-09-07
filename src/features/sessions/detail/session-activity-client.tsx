@@ -2,6 +2,8 @@
 
 import { createContext, type ReactNode, useContext } from "react";
 
+import { useSessionActivityPresentation } from "./session-activity-presentation";
+
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieSessionData } from "@/features/wallie/types";
 
@@ -43,9 +45,11 @@ export function SessionActivityPanel({
   workspaceSlug: string;
 }) {
   const archivedAt = useSessionActivityArchivedAt(initialArchivedAt);
+  const presentation = useSessionActivityPresentation();
 
   return (
     <SessionWalliePanel
+      presentation={presentation}
       initialData={initialData}
       initialNow={initialNow}
       session={{

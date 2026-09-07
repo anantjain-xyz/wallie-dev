@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, type ReactNode, useMemo, useState } from "react";
 
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { ShimmerText } from "@/components/shared/shimmer-text";
@@ -8,6 +8,7 @@ import { TimeDisplay } from "@/components/shared/time-display";
 import { agentRunStatusValue } from "@/components/ui/status";
 import {
   compactActivityText,
+  currentOperationLabel,
   connectionStateCopy,
   isConnectionInterrupted,
   runStatusLabel,
@@ -52,6 +53,7 @@ export type WallieRunCardProps = {
   actionPending: boolean;
   branchName: string | null;
   cancelLocked: boolean;
+  cancelControl?: ReactNode;
   connectionState: WallieRealtimeConnectionState;
   isExpanded: boolean;
   isPrimary?: boolean;
@@ -72,6 +74,7 @@ export const WallieRunCard = memo(function WallieRunCard({
   actionPending,
   branchName,
   cancelLocked,
+  cancelControl,
   connectionState,
   isExpanded,
   isPrimary = false,
@@ -103,43 +106,76 @@ export const WallieRunCard = memo(function WallieRunCard({
     (message) => ["text", "progress", "status"].includes(message.kind) && message.messageMd.trim(),
   );
   const latest = run.messages.at(-1);
-  const latestTool = latest?.kind === "tool_use" ? summarizeToolUse(latest.messageMd) : null;
   const error =
     run.status === "error" ? run.messages.findLast((message) => message.kind === "error") : null;
 
-  return (
-    <article
-      aria-label={isPrimary ? "Current Wallie run" : undefined}
+  const status = (
+    <span
       className={cn(
-        "min-w-0",
-        isPrimary ? "py-2" : "py-3",
-        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
+        "font-medium",
+        isPrimary && "rounded-full bg-control-muted px-2 py-0.5 text-xs",
+        run.status === "error" && "text-danger",
       )}
-      data-run-id={run.id}
-      data-wallie-summary={isPrimary ? "" : undefined}
+      data-status={agentRunStatusValue(run.status)}
+      role="status"
     >
-      <div className="flex min-w-0 items-start gap-3">
+      <ShimmerText active={working && !stalled && !disconnected}>{operation}</ShimmerText>
+    </span>
+  );
+  const controls = (
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
+      {isPrimary && cancelControl !== undefined ? (
+        cancelControl
+      ) : run.canCancel ? (
         <button
-          aria-controls={runDetailsId}
-          aria-expanded={isExpanded}
-          aria-label={`${formatStageRunLabel(run)} activity: ${operation}`}
-          className="flex min-h-9 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 rounded-[4px] py-1 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          onClick={() => onToggle(run.id)}
+          aria-label="Cancel run"
+          className={cn("ui-button", isPrimary && "text-danger")}
+          disabled={cancelLocked}
+          onClick={() => void onCancel(run.id)}
           type="button"
         >
-          <ChevronDownIcon
-            className={cn(
-              "size-4 shrink-0 text-muted transition-transform motion-reduce:transition-none",
-              !isExpanded && "-rotate-90",
-            )}
-          />
-          <span
-            className={cn("font-medium", run.status === "error" && "text-danger")}
-            data-status={agentRunStatusValue(run.status)}
-            role="status"
-          >
-            <ShimmerText active={working && !stalled && !disconnected}>{operation}</ShimmerText>
-          </span>
+          {actionPending ? "Stopping…" : isPrimary ? "Stop run" : "Stop"}
+        </button>
+      ) : null}
+      {run.canRetry ? (
+        <button
+          className="ui-button"
+          disabled={retryLocked}
+          onClick={() => void onRetry(run.id)}
+          type="button"
+        >
+          {actionPending ? "Retrying…" : "Retry Run"}
+        </button>
+      ) : null}
+    </div>
+  );
+  const toggle = (
+    <button
+      aria-controls={runDetailsId}
+      aria-expanded={isExpanded}
+      aria-label={`${formatStageRunLabel(run)} activity: ${operation}`}
+      className={cn(
+        "flex min-h-9 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-[4px] py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+        isPrimary ? "text-xs text-muted" : "flex-1 text-sm",
+      )}
+      onClick={() => onToggle(run.id)}
+      type="button"
+    >
+      <ChevronDownIcon
+        className={cn(
+          "size-3.5 shrink-0 text-muted transition-transform motion-reduce:transition-none",
+          !isExpanded && "-rotate-90",
+        )}
+      />
+      {isPrimary ? (
+        isExpanded ? (
+          "Hide full log"
+        ) : (
+          "View full log"
+        )
+      ) : (
+        <>
+          {status}
           <span className="text-muted">{formatStageRunLabel(run)}</span>
           {run.startedAt ? (
             <span className="type-annotation tabular-nums text-muted">
@@ -153,44 +189,99 @@ export const WallieRunCard = memo(function WallieRunCard({
               />
             </span>
           ) : null}
-        </button>
-        {run.canCancel ? (
-          <button
-            aria-label="Cancel run"
-            className="ui-button"
-            disabled={cancelLocked}
-            onClick={() => void onCancel(run.id)}
-            type="button"
-          >
-            {actionPending ? "Stopping…" : "Stop"}
-          </button>
-        ) : null}
-        {run.canRetry ? (
-          <button
-            className="ui-button"
-            disabled={retryLocked}
-            onClick={() => void onRetry(run.id)}
-            type="button"
-          >
-            {actionPending ? "Retrying…" : "Retry Run"}
-          </button>
-        ) : null}
-      </div>
+        </>
+      )}
+    </button>
+  );
 
-      {isPrimary && !isExpanded && run.isActive && progress && run.status !== "error" ? (
-        <div className="mt-1 min-w-0 pl-6 text-sm text-foreground">
-          <ActivityText text={progress.messageMd} />
+  return (
+    <article
+      aria-label={isPrimary ? "Current Wallie run" : undefined}
+      className={cn(
+        "min-w-0",
+        isPrimary ? "py-1" : "py-3",
+        !isPrimary && !isExpanded && !run.isActive && "run-history-group",
+      )}
+      data-run-id={run.id}
+      data-wallie-summary={isPrimary ? "" : undefined}
+    >
+      {isPrimary ? (
+        <>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h2 className="text-base font-semibold text-foreground">
+                  {formatStageRunLabel(run)}
+                </h2>
+                {status}
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-muted">
+                <span>Attempt {run.attemptCount}</span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {run.status === "queued" ? "Queued for " : "Elapsed "}
+                  <TimeDisplay
+                    active={run.isActive}
+                    endValue={run.finishedAt}
+                    initialNow={renderNow}
+                    value={run.startedAt ?? run.createdAt}
+                    variant="elapsed"
+                  />
+                </span>
+                {run.isActive && run.status !== "queued" ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Last activity{" "}
+                      <TimeDisplay
+                        active
+                        variant="relative"
+                        initialNow={renderNow}
+                        value={lastActivityTimestamp(run)}
+                      />
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+            {controls}
+          </div>
+          {!isExpanded && run.isActive ? (
+            <div className="mt-4 min-w-0 space-y-2 rounded-[6px] bg-control-muted p-3 sm:p-4">
+              {latest?.kind === "tool_use" && working && !stalled ? (
+                <p className="text-xs text-muted">{currentOperationLabel({ run, stalled })}</p>
+              ) : progress && run.status !== "queued" ? (
+                <p className="text-xs text-muted">Latest update</p>
+              ) : null}
+              {progress && run.status !== "queued" ? (
+                <div className="text-sm leading-6 text-foreground">
+                  <ActivityText text={progress.messageMd} />
+                </div>
+              ) : (
+                <p className="text-sm text-foreground">
+                  {run.status === "queued"
+                    ? "The worker has not started this run yet."
+                    : latest
+                      ? "Open the full log for activity details."
+                      : "Activity will appear here as the run progresses."}
+                </p>
+              )}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="flex min-w-0 items-start gap-3">
+          {toggle}
+          {controls}
         </div>
-      ) : null}
-      {isPrimary && !isExpanded && latestTool && run.isActive ? (
-        <p className="mt-1 truncate pl-6 type-annotation text-muted">
-          Latest: {latestTool.title}
-          {latestTool.target ? ` · ${latestTool.target}` : ""}
-        </p>
-      ) : null}
+      )}
+
       {run.status === "error" ? (
         <p
-          className="mt-2 break-words pl-6 text-sm text-danger [overflow-wrap:anywhere]"
+          className={cn(
+            "mt-3 break-words rounded-[6px] text-sm text-danger [overflow-wrap:anywhere]",
+            isPrimary ? "bg-danger-soft p-3" : "pl-6",
+          )}
           role="status"
         >
           {error
@@ -199,17 +290,27 @@ export const WallieRunCard = memo(function WallieRunCard({
         </p>
       ) : null}
       {isPrimary || isExpanded ? (
-        <LiveConnectionNotice state={connectionState} onRetry={onReconnect} className="pl-6" />
+        <LiveConnectionNotice
+          state={connectionState}
+          onRetry={onReconnect}
+          className={isPrimary ? undefined : "pl-6"}
+        />
       ) : null}
       {stalled ? (
-        <p className="mt-2 pl-6 text-sm text-warning" role="status">
+        <p className={cn("mt-2 text-sm text-warning", !isPrimary && "pl-6")} role="status">
           This run may be stalled. Cancel it before retrying.
         </p>
       ) : null}
 
+      {isPrimary ? <div className="mt-3">{toggle}</div> : null}
       <div id={runDetailsId} hidden={!isExpanded}>
         {isExpanded ? (
-          <div className="mt-3 min-w-0 space-y-3 border-t border-border/40 pt-3 sm:ml-6">
+          <div
+            className={cn(
+              "mt-3 min-w-0 space-y-3 border-t border-border/40 pt-3",
+              !isPrimary && "sm:ml-6",
+            )}
+          >
             <RunMessageTimeline messages={run.messages} renderNow={renderNow} />
             {messagesLoadFailed ? (
               <p className="text-sm text-danger" role="status">
@@ -235,10 +336,12 @@ export const WallieRunCard = memo(function WallieRunCard({
                     {run.modelProvider}/{run.modelName}
                   </dd>
                 </div>
-                <div>
-                  <dt>Attempt</dt>
-                  <dd className="text-foreground">Attempt {run.attemptCount}</dd>
-                </div>
+                {!isPrimary ? (
+                  <div>
+                    <dt>Attempt</dt>
+                    <dd className="text-foreground">Attempt {run.attemptCount}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Requester</dt>
                   <dd className="text-foreground">Requested by {formatRequestedBy(run)}</dd>

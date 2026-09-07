@@ -236,7 +236,7 @@ describe("SessionWalliePanel", () => {
     expect((html.match(/>Product run</g) ?? []).length).toBe(1);
     expect(html).toContain("Working");
     expect(html).not.toContain("Connecting…");
-    expect(html).not.toContain("Attempt 2");
+    expect(html).toContain("Attempt 2");
     expect(html).toContain("activity-shimmer");
     expect(html).not.toContain("animate-spin");
   });
@@ -351,7 +351,7 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("No recent activity");
-    expect(html).toContain(">Stop</button>");
+    expect(html).toContain(">Stop run</button>");
     expect(html).toContain("This run may be stalled. Cancel it before retrying.");
     expect(html).not.toContain("Wallie is working…");
   });

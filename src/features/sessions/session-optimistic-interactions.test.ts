@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
+import { SessionActivityPlaceholder } from "@/features/sessions/detail/session-activity-presentation";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
@@ -197,7 +198,7 @@ describe("optimistic session interactions", () => {
 
     render(
       createElement(SessionDetailPageClient, {
-        activity: null,
+        activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
         initialData: makeDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -206,7 +207,7 @@ describe("optimistic session interactions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
 
-    expect(screen.getByText("Drafting artifact")).toBeTruthy();
+    expect(screen.getByText("Artifact ready")).toBeTruthy();
     expect(screen.queryByText("Final-stage approval may also archive the session.")).toBeNull();
     expect((screen.getByRole("button", { name: /Approving/ }) as HTMLButtonElement).disabled).toBe(
       true,
@@ -260,7 +261,7 @@ describe("optimistic session interactions", () => {
 
     render(
       createElement(SessionDetailPageClient, {
-        activity: null,
+        activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
         initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -311,7 +312,7 @@ describe("optimistic session interactions", () => {
 
     render(
       createElement(SessionDetailPageClient, {
-        activity: null,
+        activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
         initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -473,7 +474,7 @@ describe("optimistic session interactions", () => {
         OverlayProvider,
         null,
         createElement(SessionDetailPageClient, {
-          activity: null,
+          activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
           initialData: makeDetailData(),
           initialFormattedArtifact: null,
           initialFormattedArtifactKey: null,
@@ -559,7 +560,7 @@ describe("optimistic session interactions", () => {
         OverlayProvider,
         null,
         createElement(SessionDetailPageClient, {
-          activity: null,
+          activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
           initialData: makeDetailData(),
           initialFormattedArtifact: null,
           initialFormattedArtifactKey: null,
@@ -606,7 +607,7 @@ describe("optimistic session interactions", () => {
         OverlayProvider,
         null,
         createElement(SessionDetailPageClient, {
-          activity: null,
+          activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
           initialData: data,
           initialFormattedArtifact: null,
           initialFormattedArtifactKey: null,
@@ -621,7 +622,7 @@ describe("optimistic session interactions", () => {
         OverlayProvider,
         null,
         createElement(SessionDetailPageClient, {
-          activity: null,
+          activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
           initialData: {
             ...data,
             session: {
@@ -657,7 +658,7 @@ describe("optimistic session interactions", () => {
 
     render(
       createElement(SessionDetailPageClient, {
-        activity: null,
+        activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
         initialData: makeDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -709,7 +710,7 @@ describe("optimistic session interactions", () => {
         OverlayProvider,
         null,
         createElement(SessionDetailPageClient, {
-          activity: null,
+          activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
           initialData: makeDetailData(),
           initialFormattedArtifact: null,
           initialFormattedArtifactKey: null,
@@ -787,7 +788,7 @@ describe("optimistic session interactions", () => {
         OverlayProvider,
         null,
         createElement(SessionDetailPageClient, {
-          activity: null,
+          activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
           initialData: detailData,
           initialFormattedArtifact: null,
           initialFormattedArtifactKey: null,
