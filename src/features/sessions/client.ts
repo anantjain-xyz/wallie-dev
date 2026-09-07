@@ -188,6 +188,10 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
   };
 }
 
+export class SessionCreationRejectedError extends Error {
+  readonly creationRejected = true;
+}
+
 export async function createSessionFromClient(
   input: CreateSessionInput,
 ): Promise<CreateSessionResult> {
@@ -231,7 +235,16 @@ export async function createSessionFromClient(
         responsePayload.error ?? "The workspace pipeline changed. Refresh and try again.",
       );
     }
-    throw new Error(responsePayload?.error ?? "Failed to create session.");
+    const message = responsePayload?.error ?? "Failed to create session.";
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      response.status !== 408 &&
+      responsePayload?.code !== "session_request_conflict"
+    ) {
+      throw new SessionCreationRejectedError(message);
+    }
+    throw new Error(message);
   }
 
   if (
