@@ -167,6 +167,7 @@ describe("optimistic session interactions", () => {
     mocked.channel.subscribe.mockReturnValue(mocked.channel);
     delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("does not expose Stop while a delayed approval is still pending", async () => {

@@ -14,11 +14,21 @@ export const SESSION_LIST_SORT_OPTIONS: {
   { key: "number", label: "Session number" },
 ];
 
+const SESSION_LIST_HREF_PARAM_KEYS = ["stage", "q", "scope", "sort", "cursor"] as const;
+
 export function buildSessionsListHref(
   base: string,
   state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope" | "sort">,
+  preserveSearch?: string | URLSearchParams | null,
 ): string {
-  const params = new URLSearchParams();
+  const params = preserveSearch
+    ? new URLSearchParams(
+        typeof preserveSearch === "string" ? preserveSearch : preserveSearch.toString(),
+      )
+    : new URLSearchParams();
+  for (const key of SESSION_LIST_HREF_PARAM_KEYS) {
+    params.delete(key);
+  }
   if (state.stageSlug) params.set("stage", state.stageSlug);
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.scope !== "active") params.set("scope", state.scope);

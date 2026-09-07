@@ -50,6 +50,20 @@ describe("sessions list helpers", () => {
         stageSlug: null,
       }),
     ).toBe("/w/acme/sessions?scope=all");
+
+    expect(
+      buildSessionsListHref(
+        "/w/acme/sessions",
+        {
+          cursor: null,
+          query: "auth",
+          scope: "all",
+          sort: "oldest",
+          stageSlug: "build",
+        },
+        "create=1&cursor=stale&scope=archived",
+      ),
+    ).toBe("/w/acme/sessions?create=1&stage=build&q=auth&scope=all&sort=oldest");
   });
 
   it("labels pagination by the active sort direction", () => {
