@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   readSessionListPreferences,
+  sessionListPreferencesCookieName,
+  parseSessionListPreferencesCookie,
   sessionListPreferencesStorageKey,
   shouldRestoreSessionListPreferences,
   writeSessionListPreferences,
@@ -27,21 +29,53 @@ const storedAll = {
 describe("sessions list preferences", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.history.replaceState(null, "", "/w/acme/sessions");
+    document.cookie = `${sessionListPreferencesCookieName("acme")}=; Path=/w/acme; Max-Age=0`;
   });
 
   afterEach(() => {
-    window.localStorage.clear();
     vi.restoreAllMocks();
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/w/acme/sessions");
+    document.cookie = `${sessionListPreferencesCookieName("acme")}=; Path=/w/acme; Max-Age=0`;
   });
 
   it("round-trips a valid payload for the workspace key", () => {
     writeSessionListPreferences("acme", storedAll);
 
-    expect(window.localStorage.getItem(sessionListPreferencesStorageKey("acme"))).toBe(
-      JSON.stringify(storedAll),
+    expect(document.cookie).toContain(
+      `${sessionListPreferencesCookieName("acme")}=${encodeURIComponent(JSON.stringify(storedAll))}`,
     );
+    expect(window.localStorage.getItem(sessionListPreferencesStorageKey("acme"))).toBeNull();
     expect(readSessionListPreferences("acme")).toEqual(storedAll);
     expect(readSessionListPreferences("other")).toBeNull();
+  });
+
+  it("validates cookie payloads on the server", () => {
+    expect(
+      parseSessionListPreferencesCookie(encodeURIComponent(JSON.stringify(storedAll))),
+    ).toEqual(storedAll);
+    for (const value of [
+      undefined,
+      "%",
+      "{not-json",
+      "null",
+      encodeURIComponent(JSON.stringify({ ...storedAll, scope: "bad" })),
+      encodeURIComponent(JSON.stringify({ ...storedAll, sort: "bad" })),
+    ]) {
+      expect(parseSessionListPreferencesCookie(value)).toBeNull();
+    }
+  });
+
+  it("prefers the cookie over legacy storage and scopes it to the workspace path", () => {
+    window.localStorage.setItem(
+      sessionListPreferencesStorageKey("acme"),
+      JSON.stringify({ ...storedAll, scope: "archived" }),
+    );
+    writeSessionListPreferences("acme", storedAll);
+    expect(readSessionListPreferences("acme")).toEqual(storedAll);
+    window.history.replaceState(null, "", "/w/other/sessions");
+    expect(document.cookie).not.toContain(sessionListPreferencesCookieName("acme"));
   });
 
   it("rejects unknown scope or sort and malformed JSON", () => {
@@ -61,15 +95,15 @@ describe("sessions list preferences", () => {
     expect(readSessionListPreferences("acme")).toBeNull();
   });
 
-  it("ignores quota and thrown getItem failures", () => {
+  it("ignores blocked legacy storage and cookie writes", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
     expect(readSessionListPreferences("acme")).toBeNull();
     vi.mocked(Storage.prototype.getItem).mockRestore();
 
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("quota");
+    vi.spyOn(document, "cookie", "set").mockImplementation(() => {
+      throw new Error("blocked");
     });
     expect(() => writeSessionListPreferences("acme", storedAll)).not.toThrow();
   });
