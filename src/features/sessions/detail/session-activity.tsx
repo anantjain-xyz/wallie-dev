@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SessionActivityPlaceholder } from "./session-activity-presentation";
+
 import { ShimmerText } from "@/components/shared/shimmer-text";
 import { SessionActivityFailure } from "@/features/sessions/detail/session-activity-failure";
 import { SessionActivityPanel } from "@/features/sessions/detail/session-activity-client";
@@ -73,8 +75,10 @@ export async function SessionActivity({
 
 export function SessionActivityFallback() {
   return (
-    <div aria-label="Loading run activity" className="py-3 text-sm text-muted" role="status">
-      <ShimmerText>Loading activity…</ShimmerText>
-    </div>
+    <SessionActivityPlaceholder>
+      <div aria-label="Loading run activity" className="py-3 text-sm text-muted" role="status">
+        <ShimmerText>Loading activity…</ShimmerText>
+      </div>
+    </SessionActivityPlaceholder>
   );
 }

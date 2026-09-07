@@ -10,7 +10,13 @@ import {
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
+import {
+  SessionActivityPlaceholder,
+  useSessionActivityPresentation,
+} from "./session-activity-presentation";
+
 import type { ToastInput } from "@/components/ui/toast";
+import { PortalRootProvider } from "@/components/ui/portal-root";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
@@ -136,6 +142,125 @@ afterEach(() => {
 });
 
 describe("SessionDetailPageClient", () => {
+  it("allows run-level cancellation for rejected reruns but suppresses it when archived", () => {
+    function CancellationProbe() {
+      const presentation = useSessionActivityPresentation();
+      return createElement(
+        "span",
+        null,
+        presentation?.stopControl === undefined
+          ? "Run cancellation available"
+          : "Run cancellation suppressed",
+      );
+    }
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "rejected";
+    expect(renderDetail({ data, activity: createElement(CancellationProbe) })).toContain(
+      "Run cancellation available",
+    );
+    data.session.archivedAt = data.session.updatedAt;
+    expect(renderDetail({ data, activity: createElement(CancellationProbe) })).toContain(
+      "Run cancellation suppressed",
+    );
+  });
+
+  it("keeps session context and input independent of the selected stage, including stages without output", async () => {
+    const data = makeSessionDetailData();
+    data.creatorDisplayName = "Ada Lovelace";
+    data.session.pipeline.stages.push({
+      id: "build",
+      slug: "build",
+      name: "Build",
+      description: "Implement",
+      position: 1,
+    });
+    data.session.currentStageId = "build";
+    data.session.currentStageSlug = "build";
+    data.session.phaseStatus = "in_progress";
+    data.session.currentArtifactVersion = 0;
+    data.session.phaseCompletions = [
+      { stageId: "stage-1", stageSlug: "product", completedAt: data.session.updatedAt },
+    ];
+    data.session.artifacts = [
+      {
+        stageSlug: "product",
+        version: 1,
+        payload: "Approved approach",
+        createdAt: data.session.updatedAt,
+      },
+    ];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: createElement(SessionActivityPlaceholder, null, "Waiting for build"),
+        initialData: data,
+        initialFormattedArtifact: createElement("p", null, "Approved approach"),
+        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+      }),
+    );
+    const context = screen.getByRole("region", { name: "Session context" });
+    expect(context.textContent).not.toContain("No Linear issue");
+    expect(context.textContent).not.toContain("No pull request");
+    expect(screen.queryByRole("region", { name: "Build artifact" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Original request" }));
+    expect(screen.getByRole("region", { name: "Original request" }).textContent).toContain(
+      data.session.promptMd,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Product: Completed" }));
+    expect(screen.getByRole("region", { name: "Product artifact" })).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get("artifactStage")).toBe("product");
+    fireEvent.click(screen.getByRole("button", { name: "Build: In progress" }));
+    expect(screen.queryByRole("region", { name: "Product artifact" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Build artifact" })).toBeNull();
+    expect(new URLSearchParams(window.location.search).has("artifactStage")).toBe(false);
+    expect(screen.getByRole("region", { name: "Session context" })).toBe(context);
+    expect(screen.getByRole("region", { name: "Original request" })).toBeTruthy();
+    window.history.replaceState(window.history.state, "", "/");
+  });
+
+  it("preserves the feedback dialog and draft when an optimistic rerun fails", async () => {
+    const data = makeSessionDetailData();
+    data.session.artifacts = [
+      {
+        stageSlug: "product",
+        version: 1,
+        payload: "Review this",
+        createdAt: data.session.updatedAt,
+      },
+    ];
+    let finish!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("phase-action"))
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      return Response.json({});
+    });
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: null,
+        initialData: data,
+        initialFormattedArtifact: createElement("p", null, "Review this"),
+        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+      }),
+      { wrapper: PortalRootProvider },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Feedback for Wallie" }), {
+      target: { value: "Keep the keyboard focus visible." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    expect(screen.getByRole("dialog", { name: "Request changes" })).toBeTruthy();
+    expect(document.querySelector('[aria-label="Product artifact"]')).not.toBeNull();
+    await act(async () => finish(Response.json({ error: "Try again" }, { status: 500 })));
+    expect(
+      (screen.getByRole("textbox", { name: "Feedback for Wallie" }) as HTMLTextAreaElement).value,
+    ).toBe("Keep the keyboard focus visible.");
+    expect(screen.getByRole("button", { name: "Queue rerun" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+  });
+
   it("refreshes after a successful archive Undo has cleared its pending state", async () => {
     const data = makeSessionDetailData();
     const archivedAt = "2026-06-07T12:00:00.000Z";
@@ -362,7 +487,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("Cancel title edit");
   });
 
-  it("gives mobile titles full width and keeps desktop actions on the right", () => {
+  it("gives the title full width below the breadcrumb and archive actions", () => {
     const data = makeSessionDetailData();
     data.session.title =
       "A deliberately long session title that must wrap in full without displacing archive actions";
@@ -370,8 +495,9 @@ describe("SessionDetailPageClient", () => {
     const headerMatch = html.match(/<header class="([^"]+)">([\s\S]*?)<\/header>/);
 
     expect(headerMatch).not.toBeNull();
-    expect(headerMatch?.[1]).toContain("grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]");
-    expect(headerMatch?.[2]).toContain("sm:col-span-2");
+    expect(headerMatch?.[2]?.indexOf("Archive")).toBeLessThan(
+      headerMatch?.[2]?.indexOf("<h1") ?? 0,
+    );
     expect(headerMatch?.[2]).toContain(data.session.title);
     expect(headerMatch?.[2]).toContain("Archive");
     expect(headerMatch?.[2]).not.toMatch(/line-clamp|overflow-hidden|truncate/);
@@ -381,20 +507,20 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail();
     const breadcrumbMatch = html.match(/← Sessions[\s\S]*?#7/);
     expect(breadcrumbMatch).not.toBeNull();
-    expect(html).not.toMatch(/<span class="font-mono">#7<\/span>/);
+    expect(html).toMatch(/aria-label="Breadcrumb"[\s\S]*?#7[\s\S]*?<\/nav>/);
   });
 
-  it("renders creator and created time in the Context inspector", () => {
+  it("keeps creator and creation time in the compact session header", () => {
     const data = makeSessionDetailData();
     data.creatorDisplayName = "Ada Lovelace";
     const html = renderDetail({ data });
 
     expect(html).toContain("Ada Lovelace");
-    expect(html).toContain('class="min-w-0 break-all"');
+    expect(html.indexOf("Ada Lovelace")).toBeLessThan(html.indexOf('aria-label="Pipeline stages"'));
     expect(html).toContain("Created");
     expect(html).toContain('dateTime="2026-06-07T10:00:00.000Z"');
     expect(html).toContain(">2026-06-07 10:00 UTC</time>");
-    expect(html).toContain("Run input");
+    expect(html).toContain("Original request");
     expect(html).toContain("acme/app");
   });
 
@@ -413,34 +539,27 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Final-stage approval may also archive the session.");
   });
 
-  it("uses a 70/30 workbench grid with sticky review controls", () => {
+  it("attaches review controls to the artifact and keeps session context above stages", () => {
     const html = renderDetail();
-
-    expect(html).toContain("lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]");
-    expect(html).not.toContain("lg:border-l");
-    expect(html).not.toContain("lg:pl-5");
-    expect(html).toContain("sticky bottom-0");
-    expect(html).toContain("Request changes");
-    expect(html).toContain("Approve stage");
-    expect(html).toContain("Final-stage approval may also archive the session.");
-    expect(html).toContain('aria-label="Pipeline stages"');
-    expect(html).not.toContain("max-h-[480px]");
-    expect(html).not.toContain(">Prompt<");
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const artifact = document.querySelector('section[aria-label="Product artifact"]')!;
+    expect(artifact.textContent).toContain("Request changes");
+    expect(artifact.textContent).toContain("Approve stage");
+    expect(artifact.querySelector('[aria-label="Session context"]')).toBeNull();
+    expect(document.querySelector('header [aria-label="Session context"]')).not.toBeNull();
+    expect(html).not.toContain('aria-label="Current execution"');
   });
 
-  it("renders runs as a full-width section below the artifact workbench", () => {
-    const html = renderDetail({ activity: createElement("div", null, "Run history") });
-    const workbenchIndex = html.indexOf("lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]");
-    const runsSectionIndex = html.indexOf('aria-labelledby="session-runs-heading"');
-
-    expect(workbenchIndex).toBeGreaterThan(-1);
-    expect(runsSectionIndex).toBeGreaterThan(workbenchIndex);
-    expect(html).toContain('class="ui-sheet mt-6"');
-    expect(html).toContain('id="session-runs-heading"');
-    expect(html).toContain(">Runs</h2>");
-    expect(html).toContain("Run history");
-    expect(html).not.toContain('aria-label="Inspector"');
-    expect(html).not.toContain('id="activity-tab"');
+  it("collapses run history below a reviewable artifact without discarding its content", () => {
+    const html = renderDetail({ activity: createElement("div", null, "Loaded run activity") });
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const runs = document.querySelector('details[aria-label="Session runs"]')!;
+    expect(runs.hasAttribute("open")).toBe(false);
+    expect(runs.querySelector("summary")?.textContent).toBe("Run history");
+    expect(runs.textContent).toContain("Loaded run activity");
+    expect(html.indexOf('aria-label="Session runs"')).toBeGreaterThan(
+      html.indexOf("Product artifact"),
+    );
   });
 
   it("keeps the review surface rendered when activity is deferred", () => {
@@ -496,15 +615,18 @@ describe("SessionDetailPageClient", () => {
     data.session.phaseCompletions = [
       { completedAt: "2026-06-07T10:30:00.000Z", stageSlug: "plan" },
     ];
-    const html = renderDetail({ data });
+    const html = renderDetail({
+      data,
+      activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
+    });
 
     expect(html).toContain(">Plan</span>");
     expect(html).toContain(">Product</span>");
     expect(html).toContain(">Land</span>");
-    expect(html).toContain("Product artifact");
-    expect(html).toContain("Waiting for this stage’s artifact. Follow progress in Runs below.");
+    expect(html).not.toContain("Product artifact");
+    expect(html).not.toContain("Waiting for this stage’s artifact");
     expect(html).toContain("Stop run");
-    expect(html.indexOf("Stop run")).toBeLessThan(html.indexOf("Archive"));
+    expect(html.indexOf("Stop run")).toBeGreaterThan(html.indexOf("Archive"));
     expect(html).not.toContain("Wallie is generating this stage’s artifact.");
     expect(html).not.toContain("sticky bottom-0");
     expect(html).not.toContain("Request changes");
@@ -543,14 +665,16 @@ describe("SessionDetailPageClient", () => {
     const data = makeSessionDetailData();
     data.session.phaseStatus = "rejected";
     const html = renderDetail({ data });
-    expect(html).toContain("This stage is not ready for review.");
+    expect(html).toContain("Earlier output · not ready for review");
+    expect(html).not.toContain("Product artifact");
     expect(html).not.toContain("Request changes");
   });
 
-  it("keeps Run input collapsed by default in Context", () => {
+  it("keeps the original request collapsed by default in the header", () => {
     const html = renderDetail();
-    expect(html).toContain("Run input");
-    expect(html).toContain("Collapsed — expand to inspect the original session input");
+    expect(html).toContain("Original request");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("Collapsed — expand");
     expect(html).not.toContain("Build the title editor");
   });
 });

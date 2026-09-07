@@ -69,11 +69,13 @@ function cardProps(): WallieRunCardProps {
 }
 
 describe("concise run activity", () => {
-  it("animates only working runs, labels the last tool as historical, and keeps Stop separate", () => {
+  it("keeps status and cancellation visible while command details stay in the full log", () => {
     const props = cardProps();
     const view = render(<WallieRunCard {...props} />);
     expect(screen.getByText("Working").classList.contains("activity-shimmer")).toBe(true);
-    expect(screen.getByText("Latest: Shell · pnpm check")).toBeTruthy();
+    expect(screen.getByText("Running a command")).toBeTruthy();
+    expect(screen.queryByText("pnpm check")).toBeNull();
+    expect(screen.getByText("View full log")).toBeTruthy();
     expect(screen.queryByLabelText("Tool payload")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
     expect(props.onCancel).toHaveBeenCalledWith("run");
