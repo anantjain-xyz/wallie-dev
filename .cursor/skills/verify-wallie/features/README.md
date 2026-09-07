@@ -43,7 +43,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 - [Landing and sign-in](./landing-and-sign-in.md) covers the public landing CTA (`Get started` / header `Sign in`), login form, magic-link request, and unauthenticated redirect into login.
 - [Sessions ledger](./sessions-ledger.md) covers the seeded workspace session list, search, scope filter, and opening a session.
-- [Session create](./session-create.md) covers opening New session, submitting Start session, and the creating preview handoff.
+- [Session create](./session-create.md) covers New session / `?create=1`, Prompt fill, Start session, and the detail-URL handoff.
 - [Pipeline board](./pipeline-board.md) covers the workspace pipeline board, status filter, and opening a session from a column.
 - [Session review](./session-review.md) covers approve / request-changes on an awaiting-review artifact.
 - [Settings](./settings.md) covers settings categories and the verify-setup surface.
