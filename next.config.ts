@@ -1,27 +1,9 @@
 import type { NextConfig } from "next";
 
+import { buildImageOptimizerConfig } from "./src/lib/storage/image-optimizer-config";
+
 const nextConfig: NextConfig = {
-  images: {
-    remotePatterns: [
-      {
-        hostname: "**.supabase.co",
-        pathname: "/storage/v1/object/public/**",
-        protocol: "https",
-      },
-      {
-        hostname: "127.0.0.1",
-        pathname: "/storage/v1/object/public/**",
-        port: "54321",
-        protocol: "http",
-      },
-      {
-        hostname: "localhost",
-        pathname: "/storage/v1/object/public/**",
-        port: "54321",
-        protocol: "http",
-      },
-    ],
-  },
+  images: buildImageOptimizerConfig(process.env.NEXT_PUBLIC_SUPABASE_URL),
   reactStrictMode: true,
   serverExternalPackages: ["@cursor/sdk"],
 };
