@@ -1,95 +1,145 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import {
+  buildGitHubAuthorizationUrl,
+  exchangeGitHubAuthorizationCode,
+  verifyGitHubInstallationOwnership,
+} from "@/features/github/oauth";
 import { syncGitHubInstallationAndRepositories } from "@/features/github/service";
-import { type GitHubInstallState, verifyGitHubInstallState } from "@/features/github/state";
+import {
+  advanceGitHubInstallFlow,
+  consumeGitHubInstallFlow,
+  githubCodeChallenge,
+  githubInstallCookieName,
+  githubInstallCookieOptions,
+  loadGitHubInstallFlow,
+  matchesGitHubStateCookie,
+} from "@/features/github/state";
 import { parseServerEnv } from "@/env/server";
 import { workspaceOnboardingPath, workspaceSettingsPath } from "@/lib/routes";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
-function buildCallbackRedirectPath(
-  state: Pick<GitHubInstallState, "source" | "workspaceSlug"> | null,
+type Destination = { source: string; workspaceSlug: string };
+
+function redirectResult(
+  appUrl: string,
+  destination: Destination | null,
   status: "connected" | "config_missing" | "failed" | "invalid_state",
 ) {
-  if (!state?.workspaceSlug) {
-    return `/?github=${status}`;
-  }
-
-  if (state.source === "onboarding") {
-    const params = new URLSearchParams({ github: status, step: "github" });
-    return `${workspaceOnboardingPath(state.workspaceSlug)}?${params.toString()}`;
-  }
-
-  return workspaceSettingsPath(state.workspaceSlug, {
-    github: status,
+  const path = !destination
+    ? `/?github=${status}`
+    : destination.source === "onboarding"
+      ? `${workspaceOnboardingPath(destination.workspaceSlug)}?${new URLSearchParams({ github: status, step: "github" })}`
+      : workspaceSettingsPath(destination.workspaceSlug, { github: status });
+  const response = NextResponse.redirect(new URL(path, appUrl), {
+    status: 303,
+    headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
   });
+  response.cookies.set(githubInstallCookieName, "", {
+    ...githubInstallCookieOptions(appUrl),
+    maxAge: 0,
+  });
+  return response;
 }
 
-export async function activateOnboardingGitHubStep(state: GitHubInstallState) {
-  if (state.source !== "onboarding") return;
-
-  const admin = createSupabaseAdminClient();
-  await admin
+export async function activateOnboardingGitHubStep(workspaceId: string) {
+  await createSupabaseAdminClient()
     .from("workspace_onboarding")
     .update({
       current_step: "github",
       status: "in_progress",
     })
-    .eq("workspace_id", state.workspaceId)
+    .eq("workspace_id", workspaceId)
     .neq("status", "completed");
 }
 
 export async function GET(request: NextRequest) {
-  const installationIdValue = request.nextUrl.searchParams.get("installation_id");
-  const stateToken = request.nextUrl.searchParams.get("state");
-  const state = verifyGitHubInstallState(stateToken);
   const env = parseServerEnv();
-
-  if (!state) {
-    return NextResponse.redirect(
-      new URL(buildCallbackRedirectPath(null, "invalid_state"), env.NEXT_PUBLIC_APP_URL),
-      { status: 303 },
-    );
+  const state = request.nextUrl.searchParams.get("state");
+  let destination: Destination | null = null;
+  if (!matchesGitHubStateCookie(state, request.cookies.get(githubInstallCookieName)?.value)) {
+    return redirectResult(env.NEXT_PUBLIC_APP_URL, null, "invalid_state");
   }
 
   try {
-    await activateOnboardingGitHubStep(state);
-  } catch {
-    // Redirect destination is signed in state; a failed active-step hint should not break install.
-  }
+    const user = await getSupabaseUserOrNull(await createSupabaseServerClient());
+    if (!user) return redirectResult(env.NEXT_PUBLIC_APP_URL, null, "invalid_state");
+    const flow = await loadGitHubInstallFlow(state, user.id);
+    if (!flow) return redirectResult(env.NEXT_PUBLIC_APP_URL, null, "invalid_state");
+    const access = await requireWorkspaceAccessById(flow.workspace_id, { requireManager: true });
+    if (!access.ok || access.context.user.id !== flow.user_id) {
+      return redirectResult(env.NEXT_PUBLIC_APP_URL, null, "invalid_state");
+    }
+    destination = { source: flow.source, workspaceSlug: access.context.workspace.slug };
+    if (getGitHubConfigStatus().missingAppKeys.length > 0) {
+      return redirectResult(env.NEXT_PUBLIC_APP_URL, destination, "config_missing");
+    }
+    if (request.nextUrl.searchParams.has("error")) {
+      return redirectResult(env.NEXT_PUBLIC_APP_URL, destination, "failed");
+    }
 
-  const missingKeys = getGitHubConfigStatus().missingAppKeys;
+    if (flow.phase === "install") {
+      const rawId = request.nextUrl.searchParams.get("installation_id") ?? "";
+      const installationId = Number(rawId);
+      if (
+        !/^[1-9]\d*$/.test(rawId) ||
+        !Number.isSafeInteger(installationId) ||
+        !(await advanceGitHubInstallFlow(flow, installationId))
+      ) {
+        return redirectResult(env.NEXT_PUBLIC_APP_URL, destination, "invalid_state");
+      }
+      const verifier = decryptSecretValue(flow.encrypted_code_verifier);
+      // This callback's installation_id is untrusted until the separate user OAuth check.
+      return NextResponse.redirect(
+        buildGitHubAuthorizationUrl({ state, codeChallenge: githubCodeChallenge(verifier) }),
+        {
+          status: 303,
+          headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+        },
+      );
+    }
 
-  if (missingKeys.length > 0) {
-    return NextResponse.redirect(
-      new URL(buildCallbackRedirectPath(state, "config_missing"), env.NEXT_PUBLIC_APP_URL),
-      { status: 303 },
-    );
-  }
-
-  const installationId = Number(installationIdValue);
-
-  if (!Number.isInteger(installationId) || installationId < 1) {
-    return NextResponse.redirect(
-      new URL(buildCallbackRedirectPath(state, "failed"), env.NEXT_PUBLIC_APP_URL),
-      { status: 303 },
-    );
-  }
-
-  try {
-    await syncGitHubInstallationAndRepositories({
-      installationId,
-      workspaceId: state.workspaceId,
+    const code = request.nextUrl.searchParams.get("code");
+    if (
+      flow.phase !== "authorize" ||
+      !flow.installation_id ||
+      !code ||
+      code.length > 1024 ||
+      !(await consumeGitHubInstallFlow(flow))
+    ) {
+      return redirectResult(env.NEXT_PUBLIC_APP_URL, destination, "invalid_state");
+    }
+    // Consume before external requests so concurrent callbacks cannot replay this flow.
+    const token = await exchangeGitHubAuthorizationCode({
+      code,
+      codeVerifier: decryptSecretValue(flow.encrypted_code_verifier),
     });
-
-    return NextResponse.redirect(
-      new URL(buildCallbackRedirectPath(state, "connected"), env.NEXT_PUBLIC_APP_URL),
-      { status: 303 },
-    );
+    await verifyGitHubInstallationOwnership({ installationId: flow.installation_id, token });
+    const currentAccess = await requireWorkspaceAccessById(flow.workspace_id, {
+      requireManager: true,
+    });
+    if (!currentAccess.ok || currentAccess.context.user.id !== flow.user_id) {
+      return redirectResult(env.NEXT_PUBLIC_APP_URL, null, "invalid_state");
+    }
+    await syncGitHubInstallationAndRepositories({
+      installationId: flow.installation_id,
+      workspaceId: flow.workspace_id,
+    });
+    if (flow.source === "onboarding") {
+      try {
+        await activateOnboardingGitHubStep(flow.workspace_id);
+      } catch {
+        // The installation is connected; a best-effort onboarding hint cannot undo it.
+      }
+    }
+    return redirectResult(env.NEXT_PUBLIC_APP_URL, destination, "connected");
   } catch {
-    return NextResponse.redirect(
-      new URL(buildCallbackRedirectPath(state, "failed"), env.NEXT_PUBLIC_APP_URL),
-      { status: 303 },
-    );
+    // Never expose OAuth codes, tokens, or upstream credential-bearing diagnostics.
+    return redirectResult(env.NEXT_PUBLIC_APP_URL, destination, "failed");
   }
 }

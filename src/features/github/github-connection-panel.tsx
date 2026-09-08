@@ -235,7 +235,7 @@ export function GitHubConnectionPanel({
             title={
               hasGitHubAppConfig
                 ? undefined
-                : "Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, then restart the app to enable install."
+                : "Set the missing GitHub App variables, then restart the app to enable install."
             }
             type="button"
           >

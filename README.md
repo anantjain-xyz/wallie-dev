@@ -414,6 +414,8 @@ Fill in the required values. Integration variables can be left blank until you c
 | `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                                                                                                  |
 | `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256-GCM at-rest encryption                                                                       |
 | `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                                                                                           |
+| `GITHUB_APP_CLIENT_ID`                 | GitHub   | GitHub App Client ID for installation ownership authorization                                                                                              |
+| `GITHUB_APP_CLIENT_SECRET`             | GitHub   | GitHub App client secret (server only)                                                                                                                     |
 | `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)                                                                             |
 | `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                                                                                                    |
 | `VERCEL_TOKEN`                         | Dev/Ops  | Optional operator token for non-session helper sandboxes or local testing. Wallie session sandboxes use the workspace Vercel connection saved in Settings. |
@@ -438,7 +440,7 @@ Workspaces choose the agent provider and model in **Settings -> Integrations**. 
 Go to <https://github.com/settings/apps> -> **New GitHub App** (or your org's equivalent under Settings -> Developer settings).
 
 - **Homepage URL**: `$PUBLIC_URL`
-- **Callback URL**: `$PUBLIC_URL/api/github/callback` (keep "Request user authorization (OAuth) during installation" **off** -- Wallie uses the app-install flow)
+- **Callback URL**: `$PUBLIC_URL/api/github/callback` (keep "Request user authorization (OAuth) during installation" **off** -- Wallie starts a separate OAuth ownership check after the setup callback)
 - **Setup URL** (required post-install redirect): `$PUBLIC_URL/api/github/callback`
 - **Webhook**
   - Active: yes
@@ -448,14 +450,17 @@ Go to <https://github.com/settings/apps> -> **New GitHub App** (or your org's eq
   - Contents: **Read and write** (clone/push stage branches and repository-onboarding commits)
   - Pull requests: **Read and write** (open/update setup and session-stage PRs and track their state)
   - Metadata: **Read-only** (mandatory; GitHub enables it automatically)
+- **Permissions -> Organization**: Members: **Read-only** (verify that the connecting GitHub user owns the organization). Existing installations must approve this permission change.
 - **Subscribe to events**: `Pull request`. The `installation` and `installation_repositories` events are delivered automatically by GitHub and are handled at `/api/github/webhooks`.
 - **Where can this GitHub App be installed?** Only on this account (for local dev).
 
 After creation:
 
-1. Copy **App ID** -> `GITHUB_APP_ID`.
+1. Copy **App ID** -> `GITHUB_APP_ID`, **Client ID** -> `GITHUB_APP_CLIENT_ID`, and generate a client secret -> `GITHUB_APP_CLIENT_SECRET`.
 2. Click **Generate a private key**, download the `.pem`, and put its contents in `GITHUB_APP_PRIVATE_KEY`. If you inline it into `.env.local`, replace real newlines with `\n` and quote the value.
-3. Click **Install App** and install it onto the repo(s) you want Wallie to see. Wallie's in-app flow (`GET /api/github/install` -> GitHub -> `GET /api/github/callback`) stores the installation against your workspace.
+3. From your workspace's GitHub settings, start **Install GitHub App**, choose the repositories, and complete the separate GitHub authorization screen. Stay signed in to the same Wallie account and browser throughout the ten-minute flow. You must be a Wallie workspace owner/admin and the GitHub personal-account owner or an active organization owner. Repository collaborators and organization members cannot connect installation-wide access.
+
+Wallie verifies ownership before saving a connection. The browser-bound flow is single-use, uses PKCE, and stores only a hash of state and an encrypted verifier; OAuth access and refresh tokens are never persisted. An installation can belong to only one workspace. Reconnecting the same installation refreshes its metadata; changing installations requires explicit disconnection first. See the [upgrade instructions](docs/SELF_HOSTING.md#github-ownership-verification-upgrade) before deploying this change to an existing database.
 
 ### 6. Linear API key (optional)
 

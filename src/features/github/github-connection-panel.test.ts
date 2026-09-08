@@ -215,7 +215,7 @@ describe("GitHubConnectionPanel", () => {
     expect(markup).toContain("the install button turns on");
     expect(markup).toContain("cannot finish this step or continue");
     expect(markup).toContain(
-      'title="Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, then restart the app to enable install."',
+      'title="Set the missing GitHub App variables, then restart the app to enable install."',
     );
     expect(markup).toContain("Install GitHub App");
     expect(markup).toContain("disabled");
