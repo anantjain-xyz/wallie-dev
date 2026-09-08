@@ -179,90 +179,92 @@ export async function upsertGitHubInstallationForWorkspace(
   input: Record<string, string | undefined> = process.env,
 ) {
   const admin = createSupabaseAdminClient(input);
-  const installation = await fetchGitHubInstallationFromApp(values.installationId, input);
-  const { data: existingRows, error: existingError } = await admin
-    .from("github_installations")
-    .select(installationSelect)
-    .or(`workspace_id.eq.${values.workspaceId},installation_id.eq.${values.installationId}`);
-
-  if (existingError) {
-    throw existingError;
-  }
-
-  const workspaceRow = (existingRows ?? []).find((row) => row.workspace_id === values.workspaceId);
-  const installationRow = (existingRows ?? []).find(
-    (row) => row.installation_id === values.installationId,
-  );
-  const recordId = workspaceRow?.id ?? installationRow?.id ?? randomUUID();
-
-  if (installationRow && installationRow.id !== recordId) {
-    const { error: deleteDuplicateError } = await admin
+  async function findExistingInstallation() {
+    const { data: existingRows, error } = await admin
       .from("github_installations")
-      .delete()
-      .eq("id", installationRow.id);
+      .select(installationSelect)
+      .or(`workspace_id.eq.${values.workspaceId},installation_id.eq.${values.installationId}`);
 
-    if (deleteDuplicateError) {
-      throw deleteDuplicateError;
+    if (error) {
+      throw error;
     }
+
+    if (
+      (existingRows ?? []).some(
+        (row) =>
+          row.installation_id === values.installationId && row.workspace_id !== values.workspaceId,
+      )
+    ) {
+      throw new Error("This GitHub installation is already connected to another workspace.");
+    }
+
+    if (
+      (existingRows ?? []).some(
+        (row) =>
+          row.workspace_id === values.workspaceId && row.installation_id !== values.installationId,
+      )
+    ) {
+      throw new Error(
+        "Disconnect the current GitHub installation before connecting a different one.",
+      );
+    }
+
+    return (existingRows ?? []).find(
+      (row) =>
+        row.workspace_id === values.workspaceId && row.installation_id === values.installationId,
+    );
   }
 
-  let data:
-    | (Pick<
-        Tables<"github_installations">,
-        | "app_id"
-        | "id"
-        | "installation_id"
-        | "installation_url"
-        | "permissions"
-        | "suspended"
-        | "target_name"
-        | "target_type"
-        | "updated_at"
-        | "workspace_id"
-      > & {
-        workspace_id: string;
-      })
-    | null = null;
-  let error: { message: string } | null = null;
+  const existingInstallation = await findExistingInstallation();
+  const installation = await fetchGitHubInstallationFromApp(values.installationId, input);
+  const metadata = {
+    app_id: installation.app_id,
+    installation_url: installation.html_url,
+    permissions: installation.permissions,
+    suspended: Boolean(installation.suspended_at),
+    target_name: resolveGitHubInstallationTargetName(installation),
+    target_type: installation.target_type,
+  };
 
-  if (workspaceRow || installationRow) {
-    const updateResult = await admin
+  async function refreshExistingInstallation(recordId: string) {
+    const { data, error } = await admin
       .from("github_installations")
-      .update({
-        app_id: installation.app_id,
-        installation_id: installation.id,
-        installation_url: installation.html_url,
-        permissions: installation.permissions,
-        suspended: false,
-        target_name: resolveGitHubInstallationTargetName(installation),
-        target_type: installation.target_type,
-        workspace_id: values.workspaceId,
-      })
+      .update(metadata)
       .eq("id", recordId)
+      .eq("workspace_id", values.workspaceId)
+      .eq("installation_id", values.installationId)
       .select(installationSelect)
       .single();
 
-    data = updateResult.data;
-    error = updateResult.error;
-  } else {
-    const insertResult = await admin
-      .from("github_installations")
-      .insert({
-        app_id: installation.app_id,
-        id: recordId,
-        installation_id: installation.id,
-        installation_url: installation.html_url,
-        permissions: installation.permissions,
-        suspended: false,
-        target_name: resolveGitHubInstallationTargetName(installation),
-        target_type: installation.target_type,
-        workspace_id: values.workspaceId,
-      })
-      .select(installationSelect)
-      .single();
+    if (error) {
+      throw error;
+    }
 
-    data = insertResult.data;
-    error = insertResult.error;
+    return mapInstallationSummary(data);
+  }
+
+  if (existingInstallation) {
+    return refreshExistingInstallation(existingInstallation.id);
+  }
+
+  const { data, error } = await admin
+    .from("github_installations")
+    .insert({
+      ...metadata,
+      id: randomUUID(),
+      installation_id: values.installationId,
+      workspace_id: values.workspaceId,
+    })
+    .select(installationSelect)
+    .single();
+
+  if (error?.code === "23505") {
+    // Unique constraints arbitrate concurrent claims. Refresh only if the winner
+    // claimed this exact installation for this same workspace.
+    const concurrentInstallation = await findExistingInstallation();
+    if (concurrentInstallation) {
+      return refreshExistingInstallation(concurrentInstallation.id);
+    }
   }
 
   if (error) {

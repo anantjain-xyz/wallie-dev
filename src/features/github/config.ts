@@ -3,6 +3,11 @@ import "server-only";
 import { parseServerEnv } from "@/env/server";
 
 export const githubAppEnvKeys = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"] as const;
+export const githubInstallEnvKeys = [
+  ...githubAppEnvKeys,
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+] as const;
 export const githubWebhookEnvKeys = [
   "GITHUB_APP_ID",
   "GITHUB_APP_PRIVATE_KEY",
@@ -18,7 +23,7 @@ export function getMissingGitHubEnvKeys(
 
 export function getGitHubConfigStatus(input: Record<string, string | undefined> = process.env) {
   return {
-    missingAppKeys: getMissingGitHubEnvKeys(githubAppEnvKeys, input),
+    missingAppKeys: getMissingGitHubEnvKeys(githubInstallEnvKeys, input),
     missingWebhookKeys: getMissingGitHubEnvKeys(githubWebhookEnvKeys, input),
   };
 }

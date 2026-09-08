@@ -399,6 +399,50 @@ export type Database = {
           },
         ]
       }
+      github_install_flows: {
+        Row: {
+          created_at: string
+          encrypted_code_verifier: string
+          expires_at: string
+          installation_id: number | null
+          phase: string
+          source: string
+          state_hash: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_code_verifier: string
+          expires_at: string
+          installation_id?: number | null
+          phase?: string
+          source: string
+          state_hash: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_code_verifier?: string
+          expires_at?: string
+          installation_id?: number | null
+          phase?: string
+          source?: string
+          state_hash?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "github_install_flows_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       github_installations: {
         Row: {
           app_id: number
@@ -443,7 +487,7 @@ export type Database = {
           {
             foreignKeyName: "github_installations_workspace_id_fkey"
             columns: ["workspace_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },

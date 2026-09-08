@@ -68,6 +68,7 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
    | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`                               | From step 1                                                |
    | `SUPABASE_SECRET_KEY`                                                | From step 1                                                |
    | `WALLIE_ENCRYPTION_KEY`                                              | From step 2                                                |
+   | `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET`                  | From step 5; required for new connections                  |
    | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_WEBHOOK_SECRET` | From step 5                                                |
    | `WALLIE_ENABLED_SANDBOX_PROVIDERS`                                   | Start with `vercel`; add `e2b`, then `daytona` to roll out |
    | `WALLIE_DAYTONA_API_URL_ALLOWLIST`                                   | Optional exact HTTPS self-hosted Daytona API URLs          |
@@ -107,17 +108,40 @@ This mirrors the [README → Create a GitHub App](../README.md#5-create-a-github
 
 - **Homepage URL:** your origin (e.g. `https://wallie.example.com`)
 - **Callback URL:** `https://wallie.example.com/api/github/callback` (keep OAuth-during-install **off**)
-- **Setup URL (post installation):** `https://wallie.example.com/api/github/callback` — **required.** With OAuth-during-install off, GitHub sends the user here after install, with the `installation_id` and signed `state`, so Wallie can record the installation. Without it, an install can finish on GitHub and leave the workspace disconnected.
+- **Setup URL (post installation):** `https://wallie.example.com/api/github/callback` — **required.** With OAuth-during-install off, GitHub sends the user here after install, with an untrusted `installation_id` and opaque `state`. Wallie then starts a separate GitHub OAuth flow to verify ownership before saving the connection. Without it, an install can finish on GitHub and leave the workspace disconnected.
 - **Webhook URL:** `https://wallie.example.com/api/github/webhooks`
 - **Webhook secret:** a strong random string → also set as `GITHUB_WEBHOOK_SECRET`
 - **Repository permissions:**
   - **Contents** → **Read and write** — repo onboarding creates branches, trees, and commits (`src/lib/repo-onboarding/server.ts`).
   - **Pull requests** → **Read and write** — onboarding opens a setup PR and session completion opens PRs (`src/lib/pipeline/pull-request.ts`); webhook ingestion also reads PR state.
   - **Metadata** → **Read-only** (mandatory, set automatically).
+- **Organization permissions:** **Members** → **Read-only**, so Wallie can verify active organization ownership. Existing installations must approve the added permission.
 - **Subscribe to events:** `Pull request`
 - **Where can this app be installed?** "Any account" if you want others to install it; "Only this account" for a private deployment.
 
-After creating it: copy the **App ID** → `GITHUB_APP_ID`, generate a private key and put its PEM contents in `GITHUB_APP_PRIVATE_KEY` (escape newlines as `\n` if you inline it), and redeploy both services so the new env vars take effect.
+After creating it: copy the **App ID** → `GITHUB_APP_ID` and **Client ID** → `GITHUB_APP_CLIENT_ID`, generate a client secret → `GITHUB_APP_CLIENT_SECRET`, generate a private key and put its PEM contents in `GITHUB_APP_PRIVATE_KEY` (escape newlines as `\n` if you inline it), and redeploy both services so the new env vars take effect.
+
+### GitHub ownership verification upgrade
+
+Before deploying the callback changes:
+
+1. Check existing installation rows for ambiguous workspace ownership:
+
+   ```sql
+   select workspace_id, array_agg(id) as installation_rows
+   from public.github_installations
+   group by workspace_id
+   having count(*) > 1;
+   ```
+
+   The migration fails if this returns rows. Investigate and explicitly resolve the connections with their workspace owners before retrying; it does not delete or transfer existing installations automatically.
+
+2. Apply migration `20260908004716_secure_github_installation_ownership.sql`. It adds a service-only OAuth flow table, enforces one installation per workspace, and forbids changing an existing connection's workspace or installation ID, including through the service role.
+3. Configure `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`, the exact callback and setup URLs above, and Organization Members read permission. Keep OAuth-during-install **off**. Redeploy. Missing OAuth configuration disables new connections; existing worker access and repository refresh still use the App ID/private key.
+4. Start a fresh connection from Wallie's workspace GitHub settings, using the same signed-in browser. Old signed callback links are invalidated by this upgrade. New flows expire after ten minutes and are consumed before code exchange; after an error or expiry, start again.
+5. Verify a personal-account owner or active organization owner can connect, and an ordinary repository collaborator cannot. Only Wallie workspace owners/admins may initiate or complete this flow. Confirm the same installation reconnects to its existing workspace and is rejected for a different workspace.
+
+The ownership check uses a short-lived GitHub user authorization solely during the callback; Wallie persists neither access nor refresh tokens. Installations already connected before this upgrade retain their mappings and are not retrospectively reauthorized. Review existing mappings if the vulnerable callback was exposed. To change installations, uninstall the existing App installation through GitHub and let its signed deletion webhook remove the connection before starting a new installation. If a webhook was missed, an operator must investigate and remove the obsolete mapping explicitly. Automatic replacement and cross-workspace transfer are no longer supported.
 
 ## 6. Per-workspace setup (in the app, not env vars)
 

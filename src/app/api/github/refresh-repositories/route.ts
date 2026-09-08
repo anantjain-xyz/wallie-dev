@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getGitHubConfigStatus } from "@/features/github/config";
+import { getMissingGitHubEnvKeys, githubAppEnvKeys } from "@/features/github/config";
 import { refreshGitHubRepositoriesSchema } from "@/features/github/contracts";
 import { syncGitHubRepositoriesForWorkspace } from "@/features/github/service";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const missingKeys = getGitHubConfigStatus().missingAppKeys;
+  const missingKeys = getMissingGitHubEnvKeys(githubAppEnvKeys);
 
   if (missingKeys.length > 0) {
     return NextResponse.json(
