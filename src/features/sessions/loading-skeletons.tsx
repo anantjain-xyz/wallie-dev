@@ -10,24 +10,29 @@ function FilterChipSkeleton({ className = "w-20" }: { className?: string }) {
 function SessionRowSkeleton({ index }: { index: number }) {
   return (
     <li className="sessions-ledger-row">
-      <div className="flex min-w-0 items-center gap-2">
-        <SkeletonBlock className="h-3 w-8 shrink-0" />
-        <SkeletonBlock className={`h-4 ${listRowTitleWidths[index % listRowTitleWidths.length]}`} />
-      </div>
-      {["Stage", "Status", "Repository", "Updated"].map((label) => (
-        <div
-          key={label}
-          className={`sessions-ledger-cell sessions-ledger-cell-${label.toLowerCase()}`}
-        >
-          <span className="sessions-ledger-cell-label">{label}</span>
+      <div className="sessions-ledger-cell sessions-ledger-cell-session">
+        <div className="flex min-w-0 items-center gap-2">
+          <SkeletonBlock className="h-3 w-8 shrink-0" />
           <SkeletonBlock
-            className={
-              label === "Status" ? "h-6 w-24 max-w-full rounded-full" : "h-3 w-16 max-w-full"
-            }
+            className={`h-4 ${listRowTitleWidths[index % listRowTitleWidths.length]}`}
           />
         </div>
-      ))}
-      <SkeletonBlock className="h-7 w-7" />
+      </div>
+      <div className="sessions-ledger-cell sessions-ledger-cell-stage">
+        <SkeletonBlock className="h-3 w-12" />
+      </div>
+      <div className="sessions-ledger-cell sessions-ledger-cell-status">
+        <SkeletonBlock className="h-6 w-24 max-w-full rounded-full" />
+      </div>
+      <div className="sessions-ledger-cell sessions-ledger-cell-repository">
+        <SkeletonBlock className="h-3 w-28 max-w-full" />
+      </div>
+      <div className="sessions-ledger-cell sessions-ledger-cell-updated">
+        <SkeletonBlock className="h-3 w-14" />
+      </div>
+      <div className="sessions-ledger-cell sessions-ledger-cell-actions">
+        <SkeletonBlock className="h-7 w-7" />
+      </div>
     </li>
   );
 }
@@ -62,13 +67,17 @@ function ArtifactPanelSkeleton() {
 
 export function SessionsListLoadingSkeleton() {
   return (
-    <PageContainer>
+    <PageContainer className="pt-5 sm:pt-10">
       <section data-route-loading aria-busy="true" aria-label="Loading sessions" role="status">
-        <PageHeader title="Sessions" />
-        <div className="mb-6" aria-hidden="true">
+        <PageHeader className="mb-4 sm:mb-8" title="Sessions" />
+        <div className="mb-4 sm:mb-6" aria-hidden="true">
+          <div className="mb-2 flex gap-1.5">
+            <FilterChipSkeleton className="w-[5.5rem]" />
+            <FilterChipSkeleton className="w-[6.5rem]" />
+            <FilterChipSkeleton className="w-14" />
+          </div>
           <div className="flex flex-wrap items-center gap-2 border-y border-border py-3">
             <SkeletonBlock className="h-11 min-w-0 flex-1 basis-full sm:basis-60 md:h-9" />
-            <FilterChipSkeleton className="w-24" />
             <FilterChipSkeleton className="w-[136px]" />
             <FilterChipSkeleton className="w-[144px]" />
           </div>

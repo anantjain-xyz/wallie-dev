@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 describe("SessionsPage accessibility", () => {
-  it("labels Search, Status, Stage, Sort, and Clear with selected semantics", async () => {
+  it("labels Search, scope radios, Stage, Sort, and Clear with selected semantics", async () => {
     const user = userEvent.setup();
     render(
       <OverlayProvider>
@@ -101,21 +101,16 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("combobox", { name: "Session scope" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Session scope" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     const stageCombo = screen.getByRole("combobox", { name: "Filter by stage" });
     expect(stageCombo).toBeInTheDocument();
     expect(stageCombo).toHaveTextContent("Build");
     expect(screen.getByRole("combobox", { name: "Sort sessions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
-    const scope = screen.getByRole("combobox", { name: "Session scope" });
-    expect(scope).toHaveTextContent("Active");
-    await user.click(scope);
-    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Active 1",
-      "Archived 0",
-      "All 1",
-    ]);
-    await user.keyboard("{Escape}");
 
     const search = screen.getByRole("searchbox", {
       name: "Search prompts, titles, or Linear IDs",
@@ -150,7 +145,10 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("combobox", { name: "Session scope" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
@@ -217,22 +215,19 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "Archived 0" }));
+    await user.click(screen.getByRole("radio", { name: "Archived 0" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=archived&sort=oldest",
       { scroll: false },
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "All 1" }));
+    await user.click(screen.getByRole("radio", { name: "All 1" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=all&sort=oldest",
       { scroll: false },
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "Active 1" }));
+    await user.click(screen.getByRole("radio", { name: "Active 1" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&sort=oldest",
       { scroll: false },

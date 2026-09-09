@@ -43,9 +43,9 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
   const sessions = initialData.sessions;
 
   return (
-    <PageContainer>
+    <PageContainer className="pt-5 sm:pt-10">
       <VisibleInteractionBoundary action="pipeline_to_sessions" />
-      <PageHeader title="Sessions" />
+      <PageHeader className="mb-4 sm:mb-8" title="Sessions" />
 
       <SessionsCommandBar
         queryState={initialData.queryState}

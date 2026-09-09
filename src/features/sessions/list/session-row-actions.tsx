@@ -396,6 +396,7 @@ export function SessionRowIsland({
       role="row"
       className={cn(
         "session-list-row sessions-ledger-row group",
+        isArchived && "sessions-ledger-row-archived",
         (isEditing || archivePending !== null || error || archiveError) &&
           "content-visibility-interacting",
       )}
@@ -459,15 +460,15 @@ export function SessionRowIsland({
                 href={detailHref}
                 trackSessionsToDetail
                 aria-label={`Open session #${session.number}: ${displayTitle}`}
-                className="line-clamp-3 min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
+                className="line-clamp-2 min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
               >
                 {displayTitle}
               </SessionDetailLink>
             </Tooltip>
-            {connections ? <div className="sessions-ledger-connections">{connections}</div> : null}
-            {archivedAt ? (
-              <span className="sessions-ledger-archived type-annotation text-muted">archived</span>
+            {isArchived ? (
+              <Status compact className="sessions-ledger-archived" value="archived" />
             ) : null}
+            {connections ? <div className="sessions-ledger-connections">{connections}</div> : null}
           </div>
         )}
         {error ? (
@@ -484,7 +485,7 @@ export function SessionRowIsland({
 
       <div className="sessions-ledger-cell sessions-ledger-cell-stage" role="cell">
         <span className="sessions-ledger-cell-label">Stage</span>
-        <span className="text-[13px] text-foreground">{stageName}</span>
+        <span className="sessions-ledger-cell-value text-[13px] text-foreground">{stageName}</span>
       </div>
 
       <div className="sessions-ledger-cell sessions-ledger-cell-status" role="cell">

@@ -165,8 +165,45 @@ export function SessionsCommandBar({
     "Recently updated";
 
   return (
-    <CommandBar aria-label="Sessions filters" className="mb-6 block border-0 p-0">
-      <div aria-busy={isPending} className={FILTER_BAR_CLASS}>
+    <CommandBar
+      aria-label="Sessions filters"
+      className="sticky top-[var(--shell-scroll-padding)] z-10 -mx-4 mb-4 block border-0 border-b border-border bg-sheet/95 px-4 py-3 backdrop-blur-sm sm:-mx-8 sm:mb-6 sm:px-8"
+    >
+      <div
+        aria-label="Session scope"
+        className="mb-2 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-0.5"
+        role="radiogroup"
+      >
+        {SCOPE_OPTIONS.map((option) => {
+          const selected = optimisticQuery.scope === option.key;
+          return (
+            <button
+              aria-checked={selected}
+              aria-label={`${option.label} ${scopeFacets[option.key]}`}
+              className={cn(
+                "ui-filter-chip min-h-11 shrink-0 md:min-h-8",
+                selected && "ui-filter-chip-active",
+              )}
+              key={option.key}
+              onClick={() => {
+                updateQueryState({ scope: option.key });
+              }}
+              role="radio"
+              type="button"
+            >
+              <span aria-hidden="true">{option.label}</span>
+              <span
+                aria-hidden="true"
+                className="font-mono type-annotation tabular-nums text-muted"
+              >
+                {scopeFacets[option.key]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div aria-busy={isPending} className={cn(FILTER_BAR_CLASS, "border-t-0 pt-2")}>
         <form
           onSubmit={handleSearchSubmit}
           className={cn("flex items-center", FILTER_SEARCH_CLASS)}
@@ -183,27 +220,6 @@ export function SessionsCommandBar({
             Search
           </button>
         </form>
-
-        <Select
-          value={optimisticQuery.scope}
-          onValueChange={(value) => updateQueryState({ scope: value as SessionFilterKey })}
-        >
-          <FilterSelectTrigger accessibleLabel="Session scope">
-            {SCOPE_OPTIONS.find((option) => option.key === optimisticQuery.scope)?.label}
-          </FilterSelectTrigger>
-          <SelectContent>
-            {SCOPE_OPTIONS.map((option) => (
-              <SelectItem key={option.key} value={option.key}>
-                <span className="flex w-full items-center justify-between gap-3">
-                  <span className="truncate">{option.label}</span>{" "}
-                  <span className="type-annotation shrink-0 text-muted">
-                    {scopeFacets[option.key]}
-                  </span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
 
         <Select
           value={optimisticQuery.stageSlug ?? "__all__"}

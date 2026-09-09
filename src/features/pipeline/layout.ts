@@ -2,7 +2,7 @@ import { FILTER_BAR_CLASS } from "@/components/ui/filter-controls";
 
 /** Shared geometry keeps the route fallback and loaded board in the same scroll mode. */
 export const pipelineLayout = {
-  page: "flex min-h-[calc(100svh-6.75rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-sheet lg:min-h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] pipeline-wide:h-[calc(100svh-6.75rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] pipeline-wide:min-h-0 pipeline-wide:lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
+  page: "flex min-h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-sheet pipeline-wide:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] pipeline-wide:min-h-0",
   emptyPage: "mx-auto w-full max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10",
   controlsArea: "shrink-0 px-4 py-3 pipeline-wide:px-8 pipeline-wide:pb-4 pipeline-wide:pt-10",
   controls: `${FILTER_BAR_CLASS} pipeline-wide:mb-5`,

@@ -266,7 +266,7 @@
   }
 
   .ui-shell-nav-link {
-    @apply inline-flex min-h-11 shrink-0 items-center rounded-[6px] px-3 text-[13px] font-medium text-muted transition-[color,background-color,transform] duration-150 lg:min-h-9;
+    @apply inline-flex min-h-9 shrink-0 items-center rounded-[6px] px-2.5 text-[13px] font-medium text-muted transition-[color,background-color,transform] duration-150 lg:px-3;
   }
 
   .ui-shell-nav-link:hover {
@@ -1082,7 +1082,8 @@
 
 @media (max-width: 1023px) {
   :root {
-    --shell-scroll-padding: calc(6.75rem + env(safe-area-inset-top));
+    /* Single-row mobile chrome matches the desktop header height budget. */
+    --shell-scroll-padding: calc(3rem + env(safe-area-inset-top));
   }
 }
 
@@ -1134,7 +1135,7 @@
 
 .session-list-row {
   content-visibility: auto;
-  contain-intrinsic-size: auto 0 auto 116px;
+  contain-intrinsic-size: auto 0 auto 76px;
 }
 
 /* Size the ledger container so cards activate when columns no longer fit —
@@ -1194,10 +1195,18 @@
   max-width: 100%;
 }
 
+.sessions-ledger-row-archived {
+  background: color-mix(in srgb, var(--control-muted) 55%, transparent);
+}
+
+.sessions-ledger-row-archived .sessions-ledger-session-summary {
+  opacity: 0.88;
+}
+
 /*
-  Card layout when the ledger itself is narrower than the column mins (~800px)
-  plus breathing room. Container query covers padded/zoomed viewports (e.g.
-  768–823px CSS width) where a viewport-only md breakpoint would still clip.
+  Dense card layout when the ledger itself is narrower than the column mins
+  (~800px) plus breathing room. Container query covers padded/zoomed viewports
+  where a viewport-only md breakpoint would still clip.
 */
 @container sessions-ledger (max-width: 53rem) {
   .sessions-ledger-header {
@@ -1206,33 +1215,74 @@
 
   .sessions-ledger-row {
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.65rem;
-    padding: 1rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    column-gap: 0.5rem;
+    row-gap: 0.35rem;
+    padding: 0.7rem 0.85rem;
+  }
+
+  .sessions-ledger-cell-session {
+    order: 1;
+    flex: 1 1 calc(100% - 2.75rem);
+    min-width: 0;
+  }
+
+  .sessions-ledger-cell-actions {
+    order: 2;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    align-self: flex-start;
+    margin-top: -0.15rem;
+  }
+
+  .sessions-ledger-cell-actions .ui-icon-button {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
   }
 
   .sessions-ledger-cell-stage,
   .sessions-ledger-cell-status,
-  .sessions-ledger-cell-repository,
   .sessions-ledger-cell-updated {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
+    order: 3;
+    display: inline-flex;
+    width: auto;
+    max-width: 100%;
+    align-items: center;
+    gap: 0;
+  }
+
+  .sessions-ledger-cell-status::before,
+  .sessions-ledger-cell-updated::before {
+    content: "·";
+    margin-inline: 0.35rem;
+    color: var(--muted);
+  }
+
+  .sessions-ledger-cell-stage {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .sessions-ledger-cell-stage .sessions-ledger-cell-value {
+    color: var(--foreground);
+  }
+
+  .sessions-ledger-cell-repository {
+    order: 4;
+    flex: 1 1 100%;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.3;
   }
 
   .sessions-ledger-cell-label {
-    display: block;
-    flex: 0 0 5.5rem;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    display: none;
   }
 
-  .sessions-ledger-cell-actions {
-    justify-content: flex-start;
+  .sessions-ledger-session-summary {
+    align-items: start;
   }
 }
 
