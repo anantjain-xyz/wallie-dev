@@ -96,10 +96,7 @@ describe("SessionsCommandBar sticky filters", () => {
 
     const scope = screen.getByRole("radiogroup", { name: "Session scope" });
     expect(scope).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute(
       "aria-checked",
       "false",
@@ -135,10 +132,7 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(document.cookie).toContain(sessionListPreferencesCookieName("acme"));
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
-    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("does not restore when the URL already has a sticky key", async () => {

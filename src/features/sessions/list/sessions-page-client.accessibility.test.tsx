@@ -102,10 +102,7 @@ describe("SessionsPage accessibility", () => {
     );
 
     expect(screen.getByRole("radiogroup", { name: "Session scope" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute("aria-checked", "true");
     const stageCombo = screen.getByRole("combobox", { name: "Filter by stage" });
     expect(stageCombo).toBeInTheDocument();
     expect(stageCombo).toHaveTextContent("Build");
@@ -145,10 +142,7 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
