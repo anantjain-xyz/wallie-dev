@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useOptimistic, useRef, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useOptimistic,
+  useRef,
+  useTransition,
+  type KeyboardEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -144,6 +151,38 @@ export function SessionsCommandBar({
     searchInputRef.current?.focus();
   }
 
+  function handleScopeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    if (!(event.target instanceof Element)) return;
+
+    const radio = event.target.closest<HTMLElement>('[role="radio"]');
+    if (!radio || !event.currentTarget.contains(radio)) return;
+
+    event.preventDefault();
+    const currentKey =
+      (radio.dataset.sessionScope as SessionFilterKey | undefined) ?? optimisticQuery.scope;
+    const currentIndex = SCOPE_OPTIONS.findIndex((option) => option.key === currentKey);
+    if (currentIndex < 0) return;
+
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight")
+      nextIndex = Math.min(currentIndex + 1, SCOPE_OPTIONS.length - 1);
+    if (event.key === "ArrowLeft") nextIndex = Math.max(currentIndex - 1, 0);
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = SCOPE_OPTIONS.length - 1;
+
+    const next = SCOPE_OPTIONS[nextIndex];
+    if (!next || next.key === currentKey) return;
+
+    const group = event.currentTarget;
+    updateQueryState({ scope: next.key });
+    queueMicrotask(() => {
+      group
+        .querySelector<HTMLElement>(`[data-session-scope="${next.key}"]`)
+        ?.focus({ preventScroll: true });
+    });
+  }
+
   const stageGroups = useMemo(() => {
     const order = [...stageFacets].sort(
       (a, b) => a.position - b.position || a.name.localeCompare(b.name),
@@ -172,6 +211,7 @@ export function SessionsCommandBar({
       <div
         aria-label="Session scope"
         className="mb-2 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-0.5"
+        onKeyDown={handleScopeKeyDown}
         role="radiogroup"
       >
         {SCOPE_OPTIONS.map((option) => {
@@ -184,11 +224,13 @@ export function SessionsCommandBar({
                 "ui-filter-chip min-h-11 shrink-0 md:min-h-8",
                 selected && "ui-filter-chip-active",
               )}
+              data-session-scope={option.key}
               key={option.key}
               onClick={() => {
                 updateQueryState({ scope: option.key });
               }}
               role="radio"
+              tabIndex={selected ? 0 : -1}
               type="button"
             >
               <span aria-hidden="true">{option.label}</span>

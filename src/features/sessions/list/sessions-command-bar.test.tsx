@@ -97,11 +97,35 @@ describe("SessionsCommandBar sticky filters", () => {
     const scope = screen.getByRole("radiogroup", { name: "Session scope" });
     expect(scope).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("tabIndex", "0");
     expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute(
       "aria-checked",
       "false",
     );
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute("tabIndex", "-1");
     expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("tabIndex", "-1");
+  });
+
+  it("moves and selects scope radios with arrow keys", async () => {
+    const user = userEvent.setup();
+    renderCommandBar();
+
+    const active = screen.getByRole("radio", { name: "Active 3" });
+    active.focus();
+    expect(active).toHaveFocus();
+
+    await user.keyboard("{ArrowRight}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=archived", {
+      scroll: false,
+    });
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveFocus();
+
+    await user.keyboard("{End}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveFocus();
   });
 
   it("exposes server-resolved filters in the URL without a second navigation", async () => {

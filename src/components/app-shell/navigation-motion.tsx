@@ -32,6 +32,8 @@ export function WorkspaceNavigation({
       nav.style.setProperty("--nav-width", `${width}px`);
       nav.style.setProperty("--nav-height", `${height}px`);
       nav.dataset.indicatorReady = "true";
+      // Keep the active tab visible when the compact mobile row clips the scroller.
+      active.scrollIntoView({ block: "nearest", inline: "nearest" });
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         nav.dataset.indicatorAnimated = "true";

@@ -1248,14 +1248,21 @@
     grid-row: 2;
     display: inline-flex;
     width: auto;
-    max-width: 100%;
+    min-width: 0;
+    max-width: min(42vw, 10rem);
     align-items: center;
+    overflow: hidden;
     color: var(--muted);
     font-size: 12px;
     font-weight: 500;
   }
 
   .sessions-ledger-cell-stage .sessions-ledger-cell-value {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--foreground);
   }
 
@@ -1448,6 +1455,7 @@
     .ui-tab,
     .ui-top-nav-tab,
     .ui-filter-chip,
+    .ui-shell-nav-link,
     .ui-touch-target,
     .ui-dropdown-item,
     .ui-menu-item,
