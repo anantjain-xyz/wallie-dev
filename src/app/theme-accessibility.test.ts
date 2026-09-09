@@ -178,7 +178,7 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toMatch(/\.session-list-row\s*\{[^}]*content-visibility: auto;/u);
     expect(stylesheet).toMatch(/\.run-history-group\s*\{[^}]*content-visibility: auto;/u);
     expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 680px;");
-    expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 116px;");
+    expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 76px;");
     expect(stylesheet).toMatch(/:focus-within,[\s\S]*content-visibility: visible;/u);
     expect(stylesheet).toMatch(
       /\.content-visibility-interacting\s*\{[^}]*content-visibility: visible;/u,
