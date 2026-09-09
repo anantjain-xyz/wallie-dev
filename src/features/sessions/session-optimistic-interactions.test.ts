@@ -134,6 +134,7 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
     nextCursor: null,
     onboarding: null,
     queryState: { cursor: null, query: "", scope, sort: "updated", stageSlug: null },
+    scopeFacets: { active: 1, all: 1, archived: 0 },
     sessions: [{ ...summary, latestRunStatus: null }],
     stageFacets: [{ count: 1, name: "Plan", position: 0, slug: "plan" }],
     totalCount: 1,

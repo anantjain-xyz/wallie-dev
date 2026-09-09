@@ -16,6 +16,7 @@ import {
   type SessionListSearchParams,
 } from "@/features/sessions/list/sessions-list-query-state";
 import {
+  type SessionFilterKey,
   type SessionListItem,
   type SessionListQueryState,
   type SessionListSortKey,
@@ -28,11 +29,14 @@ export type SessionListPageData = {
   nextCursor: string | null;
   onboarding: OnboardingResumeState | null;
   queryState: SessionListQueryState;
+  scopeFacets: SessionScopeFacets;
   sessions: SessionListItem[];
   stageFacets: SessionStageFacet[];
   totalCount: number;
   workspace: WorkspaceSummary;
 };
+
+export type SessionScopeFacets = Record<SessionFilterKey, number>;
 
 export type SessionStageFacet = {
   count: number;
@@ -50,11 +54,20 @@ type Cursor = {
 type SessionListRpcPayload = {
   hasAnySession?: boolean;
   hasMore?: boolean;
+  scopeFacets?: Partial<SessionScopeFacets>;
   sessions?: SessionListItem[];
   stageFacets?: SessionStageFacet[];
 };
 
 const SESSION_LIST_PAGE_SIZE = 50;
+
+function normalizeScopeFacets(facets: Partial<SessionScopeFacets> | undefined): SessionScopeFacets {
+  return {
+    active: facets?.active ?? 0,
+    archived: facets?.archived ?? 0,
+    all: facets?.all ?? 0,
+  };
+}
 
 function decodeCursor(raw: string | null, sort: SessionListSortKey): Cursor | null {
   if (!raw) return null;
@@ -185,6 +198,7 @@ export async function loadSessionListPageData(
         nextCursor,
         onboarding: context.onboarding,
         queryState,
+        scopeFacets: normalizeScopeFacets(payload.scopeFacets),
         sessions,
         stageFacets,
         totalCount: sessions.length,

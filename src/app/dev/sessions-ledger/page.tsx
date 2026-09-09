@@ -92,6 +92,7 @@ export default function SessionsLedgerFixturePage() {
             sort: "updated",
             stageSlug: null,
           }}
+          scopeFacets={{ active: 50, all: 62, archived: 12 }}
           stageFacets={[
             { count: 25, name: "Plan", position: 0, slug: "plan" },
             { count: 25, name: "Build", position: 1, slug: "build" },

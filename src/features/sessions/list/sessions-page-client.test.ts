@@ -96,6 +96,11 @@ function makeSessionListData(
       sort: "updated",
       stageSlug: null,
     },
+    scopeFacets: {
+      active: sessions.filter((session) => session.archivedAt === null).length,
+      all: sessions.length,
+      archived: sessions.filter((session) => session.archivedAt !== null).length,
+    },
     sessions,
     stageFacets: makeStageFacets(sessions),
     totalCount: sessions.length,

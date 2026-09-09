@@ -61,6 +61,7 @@ const initialData: SessionListPageData = {
       workspaceId: "00000000-0000-4000-8000-000000000002",
     },
   ],
+  scopeFacets: { active: 1, all: 1, archived: 0 },
   stageFacets: [{ count: 1, name: "Build", position: 1, slug: "build" }],
   totalCount: 1,
   workspace: {
@@ -110,9 +111,9 @@ describe("SessionsPage accessibility", () => {
     expect(scope).toHaveTextContent("Active");
     await user.click(scope);
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Active",
-      "Archived",
-      "All",
+      "Active 1",
+      "Archived 0",
+      "All 1",
     ]);
     await user.keyboard("{Escape}");
 
@@ -217,21 +218,21 @@ describe("SessionsPage accessibility", () => {
     );
 
     await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "Archived" }));
+    await user.click(screen.getByRole("option", { name: "Archived 0" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=archived&sort=oldest",
       { scroll: false },
     );
 
     await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "All" }));
+    await user.click(screen.getByRole("option", { name: "All 1" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=all&sort=oldest",
       { scroll: false },
     );
 
     await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "Active" }));
+    await user.click(screen.getByRole("option", { name: "Active 1" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&sort=oldest",
       { scroll: false },
