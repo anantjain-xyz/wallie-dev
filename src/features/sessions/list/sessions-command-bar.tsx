@@ -13,7 +13,7 @@ import {
 import { CommandBar } from "@/components/ui/page-shell";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
-import type { SessionStageFacet } from "@/features/sessions/list/data";
+import type { SessionScopeFacets, SessionStageFacet } from "@/features/sessions/list/data";
 import {
   SESSION_LIST_SORT_OPTIONS,
   buildSessionsListHref,
@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 
 export type SessionsCommandBarProps = {
   queryState: SessionListQueryState;
+  scopeFacets: SessionScopeFacets;
   stageFacets: readonly SessionStageFacet[];
   workspaceSlug: string;
 };
@@ -62,6 +63,7 @@ function hasActiveFilters(queryState: SessionListQueryState) {
 
 export function SessionsCommandBar({
   queryState,
+  scopeFacets,
   stageFacets,
   workspaceSlug,
 }: SessionsCommandBarProps) {
@@ -192,7 +194,12 @@ export function SessionsCommandBar({
           <SelectContent>
             {SCOPE_OPTIONS.map((option) => (
               <SelectItem key={option.key} value={option.key}>
-                {option.label}
+                <span className="flex w-full items-center justify-between gap-3">
+                  <span className="truncate">{option.label}</span>{" "}
+                  <span className="type-annotation shrink-0 text-muted">
+                    {scopeFacets[option.key]}
+                  </span>
+                </span>
               </SelectItem>
             ))}
           </SelectContent>

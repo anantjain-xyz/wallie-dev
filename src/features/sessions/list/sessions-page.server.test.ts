@@ -54,6 +54,7 @@ function makeData(count: number): SessionListPageData {
     nextCursor: null,
     onboarding: null,
     queryState: { cursor: null, query: "", scope: "active", sort: "updated", stageSlug: null },
+    scopeFacets: { active: count, all: count, archived: 0 },
     sessions,
     stageFacets: count > 0 ? [{ count, name: "Plan", position: 0, slug: "plan" }] : [],
     totalCount: count,
@@ -193,6 +194,7 @@ describe("Sessions ledger server render", () => {
     expect(rowShellSource).toContain("TimeDisplay");
     expect(pageSource).not.toMatch(/SessionsCommandBar[^>]*initialData=\{initialData\}/);
     expect(pageSource).toContain("queryState={initialData.queryState}");
+    expect(pageSource).toContain("scopeFacets={initialData.scopeFacets}");
     expect(pageSource).toContain("stageFacets={initialData.stageFacets}");
     expect(commandBarSource).not.toContain("initialData.sessions");
     expect(commandBarSource).not.toContain("initialData.onboarding");

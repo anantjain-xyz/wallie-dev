@@ -49,6 +49,7 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
 
       <SessionsCommandBar
         queryState={initialData.queryState}
+        scopeFacets={initialData.scopeFacets}
         stageFacets={initialData.stageFacets}
         workspaceSlug={workspaceSlug}
       />

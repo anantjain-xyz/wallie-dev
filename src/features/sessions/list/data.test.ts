@@ -106,4 +106,17 @@ describe("list run-status payload compatibility", () => {
       "running",
     ]);
   });
+
+  it("defaults scope counts to zero when the payload omits them", async () => {
+    mocked.rpc.mockResolvedValue({ data: { sessions: [] }, error: null });
+    const withoutFacets = await loadSessionListPageData("acme", {});
+    expect(withoutFacets.scopeFacets).toEqual({ active: 0, all: 0, archived: 0 });
+
+    mocked.rpc.mockResolvedValue({
+      data: { scopeFacets: { active: 3, all: 5, archived: 2 }, sessions: [] },
+      error: null,
+    });
+    const withFacets = await loadSessionListPageData("acme", {});
+    expect(withFacets.scopeFacets).toEqual({ active: 3, all: 5, archived: 2 });
+  });
 });
