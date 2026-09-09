@@ -460,7 +460,7 @@ export function SessionRowIsland({
                 href={detailHref}
                 trackSessionsToDetail
                 aria-label={`Open session #${session.number}: ${displayTitle}`}
-                className="line-clamp-2 block min-w-0 break-words text-[14px] font-medium leading-snug text-foreground hover:text-accent"
+                className="line-clamp-2 min-w-0 break-words text-[14px] font-medium leading-snug text-foreground hover:text-accent"
               >
                 {displayTitle}
               </SessionDetailLink>
