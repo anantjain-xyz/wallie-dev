@@ -278,7 +278,10 @@ describe("SessionsPage accessibility", () => {
       "Updated",
       "Actions",
     ]);
-    expect(screen.getByText("acme/wallie")).toBeInTheDocument();
+    expect(screen.getAllByText("acme/wallie").length).toBeGreaterThanOrEqual(1);
+    expect(document.querySelector(".sessions-ledger-cell-repository")).toHaveTextContent(
+      "acme/wallie",
+    );
     expect(screen.getByRole("link", { name: /Open session #339/ })).toHaveAttribute(
       "href",
       "/w/acme/sessions/339",

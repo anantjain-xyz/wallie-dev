@@ -13,7 +13,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Status } from "@/components/ui/status";
+import { Status, resolveStatusDefinition } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -474,13 +474,16 @@ export function SessionRowIsland({
             <div aria-hidden="true" className="sessions-ledger-title-flow">
               <span className="sessions-ledger-title-flow-stage">{stageName}</span>
               <span className="sessions-ledger-title-flow-separator">·</span>
-              <Status
-                compact
-                value={sessionDisplayStatus({
-                  phaseStatus,
-                  latestRunStatus: session.latestRunStatus,
-                })}
-              />
+              <span className="sessions-ledger-title-flow-status">
+                {
+                  resolveStatusDefinition(
+                    sessionDisplayStatus({
+                      phaseStatus,
+                      latestRunStatus: session.latestRunStatus,
+                    }),
+                  ).label
+                }
+              </span>
               <span className="sessions-ledger-title-flow-separator">·</span>
               <span className="sessions-ledger-title-flow-updated">{updated}</span>
               {repositoryLabel ? (
