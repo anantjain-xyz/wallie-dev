@@ -1190,15 +1190,17 @@
 }
 
 /*
-  Two-line title clamp. Inter + leading-snug subpixel metrics can otherwise
-  reveal a sliver of line 3 above the Archived pill — clip the wrapper hard
-  and keep line-height explicit on the text itself.
+  Two-line title clamp. Match the title's 14px font on the clip wrapper so
+  `em` is not relative to a larger parent (that left room for line-3 glyph
+  tops above the Archived pill). Cap slightly under 2 × line-height.
 */
 .sessions-ledger-session-title-clip {
   display: block;
   min-width: 0;
   overflow: hidden;
-  max-height: 2.7em; /* < 1.375 * 2 so line 3 cannot peek */
+  font-size: 14px;
+  line-height: 1.375;
+  max-height: calc(1.375em * 2 - 1px);
 }
 
 .sessions-ledger-session-title {
@@ -1207,8 +1209,8 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.375;
-  max-height: 2.7em;
+  line-height: inherit;
+  max-height: inherit;
   overflow-wrap: anywhere;
 }
 

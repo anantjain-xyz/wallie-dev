@@ -206,7 +206,7 @@ describe("Sessions ledger server render", () => {
     expect(stylesheet).toContain(".sessions-ledger-session-summary");
     expect(stylesheet).toContain(".sessions-ledger-session-title-clip");
     expect(stylesheet).toContain(".sessions-ledger-session-title");
-    expect(stylesheet).toContain("max-height: 2.7em");
+    expect(stylesheet).toContain("max-height: calc(1.375em * 2 - 1px)");
     expect(stylesheet).toContain(".sessions-ledger-title-flow");
     expect(stylesheet).toContain(".sessions-ledger-row-archived");
     expect(stylesheet).toMatch(/\.sessions-ledger-connections,[\s\S]*grid-column: 2/);
