@@ -152,7 +152,9 @@ export function SessionsCommandBar({
   }
 
   function handleScopeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "Home", "End"].includes(event.key)) {
+      return;
+    }
     if (!(event.target instanceof Element)) return;
 
     const radio = event.target.closest<HTMLElement>('[role="radio"]');
@@ -165,9 +167,12 @@ export function SessionsCommandBar({
     if (currentIndex < 0) return;
 
     let nextIndex = currentIndex;
-    if (event.key === "ArrowRight")
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
       nextIndex = Math.min(currentIndex + 1, SCOPE_OPTIONS.length - 1);
-    if (event.key === "ArrowLeft") nextIndex = Math.max(currentIndex - 1, 0);
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = Math.max(currentIndex - 1, 0);
+    }
     if (event.key === "Home") nextIndex = 0;
     if (event.key === "End") nextIndex = SCOPE_OPTIONS.length - 1;
 

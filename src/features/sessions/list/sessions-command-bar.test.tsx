@@ -122,6 +122,18 @@ describe("SessionsCommandBar sticky filters", () => {
     });
     expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveFocus();
 
+    await user.keyboard("{ArrowDown}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveFocus();
+
+    await user.keyboard("{ArrowUp}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=archived", {
+      scroll: false,
+    });
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveFocus();
+
     await user.keyboard("{End}");
 
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });

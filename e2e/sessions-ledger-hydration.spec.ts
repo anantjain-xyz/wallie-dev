@@ -57,7 +57,7 @@ test.describe("sessions ledger 50-row fixture", () => {
     });
     await expect(longTitle).toBeVisible();
     await expect(longTitle).toHaveCSS("-webkit-line-clamp", "2");
-    await expect(longTitle.locator("xpath=..")).toHaveCSS("align-items", "baseline");
+    await expect(longTitle.locator("xpath=..")).toHaveCSS("align-items", "start");
 
     const mobileTitleMetrics = await longTitle.evaluate((element) => {
       const style = getComputedStyle(element);
