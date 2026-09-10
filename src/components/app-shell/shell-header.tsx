@@ -324,27 +324,23 @@ export function ShellHeader({
             className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
             data-shell-header=""
           >
-            {/* Mobile / tablet header: workspace and actions above the navigation tabs. */}
-            <div className="flex h-14 min-w-0 items-center gap-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] lg:hidden">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-semibold text-foreground">
-                  {workspace.name}
-                </p>
-              </div>
-
-              <div className="flex shrink-0 items-center gap-1.5">
+            {/* Mobile / tablet: workspace, nav, and actions share one compact row. */}
+            <div className="flex h-12 min-w-0 items-center gap-1.5 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] lg:hidden">
+              <p className="max-w-[28%] shrink-0 truncate text-[13px] font-semibold text-foreground">
+                {workspace.name}
+              </p>
+              <WorkspaceNavigation
+                pathname={pathname}
+                className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+              >
+                {renderNavLinks()}
+              </WorkspaceNavigation>
+              <div className="flex shrink-0 items-center gap-1">
                 {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
                 <ThemeToggle />
                 <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} mobileHeader />
               </div>
             </div>
-
-            <WorkspaceNavigation
-              pathname={pathname}
-              className="flex items-center gap-1 overflow-x-auto px-3 pb-2 lg:hidden"
-            >
-              {renderNavLinks()}
-            </WorkspaceNavigation>
 
             {/* Desktop header: workspace identity, primary navigation, and global actions. */}
             <div className="hidden h-12 min-w-0 items-center justify-between gap-3 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] lg:flex">

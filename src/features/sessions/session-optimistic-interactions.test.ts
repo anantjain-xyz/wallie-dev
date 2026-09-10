@@ -347,7 +347,7 @@ describe("optimistic session interactions", () => {
     );
 
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
-    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+    expect(screen.getByLabelText(/^Archived\./)).toBeTruthy();
   });
 
   it("hides an unarchived row optimistically before the response settles", () => {
@@ -529,7 +529,7 @@ describe("optimistic session interactions", () => {
     );
 
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
-    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+    expect(screen.getByLabelText(/^Archived\./)).toBeTruthy();
   });
 
   it("ignores an archive Undo after a newer archive replaces its version", async () => {

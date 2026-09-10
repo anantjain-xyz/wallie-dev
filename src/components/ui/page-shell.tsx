@@ -30,6 +30,7 @@ type PageHeaderProps = {
    * give titles the full width and place actions below.
    */
   actionsRightOnDesktop?: boolean;
+  className?: string;
   description?: ReactNode;
   eyebrow?: ReactNode;
   /**
@@ -50,6 +51,7 @@ type PageHeaderProps = {
 export function PageHeader({
   actions,
   actionsRightOnDesktop = false,
+  className,
   description,
   eyebrow,
   eyebrowAsPlain = false,
@@ -82,6 +84,7 @@ export function PageHeader({
         actionsRightOnDesktop
           ? "grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]"
           : "flex flex-wrap justify-between",
+        className,
       )}
     >
       {actionsRightOnDesktop ? (

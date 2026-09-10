@@ -13,7 +13,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Status } from "@/components/ui/status";
+import { Status, resolveStatusDefinition } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -455,19 +455,42 @@ export function SessionRowIsland({
           <div className="sessions-ledger-session-summary min-w-0">
             <span className="font-mono type-annotation text-muted">#{session.number}</span>
             <Tooltip content={displayTitle}>
-              <SessionDetailLink
-                href={detailHref}
-                trackSessionsToDetail
-                aria-label={`Open session #${session.number}: ${displayTitle}`}
-                className="line-clamp-3 min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
-              >
-                {displayTitle}
-              </SessionDetailLink>
+              <span className="sessions-ledger-session-title-clip">
+                <SessionDetailLink
+                  href={detailHref}
+                  trackSessionsToDetail
+                  aria-label={`Open session #${session.number}: ${displayTitle}`}
+                  className="sessions-ledger-session-title min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
+                >
+                  {displayTitle}
+                </SessionDetailLink>
+              </span>
             </Tooltip>
-            {connections ? <div className="sessions-ledger-connections">{connections}</div> : null}
-            {archivedAt ? (
-              <span className="sessions-ledger-archived type-annotation text-muted">archived</span>
+            {isArchived ? (
+              <Status compact className="sessions-ledger-archived" value="archived" />
             ) : null}
+            {connections ? <div className="sessions-ledger-connections">{connections}</div> : null}
+            {/* Narrow cards: keep metadata under the title (not flush under #). Decorative;
+                the real table cells below stay available to assistive tech. */}
+            <div aria-hidden="true" className="sessions-ledger-title-flow">
+              <span className="sessions-ledger-title-flow-stage">{stageName}</span>
+              <span className="sessions-ledger-title-flow-separator">·</span>
+              <span className="sessions-ledger-title-flow-status">
+                {
+                  resolveStatusDefinition(
+                    sessionDisplayStatus({
+                      phaseStatus,
+                      latestRunStatus: session.latestRunStatus,
+                    }),
+                  ).label
+                }
+              </span>
+              <span className="sessions-ledger-title-flow-separator">·</span>
+              <span className="sessions-ledger-title-flow-updated">{updated}</span>
+              {repositoryLabel ? (
+                <span className="sessions-ledger-title-flow-repository">{repositoryLabel}</span>
+              ) : null}
+            </div>
           </div>
         )}
         {error ? (
@@ -484,7 +507,7 @@ export function SessionRowIsland({
 
       <div className="sessions-ledger-cell sessions-ledger-cell-stage" role="cell">
         <span className="sessions-ledger-cell-label">Stage</span>
-        <span className="text-[13px] text-foreground">{stageName}</span>
+        <span className="sessions-ledger-cell-value text-[13px] text-foreground">{stageName}</span>
       </div>
 
       <div className="sessions-ledger-cell sessions-ledger-cell-status" role="cell">
@@ -495,7 +518,13 @@ export function SessionRowIsland({
         />
       </div>
 
-      <div className="sessions-ledger-cell sessions-ledger-cell-repository" role="cell">
+      <div
+        className={cn(
+          "sessions-ledger-cell sessions-ledger-cell-repository",
+          !repositoryLabel && "sessions-ledger-cell-repository-empty",
+        )}
+        role="cell"
+      >
         <span className="sessions-ledger-cell-label">Repository</span>
         <span className="truncate text-[13px] text-muted" title={repositoryLabel ?? undefined}>
           {repositoryLabel ?? "—"}

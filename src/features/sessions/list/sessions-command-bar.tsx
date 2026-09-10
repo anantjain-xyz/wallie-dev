@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useOptimistic, useRef, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useOptimistic,
+  useRef,
+  useTransition,
+  type KeyboardEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -144,6 +151,43 @@ export function SessionsCommandBar({
     searchInputRef.current?.focus();
   }
 
+  function handleScopeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    if (!(event.target instanceof Element)) return;
+
+    const radio = event.target.closest<HTMLElement>('[role="radio"]');
+    if (!radio || !event.currentTarget.contains(radio)) return;
+
+    event.preventDefault();
+    const currentKey =
+      (radio.dataset.sessionScope as SessionFilterKey | undefined) ?? optimisticQuery.scope;
+    const currentIndex = SCOPE_OPTIONS.findIndex((option) => option.key === currentKey);
+    if (currentIndex < 0) return;
+
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = Math.min(currentIndex + 1, SCOPE_OPTIONS.length - 1);
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = Math.max(currentIndex - 1, 0);
+    }
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = SCOPE_OPTIONS.length - 1;
+
+    const next = SCOPE_OPTIONS[nextIndex];
+    if (!next || next.key === currentKey) return;
+
+    const group = event.currentTarget;
+    updateQueryState({ scope: next.key });
+    queueMicrotask(() => {
+      group
+        .querySelector<HTMLElement>(`[data-session-scope="${next.key}"]`)
+        ?.focus({ preventScroll: true });
+    });
+  }
+
   const stageGroups = useMemo(() => {
     const order = [...stageFacets].sort(
       (a, b) => a.position - b.position || a.name.localeCompare(b.name),
@@ -165,16 +209,60 @@ export function SessionsCommandBar({
     "Recently updated";
 
   return (
-    <CommandBar aria-label="Sessions filters" className="mb-6 block border-0 p-0">
-      <div aria-busy={isPending} className={FILTER_BAR_CLASS}>
+    <CommandBar
+      aria-label="Sessions filters"
+      className="-mx-4 mb-4 block border-0 border-b border-border px-4 py-2 sm:-mx-8 sm:mb-6 sm:px-8 sm:py-3"
+    >
+      <div
+        aria-label="Session scope"
+        className="mb-1.5 flex gap-1 overflow-x-auto overscroll-x-contain pb-0.5"
+        onKeyDown={handleScopeKeyDown}
+        role="radiogroup"
+      >
+        {SCOPE_OPTIONS.map((option) => {
+          const selected = optimisticQuery.scope === option.key;
+          return (
+            <button
+              aria-checked={selected}
+              aria-label={`${option.label} ${scopeFacets[option.key]}`}
+              className={cn(
+                "ui-filter-chip h-9 min-h-9 shrink-0 px-2.5 md:h-8 md:min-h-8",
+                selected && "ui-filter-chip-active",
+              )}
+              data-session-scope={option.key}
+              key={option.key}
+              onClick={() => {
+                updateQueryState({ scope: option.key });
+              }}
+              role="radio"
+              tabIndex={selected ? 0 : -1}
+              type="button"
+            >
+              <span aria-hidden="true">{option.label}</span>
+              <span
+                aria-hidden="true"
+                className="font-mono type-annotation tabular-nums text-muted"
+              >
+                {scopeFacets[option.key]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        aria-busy={isPending}
+        className={cn(FILTER_BAR_CLASS, "items-stretch gap-1.5 border-t-0 py-1.5 sm:items-center")}
+      >
         <form
           onSubmit={handleSearchSubmit}
-          className={cn("flex items-center", FILTER_SEARCH_CLASS)}
+          className={cn("flex min-w-0 flex-1 items-center", FILTER_SEARCH_CLASS)}
           aria-label="Search sessions"
         >
           <FilterSearch
             ref={searchInputRef}
             id="sessions-search"
+            className="h-9 min-h-9 text-sm md:h-9 md:text-[13px]"
             defaultValue={queryState.query}
             aria-label="Search prompts, titles, or Linear IDs"
             description="Search prompts, titles, session numbers, or Linear IDs. Press Enter to search."
@@ -184,79 +272,67 @@ export function SessionsCommandBar({
           </button>
         </form>
 
-        <Select
-          value={optimisticQuery.scope}
-          onValueChange={(value) => updateQueryState({ scope: value as SessionFilterKey })}
-        >
-          <FilterSelectTrigger accessibleLabel="Session scope">
-            {SCOPE_OPTIONS.find((option) => option.key === optimisticQuery.scope)?.label}
-          </FilterSelectTrigger>
-          <SelectContent>
-            {SCOPE_OPTIONS.map((option) => (
-              <SelectItem key={option.key} value={option.key}>
-                <span className="flex w-full items-center justify-between gap-3">
-                  <span className="truncate">{option.label}</span>{" "}
-                  <span className="type-annotation shrink-0 text-muted">
-                    {scopeFacets[option.key]}
-                  </span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={optimisticQuery.stageSlug ?? "__all__"}
-          onValueChange={(nextValue) =>
-            updateQueryState({
-              stageSlug: nextValue === "__all__" ? null : nextValue,
-            })
-          }
-        >
-          <FilterSelectTrigger
-            accessibleLabel="Filter by stage"
-            className="min-w-[8.5rem] max-w-[12rem]"
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Select
+            value={optimisticQuery.stageSlug ?? "__all__"}
+            onValueChange={(nextValue) =>
+              updateQueryState({
+                stageSlug: nextValue === "__all__" ? null : nextValue,
+              })
+            }
           >
-            <span className="truncate">{stageValueLabel}</span>
-          </FilterSelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All stages</SelectItem>
-            {stageGroups.order.map((stage) => {
-              const count = stageGroups.counts.get(stage.slug) ?? 0;
-              return (
-                <SelectItem key={stage.slug} value={stage.slug}>
-                  <span className="flex w-full items-center justify-between gap-3">
-                    <span className="truncate">{stage.name}</span>
-                    <span className="type-annotation shrink-0 text-muted">{count}</span>
-                  </span>
+            <FilterSelectTrigger
+              accessibleLabel="Filter by stage"
+              className="h-9 min-h-9 min-w-0 max-w-[10rem] px-2 text-sm md:h-9 md:max-w-[12rem] md:text-[13px]"
+            >
+              <span className="truncate">{stageValueLabel}</span>
+            </FilterSelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All stages</SelectItem>
+              {stageGroups.order.map((stage) => {
+                const count = stageGroups.counts.get(stage.slug) ?? 0;
+                return (
+                  <SelectItem key={stage.slug} value={stage.slug}>
+                    <span className="flex w-full items-center justify-between gap-3">
+                      <span className="truncate">{stage.name}</span>
+                      <span className="type-annotation shrink-0 text-muted">{count}</span>
+                    </span>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={optimisticQuery.sort}
+            onValueChange={(nextValue) =>
+              updateQueryState({ sort: nextValue as SessionListSortKey })
+            }
+          >
+            <FilterSelectTrigger
+              accessibleLabel="Sort sessions"
+              className="h-9 min-h-9 min-w-0 max-w-[10rem] px-2 text-sm md:h-9 md:max-w-[12rem] md:text-[13px]"
+            >
+              <span className="truncate">{sortValueLabel}</span>
+            </FilterSelectTrigger>
+            <SelectContent>
+              {SESSION_LIST_SORT_OPTIONS.map((option) => (
+                <SelectItem key={option.key} value={option.key}>
+                  {option.label}
                 </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
+              ))}
+            </SelectContent>
+          </Select>
 
-        <Select
-          value={optimisticQuery.sort}
-          onValueChange={(nextValue) => updateQueryState({ sort: nextValue as SessionListSortKey })}
-        >
-          <FilterSelectTrigger
-            accessibleLabel="Sort sessions"
-            className="min-w-[9rem] max-w-[12rem]"
-          >
-            <span className="truncate">{sortValueLabel}</span>
-          </FilterSelectTrigger>
-          <SelectContent>
-            {SESSION_LIST_SORT_OPTIONS.map((option) => (
-              <SelectItem key={option.key} value={option.key}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {clearEnabled ? <ClearFilters onClick={handleClear} /> : null}
+          {clearEnabled ? (
+            <ClearFilters
+              className="h-9 min-h-9 w-auto shrink-0 px-2 text-sm md:h-9 md:text-[13px]"
+              onClick={handleClear}
+            />
+          ) : null}
+        </div>
       </div>
-      <div role="status" aria-live="polite" className="mt-2 min-h-4 text-xs text-muted">
+      <div role="status" aria-live="polite" className="mt-1 min-h-4 text-xs text-muted">
         {isPending ? "Updating sessions…" : null}
       </div>
     </CommandBar>

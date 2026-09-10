@@ -20,9 +20,10 @@ type AccountMenuProps = {
   mobileHeader?: boolean;
 };
 
-/** Leave a visible gap below the header, including the mobile navigation row. */
+/** Leave a visible gap below the sticky header. */
 export const ACCOUNT_MENU_SIDE_OFFSET = 20;
-export const ACCOUNT_MENU_MOBILE_SIDE_OFFSET = ACCOUNT_MENU_SIDE_OFFSET + 52;
+/** Same gap on mobile now that workspace nav shares the single header row. */
+export const ACCOUNT_MENU_MOBILE_SIDE_OFFSET = ACCOUNT_MENU_SIDE_OFFSET;
 
 export function AccountMenu({ avatarUrl = null, email, mobileHeader = false }: AccountMenuProps) {
   const signOutFormRef = useRef<HTMLFormElement>(null);

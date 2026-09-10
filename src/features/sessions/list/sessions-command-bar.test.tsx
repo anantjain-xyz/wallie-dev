@@ -81,8 +81,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar();
 
-    await user.click(screen.getByRole("combobox", { name: "Session scope" }));
-    await user.click(screen.getByRole("option", { name: "All 5" }));
+    await user.click(screen.getByRole("radio", { name: "All 5" }));
 
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
     expect(readSessionListPreferences("acme")).toEqual({
@@ -92,17 +91,53 @@ describe("SessionsCommandBar sticky filters", () => {
     });
   });
 
-  it("shows scope counts in the options without adding them to the trigger", async () => {
+  it("shows scope counts on the visible scope radios", () => {
+    renderCommandBar();
+
+    const scope = screen.getByRole("radiogroup", { name: "Session scope" });
+    expect(scope).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("tabIndex", "0");
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute("tabIndex", "-1");
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("tabIndex", "-1");
+  });
+
+  it("moves and selects scope radios with arrow keys", async () => {
     const user = userEvent.setup();
     renderCommandBar();
 
-    const scope = screen.getByRole("combobox", { name: "Session scope" });
-    expect(scope).toHaveTextContent(/^Active$/);
-    await user.click(scope);
+    const active = screen.getByRole("radio", { name: "Active 3" });
+    active.focus();
+    expect(active).toHaveFocus();
 
-    expect(screen.getByRole("option", { name: "Active 3" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Archived 2" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "All 5" })).toBeInTheDocument();
+    await user.keyboard("{ArrowRight}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=archived", {
+      scroll: false,
+    });
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveFocus();
+
+    await user.keyboard("{ArrowUp}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=archived", {
+      scroll: false,
+    });
+    expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveFocus();
+
+    await user.keyboard("{End}");
+
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveFocus();
   });
 
   it("exposes server-resolved filters in the URL without a second navigation", async () => {
@@ -114,7 +149,7 @@ describe("SessionsCommandBar sticky filters", () => {
     renderCommandBar({ ...defaultQueryState, scope: "all", sort: "oldest", stageSlug: "build" });
 
     await waitFor(() => expect(window.location.search).toBe("?stage=build&scope=all&sort=oldest"));
-    expect(screen.getByRole("combobox", { name: "Session scope" })).toHaveTextContent("All");
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "true");
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -133,7 +168,7 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(document.cookie).toContain(sessionListPreferencesCookieName("acme"));
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
-    expect(screen.getByRole("combobox", { name: "Session scope" })).toHaveTextContent("Active");
+    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("does not restore when the URL already has a sticky key", async () => {
@@ -145,12 +180,12 @@ describe("SessionsCommandBar sticky filters", () => {
     setListUrl("scope=archived");
     renderCommandBar({ ...defaultQueryState, scope: "archived" });
 
-    const scope = await screen.findByRole("combobox", { name: "Session scope" });
-    expect(scope).toHaveTextContent("Archived");
+    expect(await screen.findByRole("radio", { name: "Archived 2" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(mocked.replace).not.toHaveBeenCalled();
-    await userEvent.click(scope);
-    expect(screen.getByRole("option", { name: "Archived 2", selected: true })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "All 5", selected: false })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "false");
   });
 
   it("writes defaults on Clear and pushes the bare sessions path", async () => {

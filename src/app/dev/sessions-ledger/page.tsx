@@ -13,12 +13,13 @@ const INITIAL_NOW = "2026-07-18T12:00:00.000Z";
 function makeSession(index: number): SessionListItem {
   const padded = String(index).padStart(3, "0");
   const awaiting = index % 3 === 0;
+  const archived = index % 11 === 0;
   const title =
-    index === 1
+    index === 1 || index === 11
       ? "Delete the superseded Settings client architecture and replace the remaining legacy configuration paths with the current workspace settings flow"
       : `Seeded ledger session ${index}`;
   return {
-    archivedAt: null,
+    archivedAt: archived ? "2026-07-17T09:00:00.000Z" : null,
     latestRunStatus: index % 5 === 0 ? "error" : null,
     createdAt: "2026-07-18T10:00:00.000Z",
     currentArtifactVersion: 1,
@@ -88,11 +89,11 @@ export default function SessionsLedgerFixturePage() {
           queryState={{
             cursor: null,
             query: "",
-            scope: "active",
+            scope: "all",
             sort: "updated",
             stageSlug: null,
           }}
-          scopeFacets={{ active: 50, all: 62, archived: 12 }}
+          scopeFacets={{ active: 46, all: 50, archived: 4 }}
           stageFacets={[
             { count: 25, name: "Plan", position: 0, slug: "plan" },
             { count: 25, name: "Build", position: 1, slug: "build" },

@@ -15,7 +15,7 @@ test.describe("sessions ledger 50-row fixture", () => {
     });
     await expect(firstTitle).toBeVisible();
     await expect(firstTitle).toHaveAttribute("href", "/w/fixture/sessions/1");
-    await expect(firstTitle).toHaveCSS("-webkit-line-clamp", "3");
+    await expect(firstTitle).toHaveCSS("-webkit-line-clamp", "2");
     await expect(firstTitle.locator("xpath=..")).toHaveCSS("align-items", "baseline");
 
     const titleBox = await firstTitle.boundingBox();
@@ -28,7 +28,7 @@ test.describe("sessions ledger 50-row fixture", () => {
       };
     });
     expect(titleBox).toBeTruthy();
-    expect(titleMetrics.clientHeight).toBeCloseTo(titleMetrics.lineHeight * 3, 0);
+    expect(titleMetrics.clientHeight).toBeCloseTo(titleMetrics.lineHeight * 2, 0);
     expect(titleMetrics.scrollHeight).toBeGreaterThan(titleMetrics.clientHeight);
 
     // Modifier-click semantics: the title is a real link (not an overlay).
@@ -56,8 +56,8 @@ test.describe("sessions ledger 50-row fixture", () => {
       name: /Open session #1: Delete the superseded Settings client architecture/,
     });
     await expect(longTitle).toBeVisible();
-    await expect(longTitle).toHaveCSS("-webkit-line-clamp", "3");
-    await expect(longTitle.locator("xpath=..")).toHaveCSS("align-items", "baseline");
+    await expect(longTitle).toHaveCSS("-webkit-line-clamp", "2");
+    await expect(longTitle.locator("xpath=..")).toHaveCSS("align-items", "start");
 
     const mobileTitleMetrics = await longTitle.evaluate((element) => {
       const style = getComputedStyle(element);
@@ -67,7 +67,7 @@ test.describe("sessions ledger 50-row fixture", () => {
         scrollHeight: element.scrollHeight,
       };
     });
-    expect(mobileTitleMetrics.clientHeight).toBeCloseTo(mobileTitleMetrics.lineHeight * 3, 0);
+    expect(mobileTitleMetrics.clientHeight).toBeCloseTo(mobileTitleMetrics.lineHeight * 2, 0);
     expect(mobileTitleMetrics.scrollHeight).toBeGreaterThan(mobileTitleMetrics.clientHeight);
 
     const title = page.getByRole("link", {

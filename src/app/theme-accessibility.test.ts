@@ -178,7 +178,7 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toMatch(/\.session-list-row\s*\{[^}]*content-visibility: auto;/u);
     expect(stylesheet).toMatch(/\.run-history-group\s*\{[^}]*content-visibility: auto;/u);
     expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 680px;");
-    expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 116px;");
+    expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 76px;");
     expect(stylesheet).toMatch(/:focus-within,[\s\S]*content-visibility: visible;/u);
     expect(stylesheet).toMatch(
       /\.content-visibility-interacting\s*\{[^}]*content-visibility: visible;/u,
@@ -262,6 +262,7 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toContain("@media (pointer: coarse), (max-width: 767px)");
     expect(stylesheet).toContain("min-width: 44px;");
     expect(stylesheet).toContain("min-height: 44px;");
+    expect(stylesheet).toContain(".ui-shell-nav-link,");
     expect(stylesheet).toContain(".ui-touch-target,");
     expect(stylesheet).toContain("grid-template-columns: repeat(6, minmax(2.75rem, 1fr));");
     expect(stylesheet).toContain("container-name: email-code-form;");

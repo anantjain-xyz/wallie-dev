@@ -68,14 +68,14 @@ describe("AccountMenu", () => {
   it.each([
     { headerHeight: 48, triggerRowHeight: 48, triggerHeight: 32, offset: ACCOUNT_MENU_SIDE_OFFSET },
     {
-      headerHeight: 108,
-      triggerRowHeight: 56,
+      headerHeight: 48,
+      triggerRowHeight: 48,
       triggerHeight: 44,
       offset: ACCOUNT_MENU_MOBILE_SIDE_OFFSET,
     },
     {
-      headerHeight: 108,
-      triggerRowHeight: 56,
+      headerHeight: 48,
+      triggerRowHeight: 48,
       triggerHeight: 32,
       offset: ACCOUNT_MENU_MOBILE_SIDE_OFFSET,
     },
@@ -84,6 +84,7 @@ describe("AccountMenu", () => {
     ({ headerHeight, triggerRowHeight, triggerHeight, offset }) => {
       const triggerBottom = (triggerRowHeight + triggerHeight) / 2;
       expect(triggerBottom + offset - headerHeight).toBeGreaterThanOrEqual(6);
+      expect(ACCOUNT_MENU_MOBILE_SIDE_OFFSET).toBe(ACCOUNT_MENU_SIDE_OFFSET);
       expect(accountMenuSource).toContain(
         "mobileHeader ? ACCOUNT_MENU_MOBILE_SIDE_OFFSET : ACCOUNT_MENU_SIDE_OFFSET",
       );
