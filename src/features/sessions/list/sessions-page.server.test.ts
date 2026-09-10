@@ -208,7 +208,9 @@ describe("Sessions ledger server render", () => {
     expect(stylesheet).toContain(".sessions-ledger-session-title");
     expect(stylesheet).toContain("max-height: calc(1.375em * 2 - 1px)");
     expect(stylesheet).toContain(".sessions-ledger-title-flow");
-    expect(stylesheet).toContain(".sessions-ledger-row-archived");
+    expect(stylesheet).not.toContain(".sessions-ledger-row-archived");
+    expect(stylesheet).not.toContain("color-mix(in srgb, var(--control-muted) 55%, transparent)");
+    expect(rowIslandSource).not.toContain("sessions-ledger-row-archived");
     expect(stylesheet).toMatch(/\.sessions-ledger-connections,[\s\S]*grid-column: 2/);
     expect(stylesheet).not.toContain(".sessions-ledger-cell-stage::before");
     expect(commandBarSource).not.toContain("sticky top-[");

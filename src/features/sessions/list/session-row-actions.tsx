@@ -396,7 +396,6 @@ export function SessionRowIsland({
       role="row"
       className={cn(
         "session-list-row sessions-ledger-row group",
-        isArchived && "sessions-ledger-row-archived",
         (isEditing || archivePending !== null || error || archiveError) &&
           "content-visibility-interacting",
       )}

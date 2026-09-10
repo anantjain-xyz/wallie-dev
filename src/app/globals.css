@@ -1226,14 +1226,6 @@
   justify-self: start;
 }
 
-.sessions-ledger-row-archived {
-  background: color-mix(in srgb, var(--control-muted) 55%, transparent);
-}
-
-.sessions-ledger-row-archived .sessions-ledger-session-summary {
-  opacity: 0.88;
-}
-
 /*
   Dense card layout when the ledger itself is narrower than the column mins
   (~800px) plus breathing room. Container query covers padded/zoomed viewports
