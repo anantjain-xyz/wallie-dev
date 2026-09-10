@@ -1303,8 +1303,19 @@
     display: none;
   }
 
+  /* Column headers are hidden here — keep cell labels for assistive tech. */
   .sessions-ledger-cell-label {
-    display: none;
+    /* Override the desktop `display: none` so labels stay in the a11y tree. */
+    display: inline;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
   }
 
   .sessions-ledger-session-summary {
