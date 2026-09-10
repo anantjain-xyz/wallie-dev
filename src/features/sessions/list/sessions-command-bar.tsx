@@ -211,11 +211,11 @@ export function SessionsCommandBar({
   return (
     <CommandBar
       aria-label="Sessions filters"
-      className="sticky top-[var(--shell-scroll-padding)] z-10 -mx-4 mb-4 block border-0 border-b border-border bg-sheet/95 px-4 py-3 backdrop-blur-sm sm:-mx-8 sm:mb-6 sm:px-8"
+      className="-mx-4 mb-4 block border-0 border-b border-border px-4 py-2 sm:-mx-8 sm:mb-6 sm:px-8 sm:py-3"
     >
       <div
         aria-label="Session scope"
-        className="mb-2 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-0.5"
+        className="mb-1.5 flex gap-1 overflow-x-auto overscroll-x-contain pb-0.5"
         onKeyDown={handleScopeKeyDown}
         role="radiogroup"
       >
@@ -226,7 +226,7 @@ export function SessionsCommandBar({
               aria-checked={selected}
               aria-label={`${option.label} ${scopeFacets[option.key]}`}
               className={cn(
-                "ui-filter-chip min-h-11 shrink-0 md:min-h-8",
+                "ui-filter-chip h-9 min-h-9 shrink-0 px-2.5 md:h-8 md:min-h-8",
                 selected && "ui-filter-chip-active",
               )}
               data-session-scope={option.key}
@@ -250,15 +250,19 @@ export function SessionsCommandBar({
         })}
       </div>
 
-      <div aria-busy={isPending} className={cn(FILTER_BAR_CLASS, "border-t-0 pt-2")}>
+      <div
+        aria-busy={isPending}
+        className={cn(FILTER_BAR_CLASS, "items-stretch gap-1.5 border-t-0 py-1.5 sm:items-center")}
+      >
         <form
           onSubmit={handleSearchSubmit}
-          className={cn("flex items-center", FILTER_SEARCH_CLASS)}
+          className={cn("flex min-w-0 flex-1 items-center", FILTER_SEARCH_CLASS)}
           aria-label="Search sessions"
         >
           <FilterSearch
             ref={searchInputRef}
             id="sessions-search"
+            className="h-9 min-h-9 text-sm md:h-9 md:text-[13px]"
             defaultValue={queryState.query}
             aria-label="Search prompts, titles, or Linear IDs"
             description="Search prompts, titles, session numbers, or Linear IDs. Press Enter to search."
@@ -268,58 +272,67 @@ export function SessionsCommandBar({
           </button>
         </form>
 
-        <Select
-          value={optimisticQuery.stageSlug ?? "__all__"}
-          onValueChange={(nextValue) =>
-            updateQueryState({
-              stageSlug: nextValue === "__all__" ? null : nextValue,
-            })
-          }
-        >
-          <FilterSelectTrigger
-            accessibleLabel="Filter by stage"
-            className="min-w-[8.5rem] max-w-[12rem]"
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Select
+            value={optimisticQuery.stageSlug ?? "__all__"}
+            onValueChange={(nextValue) =>
+              updateQueryState({
+                stageSlug: nextValue === "__all__" ? null : nextValue,
+              })
+            }
           >
-            <span className="truncate">{stageValueLabel}</span>
-          </FilterSelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All stages</SelectItem>
-            {stageGroups.order.map((stage) => {
-              const count = stageGroups.counts.get(stage.slug) ?? 0;
-              return (
-                <SelectItem key={stage.slug} value={stage.slug}>
-                  <span className="flex w-full items-center justify-between gap-3">
-                    <span className="truncate">{stage.name}</span>
-                    <span className="type-annotation shrink-0 text-muted">{count}</span>
-                  </span>
+            <FilterSelectTrigger
+              accessibleLabel="Filter by stage"
+              className="h-9 min-h-9 min-w-0 max-w-[10rem] px-2 text-sm md:h-9 md:max-w-[12rem] md:text-[13px]"
+            >
+              <span className="truncate">{stageValueLabel}</span>
+            </FilterSelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All stages</SelectItem>
+              {stageGroups.order.map((stage) => {
+                const count = stageGroups.counts.get(stage.slug) ?? 0;
+                return (
+                  <SelectItem key={stage.slug} value={stage.slug}>
+                    <span className="flex w-full items-center justify-between gap-3">
+                      <span className="truncate">{stage.name}</span>
+                      <span className="type-annotation shrink-0 text-muted">{count}</span>
+                    </span>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={optimisticQuery.sort}
+            onValueChange={(nextValue) =>
+              updateQueryState({ sort: nextValue as SessionListSortKey })
+            }
+          >
+            <FilterSelectTrigger
+              accessibleLabel="Sort sessions"
+              className="h-9 min-h-9 min-w-0 max-w-[10rem] px-2 text-sm md:h-9 md:max-w-[12rem] md:text-[13px]"
+            >
+              <span className="truncate">{sortValueLabel}</span>
+            </FilterSelectTrigger>
+            <SelectContent>
+              {SESSION_LIST_SORT_OPTIONS.map((option) => (
+                <SelectItem key={option.key} value={option.key}>
+                  {option.label}
                 </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
+              ))}
+            </SelectContent>
+          </Select>
 
-        <Select
-          value={optimisticQuery.sort}
-          onValueChange={(nextValue) => updateQueryState({ sort: nextValue as SessionListSortKey })}
-        >
-          <FilterSelectTrigger
-            accessibleLabel="Sort sessions"
-            className="min-w-[9rem] max-w-[12rem]"
-          >
-            <span className="truncate">{sortValueLabel}</span>
-          </FilterSelectTrigger>
-          <SelectContent>
-            {SESSION_LIST_SORT_OPTIONS.map((option) => (
-              <SelectItem key={option.key} value={option.key}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {clearEnabled ? <ClearFilters onClick={handleClear} /> : null}
+          {clearEnabled ? (
+            <ClearFilters
+              className="h-9 min-h-9 w-auto shrink-0 px-2 text-sm md:h-9 md:text-[13px]"
+              onClick={handleClear}
+            />
+          ) : null}
+        </div>
       </div>
-      <div role="status" aria-live="polite" className="mt-2 min-h-4 text-xs text-muted">
+      <div role="status" aria-live="polite" className="mt-1 min-h-4 text-xs text-muted">
         {isPending ? "Updating sessions…" : null}
       </div>
     </CommandBar>

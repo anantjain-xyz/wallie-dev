@@ -204,9 +204,12 @@ describe("Sessions ledger server render", () => {
     expect(stylesheet).toContain("@container sessions-ledger (max-width: 53rem)");
     expect(stylesheet).toContain(".sessions-ledger-cell-label");
     expect(stylesheet).toContain(".sessions-ledger-session-summary");
+    expect(stylesheet).toContain(".sessions-ledger-session-title");
+    expect(stylesheet).toContain("max-height: calc(1.375em * 2)");
     expect(stylesheet).toContain(".sessions-ledger-row-archived");
     expect(stylesheet).toMatch(/\.sessions-ledger-connections,[\s\S]*grid-column: 2/);
     expect(stylesheet).toContain('content: "·"');
     expect(stylesheet).not.toContain(".sessions-ledger-cell-stage::before");
+    expect(commandBarSource).not.toContain("sticky top-[var(--shell-scroll-padding)]");
   });
 });
