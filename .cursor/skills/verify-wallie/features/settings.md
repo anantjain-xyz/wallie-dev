@@ -17,6 +17,7 @@ Settings lets a workspace member open workspace configuration categories (Integr
 
 Preconditions:
 
+- Local Supabase is healthy with seed data (`acme-corp`, user `anant@example.com`).
 - Signed in to `acme-corp` via `control-wallie sign-in --destination /w/acme-corp/settings`.
 - `control-wallie doctor` passes.
 
@@ -27,5 +28,6 @@ Preconditions:
 
 ## Gotchas
 
+- Signing in requires Supabase Auth admin `generate_link`; a down Auth API fails `sign-in` and blocks this feature.
 - Some settings write encrypted secrets; do not paste real production credentials into a disposable verify run.
 - GitHub App env vars can be empty locally; missing GitHub config is a skip for install flows, not a Settings page failure.
