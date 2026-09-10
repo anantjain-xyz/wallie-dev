@@ -15,7 +15,7 @@ function makeSession(index: number): SessionListItem {
   const awaiting = index % 3 === 0;
   const archived = index % 11 === 0;
   const title =
-    index === 1
+    index === 1 || index === 11
       ? "Delete the superseded Settings client architecture and replace the remaining legacy configuration paths with the current workspace settings flow"
       : `Seeded ledger session ${index}`;
   return {
