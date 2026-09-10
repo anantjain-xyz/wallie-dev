@@ -213,6 +213,7 @@ describe("SessionsPage", () => {
     expect(html).toContain("A long session title");
     expect(html).toContain("sessions-ledger-session-summary");
     expect(html).toContain("sessions-ledger-session-title");
+    expect(html).toContain("sessions-ledger-title-flow");
     expect(html).not.toContain("md:truncate");
   });
 });

@@ -469,6 +469,24 @@ export function SessionRowIsland({
               <Status compact className="sessions-ledger-archived" value="archived" />
             ) : null}
             {connections ? <div className="sessions-ledger-connections">{connections}</div> : null}
+            {/* Narrow cards: keep metadata under the title (not flush under #). Decorative;
+                the real table cells below stay available to assistive tech. */}
+            <div aria-hidden="true" className="sessions-ledger-title-flow">
+              <span className="sessions-ledger-title-flow-stage">{stageName}</span>
+              <span className="sessions-ledger-title-flow-separator">·</span>
+              <Status
+                compact
+                value={sessionDisplayStatus({
+                  phaseStatus,
+                  latestRunStatus: session.latestRunStatus,
+                })}
+              />
+              <span className="sessions-ledger-title-flow-separator">·</span>
+              <span className="sessions-ledger-title-flow-updated">{updated}</span>
+              {repositoryLabel ? (
+                <span className="sessions-ledger-title-flow-repository">{repositoryLabel}</span>
+              ) : null}
+            </div>
           </div>
         )}
         {error ? (
