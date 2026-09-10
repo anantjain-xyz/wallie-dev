@@ -456,14 +456,16 @@ export function SessionRowIsland({
           <div className="sessions-ledger-session-summary min-w-0">
             <span className="font-mono type-annotation text-muted">#{session.number}</span>
             <Tooltip content={displayTitle}>
-              <SessionDetailLink
-                href={detailHref}
-                trackSessionsToDetail
-                aria-label={`Open session #${session.number}: ${displayTitle}`}
-                className="sessions-ledger-session-title min-w-0 break-words text-[14px] font-medium leading-snug text-foreground hover:text-accent"
-              >
-                {displayTitle}
-              </SessionDetailLink>
+              <span className="sessions-ledger-session-title-clip">
+                <SessionDetailLink
+                  href={detailHref}
+                  trackSessionsToDetail
+                  aria-label={`Open session #${session.number}: ${displayTitle}`}
+                  className="sessions-ledger-session-title min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
+                >
+                  {displayTitle}
+                </SessionDetailLink>
+              </span>
             </Tooltip>
             {isArchived ? (
               <Status compact className="sessions-ledger-archived" value="archived" />

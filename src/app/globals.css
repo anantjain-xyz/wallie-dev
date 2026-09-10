@@ -1189,14 +1189,26 @@
   gap: 0.375rem 0.5rem;
 }
 
-/* Two-line clamp with a hard max-height so a third line cannot peek. */
+/*
+  Two-line title clamp. Inter + leading-snug subpixel metrics can otherwise
+  reveal a sliver of line 3 above the Archived pill — clip the wrapper hard
+  and keep line-height explicit on the text itself.
+*/
+.sessions-ledger-session-title-clip {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  max-height: 2.7em; /* < 1.375 * 2 so line 3 cannot peek */
+}
+
 .sessions-ledger-session-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-height: calc(1.375em * 2);
+  line-height: 1.375;
+  max-height: 2.7em;
   overflow-wrap: anywhere;
 }
 

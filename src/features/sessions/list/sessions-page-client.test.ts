@@ -212,6 +212,7 @@ describe("SessionsPage", () => {
     expect(html).not.toContain("absolute inset-0");
     expect(html).toContain("A long session title");
     expect(html).toContain("sessions-ledger-session-summary");
+    expect(html).toContain("sessions-ledger-session-title-clip");
     expect(html).toContain("sessions-ledger-session-title");
     expect(html).toContain("sessions-ledger-title-flow");
     expect(html).not.toContain("md:truncate");
