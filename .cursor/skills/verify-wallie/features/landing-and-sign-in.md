@@ -35,7 +35,7 @@ Preconditions:
 
 ## Gotchas
 
-- Authenticated users hitting `/` redirect into the workspace; doctor and landing recipes assume a signed-out browser.
+- Authenticated users hitting `/` redirect into a workspace home or onboarding (`/onboarding/workspace` when they have no workspace); doctor and landing recipes assume a signed-out browser.
 - There is no password field. Do not look for password login.
 - Do not click `Sign in to Wallie` on the landing page — that heading exists only on `/login`. Landing CTAs are `Get started` and header `Sign in`.
 - Browser commands share one live page until `stop`. Fill then `Send magic link` submits the filled form; do not `goto /login` between those two steps.
