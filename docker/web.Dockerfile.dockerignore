@@ -1,0 +1,17 @@
+# Only web build/runtime inputs enter the build context.
+**
+!LICENSE
+!package.json
+!pnpm-lock.yaml
+!tsconfig.json
+!middleware.ts
+!next.config.ts
+!postcss.config.mjs
+!src
+!src/**
+!public
+!public/**
+**/*.test.*
+**/__tests__/**
+**/.env*
+**/*.pem

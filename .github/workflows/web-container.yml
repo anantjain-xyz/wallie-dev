@@ -1,0 +1,54 @@
+name: Web container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/web.Dockerfile*"
+      - "scripts/check-web-container.mjs"
+      - "scripts/fixtures/web-container-*.mjs"
+      - "src/**"
+      - "public/**"
+      - "middleware.ts"
+      - "next.config.ts"
+      - "postcss.config.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
+      - "LICENSE"
+      - ".github/workflows/web-container.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker/web.Dockerfile*"
+      - "scripts/check-web-container.mjs"
+      - "scripts/fixtures/web-container-*.mjs"
+      - "src/**"
+      - "public/**"
+      - "middleware.ts"
+      - "next.config.ts"
+      - "postcss.config.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
+      - "LICENSE"
+      - ".github/workflows/web-container.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  web-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Build web image
+        run: docker build -f docker/web.Dockerfile -t wallie-web:local .
+      - name: Verify runtime installation configuration
+        run: node scripts/check-web-container.mjs wallie-web:local
