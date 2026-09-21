@@ -13,7 +13,7 @@ flowchart LR
 | ------------------ | ------------------------------------------------------------- |
 | Name               | `wallie_staging_images`                                       |
 | Platform           | `Notation-OCI-SHA384-ECDSA`                                   |
-| Signature lifetime | 365 days; future releases must account for expiry             |
+| Signature lifetime | 1 year (`value = 1`, `type = "YEARS"`); account for expiry    |
 | Ownership          | `WallieStack=wallie-staging-registry`, `Component=signing`    |
 | Destruction        | Terraform `prevent_destroy`; no cancellation/revocation grant |
 | Outputs            | Profile name, ARN, version, version ARN, status               |
@@ -57,7 +57,7 @@ Follow the [registry saved-plan procedure](AWS-STAGING-REGISTRY.md#plan-review-a
 
 - Existing staging: **1 addition, 0 changes, 0 deletions**. Both ECR repositories must remain unchanged.
 - Fresh installation: **3 additions** (two repositories + profile).
-- Review the exact account/region, name, platform, 365-day validity, and ownership tags before applying the saved plan.
+- Review the exact account/region, name, platform, one-year validity, and ownership tags before applying the saved plan.
 
 ## Verify and remove bootstrap access
 
@@ -66,7 +66,15 @@ aws signer get-signing-profile --profile-name wallie_staging_images --region "$A
 terraform -chdir=infra/aws/staging-registry output signing_profile
 ```
 
-- Require `Active`, the expected ARN/account/region, platform, validity, and tags. Record the profile version and version ARN from the readback; compare Terraform outputs.
+- Require `Active`, the expected ARN/account/region, platform, and `signatureValidityPeriod` of `1 YEARS`. Record the profile version and version ARN from the readback; compare Terraform outputs.
+- Use the verified profile ARN for an explicit [tag readback](https://docs.aws.amazon.com/cli/latest/reference/signer/list-tags-for-resource.html):
+
+```sh
+WALLIE_SIGNING_PROFILE_ARN="$(aws signer get-signing-profile --profile-name wallie_staging_images --region "$AWS_REGION" --query arn --output text)"
+aws signer list-tags-for-resource --resource-arn "$WALLIE_SIGNING_PROFILE_ARN" --region "$AWS_REGION"
+```
+
+- Require all six tags: `Name=wallie_staging_images`, `Project=Wallie`, `Environment=staging`, `ManagedBy=Terraform`, `Component=signing`, `WallieStack=wallie-staging-registry`. Stop on a read error or any missing/mismatched value.
 - Run the final registry plan with `-detailed-exitcode`; require **0**. Then detach **WallieStagingSigningProfileBootstrap** in IAM.
 - Mock tests cover configuration, output wiring, and account/root guards. Live IAM and creation are qualified only after merge; this PR has not created a profile.
 - Next PR: digest signing + strict verification, only after [image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary) passes. Provenance, broader vulnerability scanning, and GitHub OIDC publishing remain later work.

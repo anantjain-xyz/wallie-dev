@@ -3,8 +3,8 @@ resource "aws_signer_signing_profile" "images" {
   platform_id = "Notation-OCI-SHA384-ECDSA"
 
   signature_validity_period {
-    value = 365
-    type  = "DAYS"
+    value = 1
+    type  = "YEARS"
   }
 
   tags = {

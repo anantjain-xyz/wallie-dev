@@ -75,8 +75,8 @@ run "signing_profile_configuration" {
     condition = (
       aws_signer_signing_profile.images.name == "wallie_staging_images" &&
       aws_signer_signing_profile.images.platform_id == "Notation-OCI-SHA384-ECDSA" &&
-      one(aws_signer_signing_profile.images.signature_validity_period).value == 365 &&
-      one(aws_signer_signing_profile.images.signature_validity_period).type == "DAYS"
+      one(aws_signer_signing_profile.images.signature_validity_period).value == 1 &&
+      one(aws_signer_signing_profile.images.signature_validity_period).type == "YEARS"
     )
     error_message = "Use the fixed OCI signing profile with explicit one-year signature validity."
   }
