@@ -16,6 +16,7 @@ type Options = Record<string, string>;
 type Call = {
   command: string;
   args: string[];
+  startedAt: number;
   options: {
     env?: NodeJS.ProcessEnv;
     input?: string;
@@ -140,6 +141,7 @@ function harness(component = "web") {
   };
   const calls: Call[] = [];
   const overrides: Record<string, unknown> = {};
+  const durations: Record<string, number> = {};
   let endpoint = "unix:///var/run/docker.sock";
   let time = Date.parse("2026-09-22T01:00:00.500Z");
   const env: NodeJS.ProcessEnv = {
@@ -175,7 +177,7 @@ function harness(component = "web") {
     Expiration: "2026-09-22T02:00:00Z",
   };
   const run: Runner = async (command, args, options = {}) => {
-    calls.push({ command, args, options });
+    calls.push({ command, args, options, startedAt: time });
     const actualArgs =
       command === "git"
         ? args.slice(
@@ -200,6 +202,7 @@ function harness(component = "web") {
         : command === process.execPath
           ? "smoke"
           : `${command}:${actualArgs[0]}`;
+    time += durations[operation] ?? 0;
     if (Object.hasOwn(overrides, operation)) {
       const value = overrides[operation];
       if (value instanceof Error) throw value;
@@ -286,6 +289,7 @@ function harness(component = "web") {
     directory,
     calls,
     overrides,
+    durations,
     repo,
     image,
     identity,
@@ -302,6 +306,7 @@ function harness(component = "web") {
     dockerCalls,
     receipt,
     digest,
+    now: () => time,
     setEndpoint: (value: string) => {
       endpoint = value;
     },
@@ -523,14 +528,15 @@ describe("manual AWS image publishing", () => {
       AccessKeyId: "refreshed-session-key",
       SessionToken: "refreshed-token",
     };
-    h.credentialResponses.push(h.credentials, refreshed);
+    h.credentialResponses.push(h.credentials, refreshed, refreshed);
     const result = await h.execute();
     const exports = h.calls.filter(
       (call) => call.command === "aws" && call.args[1] === "export-credentials",
     );
-    expect(exports).toHaveLength(2);
+    expect(exports).toHaveLength(3);
     const smoke = h.calls.find((call) => call.command === process.execPath)!;
     expect(h.calls.indexOf(exports[1])).toBeGreaterThan(h.calls.indexOf(smoke));
+    expect(h.calls.indexOf(exports[2])).toBeGreaterThan(h.calls.indexOf(h.dockerCalls("push")[0]));
     const awsCalls = h.calls.filter(
       (call) => call.command === "aws" && call.args[1] !== "export-credentials",
     );
@@ -576,6 +582,258 @@ describe("manual AWS image publishing", () => {
     expect(h.dockerCalls("buildx")).toHaveLength(0);
   });
 
+  it("refreshes after a push that outlives the upload session before reading ECR", async () => {
+    const h = harness();
+    const shortSession = {
+      ...h.credentials,
+      Expiration: new Date(h.now() + 15 * 60_000).toISOString(),
+    };
+    const afterPush = {
+      ...h.credentials,
+      AccessKeyId: "post-push-session",
+      Expiration: new Date(h.now() + 35 * 60_000).toISOString(),
+    };
+    h.credentialResponses.push(shortSession, shortSession, afterPush);
+    h.durations["docker:push"] = 20 * 60_000;
+    await h.execute();
+    const push = h.dockerCalls("push")[0];
+    const postPushCalls = h.calls.slice(h.calls.indexOf(push) + 1);
+    expect(postPushCalls.slice(0, 3).map((call) => call.args[1])).toEqual([
+      "export-credentials",
+      "get-caller-identity",
+      "batch-get-image",
+    ]);
+    for (const call of postPushCalls.filter((call) => call.args[0] === "ecr"))
+      expect(call.options.env?.AWS_ACCESS_KEY_ID).toBe(afterPush.AccessKeyId);
+    expect(h.dockerCalls("push")).toHaveLength(1);
+    expect(h.receipt()).toMatchObject({ uploadStatus: "confirmed", scan: { fresh: true } });
+  });
+
+  it("refreshes an expiring snapshot during the scan without restarting the upload", async () => {
+    const h = harness();
+    const scanningSession = {
+      ...h.credentials,
+      AccessKeyId: "early-scan-session",
+      Expiration: new Date(h.now() + 3 * 60_000).toISOString(),
+    };
+    const renewed = { ...h.credentials, AccessKeyId: "renewed-scan-session" };
+    h.credentialResponses.push(h.credentials, h.credentials, scanningSession, renewed);
+    h.scanResponses.push(
+      ...Array.from({ length: 5 }, () => ({
+        ...h.scan,
+        imageScanStatus: { status: "IN_PROGRESS" },
+      })),
+    );
+    await h.execute();
+    const scans = h.calls.filter((call) => call.args[1] === "describe-image-scan-findings");
+    expect(scans.map((call) => call.options.env?.AWS_ACCESS_KEY_ID)).toEqual([
+      "early-scan-session",
+      "early-scan-session",
+      "early-scan-session",
+      "renewed-scan-session",
+      "renewed-scan-session",
+      "renewed-scan-session",
+    ]);
+    const renewal = h.calls.find(
+      (call) =>
+        call.args[1] === "get-caller-identity" &&
+        call.options.env?.AWS_ACCESS_KEY_ID === renewed.AccessKeyId,
+    )!;
+    expect(h.calls.indexOf(renewal)).toBeLessThan(h.calls.indexOf(scans[3]));
+    for (const call of scans) {
+      const session =
+        call.options.env?.AWS_ACCESS_KEY_ID === renewed.AccessKeyId ? renewed : scanningSession;
+      expect(Date.parse(session.Expiration) - call.startedAt).toBeGreaterThan(
+        call.options.timeout! + 30_000,
+      );
+    }
+    expect(h.dockerCalls("push")).toHaveLength(1);
+    expect(h.receipt()).toMatchObject({ startedAt: "2026-09-22T01:00:00.500Z" });
+  });
+
+  it("checks remaining lifetime between preflight calls", async () => {
+    const h = harness();
+    h.credentialResponses.push(
+      {
+        ...h.credentials,
+        Expiration: new Date(h.now() + 3 * 60_000).toISOString(),
+      },
+      { ...h.credentials, AccessKeyId: "renewed-preflight-session" },
+    );
+    h.durations["describe-repositories"] = 40_000;
+    h.scan.imageScanFindings.imageScanCompletedAt = new Date(h.now() + 40_500).toISOString();
+    await h.execute();
+    const tags = h.calls.find((call) => call.args[1] === "list-tags-for-resource")!;
+    expect(tags.options.env?.AWS_ACCESS_KEY_ID).toBe("renewed-preflight-session");
+    const validation = h.calls.find(
+      (call) =>
+        call.args[1] === "get-caller-identity" &&
+        call.options.env?.AWS_ACCESS_KEY_ID === "renewed-preflight-session",
+    )!;
+    expect(h.calls.indexOf(validation)).toBeLessThan(h.calls.indexOf(tags));
+  });
+
+  it.each(["initial", "after-build"])(
+    "rejects a near-expiry %s session before STS or upload",
+    async (phase) => {
+      const h = harness();
+      if (phase === "after-build") h.credentialResponses.push(h.credentials);
+      h.credentialResponses.push({
+        ...h.credentials,
+        Expiration: new Date(h.now() + 150_000).toISOString(),
+      });
+      await expect(h.execute()).rejects.toThrow("expire too soon");
+      expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(
+        phase === "initial" ? 0 : 1,
+      );
+      expect(h.dockerCalls("push")).toHaveLength(0);
+      if (phase === "initial") expect(h.calls.some((call) => call.args[0] === "ecr")).toBe(false);
+    },
+  );
+
+  it("rejects a snapshot whose STS validation consumed the request reserve", async () => {
+    const h = harness();
+    h.credentialResponses.push({
+      ...h.credentials,
+      Expiration: new Date(h.now() + 4 * 60_000).toISOString(),
+    });
+    h.durations["get-caller-identity"] = 100_000;
+    await expect(h.execute()).rejects.toThrow("expire too soon");
+    expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(1);
+    expect(h.calls.some((call) => call.args[0] === "ecr")).toBe(false);
+  });
+
+  it("fails before push if login consumes the reserve and the provider cannot renew", async () => {
+    const h = harness();
+    const short = { ...h.credentials, Expiration: new Date(h.now() + 3 * 60_000).toISOString() };
+    h.credentialResponses.push(h.credentials, short, short);
+    h.durations["docker:login"] = 40_000;
+    await expect(h.execute()).rejects.toThrow("expire too soon");
+    expect(h.calls.filter((call) => call.args[1] === "export-credentials")).toHaveLength(3);
+    expect(h.dockerCalls("login")).toHaveLength(1);
+    expect(h.dockerCalls("push")).toHaveLength(0);
+    expect(readdirSync(h.directory)).toEqual([]);
+  });
+
+  it("preserves the pushed receipt and stops before ECR if the post-push principal changes", async () => {
+    const h = harness();
+    h.identityResponses.push(h.identity, h.identity, {
+      ...h.identity,
+      UserId: "AIDAZYXWVUTSRQPONMLKJ",
+    });
+    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    expect(h.dockerCalls("push")).toHaveLength(1);
+    expect(h.calls.some((call) => call.args[1] === "batch-get-image")).toBe(false);
+    expect(h.receipt()).toMatchObject({
+      uploadStatus: "confirmed",
+      digest: null,
+      signed: false,
+      deployable: false,
+    });
+    expect(existsSync(h.dockerCalls("login")[0].options.env!.DOCKER_CONFIG!)).toBe(false);
+  });
+
+  it.each(["ExpiredToken", "ExpiredTokenException"])(
+    "refreshes once for a scan %s response",
+    async (code) => {
+      const h = harness();
+      h.credentialResponses.push(h.credentials, h.credentials, h.credentials, {
+        ...h.credentials,
+        AccessKeyId: "expiry-retry-session",
+      });
+      h.scanResponses.push(awsError(code));
+      await h.execute();
+      const scans = h.calls.filter((call) => call.args[1] === "describe-image-scan-findings");
+      expect(scans).toHaveLength(2);
+      expect(scans[1].options.env?.AWS_ACCESS_KEY_ID).toBe("expiry-retry-session");
+      expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(4);
+      expect(h.dockerCalls("push")).toHaveLength(1);
+    },
+  );
+
+  it("bounds repeated expiry errors and retains the already-published image", async () => {
+    const h = harness();
+    h.scanResponses.push(awsError("ExpiredTokenException"), awsError("ExpiredTokenException"));
+    await expect(h.execute()).rejects.toThrow("ExpiredTokenException");
+    expect(h.calls.filter((call) => call.args[1] === "export-credentials")).toHaveLength(4);
+    expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
+      2,
+    );
+    expect(h.receipt()).toMatchObject({
+      uploadStatus: "confirmed",
+      digest: h.digest,
+      deployable: false,
+    });
+  });
+
+  it("rejects an identity change during scan refresh before another ECR request", async () => {
+    const h = harness();
+    h.identityResponses.push(h.identity, h.identity, h.identity, {
+      ...h.identity,
+      Arn: `arn:aws:iam::${account}:user/another-publisher`,
+    });
+    h.scanResponses.push(awsError("ExpiredTokenException"));
+    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
+      1,
+    );
+    expect(h.receipt()).toMatchObject({
+      uploadStatus: "confirmed",
+      digest: h.digest,
+      deployable: false,
+    });
+  });
+
+  it("preserves the confirmed upload when the provider cannot renew after push", async () => {
+    const h = harness();
+    h.credentialResponses.push(h.credentials, h.credentials, {});
+    await expect(h.execute()).rejects.toThrow("temporary session credentials");
+    expect(h.calls.some((call) => call.args[1] === "batch-get-image")).toBe(false);
+    expect(h.receipt()).toMatchObject({
+      uploadStatus: "confirmed",
+      digest: null,
+      deployable: false,
+    });
+    expect(existsSync(h.dockerCalls("login")[0].options.env!.DOCKER_CONFIG!)).toBe(false);
+  });
+
+  it("does not retry ECR access errors as credential expiry", async () => {
+    const h = harness();
+    h.scanResponses.push(awsError("AccessDeniedException"));
+    await expect(h.execute()).rejects.toThrow("AccessDeniedException");
+    expect(h.calls.filter((call) => call.args[1] === "export-credentials")).toHaveLength(3);
+    expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
+      1,
+    );
+  });
+
+  it.each(["web", "worker"])(
+    "isolates Docker trust controls and passphrases throughout %s publishing",
+    async (component) => {
+      const h = harness(component);
+      Object.assign(h.env, {
+        DOCKER_CONTENT_TRUST: "1",
+        DOCKER_CONTENT_TRUST_SERVER: "https://untrusted-notary.invalid",
+        DOCKER_CONTENT_TRUST_ROOT_PASSPHRASE: "synthetic-root-passphrase",
+        DOCKER_CONTENT_TRUST_REPOSITORY_PASSPHRASE: "synthetic-repository-passphrase",
+        docker_content_trust: "1",
+      });
+      const result = await h.execute();
+      const processes = h.calls.filter(
+        (call) => call.command === "docker" || call.command === process.execPath,
+      );
+      expect(processes.length).toBeGreaterThan(5);
+      for (const call of processes)
+        expect(
+          Object.keys(call.options.env ?? {}).filter((name) =>
+            name.toUpperCase().startsWith("DOCKER_CONTENT_TRUST"),
+          ),
+        ).toEqual([]);
+      expect(result.receipt.signed).toBe(false);
+      expect(h.env.DOCKER_CONTENT_TRUST).toBe("1");
+    },
+  );
+
   it("stops before upload if credentials refresh to a different AWS identity", async () => {
     const h = harness();
     h.identityResponses.push(h.identity, {
@@ -598,14 +856,14 @@ describe("manual AWS image publishing", () => {
         Arn: `arn:aws:sts::${account}:assumed-role/WalliePublisher/${session}`,
         UserId: `AROAABCDEFGHIJKLMNOPQ:${session}`,
       });
-      h.identityResponses.push(role("before-build"), role("after-build"));
+      h.identityResponses.push(role("before-build"), role("after-build"), role("after-push"));
       h.credentialResponses.push(h.credentials, {
         ...h.credentials,
         AccessKeyId: "refreshed-role-key",
       });
       await h.execute();
       expect(h.dockerCalls("push")).toHaveLength(1);
-      expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(2);
+      expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(3);
     },
   );
 
