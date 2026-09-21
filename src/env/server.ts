@@ -8,6 +8,7 @@ import {
   supabasePublicEnvSchema,
   type ClientEnv,
 } from "@/env/client";
+import { deployEnvSchema } from "@/env/deploy";
 
 const requiredEnvStringSchema = z.string().min(1);
 const optionalEnvStringSchema = z.preprocess(
@@ -36,6 +37,7 @@ export const titleGenerationEnvSchema = z.object({
 });
 
 export const serverEnvSchema = z.object({
+  ...deployEnvSchema.shape,
   ...titleGenerationEnvSchema.shape,
   GITHUB_APP_ID: optionalEnvStringSchema,
   GITHUB_APP_CLIENT_ID: optionalEnvStringSchema,
@@ -82,6 +84,7 @@ export function parseSupabaseAdminEnv(input: EnvInput = process.env): SupabaseAd
 export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
   const clientEnv = parseClientEnv(input);
   const serverEnv = serverEnvSchema.parse({
+    WALLIE_DEPLOY_ENV: input.WALLIE_DEPLOY_ENV,
     OPENROUTER_API_KEY: input.OPENROUTER_API_KEY,
     WALLIE_TITLE_MODEL: input.WALLIE_TITLE_MODEL,
     GITHUB_APP_ID: input.GITHUB_APP_ID,
