@@ -15,6 +15,27 @@ describe("parseServerEnv", () => {
     expect(parseServerEnv(validEnv)).toMatchObject(validEnv);
   });
 
+  it.each(["production", "preview", "development"])(
+    "accepts an explicit deployment environment: %s",
+    (environment) => {
+      expect(
+        parseServerEnv({ ...validEnv, WALLIE_DEPLOY_ENV: environment }).WALLIE_DEPLOY_ENV,
+      ).toBe(environment);
+    },
+  );
+
+  it.each([undefined, "", "   "])("allows an unset deployment environment: %j", (value) => {
+    expect(
+      parseServerEnv({ ...validEnv, WALLIE_DEPLOY_ENV: value }).WALLIE_DEPLOY_ENV,
+    ).toBeUndefined();
+  });
+
+  it("rejects an invalid deployment environment", () => {
+    expect(() => parseServerEnv({ ...validEnv, WALLIE_DEPLOY_ENV: "prod" })).toThrow(
+      "WALLIE_DEPLOY_ENV",
+    );
+  });
+
   it("treats blank optional integration env values as missing", () => {
     const parsed = parseServerEnv({
       ...validEnv,

@@ -20,6 +20,17 @@ Wallie has two long-lived processes plus managed backing services:
 
 ## Prerequisites
 
+### Deployment environment
+
+- Set `WALLIE_DEPLOY_ENV=production` for a production deployment on any host.
+- Values: `production`, `preview`, or `development`; blank means automatic detection.
+- Precedence: `WALLIE_DEPLOY_ENV` → recognized `VERCEL_ENV` → `NODE_ENV` (`production` or local development).
+- Production blocks `/dev/*` fixtures at request time. Use `preview` for an isolated preview or fixture test server.
+- Vercel analytics stays limited to Vercel production; choosing production on another host does not enable it.
+- This setting classifies the deployment; browser-facing `NEXT_PUBLIC_*` values still need to be set before building.
+
+### Accounts and tools
+
 - A [Supabase](https://supabase.com) account and the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started).
 - A host for the web app (e.g. [Vercel](https://vercel.com)).
 - A host for the worker (e.g. [Railway](https://railway.com) — a `railway.json` is already included).

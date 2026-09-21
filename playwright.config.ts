@@ -22,6 +22,8 @@ export default defineConfig({
     command: `pnpm start --hostname ${host} --port ${port}`,
     env: {
       ...process.env,
+      // Fixture routes require an explicit preview deployment on a production server.
+      WALLIE_DEPLOY_ENV: process.env.WALLIE_DEPLOY_ENV?.trim() || "preview",
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? localAppUrl,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
         process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "playwright-local-key",
