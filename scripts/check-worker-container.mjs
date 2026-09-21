@@ -43,29 +43,7 @@ function fixtureState() {
   );
 }
 
-try {
-  docker([
-    "run",
-    "--rm",
-    "--network",
-    "none",
-    "--entrypoint",
-    "node",
-    image,
-    "--eval",
-    `const assert = require("node:assert/strict");
-     const fs = require("node:fs");
-     assert.notEqual(process.getuid(), 0, "Image must run as non-root");
-     assert.equal(process.env.NODE_ENV, "production");
-     assert.equal(fs.existsSync("LICENSE"), true, "Repository license must ship");
-     for (const path of [".env", ".env.local", ".git", "src/worker/config.test.ts"]) {
-       assert.equal(fs.existsSync(path), false, path + " must not ship");
-     }
-     assert.equal(fs.existsSync("scripts/install-crash-handlers.mjs"), true);
-     assert.equal(fs.existsSync("scripts/register-server-only.mjs"), true);
-     console.log("Runtime image checks passed");`,
-  ]);
-  docker(["network", "create", "--internal", network]);
+async function startWorker() {
   docker([
     "run",
     "--detach",
@@ -125,6 +103,10 @@ try {
     assert.ok(Date.now() < deadline, "Worker did not register, poll, and heartbeat in time");
     await setTimeout(500);
   }
+  return fixtureState().workerId;
+}
+
+function stopWorker() {
   docker(["stop", "--time", "15", worker]);
   const stopped = JSON.parse(docker(["inspect", "--format", "{{json .State}}", worker]));
   assert.equal(stopped.ExitCode, 0, "Worker must exit normally after SIGTERM");
@@ -135,8 +117,88 @@ try {
   const finalState = fixtureState();
   assert.equal(finalState.deregistered, true, "Worker must remove its heartbeat at shutdown");
   assert.deepEqual(finalState.errors, []);
+}
+
+function control(command) {
+  return JSON.parse(docker(["exec", worker, "node", "scripts/worker-control.mjs", command]));
+}
+
+try {
+  docker([
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--entrypoint",
+    "node",
+    image,
+    "--eval",
+    `const assert = require("node:assert/strict");
+     const fs = require("node:fs");
+     assert.notEqual(process.getuid(), 0, "Image must run as non-root");
+     assert.equal(process.env.NODE_ENV, "production");
+     assert.equal(fs.existsSync("LICENSE"), true, "Repository license must ship");
+     for (const path of [".env", ".env.local", ".git", "src/worker/config.test.ts"]) {
+       assert.equal(fs.existsSync(path), false, path + " must not ship");
+     }
+     assert.equal(fs.existsSync("scripts/install-crash-handlers.mjs"), true);
+     assert.equal(fs.existsSync("scripts/register-server-only.mjs"), true);
+     assert.equal(fs.existsSync("scripts/worker-control.mjs"), true);
+     assert.ok(process.env.WORKER_CONTROL_SOCKET, "Image must enable local worker control");
+     console.log("Runtime image checks passed");`,
+  ]);
+  docker(["network", "create", "--internal", network]);
+
+  await startWorker();
+  stopWorker();
+  // A fresh fixture prevents the first worker's counters from satisfying this proof.
+  docker(["rm", worker, "--force", fixture]);
+  const workerId = await startWorker();
+  assert.deepEqual(control("status"), { workerId, phase: "running", activeJobIds: [] });
+  assert.deepEqual(control("drain"), { workerId, phase: "drained", activeJobIds: [] });
+  assert.deepEqual(control("drain"), { workerId, phase: "drained", activeJobIds: [] });
+
+  const drainedAt = Date.now();
+  const drained = fixtureState();
+  const config = JSON.parse(
+    docker([
+      "exec",
+      worker,
+      "node",
+      "--import",
+      "tsx",
+      "--eval",
+      'console.log(JSON.stringify(require("./src/worker/config.ts").parseWorkerConfig()))',
+    ]),
+  );
+  const quietWindow = Math.max(
+    config.stallSweepIntervalMs,
+    config.reconcileIntervalMs,
+    config.sandboxReapIntervalMs,
+  );
+  const deadline = drainedAt + quietWindow + config.heartbeatIntervalMs * 2 + 10_000;
+  while (true) {
+    const state = fixtureState();
+    assert.deepEqual(state.errors, []);
+    assert.equal(state.workerId, workerId);
+    assert.equal(state.deregistered, false, "Draining must keep the worker registered");
+    assert.equal(state.workRequests, drained.workRequests, "Drained worker started more work");
+    assert.equal(docker(["inspect", "--format", "{{.State.Running}}", worker]), "true");
+    assert.deepEqual(control("status"), { workerId, phase: "drained", activeJobIds: [] });
+    // Observe acknowledged heartbeats across every maintenance interval; no fixed sleep
+    // can satisfy the proof if the worker stops heartbeating or starts more work.
+    if (
+      state.heartbeats > drained.heartbeats &&
+      Date.parse(state.lastHeartbeatAt) >= drainedAt + quietWindow
+    ) {
+      break;
+    }
+    assert.ok(Date.now() < deadline, "Drained worker did not keep heartbeating");
+    await setTimeout(500);
+  }
+  stopWorker();
   console.log(
-    "Worker container passed: non-root runtime, registration, polling, heartbeat, SIGTERM, deregistration, clean exit.",
+    "Worker container passed: non-root runtime, polling, heartbeat, direct SIGTERM, pre-stop drain, quiescence, deregistration, clean exit.",
   );
 } catch (error) {
   console.error(docker(["logs", worker], { allowFailure: true }));

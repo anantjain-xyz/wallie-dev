@@ -5,6 +5,7 @@ import { parseWorkerConfig } from "./config";
 describe("worker/config", () => {
   afterEach(() => {
     delete process.env.WORKER_MAX_CONCURRENT_JOBS;
+    delete process.env.WORKER_CONTROL_SOCKET;
   });
 
   it("returns sensible defaults and a generated worker id", () => {
@@ -18,6 +19,18 @@ describe("worker/config", () => {
     expect(config.defaultConcurrencyLimit).toBe(2);
     expect(config.maxConcurrentJobs).toBe(10);
     expect(config.workerId).toMatch(/^worker-/);
+    expect(config.controlSocketPath).toBeUndefined();
+  });
+
+  it("enables local control only with a valid explicit socket path", () => {
+    process.env.WORKER_CONTROL_SOCKET = "/tmp/wallie-worker/control.sock";
+    expect(parseWorkerConfig().controlSocketPath).toBe(process.env.WORKER_CONTROL_SOCKET);
+    process.env.WORKER_CONTROL_SOCKET = "";
+    expect(parseWorkerConfig().controlSocketPath).toBeUndefined();
+    for (const value of ["relative.sock", `/${"x".repeat(100)}`]) {
+      process.env.WORKER_CONTROL_SOCKET = value;
+      expect(() => parseWorkerConfig()).toThrow();
+    }
   });
 
   it("honors WORKER_MAX_CONCURRENT_JOBS when it is a positive integer", () => {

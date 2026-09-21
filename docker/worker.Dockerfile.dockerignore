@@ -7,6 +7,7 @@
 !scripts
 !scripts/install-crash-handlers.mjs
 !scripts/register-server-only.mjs
+!scripts/worker-control.mjs
 !src
 !src/**
 **/*.test.*
