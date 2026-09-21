@@ -25,6 +25,7 @@ const checkout = join(directory, "upstream");
 const stack = join(directory, "stack");
 let activeChild;
 let interrupted = false;
+const cancellation = new AbortController();
 let composeArgs;
 let composeEnv;
 let started = false;
@@ -33,6 +34,7 @@ let result;
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     interrupted = true;
+    cancellation.abort(new Error("Qualification interrupted"));
     activeChild?.kill("SIGTERM");
   });
 }
@@ -289,6 +291,7 @@ try {
     url,
     anonKey: env.ANON_KEY,
     serviceRoleKey: env.SERVICE_ROLE_KEY,
+    signal: cancellation.signal,
   });
   const images = parse(await compose(["images", "--format", "json"]));
   result = {

@@ -8,30 +8,29 @@ const checked = async (request, label) => {
   return data;
 };
 
-const boundedFetch = (input, init = {}) =>
-  fetch(input, {
-    ...init,
-    signal: AbortSignal.any([AbortSignal.timeout(15_000), ...[init.signal].filter(Boolean)]),
-  });
-
 async function expectStorageDenied(request, label) {
   const { data, error } = await request;
   assert.ok(error && !data, label);
   assert.ok([400, 401, 403, 404].includes(Number(error.statusCode ?? error.status)), label);
 }
 
-async function checkRealtime(client, workspaceId, mutate) {
+async function checkRealtime(client, workspaceId, mutate, signal) {
+  signal.throwIfAborted();
   const channel = client.channel(`qualification-${randomUUID()}`);
   const expectedName = `Realtime proof ${randomUUID()}`;
   let timer;
   let triggered = false;
+  let onAbort;
   try {
     await new Promise((resolve, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
       timer = setTimeout(() => reject(new Error("Realtime update timed out")), 30_000);
       channel
         // SUBSCRIBED can precede the database listener; wait for backend readiness.
         // https://supabase.com/docs/guides/troubleshooting/realtime-postgres-changes-troubleshooting
         .on("system", "*", (payload) => {
+          if (signal.aborted) return;
           if (payload.extension !== "postgres_changes") return;
           if (payload.status === "ok" && !triggered) {
             triggered = true;
@@ -60,12 +59,21 @@ async function checkRealtime(client, workspaceId, mutate) {
     });
   } finally {
     clearTimeout(timer);
-    await client.removeChannel(channel);
+    signal.removeEventListener("abort", onAbort);
+    // This probe owns the socket; stop it without waiting for a remote leave acknowledgement.
+    channel.teardown();
+    void client.realtime.disconnect();
   }
 }
 
 /** Exercise disposable, local self-hosted services; this does not qualify AWS or recovery. */
-export async function checkSelfHostedSupabase({ url, anonKey, serviceRoleKey }) {
+export async function checkSelfHostedSupabase({
+  url,
+  anonKey,
+  serviceRoleKey,
+  signal = new AbortController().signal,
+}) {
+  signal.throwIfAborted();
   const endpoint = new URL(url);
   assert.ok(
     endpoint.protocol === "http:" &&
@@ -77,6 +85,17 @@ export async function checkSelfHostedSupabase({ url, anonKey, serviceRoleKey }) 
       !endpoint.hash,
     "The destructive fixture probe requires a loopback HTTP origin",
   );
+  const boundedFetch = (input, init = {}) => {
+    signal.throwIfAborted();
+    return fetch(input, {
+      ...init,
+      signal: AbortSignal.any([
+        signal,
+        AbortSignal.timeout(15_000),
+        ...[init.signal].filter(Boolean),
+      ]),
+    });
+  };
   const options = {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
     global: { fetch: boundedFetch },
@@ -137,11 +156,15 @@ export async function checkSelfHostedSupabase({ url, anonKey, serviceRoleKey }) 
     );
     assert.deepEqual(privateProfile, [], "Profile RLS must hide the other user");
 
-    await checkRealtime(owner.client, workspaceIds[0], (name) =>
-      checked(
-        admin.from("workspaces").update({ name }).eq("id", workspaceIds[0]).select("id").single(),
-        "Publish owned workspace update",
-      ),
+    await checkRealtime(
+      owner.client,
+      workspaceIds[0],
+      (name) =>
+        checked(
+          admin.from("workspaces").update({ name }).eq("id", workspaceIds[0]).select("id").single(),
+          "Publish owned workspace update",
+        ),
+      signal,
     );
 
     // Wallie mediates private attachments through privileged routes and signed URLs.
@@ -184,9 +207,12 @@ export async function checkSelfHostedSupabase({ url, anonKey, serviceRoleKey }) 
     failure = error;
   }
 
+  // Cancellation hands cleanup to the runner, which destroys the owned Compose project.
+  signal.throwIfAborted();
   // Attempt every cleanup even if a check failed. Never touch the shared seed fixtures.
   const cleanupFailures = [];
   const cleanup = async (operation, label) => {
+    signal.throwIfAborted();
     try {
       await checked(operation(), label);
     } catch (error) {
@@ -206,6 +232,7 @@ export async function checkSelfHostedSupabase({ url, anonKey, serviceRoleKey }) 
     await cleanup(() => user.client.auth.signOut({ scope: "local" }), "Sign out probe user");
     await cleanup(() => admin.auth.admin.deleteUser(user.id), "Remove probe Auth user");
   }
+  signal.throwIfAborted();
   if (failure || cleanupFailures.length) {
     const errors = [...(failure ? [failure] : []), ...cleanupFailures];
     throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
