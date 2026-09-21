@@ -60,7 +60,7 @@ flowchart TB
 - Enterprise profile: internal load balancer and private DNS/access.
 - Expose required application and Supabase APIs only; PostgreSQL, Studio, and administrative endpoints stay private.
 - Supporting AWS services: Route 53, ACM, ECR, Secrets Manager, KMS, CloudWatch; optional CloudFront for public assets.
-- **Data boundary:** model requests may include repository content. Approved external integrations remain.
+- **Data boundary:** approved model providers may receive repository content, session titles/prompts, rejection feedback, and prior artifacts. Attachments available to agents can also leave the VPC. Approved external integrations remain.
 
 **Vercel exit scope**
 
@@ -101,7 +101,7 @@ flowchart TB
 - **State migration:** pause writes and drain work; transfer [database/Auth data](https://supabase.com/docs/guides/self-hosting/restore-from-platform) and [objects separately](https://supabase.com/docs/guides/self-hosting/copy-from-platform-s3); preserve Wallie's encryption key.
 - **Identity:** configure new endpoints, email, and callbacks; plan for users to sign in again. Test invitations, SSO access removal, and workspace isolation.
 - **Rollback:** keep one writable database; retain the old deployment through a defined rollback window. After new writes, rollback requires data reconciliation.
-- **Worker safety:** current [drain budget](WORKER-OPERATIONS.md) is **45 minutes**; [Fargate stop timeout](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html) is **2 minutes maximum**. Drain before shutdown; protect active work; test crash recovery and duplicate prevention.
+- **Worker safety:** current [drain budget](WORKER-OPERATIONS.md) is **45 minutes**; [Fargate stop timeout](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html) is **2 minutes maximum**. Add a control to pause new work, maintain heartbeats, and confirm all active work has drained **before planned ECS rollouts, scale-in, or manual stops**. SIGTERM starts too late; separately test crash recovery and duplicate prevention.
 - **Web portability:** runtime customer URLs, streaming/WebSockets, replica cache/rate-limit coordination, and isolated preview deployments.
 - **Isolation:** sandbox network/IAM restrictions; block database, deployment secrets, metadata, and unrelated networks. Allowlist egress; use private AWS endpoints.
 - **Enterprise webhooks:** narrow signed/deduplicated ingress, or an outbound relay/polling implementation.
