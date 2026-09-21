@@ -24,11 +24,11 @@ function render(command: string, args = common) {
   });
 }
 
-function grants(action: string) {
-  const result = render("policy");
+function grants(action: string, command = "policy", service = "ecr") {
+  const result = render(command);
   expect(result.status).toBe(0);
   const statements = (JSON.parse(result.stdout).Statement as Statement[]).filter((statement) =>
-    array(statement.Action).includes(`ecr:${action}`),
+    array(statement.Action).includes(`${service}:${action}`),
   );
   expect(statements.length).toBeGreaterThan(0);
   return statements;
@@ -93,11 +93,130 @@ describe("AWS registry preparation", () => {
     ["variables", [...common, "--component", "registry"]],
     ["policy", [...common, "--repository", "other"]],
     ["policy", [...common, "extra"]],
+    ["signing-policy", []],
+    ["signing-policy", ["--account-id", "123", "--region", region]],
+    ["signing-policy", ["--account-id", account, "--region", "us-iso-east-1"]],
+    ["signing-policy", [...common, "--region", region]],
+    ["signing-policy", [...common, "--account-id", account]],
+    ["signing-policy", [...common, "--profile-name", "other"]],
+    ["signing-policy", [...common, "--profile", "root"]],
+    ["signing-policy", [...common, "extra"]],
   ] as [string, string[]][])("rejects invalid or unsupported input: %s %j", (command, args) => {
     const result = render(command, args);
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("[aws-registry]");
+  });
+});
+
+const signingTags = {
+  WallieStack: marker,
+  Project: "Wallie",
+  Environment: "staging",
+  ManagedBy: "Terraform",
+  Component: "signing",
+  Name: "wallie_staging_images",
+};
+const signingGrants = (action: string) => grants(action, "signing-policy", "signer");
+
+// Structural guards, not an IAM simulator or proof of live Signer authorization.
+describe("signing profile preparation", () => {
+  it.each([
+    [region, "aws"],
+    ["us-gov-west-1", "aws-us-gov"],
+    ["cn-north-1", "aws-cn"],
+  ])("renders an independent profile policy offline for %s", (awsRegion, partition) => {
+    const result = render("signing-policy", ["--account-id", account, "--region", awsRegion]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).not.toMatch(/<[A-Z_]+>|access_key|secret_key|token/);
+    const policy = JSON.parse(result.stdout);
+    expect(policy.Version).toBe("2012-10-17");
+    expect(JSON.stringify(policy).length).toBeLessThanOrEqual(6_144);
+    const statements = policy.Statement as Statement[];
+    // This excludes signing, cancellation/revocation, permission sharing, ECR and IAM writes.
+    expect([...new Set(statements.flatMap((statement) => array(statement.Action)))].sort()).toEqual(
+      [
+        "signer:GetSigningProfile",
+        "signer:ListTagsForResource",
+        "signer:PutSigningProfile",
+        "signer:TagResource",
+        "signer:UntagResource",
+      ],
+    );
+    expect(statements.filter((statement) => array(statement.Resource).includes("*"))).toHaveLength(
+      1,
+    );
+    for (const statement of statements) {
+      expect(statement.Effect).toBe("Allow");
+      expect(statement.Condition.StringEquals).toMatchObject({
+        "aws:PrincipalAccount": account,
+        "aws:RequestedRegion": awsRegion,
+      });
+      if (array(statement.Action).includes("signer:PutSigningProfile")) {
+        // AWS does not support a resource ARN or profile-name condition for this action.
+        expect(array(statement.Action)).toEqual(["signer:PutSigningProfile"]);
+        expect(array(statement.Resource)).toEqual(["*"]);
+      } else {
+        expect(array(statement.Resource)).toEqual([
+          `arn:${partition}:signer:${awsRegion}:${account}:/signing-profiles/wallie_staging_images`,
+        ]);
+      }
+    }
+  });
+
+  it("requires every fixed request tag and bounds tag keys on wildcard creation", () => {
+    for (const { Condition: condition } of signingGrants("PutSigningProfile")) {
+      expect(Object.keys(condition).sort()).toEqual(["ForAllValues:StringEquals", "StringEquals"]);
+      expect(condition.StringEquals).toEqual({
+        "aws:PrincipalAccount": account,
+        "aws:RequestedRegion": region,
+        ...Object.fromEntries(
+          Object.entries(signingTags).map(([key, value]) => [`aws:RequestTag/${key}`, value]),
+        ),
+      });
+      expect(condition["ForAllValues:StringEquals"]["aws:TagKeys"]).toEqual(
+        Object.keys(signingTags),
+      );
+    }
+  });
+
+  it("permits exact-name preflight reads before any ownership tag exists", () => {
+    for (const action of ["GetSigningProfile", "ListTagsForResource"]) {
+      for (const { Condition: condition } of signingGrants(action)) {
+        expect(condition).toEqual({
+          StringEquals: { "aws:PrincipalAccount": account, "aws:RequestedRegion": region },
+        });
+      }
+    }
+  });
+
+  it("preserves ownership in both bootstrap and existing-profile tagging grants", () => {
+    const statements = signingGrants("TagResource");
+    expect(statements).toHaveLength(2);
+    for (const { Condition: condition } of statements) {
+      if (condition.StringEquals["aws:ResourceTag/WallieStack"] === marker) {
+        expect(condition.StringEqualsIfExists["aws:RequestTag/WallieStack"]).toBe(marker);
+        expect(condition.Null["aws:TagKeys"]).toBe("false");
+      } else {
+        // The fixed name must be absent at preflight: Signer has no create-only tag condition.
+        expect(condition.StringEqualsIfExists["aws:ResourceTag/WallieStack"]).toBe(marker);
+        for (const [key, value] of Object.entries(signingTags)) {
+          expect(condition.StringEquals[`aws:RequestTag/${key}`]).toBe(value);
+        }
+      }
+      expect(condition["ForAllValues:StringEquals"]["aws:TagKeys"]).toEqual(
+        Object.keys(signingTags),
+      );
+    }
+  });
+
+  it("only removes metadata from the owned profile and never removes its marker", () => {
+    for (const { Condition: condition } of signingGrants("UntagResource")) {
+      expect(condition.StringEquals["aws:ResourceTag/WallieStack"]).toBe(marker);
+      expect(condition["ForAllValues:StringEquals"]["aws:TagKeys"]).toEqual(metadata);
+      expect(condition.Null["aws:TagKeys"]).toBe("false");
+    }
   });
 });
 

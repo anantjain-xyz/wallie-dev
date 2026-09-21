@@ -6,8 +6,8 @@ Proposal · September 19, 2026
 
 - **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with the first qualification images.
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
-- **Live image checks (`d2841540`):** both uploads and manifest verification passed; each ECR scan blocked release on 3 Critical and 14 High base-package findings. Images remain unsigned and not deployable.
-- **Current batch:** address the base-image findings before signing. No application or database is running on AWS yet.
+- **Live image checks (`00c0cac9`):** both runtimes, uploads, and manifest verification passed. Debian 13 reduced each ECR scan from 3 Critical / 14 High to 0 Critical / 1 High; release remains blocked. Images are unsigned and not deployable.
+- **Current batch:** prepare one [AWS signing profile](AWS-SIGNING-PROFILE.md) while the remaining zlib finding is investigated. No application or database is running on AWS yet.
 
 | Remaining               | Exit check                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
