@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, Inter } from "next/font/google";
+import { connection } from "next/server";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { ProductionTelemetry } from "@/components/telemetry/production-telemetry";
@@ -7,6 +8,8 @@ import { isVercelTelemetryEnabled } from "@/env/deploy";
 import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
 import { PRODUCTION_TELEMETRY_MARKER_ID } from "@/lib/telemetry/environment";
+import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
+import { SupabasePublicConfigProvider } from "@/lib/supabase/public-config-provider";
 import "./globals.css";
 
 const inter = Inter({
@@ -54,8 +57,7 @@ const themeBootstrapScript = `
 const defaultTitle = `${siteConfig.name} — ${siteConfig.tagline}`;
 const ogImageAlt = `${siteConfig.name} — ${siteConfig.tagline}`;
 
-export const metadata: Metadata = {
-  metadataBase: resolveAppUrl(),
+const sharedMetadata: Metadata = {
   title: {
     default: defaultTitle,
     template: `%s | ${siteConfig.name}`,
@@ -96,6 +98,12 @@ export const metadata: Metadata = {
   },
 };
 
+export async function generateMetadata(): Promise<Metadata> {
+  await connection();
+
+  return { ...sharedMetadata, metadataBase: resolveAppUrl() };
+}
+
 export const viewport: Viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f4f5f7" },
@@ -103,11 +111,19 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Keep deployment configuration out of prerendered HTML and browser bundles.
+  await connection();
+  const input = process.env;
+  const hasSupabaseConfig = Boolean(
+    input.NEXT_PUBLIC_SUPABASE_URL || input.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  );
+  const supabaseConfig = hasSupabaseConfig ? resolveSupabasePublicConfig(input) : null;
+
   return (
     <html
       lang="en"
@@ -116,12 +132,14 @@ export default function RootLayout({
     >
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
-        <OverlayProvider>
-          <a href="#main-content" className="ui-skip-link">
-            Skip to main content
-          </a>
-          {children}
-        </OverlayProvider>
+        <SupabasePublicConfigProvider value={supabaseConfig}>
+          <OverlayProvider>
+            <a href="#main-content" className="ui-skip-link">
+              Skip to main content
+            </a>
+            {children}
+          </OverlayProvider>
+        </SupabasePublicConfigProvider>
         {isVercelTelemetryEnabled() ? (
           <>
             <span id={PRODUCTION_TELEMETRY_MARKER_ID} hidden />

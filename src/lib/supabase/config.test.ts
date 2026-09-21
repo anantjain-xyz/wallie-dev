@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveSupabaseAdminConfig } from "@/lib/supabase/admin-config";
 import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
@@ -15,7 +15,26 @@ const adminEnv = {
   SUPABASE_SECRET_KEY: "secret-key",
 };
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("supabase config resolvers", () => {
+  it("reads current process configuration without caching or returning server secrets", () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://runtime-a.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "key-a");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "private-canary");
+    expect(resolveSupabasePublicConfig()).toEqual({
+      url: "https://runtime-a.example",
+      publishableKey: "key-a",
+    });
+
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://runtime-b.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "key-b");
+    expect(resolveSupabasePublicConfig()).toEqual({
+      url: "https://runtime-b.example",
+      publishableKey: "key-b",
+    });
+  });
+
   it("resolves the public config from env", () => {
     expect(resolveSupabasePublicConfig(publicEnv)).toEqual({
       publishableKey: "publishable-key",

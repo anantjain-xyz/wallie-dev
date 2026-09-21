@@ -27,7 +27,23 @@ Wallie has two long-lived processes plus managed backing services:
 - Precedence: `WALLIE_DEPLOY_ENV` → recognized `VERCEL_ENV` → `NODE_ENV` (`production` or local development).
 - Production blocks `/dev/*` fixtures at request time. Use `preview` for an isolated preview or fixture test server.
 - Vercel analytics stays limited to Vercel production; choosing production on another host does not enable it.
-- This setting classifies the deployment; browser-facing `NEXT_PUBLIC_*` values still need to be set before building.
+
+### Runtime public configuration
+
+| Setting                                | Used for                                                 |
+| -------------------------------------- | -------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Metadata, authentication redirects, and invitation links |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Browser/server clients and the avatar image allowlist    |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public browser/server client authentication              |
+
+- With `pnpm start`, set these values at startup; the same build can run against different installations. Keep `next.config.ts` and its imports available.
+- The server passes only the public Supabase URL/key to React clients. Private keys stay on the server.
+- Pages render at request time so HTML, hydration, metadata, and telemetry use the current deployment configuration. Public pages no longer use build-time prerendering.
+- Image optimization retains the exact configured origin and avatar buckets; redirects and arbitrary remote hosts remain blocked.
+- **Supported runtime:** `next start`. Standalone output embeds Next.js configuration and needs a separate solution before cross-installation promotion.
+- On Vercel, keep the existing environment settings. No variable renaming is required.
+
+See [Next.js runtime environment guidance](https://nextjs.org/docs/app/guides/self-hosting#environment-variables).
 
 ### Accounts and tools
 

@@ -73,6 +73,7 @@ import {
 import { formatUtcTimestamp } from "@/components/shared/time-display";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/types";
+import { SupabasePublicConfigProvider } from "@/lib/supabase/public-config-provider";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 
@@ -265,6 +266,29 @@ describe("PipelinePageClient", () => {
     vi.useRealTimers();
     mocked.refresh.mockReset();
     mocked.suspendCard = null;
+  });
+
+  it("creates its realtime client with server-provided public configuration", () => {
+    installSupabaseMock();
+    const config = {
+      publishableKey: "runtime-public-key",
+      url: "https://runtime.supabase.co",
+    };
+
+    render(
+      <SupabasePublicConfigProvider value={config}>
+        <PipelinePageClient initialData={initialData()} />
+      </SupabasePublicConfigProvider>,
+    );
+
+    expect(mocked.createSupabaseBrowserClient).toHaveBeenCalledWith(config);
+  });
+
+  it("does not require public configuration when realtime is disabled", () => {
+    render(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
+
+    expect(mocked.createSupabaseBrowserClient).not.toHaveBeenCalled();
+    expect(screen.getByText("Session 1")).toBeTruthy();
   });
 
   it("recovers missed removals and independent run state without an initial refresh", async () => {
