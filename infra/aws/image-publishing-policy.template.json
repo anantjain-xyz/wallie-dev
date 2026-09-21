@@ -1,0 +1,62 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AuthenticateAndReadRegistryScanMode",
+      "Effect": "Allow",
+      "Action": ["ecr:GetAuthorizationToken", "ecr:GetRegistryScanningConfiguration"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "UploadToOwnedRepositories",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:CompleteLayerUpload",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:UploadLayerPart"
+      ],
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        }
+      }
+    },
+    {
+      "Sid": "VerifyOwnedRepositoriesAndImages",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "ecr:BatchGetRepositoryScanningConfiguration",
+        "ecr:DescribeImages",
+        "ecr:DescribeImageScanFindings",
+        "ecr:DescribeRepositories",
+        "ecr:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        }
+      }
+    }
+  ]
+}

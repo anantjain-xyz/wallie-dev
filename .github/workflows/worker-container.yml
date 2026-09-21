@@ -6,6 +6,8 @@ on:
     paths:
       - "docker/worker.Dockerfile*"
       - "scripts/check-worker-container.mjs"
+      - "scripts/publish-aws-image.mjs"
+      - "scripts/lib/aws-image-*.mjs"
       - "scripts/fixtures/worker-container-supabase.mjs"
       - "scripts/install-crash-handlers.mjs"
       - "scripts/register-server-only.mjs"
@@ -20,6 +22,8 @@ on:
     paths:
       - "docker/worker.Dockerfile*"
       - "scripts/check-worker-container.mjs"
+      - "scripts/publish-aws-image.mjs"
+      - "scripts/lib/aws-image-*.mjs"
       - "scripts/fixtures/worker-container-supabase.mjs"
       - "scripts/install-crash-handlers.mjs"
       - "scripts/register-server-only.mjs"

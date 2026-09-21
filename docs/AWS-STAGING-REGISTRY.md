@@ -77,4 +77,4 @@ terraform -chdir=infra/aws/staging-registry plan -var-file="$WALLIE_AWS_FILES/re
 
 - Verify AWS readback matches the planned settings and the final plan exits **0**. CI mock tests do not prove live IAM or effective scanning.
 - No fixed repository charge; stored images and applicable transfer incur [ECR usage charges](https://aws.amazon.com/ecr/pricing/). Empty repositories add no image storage; Terraform state retains its separate S3 usage.
-- Next PR: scoped publishing, immutable release tags/digests, scan verification and signing. Retention must preserve deployed and rollback images; no expiration policy is added here.
+- Continue with [manual image publishing](AWS-IMAGE-PUBLISHING.md), then signing and release verification in a separate PR. Retention must preserve deployed and rollback images; no expiration policy is added here.
