@@ -1,0 +1,37 @@
+name: AWS registry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/aws/staging-registry/**"
+      - ".github/workflows/aws-registry.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/aws/staging-registry/**"
+      - ".github/workflows/aws-registry.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.3
+          terraform_wrapper: false
+      - name: Check formatting
+        run: terraform -chdir=infra/aws/staging-registry fmt -check -recursive
+      - name: Initialize pinned provider without the AWS backend
+        run: terraform -chdir=infra/aws/staging-registry init -backend=false -lockfile=readonly -input=false
+      - name: Validate configuration
+        run: terraform -chdir=infra/aws/staging-registry validate
+      - name: Run mocked safety tests without AWS credentials
+        run: terraform -chdir=infra/aws/staging-registry test

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 const usage =
-  "Usage: node scripts/prepare-aws-state.mjs bootstrap-policy|access-policy|backend --account-id <12 digits> --region <region>";
+  "Usage: node scripts/prepare-aws-state.mjs bootstrap-policy|access-policy|backend --account-id <12 digits> --region <region> [--component foundation|registry (backend only)]";
 
 function main() {
   const { values, positionals, tokens } = parseArgs({
@@ -11,6 +11,7 @@ function main() {
     options: {
       "account-id": { type: "string" },
       region: { type: "string" },
+      component: { type: "string" },
     },
   });
   const [command] = positionals;
@@ -21,7 +22,9 @@ function main() {
     !["bootstrap-policy", "access-policy", "backend"].includes(command) ||
     tokens.filter((token) => token.kind === "option").length !== Object.keys(values).length ||
     !/^\d{12}$/.test(accountId ?? "") ||
-    !/^(?:[a-z]{2}-[a-z]+|us-gov-[a-z]+)-\d+$/.test(region ?? "")
+    !/^(?:[a-z]{2}-[a-z]+|us-gov-[a-z]+)-\d+$/.test(region ?? "") ||
+    (values.component !== undefined &&
+      (command !== "backend" || !["foundation", "registry"].includes(values.component)))
   ) {
     throw new Error(usage);
   }
@@ -32,7 +35,7 @@ function main() {
       [
         `bucket              = "${bucket}"`,
         `region              = "${region}"`,
-        'key                 = "staging/foundation.tfstate"',
+        `key                 = "staging/${values.component ?? "foundation"}.tfstate"`,
         "encrypt             = true",
         "use_lockfile        = true",
         `allowed_account_ids = ["${accountId}"]`,

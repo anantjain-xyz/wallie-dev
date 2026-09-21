@@ -66,7 +66,7 @@ describe("AWS state preparation", () => {
     }
   });
 
-  it("limits backend writes to one state object and permits deletion only of its lock", () => {
+  it("limits backend writes to foundation and registry state and permits deletion only of their locks", () => {
     const { Statement: statements } = JSON.parse(render("access-policy").stdout);
     const objects = new Map<string, Set<string>>();
     for (const statement of statements as Statement[]) {
@@ -80,10 +80,15 @@ describe("AWS state preparation", () => {
       new Set([
         `${bucketArn}/staging/foundation.tfstate`,
         `${bucketArn}/staging/foundation.tfstate.tflock`,
+        `${bucketArn}/staging/registry.tfstate`,
+        `${bucketArn}/staging/registry.tfstate.tflock`,
       ]),
     );
     expect(objects.get("s3:DeleteObject")).toEqual(
-      new Set([`${bucketArn}/staging/foundation.tfstate.tflock`]),
+      new Set([
+        `${bucketArn}/staging/foundation.tfstate.tflock`,
+        `${bucketArn}/staging/registry.tfstate.tflock`,
+      ]),
     );
     expect(objects.get("s3:ListBucket")).toEqual(new Set([bucketArn]));
     expect([...objects.keys()].every((action) => action.startsWith("s3:"))).toBe(true);
@@ -100,6 +105,28 @@ describe("AWS state preparation", () => {
     expect(result.stdout).toContain(`allowed_account_ids = ["${account}"]`);
     expect(result.stdout).not.toMatch(/access_key|secret_key|token|profile/);
   });
+
+  it.each(["foundation", "registry"])(
+    "selects only the %s backend without changing other safeguards",
+    (component) => {
+      const result = render("backend", [
+        "--account-id",
+        account,
+        "--region",
+        region,
+        "--component",
+        component,
+      ]);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe(
+        render("backend").stdout.replace(
+          "staging/foundation.tfstate",
+          `staging/${component}.tfstate`,
+        ),
+      );
+    },
+  );
 
   it.each([
     ["us-gov-west-1", "aws-us-gov"],
@@ -119,6 +146,26 @@ describe("AWS state preparation", () => {
     ["backend", ["--account-id", account, "--region", region, "--region", region]],
     ["backend", ["--account-id", account, "--region", region, "--profile", "root"]],
     ["backend", ["--account-id", account, "--region", region, "extra"]],
+    ["backend", ["--account-id", account, "--region", region, "--component", ""]],
+    ["backend", ["--account-id", account, "--region", region, "--component", "../other"]],
+    [
+      "backend",
+      [
+        "--account-id",
+        account,
+        "--region",
+        region,
+        "--component",
+        "registry",
+        "--component",
+        "foundation",
+      ],
+    ],
+    ["access-policy", ["--account-id", account, "--region", region, "--component", "registry"]],
+    [
+      "bootstrap-policy",
+      ["--account-id", account, "--region", region, "--component", "foundation"],
+    ],
   ])("rejects invalid or unsupported inputs: %s %j", (command, args) => {
     const result = render(command as string, args as string[]);
     expect(result.status).toBe(1);
