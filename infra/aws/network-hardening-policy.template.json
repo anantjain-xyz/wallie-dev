@@ -1,0 +1,223 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadHardeningInventory",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeTags",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateTaggedHardeningAcl",
+      "Effect": "Allow",
+      "Action": "ec2:CreateNetworkAcl",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:network-acl/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "hardening"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AuthorizeExactParentVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateNetworkAcl",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Sid": "TagHardeningAclDuringCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:network-acl/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "ec2:CreateAction": "CreateNetworkAcl",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "hardening"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "EmptyExactDefaultSecurityGroup",
+      "Effect": "Allow",
+      "Action": ["ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress"],
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DEFAULT_SECURITY_GROUP_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "TagExactDefaultSecurityGroup",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DEFAULT_SECURITY_GROUP_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "hardening"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageOwnedHardeningAcl",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteNetworkAcl",
+        "ec2:DeleteNetworkAclEntry",
+        "ec2:ReplaceNetworkAclAssociation"
+      ],
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:network-acl/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "hardening"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "AssociateExactSandboxSubnetsAndRestoreDefaultAcl",
+      "Effect": "Allow",
+      "Action": "ec2:ReplaceNetworkAclAssociation",
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:network-acl/<DEFAULT_NETWORK_ACL_ID>",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/<SANDBOX_SUBNET_A_ID>",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/<SANDBOX_SUBNET_B_ID>"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "UpdateTagsOnOwnedHardeningAcl",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:network-acl/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "hardening"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "hardening"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "RemoveMetadataTagsFromExactDefaultSecurityGroup",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteTags",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DEFAULT_SECURITY_GROUP_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Project", "Environment", "ManagedBy", "Name", "Tier"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    }
+  ]
+}

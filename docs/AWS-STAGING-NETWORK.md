@@ -1,6 +1,6 @@
 # AWS staging network
 
-**Reserve a dedicated two-AZ network before adding workloads.** This PR defines 26 Terraform-managed resources; deployment follows review and merge.
+**Reserve a dedicated two-AZ network before adding workloads.** Deploy in two steps: 26 foundation resources here, then four [hardening resources](AWS-NETWORK-HARDENING.md). Deployment follows review and merge.
 
 ```mermaid
 flowchart TB
@@ -25,7 +25,7 @@ flowchart TB
 
 - One explicit route table per subnet; automatic public IPv4 assignment and IPv6 assignment disabled.
 - No compute, load balancer, NAT gateway, paid endpoint, or public IPv4 allocation.
-- Existing VPCs are not adopted. AWS-created defaults within the new VPC remain unmanaged in this batch.
+- Existing VPCs are not adopted. The next step manages only this new VPC's default security group.
 - **Subnets are reservations, not security boundaries:** the VPC-local route still connects tiers. Harden the default security group and define workload/sandbox security groups, ACLs, and egress controls before launching anything.
 - The sandbox provider remains unqualified; reserving addresses does not select or qualify one.
 
@@ -56,10 +56,12 @@ node scripts/prepare-aws-state.mjs backend --account-id "$WALLIE_AWS_ACCOUNT_ID"
 
 Run after the PR is merged. The backend is the default workspace at `staging/foundation.tfstate`, with S3 locking and an account guard.
 
+For a **fresh network only**, bootstrap the foundation first to obtain the exact resource IDs required by the hardening IAM policy. The target below includes all 26 foundation resources through their dependencies. [Targeting is exceptional](https://developer.hashicorp.com/terraform/cli/commands/plan#resource-targeting): finish with the full hardening plan; use untargeted plans for subsequent changes.
+
 ```sh
 WALLIE_AWS_FILES="$PWD/.wallie/aws"
 terraform -chdir=infra/aws/staging-network init -lockfile=readonly -backend-config="$WALLIE_AWS_FILES/staging.backend.hcl"
-terraform -chdir=infra/aws/staging-network plan -var-file="$WALLIE_AWS_FILES/network.tfvars.json" -out="$WALLIE_AWS_FILES/network.tfplan"
+terraform -chdir=infra/aws/staging-network plan -target=aws_route_table_association.tier -var-file="$WALLIE_AWS_FILES/network.tfvars.json" -out="$WALLIE_AWS_FILES/network.tfplan"
 terraform -chdir=infra/aws/staging-network show "$WALLIE_AWS_FILES/network.tfplan"
 ```
 
@@ -70,10 +72,9 @@ terraform -chdir=infra/aws/staging-network show "$WALLIE_AWS_FILES/network.tfpla
 ```sh
 terraform -chdir=infra/aws/staging-network apply "$WALLIE_AWS_FILES/network.tfplan"
 terraform -chdir=infra/aws/staging-network output
-terraform -chdir=infra/aws/staging-network plan -var-file="$WALLIE_AWS_FILES/network.tfvars.json" -detailed-exitcode
 ```
 
-- Verify the final plan exits `0` (no changes), then inspect subnet and route-table associations in AWS. Verify private tiers have only the implicit local route.
+- Inspect subnet and route-table associations in AWS; private tiers must have only the implicit local route. Continue immediately to [network hardening](AWS-NETWORK-HARDENING.md), whose full plan should add four managed resources; that guide ends with the zero-diff check.
 - Keep the state-access policy attached. Recover interrupted operations from Terraform state; do not relabel or adopt existing resources to bypass an authorization failure.
 
 ## Cost and next gate
