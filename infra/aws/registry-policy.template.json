@@ -1,0 +1,102 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadExactRepositories",
+      "Effect": "Allow",
+      "Action": ["ecr:DescribeRepositories", "ecr:ListTagsForResource"],
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateAndTagExactRepositories",
+      "Effect": "Allow",
+      "Action": ["ecr:CreateRepository", "ecr:TagResource"],
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-registry"
+        },
+        "StringEqualsIfExists": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureOwnedRepositories",
+      "Effect": "Allow",
+      "Action": ["ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability"],
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        }
+      }
+    },
+    {
+      "Sid": "UpdateTagsOnOwnedRepositories",
+      "Effect": "Allow",
+      "Action": "ecr:TagResource",
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-registry"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "RemoveMetadataTagsFromOwnedRepositories",
+      "Effect": "Allow",
+      "Action": "ecr:UntagResource",
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    }
+  ]
+}

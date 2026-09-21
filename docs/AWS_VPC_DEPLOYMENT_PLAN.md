@@ -119,6 +119,7 @@ flowchart TB
 - Prepare [private Terraform state storage](AWS-STATE-BOOTSTRAP.md) before the network foundation; this batch creates no compute.
 - Reserve the [two-AZ staging network](AWS-STAGING-NETWORK.md); workload security controls and compute follow after its review and deployment.
 - Apply [network hardening](AWS-NETWORK-HARDENING.md) to the empty VPC: remove default-SG rules and block ordinary traffic in the sandbox reservation.
+- Prepare [private image repositories](AWS-STAGING-REGISTRY.md) for the web app and worker; image publishing and compute follow in separate PRs.
 - Foundation code needs no AWS credentials. Infrastructure work needs an AWS account, region, and SSO/assumable role.
 - Each PR waits for human review and merge; dependent batches follow after merge.
 

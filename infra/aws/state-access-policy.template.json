@@ -14,10 +14,13 @@
       }
     },
     {
-      "Sid": "ReadAndWriteFoundationState",
+      "Sid": "ReadAndWriteStagingState",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate",
+      "Resource": [
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate",
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/registry.tfstate"
+      ],
       "Condition": {
         "StringEquals": {
           "aws:PrincipalAccount": "<ACCOUNT_ID>",
@@ -26,10 +29,13 @@
       }
     },
     {
-      "Sid": "ManageFoundationStateLock",
+      "Sid": "ManageStagingStateLocks",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate.tflock",
+      "Resource": [
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate.tflock",
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/registry.tfstate.tflock"
+      ],
       "Condition": {
         "StringEquals": {
           "aws:PrincipalAccount": "<ACCOUNT_ID>",
