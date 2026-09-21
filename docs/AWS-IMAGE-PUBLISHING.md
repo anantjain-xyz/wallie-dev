@@ -13,17 +13,17 @@ flowchart LR
     scan --> receipt["Private receipt · still unsigned"]
 ```
 
-| Guard       | Behavior                                                                                |
-| ----------- | --------------------------------------------------------------------------------------- |
-| Source      | Full commit SHA in freshly fetched Wallie `origin/main`; build from `git archive`       |
-| Image       | Fixed Linux AMD64, non-root, revision label; no rebuild after smoke                     |
-| Destination | Expected account/region and exact owned web or worker repository                        |
-| Tag         | Full SHA + platform + unique build ID; existing tags are never overwritten              |
-| Scan        | Effective BASIC scan-on-push; fail on incomplete/failed scans or High/Critical findings |
-| Credentials | Temporary AWS profile; ECR token via stdin into disposable Docker configuration         |
+| Guard       | Behavior                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| Source      | Full commit SHA in an isolated fetch of Wallie `main`; archive without local Git overrides       |
+| Image       | Fixed Linux AMD64, non-root, revision label; no rebuild after smoke                              |
+| Destination | Expected account/region and exact owned web or worker repository                                 |
+| Tag         | Full SHA + platform + unique build ID; existing tags are never overwritten                       |
+| Scan        | Effective BASIC scan-on-push; fail on incomplete/failed scans or High/Critical findings          |
+| Credentials | Validated expiring session credentials; ECR token via stdin into disposable Docker configuration |
 
 - Requires a local Docker Unix socket and AMD64 execution support. Apple Silicon uses emulation; builds can take longer.
-- Local untracked/ignored files do not enter the source archive. Container configuration and application secrets are supplied later, at runtime.
+- Source fetching and archiving use fresh Git metadata, with replacement objects and local/global archive attributes disabled. Local untracked/ignored files do not enter the source archive. Container configuration and application secrets are supplied later, at runtime.
 - BuildKit attestations are disabled for this initial single-image flow. Signing, provenance, language-package scanning, and GitHub OIDC remain later PRs.
 
 ## Prepare access
@@ -42,6 +42,7 @@ node scripts/prepare-aws-image-publishing.mjs policy --account-id "$WALLIE_AWS_A
 - In IAM, create customer-managed **WallieStagingImagePublishing** from that file and attach it to the temporary-login identity.
 - Grants uploads and verification reads for the two exact owned repositories. Authentication and registry scan-mode reads require `Resource: "*"`, constrained to the account/region.
 - This policy grants no image/repository deletion, setting changes, manual scans, signing, IAM administration, or layer downloads. Existing infrastructure policies remain separate grants.
+- The selected profile must resolve to a session token with a future expiration; long-lived access-key profiles are rejected. Credentials are revalidated after the build, and the AWS identity must remain the same. Each phase uses its validated credentials in memory.
 - No AWS keys in `.env`, GitHub secrets, build arguments, or Docker images.
 
 ## Publish one component
@@ -56,15 +57,16 @@ node scripts/publish-aws-image.mjs \
 ```
 
 - Repeat with `--component worker` for the same revision. Each command builds and tests independently using the existing [web](WEB-CONTAINER.md) or [worker](WORKER-CONTAINER.md) smoke checks.
-- The publisher re-fetches `main` and rejects unmerged revisions, root credentials, wrong destinations, mutable tags, remote Docker daemons, or incompatible scanning settings.
+- The publisher independently fetches `main` and rejects unmerged revisions, root credentials, wrong destinations, mutable tags, remote Docker daemons, or incompatible scanning settings.
 - It checks effective scanning with `BatchGetRepositoryScanningConfiguration`; it never changes account-wide scan settings. BASIC scans cover OS packages only. [AWS scanning scope](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html)
 - The registry manifest must reference the tested local image configuration and match its reported digest. Future deployments use **`repository@sha256:…`**, never a mutable tag.
 
 ## Read the result
 
 - Receipt: `.wallie/aws/image-<component>-<revision>-linux-amd64-<build-id>.json`, mode `0600`.
-- Records source revision, tested image ID and config digest, registry digest, upload status, scan findings, and `signed: false` / `deployable: false`.
+- Records source revision, tested image ID and config digest, registry digest, upload status, scan findings and freshness, and `signed: false` / `deployable: false`.
 - Successful exit requires a completed scan with no High/Critical findings. Lower severities remain in the receipt; success is **not** full vulnerability clearance or deployment approval.
+- A completed scan must be newer than the upload start and no later than the current time. Keep the host clock synchronized. Stale findings remain unverified while the publisher waits, then fail if no fresh scan arrives. Repeated digests may not receive a new scan because BASIC scanning limits each image to once per 24 hours. [AWS scan limits](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning-basic.html)
 - Scanning is checked **after upload**. A failed scan leaves the image in ECR and returns failure; inspect the receipt. An interrupted/failed upload may also leave an image or layers; verify its tag before retrying.
 - Retry creates a new build/tag. No automatic rollback, image deletion, or expiration policy; storage can accumulate. [ECR usage charges](https://aws.amazon.com/ecr/pricing/)
 - Next gate: sign and verify the recorded digest, establish release provenance and broader vulnerability checks, then qualify deployment. No compute or production cutover occurs here.

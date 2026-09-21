@@ -30,7 +30,12 @@ type Receipt = {
   signed: boolean;
   uploadStatus: string;
   tag: string;
-  scan: { status: string; counts?: Record<string, number> };
+  scan: {
+    status: string;
+    fresh?: boolean;
+    completedAt?: string | number;
+    counts?: Record<string, number>;
+  };
   error?: string;
 };
 type Runner = (command: string, args: string[], options?: Call["options"]) => Promise<string>;
@@ -125,14 +130,14 @@ function harness(component = "web") {
     imageId: { imageDigest: digest },
     imageScanStatus: { status: "COMPLETE" },
     imageScanFindings: {
-      imageScanCompletedAt: "2026-09-22T01:00:00Z",
+      imageScanCompletedAt: "2026-09-22T01:00:01Z" as string | number,
       findingSeverityCounts: { MEDIUM: 2 } as Record<string, number>,
     },
   };
   const calls: Call[] = [];
   const overrides: Record<string, unknown> = {};
   let endpoint = "unix:///var/run/docker.sock";
-  let time = Date.parse("2026-09-22T01:00:00Z");
+  let time = Date.parse("2026-09-22T01:00:00.500Z");
   const env: NodeJS.ProcessEnv = {
     NODE_ENV: "test",
     DOCKER_CONTEXT: "desktop-linux",
@@ -145,9 +150,35 @@ function harness(component = "web") {
     AWS_SESSION_TOKEN: "ambient-token",
   };
   const scanResponses: unknown[] = [];
+  const credentialResponses: unknown[] = [];
+  const identityResponses: unknown[] = [];
+  const credentials = {
+    Version: 1,
+    AccessKeyId: "synthetic-temporary-key",
+    SecretAccessKey: "synthetic-temporary-secret",
+    SessionToken: "synthetic-session-token",
+    Expiration: "2026-09-22T02:00:00Z",
+  };
   const run: Runner = async (command, args, options = {}) => {
     calls.push({ command, args, options });
-    const actualArgs = args[0] === "--host" ? args.slice(2) : args;
+    const actualArgs =
+      command === "git"
+        ? args.slice(
+            args.findIndex((arg) =>
+              [
+                "config",
+                "rev-parse",
+                "init",
+                "fetch",
+                "cat-file",
+                "merge-base",
+                "archive",
+              ].includes(arg),
+            ),
+          )
+        : args[0] === "--host"
+          ? args.slice(2)
+          : args;
     const operation =
       command === "aws"
         ? args[1]
@@ -160,8 +191,11 @@ function harness(component = "web") {
       return typeof value === "string" ? value : JSON.stringify(value);
     }
     if (command === "git") {
-      if (args[0] === "remote") return "https://github.com/anantjain-xyz/wallie-dev.git";
-      if (args[0] === "rev-parse") return directory;
+      if (actualArgs[0] === "config" && actualArgs.includes("--local"))
+        return "https://github.com/anantjain-xyz/wallie-dev.git";
+      if (actualArgs[0] === "rev-parse")
+        return actualArgs.includes("--show-toplevel") ? directory : revision;
+      if (actualArgs[0] === "cat-file") return "commit";
       return "";
     }
     if (command === "docker") {
@@ -183,11 +217,15 @@ function harness(component = "web") {
           readdirSync(join(directory, ".wallie", "aws"))[0],
         );
         expect(JSON.parse(readFileSync(path, "utf8")).uploadStatus).toBe("attempted");
+        time += 1000;
       }
       return "";
     }
     if (command !== "aws") return "";
-    if (operation === "get-caller-identity") return JSON.stringify(identity);
+    if (operation === "export-credentials")
+      return JSON.stringify(credentialResponses.length ? credentialResponses.shift() : credentials);
+    if (operation === "get-caller-identity")
+      return JSON.stringify(identityResponses.length ? identityResponses.shift() : identity);
     if (operation === "describe-repositories") return JSON.stringify({ repositories: [repo] });
     if (operation === "list-tags-for-resource")
       return JSON.stringify({ tags: [{ Key: "WallieStack", Value: "wallie-staging-registry" }] });
@@ -241,6 +279,9 @@ function harness(component = "web") {
     remote,
     scan,
     scanResponses,
+    credentialResponses,
+    identityResponses,
+    credentials,
     env,
     execute,
     dockerCalls,
@@ -283,10 +324,10 @@ describe("manual AWS image publishing", () => {
       );
       expect(h.dockerCalls("push")[0].args[3]).toBe(tag.args[4]);
       expect(h.calls.indexOf(smoke)).toBeLessThan(h.calls.indexOf(tag));
-      expect(h.calls.findIndex((call) => call.args[0] === "fetch")).toBeLessThan(
-        h.calls.findIndex((call) => call.args[0] === "merge-base"),
+      expect(h.calls.findIndex((call) => call.args.includes("fetch"))).toBeLessThan(
+        h.calls.findIndex((call) => call.args.includes("merge-base")),
       );
-      expect(h.calls.find((call) => call.args[0] === "archive")!.args).toContain(revision);
+      expect(h.calls.find((call) => call.args.includes("archive"))!.args).toContain(revision);
       const login = h.dockerCalls("login")[0];
       expect(login.options.input).toBe("synthetic-ecr-token");
       expect(JSON.stringify(h.calls.map((call) => call.args))).not.toContain("synthetic-ecr-token");
@@ -299,8 +340,11 @@ describe("manual AWS image publishing", () => {
       expect(
         h.calls
           .filter((call) => call.command === "aws")
-          .every(
-            (call) => !call.options.env?.AWS_ACCESS_KEY_ID && call.args.includes(base.profile),
+          .every((call) =>
+            call.args[1] === "export-credentials"
+              ? !call.options.env?.AWS_ACCESS_KEY_ID && call.args.includes(base.profile)
+              : call.options.env?.AWS_ACCESS_KEY_ID === h.credentials.AccessKeyId &&
+                !call.args.includes("--profile"),
           ),
       ).toBe(true);
       expect(result.receipt).toMatchObject({
@@ -457,6 +501,67 @@ describe("manual AWS image publishing", () => {
     expect(h.calls.some((call) => call.command === "aws")).toBe(false);
   });
 
+  it("binds each AWS phase to validated temporary credentials without exposing them to Docker", async () => {
+    const h = harness();
+    const refreshed = {
+      ...h.credentials,
+      AccessKeyId: "refreshed-session-key",
+      SessionToken: "refreshed-token",
+    };
+    h.credentialResponses.push(h.credentials, refreshed);
+    const result = await h.execute();
+    const exports = h.calls.filter(
+      (call) => call.command === "aws" && call.args[1] === "export-credentials",
+    );
+    expect(exports).toHaveLength(2);
+    const smoke = h.calls.find((call) => call.command === process.execPath)!;
+    expect(h.calls.indexOf(exports[1])).toBeGreaterThan(h.calls.indexOf(smoke));
+    const awsCalls = h.calls.filter(
+      (call) => call.command === "aws" && call.args[1] !== "export-credentials",
+    );
+    for (const call of awsCalls) {
+      const expected =
+        h.calls.indexOf(call) < h.calls.indexOf(exports[1]) ? h.credentials : refreshed;
+      expect(call.options.env?.AWS_ACCESS_KEY_ID).toBe(expected.AccessKeyId);
+      expect(call.options.env?.AWS_SESSION_TOKEN).toBe(expected.SessionToken);
+      expect(call.args).not.toContain("--profile");
+    }
+    const publicEvidence = JSON.stringify([result.receipt, h.calls.map((call) => call.args)]);
+    expect(publicEvidence).not.toContain(h.credentials.SecretAccessKey);
+    expect(publicEvidence).not.toContain(refreshed.SessionToken);
+    for (const call of h.calls.filter(
+      (call) => call.command === "docker" || call.command === process.execPath,
+    ))
+      expect([h.credentials.AccessKeyId, refreshed.AccessKeyId]).not.toContain(
+        call.options.env?.AWS_ACCESS_KEY_ID,
+      );
+  });
+
+  it("rejects long-lived profile credentials before AWS preflight or Docker", async () => {
+    const h = harness();
+    h.credentialResponses.push({
+      ...h.credentials,
+      SessionToken: undefined,
+      Expiration: undefined,
+    });
+    await expect(h.execute()).rejects.toThrow("temporary session credentials");
+    expect(h.calls.some((call) => call.args[1] === "get-caller-identity")).toBe(false);
+    expect(h.dockerCalls("buildx")).toHaveLength(0);
+  });
+
+  it("stops before upload if credentials refresh to a different AWS identity", async () => {
+    const h = harness();
+    h.identityResponses.push(h.identity, {
+      ...h.identity,
+      Arn: `arn:aws:iam::${account}:user/another-user`,
+    });
+    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    expect(h.calls.some((call) => call.command === process.execPath)).toBe(true);
+    expect(h.dockerCalls("tag")).toHaveLength(0);
+    expect(h.dockerCalls("login")).toHaveLength(0);
+    expect(h.dockerCalls("push")).toHaveLength(0);
+  });
+
   it("preserves an attempted receipt when push outcome is uncertain", async () => {
     const h = harness();
     h.overrides["docker:push"] = new Error("network interrupted");
@@ -495,6 +600,76 @@ describe("manual AWS image publishing", () => {
     expect(scans).toHaveLength(4);
     expect(scans.every((call) => call.args.includes(`imageDigest=${h.digest}`))).toBe(true);
   });
+
+  it.each(["2026-09-22T01:00:01Z", Date.parse("2026-09-22T01:00:01Z") / 1000])(
+    "accepts a fresh scan completed during the push command (%s)",
+    async (completedAt) => {
+      const h = harness();
+      h.scan.imageScanFindings.imageScanCompletedAt = completedAt;
+      const result = await h.execute();
+      expect(result.receipt).toMatchObject({
+        startedAt: "2026-09-22T01:00:00.500Z",
+        pushedAt: "2026-09-22T01:00:01.500Z",
+        scan: { fresh: true, completedAt },
+      });
+    },
+  );
+
+  it.each(["2026-09-21T01:00:00Z", "2026-09-22T01:00:00.400Z", "2026-09-22T01:00:00.500Z"])(
+    "never accepts completed findings at or before the upload marker (%s)",
+    async (completedAt) => {
+      const h = harness();
+      h.scan.imageScanFindings.imageScanCompletedAt = completedAt;
+      await expect(h.execute()).rejects.toThrow("scan timed out");
+      expect(h.receipt()).toMatchObject({
+        digest: h.digest,
+        deployable: false,
+        scan: { status: "COMPLETE", fresh: false, completedAt },
+      });
+      expect(
+        h.calls.filter((call) => call.args[1] === "describe-image-scan-findings"),
+      ).toHaveLength(60);
+    },
+  );
+
+  it("waits past stale findings and checks newly completed findings", async () => {
+    const h = harness();
+    h.scanResponses.push({
+      ...h.scan,
+      imageScanFindings: {
+        imageScanCompletedAt: "2026-09-21T01:00:00Z",
+        findingSeverityCounts: {},
+      },
+    });
+    h.scan.imageScanFindings.findingSeverityCounts.HIGH = 1;
+    await expect(h.execute()).rejects.toThrow("HIGH or CRITICAL");
+    expect(h.receipt().scan).toMatchObject({ fresh: true, counts: { HIGH: 1 } });
+    expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
+      2,
+    );
+  });
+
+  it.each(["2026-09-22T01:00:02Z", Date.parse("2026-09-22T01:00:02Z") / 1000])(
+    "fails closed for a scan timestamp in the future (%s)",
+    async (completedAt) => {
+      const h = harness();
+      h.scan.imageScanFindings.imageScanCompletedAt = completedAt;
+      await expect(h.execute()).rejects.toThrow("timestamp is in the future");
+      expect(h.receipt().scan.fresh).toBe(false);
+    },
+  );
+
+  it.each([null, "2026-09-22T01:00:01", "invalid", 0, -1])(
+    "rejects invalid or unzoned scan timestamps (%s)",
+    async (completedAt) => {
+      const h = harness();
+      h.overrides["describe-image-scan-findings"] = {
+        ...h.scan,
+        imageScanFindings: { ...h.scan.imageScanFindings, imageScanCompletedAt: completedAt },
+      };
+      await expect(h.execute()).rejects.toThrow("findings are missing or invalid");
+    },
+  );
 
   it.each(["FAILED", "UNSUPPORTED_IMAGE", "ACTIVE", "FINDINGS_UNAVAILABLE", "unknown"])(
     "does not accept scan status %s",

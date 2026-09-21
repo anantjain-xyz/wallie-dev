@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { resolveTemporaryAwsCredentials } from "./lib/aws-image-credentials.mjs";
+import { archiveReviewedSource } from "./lib/aws-image-source.mjs";
 
 const platform = "linux/amd64";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
@@ -139,25 +141,18 @@ export async function publishImage(options, dependencies = {}) {
   };
   try {
     progress("Checking reviewed source and registry");
-    // Pin the source to a freshly fetched reviewed main history, not working-tree files.
-    const origin = await run("git", ["remote", "get-url", "origin"], common);
-    requireThat(
-      [
-        "https://github.com/anantjain-xyz/wallie-dev.git",
-        "https://github.com/anantjain-xyz/wallie-dev",
-        "git@github.com:anantjain-xyz/wallie-dev.git",
-      ].includes(origin),
-      "Origin must be the Wallie repository",
-    );
-    await run("git", ["fetch", "--no-tags", "origin", "main:refs/remotes/origin/main"], common);
-    await run("git", ["merge-base", "--is-ancestor", revision, "refs/remotes/origin/main"], common);
-    const root = await run("git", ["rev-parse", "--show-toplevel"], common);
+    const { root } = await archiveReviewedSource({
+      run,
+      ...common,
+      revision,
+      source,
+      temporary,
+    });
     receiptPath = join(root, ".wallie", "aws", `image-${component}-${tag}.json`);
 
-    const awsEnv = { ...env, AWS_PAGER: "", AWS_CLI_AUTO_PROMPT: "off" };
-    // Select the explicit login profile, never an ambient access-key credential pair.
-    for (const key of ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"])
-      delete awsEnv[key];
+    const resolveCredentials = () =>
+      resolveTemporaryAwsCredentials({ profile, run, ...common, now });
+    let awsEnv = (await resolveCredentials()).env;
     const aws = async (service, operation, args = [], raw = false) => {
       const output = await run(
         "aws",
@@ -165,8 +160,6 @@ export async function publishImage(options, dependencies = {}) {
           service,
           operation,
           ...args,
-          "--profile",
-          profile,
           "--region",
           region,
           "--output",
@@ -284,7 +277,6 @@ export async function publishImage(options, dependencies = {}) {
       "EXPERIMENTAL_BUILDKIT_SOURCE_POLICY",
     ])
       delete dockerEnv[key];
-    mkdirSync(source, { mode: 0o700 });
     mkdirSync(dockerConfig, { mode: 0o700 });
     // Preserve CLI plugin discovery, but never copy registry auth or credential helpers.
     const originalConfig = env.DOCKER_CONFIG ?? join(homedir(), ".docker");
@@ -295,12 +287,6 @@ export async function publishImage(options, dependencies = {}) {
     );
     const docker = (args, extra = {}) =>
       run("docker", ["--host", endpoint, ...args], { ...common, env: dockerEnv, ...extra });
-    await run(
-      "git",
-      ["archive", "--format=tar", `--output=${join(temporary, "source.tar")}`, revision],
-      common,
-    );
-    await run("tar", ["-xf", join(temporary, "source.tar"), "-C", source], common);
     const metadataFile = join(temporary, "build-metadata.json");
     const localTag = `wallie-build-${component}:${nonce}`;
     progress(`Building ${component} for ${platform}`);
@@ -356,12 +342,21 @@ export async function publishImage(options, dependencies = {}) {
       [join(source, "scripts", `check-${component}-container.mjs`), imageId],
       { ...common, cwd: source, env: dockerEnv, timeout: 10 * 60_000 },
     );
+    // A long build can outlive the login's short credential lifetime. Resolve again,
+    // then bind all upload/verification calls to this snapshot and the same identity.
+    awsEnv = (await resolveCredentials()).env;
+    const uploadIdentity = await aws("sts", "get-caller-identity");
+    requireThat(
+      uploadIdentity.Account === account && uploadIdentity.Arn === identity.Arn,
+      "AWS identity changed after the build; publishing stopped",
+    );
     progress(`Uploading the tested ${component} image`);
     await docker(["tag", imageId, reference]);
     // The token only travels over stdin into this run's private, disposable config.
     const password = await aws("ecr", "get-login-password", [], true);
     requireThat(typeof password === "string" && password.length > 0, "ECR returned no login token");
     await docker(["login", "--username", "AWS", "--password-stdin", registry], { input: password });
+    const uploadStartedAt = now();
     receipt = {
       schemaVersion: 1,
       component,
@@ -372,7 +367,7 @@ export async function publishImage(options, dependencies = {}) {
       testedImageId: imageId,
       testedConfigDigest: configDigest,
       uploadStatus: "attempted",
-      startedAt: new Date(now()).toISOString(),
+      startedAt: new Date(uploadStartedAt).toISOString(),
       pushedAt: null,
       digest: null,
       signed: false,
@@ -448,6 +443,15 @@ export async function publishImage(options, dependencies = {}) {
       );
       const counts = result.imageScanFindings?.findingSeverityCounts;
       const completedAt = result.imageScanFindings?.imageScanCompletedAt;
+      const completedMs =
+        typeof completedAt === "number"
+          ? completedAt * 1000
+          : typeof completedAt === "string" &&
+              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+                completedAt,
+              )
+            ? Date.parse(completedAt)
+            : NaN;
       requireThat(
         counts &&
           typeof counts === "object" &&
@@ -456,16 +460,27 @@ export async function publishImage(options, dependencies = {}) {
             ([name, count]) =>
               severityNames.includes(name) && Number.isSafeInteger(count) && count >= 0,
           ) &&
-          Number.isFinite(
-            typeof completedAt === "number" ? completedAt * 1000 : Date.parse(completedAt),
-          ),
+          Number.isFinite(completedMs) &&
+          completedMs > 0,
         "ECR scan findings are missing or invalid",
       );
+      const observedAt = now();
       receipt.scan = {
         status,
         completedAt,
+        fresh: completedMs > uploadStartedAt && completedMs <= observedAt,
         counts: Object.fromEntries(severityNames.map((name) => [name, counts[name] ?? 0])),
       };
+      requireThat(
+        completedMs <= observedAt,
+        "ECR scan timestamp is in the future; check the host clock",
+      );
+      // ECR can return the previous completed scan for a deterministic rebuild.
+      // Never round the upload marker down or allow clock-skew tolerance here.
+      if (!receipt.scan.fresh) {
+        await wait(10_000, undefined, { signal: dependencies.signal });
+        continue;
+      }
       requireThat(
         !counts.HIGH && !counts.CRITICAL,
         "ECR scan contains HIGH or CRITICAL findings; image remains published but is blocked",
