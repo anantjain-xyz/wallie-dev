@@ -1,0 +1,48 @@
+name: Worker container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/worker.Dockerfile*"
+      - "scripts/check-worker-container.mjs"
+      - "scripts/fixtures/worker-container-supabase.mjs"
+      - "scripts/install-crash-handlers.mjs"
+      - "scripts/register-server-only.mjs"
+      - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
+      - ".github/workflows/worker-container.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker/worker.Dockerfile*"
+      - "scripts/check-worker-container.mjs"
+      - "scripts/fixtures/worker-container-supabase.mjs"
+      - "scripts/install-crash-handlers.mjs"
+      - "scripts/register-server-only.mjs"
+      - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
+      - ".github/workflows/worker-container.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  worker-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Build worker image
+        run: docker build -f docker/worker.Dockerfile -t wallie-worker:local .
+      - name: Verify worker lifecycle
+        run: node scripts/check-worker-container.mjs wallie-worker:local
