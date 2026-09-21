@@ -1,0 +1,15 @@
+# Only worker runtime inputs enter the build context.
+**
+!LICENSE
+!package.json
+!pnpm-lock.yaml
+!tsconfig.json
+!scripts
+!scripts/install-crash-handlers.mjs
+!scripts/register-server-only.mjs
+!src
+!src/**
+**/*.test.*
+**/__tests__/**
+**/.env*
+**/*.pem

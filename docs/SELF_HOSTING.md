@@ -90,6 +90,8 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
 
 ## 4. Deploy the worker
 
+For the packaged Docker image and its lifecycle smoke check, see [Worker container](WORKER-CONTAINER.md).
+
 The worker runs continuously and needs the **same environment variables as the web app** (it talks to Supabase and reaches the web origin). Production starts Node directly so the worker receives `SIGTERM` and can finish active jobs during deployment:
 
 ```bash
