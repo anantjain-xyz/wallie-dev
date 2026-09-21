@@ -400,7 +400,10 @@ begin
     connection_name := 'create_' || index;
     perform extensions.dblink_connect(
       connection_name,
-      'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'
+      coalesce(
+        nullif(current_setting('wallie.test_db_connection', true), ''),
+        'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'
+      )
     );
     query := format(
       $query$

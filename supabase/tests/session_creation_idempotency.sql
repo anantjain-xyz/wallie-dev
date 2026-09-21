@@ -104,7 +104,10 @@ begin
   for attempt in 1..8 loop
     connection_name := 'session_retry_' || attempt;
     perform extensions.dblink_connect(connection_name,
-      'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres');
+      coalesce(
+        nullif(current_setting('wallie.test_db_connection', true), ''),
+        'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'
+      ));
     perform extensions.dblink_send_query(connection_name, $query$
       select created.session_id, created.session_number
       from (select set_config('request.jwt.claim.role', 'service_role', false) as role) config
