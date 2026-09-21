@@ -5,6 +5,7 @@
 ## Access
 
 - Node 22 and AWS CLI v2 with an authenticated non-root profile, such as `wallie-staging`.
+- Region formats cover commercial AWS, China, and GovCloud; isolated AWS partitions are unsupported.
 - Keep credentials in the AWS CLI session; no AWS keys in `.env`, Git, or chat.
 - This policy permits seven read actions in one account and region. Deployment permissions come later.
 

@@ -116,6 +116,37 @@ describe("AWS discovery CLI", () => {
     expect(result.calls).toEqual([]);
   });
 
+  it.each(["us-iso-east-1", "us-isob-east-1", "eu-isoe-west-1", "us-isof-south-1"])(
+    "rejects unsupported isolated region %s before rendering or calling AWS",
+    (unsupportedRegion) => {
+      for (const command of ["policy", "inspect"]) {
+        const result = run([
+          command,
+          "--account-id",
+          accountId,
+          "--region",
+          unsupportedRegion,
+          ...(command === "inspect" ? ["--profile", "wallie-staging"] : []),
+        ]);
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).toBe("");
+        expect(result.calls).toEqual([]);
+      }
+    },
+  );
+
+  it.each([
+    ["cn-northwest-1", "aws-cn"],
+    ["us-gov-west-1", "aws-us-gov"],
+  ])("renders the supported partition for %s", (supportedRegion, partition) => {
+    const result = run(["policy", "--account-id", accountId, "--region", supportedRegion]);
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([]);
+    expect(JSON.parse(result.stdout).Statement[1].Resource).toBe(
+      `arn:${partition}:servicequotas:${supportedRegion}:${accountId}:ec2/L-1216C47A`,
+    );
+  });
+
   it("preserves a missing quota value and forwards explicitly selected probes", () => {
     const result = run(
       [

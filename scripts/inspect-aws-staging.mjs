@@ -28,7 +28,7 @@ function main() {
     tokens.filter((token) => token.kind === "option").length !== Object.keys(values).length ||
     !["policy", "inspect"].includes(command) ||
     !/^\d{12}$/.test(accountId ?? "") ||
-    !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region ?? "") ||
+    !/^(?:[a-z]{2}-[a-z]+|us-gov-[a-z]+)-\d+$/.test(region ?? "") ||
     (command === "inspect" && !/^[\w][\w.-]{0,127}$/.test(profile ?? "")) ||
     !/^[a-z][a-z\d-]*\.[a-z\d-]+$/.test(runnerInstanceType) ||
     !/^db\.[a-z][a-z\d-]*\.[a-z\d]+$/.test(dbInstanceClass) ||
