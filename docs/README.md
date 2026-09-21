@@ -40,6 +40,10 @@ encode, but they are not repository policy.
 
 ## Reading order
 
+For the proposed shared AWS deployment and review batches, see the
+[AWS migration plan](AWS_VPC_DEPLOYMENT_PLAN.md). The [self-hosting guide](SELF_HOSTING.md)
+remains the current deployment procedure.
+
 1. Read `AGENTS.md` and the one task-specific document from the table above.
 2. Follow its links to the semantic owner in code or SQL.
 3. Inspect nearby tests before changing the owner.
