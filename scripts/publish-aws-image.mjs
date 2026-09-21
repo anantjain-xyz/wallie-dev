@@ -12,6 +12,8 @@ import { withoutAwsProviderEnvironment } from "./lib/aws-image-environment.mjs";
 import { stableAwsIdentity } from "./lib/aws-image-identity.mjs";
 
 const platform = "linux/amd64";
+const awsCallTimeout = 120_000;
+const credentialMargin = 30_000;
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const imageManifestTypes = [
   "application/vnd.oci.image.manifest.v1+json",
@@ -135,6 +137,9 @@ export async function publishImage(options, dependencies = {}) {
   const source = join(temporary, "source");
   const dockerConfig = join(temporary, "docker");
   const nonAwsEnv = withoutAwsProviderEnvironment(env);
+  // This unsigned qualification path must not inherit Notary behavior or passphrases.
+  for (const key of Object.keys(nonAwsEnv))
+    if (key.toUpperCase().startsWith("DOCKER_CONTENT_TRUST")) delete nonAwsEnv[key];
   const common = { cwd, env: nonAwsEnv, signal: dependencies.signal };
   let receipt;
   let receiptPath;
@@ -155,8 +160,17 @@ export async function publishImage(options, dependencies = {}) {
 
     const resolveCredentials = () =>
       resolveTemporaryAwsCredentials({ profile, run, ...common, env, now });
-    let awsEnv = (await resolveCredentials()).env;
-    const aws = async (service, operation, args = [], raw = false) => {
+    let credentials;
+    let principal;
+    const hasLifetime = (snapshot) =>
+      snapshot && Date.parse(snapshot.expiration) - now() > awsCallTimeout + credentialMargin;
+    const requireLifetime = (snapshot) =>
+      requireThat(
+        hasLifetime(snapshot),
+        "AWS credentials expire too soon for a bounded request; renew the temporary login",
+      );
+    const invokeAws = async (snapshot, service, operation, args = [], raw = false) => {
+      requireLifetime(snapshot);
       const output = await run(
         "aws",
         [
@@ -174,12 +188,38 @@ export async function publishImage(options, dependencies = {}) {
           "--cli-read-timeout",
           "30",
         ],
-        { ...common, env: awsEnv },
+        { ...common, env: snapshot.env, timeout: awsCallTimeout },
       );
       return raw ? output : json(output);
     };
-    const identity = await aws("sts", "get-caller-identity");
-    const principal = stableAwsIdentity(identity, account, partition);
+    const refreshCredentials = async () => {
+      const candidate = await resolveCredentials();
+      const identity = await invokeAws(candidate, "sts", "get-caller-identity");
+      const nextPrincipal = stableAwsIdentity(identity, account, partition);
+      requireThat(
+        principal === undefined || nextPrincipal === principal,
+        "AWS identity changed during publishing; publishing stopped",
+      );
+      // STS itself takes time. Never promote a snapshot that cannot finish the next call.
+      requireLifetime(candidate);
+      principal = nextPrincipal;
+      credentials = candidate;
+    };
+    const ensureCredentials = async () => {
+      if (!hasLifetime(credentials)) await refreshCredentials();
+    };
+    const aws = async (service, operation, args = [], raw = false) => {
+      await ensureCredentials();
+      try {
+        return await invokeAws(credentials, service, operation, args, raw);
+      } catch (error) {
+        if (!["ExpiredToken", "ExpiredTokenException"].includes(error.awsCode)) throw error;
+        // One identity-checked retry handles service-side expiry without a refresh loop.
+        await refreshCredentials();
+        return invokeAws(credentials, service, operation, args, raw);
+      }
+    };
+    await refreshCredentials();
     const repositories = await aws("ecr", "describe-repositories", [
       "--registry-id",
       account,
@@ -339,20 +379,16 @@ export async function publishImage(options, dependencies = {}) {
       [join(source, "scripts", `check-${component}-container.mjs`), imageId],
       { ...common, cwd: source, env: dockerEnv, timeout: 10 * 60_000 },
     );
-    // A long build can outlive the login's short credential lifetime. Resolve again,
-    // then bind all upload/verification calls to this snapshot and the same identity.
-    awsEnv = (await resolveCredentials()).env;
-    const uploadIdentity = await aws("sts", "get-caller-identity");
-    requireThat(
-      stableAwsIdentity(uploadIdentity, account, partition) === principal,
-      "AWS identity changed after the build; publishing stopped",
-    );
+    // Builds and pushes can each outlive a short login. Refresh at both boundaries;
+    // preflight and scan calls also check lifetime before every request.
+    await refreshCredentials();
     progress(`Uploading the tested ${component} image`);
     await docker(["tag", imageId, reference]);
     // The token only travels over stdin into this run's private, disposable config.
     const password = await aws("ecr", "get-login-password", [], true);
     requireThat(typeof password === "string" && password.length > 0, "ECR returned no login token");
     await docker(["login", "--username", "AWS", "--password-stdin", registry], { input: password });
+    await ensureCredentials();
     const uploadStartedAt = now();
     receipt = {
       schemaVersion: 1,
@@ -376,6 +412,7 @@ export async function publishImage(options, dependencies = {}) {
     receipt.uploadStatus = "confirmed";
     receipt.pushedAt = new Date(now()).toISOString();
     progress("Verifying the published manifest and waiting for its scan");
+    await refreshCredentials();
     const remote = await aws("ecr", "batch-get-image", [
       "--registry-id",
       account,

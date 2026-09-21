@@ -42,8 +42,12 @@ node scripts/prepare-aws-image-publishing.mjs policy --account-id "$WALLIE_AWS_A
 - In IAM, create customer-managed **WallieStagingImagePublishing** from that file and attach it to the temporary-login identity.
 - Grants uploads and verification reads for the two exact owned repositories. Authentication and registry scan-mode reads require `Resource: "*"`, constrained to the account/region.
 - This policy grants no image/repository deletion, setting changes, manual scans, signing, IAM administration, or layer downloads. Existing infrastructure policies remain separate grants.
-- The selected profile must resolve to a session token with a future expiration; long-lived access-key profiles are rejected. Credentials are revalidated after the build. Account, partition, and principal identity must remain the same; a refreshed assumed-role session may have a new session name, but its role ARN and unique role ID must match. Each phase uses its validated credentials in memory.
+- The selected profile must provide expiring session credentials; long-lived access-key profiles are rejected. [AWS CLI temporary login](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html)
+- Refresh after build/push and as needed before each AWS request. Require over 150 seconds remaining: a two-minute timeout plus a 30-second margin. Recheck after identity validation; stop if renewal cannot supply enough time.
+- Expired-token responses get one identity-checked retry; Docker uploads are never retried automatically.
+- Every replacement must match the initial account, partition, and principal. A refreshed role session may change its session name; its role ARN and unique role ID must match. Credentials remain in memory.
 - AWS credentials and provider variables are removed from Git, Docker/Buildx, and smoke-test environments. The selected profile configuration is used only by the AWS credential resolver.
+- Inherited `DOCKER_CONTENT_TRUST*` settings and passphrases are removed from those environments, keeping this unsigned flow independent of local [Docker signing settings](https://docs.docker.com/engine/security/trust/).
 - No AWS keys in `.env`, GitHub secrets, build arguments, or Docker images.
 
 ## Publish one component

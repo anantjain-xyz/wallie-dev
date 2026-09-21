@@ -2,6 +2,25 @@
 
 Proposal · September 19, 2026
 
+**Progress · September 21, 2026**
+
+- **Deployed:** private Terraform state, hardened two-AZ staging VPC, empty web/worker ECR repositories.
+- **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
+- **Current batch:** finish image-publisher review fixes, then qualify live uploads and ECR scans. No application or database is running on AWS yet.
+
+| Remaining               | Exit check                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| Image releases          | Live upload, scan, signing/verification, provenance, and GitHub OIDC publishing              |
+| AWS application hosting | ECS web/workers, TLS/ingress, secrets, egress, monitoring, drain-aware rollouts and rollback |
+| AWS Supabase            | Database/API deployment, object storage, backups, restore/failover, and upgrades             |
+| In-account sandboxes    | Supported controller/runners; isolation, cleanup, and every sandbox use case qualified       |
+| Staging validation      | Full session/review/rejection workflow, integrations, streaming, and crash recovery          |
+| wallie.dev cutover      | Move compute, migrate state, rehearse rollback, then retire old hosting services             |
+| Enterprise profile      | Private access, customer SSO, webhook strategy, independent install/upgrade/support          |
+
+- **Open dependencies:** supported full sandbox self-hosting; database availability and recovery targets.
+- Continue in small PRs; the owner reviews and merges each before dependent deployment work.
+
 **Direction**
 
 - Make AWS the primary hosting platform. Migrate **wallie.dev first**, then deploy the same stack for enterprises.
