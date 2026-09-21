@@ -76,5 +76,12 @@ aws signer list-tags-for-resource --resource-arn "$WALLIE_SIGNING_PROFILE_ARN" -
 
 - Require all six tags: `Name=wallie_staging_images`, `Project=Wallie`, `Environment=staging`, `ManagedBy=Terraform`, `Component=signing`, `WallieStack=wallie-staging-registry`. Stop on a read error or any missing/mismatched value.
 - Run the final registry plan with `-detailed-exitcode`; require **0**. Then detach **WallieStagingSigningProfileBootstrap** in IAM.
-- Mock tests cover configuration, output wiring, and account/root guards. Live IAM and creation are qualified only after merge; this PR has not created a profile.
-- Next PR: digest signing + strict verification, only after [image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary) passes. Provenance, broader vulnerability scanning, and GitHub OIDC publishing remain later work.
+- Mock tests cover configuration, output wiring, and account/root guards. Mock results alone do not prove live IAM or creation; see the recorded live check below.
+- Continue with offline [signing preparation](AWS-IMAGE-SIGNING.md). Actual digest signing + strict verification must wait for [image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary).
+
+## Live verification · September 21, 2026
+
+- Applied merged revision `4451e588`: **1 added, 0 changed, 0 destroyed**; both repositories unchanged.
+- Profile readback: **Active**, `1 YEARS`, expected platform, version identity, and all six tags.
+- Final Terraform plan: **no changes**. Registry state now manages two repositories and one profile.
+- Removed **WallieStagingSigningProfileBootstrap** from `wallie-local` after verification. Private plan/readback receipts remain under ignored `.wallie/aws/`. No image signing or deployment occurred.
