@@ -1,0 +1,219 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadNetworkInventory",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeTags",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateTaggedVpcAndInternetGateway",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpc", "ec2:CreateInternetGateway"],
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:internet-gateway/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "CreateTaggedSubnetsAndRouteTables",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSubnet", "ec2:CreateRouteTable"],
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:route-table/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AuthorizeOwnedParentVpc",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSubnet", "ec2:CreateRouteTable"],
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Sid": "TagNetworkResourcesDuringCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:route-table/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:internet-gateway/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "ec2:CreateAction": [
+            "CreateVpc",
+            "CreateSubnet",
+            "CreateRouteTable",
+            "CreateInternetGateway"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageOwnedNetworkResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcAttribute",
+        "ec2:ModifyVpcAttribute",
+        "ec2:ModifySubnetAttribute",
+        "ec2:AttachInternetGateway",
+        "ec2:DetachInternetGateway",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:ReplaceRouteTableAssociation",
+        "ec2:CreateRoute",
+        "ec2:ReplaceRoute",
+        "ec2:DeleteRoute",
+        "ec2:DeleteRouteTable",
+        "ec2:DeleteSubnet",
+        "ec2:DeleteInternetGateway",
+        "ec2:DeleteVpc"
+      ],
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:route-table/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:internet-gateway/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Sid": "UpdateTagsOnOwnedNetworkResources",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:route-table/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:internet-gateway/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-network"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WallieStack",
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "Name",
+            "Tier"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "RemoveMetadataTagsFromOwnedNetworkResources",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteTags",
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:route-table/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:internet-gateway/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Project", "Environment", "ManagedBy", "Component", "Name", "Tier"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    }
+  ]
+}
