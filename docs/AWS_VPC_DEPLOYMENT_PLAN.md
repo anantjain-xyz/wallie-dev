@@ -78,11 +78,13 @@ flowchart TB
 
 **Decide first**
 
-| Decision  | Preferred path                                                                                              | Must prove                                                                                  |
-| --------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Database  | RDS PostgreSQL Multi-AZ; Supabase PostgreSQL on EC2 if incompatible                                         | Auth, RLS, RPCs, migrations, Realtime replication, failover, restore                        |
-| Sandboxes | In-account Daytona through the [existing adapter](SANDBOX-PROVIDER-CONTRACTS.md); otherwise an AWS provider | Controller, runners, snapshots, and logs stay in-account; isolation, cleanup, support terms |
+| Decision  | Preferred path                                                                                                      | Must prove                                                                                  |
+| --------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Database  | Qualify upstream Supabase PostgreSQL locally, then on EC2; [qualification guide](SELF-HOSTED-SUPABASE.md)           | Auth, RLS, RPCs, migrations, Realtime replication, failover, restore                        |
+| Sandboxes | Daytona through the [existing adapter](SANDBOX-PROVIDER-CONTRACTS.md), pending a supported full self-hosted package | Controller, runners, snapshots, and logs stay in-account; isolation, cleanup, support terms |
 
+- **Database:** the [upstream bootstrap](https://github.com/supabase/supabase/blob/8c7a4d9dbbaf8b552893822e89d7bf06f33f9220/docker/docker-compose.yml#L479-L496) uses superuser operations that [RDS does not expose](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.PostgreSQL.CommonDBATasks.Roles.rds_superuser.html). An RDS variant needs custom bootstrap and separate qualification.
+- **Sandboxes remain unqualified:** [Daytona BYOC](https://www.daytona.io/docs/en/bring-your-own-compute/) retains its hosted control plane; it does not meet our boundary. The [old public core is unmaintained](https://github.com/daytonaio/daytona). Confirm current full self-hosting availability and support terms before choosing infrastructure.
 - Select one supported combination; estimate delivery after qualification.
 - **Tradeoff:** one shared hosting architecture; we take on Supabase upgrades, availability, backups, and recovery. [Self-hosting responsibilities](https://supabase.com/docs/guides/self-hosting).
 

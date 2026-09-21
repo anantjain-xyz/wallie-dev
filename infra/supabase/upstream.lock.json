@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/supabase/supabase.git",
+  "release": "self-hosted/v0.8.1",
+  "commit": "8c7a4d9dbbaf8b552893822e89d7bf06f33f9220",
+  "images": {
+    "db": "supabase/postgres:17.6.1.136",
+    "api-gw": "envoyproxy/envoy:v1.39.1",
+    "auth": "supabase/gotrue:v2.196.0",
+    "rest": "postgrest/postgrest:v14.17",
+    "realtime": "supabase/realtime:v2.134.10",
+    "storage": "supabase/storage-api:v1.74.0",
+    "imgproxy": "darthsim/imgproxy:v3.31.4"
+  },
+  "digests": {
+    "db": "sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+    "api-gw": "sha256:57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4",
+    "auth": "sha256:c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232",
+    "rest": "sha256:c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c",
+    "realtime": "sha256:cbcc6a7986fc28b6dcffa798b077d5fb9c69cd25500371ab49147a86d7edbb03",
+    "storage": "sha256:f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85",
+    "imgproxy": "sha256:73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712"
+  }
+}

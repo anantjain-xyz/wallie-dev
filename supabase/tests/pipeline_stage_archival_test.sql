@@ -14,11 +14,17 @@ set local "request.jwt.claim.role" = 'service_role';
 -- the rewrite transaction and select stages from the post-archive snapshot.
 select extensions.dblink_connect(
   'archive_rewrite',
-  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres application_name=pipeline_archive_rewrite'
+  coalesce(
+    nullif(current_setting('wallie.test_db_connection', true), ''),
+    'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'
+  ) || ' application_name=pipeline_archive_rewrite'
 );
 select extensions.dblink_connect(
   'archive_session_create',
-  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres application_name=pipeline_archive_session_create'
+  coalesce(
+    nullif(current_setting('wallie.test_db_connection', true), ''),
+    'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'
+  ) || ' application_name=pipeline_archive_session_create'
 );
 select extensions.dblink_exec('archive_rewrite', 'begin');
 
