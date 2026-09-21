@@ -42,7 +42,8 @@ node scripts/prepare-aws-image-publishing.mjs policy --account-id "$WALLIE_AWS_A
 - In IAM, create customer-managed **WallieStagingImagePublishing** from that file and attach it to the temporary-login identity.
 - Grants uploads and verification reads for the two exact owned repositories. Authentication and registry scan-mode reads require `Resource: "*"`, constrained to the account/region.
 - This policy grants no image/repository deletion, setting changes, manual scans, signing, IAM administration, or layer downloads. Existing infrastructure policies remain separate grants.
-- The selected profile must resolve to a session token with a future expiration; long-lived access-key profiles are rejected. Credentials are revalidated after the build, and the AWS identity must remain the same. Each phase uses its validated credentials in memory.
+- The selected profile must resolve to a session token with a future expiration; long-lived access-key profiles are rejected. Credentials are revalidated after the build. Account, partition, and principal identity must remain the same; a refreshed assumed-role session may have a new session name, but its role ARN and unique role ID must match. Each phase uses its validated credentials in memory.
+- AWS credentials and provider variables are removed from Git, Docker/Buildx, and smoke-test environments. The selected profile configuration is used only by the AWS credential resolver.
 - No AWS keys in `.env`, GitHub secrets, build arguments, or Docker images.
 
 ## Publish one component

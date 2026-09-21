@@ -8,6 +8,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { resolveTemporaryAwsCredentials } from "./lib/aws-image-credentials.mjs";
 import { archiveReviewedSource } from "./lib/aws-image-source.mjs";
+import { withoutAwsProviderEnvironment } from "./lib/aws-image-environment.mjs";
+import { stableAwsIdentity } from "./lib/aws-image-identity.mjs";
 
 const platform = "linux/amd64";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
@@ -132,7 +134,8 @@ export async function publishImage(options, dependencies = {}) {
   const temporary = mkdtempSync(join(dependencies.tempRoot ?? tmpdir(), "wallie-image-publish-"));
   const source = join(temporary, "source");
   const dockerConfig = join(temporary, "docker");
-  const common = { cwd, env, signal: dependencies.signal };
+  const nonAwsEnv = withoutAwsProviderEnvironment(env);
+  const common = { cwd, env: nonAwsEnv, signal: dependencies.signal };
   let receipt;
   let receiptPath;
   const saveReceipt = () => {
@@ -151,7 +154,7 @@ export async function publishImage(options, dependencies = {}) {
     receiptPath = join(root, ".wallie", "aws", `image-${component}-${tag}.json`);
 
     const resolveCredentials = () =>
-      resolveTemporaryAwsCredentials({ profile, run, ...common, now });
+      resolveTemporaryAwsCredentials({ profile, run, ...common, env, now });
     let awsEnv = (await resolveCredentials()).env;
     const aws = async (service, operation, args = [], raw = false) => {
       const output = await run(
@@ -176,13 +179,7 @@ export async function publishImage(options, dependencies = {}) {
       return raw ? output : json(output);
     };
     const identity = await aws("sts", "get-caller-identity");
-    requireThat(
-      identity.Account === account &&
-        typeof identity.Arn === "string" &&
-        identity.Arn.includes(`::${account}:`) &&
-        !identity.Arn.endsWith(":root"),
-      "Use a non-root login in the expected AWS account",
-    );
+    const principal = stableAwsIdentity(identity, account, partition);
     const repositories = await aws("ecr", "describe-repositories", [
       "--registry-id",
       account,
@@ -262,7 +259,7 @@ export async function publishImage(options, dependencies = {}) {
       "Publishing requires a local Docker Unix socket",
     );
     const dockerEnv = {
-      ...env,
+      ...nonAwsEnv,
       DOCKER_CONFIG: dockerConfig,
       DOCKER_HOST: endpoint,
       DOCKER_DEFAULT_PLATFORM: platform,
@@ -347,7 +344,7 @@ export async function publishImage(options, dependencies = {}) {
     awsEnv = (await resolveCredentials()).env;
     const uploadIdentity = await aws("sts", "get-caller-identity");
     requireThat(
-      uploadIdentity.Account === account && uploadIdentity.Arn === identity.Arn,
+      stableAwsIdentity(uploadIdentity, account, partition) === principal,
       "AWS identity changed after the build; publishing stopped",
     );
     progress(`Uploading the tested ${component} image`);

@@ -105,7 +105,11 @@ function harness(component = "web") {
     imageScanningConfiguration: { scanOnPush: true },
     encryptionConfiguration: { encryptionType: "AES256" },
   };
-  const identity = { Account: account, Arn: `arn:aws:iam::${account}:user/wallie-local` };
+  const identity = {
+    Account: account,
+    Arn: `arn:aws:iam::${account}:user/wallie-local`,
+    UserId: "AIDAABCDEFGHIJKLMNOPQ",
+  };
   const effective = {
     failures: [],
     scanningConfigurations: [
@@ -148,6 +152,17 @@ function harness(component = "web") {
     AWS_ACCESS_KEY_ID: "ambient-key",
     AWS_SECRET_ACCESS_KEY: "ambient-secret",
     AWS_SESSION_TOKEN: "ambient-token",
+    AWS_SECURITY_TOKEN: "legacy-token",
+    AWS_PROFILE: "ambient-profile",
+    AWS_DEFAULT_PROFILE: "ambient-default",
+    AWS_CONFIG_FILE: "/selected-profile/config",
+    AWS_SHARED_CREDENTIALS_FILE: "/selected-profile/credentials",
+    AWS_WEB_IDENTITY_TOKEN_FILE: "/ambient/web-token",
+    AWS_ROLE_ARN: `arn:aws:iam::${account}:role/ambient`,
+    AWS_ROLE_SESSION_NAME: "ambient-session",
+    AWS_CONTAINER_CREDENTIALS_FULL_URI: "http://ambient.invalid",
+    AWS_CONTAINER_AUTHORIZATION_TOKEN: "ambient-container-token",
+    BOTO_CONFIG: "/ambient/boto-config",
   };
   const scanResponses: unknown[] = [];
   const credentialResponses: unknown[] = [];
@@ -529,12 +544,24 @@ describe("manual AWS image publishing", () => {
     const publicEvidence = JSON.stringify([result.receipt, h.calls.map((call) => call.args)]);
     expect(publicEvidence).not.toContain(h.credentials.SecretAccessKey);
     expect(publicEvidence).not.toContain(refreshed.SessionToken);
-    for (const call of h.calls.filter(
-      (call) => call.command === "docker" || call.command === process.execPath,
-    ))
-      expect([h.credentials.AccessKeyId, refreshed.AccessKeyId]).not.toContain(
-        call.options.env?.AWS_ACCESS_KEY_ID,
-      );
+    for (const call of h.calls.filter((call) => call.command !== "aws")) {
+      expect(
+        Object.keys(call.options.env ?? {}).filter((key) => /^AWS_|^BOTO_CONFIG$/i.test(key)),
+      ).toEqual([]);
+    }
+    for (const call of exports) {
+      expect(call.options.env?.AWS_CONFIG_FILE).toBe(h.env.AWS_CONFIG_FILE);
+      expect(call.options.env?.AWS_SHARED_CREDENTIALS_FILE).toBe(h.env.AWS_SHARED_CREDENTIALS_FILE);
+    }
+    expect(h.env.AWS_ACCESS_KEY_ID).toBe("ambient-key");
+    expect(h.calls.some((call) => call.command === "git")).toBe(true);
+    expect(h.calls.some((call) => call.command === "tar")).toBe(true);
+    expect(h.calls.some((call) => call.command === "docker" && call.args[0] === "context")).toBe(
+      true,
+    );
+    expect(h.dockerCalls("buildx")).toHaveLength(1);
+    expect(h.dockerCalls("login")).toHaveLength(1);
+    expect(h.dockerCalls("push")).toHaveLength(1);
   });
 
   it("rejects long-lived profile credentials before AWS preflight or Docker", async () => {
@@ -560,6 +587,65 @@ describe("manual AWS image publishing", () => {
     expect(h.dockerCalls("tag")).toHaveLength(0);
     expect(h.dockerCalls("login")).toHaveLength(0);
     expect(h.dockerCalls("push")).toHaveLength(0);
+  });
+
+  it.each(["web", "worker"])(
+    "allows a refreshed session for the same %s publishing role",
+    async (component) => {
+      const h = harness(component);
+      const role = (session: string) => ({
+        Account: account,
+        Arn: `arn:aws:sts::${account}:assumed-role/WalliePublisher/${session}`,
+        UserId: `AROAABCDEFGHIJKLMNOPQ:${session}`,
+      });
+      h.identityResponses.push(role("before-build"), role("after-build"));
+      h.credentialResponses.push(h.credentials, {
+        ...h.credentials,
+        AccessKeyId: "refreshed-role-key",
+      });
+      await h.execute();
+      expect(h.dockerCalls("push")).toHaveLength(1);
+      expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(2);
+    },
+  );
+
+  it.each(["role name", "role id", "account", "partition", "principal type"])(
+    "stops before upload when a role refresh changes its %s",
+    async (field) => {
+      const h = harness();
+      const initial = {
+        Account: account,
+        Arn: `arn:aws:sts::${account}:assumed-role/WalliePublisher/before-build`,
+        UserId: "AROAABCDEFGHIJKLMNOPQ:before-build",
+      };
+      let refreshed = {
+        ...initial,
+        Arn: `arn:aws:sts::${account}:assumed-role/WalliePublisher/after-build`,
+        UserId: "AROAABCDEFGHIJKLMNOPQ:after-build",
+      };
+      if (field === "role name")
+        refreshed.Arn = refreshed.Arn.replace("WalliePublisher", "AnotherRole");
+      if (field === "role id") refreshed.UserId = "AROAZYXWVUTSRQPONMLKJ:after-build";
+      if (field === "account") {
+        refreshed.Account = "999999999999";
+        refreshed.Arn = refreshed.Arn.replace(account, refreshed.Account);
+      }
+      if (field === "partition") refreshed.Arn = refreshed.Arn.replace("arn:aws:", "arn:aws-cn:");
+      if (field === "principal type") refreshed = h.identity;
+      h.identityResponses.push(initial, refreshed);
+      await expect(h.execute()).rejects.toThrow();
+      expect(h.calls.some((call) => call.command === process.execPath)).toBe(true);
+      expect(h.dockerCalls("tag")).toHaveLength(0);
+      expect(h.dockerCalls("login")).toHaveLength(0);
+      expect(h.dockerCalls("push")).toHaveLength(0);
+    },
+  );
+
+  it("rejects a recreated IAM user even when its ARN is unchanged", async () => {
+    const h = harness();
+    h.identityResponses.push(h.identity, { ...h.identity, UserId: "AIDAZYXWVUTSRQPONMLKJ" });
+    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    expect(h.dockerCalls("tag")).toHaveLength(0);
   });
 
   it("preserves an attempted receipt when push outcome is uncertain", async () => {
