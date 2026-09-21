@@ -34,6 +34,7 @@ import {
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
@@ -131,9 +132,10 @@ function SessionWalliePanelContent({
   workspaceSlug,
 }: SessionWalliePanelProps) {
   const focused = useSessionRunFocus();
+  const supabaseConfig = useSupabasePublicConfig();
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const [supabase] = useState<SupabaseClient<Database>>(
-    () => injectedSupabase ?? createSupabaseBrowserClient(),
+    () => injectedSupabase ?? createSupabaseBrowserClient(supabaseConfig),
   );
   const [runs, setRuns] = useState(initialData.runs);
   const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);

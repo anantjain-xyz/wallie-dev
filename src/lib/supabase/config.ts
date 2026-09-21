@@ -6,7 +6,7 @@ export type SupabasePublicConfig = Readonly<{
 }>;
 
 export function resolveSupabasePublicConfig(
-  input?: Record<string, string | undefined>,
+  input: Record<string, string | undefined> = process.env,
 ): SupabasePublicConfig {
   const env = parseSupabasePublicEnv(input);
 

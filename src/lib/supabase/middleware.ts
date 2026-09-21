@@ -25,7 +25,7 @@ export async function updateSupabaseSession(request: NextRequest) {
   let response = NextResponse.next({
     request,
   });
-  const { publishableKey, url } = resolveSupabasePublicConfig();
+  const { publishableKey, url } = resolveSupabasePublicConfig(process.env);
   const sessionCookieNames = getSupabaseSessionCookieNames(request.cookies.getAll());
 
   if (sessionCookieNames.length === 0) {

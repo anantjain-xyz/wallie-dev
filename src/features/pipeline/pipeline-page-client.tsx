@@ -55,6 +55,7 @@ import { createSessionRecoveryRefresh } from "@/features/sessions/detail/recover
 import { type SessionPhaseStatus } from "@/features/sessions/types";
 import { workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import type { Tables } from "@/lib/supabase/database.types";
 import { cn } from "@/lib/utils";
 
@@ -206,9 +207,10 @@ function PipelinePageContent({
   const loadingLaneKeyRef = useRef<string | null>(null);
   const pendingCardFocus = useRef<PendingCardFocus | null>(null);
   const router = useRouter();
+  const supabaseConfig = useSupabasePublicConfig();
   const supabase = useMemo(
-    () => (enableRealtime ? createSupabaseBrowserClient() : null),
-    [enableRealtime],
+    () => (enableRealtime ? createSupabaseBrowserClient(supabaseConfig) : null),
+    [enableRealtime, supabaseConfig],
   );
   boardRef.current = board;
   const [refreshPending, startRefresh] = useTransition();

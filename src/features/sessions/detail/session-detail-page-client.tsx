@@ -75,6 +75,7 @@ import {
 import type { SessionArtifactSummary } from "@/features/sessions/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
@@ -167,7 +168,10 @@ function SessionDetailContent({
   const router = useRouter();
   const searchParams = useSearchParams();
   const { pushToast } = useOptionalToast();
-  const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
+  const supabaseConfig = useSupabasePublicConfig();
+  const [supabase] = useState<SupabaseClient<Database>>(() =>
+    createSupabaseBrowserClient(supabaseConfig),
+  );
   const { recovery } = useRealtimeRecovery();
   const [session, setSession] = useState(initialData.session);
   const latestSessionRef = useRef(session);
