@@ -113,6 +113,7 @@ flowchart TB
 - Batch 1: this plan and platform-independent production checks, in separate PRs.
 - Batch 2: runtime public configuration, then container packaging.
 - Later: database/sandbox qualification, AWS staging, cutover, enterprise installation.
+- Start qualification with [read-only AWS discovery](AWS-DISCOVERY.md); inventory does not establish database or sandbox compatibility.
 - Foundation code needs no AWS credentials. Infrastructure work needs an AWS account, region, and SSO/assumable role.
 - Each PR waits for human review and merge; dependent batches follow after merge.
 

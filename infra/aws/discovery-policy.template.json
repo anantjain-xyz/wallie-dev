@@ -1,0 +1,36 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRegionalCatalogAndNetworks",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeInstanceTypeOfferings",
+        "rds:DescribeDBEngineVersions",
+        "rds:DescribeOrderableDBInstanceOptions"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<REGION>",
+          "aws:PrincipalAccount": "<ACCOUNT_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadStandardEc2CpuQuota",
+      "Effect": "Allow",
+      "Action": "servicequotas:GetServiceQuota",
+      "Resource": "arn:<PARTITION>:servicequotas:<REGION>:<ACCOUNT_ID>:ec2/L-1216C47A",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<REGION>",
+          "aws:PrincipalAccount": "<ACCOUNT_ID>"
+        }
+      }
+    }
+  ]
+}
