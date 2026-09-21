@@ -117,6 +117,7 @@ flowchart TB
 - Later: database/sandbox qualification, AWS staging, cutover, enterprise installation.
 - Start qualification with [read-only AWS discovery](AWS-DISCOVERY.md); inventory does not establish database or sandbox compatibility.
 - Prepare [private Terraform state storage](AWS-STATE-BOOTSTRAP.md) before the network foundation; this batch creates no compute.
+- Reserve the [two-AZ staging network](AWS-STAGING-NETWORK.md); workload security controls and compute follow after its review and deployment.
 - Foundation code needs no AWS credentials. Infrastructure work needs an AWS account, region, and SSO/assumable role.
 - Each PR waits for human review and merge; dependent batches follow after merge.
 

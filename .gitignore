@@ -45,3 +45,13 @@ yarn-error.log*
 
 # local verification / screenshot proof artifacts
 .wallie/
+
+# Terraform local state, provider downloads, plans, and account-specific inputs
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
