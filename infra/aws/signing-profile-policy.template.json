@@ -1,0 +1,103 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateTaggedSigningProfile",
+      "Effect": "Allow",
+      "Action": "signer:PutSigningProfile",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-registry",
+          "aws:RequestTag/Project": "Wallie",
+          "aws:RequestTag/Environment": "staging",
+          "aws:RequestTag/ManagedBy": "Terraform",
+          "aws:RequestTag/Component": "signing",
+          "aws:RequestTag/Name": "wallie_staging_images"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ReadExactSigningProfile",
+      "Effect": "Allow",
+      "Action": ["signer:GetSigningProfile", "signer:ListTagsForResource"],
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "BootstrapTagsOnExactSigningProfile",
+      "Effect": "Allow",
+      "Action": "signer:TagResource",
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-registry",
+          "aws:RequestTag/Project": "Wallie",
+          "aws:RequestTag/Environment": "staging",
+          "aws:RequestTag/ManagedBy": "Terraform",
+          "aws:RequestTag/Component": "signing",
+          "aws:RequestTag/Name": "wallie_staging_images"
+        },
+        "StringEqualsIfExists": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "UpdateTagsOnOwnedSigningProfile",
+      "Effect": "Allow",
+      "Action": "signer:TagResource",
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-registry"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    },
+    {
+      "Sid": "RemoveMetadataTagsFromOwnedSigningProfile",
+      "Effect": "Allow",
+      "Action": "signer:UntagResource",
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    }
+  ]
+}

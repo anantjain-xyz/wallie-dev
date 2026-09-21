@@ -5,6 +5,15 @@ mock_provider "aws" {
       arn        = "arn:aws:iam::123456789012:user/registry-test"
     }
   }
+
+  mock_resource "aws_signer_signing_profile" {
+    defaults = {
+      arn         = "arn:aws:signer:us-west-2:123456789012:/signing-profiles/wallie_staging_images"
+      version     = "a1b2c3d4e5"
+      version_arn = "arn:aws:signer:us-west-2:123456789012:/signing-profiles/wallie_staging_images/a1b2c3d4e5"
+      status      = "Active"
+    }
+  }
 }
 
 variables {
@@ -59,6 +68,32 @@ run "repository_configuration" {
   }
 }
 
+run "signing_profile_configuration" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_signer_signing_profile.images.name == "wallie_staging_images" &&
+      aws_signer_signing_profile.images.platform_id == "Notation-OCI-SHA384-ECDSA" &&
+      one(aws_signer_signing_profile.images.signature_validity_period).value == 1 &&
+      one(aws_signer_signing_profile.images.signature_validity_period).type == "YEARS"
+    )
+    error_message = "Use the fixed OCI signing profile with explicit one-year signature validity."
+  }
+
+  assert {
+    condition = aws_signer_signing_profile.images.tags == tomap({
+      Name        = "wallie_staging_images"
+      Project     = "Wallie"
+      Environment = "staging"
+      ManagedBy   = "Terraform"
+      Component   = "signing"
+      WallieStack = "wallie-staging-registry"
+    })
+    error_message = "The signing profile must carry the registry ownership marker and signing metadata."
+  }
+}
+
 # Mock-generated attributes verify output wiring without creating AWS resources.
 run "repository_outputs" {
   command = apply
@@ -75,6 +110,17 @@ run "repository_outputs" {
       ])
     )
     error_message = "Outputs must expose the corresponding repository names, ARNs, and image URLs."
+  }
+
+  assert {
+    condition = output.signing_profile == {
+      name        = "wallie_staging_images"
+      arn         = "arn:aws:signer:us-west-2:123456789012:/signing-profiles/wallie_staging_images"
+      version     = "a1b2c3d4e5"
+      version_arn = "arn:aws:signer:us-west-2:123456789012:/signing-profiles/wallie_staging_images/a1b2c3d4e5"
+      status      = "Active"
+    }
+    error_message = "Expose the signing profile name, ARN, version identity, and status without mixing fields."
   }
 }
 
@@ -103,7 +149,7 @@ run "reject_wrong_caller_account" {
       arn        = "arn:aws:iam::999999999999:user/registry-test"
     }
   }
-  expect_failures = [aws_ecr_repository.application]
+  expect_failures = [aws_ecr_repository.application, aws_signer_signing_profile.images]
 }
 
 run "reject_root_caller" {
@@ -115,5 +161,5 @@ run "reject_root_caller" {
       arn        = "arn:aws:iam::123456789012:root"
     }
   }
-  expect_failures = [aws_ecr_repository.application]
+  expect_failures = [aws_ecr_repository.application, aws_signer_signing_profile.images]
 }

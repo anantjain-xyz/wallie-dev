@@ -78,20 +78,18 @@ node scripts/publish-aws-image.mjs \
 
 ## Verification boundary
 
-- Local tests exercise command ordering and failure handling with stubbed external operations; existing container checks exercise real Docker packaging and runtime behavior.
-- **Live check · September 21, 2026:** web and worker images from merged revision `d2841540` both uploaded; registry manifest/config verification and fresh ECR scans completed.
-- **Release blocked:** each scan reported 3 Critical, 14 High, 8 Medium, and 1 Undefined finding. The publisher returned failure and retained private receipts; both images remain unsigned and not deployable.
-- After any base-image fix merges, publish both components again and inspect the new scans. Package-version checks do not establish scan clearance; the High/Critical gate remains enforced.
+- Local tests exercise command ordering and failure handling; real Docker smoke checks exercise both runtimes.
+- **Live check · September 21, 2026:** merged revision `00c0cac9` (Node 22.23.2 / Debian 13) passed both runtime smoke checks, uploads, manifest/config verification, and fresh ECR scans.
 
-### Base refresh · September 21, 2026
+| ECR findings per image | Previous Debian 12 (`d2841540`) | Current Debian 13 (`00c0cac9`) |
+| ---------------------- | ------------------------------- | ------------------------------ |
+| Critical               | 3                               | 0                              |
+| High                   | 14                              | 1                              |
+| Medium                 | 8                               | 0                              |
+| Undefined              | 1                               | 1                              |
 
-- Both containers now pin the official [Node 22.23.2](https://nodejs.org/en/blog/release/v22.23.2) / Debian 13 slim image by digest. AMD64 package inspection confirms these versions:
-
-| Source package                                                           | Installed version  | Prior High/Critical findings with fixes present |
-| ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------- |
-| [Perl](https://security-tracker.debian.org/tracker/source-package/perl)  | `5.40.1-6+deb13u1` | 8, including all 3 Critical                     |
-| [PCRE2](https://security-tracker.debian.org/tracker/CVE-2026-89161)      | `10.46-1~deb13u2`  | 3                                               |
-| [util-linux](https://security-tracker.debian.org/tracker/CVE-2026-53615) | `2.41.5-0+deb13u1` | 1                                               |
-
-- **Expected blockers from the existing findings:** util-linux `CVE-2026-78408`, `CVE-2026-78409`, `CVE-2026-78410`, `CVE-2026-76642`; zlib `CVE-2026-85091`. Debian still lists these as unfixed for this release. [util-linux tracker](https://security-tracker.debian.org/tracker/source-package/util-linux), [zlib tracker](https://security-tracker.debian.org/tracker/CVE-2026-85091)
-- A new scan may identify additional findings. No exceptions or severity overrides are introduced; signing and deployment remain later gates.
+- **Release blocked:** both publishers returned failure and retained private receipts. Images remain unsigned and not deployable; no severity overrides or exceptions.
+- Remaining High: `CVE-2026-85091`, source package zlib `1.3.dfsg+really1.3.1-1`. The advisory describes versions **1.3.1.2–1.3.2**; the installed Debian source is 1.3.1. This is a classification-mismatch candidate, not an accepted exception. [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-85091), [upstream introducing change](https://github.com/madler/zlib/commit/81cc0bebedd935daeb81b0b6e475d8786b51af3d), [upstream fix](https://github.com/madler/zlib/commit/df84af25dc1942490e1d1c899a07619152a46148)
+- Undefined: `CVE-2026-82560`, source package Perl `5.40.1-6+deb13u1`; retain for triage. A passing BASIC scan will still not establish complete vulnerability clearance.
+- Next: obtain a supported package fix or authoritative scanner-data correction, then publish again and require a fresh passing scan. Do not remove package metadata or bypass the gate.
+- The independent [signing profile foundation](AWS-SIGNING-PROFILE.md) prepares infrastructure only. Actual signing, verification, provenance, and broader package scanning remain later gates.
