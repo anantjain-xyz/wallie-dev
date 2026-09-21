@@ -85,6 +85,8 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
 
 ## 3. Deploy the web app (Vercel)
 
+For the packaged Docker image and runtime configuration smoke check, see [Web container](WEB-CONTAINER.md).
+
 1. Import the repository into Vercel.
 2. Set the environment variables (mirror `.env.example`):
 
