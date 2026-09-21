@@ -4,9 +4,10 @@ Proposal · September 19, 2026
 
 **Progress · September 21, 2026**
 
-- **Deployed:** private Terraform state, hardened two-AZ staging VPC, empty web/worker ECR repositories.
+- **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with the first qualification images.
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
-- **Current batch:** finish image-publisher review fixes, then qualify live uploads and ECR scans. No application or database is running on AWS yet.
+- **Live image checks (`d2841540`):** both uploads and manifest verification passed; each ECR scan blocked release on 3 Critical and 14 High base-package findings. Images remain unsigned and not deployable.
+- **Current batch:** address the base-image findings before signing. No application or database is running on AWS yet.
 
 | Remaining               | Exit check                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
