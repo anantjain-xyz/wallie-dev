@@ -1,5 +1,5 @@
 # Keep computed resource attributes unknown during plan: generating mock empty
-# collections here would hide removal of explicit route = [] configuration.
+# collections here would hide removal of explicit empty routes or security rules.
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
     defaults = {
@@ -19,6 +19,27 @@ variables {
   aws_account_id     = "123456789012"
   aws_region         = "us-west-2"
   availability_zones = ["us-west-2a", "us-west-2b"]
+}
+
+# The one-time bootstrap has its own mock state so the full-plan security
+# assertions below still evaluate newly configured resources.
+run "foundation_bootstrap" {
+  command   = apply
+  state_key = "foundation_bootstrap"
+
+  plan_options {
+    target = [aws_route_table_association.tier]
+  }
+
+  assert {
+    condition = (
+      output.default_security_group_id == aws_vpc.main.default_security_group_id &&
+      output.default_network_acl_id == aws_vpc.main.default_network_acl_id &&
+      length(output.default_security_group_id) > 0 &&
+      length(output.default_network_acl_id) > 0
+    )
+    error_message = "Foundation bootstrap must expose the VPC defaults before hardening adoption."
+  }
 }
 
 run "network_configuration" {
@@ -80,6 +101,22 @@ run "network_configuration" {
     )
     error_message = "Only the two public route tables may have a default IPv4 route."
   }
+
+  assert {
+    condition = (
+      length(aws_default_security_group.main.ingress) == 0 &&
+      length(aws_default_security_group.main.egress) == 0
+    )
+    error_message = "The VPC default security group must explicitly permit no ingress or egress."
+  }
+
+  assert {
+    condition = (
+      length(aws_network_acl.sandbox.ingress) == 0 &&
+      length(aws_network_acl.sandbox.egress) == 0
+    )
+    error_message = "The reserved sandbox ACL must explicitly permit no ingress or egress."
+  }
 }
 
 # This apply uses the mocked provider above, never AWS. Generated IDs allow
@@ -113,6 +150,26 @@ run "subnet_and_route_associations" {
       ])
     )
     error_message = "All network resources must belong to the new VPC and use its internet gateway."
+  }
+
+  assert {
+    condition = (
+      aws_default_security_group.main.vpc_id == aws_vpc.main.id &&
+      aws_network_acl.sandbox.vpc_id == aws_vpc.main.id
+    )
+    error_message = "Both security controls must belong to this module's VPC."
+  }
+
+  assert {
+    condition = (
+      toset(keys(aws_network_acl_association.sandbox)) == toset(["sandbox-a", "sandbox-b"]) &&
+      alltrue([
+        for key, association in aws_network_acl_association.sandbox :
+        association.subnet_id == aws_subnet.tier[key].id &&
+        association.network_acl_id == aws_network_acl.sandbox.id
+      ])
+    )
+    error_message = "The deny-all ACL must attach to exactly the two sandbox subnets and no other tier."
   }
 }
 
