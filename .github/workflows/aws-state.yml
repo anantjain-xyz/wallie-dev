@@ -1,0 +1,32 @@
+name: AWS state bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/aws/state-bootstrap.yaml"
+      - ".github/workflows/aws-state.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/aws/state-bootstrap.yaml"
+      - ".github/workflows/aws-state.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cloudformation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CloudFormation validator
+        run: python -m pip install cfn-lint==1.57.0
+      - name: Validate staging state template without AWS access
+        run: cfn-lint --template infra/aws/state-bootstrap.yaml --regions us-west-2
