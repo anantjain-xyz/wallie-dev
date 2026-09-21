@@ -1,0 +1,41 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListStateBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:<PARTITION>:s3:::<BUCKET_NAME>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "s3:ResourceAccount": "<ACCOUNT_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadAndWriteFoundationState",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "s3:ResourceAccount": "<ACCOUNT_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "ManageFoundationStateLock",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate.tflock",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "s3:ResourceAccount": "<ACCOUNT_ID>"
+        }
+      }
+    }
+  ]
+}
