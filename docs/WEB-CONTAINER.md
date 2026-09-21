@@ -1,7 +1,7 @@
 # Web container
 
 - Packages the Next.js website, dashboard, and API; run the [worker](WORKER-CONTAINER.md) separately.
-- Pinned Node 22/Debian image, non-root user, locked Linux production dependencies.
+- Pinned Node 22.23.2/Debian 13 slim image, non-root user, locked Linux production dependencies.
 - Builds without installation URLs or credentials. Package and Google Fonts downloads require network access during the build.
 - Uses `next start` and retains its configuration files, so the same image supports different runtime installations.
 

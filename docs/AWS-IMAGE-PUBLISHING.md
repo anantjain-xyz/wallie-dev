@@ -79,4 +79,19 @@ node scripts/publish-aws-image.mjs \
 ## Verification boundary
 
 - Local tests exercise command ordering and failure handling with stubbed external operations; existing container checks exercise real Docker packaging and runtime behavior.
-- First live upload follows merge and policy attachment. Verify the digest and real ECR findings before claiming publishing is qualified.
+- **Live check · September 21, 2026:** web and worker images from merged revision `d2841540` both uploaded; registry manifest/config verification and fresh ECR scans completed.
+- **Release blocked:** each scan reported 3 Critical, 14 High, 8 Medium, and 1 Undefined finding. The publisher returned failure and retained private receipts; both images remain unsigned and not deployable.
+- After any base-image fix merges, publish both components again and inspect the new scans. Package-version checks do not establish scan clearance; the High/Critical gate remains enforced.
+
+### Base refresh · September 21, 2026
+
+- Both containers now pin the official [Node 22.23.2](https://nodejs.org/en/blog/release/v22.23.2) / Debian 13 slim image by digest. AMD64 package inspection confirms these versions:
+
+| Source package                                                           | Installed version  | Prior High/Critical findings with fixes present |
+| ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------- |
+| [Perl](https://security-tracker.debian.org/tracker/source-package/perl)  | `5.40.1-6+deb13u1` | 8, including all 3 Critical                     |
+| [PCRE2](https://security-tracker.debian.org/tracker/CVE-2026-89161)      | `10.46-1~deb13u2`  | 3                                               |
+| [util-linux](https://security-tracker.debian.org/tracker/CVE-2026-53615) | `2.41.5-0+deb13u1` | 1                                               |
+
+- **Expected blockers from the existing findings:** util-linux `CVE-2026-78408`, `CVE-2026-78409`, `CVE-2026-78410`, `CVE-2026-76642`; zlib `CVE-2026-85091`. Debian still lists these as unfixed for this release. [util-linux tracker](https://security-tracker.debian.org/tracker/source-package/util-linux), [zlib tracker](https://security-tracker.debian.org/tracker/CVE-2026-85091)
+- A new scan may identify additional findings. No exceptions or severity overrides are introduced; signing and deployment remain later gates.

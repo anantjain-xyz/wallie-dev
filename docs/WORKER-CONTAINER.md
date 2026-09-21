@@ -1,7 +1,7 @@
 # Worker container
 
 - Packages the existing worker for an always-on container host.
-- Node 22, Debian slim, non-root user, locked production dependencies.
+- Pinned Node 22.23.2/Debian 13 slim image, non-root user, locked production dependencies.
 - Configuration is supplied when the container starts; no credentials are needed to build.
 - Web hosting, Supabase, and sandbox providers remain separate services.
 
