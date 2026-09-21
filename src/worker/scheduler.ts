@@ -10,7 +10,7 @@ type AdminClient = SupabaseClient<Database>;
 type AgentJobRow = Tables<"agent_jobs">;
 
 export interface SchedulerOptions {
-  /** Returns true once a shutdown has been requested. */
+  /** Returns true once draining or shutdown has been requested. */
   isShuttingDown: () => boolean;
   /** Sleep helper; injectable for tests. */
   delay?: (ms: number) => Promise<void>;
@@ -21,7 +21,7 @@ export interface Scheduler {
   run(): Promise<void>;
   /** The jobs this worker is currently processing. */
   getActiveJobIds(): string[];
-  /** Wait for every job already claimed by this scheduler to settle. */
+  /** After run() settles, wait for claimed jobs and their heartbeat writes. */
   waitForIdle(): Promise<void>;
 }
 
@@ -38,14 +38,19 @@ export function createScheduler(
   options: SchedulerOptions,
 ): Scheduler {
   const inFlight = new Map<string, Promise<void>>();
+  const heartbeats = new Set<Promise<void>>();
   const delay = options.delay ?? defaultDelay;
 
   function getActiveJobIds(): string[] {
     return [...inFlight.keys()];
   }
 
-  async function emitHeartbeat(): Promise<void> {
-    await sendHeartbeat(admin, config.workerId, getActiveJobIds());
+  function emitHeartbeat(): Promise<void> {
+    const heartbeat = sendHeartbeat(admin, config.workerId, getActiveJobIds()).finally(() => {
+      heartbeats.delete(heartbeat);
+    });
+    heartbeats.add(heartbeat);
+    return heartbeat;
   }
 
   function startJob(job: AgentJobRow): void {
@@ -105,6 +110,9 @@ export function createScheduler(
 
   async function waitForIdle(): Promise<void> {
     await Promise.allSettled([...inFlight.values()]);
+    // Completion removes a job before its final heartbeat finishes. These
+    // writes must settle too, including when the in-flight set is already empty.
+    await Promise.allSettled([...heartbeats]);
   }
 
   return { getActiveJobIds, run, waitForIdle };

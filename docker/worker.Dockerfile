@@ -11,11 +11,11 @@ RUN pnpm install --prod --frozen-lockfile
 
 FROM base AS worker
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production WORKER_CONTROL_SOCKET=/tmp/wallie-worker/control.sock
 WORKDIR /app
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node LICENSE package.json tsconfig.json ./
-COPY --chown=node:node scripts/install-crash-handlers.mjs scripts/register-server-only.mjs ./scripts/
+COPY --chown=node:node scripts/install-crash-handlers.mjs scripts/register-server-only.mjs scripts/worker-control.mjs ./scripts/
 COPY --chown=node:node src ./src
 
 USER node

@@ -36,9 +36,8 @@ export function createTimerTaskTracker(
 }
 
 /**
- * Finish a graceful worker shutdown after the scheduler has stopped claiming
- * new jobs. Timers intentionally remain active while jobs drain so the worker
- * continues advertising ownership of its in-flight set.
+ * Finish shutdown after work has drained. Heartbeats remain active until this
+ * final step; settle interval and scheduler heartbeat writes before deregistering.
  */
 export async function finishWorkerShutdown(input: FinishWorkerShutdownInput): Promise<void> {
   await input.scheduler.waitForIdle();

@@ -187,4 +187,65 @@ describe("createScheduler", () => {
     expect(delay).toHaveBeenCalledWith(config.pollIntervalMs * 2);
     expect(mocked.runClaimedJob).not.toHaveBeenCalled();
   });
+
+  it("drains a job returned by an outstanding claim after intake closes", async () => {
+    let finishClaim!: (result: ClaimNextResult) => void;
+    const pendingClaim = new Promise<ClaimNextResult>((resolve) => {
+      finishClaim = resolve;
+    });
+    const activeJob = deferred();
+    mocked.claimNextJob.mockReturnValue(pendingClaim);
+    mocked.runClaimedJob.mockReturnValue(activeJob.promise);
+    mocked.sendHeartbeat.mockResolvedValue(undefined);
+    let draining = false;
+    const scheduler = createScheduler(admin, config, { isShuttingDown: () => draining });
+    const running = scheduler.run();
+
+    draining = true;
+    expect(scheduler.getActiveJobIds()).toEqual([]);
+    finishClaim(job("late-claim"));
+    await running;
+
+    expect(mocked.claimNextJob).toHaveBeenCalledOnce();
+    expect(mocked.runClaimedJob).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({ id: "late-claim" }),
+    );
+    expect(scheduler.getActiveJobIds()).toEqual(["late-claim"]);
+    let idle = false;
+    const waiting = scheduler.waitForIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    activeJob.resolve();
+    await waiting;
+    expect(idle).toBe(true);
+  });
+
+  it("waits for a completion heartbeat after the active job list is empty", async () => {
+    const completionHeartbeat = deferred();
+    let draining = false;
+    mocked.claimNextJob.mockImplementation(async () => {
+      draining = true;
+      return job("job-1");
+    });
+    mocked.runClaimedJob.mockResolvedValue(undefined);
+    mocked.sendHeartbeat.mockImplementation((_admin, _workerId, activeJobIds: string[]) =>
+      activeJobIds.length === 0 ? completionHeartbeat.promise : Promise.resolve(),
+    );
+    const scheduler = createScheduler(admin, config, { isShuttingDown: () => draining });
+    await scheduler.run();
+    expect(scheduler.getActiveJobIds()).toEqual([]);
+
+    let idle = false;
+    const waiting = scheduler.waitForIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    completionHeartbeat.resolve();
+    await waiting;
+    expect(idle).toBe(true);
+  });
 });

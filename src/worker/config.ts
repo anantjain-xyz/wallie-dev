@@ -1,4 +1,8 @@
+import { workerControlEnvSchema } from "@/env/worker";
+
 export type WorkerConfig = {
+  /** Optional local operator socket; disabled when unset. */
+  controlSocketPath?: string;
   /** How often the worker polls for queued jobs (milliseconds). */
   pollIntervalMs: number;
   /** How often the worker sends a heartbeat (milliseconds). */
@@ -27,7 +31,9 @@ const DEFAULT_MAX_CONCURRENT_JOBS = 10;
 
 /** Build worker config with baked-in defaults and a generated worker id. */
 export function parseWorkerConfig(): WorkerConfig {
+  const controlEnv = workerControlEnvSchema.parse(process.env);
   return {
+    controlSocketPath: controlEnv.WORKER_CONTROL_SOCKET,
     pollIntervalMs: 2_000,
     heartbeatIntervalMs: 10_000,
     stallSweepIntervalMs: 30_000,

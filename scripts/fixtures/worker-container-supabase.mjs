@@ -4,8 +4,10 @@ import { createServer } from "node:http";
 const state = {
   workerId: null,
   heartbeats: 0,
+  lastHeartbeatAt: null,
   claims: 0,
   cursorPolls: 0,
+  workRequests: 0,
   deregistered: false,
   errors: [],
 };
@@ -45,6 +47,7 @@ createServer(async (request, response) => {
         return fail("Invalid idle heartbeat");
       }
       state.heartbeats += 1;
+      state.lastHeartbeatAt = body.last_heartbeat_at;
       return reply(204, null);
     }
     if (request.method === "DELETE") {
@@ -52,6 +55,7 @@ createServer(async (request, response) => {
       return reply(204, null);
     }
   }
+  state.workRequests += 1;
   if (url.pathname === "/rest/v1/rpc/claim_next_agent_job" && request.method === "POST") {
     if (body.default_concurrency_limit !== 2) return fail("Invalid queue claim");
     state.claims += 1;

@@ -86,7 +86,7 @@ every live job appears in the stored snapshot. A long-running setup or runner
 that emits no activity can therefore be treated as unowned and recovered once
 its activity exceeds the stall timeout.
 
-There is currently no public worker health endpoint. Service-role-only
+There is no public worker health endpoint. The optional [local control socket](WORKER-CONTAINER.md#drain-before-a-planned-stop) reports drain status, not application readiness. Service-role-only
 `worker_heartbeats`, worker logs, and durable job/run activity are the health
 evidence.
 
@@ -145,21 +145,26 @@ resource relies on provider TTL or operator cleanup.
 
 Timer tasks are fire-and-forget. There is currently no mutex preventing a slow
 sweep from overlapping its next interval or a manager-triggered maintenance
-tick.
+tick. Worker drain stops new maintenance ticks and waits for callbacks already running.
 
 ## Cancellation and shutdown
 
 User and reconciler cancellation must call the shared cancellation service.
 Direct status updates do not close sandbox-attachment and late-write races.
 
-Graceful process shutdown drains already-claimed work:
+Worker drain and process termination are separate steps:
 
-1. `SIGINT` or `SIGTERM` sets the shutdown flag.
-2. The scheduler stops claiming new jobs while active jobs continue running.
-3. Heartbeat and maintenance timers remain active until every in-flight job
-   settles, so the stall detector continues to see those jobs as owned.
-4. The worker clears its timers, deregisters its heartbeat row, and exits
-   naturally after the drain completes.
+| State      | Behavior                                                                                                                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `running`  | Claims jobs, handles Cursor sign-ins, and schedules maintenance.                                                           |
+| `draining` | Stops new intake; waits for pending claims, owned jobs, Cursor flow release, and running maintenance. Heartbeats continue. |
+| `drained`  | No new work; stays alive and heartbeating until stopped.                                                                   |
+| `stopping` | `SIGINT`/`SIGTERM` requested; completes the same drain, settles heartbeat writes, deregisters, and exits.                  |
+
+- Use the [local drain command](WORKER-CONTAINER.md#drain-before-a-planned-stop) before planned termination on hosts with a short stop deadline.
+- A pending claim can return another owned job after drain begins; an empty active-job list alone does **not** prove drain completion.
+- Cursor sign-in flows are aborted and released for another worker; pipeline jobs finish normally.
+- Direct `SIGINT`/`SIGTERM` still drains gracefully, including when local control is disabled.
 
 The worker does not impose a separate drain deadline. Sandbox provider timeouts
 bound normal execution, while a shorter application deadline would recreate the
