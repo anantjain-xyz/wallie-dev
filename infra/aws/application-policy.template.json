@@ -1,0 +1,210 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadCluster",
+      "Effect": "Allow",
+      "Action": ["ecs:DescribeClusters", "ecs:ListTagsForResource"],
+      "Resource": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateCluster",
+      "Effect": "Allow",
+      "Action": "ecs:CreateCluster",
+      "Resource": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-application"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "StringEqualsIfExists": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-application"
+        }
+      }
+    },
+    {
+      "Sid": "TagClusterAtCreation",
+      "Effect": "Allow",
+      "Action": "ecs:TagResource",
+      "Resource": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-application",
+          "ecs:CreateAction": "CreateCluster"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureOwnedCluster",
+      "Effect": "Allow",
+      "Action": "ecs:UpdateCluster",
+      "Resource": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-application"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeLogGroups",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadLogGroupTags",
+      "Effect": "Allow",
+      "Action": "logs:ListTagsForResource",
+      "Resource": [
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateLogGroups",
+      "Effect": "Allow",
+      "Action": "logs:CreateLogGroup",
+      "Resource": [
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web:*",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-application"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNewLogGroups",
+      "Effect": "Allow",
+      "Action": "logs:TagResource",
+      "Resource": [
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-application"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "StringEqualsIfExists": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-application"
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureOwnedLogGroups",
+      "Effect": "Allow",
+      "Action": ["logs:PutRetentionPolicy", "logs:PutLogGroupDeletionProtection"],
+      "Resource": [
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web:*",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-application"
+        }
+      }
+    },
+    {
+      "Sid": "UpdateOwnedMetadata",
+      "Effect": "Allow",
+      "Action": ["ecs:TagResource", "logs:TagResource"],
+      "Resource": [
+        "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-application"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-application"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    },
+    {
+      "Sid": "RemoveOwnedMetadata",
+      "Effect": "Allow",
+      "Action": ["ecs:UntagResource", "logs:UntagResource"],
+      "Resource": [
+        "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-application"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Project", "Environment", "ManagedBy", "Component", "Name"]
+        },
+        "Null": {
+          "aws:TagKeys": "false"
+        }
+      }
+    },
+    {
+      "Sid": "ReadExistingEcsServiceRole",
+      "Effect": "Allow",
+      "Action": "iam:GetRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>"
+        }
+      }
+    }
+  ]
+}

@@ -19,7 +19,8 @@
       "Action": ["s3:GetObject", "s3:PutObject"],
       "Resource": [
         "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate",
-        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/registry.tfstate"
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/registry.tfstate",
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/application.tfstate"
       ],
       "Condition": {
         "StringEquals": {
@@ -34,7 +35,8 @@
       "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
       "Resource": [
         "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/foundation.tfstate.tflock",
-        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/registry.tfstate.tflock"
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/registry.tfstate.tflock",
+        "arn:<PARTITION>:s3:::<BUCKET_NAME>/staging/application.tfstate.tflock"
       ],
       "Condition": {
         "StringEquals": {
