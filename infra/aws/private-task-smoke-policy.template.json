@@ -1,0 +1,126 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunReviewedSmokeRevisions",
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": ["<WEB_DEFINITION_ARN>", "<WORKER_DEFINITION_ARN>"],
+      "Condition": {
+        "ArnEquals": { "ecs:cluster": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:cluster/wallie-staging" },
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/Project": "Wallie",
+          "aws:RequestTag/Environment": "staging",
+          "aws:RequestTag/ManagedBy": "ManualQualification",
+          "aws:RequestTag/Component": "private-task-smoke",
+          "aws:RequestTag/WallieStack": "wallie-staging-application",
+          "aws:RequestTag/Name": "wallie-staging-connectivity-smoke",
+          "aws:RequestTag/WallieSmokeRun": "<RUN_ID>"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "WallieStack",
+            "Name",
+            "WallieSmokeRun"
+          ]
+        },
+        "Bool": { "ecs:enable-execute-command": "false" },
+        "BoolIfExists": { "ecs:enable-ebs-volumes": "false" }
+      }
+    },
+    {
+      "Sid": "PassOnlyExecutionRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-web-execution",
+        "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-worker-execution"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "TagOnlyNewSmokeTasks",
+      "Effect": "Allow",
+      "Action": "ecs:TagResource",
+      "Resource": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:task/wallie-staging/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "ecs:CreateAction": "RunTask",
+          "aws:RequestTag/Project": "Wallie",
+          "aws:RequestTag/Environment": "staging",
+          "aws:RequestTag/ManagedBy": "ManualQualification",
+          "aws:RequestTag/Component": "private-task-smoke",
+          "aws:RequestTag/WallieStack": "wallie-staging-application",
+          "aws:RequestTag/Name": "wallie-staging-connectivity-smoke",
+          "aws:RequestTag/WallieSmokeRun": "<RUN_ID>"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Project",
+            "Environment",
+            "ManagedBy",
+            "Component",
+            "WallieStack",
+            "Name",
+            "WallieSmokeRun"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "InspectOrStopThisSmokeRun",
+      "Effect": "Allow",
+      "Action": ["ecs:DescribeTasks", "ecs:ListTagsForResource", "ecs:StopTask"],
+      "Resource": "arn:aws:ecs:<REGION>:<ACCOUNT_ID>:task/wallie-staging/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-application",
+          "aws:ResourceTag/Component": "private-task-smoke",
+          "aws:ResourceTag/WallieSmokeRun": "<RUN_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadThisSmokeRunLogs",
+      "Effect": "Allow",
+      "Action": "logs:GetLogEvents",
+      "Resource": [
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web:log-stream:wallie-smoke-<RUN_ID>/smoke/*",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker:log-stream:wallie-smoke-<RUN_ID>/smoke/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadUnscopableQualificationMetadata",
+      "Effect": "Allow",
+      "Action": ["ecs:DescribeTaskDefinition", "ec2:DescribeNetworkInterfaces"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    }
+  ]
+}
