@@ -48,7 +48,7 @@ aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com
 ```
 
 - Use no custom suffix. On timeout or an ambiguous result, inspect the role before retrying; do not assume creation failed.
-- Live creation remains unqualified until this post-merge check. If AWS denies creation, stop and review the reported action; do not broaden IAM permissions automatically.
+- If AWS denies creation, stop and review the reported action; do not broaden IAM permissions automatically.
 
 ## Verify before removing access
 
@@ -77,4 +77,9 @@ aws iam get-policy-version --policy-arn "$WALLIE_ECS_POLICY_ARN" --version-id "$
 
 - Wait for IAM propagation and repeat reads if needed. Stop on mismatched identity, trust, path, or permissions; do not repair the service-owned role automatically.
 - After verification, detach **WallieStagingEcsServiceRoleBootstrap** from `wallie-local` in IAM. Keep **WallieStagingApplication**, whose existing `GetRole` permission supports Terraform's prerequisite check.
-- Confirm `GetRole` still succeeds, then resume the application foundation's absence checks and saved-plan review. Expected application plan remains **3 additions / 0 changes / 0 deletions**.
+- Confirm `GetRole` still succeeds, then resume the application foundation's saved-plan review. For a **fresh application installation**, require absence checks and **3 additions / 0 changes / 0 deletions**. Existing deployments must inspect managed state; see [partial recovery](AWS-APPLICATION-FOUNDATION.md#recover-a-partial-first-apply).
+
+## Live qualification · September 22, 2026 (UTC)
+
+- Created once after explicit `NoSuchEntity`; verified the exact role ARN/path, ECS-only trust, sole AWS-managed policy, and absence of inline policies or a permissions boundary.
+- Detached the temporary bootstrap grant; `GetRole` still passed with steady-state application access. The [application foundation](AWS-APPLICATION-FOUNDATION.md#live-qualification--september-22-2026-utc) subsequently completed recovery with zero drift.

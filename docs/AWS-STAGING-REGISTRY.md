@@ -83,4 +83,4 @@ terraform -chdir=infra/aws/staging-registry plan -var-file="$WALLIE_AWS_FILES/re
 
 - Verify repository and [signing profile readback](AWS-SIGNING-PROFILE.md#verify-and-remove-bootstrap-access) match the plan; the final plan must exit **0**. CI mocks do not prove live IAM or effective scanning. Detach the signing bootstrap grant afterward, before image publishing.
 - No fixed repository charge; stored images and applicable transfer incur [ECR usage charges](https://aws.amazon.com/ecr/pricing/). Empty repositories add no image storage; Terraform state retains its separate S3 usage.
-- Continue with [manual image publishing](AWS-IMAGE-PUBLISHING.md); actual signing and release verification remain separate PRs. Retention must preserve deployed and rollback images; no expiration policy is added here.
+- Continue with [manual image publishing](AWS-IMAGE-PUBLISHING.md) and the merged [signing workflow](AWS-IMAGE-SIGNING.md). Both images passed live scan/signature qualification; provenance, broader scanning, and deployment remain later gates. Retention must preserve deployed and rollback images; no expiration policy is added here.

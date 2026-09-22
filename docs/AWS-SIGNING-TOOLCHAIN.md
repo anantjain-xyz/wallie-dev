@@ -56,6 +56,4 @@ node scripts/prepare-aws-signing-toolchain.mjs
 
 ## Next
 
-- Qualify the [gated signing workflow](AWS-IMAGE-SIGNING.md) against live AWS once the image blocker is resolved.
 - Add Linux CI packaging, provenance, broader package scanning, and GitHub OIDC publishing.
-- Existing web and worker images still fail the High-severity scan gate.

@@ -81,6 +81,7 @@ node scripts/publish-aws-image.mjs \
 
 ## Remaining gates
 
-1. Qualify the supported base for both images with fresh passing High/Critical scans; keep the scan gate unchanged.
-2. Qualify live IAM authorization, signing, and strict verification, including missing, expired, revoked, or untrusted signatures and failed revocation checks. Local tests do not establish AWS interoperability.
-3. Add Linux CI tooling, provenance, broader package scanning, and GitHub OIDC publishing before deployment qualification. A valid signature does not clear vulnerability findings.
+The supported base, fresh passing scans, live IAM authorization, signing, and strict verification passed for both images; see [live qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary).
+
+1. Complete live negative-case qualification for missing, expired, revoked, or untrusted signatures and failed revocation checks. Local tests alone do not establish these AWS failure paths.
+2. Add Linux CI tooling, provenance, broader package scanning, and GitHub OIDC publishing before deployment qualification. A valid signature does not clear vulnerability findings.

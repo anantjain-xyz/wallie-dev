@@ -1,12 +1,12 @@
 # AWS image-signing profile
 
-**Prepare one AWS Signer profile; image signing and deployment remain blocked.** Apply only after this PR is reviewed and merged.
+**Provision one AWS Signer profile.** Apply infrastructure changes only after review and merge; image signing uses the separate [qualified workflow](AWS-IMAGE-PUBLISHING.md#verification-boundary).
 
 ```mermaid
 flowchart LR
     tf["Registry Terraform root"] --> profile["AWS Signer · wallie_staging_images"]
     tf --> state[("Existing staging/registry.tfstate")]
-    profile -. "Later: sign + verify digest" .-> images["Qualified ECR images"]
+    profile -. "Sign + verify digest" .-> images["Qualified ECR images"]
 ```
 
 | Setting            | Value                                                         |
@@ -77,7 +77,7 @@ aws signer list-tags-for-resource --resource-arn "$WALLIE_SIGNING_PROFILE_ARN" -
 - Require all six tags: `Name=wallie_staging_images`, `Project=Wallie`, `Environment=staging`, `ManagedBy=Terraform`, `Component=signing`, `WallieStack=wallie-staging-registry`. Stop on a read error or any missing/mismatched value.
 - Run the final registry plan with `-detailed-exitcode`; require **0**. Then detach **WallieStagingSigningProfileBootstrap** in IAM.
 - Mock tests cover configuration, output wiring, and account/root guards. Mock results alone do not prove live IAM or creation; see the recorded live check below.
-- Continue with offline [signing preparation](AWS-IMAGE-SIGNING.md). Actual digest signing + strict verification must wait for [image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary).
+- Use the [gated signing workflow](AWS-IMAGE-SIGNING.md) with fresh passing image scans. Both images have passed [live signing and strict verification](AWS-IMAGE-PUBLISHING.md#verification-boundary); deployment approval remains separate.
 
 ## Live verification · September 21, 2026
 
