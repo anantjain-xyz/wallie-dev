@@ -16,6 +16,7 @@ const logs = ["web", "worker"].map(
 const metadata = ["Project", "Environment", "ManagedBy", "Component", "Name"];
 const array = (value: string | string[]) => (Array.isArray(value) ? value : [value]);
 type Statement = {
+  Sid: string;
   Effect: string;
   Action: string | string[];
   Resource: string | string[];
@@ -88,7 +89,7 @@ describe("AWS application foundation preparation", () => {
     );
   });
 
-  it("uses the two CloudWatch ARN forms only for the APIs that require them", () => {
+  it("limits both CloudWatch ARN forms to their reviewed API grants", () => {
     for (const action of [
       "logs:CreateLogGroup",
       "logs:PutRetentionPolicy",
@@ -96,9 +97,13 @@ describe("AWS application foundation preparation", () => {
     ])
       for (const item of grants(action))
         expect(array(item.Resource)).toEqual(logs.map((arn) => `${arn}:*`));
-    for (const action of ["logs:ListTagsForResource", "logs:TagResource", "logs:UntagResource"])
+    for (const action of ["logs:ListTagsForResource", "logs:UntagResource"])
       for (const item of grants(action))
         expect(array(item.Resource).filter((arn) => arn.includes(":logs:"))).toEqual(logs);
+    for (const item of grants("logs:TagResource"))
+      expect(array(item.Resource).filter((arn) => arn.includes(":logs:"))).toEqual(
+        item.Sid === "TagNewLogGroups" ? [...logs, ...logs.map((arn) => `${arn}:*`)] : logs,
+      );
     for (const action of [
       "ecs:CreateCluster",
       "ecs:DescribeClusters",
@@ -109,6 +114,26 @@ describe("AWS application foundation preparation", () => {
     ])
       for (const item of grants(action))
         expect(array(item.Resource).filter((arn) => arn.includes(":ecs:"))).toEqual([cluster]);
+  });
+
+  it("preserves every condition while covering tagged creation at the exact log-group names", () => {
+    expect(statements().filter((item) => item.Sid === "TagNewLogGroups")).toEqual([
+      {
+        Sid: "TagNewLogGroups",
+        Effect: "Allow",
+        Action: "logs:TagResource",
+        Resource: [...logs, ...logs.map((arn) => `${arn}:*`)],
+        Condition: {
+          StringEquals: {
+            "aws:PrincipalAccount": account,
+            "aws:RequestedRegion": region,
+            "aws:RequestTag/WallieStack": marker,
+          },
+          "ForAllValues:StringEquals": { "aws:TagKeys": ["WallieStack", ...metadata] },
+          StringEqualsIfExists: { "aws:ResourceTag/WallieStack": marker },
+        },
+      },
+    ]);
   });
 
   it("permits prerequisite role reads but cannot create a service-linked role or pass one to a workload", () => {
