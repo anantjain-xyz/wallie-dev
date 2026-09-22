@@ -6,6 +6,7 @@ on:
     paths:
       - "docker/worker.Dockerfile*"
       - "scripts/check-worker-container.mjs"
+      - "scripts/fixtures/container-native-probe.mjs"
       - "scripts/publish-aws-image.mjs"
       - "scripts/lib/aws-image-*.mjs"
       - "scripts/fixtures/worker-container-supabase.mjs"
@@ -22,6 +23,7 @@ on:
     paths:
       - "docker/worker.Dockerfile*"
       - "scripts/check-worker-container.mjs"
+      - "scripts/fixtures/container-native-probe.mjs"
       - "scripts/publish-aws-image.mjs"
       - "scripts/lib/aws-image-*.mjs"
       - "scripts/fixtures/worker-container-supabase.mjs"

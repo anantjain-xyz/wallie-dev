@@ -74,6 +74,18 @@ try {
   ]);
   docker([
     "run",
+    "--rm",
+    "--network",
+    "none",
+    "--entrypoint",
+    "node",
+    imageId,
+    "--input-type=module",
+    "--eval",
+    readFileSync(new URL("./fixtures/container-native-probe.mjs", import.meta.url), "utf8"),
+  ]);
+  docker([
+    "run",
     "--detach",
     "--name",
     fixture,

@@ -147,6 +147,18 @@ try {
      assert.ok(process.env.WORKER_CONTROL_SOCKET, "Image must enable local worker control");
      console.log("Runtime image checks passed");`,
   ]);
+  docker([
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--entrypoint",
+    "node",
+    image,
+    "--input-type=module",
+    "--eval",
+    readFileSync(new URL("./fixtures/container-native-probe.mjs", import.meta.url), "utf8"),
+  ]);
   docker(["network", "create", "--internal", network]);
 
   await startWorker();

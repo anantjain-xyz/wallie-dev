@@ -82,15 +82,17 @@ node scripts/publish-aws-image.mjs \
 - Local tests exercise command ordering and failure handling; real Docker smoke checks exercise both runtimes.
 - **Live check · September 21, 2026:** merged revision `00c0cac9` (Node 22.23.2 / Debian 13) passed both runtime smoke checks, uploads, manifest/config verification, and fresh ECR scans.
 
-| ECR findings per image | Previous Debian 12 (`d2841540`) | Current Debian 13 (`00c0cac9`) |
-| ---------------------- | ------------------------------- | ------------------------------ |
-| Critical               | 3                               | 0                              |
-| High                   | 14                              | 1                              |
-| Medium                 | 8                               | 0                              |
-| Undefined              | 1                               | 1                              |
+| ECR findings per image | Previous Debian 12 (`d2841540`) | Debian 13 (`00c0cac9`) |
+| ---------------------- | ------------------------------- | ---------------------- |
+| Critical               | 3                               | 0                      |
+| High                   | 14                              | 1                      |
+| Medium                 | 8                               | 0                      |
+| Undefined              | 1                               | 1                      |
 
 - **Release blocked:** both publishers returned failure and retained private receipts. Images remain unsigned and not deployable; no severity overrides or exceptions.
 - Remaining High: `CVE-2026-85091`, source package zlib `1.3.dfsg+really1.3.1-1`. The advisory describes versions **1.3.1.2–1.3.2**; the installed Debian source is 1.3.1. The affected range is unresolved: Ubuntu reports crashes in older versions too, and Debian has not accepted an unaffected classification or shipped a Trixie fix. Keep the finding blocked. [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-85091), [Ubuntu assessment](https://ubuntu.com/security/CVE-2026-85091), [existing Debian report](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1146895)
 - Undefined: `CVE-2026-82560`, source package Perl `5.40.1-6+deb13u1`; retain for triage. A passing BASIC scan will still not establish complete vulnerability clearance.
-- Next: obtain a supported package fix or authoritative scanner-data correction, then publish again and require a fresh passing scan. Do not remove package metadata or bypass the gate.
+- **Replacement candidate:** pinned [Amazon Linux 2023 minimal](https://docs.aws.amazon.com/linux/al2023/ug/minimal-container.html), release `2023.12.20260918`, with AWS-packaged Node 22.23.2. [AWS classifies its zlib package as unaffected](https://explore.alas.aws.amazon.com/CVE-2026-85091.html); this does not establish application-wide vulnerability clearance.
+- The dated image digest and [versioned package repository](https://docs.aws.amazon.com/linux/al2023/ug/deterministic-upgrades-usage.html) pin the OS/runtime inputs. Keep the RPM inventory; no package metadata removal or severity exceptions.
+- Next: after review/merge, publish both replacement images and require fresh passing ECR scans before signing. Local smoke/ABI checks do not replace this gate.
 - The [signing profile](AWS-SIGNING-PROFILE.md), [local tools](AWS-SIGNING-TOOLCHAIN.md), and [gated signing workflow](AWS-IMAGE-SIGNING.md) are implemented. Live signing/verification, provenance, and broader package scanning remain release gates.

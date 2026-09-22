@@ -6,6 +6,7 @@ on:
     paths:
       - "docker/web.Dockerfile*"
       - "scripts/check-web-container.mjs"
+      - "scripts/fixtures/container-native-probe.mjs"
       - "scripts/publish-aws-image.mjs"
       - "scripts/lib/aws-image-*.mjs"
       - "scripts/fixtures/web-container-*.mjs"
@@ -24,6 +25,7 @@ on:
     paths:
       - "docker/web.Dockerfile*"
       - "scripts/check-web-container.mjs"
+      - "scripts/fixtures/container-native-probe.mjs"
       - "scripts/publish-aws-image.mjs"
       - "scripts/lib/aws-image-*.mjs"
       - "scripts/fixtures/web-container-*.mjs"
