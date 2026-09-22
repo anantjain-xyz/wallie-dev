@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import { resolveTemporaryAwsCredentials } from "./lib/aws-image-credentials.mjs"
 import { archiveReviewedSource } from "./lib/aws-image-source.mjs";
 import { withoutAwsProviderEnvironment } from "./lib/aws-image-environment.mjs";
 import { stableAwsIdentity } from "./lib/aws-image-identity.mjs";
+import { prepareImageSigning } from "./lib/aws-image-signing.mjs";
 
 const platform = "linux/amd64";
 const awsCallTimeout = 120_000;
@@ -21,27 +22,32 @@ const imageManifestTypes = [
 ];
 const severityNames = ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL", "UNDEFINED"];
 const usage =
-  "Usage: node scripts/publish-aws-image.mjs --component web|worker --account-id <12 digits> --region <region> --revision <full Git SHA> [--profile <temporary-login profile>]";
+  "Usage: node scripts/publish-aws-image.mjs --component web|worker --account-id <12 digits> --region <region> --revision <full Git SHA> [--profile <temporary-login profile>] [--signing-profile-version <10 alphanumeric characters>]";
 
 export function parsePublishArgs(args, env = process.env) {
   const { values, tokens } = parseArgs({
     args,
     tokens: true,
     options: Object.fromEntries(
-      ["component", "account-id", "region", "revision", "profile"].map((key) => [
-        key,
-        { type: "string" },
-      ]),
+      ["component", "account-id", "region", "revision", "profile", "signing-profile-version"].map(
+        (key) => [key, { type: "string" }],
+      ),
     ),
   });
   const profile = values.profile ?? env.AWS_PROFILE;
+  const signingVersion = values["signing-profile-version"];
   if (
     tokens.length !== Object.keys(values).length ||
+    Object.values(values).some((value) => value !== value.trim()) ||
     !["web", "worker"].includes(values.component) ||
     !/^\d{12}$/.test(values["account-id"] ?? "") ||
     !/^(?:[a-z]{2}-[a-z]+|us-gov-[a-z]+)-\d+$/.test(values.region ?? "") ||
     !/^[a-f0-9]{40}$/.test(values.revision ?? "") ||
-    !/^[\w][\w.-]{0,127}$/.test(profile ?? "")
+    !/^[\w][\w.-]{0,127}$/.test(profile ?? "") ||
+    (signingVersion !== undefined &&
+      (!/^[a-zA-Z0-9]{10}$/.test(signingVersion) ||
+        values.region.startsWith("cn-") ||
+        values.region.startsWith("us-gov-")))
   )
     throw new Error(usage);
   return { ...values, profile };
@@ -55,21 +61,32 @@ export function runCommand(command, args, options = {}) {
       cwd: options.cwd,
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: options.processGroup === true,
     });
     let stdout = "";
     let stderr = "";
     let failure;
     let killTimer;
+    const stop = (signal) => {
+      if (options.processGroup === true && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+        } catch (error) {
+          // Preserve the original failure when a second kill races process teardown.
+          if (error.code !== "ESRCH") failure ??= "process-group termination failed";
+        }
+      } else child.kill(signal);
+    };
     const kill = (reason) => {
       failure = reason;
-      child.kill("SIGKILL");
+      stop("SIGKILL");
       child.stdout.destroy();
       child.stderr.destroy();
     };
     const timer = setTimeout(() => kill("timeout"), options.timeout ?? 120_000);
     const abort = () => {
       failure = "interrupted";
-      child.kill("SIGTERM");
+      stop("SIGTERM");
       killTimer = setTimeout(() => kill("interrupted"), 5_000);
     };
     options.signal?.addEventListener("abort", abort, { once: true });
@@ -88,6 +105,9 @@ export function runCommand(command, args, options = {}) {
       clearTimeout(timer);
       clearTimeout(killTimer);
       options.signal?.removeEventListener("abort", abort);
+      // A plugin may outlive Notation even after its stdio closes. End the entire
+      // private process group before discarding credentialed runtime files.
+      if (options.processGroup === true) stop("SIGKILL");
       if (code === 0 && !failure) return done(stdout.trim());
       const awsCode = stderr.match(/\(([\w.-]+)\) when calling/)?.[1];
       reject(
@@ -113,6 +133,59 @@ const json = (text) => {
   }
 };
 
+export function formatPublishResult(receipt) {
+  if (receipt.signed === true && receipt.signing?.status === "verified")
+    return "Signature verified; not deployable.";
+  if (receipt.signed === false && !receipt.signing) return "Unsigned; not deployable.";
+  return "Signature status unconfirmed; not deployable.";
+}
+
+function recordCompletedScan(
+  result,
+  { account, repository, digest, uploadStartedAt, observedAt },
+  receipt,
+) {
+  requireThat(
+    result.registryId === account &&
+      result.repositoryName === repository &&
+      result.imageId?.imageDigest === digest,
+    "Scan response does not identify the pushed digest",
+  );
+  const status = result.imageScanStatus?.status;
+  requireThat(status === "COMPLETE", `ECR scan is not complete (${status ?? "missing status"})`);
+  const counts = result.imageScanFindings?.findingSeverityCounts;
+  const completedAt = result.imageScanFindings?.imageScanCompletedAt;
+  const completedMs =
+    typeof completedAt === "number"
+      ? completedAt * 1000
+      : typeof completedAt === "string" &&
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(completedAt)
+        ? Date.parse(completedAt)
+        : NaN;
+  requireThat(
+    counts &&
+      typeof counts === "object" &&
+      !Array.isArray(counts) &&
+      Object.entries(counts).every(
+        ([name, count]) =>
+          severityNames.includes(name) && Number.isSafeInteger(count) && count >= 0,
+      ) &&
+      Number.isFinite(completedMs) &&
+      completedMs > 0,
+    "ECR scan findings are missing or invalid",
+  );
+  receipt.scan = {
+    status,
+    completedAt,
+    fresh: completedMs > uploadStartedAt && completedMs <= observedAt,
+    counts: Object.fromEntries(severityNames.map((name) => [name, counts[name] ?? 0])),
+  };
+  requireThat(
+    completedMs <= observedAt,
+    "ECR scan timestamp is in the future; check the host clock",
+  );
+}
+
 export async function publishImage(options, dependencies = {}) {
   const run = dependencies.run ?? runCommand;
   const now = dependencies.now ?? Date.now;
@@ -133,11 +206,13 @@ export async function publishImage(options, dependencies = {}) {
   const repositoryArn = `arn:${partition}:ecr:${region}:${account}:repository/${repository}`;
   const tag = `${revision}-linux-amd64-${nonce}`;
   const reference = `${repositoryUrl}:${tag}`;
-  const temporary = mkdtempSync(join(dependencies.tempRoot ?? tmpdir(), "wallie-image-publish-"));
+  const temporary = mkdtempSync(
+    join(realpathSync(dependencies.tempRoot ?? tmpdir()), "wallie-image-publish-"),
+  );
   const source = join(temporary, "source");
   const dockerConfig = join(temporary, "docker");
   const nonAwsEnv = withoutAwsProviderEnvironment(env);
-  // This unsigned qualification path must not inherit Notary behavior or passphrases.
+  // Docker qualification must not inherit legacy Notary behavior or passphrases.
   for (const key of Object.keys(nonAwsEnv))
     if (key.toUpperCase().startsWith("DOCKER_CONTENT_TRUST")) delete nonAwsEnv[key];
   const common = { cwd, env: nonAwsEnv, signal: dependencies.signal };
@@ -220,52 +295,72 @@ export async function publishImage(options, dependencies = {}) {
       }
     };
     await refreshCredentials();
-    const repositories = await aws("ecr", "describe-repositories", [
-      "--registry-id",
-      account,
-      "--repository-names",
-      repository,
-    ]);
-    const repo = repositories.repositories?.[0];
-    requireThat(
-      repositories.repositories?.length === 1 &&
-        repo.repositoryArn === repositoryArn &&
-        repo.repositoryUri === repositoryUrl &&
-        repo.repositoryName === repository &&
-        repo.registryId === account &&
-        repo.imageTagMutability === "IMMUTABLE" &&
-        (repo.imageTagMutabilityExclusionFilters ?? []).length === 0 &&
-        repo.encryptionConfiguration?.encryptionType === "AES256" &&
-        repo.imageScanningConfiguration?.scanOnPush === true,
-      "Repository identity or reviewed settings do not match",
-    );
-    const tags = await aws("ecr", "list-tags-for-resource", ["--resource-arn", repositoryArn]);
-    requireThat(
-      tags.tags?.some(
-        (item) => item.Key === "WallieStack" && item.Value === "wallie-staging-registry",
-      ),
-      "Repository ownership marker does not match",
-    );
-    const scanning = await aws("ecr", "get-registry-scanning-configuration");
-    requireThat(
-      scanning.registryId === account && scanning.scanningConfiguration?.scanType === "BASIC",
-      "This publisher requires BASIC ECR scanning in the expected account",
-    );
-    const effective = await aws("ecr", "batch-get-repository-scanning-configuration", [
-      "--repository-names",
-      repository,
-    ]);
-    const coverage = effective.scanningConfigurations?.[0];
-    requireThat(
-      Array.isArray(effective.failures) &&
-        effective.failures.length === 0 &&
-        effective.scanningConfigurations?.length === 1 &&
-        coverage.repositoryArn === repositoryArn &&
-        coverage.repositoryName === repository &&
-        coverage.scanOnPush === true &&
-        coverage.scanFrequency === "SCAN_ON_PUSH",
-      "Effective repository scanning must be BASIC scan-on-push",
-    );
+    const checkRepository = async () => {
+      const repositories = await aws("ecr", "describe-repositories", [
+        "--registry-id",
+        account,
+        "--repository-names",
+        repository,
+      ]);
+      const repo = repositories.repositories?.[0];
+      requireThat(
+        repositories.repositories?.length === 1 &&
+          repo.repositoryArn === repositoryArn &&
+          repo.repositoryUri === repositoryUrl &&
+          repo.repositoryName === repository &&
+          repo.registryId === account &&
+          repo.imageTagMutability === "IMMUTABLE" &&
+          (repo.imageTagMutabilityExclusionFilters ?? []).length === 0 &&
+          repo.encryptionConfiguration?.encryptionType === "AES256" &&
+          repo.imageScanningConfiguration?.scanOnPush === true,
+        "Repository identity or reviewed settings do not match",
+      );
+      const tags = await aws("ecr", "list-tags-for-resource", ["--resource-arn", repositoryArn]);
+      requireThat(
+        tags.tags?.some(
+          (item) => item.Key === "WallieStack" && item.Value === "wallie-staging-registry",
+        ),
+        "Repository ownership marker does not match",
+      );
+      const scanning = await aws("ecr", "get-registry-scanning-configuration");
+      requireThat(
+        scanning.registryId === account && scanning.scanningConfiguration?.scanType === "BASIC",
+        "This publisher requires BASIC ECR scanning in the expected account",
+      );
+      const effective = await aws("ecr", "batch-get-repository-scanning-configuration", [
+        "--repository-names",
+        repository,
+      ]);
+      const coverage = effective.scanningConfigurations?.[0];
+      requireThat(
+        Array.isArray(effective.failures) &&
+          effective.failures.length === 0 &&
+          effective.scanningConfigurations?.length === 1 &&
+          coverage.repositoryArn === repositoryArn &&
+          coverage.repositoryName === repository &&
+          coverage.scanOnPush === true &&
+          coverage.scanFrequency === "SCAN_ON_PUSH",
+        "Effective repository scanning must be BASIC scan-on-push",
+      );
+    };
+    await checkRepository();
+    const signingVersion = options["signing-profile-version"];
+    const signing =
+      signingVersion === undefined
+        ? undefined
+        : await (dependencies.prepareSigning ?? prepareImageSigning)({
+            root,
+            temporary,
+            account,
+            region,
+            profileVersion: signingVersion,
+            run,
+            now,
+            signal: dependencies.signal,
+            platform: dependencies.platform,
+            arch: dependencies.arch,
+          });
+    if (signing) await signing.verifyProfile(aws);
     try {
       await aws("ecr", "describe-images", [
         "--registry-id",
@@ -471,43 +566,16 @@ export async function publishImage(options, dependencies = {}) {
         await wait(10_000, undefined, { signal: dependencies.signal });
         continue;
       }
-      requireThat(
-        status === "COMPLETE",
-        `ECR scan is not complete (${status ?? "missing status"})`,
-      );
-      const counts = result.imageScanFindings?.findingSeverityCounts;
-      const completedAt = result.imageScanFindings?.imageScanCompletedAt;
-      const completedMs =
-        typeof completedAt === "number"
-          ? completedAt * 1000
-          : typeof completedAt === "string" &&
-              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
-                completedAt,
-              )
-            ? Date.parse(completedAt)
-            : NaN;
-      requireThat(
-        counts &&
-          typeof counts === "object" &&
-          !Array.isArray(counts) &&
-          Object.entries(counts).every(
-            ([name, count]) =>
-              severityNames.includes(name) && Number.isSafeInteger(count) && count >= 0,
-          ) &&
-          Number.isFinite(completedMs) &&
-          completedMs > 0,
-        "ECR scan findings are missing or invalid",
-      );
-      const observedAt = now();
-      receipt.scan = {
-        status,
-        completedAt,
-        fresh: completedMs > uploadStartedAt && completedMs <= observedAt,
-        counts: Object.fromEntries(severityNames.map((name) => [name, counts[name] ?? 0])),
-      };
-      requireThat(
-        completedMs <= observedAt,
-        "ECR scan timestamp is in the future; check the host clock",
+      recordCompletedScan(
+        result,
+        {
+          account,
+          repository,
+          digest: receipt.digest,
+          uploadStartedAt,
+          observedAt: now(),
+        },
+        receipt,
       );
       // ECR can return the previous completed scan for a deterministic rebuild.
       // Never round the upload marker down or allow clock-skew tolerance here.
@@ -516,9 +584,49 @@ export async function publishImage(options, dependencies = {}) {
         continue;
       }
       requireThat(
-        !counts.HIGH && !counts.CRITICAL,
+        !receipt.scan.counts.HIGH && !receipt.scan.counts.CRITICAL,
         "ECR scan contains HIGH or CRITICAL findings; image remains published but is blocked",
       );
+      if (signing) {
+        progress("Rechecking image qualification before signing the exact digest");
+        await refreshCredentials();
+        await checkRepository();
+        // Do not retain an earlier passing receipt if the current scan read fails.
+        receipt.scan = { status: "unverified" };
+        const currentScan = await aws("ecr", "describe-image-scan-findings", [
+          "--registry-id",
+          account,
+          "--repository-name",
+          repository,
+          "--image-id",
+          `imageDigest=${receipt.digest}`,
+        ]);
+        recordCompletedScan(
+          currentScan,
+          {
+            account,
+            repository,
+            digest: receipt.digest,
+            uploadStartedAt,
+            observedAt: now(),
+          },
+          receipt,
+        );
+        requireThat(
+          receipt.scan.fresh && !receipt.scan.counts.HIGH && !receipt.scan.counts.CRITICAL,
+          "Latest ECR scan no longer qualifies this digest for signing",
+        );
+        await signing.signAndVerify({
+          aws,
+          getCredentials: async () => {
+            await refreshCredentials();
+            return credentials;
+          },
+          receipt,
+          saveReceipt,
+          nonce,
+        });
+      }
       return { receipt, receiptPath };
     }
     throw new Error("ECR scan timed out; image remains published but is unverified");
@@ -549,7 +657,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       progress: console.info,
     });
     console.log(`Published ${result.receipt.repository}@${result.receipt.digest}`);
-    console.log(`Receipt: ${result.receiptPath}. Unsigned; not deployable.`);
+    console.log(`Receipt: ${result.receiptPath}. ${formatPublishResult(result.receipt)}`);
   } catch (error) {
     console.error(`[aws-image] ${error.message}`);
     if (error.receiptPath) console.error(`Receipt: ${error.receiptPath}`);

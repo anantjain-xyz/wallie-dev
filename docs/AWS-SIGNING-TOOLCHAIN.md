@@ -37,7 +37,7 @@ node scripts/prepare-aws-signing-toolchain.mjs
 | Isolated configuration                 | Preserve the user's existing Notation and Docker settings |
 
 - No global installation, signing-policy attachment, image signing, or application deployment.
-- The root certificate alone authorizes no image: the later workflow must load the [strict, version-pinned trust policy](AWS-IMAGE-SIGNING.md).
+- The root certificate alone authorizes no image: the [signing workflow](AWS-IMAGE-SIGNING.md) creates strict, version-pinned trust settings in fresh private configuration.
 - A prepared toolchain is not a release approval. Recheck its files before use; later signing still requires current passing scans and exact source, digest, profile, and repository checks.
 - Do not bypass signature, notarization, hash, or runtime-check failures. A changed vendor package or certificate requires a reviewed update.
 
@@ -56,6 +56,6 @@ node scripts/prepare-aws-signing-toolchain.mjs
 
 ## Next
 
-- Qualify the gated digest-signing and strict verification workflow.
+- Qualify the [gated signing workflow](AWS-IMAGE-SIGNING.md) against live AWS once the image blocker is resolved.
 - Add Linux CI packaging, provenance, broader package scanning, and GitHub OIDC publishing.
 - Existing web and worker images still fail the High-severity scan gate.

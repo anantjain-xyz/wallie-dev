@@ -7,7 +7,7 @@ Proposal · September 19, 2026
 - **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, and an active OCI signing profile.
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
 - **Live image checks (`00c0cac9`):** both runtimes, uploads, and manifest verification passed. Debian 13 reduced each ECR scan from 3 Critical / 14 High to 0 Critical / 1 High; release remains blocked. Images are unsigned and not deployable.
-- **Current batch:** qualify a pinned, authenticated [local signing toolchain](AWS-SIGNING-TOOLCHAIN.md). Version-pinned permissions and trust settings are prepared; the zlib finding remains unresolved. No application or database is running on AWS yet.
+- **Current batch:** add optional [digest signing and strict verification](AWS-IMAGE-SIGNING.md) to the publisher. The local toolchain is qualified; live signing remains blocked by zlib. No application or database is running on AWS yet.
 
 | Remaining               | Exit check                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------- |

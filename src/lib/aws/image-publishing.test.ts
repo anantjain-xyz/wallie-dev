@@ -28,7 +28,8 @@ type Call = {
 type Receipt = {
   digest: string | null;
   deployable: boolean;
-  signed: boolean;
+  signed: boolean | null;
+  signing?: { status: string };
   uploadStatus: string;
   tag: string;
   scan: {
@@ -40,7 +41,20 @@ type Receipt = {
   error?: string;
 };
 type Runner = (command: string, args: string[], options?: Call["options"]) => Promise<string>;
+type Aws = (service: string, operation: string, args?: string[]) => Promise<unknown>;
+type SigningInput = {
+  aws: Aws;
+  getCredentials: () => Promise<{ env: NodeJS.ProcessEnv; expiration: string }>;
+  receipt: Receipt;
+  saveReceipt: () => void;
+  nonce: string;
+};
+type Signing = {
+  verifyProfile: (aws: Aws) => Promise<void>;
+  signAndVerify: (input: SigningInput) => Promise<void>;
+};
 let parsePublishArgs: (args: string[], env?: NodeJS.ProcessEnv) => Options;
+let formatPublishResult: (receipt: Receipt) => string;
 let publishImage: (
   options: Options,
   dependencies: {
@@ -50,12 +64,13 @@ let publishImage: (
     tempRoot: string;
     now: () => number;
     wait: (ms: number) => Promise<void>;
+    prepareSigning: (input: Record<string, unknown>) => Promise<Signing>;
   },
 ) => Promise<{ receipt: Receipt; receiptPath: string }>;
 let runCommand: Runner;
 beforeAll(async () => {
   const script = new URL("../../../scripts/publish-aws-image.mjs", import.meta.url).href;
-  ({ parsePublishArgs, publishImage, runCommand } = await import(script));
+  ({ parsePublishArgs, publishImage, runCommand, formatPublishResult } = await import(script));
 });
 const directories: string[] = [];
 afterEach(() => {
@@ -66,6 +81,7 @@ afterEach(() => {
 const account = "123456789012";
 const revision = "a".repeat(40);
 const imageId = `sha256:${"b".repeat(64)}`;
+const signingVersion = "A1b2C3d4E5";
 const base = {
   component: "web",
   "account-id": account,
@@ -73,7 +89,7 @@ const base = {
   revision,
   profile: "wallie-staging",
 };
-const argumentsFor = (options = base) =>
+const argumentsFor = (options: Options = base) =>
   Object.entries(options).flatMap(([key, value]) => [`--${key}`, value]);
 const awsError = (awsCode: string) => Object.assign(new Error(awsCode), { awsCode });
 
@@ -141,6 +157,7 @@ function harness(component = "web") {
   };
   const calls: Call[] = [];
   const overrides: Record<string, unknown> = {};
+  const responses: Record<string, unknown[]> = {};
   const durations: Record<string, number> = {};
   let endpoint = "unix:///var/run/docker.sock";
   let time = Date.parse("2026-09-22T01:00:00.500Z");
@@ -203,6 +220,11 @@ function harness(component = "web") {
           ? "smoke"
           : `${command}:${actualArgs[0]}`;
     time += durations[operation] ?? 0;
+    if (responses[operation]?.length) {
+      const value = responses[operation].shift();
+      if (value instanceof Error) throw value;
+      return typeof value === "string" ? value : JSON.stringify(value);
+    }
     if (Object.hasOwn(overrides, operation)) {
       const value = overrides[operation];
       if (value instanceof Error) throw value;
@@ -260,9 +282,23 @@ function harness(component = "web") {
     }
     throw new Error(`Unexpected command: ${operation}`);
   };
-  const execute = () =>
+  const signingPhases: { phase: string; calls: number }[] = [];
+  const verifyProfile = vi.fn<Signing["verifyProfile"]>(async () => {
+    signingPhases.push({ phase: "profile", calls: calls.length });
+  });
+  const signAndVerify = vi.fn<Signing["signAndVerify"]>(async ({ receipt, saveReceipt }) => {
+    signingPhases.push({ phase: "sign", calls: calls.length });
+    receipt.signed = true;
+    receipt.signing = { status: "verified" };
+    saveReceipt();
+  });
+  const prepareSigning = vi.fn<(input: Record<string, unknown>) => Promise<Signing>>(async () => {
+    signingPhases.push({ phase: "prepare", calls: calls.length });
+    return { verifyProfile, signAndVerify };
+  });
+  const execute = (signing = false) =>
     publishImage(
-      { ...base, component },
+      { ...base, component, ...(signing ? { "signing-profile-version": signingVersion } : {}) },
       {
         run,
         cwd: directory,
@@ -272,6 +308,7 @@ function harness(component = "web") {
         wait: async (ms) => {
           time += ms;
         },
+        prepareSigning,
       },
     );
   const dockerCalls = (operation: string) =>
@@ -289,6 +326,7 @@ function harness(component = "web") {
     directory,
     calls,
     overrides,
+    responses,
     durations,
     repo,
     image,
@@ -306,6 +344,10 @@ function harness(component = "web") {
     dockerCalls,
     receipt,
     digest,
+    prepareSigning,
+    verifyProfile,
+    signAndVerify,
+    signingPhases,
     now: () => time,
     setEndpoint: (value: string) => {
       endpoint = value;
@@ -376,6 +418,9 @@ describe("manual AWS image publishing", () => {
         uploadStatus: "confirmed",
         scan: { status: "COMPLETE", counts: { HIGH: 0, CRITICAL: 0, MEDIUM: 2 } },
       });
+      expect(h.prepareSigning).not.toHaveBeenCalled();
+      expect(h.verifyProfile).not.toHaveBeenCalled();
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(statSync(result.receiptPath).mode & 0o777).toBe(0o600);
       expect(readdirSync(h.directory)).toEqual([".wallie"]);
     },
@@ -416,7 +461,8 @@ describe("manual AWS image publishing", () => {
                 ? "application/vnd.docker.distribution.manifest.list.v2+json"
                 : "application/vnd.oci.image.manifest.v1+json",
         };
-      await expect(h.execute()).rejects.toThrow("Built image identity");
+      await expect(h.execute(true)).rejects.toThrow("Built image identity");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.dockerCalls("tag")).toHaveLength(0);
       expect(h.dockerCalls("push")).toHaveLength(0);
     },
@@ -451,7 +497,8 @@ describe("manual AWS image publishing", () => {
   it("never logs in, tags, or pushes when archived smoke fails", async () => {
     const h = harness();
     h.overrides.smoke = new Error("smoke failed");
-    await expect(h.execute()).rejects.toThrow("smoke failed");
+    await expect(h.execute(true)).rejects.toThrow("smoke failed");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.dockerCalls("tag")).toHaveLength(0);
     expect(h.dockerCalls("login")).toHaveLength(0);
     expect(h.dockerCalls("push")).toHaveLength(0);
@@ -467,7 +514,8 @@ describe("manual AWS image publishing", () => {
       if (field === "User") h.image.Config.User = "root";
       if (field === "revision")
         h.image.Config.Labels["org.opencontainers.image.revision"] = "c".repeat(40);
-      await expect(h.execute()).rejects.toThrow("Built image");
+      await expect(h.execute(true)).rejects.toThrow("Built image");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.dockerCalls("push")).toHaveLength(0);
     },
   );
@@ -491,7 +539,8 @@ describe("manual AWS image publishing", () => {
     if (field === "encryption") h.repo.encryptionConfiguration.encryptionType = "KMS";
     if (field === "registry scan") h.registryScan.scanningConfiguration.scanType = "ENHANCED";
     if (field === "coverage") h.effective.scanningConfigurations[0].scanFrequency = "MANUAL";
-    await expect(h.execute()).rejects.toThrow();
+    await expect(h.execute(true)).rejects.toThrow();
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.dockerCalls("buildx")).toHaveLength(0);
     expect(h.dockerCalls("push")).toHaveLength(0);
   });
@@ -501,7 +550,8 @@ describe("manual AWS image publishing", () => {
     async (value) => {
       const h = harness();
       h.overrides["describe-images"] = value;
-      await expect(h.execute()).rejects.toThrow();
+      await expect(h.execute(true)).rejects.toThrow();
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.dockerCalls("buildx")).toHaveLength(0);
     },
   );
@@ -510,14 +560,16 @@ describe("manual AWS image publishing", () => {
     const h = harness();
     h.env.DOCKER_HOST = "unix:///local.sock";
     h.setEndpoint("ssh://remote.example");
-    await expect(h.execute()).rejects.toThrow("local Docker Unix socket");
+    await expect(h.execute(true)).rejects.toThrow("local Docker Unix socket");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.dockerCalls("buildx")).toHaveLength(0);
   });
 
   it("refuses a revision outside freshly fetched Wallie main", async () => {
     const h = harness();
     h.overrides["git:merge-base"] = new Error("not reviewed");
-    await expect(h.execute()).rejects.toThrow("not reviewed");
+    await expect(h.execute(true)).rejects.toThrow("not reviewed");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.some((call) => call.command === "aws")).toBe(false);
   });
 
@@ -577,7 +629,8 @@ describe("manual AWS image publishing", () => {
       SessionToken: undefined,
       Expiration: undefined,
     });
-    await expect(h.execute()).rejects.toThrow("temporary session credentials");
+    await expect(h.execute(true)).rejects.toThrow("temporary session credentials");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.some((call) => call.args[1] === "get-caller-identity")).toBe(false);
     expect(h.dockerCalls("buildx")).toHaveLength(0);
   });
@@ -682,7 +735,8 @@ describe("manual AWS image publishing", () => {
         ...h.credentials,
         Expiration: new Date(h.now() + 150_000).toISOString(),
       });
-      await expect(h.execute()).rejects.toThrow("expire too soon");
+      await expect(h.execute(true)).rejects.toThrow("expire too soon");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(
         phase === "initial" ? 0 : 1,
       );
@@ -698,7 +752,8 @@ describe("manual AWS image publishing", () => {
       Expiration: new Date(h.now() + 4 * 60_000).toISOString(),
     });
     h.durations["get-caller-identity"] = 100_000;
-    await expect(h.execute()).rejects.toThrow("expire too soon");
+    await expect(h.execute(true)).rejects.toThrow("expire too soon");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.filter((call) => call.args[1] === "get-caller-identity")).toHaveLength(1);
     expect(h.calls.some((call) => call.args[0] === "ecr")).toBe(false);
   });
@@ -708,7 +763,8 @@ describe("manual AWS image publishing", () => {
     const short = { ...h.credentials, Expiration: new Date(h.now() + 3 * 60_000).toISOString() };
     h.credentialResponses.push(h.credentials, short, short);
     h.durations["docker:login"] = 40_000;
-    await expect(h.execute()).rejects.toThrow("expire too soon");
+    await expect(h.execute(true)).rejects.toThrow("expire too soon");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.filter((call) => call.args[1] === "export-credentials")).toHaveLength(3);
     expect(h.dockerCalls("login")).toHaveLength(1);
     expect(h.dockerCalls("push")).toHaveLength(0);
@@ -721,7 +777,8 @@ describe("manual AWS image publishing", () => {
       ...h.identity,
       UserId: "AIDAZYXWVUTSRQPONMLKJ",
     });
-    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    await expect(h.execute(true)).rejects.toThrow("AWS identity changed");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.dockerCalls("push")).toHaveLength(1);
     expect(h.calls.some((call) => call.args[1] === "batch-get-image")).toBe(false);
     expect(h.receipt()).toMatchObject({
@@ -754,7 +811,8 @@ describe("manual AWS image publishing", () => {
   it("bounds repeated expiry errors and retains the already-published image", async () => {
     const h = harness();
     h.scanResponses.push(awsError("ExpiredTokenException"), awsError("ExpiredTokenException"));
-    await expect(h.execute()).rejects.toThrow("ExpiredTokenException");
+    await expect(h.execute(true)).rejects.toThrow("ExpiredTokenException");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.filter((call) => call.args[1] === "export-credentials")).toHaveLength(4);
     expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
       2,
@@ -773,7 +831,8 @@ describe("manual AWS image publishing", () => {
       Arn: `arn:aws:iam::${account}:user/another-publisher`,
     });
     h.scanResponses.push(awsError("ExpiredTokenException"));
-    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    await expect(h.execute(true)).rejects.toThrow("AWS identity changed");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
       1,
     );
@@ -787,7 +846,8 @@ describe("manual AWS image publishing", () => {
   it("preserves the confirmed upload when the provider cannot renew after push", async () => {
     const h = harness();
     h.credentialResponses.push(h.credentials, h.credentials, {});
-    await expect(h.execute()).rejects.toThrow("temporary session credentials");
+    await expect(h.execute(true)).rejects.toThrow("temporary session credentials");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.some((call) => call.args[1] === "batch-get-image")).toBe(false);
     expect(h.receipt()).toMatchObject({
       uploadStatus: "confirmed",
@@ -800,7 +860,8 @@ describe("manual AWS image publishing", () => {
   it("does not retry ECR access errors as credential expiry", async () => {
     const h = harness();
     h.scanResponses.push(awsError("AccessDeniedException"));
-    await expect(h.execute()).rejects.toThrow("AccessDeniedException");
+    await expect(h.execute(true)).rejects.toThrow("AccessDeniedException");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.filter((call) => call.args[1] === "export-credentials")).toHaveLength(3);
     expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
       1,
@@ -840,7 +901,8 @@ describe("manual AWS image publishing", () => {
       ...h.identity,
       Arn: `arn:aws:iam::${account}:user/another-user`,
     });
-    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    await expect(h.execute(true)).rejects.toThrow("AWS identity changed");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.calls.some((call) => call.command === process.execPath)).toBe(true);
     expect(h.dockerCalls("tag")).toHaveLength(0);
     expect(h.dockerCalls("login")).toHaveLength(0);
@@ -891,7 +953,8 @@ describe("manual AWS image publishing", () => {
       if (field === "partition") refreshed.Arn = refreshed.Arn.replace("arn:aws:", "arn:aws-cn:");
       if (field === "principal type") refreshed = h.identity;
       h.identityResponses.push(initial, refreshed);
-      await expect(h.execute()).rejects.toThrow();
+      await expect(h.execute(true)).rejects.toThrow();
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.calls.some((call) => call.command === process.execPath)).toBe(true);
       expect(h.dockerCalls("tag")).toHaveLength(0);
       expect(h.dockerCalls("login")).toHaveLength(0);
@@ -902,14 +965,16 @@ describe("manual AWS image publishing", () => {
   it("rejects a recreated IAM user even when its ARN is unchanged", async () => {
     const h = harness();
     h.identityResponses.push(h.identity, { ...h.identity, UserId: "AIDAZYXWVUTSRQPONMLKJ" });
-    await expect(h.execute()).rejects.toThrow("AWS identity changed");
+    await expect(h.execute(true)).rejects.toThrow("AWS identity changed");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.dockerCalls("tag")).toHaveLength(0);
   });
 
   it("preserves an attempted receipt when push outcome is uncertain", async () => {
     const h = harness();
     h.overrides["docker:push"] = new Error("network interrupted");
-    await expect(h.execute()).rejects.toThrow("network interrupted");
+    await expect(h.execute(true)).rejects.toThrow("network interrupted");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.receipt()).toMatchObject({
       uploadStatus: "attempted",
       digest: null,
@@ -926,7 +991,8 @@ describe("manual AWS image publishing", () => {
       if (field === "config")
         h.remote.images[0].imageManifest = JSON.stringify({ config: { digest: "different" } });
       else h.remote.images[0].imageId.imageDigest = `sha256:${"d".repeat(64)}`;
-      await expect(h.execute()).rejects.toThrow("Pushed manifest");
+      await expect(h.execute(true)).rejects.toThrow("Pushed manifest");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.receipt()).toMatchObject({ uploadStatus: "confirmed", deployable: false });
       expect(h.calls.some((call) => call.args[1] === "describe-image-scan-findings")).toBe(false);
     },
@@ -964,7 +1030,8 @@ describe("manual AWS image publishing", () => {
     async (completedAt) => {
       const h = harness();
       h.scan.imageScanFindings.imageScanCompletedAt = completedAt;
-      await expect(h.execute()).rejects.toThrow("scan timed out");
+      await expect(h.execute(true)).rejects.toThrow("scan timed out");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.receipt()).toMatchObject({
         digest: h.digest,
         deployable: false,
@@ -986,7 +1053,8 @@ describe("manual AWS image publishing", () => {
       },
     });
     h.scan.imageScanFindings.findingSeverityCounts.HIGH = 1;
-    await expect(h.execute()).rejects.toThrow("HIGH or CRITICAL");
+    await expect(h.execute(true)).rejects.toThrow("HIGH or CRITICAL");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.receipt().scan).toMatchObject({ fresh: true, counts: { HIGH: 1 } });
     expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
       2,
@@ -998,7 +1066,8 @@ describe("manual AWS image publishing", () => {
     async (completedAt) => {
       const h = harness();
       h.scan.imageScanFindings.imageScanCompletedAt = completedAt;
-      await expect(h.execute()).rejects.toThrow("timestamp is in the future");
+      await expect(h.execute(true)).rejects.toThrow("timestamp is in the future");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.receipt().scan.fresh).toBe(false);
     },
   );
@@ -1011,7 +1080,8 @@ describe("manual AWS image publishing", () => {
         ...h.scan,
         imageScanFindings: { ...h.scan.imageScanFindings, imageScanCompletedAt: completedAt },
       };
-      await expect(h.execute()).rejects.toThrow("findings are missing or invalid");
+      await expect(h.execute(true)).rejects.toThrow("findings are missing or invalid");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
     },
   );
 
@@ -1020,7 +1090,8 @@ describe("manual AWS image publishing", () => {
     async (status) => {
       const h = harness();
       h.scan.imageScanStatus.status = status;
-      await expect(h.execute()).rejects.toThrow("scan is not complete");
+      await expect(h.execute(true)).rejects.toThrow("scan is not complete");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.receipt().scan.status).toBe(status);
     },
   );
@@ -1030,7 +1101,8 @@ describe("manual AWS image publishing", () => {
     async (severity) => {
       const h = harness();
       h.scan.imageScanFindings.findingSeverityCounts[severity] = 1;
-      await expect(h.execute()).rejects.toThrow("HIGH or CRITICAL");
+      await expect(h.execute(true)).rejects.toThrow("HIGH or CRITICAL");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
       expect(h.receipt().scan.counts?.[severity]).toBe(1);
       expect(h.calls.some((call) => call.args.some((arg) => /delete/.test(arg)))).toBe(false);
     },
@@ -1044,19 +1116,251 @@ describe("manual AWS image publishing", () => {
         ...h.scan,
         imageScanFindings: { ...h.scan.imageScanFindings, findingSeverityCounts: counts },
       };
-      await expect(h.execute()).rejects.toThrow("findings are missing or invalid");
+      await expect(h.execute(true)).rejects.toThrow("findings are missing or invalid");
+      expect(h.signAndVerify).not.toHaveBeenCalled();
     },
   );
 
   it("bounds waiting for an incomplete scan and retains the image reference", async () => {
     const h = harness();
     h.scan.imageScanStatus.status = "IN_PROGRESS";
-    await expect(h.execute()).rejects.toThrow("scan timed out");
+    await expect(h.execute(true)).rejects.toThrow("scan timed out");
+    expect(h.signAndVerify).not.toHaveBeenCalled();
     expect(h.receipt().digest).toBe(h.digest);
     expect(h.calls.filter((call) => call.args[1] === "describe-image-scan-findings")).toHaveLength(
       60,
     );
   });
+
+  it.each(["web", "worker"])(
+    "signs the qualified %s digest only after checking the current repository and scan again",
+    async (component) => {
+      const h = harness(component);
+      const result = await h.execute(true);
+      expect(h.prepareSigning).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ account, region: base.region, profileVersion: signingVersion }),
+      );
+      expect(h.verifyProfile).toHaveBeenCalledOnce();
+      const buildIndex = h.calls.indexOf(h.dockerCalls("buildx")[0]);
+      expect(h.signingPhases.find((item) => item.phase === "profile")!.calls).toBeLessThanOrEqual(
+        buildIndex,
+      );
+      const scans = h.calls.flatMap((call, index) =>
+        call.args[1] === "describe-image-scan-findings" ? [index] : [],
+      );
+      expect(scans).toHaveLength(2);
+      const rechecks = h.calls.slice(scans[0] + 1, scans[1]);
+      for (const operation of [
+        "describe-repositories",
+        "list-tags-for-resource",
+        "get-registry-scanning-configuration",
+        "batch-get-repository-scanning-configuration",
+      ])
+        expect(rechecks.some((call) => call.args[1] === operation)).toBe(true);
+      expect(h.signAndVerify).toHaveBeenCalledOnce();
+      const signing = h.signAndVerify.mock.calls[0][0];
+      expect(signing.receipt).toBe(result.receipt);
+      expect(signing.receipt.digest).toBe(h.digest);
+      expect(signing.nonce).toMatch(/^[a-f0-9]{32}$/);
+      expect(signing.aws).toBeTypeOf("function");
+      expect(signing.getCredentials).toBeTypeOf("function");
+      expect(h.signingPhases.find((item) => item.phase === "sign")!.calls).toBeGreaterThan(
+        scans[1],
+      );
+      expect(h.receipt()).toMatchObject({
+        digest: h.digest,
+        signed: true,
+        signing: { status: "verified" },
+        deployable: false,
+      });
+      expect(readdirSync(h.directory)).toEqual([".wallie"]);
+    },
+  );
+
+  it.each(["toolchain", "profile"])(
+    "rejects a failed signing %s preflight before building or uploading",
+    async (phase) => {
+      const h = harness();
+      const error = new Error(`${phase} is not qualified`);
+      if (phase === "toolchain") h.prepareSigning.mockRejectedValue(error);
+      else h.verifyProfile.mockRejectedValue(error);
+      await expect(h.execute(true)).rejects.toThrow(error.message);
+      expect(h.dockerCalls("buildx")).toHaveLength(0);
+      expect(h.dockerCalls("push")).toHaveLength(0);
+      expect(h.signAndVerify).not.toHaveBeenCalled();
+      expect(readdirSync(h.directory)).toEqual([]);
+    },
+  );
+
+  it.each(["identity", "ownership", "mutability", "registry mode", "coverage"])(
+    "does not sign when repository %s changes after preflight",
+    async (field) => {
+      const h = harness();
+      if (["identity", "mutability"].includes(field)) {
+        const changed = structuredClone(h.repo);
+        if (field === "identity") changed.repositoryArn += "-other";
+        else changed.imageTagMutability = "MUTABLE";
+        h.responses["describe-repositories"] = [
+          { repositories: [h.repo] },
+          { repositories: [changed] },
+        ];
+      }
+      if (field === "ownership")
+        h.responses["list-tags-for-resource"] = [
+          { tags: [{ Key: "WallieStack", Value: "wallie-staging-registry" }] },
+          { tags: [] },
+        ];
+      if (field === "registry mode")
+        h.responses["get-registry-scanning-configuration"] = [
+          h.registryScan,
+          { registryId: account, scanningConfiguration: { scanType: "ENHANCED" } },
+        ];
+      if (field === "coverage") {
+        const changed = structuredClone(h.effective);
+        changed.scanningConfigurations[0].scanFrequency = "MANUAL";
+        h.responses["batch-get-repository-scanning-configuration"] = [h.effective, changed];
+      }
+      await expect(h.execute(true)).rejects.toThrow();
+      expect(h.dockerCalls("push")).toHaveLength(1);
+      expect(h.signAndVerify).not.toHaveBeenCalled();
+      expect(h.receipt()).toMatchObject({
+        uploadStatus: "confirmed",
+        signed: false,
+        deployable: false,
+      });
+    },
+  );
+
+  it.each(["HIGH", "CRITICAL", "digest", "account", "stale timestamp", "status", "counts"])(
+    "does not sign if the final scan recheck changes its %s",
+    async (field) => {
+      const h = harness();
+      const changed = structuredClone(h.scan);
+      if (field === "HIGH" || field === "CRITICAL")
+        changed.imageScanFindings.findingSeverityCounts[field] = 1;
+      if (field === "digest") changed.imageId.imageDigest = imageId;
+      if (field === "account") changed.registryId = "999999999999";
+      if (field === "stale timestamp")
+        changed.imageScanFindings.imageScanCompletedAt = "2026-09-22T01:00:00.500Z";
+      if (field === "status") changed.imageScanStatus.status = "IN_PROGRESS";
+      if (field === "counts") changed.imageScanFindings.findingSeverityCounts.MEDIUM = -1;
+      h.scanResponses.push(h.scan, changed);
+      await expect(h.execute(true)).rejects.toThrow();
+      expect(h.signAndVerify).not.toHaveBeenCalled();
+      expect(h.receipt()).toMatchObject({
+        uploadStatus: "confirmed",
+        signed: false,
+        deployable: false,
+      });
+    },
+  );
+
+  it("accepts a newer passing scan of the same digest at the final recheck", async () => {
+    const h = harness();
+    const refreshed = structuredClone(h.scan);
+    refreshed.imageScanFindings.imageScanCompletedAt = "2026-09-22T01:00:01.250Z";
+    h.scanResponses.push(h.scan, refreshed);
+    await h.execute(true);
+    expect(h.signAndVerify).toHaveBeenCalledOnce();
+    expect(h.receipt()).toMatchObject({
+      digest: h.digest,
+      scan: { fresh: true, completedAt: refreshed.imageScanFindings.imageScanCompletedAt },
+      signed: true,
+      deployable: false,
+    });
+  });
+
+  it("propagates a late profile rotation rejection without marking the image signed", async () => {
+    const h = harness();
+    h.signAndVerify.mockRejectedValue(new Error("Signing profile version changed"));
+    await expect(h.execute(true)).rejects.toThrow("Signing profile version changed");
+    expect(h.dockerCalls("push")).toHaveLength(1);
+    expect(h.receipt()).toMatchObject({
+      signed: false,
+      deployable: false,
+      error: "Signing profile version changed",
+    });
+  });
+
+  it("revalidates the publishing principal when signing requests a credential snapshot", async () => {
+    const h = harness();
+    h.signAndVerify.mockImplementation(async ({ getCredentials }) => {
+      h.identity.UserId = "AIDAZYXWVUTSRQPONMLKJ";
+      await getCredentials();
+      throw new Error("Changed principal must never reach the signing command");
+    });
+    await expect(h.execute(true)).rejects.toThrow("AWS identity changed");
+    expect(h.receipt()).toMatchObject({ signed: false, deployable: false });
+    expect(h.dockerCalls("push")).toHaveLength(1);
+  });
+
+  it.each(["attempted", "signed"])(
+    "retains an unconfirmed receipt when signing fails after status %s",
+    async (status) => {
+      const h = harness();
+      h.signAndVerify.mockImplementation(async ({ receipt, saveReceipt }) => {
+        receipt.signed = null;
+        receipt.signing = { status };
+        saveReceipt();
+        throw new Error("Signature verification did not complete");
+      });
+      await expect(h.execute(true)).rejects.toThrow("Signature verification did not complete");
+      expect(h.receipt()).toMatchObject({
+        signed: null,
+        signing: { status },
+        deployable: false,
+      });
+      expect(h.signAndVerify).toHaveBeenCalledOnce();
+      expect(h.dockerCalls("push")).toHaveLength(1);
+      expect(existsSync(h.dockerCalls("login")[0].options.env!.DOCKER_CONFIG!)).toBe(false);
+    },
+  );
+
+  it.each(["", "123456789", "12345678901", "é123456789", "a1b2c3d4_5"])(
+    "rejects invalid explicit signing version %j",
+    (version) => {
+      expect(() =>
+        parsePublishArgs(argumentsFor({ ...base, "signing-profile-version": version })),
+      ).toThrow();
+    },
+  );
+
+  it.each(["cn-north-1", "us-gov-west-1"])(
+    "rejects signing in the unqualified partition %s",
+    (region) => {
+      expect(() =>
+        parsePublishArgs(
+          argumentsFor({ ...base, region, "signing-profile-version": signingVersion }),
+        ),
+      ).toThrow();
+      expect(parsePublishArgs(argumentsFor({ ...base, region }))).toMatchObject({ region });
+    },
+  );
+
+  it("requires explicit signing opt-in and cannot replay an old receipt", () => {
+    const options = { ...base, "signing-profile-version": signingVersion };
+    expect(parsePublishArgs(argumentsFor(options))).toEqual(options);
+    expect(() =>
+      parsePublishArgs([...argumentsFor(options), "--signing-profile-version", signingVersion]),
+    ).toThrow();
+    expect(() =>
+      parsePublishArgs([...argumentsFor(options), "--receipt", "old-passing.json"]),
+    ).toThrow();
+  });
+
+  it.each([
+    [false, undefined, "Unsigned; not deployable."],
+    [null, "attempted", "Signature status unconfirmed; not deployable."],
+    [null, "signed", "Signature status unconfirmed; not deployable."],
+    [true, "signed", "Signature status unconfirmed; not deployable."],
+    [true, "verified", "Signature verified; not deployable."],
+  ] as const)(
+    "reports signed=%s / %s without claiming release approval",
+    (signed, status, expected) => {
+      const receipt = { signed, ...(status ? { signing: { status } } : {}) } as Receipt;
+      expect(formatPublishResult(receipt)).toBe(expected);
+    },
+  );
 
   it("validates invocation arguments before commands can run", () => {
     expect(parsePublishArgs(argumentsFor())).toEqual(base);
