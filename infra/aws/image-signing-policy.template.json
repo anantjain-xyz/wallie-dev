@@ -19,7 +19,7 @@
     {
       "Sid": "ReadOwnedSigningProfile",
       "Effect": "Allow",
-      "Action": ["signer:ListTagsForResource", "signer:GetRevocationStatus"],
+      "Action": "signer:ListTagsForResource",
       "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
       "Condition": {
         "StringEquals": {
@@ -27,6 +27,18 @@
           "aws:RequestedRegion": "<REGION>",
           "aws:ResourceTag/WallieStack": "wallie-staging-registry",
           "aws:ResourceTag/Component": "signing"
+        }
+      }
+    },
+    {
+      "Sid": "CheckReviewedProfileRevocation",
+      "Effect": "Allow",
+      "Action": "signer:GetRevocationStatus",
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
         }
       }
     },
