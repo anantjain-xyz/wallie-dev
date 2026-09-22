@@ -83,7 +83,7 @@ terraform -chdir=infra/aws/staging-application plan -var-file="$WALLIE_AWS_FILES
 
 ## Later: populate and inject
 
-- Before real values, [prepare a non-sensitive canary version](AWS-RUNTIME-SECRET-CANARY.md) for the separately reviewed injection check. Its cleanup removes the staging label; the deprecated version remains temporarily.
+- For the first isolated staging app startup, use the reviewed [real-value population workflow](AWS-RUNTIME-SECRET-POPULATION.md). The [non-sensitive canary workflow](AWS-RUNTIME-SECRET-CANARY.md) remains an optional separate injection check; it is not a prerequisite.
 - For a real isolated staging startup, use the [offline runtime configuration contract](AWS-RUNTIME-CONFIG.md) for public variables and exact component-owned JSON-key selectors.
 - Empty containers have no `AWSCURRENT` version and cannot supply task values. Plan per-component JSON objects using existing secret environment names. Keep public URLs, publishable keys, and ordinary runtime settings outside secret storage. `SUPABASE_SECRET_KEY` stays server-only. [Supabase key boundaries](https://supabase.com/docs/guides/getting-started/api-keys)
 - Web and worker share `WALLIE_ENCRYPTION_KEY` while sharing encrypted database records; preserve it during migration. Rotation requires re-encrypting existing data, not just replacing a value. Workspace credentials remain in Wallie's encrypted database.

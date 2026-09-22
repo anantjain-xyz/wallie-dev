@@ -25,4 +25,5 @@ node scripts/prepare-aws-runtime-config.mjs \
 
 - Output contains only variable names, ARNs, version IDs, and ECS `valueFrom` selectors. It has `deployable: false`; no values, AWS calls, IAM changes, task definitions, or services are created.
 - The renderer cannot prove that a version contains those JSON keys or distinguish a canary version by metadata alone. Real-value population, payload verification, network reachability, and workload deployment need separate review and live checks. Never pass real values to this script.
+- Use the [runtime secret population workflow](AWS-RUNTIME-SECRET-POPULATION.md) to create the first real versions and obtain their IDs without storing values in the repository.
 - [ECS JSON-key/version selectors](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html) and [Supabase API key boundaries](https://supabase.com/docs/guides/getting-started/api-keys) define the underlying injection and exposure rules.
