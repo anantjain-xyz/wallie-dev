@@ -56,7 +56,7 @@ aws logs describe-log-groups --log-group-name-prefix /wallie/staging/
 
 - Verify the intended account and non-root identity.
 - Require role ARN `arn:aws:iam::<account>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS` and its matching service-role path. Terraform checks both before creating resources.
-- **Missing role:** stop and prepare a separately reviewed service-linked-role bootstrap. [CreateCluster can attempt to create this role](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_CreateCluster.html); this policy deliberately grants only `iam:GetRole` and Terraform requires the role to exist first.
+- **Missing role:** complete the separately reviewed [ECS service-linked-role bootstrap](AWS-ECS-SERVICE-ROLE.md). [CreateCluster can attempt to create this role](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_CreateCluster.html); this policy deliberately grants only `iam:GetRole` and Terraform requires the role to exist first.
 - **First deployment:** require an explicit `MISSING` cluster failure for `wallie-staging` and no exact match for either log-group name. Access errors are not absence. An existing or inactive cluster, or an existing log group, needs separate inspection; do not import or retag it automatically.
 - Subsequent deployments: inspect managed state and ownership instead of requiring absence.
 
