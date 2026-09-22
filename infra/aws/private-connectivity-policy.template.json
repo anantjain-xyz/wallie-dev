@@ -1,0 +1,232 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribePrefixLists",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeManagedPrefixLists"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSecurityGroup", "ec2:CreateVpcEndpoint"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpcEndpoint", "ec2:ModifyVpcEndpoint"],
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:subnet/<SERVICES_SUBNET_A_ID>",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:subnet/<SERVICES_SUBNET_B_ID>",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:route-table/<SERVICES_ROUTE_TABLE_A_ID>",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:route-table/<SERVICES_ROUTE_TABLE_B_ID>"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "private-connectivity",
+          "aws:RequestTag/Name": [
+            "wallie-staging-application-tasks",
+            "wallie-staging-aws-endpoints"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "private-connectivity",
+          "ec2:VpceServiceOwner": "amazon",
+          "ec2:VpceServiceName": [
+            "com.amazonaws.<REGION>.ecr.api",
+            "com.amazonaws.<REGION>.ecr.dkr",
+            "com.amazonaws.<REGION>.logs",
+            "com.amazonaws.<REGION>.s3"
+          ],
+          "aws:RequestTag/Name": [
+            "wallie-staging-ecr-api",
+            "wallie-staging-ecr-dkr",
+            "wallie-staging-logs",
+            "wallie-staging-ecr-image-layers"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpcEndpoint", "ec2:ModifyVpcEndpoint"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "private-connectivity"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupRules"
+      ],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "private-connectivity"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "private-connectivity",
+          "aws:RequestTag/Name": [
+            "wallie-staging-endpoint-https",
+            "wallie-staging-task-endpoint-https",
+            "wallie-staging-task-layer-https"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:ModifyVpcEndpoint", "ec2:ModifySecurityGroupRules"],
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "private-connectivity"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "private-connectivity",
+          "ec2:CreateAction": [
+            "CreateSecurityGroup",
+            "CreateVpcEndpoint",
+            "AuthorizeSecurityGroupIngress",
+            "AuthorizeSecurityGroupEgress"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "private-connectivity"
+        },
+        "StringEqualsIfExists": {
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "private-connectivity"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:ModifySecurityGroupRules",
+      "Resource": "<S3_PREFIX_LIST_ARN>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    }
+  ]
+}
