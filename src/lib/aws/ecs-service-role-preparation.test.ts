@@ -7,6 +7,7 @@ const script = fileURLToPath(
 );
 const account = "123456789012";
 const role = `arn:aws:iam::${account}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS`;
+const absentRole = `arn:aws:iam::${account}:role/AWSServiceRoleForECS`;
 const managedPolicy = "arn:aws:iam::aws:policy/aws-service-role/AmazonECSServiceRolePolicy";
 const args = ["policy", "--account-id", account];
 const array = (value: string | string[]) => (Array.isArray(value) ? value : [value]);
@@ -37,7 +38,7 @@ describe("ECS service-linked-role bootstrap preparation", () => {
   it("renders offline and permits only the bounded creation and verification actions", () => {
     const document = policy();
     expect(document.Version).toBe("2012-10-17");
-    expect(document.Statement).toHaveLength(3);
+    expect(document.Statement).toHaveLength(4);
     expect(JSON.stringify(document).length).toBeLessThanOrEqual(6144);
     expect([...new Set(document.Statement.flatMap((item) => array(item.Action)))].sort()).toEqual([
       "iam:CreateServiceLinkedRole",
@@ -56,8 +57,20 @@ describe("ECS service-linked-role bootstrap preparation", () => {
     expect(JSON.stringify(document)).not.toMatch(/<[A-Z_]+>|access_key|secret_key|token/);
   });
 
+  it("permits only GetRole at the exact pathless ARN for the absence check", () => {
+    expect(policy().Statement.filter((item) => item.Resource === absentRole)).toEqual([
+      {
+        Sid: "CheckEcsRoleAbsence",
+        Effect: "Allow",
+        Action: "iam:GetRole",
+        Resource: absentRole,
+        Condition: { StringEquals: { "aws:PrincipalAccount": account } },
+      },
+    ]);
+  });
+
   it("allows creation only for the exact account, role name, service path and ECS service", () => {
-    expect(policy().Statement[0]).toEqual({
+    expect(policy().Statement[1]).toEqual({
       Sid: "CreateOnlyEcsServiceLinkedRole",
       Effect: "Allow",
       Action: "iam:CreateServiceLinkedRole",
@@ -72,7 +85,7 @@ describe("ECS service-linked-role bootstrap preparation", () => {
   });
 
   it("limits inspection to the exact role and AWS-owned managed policy", () => {
-    expect(policy().Statement.slice(1)).toEqual([
+    expect(policy().Statement.slice(2)).toEqual([
       {
         Sid: "InspectExactEcsRole",
         Effect: "Allow",
@@ -102,7 +115,8 @@ describe("ECS service-linked-role bootstrap preparation", () => {
     });
     expect(result.status).toBe(0);
     const document = JSON.parse(result.stdout);
-    expect(document.Statement[0].Resource).toBe(role.replace(account, "999999999999"));
+    expect(document.Statement[0].Resource).toBe(absentRole.replace(account, "999999999999"));
+    expect(document.Statement[1].Resource).toBe(role.replace(account, "999999999999"));
     expect(result.stdout).not.toMatch(/must-not-appear|unrelated|cn-north-1/);
   });
 

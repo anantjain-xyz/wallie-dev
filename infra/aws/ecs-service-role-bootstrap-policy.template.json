@@ -2,6 +2,17 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "CheckEcsRoleAbsence",
+      "Effect": "Allow",
+      "Action": "iam:GetRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/AWSServiceRoleForECS",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>"
+        }
+      }
+    },
+    {
       "Sid": "CreateOnlyEcsServiceLinkedRole",
       "Effect": "Allow",
       "Action": "iam:CreateServiceLinkedRole",
