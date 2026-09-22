@@ -27,14 +27,14 @@ function run(command: string, component = "web", extra: string[] = [], base = co
     },
   );
 }
-function artifact(command: string, component = "web") {
-  const result = run(command, component);
+function artifact(command: string, component = "web", extra: string[] = []) {
+  const result = run(command, component, extra);
   expect(result.status).toBe(0);
   expect(result.stderr).toBe("");
   return JSON.parse(result.stdout);
 }
-function readback(component = "web") {
-  const manifest = artifact("manifest", component);
+function readback(component = "web", extra: string[] = []) {
+  const manifest = artifact("manifest", component, extra);
   const { PermissionsBoundary: _boundary, ...role } = manifest.role;
   void _boundary;
   return {
@@ -47,12 +47,12 @@ function readback(component = "web") {
     "get-role-policy": manifest.inlinePolicy,
   };
 }
-function verify(fixture: ReturnType<typeof readback>, component = "web") {
+function verify(fixture: ReturnType<typeof readback>, component = "web", extra: string[] = []) {
   const directory = mkdtempSync(join(tmpdir(), "wallie-execution-role-"));
   try {
     for (const [name, value] of Object.entries(fixture))
       writeFileSync(join(directory, `${name}.json`), JSON.stringify(value));
-    return run("verify", component, ["--readback-dir", directory]);
+    return run("verify", component, ["--readback-dir", directory, ...extra]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -396,4 +396,160 @@ describe("AWS execution-role bootstrap", () => {
       expect(result.stderr).toContain("[aws-execution-roles]");
     },
   );
+});
+
+describe("optional execution-role runtime secret access", () => {
+  const secretArn = (component: string) =>
+    `arn:aws:secretsmanager:${region}:${account}:secret:/wallie/staging/${component}/runtime-aB123Z`;
+  const secretArgs = (component: string) => ["--runtime-secret-arn", secretArn(component)];
+
+  it.each(["web", "worker"])(
+    "adds only exact %s secret retrieval and preserves the existing role and policy grants",
+    (component) => {
+      const baseline = artifact("manifest", component);
+      const manifest = artifact("manifest", component, secretArgs(component));
+      const put = artifact("put-role-policy-input", component, secretArgs(component));
+      expect(manifest.role).toEqual(baseline.role);
+      expect(manifest.inlinePolicyNames).toEqual(baseline.inlinePolicyNames);
+      expect(manifest.attachedPolicyArns).toEqual([]);
+      expect(manifest.runtimeSecretArn).toBe(secretArn(component));
+      const policy = JSON.parse(put.PolicyDocument);
+      expect(policy).toEqual(manifest.inlinePolicy.PolicyDocument);
+      expect(policy.Statement).toEqual([
+        ...baseline.inlinePolicy.PolicyDocument.Statement,
+        {
+          Sid: "ReadOwnRuntimeSecret",
+          Effect: "Allow",
+          Action: "secretsmanager:GetSecretValue",
+          Resource: secretArn(component),
+          Condition: {
+            StringEquals: { "aws:PrincipalAccount": account, "aws:RequestedRegion": region },
+          },
+        },
+      ]);
+      expect(run("create-role-input", component, secretArgs(component)).stdout).toBe(
+        run("create-role-input", component).stdout,
+      );
+      expect(JSON.stringify(manifest)).not.toMatch(
+        /kms:|ssm:|iam:PassRole|SecretString|SecretBinary|secretsmanager:(Put|Update|Delete|Describe)/,
+      );
+      const result = verify(
+        readback(component, secretArgs(component)),
+        component,
+        secretArgs(component),
+      );
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "readback-matches-manifest",
+        runtimeSecretArn: secretArn(component),
+      });
+      expect(JSON.parse(result.stdout).limitation).toContain("secret injection remain unqualified");
+    },
+  );
+
+  it.each(["web", "worker"])("requires matching opt-in during %s verification", (component) => {
+    const unexpectedGrant = verify(readback(component, secretArgs(component)), component);
+    expect(unexpectedGrant.status).toBe(1);
+    expect(unexpectedGrant.stdout).toBe("");
+    const missingGrant = verify(readback(component), component, secretArgs(component));
+    expect(missingGrant.status).toBe(1);
+    expect(missingGrant.stdout).toBe("");
+  });
+
+  it.each([
+    [
+      "wildcard resource",
+      (statement: Record<string, unknown>) => {
+        statement.Resource = "*";
+      },
+    ],
+    [
+      "another secret suffix",
+      (statement: Record<string, unknown>) => {
+        statement.Resource = secretArn("web").replace("aB123Z", "aB123Y");
+      },
+    ],
+    [
+      "other component",
+      (statement: Record<string, unknown>) => {
+        statement.Resource = secretArn("worker");
+      },
+    ],
+    [
+      "multiple secret resources",
+      (statement: Record<string, unknown>) => {
+        statement.Resource = [secretArn("web"), secretArn("worker")];
+      },
+    ],
+    [
+      "additional write action",
+      (statement: Record<string, unknown>) => {
+        statement.Action = ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"];
+      },
+    ],
+    [
+      "missing account/region conditions",
+      (statement: Record<string, unknown>) => {
+        delete statement.Condition;
+      },
+    ],
+  ] as [string, (statement: Record<string, unknown>) => void][])(
+    "rejects %s in secret-enabled readback",
+    (_name, mutate) => {
+      const fixture = readback("web", secretArgs("web"));
+      mutate(fixture["get-role-policy"].PolicyDocument.Statement[3]);
+      const result = verify(fixture, "web", secretArgs("web"));
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("inline PolicyDocument");
+    },
+  );
+
+  it.each([
+    "*",
+    secretArn("worker"),
+    secretArn("web").replace(account, "999999999999"),
+    secretArn("web").replace(region, "us-east-1"),
+    secretArn("web").replace("arn:aws:", "arn:aws-us-gov:"),
+    secretArn("web").replace("secretsmanager:", "ssm:"),
+    secretArn("web").replace("/staging/", "/production/"),
+    secretArn("web").replace("/wallie/", "/other/"),
+    secretArn("web").replace("/runtime-", "/runtime-extra-"),
+    secretArn("web").replace("/runtime-", "/other-"),
+    secretArn("web").replace("aB123Z", "*"),
+    secretArn("web").replace("aB123Z", "??????"),
+    secretArn("web").replace("aB123Z", "aB123"),
+    secretArn("web").replace("aB123Z", "aB123Z0"),
+    secretArn("web").replace("-aB123Z", ""),
+    secretArn("web").replace("aB123Z", "aB12_Z"),
+    `${secretArn("web")}:password::`,
+    `${secretArn("web")}\n`,
+    ` ${secretArn("web")}`,
+    "",
+  ])("rejects unsupported runtime secret ARN %j before rendering", (value) => {
+    for (const command of ["create-role-input", "put-role-policy-input", "manifest", "verify"]) {
+      const result = run(command, "web", [
+        "--runtime-secret-arn",
+        value,
+        ...(command === "verify" ? ["--readback-dir", "/must-not-be-read"] : []),
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("[aws-execution-roles]");
+      expect(result.stderr).not.toContain("Missing or invalid readback file");
+    }
+  });
+
+  it("rejects duplicate or valueless runtime secret options", () => {
+    for (const extra of [
+      [...secretArgs("web"), ...secretArgs("web")],
+      [...secretArgs("web"), `--runtime-secret-arn=${secretArn("web")}`],
+      ["--runtime-secret-arn"],
+    ]) {
+      const result = run("manifest", "web", extra);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+    }
+  });
 });

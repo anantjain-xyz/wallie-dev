@@ -1,6 +1,6 @@
 # ECS execution roles
 
-**An administrator creates two fixed roles; the deployment identity can only inspect them.** This batch prepares image pulls and log delivery. Create the roles only after review and merge.
+**An administrator manages two fixed roles; the deployment identity can only inspect them.** Image pulls and log delivery are the default. An explicit option adds access to each role's own runtime secret. Apply changes only after review and merge.
 
 ```mermaid
 flowchart LR
@@ -20,10 +20,11 @@ flowchart LR
 | Trust          | Only `ecs-tasks.amazonaws.com`; exact source account and regional ECS ARN                                  |
 | Image pulls    | `GetAuthorizationToken` on `*`; three pull actions on the role's own repository                            |
 | Logs           | `CreateLogStream` and `PutLogEvents` on streams in the role's own existing group                           |
+| Secret opt-in  | `GetSecretValue` on one full, reviewed `/wallie/staging/<component>/runtime` ARN, including its suffix     |
 | Ownership      | Six fixed tags; `ManagedBy=Administrator`; one inline `WallieStagingExecution` policy                      |
 | Local identity | Four read actions on the two exact role ARNs, added to existing `WallieStagingApplication`                 |
 
-- These are **execution roles for the ECS/Fargate agent**, separate from application task roles. No task definitions, services, tasks, secret access, image publication, log-group creation, or `iam:PassRole` permissions. [AWS execution-role responsibilities](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html)
+- These are **execution roles for the ECS/Fargate agent**, separate from application task roles. Secret access requires the explicit opt-in below. No task definitions, services, tasks, image publication, log-group creation, or `iam:PassRole` permissions. [AWS execution-role responsibilities](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html)
 - Trust uses `arn:aws:ecs:<region>:<account>:*`: ECS does not support narrowing this condition to a specific cluster. The later deployment batch must constrain which task definitions can use each role. [AWS trust conditions](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html)
 - No managed attachments or permissions boundary. Administrator-owned trust and policy creation avoids delegating arbitrary IAM document writes. A boundary limits identity permissions; it does not replace review of role trust. [Permissions boundaries](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html)
 - The existing Terraform application root keeps its cluster/log-group ownership. Roles are not imported into Terraform. This bootstrap supports one commercial AWS account/region; subsequent policy changes require separate review.
@@ -109,4 +110,36 @@ node scripts/prepare-aws-execution-roles.mjs verify \
 - Verify the caller account/non-root identity first; stop if any capture command fails. The verifier cannot prove file freshness or the identity that captured it.
 - Both list responses must explicitly contain `IsTruncated: false`, no continuation marker, exactly one expected inline policy, and zero managed attachments. An incomplete or ambiguous response fails closed; never treat an empty failed command as a valid snapshot.
 - Verification compares exact ARN/name/path, description, session duration, all tags, absence of a boundary, complete trust, and complete inline permissions. IAM URL encoding, statement ordering, and scalar/singleton list forms are normalized; additional permissions or principals are rejected. [IAM policy encoding](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRolePolicy.html)
-- `readback-matches-manifest` means **offline metadata matched**. It does not establish effective IAM or live task capability. The next [private task smoke](AWS-PRIVATE-TASK-SMOKE.md) prepares bounded image-pull/log qualification and temporary `PassRole` access. Application task roles and per-component secret access remain later batches.
+- `readback-matches-manifest` means **offline metadata matched**. It does not establish effective IAM or live task capability. The [private task smoke](AWS-PRIVATE-TASK-SMOKE.md) prepares bounded image-pull/log qualification and temporary `PassRole` access. Application task roles and live secret injection remain later batches.
+
+## Optional runtime secret access
+
+- Start with a verified existing role and its [runtime secret container](AWS-SECRETS-FOUNDATION.md). Read the secret's **full ARN** from reviewed metadata; names, wildcard suffixes, and ECS JSON-key/version selectors are rejected.
+- The option adds only `secretsmanager:GetSecretValue` for that component/account/region. Trust, tags, existing ECR/log permissions, and role creation inputs stay unchanged. Omitting the option still renders the original policy with **no secret access**.
+- This grant covers the entire component secret. Values and task-definition injection mappings require later review; this renderer never reads or writes a value. The current AWS-managed encryption key needs no added `kms:Decrypt`; custom keys require separate work. [AWS secret permissions](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html#task-execution-secrets)
+
+```sh
+component=web # repeat with worker and its own full ARN
+WALLIE_RUNTIME_SECRET_ARN='<full-reviewed-own-component-runtime-secret-arn>'
+WALLIE_ROLE_FILES="$PWD/.wallie/aws/execution-role-secret-access"
+WALLIE_SECRET_ROLE_FILES="$WALLIE_ROLE_FILES/$component"
+mkdir -p "$WALLIE_SECRET_ROLE_FILES"
+for command in put-role-policy-input manifest; do
+  node scripts/prepare-aws-execution-roles.mjs "$command" \
+    --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$AWS_REGION" --component "$component" \
+    --runtime-secret-arn "$WALLIE_RUNTIME_SECRET_ARN" \
+    > "$WALLIE_SECRET_ROLE_FILES/$command.json"
+done
+```
+
+- Preserve the earlier role readbacks. Review the single added statement, then have an administrator apply the reviewed `put-role-policy-input.json` to the existing `WallieStagingExecution` inline policy after merge. Do not recreate the role or change its trust.
+- With the new `$WALLIE_ROLE_FILES` base, repeat only the four IAM read commands above; they write into `$WALLIE_SECRET_ROLE_FILES`. Use the verification command below with the **same ARN option**. Missing, extra, or different secret access fails comparison.
+
+```sh
+node scripts/prepare-aws-execution-roles.mjs verify \
+  --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$AWS_REGION" --component "$component" \
+  --runtime-secret-arn "$WALLIE_RUNTIME_SECRET_ARN" \
+  --readback-dir "$WALLIE_SECRET_ROLE_FILES"
+```
+
+- Private Secrets Manager connectivity, populated values, task definitions, and a live injection check remain separate gates. Metadata verification alone does not qualify secret injection.
