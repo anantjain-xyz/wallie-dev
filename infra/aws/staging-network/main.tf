@@ -103,7 +103,8 @@ resource "aws_route_table" "private" {
   for_each = local.private_subnets
 
   vpc_id = aws_vpc.main.id
-  # Explicitly manage an empty set of non-local routes; omission would leave them unmanaged.
+  # Manage no ordinary non-local routes. Provider 6.65.0 ignores S3 gateway
+  # endpoint prefix-list routes here; aws_vpc_endpoint manages those separately.
   route = []
 
   tags = {

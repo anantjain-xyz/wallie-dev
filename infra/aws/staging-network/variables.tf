@@ -54,3 +54,10 @@ variable "vpc_cidr" {
     error_message = "vpc_cidr must be an aligned RFC 1918 IPv4 /16, such as 10.42.0.0/16."
   }
 }
+
+variable "enable_private_connectivity" {
+  description = "Create the separately reviewed, billable application endpoints and dedicated security groups. Keep false during foundation/hardening."
+  type        = bool
+  default     = false
+  nullable    = false
+}

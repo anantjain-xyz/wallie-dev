@@ -51,3 +51,20 @@ output "sandbox_network_acl_associations" {
     }
   }
 }
+
+output "application_connectivity" {
+  description = "Private image/log connectivity for later application tasks; no workloads are launched."
+  value = var.enable_private_connectivity ? {
+    task_security_group_id     = aws_security_group.application_tasks[0].id
+    endpoint_security_group_id = aws_security_group.aws_endpoints[0].id
+    interface_endpoints = {
+      for name, endpoint in aws_vpc_endpoint.application : name => {
+        id                    = endpoint.id
+        subnet_ids            = endpoint.subnet_ids
+        network_interface_ids = endpoint.network_interface_ids
+      }
+    }
+    s3_endpoint_id    = aws_vpc_endpoint.image_layers[0].id
+    s3_prefix_list_id = aws_vpc_endpoint.image_layers[0].prefix_list_id
+  } : null
+}
