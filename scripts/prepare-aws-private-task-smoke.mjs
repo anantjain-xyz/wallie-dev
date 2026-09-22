@@ -21,6 +21,7 @@ const time = (value) => {
   check(Number.isFinite(result), "Invalid evidence time");
   return result;
 };
+const smokeDeadline = (evidence) => time(evidence.run?.requestStartedAt) + 10 * 60_000;
 const tagsObject = (tags) => {
   check(Array.isArray(tags), "Missing resource tags");
   const result = Object.fromEntries(tags.map(({ key, value }) => [key, value]));
@@ -583,6 +584,10 @@ export function verifyDefinition(plan, component, response) {
       if (isDeepStrictEqual(container[key], [])) delete container[key];
     if (container.cpu === 0) delete container.cpu;
     if (container.privileged === false) delete container.privileged;
+    if (isDeepStrictEqual(container.logConfiguration?.secretOptions, []))
+      delete container.logConfiguration.secretOptions;
+    if (isDeepStrictEqual(container.linuxParameters?.capabilities?.add, []))
+      delete container.linuxParameters.capabilities.add;
   }
   const { tags: _tags, ...definition } = expected;
   void _tags;
@@ -636,13 +641,14 @@ export function smokePolicy(plan, definitions) {
   return result;
 }
 
-function oneTask(envelope, plan, request, now) {
+function oneTask(envelope, plan, request, now, deadline) {
   check(
     time(envelope?.requestStartedAt) >= time(plan.createdAt) &&
       time(envelope.capturedAt) >= time(envelope.requestStartedAt) &&
       time(envelope.capturedAt) <= now,
     "Invalid task evidence capture time",
   );
+  check(time(envelope.capturedAt) <= deadline, "Task evidence exceeds smoke deadline");
   const response = envelope.response;
   equal(response?.failures, [], "ECS task failures");
   check(
@@ -723,12 +729,17 @@ export function verifyNetwork(
   now = Date.now(),
 ) {
   const request = runInput(plan, component, subnetIndex, definitions);
-  const launch = oneTask(evidence.run, plan, request, now);
+  const deadline = smokeDeadline(evidence);
+  const launch = oneTask(evidence.run, plan, request, now, deadline);
   check(
     time(launch.createdAt) >= time(evidence.run.requestStartedAt),
     "Task predates this RunTask request",
   );
-  const task = oneTask(evidence.running, plan, request, now);
+  const task = oneTask(evidence.running, plan, request, now, deadline);
+  check(
+    time(evidence.running.requestStartedAt) >= time(evidence.run.capturedAt),
+    "RUNNING capture must follow the RunTask response",
+  );
   equal(task.taskArn, launch.taskArn, "launched task identity");
   equal(task.createdAt, launch.createdAt, "task creation time");
   equal(task.lastStatus, "RUNNING", "network capture task state");
@@ -764,6 +775,7 @@ export function verifyNetwork(
       time(snapshot.capturedAt) <= now,
     "Invalid ENI capture time",
   );
+  check(time(snapshot.capturedAt) <= deadline, "ENI evidence exceeds smoke deadline");
   const enis = snapshot.response?.NetworkInterfaces;
   check(
     Array.isArray(enis) && enis.length === 1 && !snapshot.response.NextToken,
@@ -812,7 +824,12 @@ export function verifyResult(
 ) {
   const network = verifyNetwork(plan, component, subnetIndex, definitions, evidence, now);
   const request = runInput(plan, component, subnetIndex, definitions);
-  const task = oneTask(evidence.stopped, plan, request, now);
+  const deadline = smokeDeadline(evidence);
+  const task = oneTask(evidence.stopped, plan, request, now, deadline);
+  check(
+    time(evidence.stopped.requestStartedAt) >= time(evidence.eni.capturedAt),
+    "STOPPED capture must follow the ENI response",
+  );
   equal(task.taskArn, network.taskArn, "stopped task identity");
   equal(task.createdAt, evidence.running.response.tasks[0].createdAt, "stopped task creation time");
   equal(task.lastStatus, "STOPPED", "final task state");
@@ -828,7 +845,7 @@ export function verifyResult(
     time(task.startedAt) <= time(evidence.running.capturedAt) &&
       time(evidence.eni.capturedAt) < stopped &&
       stopped <= time(evidence.stopped.capturedAt) &&
-      stopped - time(task.createdAt) <= 10 * 60_000,
+      stopped <= deadline,
     "Missing live ENI capture or exceeded smoke deadline",
   );
   const stream = `wallie-smoke-${plan.runId}/smoke/${task.taskArn.split("/").at(-1)}`;
@@ -839,6 +856,7 @@ export function verifyResult(
   );
   const events = [];
   let token;
+  let previousCapture = time(evidence.stopped.capturedAt);
   for (const [index, page] of pages.entries()) {
     equal(
       page.request,
@@ -851,11 +869,13 @@ export function verifyResult(
       "log request",
     );
     check(
-      time(page.requestStartedAt) >= stopped &&
+      time(page.requestStartedAt) >= previousCapture &&
         time(page.capturedAt) >= time(page.requestStartedAt) &&
         time(page.capturedAt) <= now,
-      "Logs must be captured after the task stops",
+      "Log pages must be captured in order after the STOPPED response",
     );
+    check(time(page.capturedAt) <= deadline, "Log evidence exceeds smoke deadline");
+    previousCapture = time(page.capturedAt);
     check(
       Array.isArray(page.response?.events) &&
         page.response.events.length <= 100 &&

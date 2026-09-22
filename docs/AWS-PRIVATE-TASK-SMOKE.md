@@ -51,7 +51,7 @@ umask 077
 WALLIE_SMOKE_DIR="$PWD/.wallie/aws/private-task-smoke"
 snapshot="$WALLIE_SMOKE_DIR/preparation"
 mkdir -p "$snapshot"
-aws_read=(aws --profile wallie-staging --region "$AWS_REGION" --output json --no-cli-pager)
+aws_read=(aws --profile wallie-staging --region "$AWS_REGION" --output json --no-cli-pager --no-paginate)
 
 capture() {
   local output="$1" captured; shift
@@ -73,7 +73,8 @@ capture "$snapshot/endpoints.json" "${aws_read[@]}" ec2 describe-vpc-endpoints -
 capture "$snapshot/prefixList.json" "${aws_read[@]}" ec2 describe-managed-prefix-lists --prefix-list-ids "$S3_PREFIX_LIST"
 ```
 
-- Select exactly those resources; do not include the default SG or other route tables. Use **`describe-managed-prefix-lists`**, not `describe-prefix-lists`: owner and address-family evidence are required.
+- Every capture uses `--no-paginate` to preserve one raw service response and its tokens; `--no-cli-pager` only disables the display pager. Keep both flags for administrator captures too. [AWS CLI pagination](https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-pagination.html)
+- Select exactly those resources; do not include the default SG or other route tables. Use **`describe-managed-prefix-lists`**, not `describe-prefix-lists`: owner and address-family evidence are required. A network continuation token fails verification; never hide it with CLI aggregation.
 - For each component, capture the exact digest's scan. Require `COMPLETE`, zero High/Critical findings, valid severity counts, and completion within 24 hours. This policy does not grant `StartImageScan`; stale or unavailable results require separately reviewed rescan/publication work.
 
 ```sh
@@ -159,7 +160,7 @@ capture "$task_dir/run.json" "${aws_read[@]}" ecs run-task --cli-input-json "fil
 ```
 
 - Require `failures: []` and exactly one returned task ARN, even on HTTP 200. Record that ARN before further actions. An ambiguous timeout is not absence: preserve the client token and resolve the original request with an administrator; do not generate another run/token. [RunTask semantics](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RunTask.html)
-- Poll that exact task at bounded intervals until RUNNING, at most 10 minutes from request start. Capture `running.json` using `ecs describe-tasks --cluster wallie-staging --tasks "$TASK_ARN" --include TAGS`. Extract the attached ENI ID from this response, then immediately capture `eni.json` using `ec2 describe-network-interfaces --network-interface-ids "$TASK_ENI"`.
+- One 10-minute deadline starts at `run.json.requestStartedAt` and covers RUNNING/ENI, STOPPED, and all log-response captures. Poll that exact task at bounded intervals until RUNNING. Capture `running.json` using `ecs describe-tasks --cluster wallie-staging --tasks "$TASK_ARN" --include TAGS`. Extract the attached ENI ID from this response, then immediately capture `eni.json` using `ec2 describe-network-interfaces --network-interface-ids "$TASK_ENI"`.
 - Use the `capture` function for both. The probe exits after 60 seconds: if RUNNING/ENI evidence is missed, fail this qualification. A STOPPED attachment snapshot cannot replace live ENI evidence.
 
 ```sh
@@ -171,7 +172,7 @@ node scripts/prepare-aws-private-task-smoke.mjs verify-network \
 ## Stop, logs, and final comparison
 
 - Within the same 10-minute overall task deadline, capture `stopped.json` with the exact `describe-tasks` call. Require normal essential-container exit, code 0, and the expected digest. On timeout, unexpected behavior, or interruption, explicitly stop **only the recorded task ARN**, retain evidence, and wait for STOPPED before removing the temporary grant. Never retry a failed smoke automatically.
-- After STOPPED, request the exact stream `wallie-smoke-<runId>/smoke/<task-id>` from `/wallie/staging/<component>`. Save each request and full raw GetLogEvents response; start with `startFromHead: true`, then follow `nextForwardToken` until the **request and returned token match**. Empty intermediate pages are not completion. If delivery is still pending, recollect a fresh complete chain within the deadline; do not concatenate polling attempts. [AWS pagination](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html)
+- After STOPPED, request the exact stream `wallie-smoke-<runId>/smoke/<task-id>` from `/wallie/staging/<component>`. Save each request and full raw GetLogEvents response using `aws_read` with **`--no-paginate`**; start with `startFromHead: true`, then follow `nextForwardToken` until the **request and returned token match**. Empty intermediate pages are not completion. If delivery is still pending, recollect a fresh complete chain within the deadline; do not concatenate polling attempts. [AWS pagination](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html)
 - Use a JSON request file with only `logGroupName`, `logStreamName`, `startFromHead`, and, after page one, `nextToken`. Capture it with the same function, then add its request object to the envelope:
 
 ```sh

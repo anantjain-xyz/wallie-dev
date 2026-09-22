@@ -550,6 +550,7 @@ describe("private ECS smoke preparation", () => {
   it("rejects a late task even when retrospectively validating its old evidence", () => {
     const plan = fixture(),
       { definitions, snapshots } = evidence(plan);
+    snapshots.run.requestStartedAt = "2026-09-22T12:16:00Z";
     snapshots.run.capturedAt = "2026-09-22T12:16:02Z";
     setAt(snapshots, "run.response.tasks.0.createdAt", "2026-09-22T12:16:01Z");
     expect(() =>
@@ -631,6 +632,31 @@ describe("private ECS smoke preparation", () => {
     expect(() => helper.assembleManifest(input, readback, now)).toThrow(/fresh/);
   });
 
+  it.each(["web", "worker"])(
+    "accepts nested ECS empty defaults for %s without changing the readback",
+    (component) => {
+      const plan = fixture(),
+        { definitions, snapshots } = evidence(plan, component);
+      for (const definition of Object.values(definitions)) {
+        setAt(
+          definition.taskDefinition,
+          "containerDefinitions.0.logConfiguration.secretOptions",
+          [],
+        );
+        setAt(
+          definition.taskDefinition,
+          "containerDefinitions.0.linuxParameters.capabilities.add",
+          [],
+        );
+      }
+      const original = structuredClone(definitions);
+      expect(helper.runInput(plan, component, 0, definitions).count).toBe(1);
+      expect(helper.smokePolicy(plan, definitions).Statement).toBeDefined();
+      expect(helper.verifyResult(plan, component, 0, definitions, snapshots, now).exitCode).toBe(0);
+      expect(definitions).toEqual(original);
+    },
+  );
+
   it.each([
     ["taskRoleArn", `arn:aws:iam::${account}:role/wallie-staging-web-execution`],
     ["cpu", "4096"],
@@ -639,6 +665,15 @@ describe("private ECS smoke preparation", () => {
     ["containerDefinitions.0.secrets", [{ name: "SECRET", valueFrom: "anything" }]],
     ["containerDefinitions.0.image", reference("worker")],
     ["containerDefinitions.0.logConfiguration.options.mode", "non-blocking"],
+    [
+      "containerDefinitions.0.logConfiguration.secretOptions",
+      [{ name: "token", valueFrom: "secret" }],
+    ],
+    ["containerDefinitions.0.logConfiguration.secretOptions", null],
+    ["containerDefinitions.0.logConfiguration.secretOptions", {}],
+    ["containerDefinitions.0.linuxParameters.capabilities.add", ["SYS_ADMIN"]],
+    ["containerDefinitions.0.linuxParameters.capabilities.add", null],
+    ["containerDefinitions.0.linuxParameters.capabilities.add", "SYS_ADMIN"],
     ["containerDefinitions.0.portMappings", [{ containerPort: 3000 }]],
   ])("rejects unexpected registered-definition field %s", (path, replacement) => {
     const plan = fixture(),
@@ -689,12 +724,96 @@ describe("private ECS smoke preparation", () => {
     expect(() => helper.verifyResult(plan, "web", 0, definitions, snapshots, now)).toThrow();
   });
 
+  it.each(["run", "running", "eni", "stopped"])(
+    "rejects %s response receipt after the request-based ten-minute deadline",
+    (capture) => {
+      const plan = fixture(),
+        { definitions, snapshots } = evidence(plan);
+      setAt(snapshots, `${capture}.capturedAt`, "2026-09-22T12:10:00.001Z");
+      const later = Date.parse("2026-09-22T12:20:00Z");
+      if (capture !== "stopped")
+        expect(() => helper.verifyNetwork(plan, "web", 0, definitions, snapshots, later)).toThrow(
+          /smoke deadline/,
+        );
+      expect(() => helper.verifyResult(plan, "web", 0, definitions, snapshots, later)).toThrow(
+        /smoke deadline/,
+      );
+    },
+  );
+
+  it.each([0, 1])(
+    "rejects log page %s received late even if requested before the deadline",
+    (page) => {
+      const plan = fixture(),
+        { definitions, snapshots } = evidence(plan);
+      snapshots.logs[page].requestStartedAt = "2026-09-22T12:09:59.999Z";
+      snapshots.logs[page].capturedAt = "2026-09-22T12:10:00.001Z";
+      expect(() =>
+        helper.verifyResult(plan, "web", 0, definitions, snapshots, now + 48 * 60 * 60_000),
+      ).toThrow(/Log evidence exceeds smoke deadline/);
+    },
+  );
+
+  it("accepts a complete log chain received exactly at the deadline when verified later", () => {
+    const plan = fixture(),
+      { definitions, snapshots } = evidence(plan);
+    snapshots.logs[1].requestStartedAt = "2026-09-22T12:09:59.999Z";
+    snapshots.logs[1].capturedAt = "2026-09-22T12:10:00.000Z";
+    expect(
+      helper.verifyResult(plan, "web", 0, definitions, snapshots, now + 48 * 60 * 60_000).exitCode,
+    ).toBe(0);
+  });
+
+  it("does not restart the deadline when task creation is delayed", () => {
+    const plan = fixture(),
+      { definitions, snapshots } = evidence(plan);
+    const shift = (value: string) => new Date(Date.parse(value) + 8 * 60_000).toISOString();
+    for (const [name, capture] of Object.entries({
+      run: snapshots.run,
+      running: snapshots.running,
+      stopped: snapshots.stopped,
+    })) {
+      if (name !== "run") capture.requestStartedAt = shift(capture.requestStartedAt);
+      capture.capturedAt = shift(capture.capturedAt);
+      const task = capture.response.tasks[0] as Data;
+      for (const key of ["createdAt", "startedAt", "stoppedAt"])
+        if (typeof task[key] === "string") task[key] = shift(task[key]);
+    }
+    snapshots.eni.requestStartedAt = shift(snapshots.eni.requestStartedAt);
+    snapshots.eni.capturedAt = shift(snapshots.eni.capturedAt);
+    for (const page of snapshots.logs) {
+      page.requestStartedAt = shift(page.requestStartedAt);
+      page.capturedAt = shift(page.capturedAt);
+      for (const event of page.response.events) event.timestamp += 8 * 60_000;
+    }
+    const later = now + 60 * 60_000;
+    expect(
+      helper.verifyNetwork(plan, "web", 0, definitions, snapshots, later).taskArn,
+    ).toBeDefined();
+    expect(() => helper.verifyResult(plan, "web", 0, definitions, snapshots, later)).toThrow(
+      /smoke deadline/,
+    );
+  });
+
+  it.each([
+    ["running.requestStartedAt", "2026-09-22T12:00:01Z", /RunTask response/],
+    ["stopped.requestStartedAt", "2026-09-22T12:01:05Z", /ENI response/],
+    ["logs.0.requestStartedAt", "2026-09-22T12:02:09Z", /in order/],
+    ["logs.1.requestStartedAt", "2026-09-22T12:02:10Z", /in order/],
+  ])("rejects out-of-order capture %s", (path, replacement, error) => {
+    const plan = fixture(),
+      { definitions, snapshots } = evidence(plan);
+    setAt(snapshots, path as string, replacement);
+    expect(() => helper.verifyResult(plan, "web", 0, definitions, snapshots, now)).toThrow(error);
+  });
+
   it("continues through empty log pages and requires an actual stable forward token", () => {
     const plan = fixture(),
       { definitions, snapshots } = evidence(plan);
     const first = snapshots.logs[0];
     snapshots.logs.unshift({
       ...structuredClone(first),
+      capturedAt: first.requestStartedAt,
       response: { events: [], nextForwardToken: "empty-page" },
     });
     Object.assign(snapshots.logs[1].request, { nextToken: "empty-page" });
