@@ -68,3 +68,18 @@ output "application_connectivity" {
     s3_prefix_list_id = aws_vpc_endpoint.image_layers[0].prefix_list_id
   } : null
 }
+
+output "runtime_https_egress" {
+  description = "Opt-in one-AZ outbound HTTPS path for real tasks in services-a."
+  value = var.enable_runtime_https_egress ? {
+    nat_gateway_id          = aws_nat_gateway.runtime_egress[0].id
+    eip_allocation_id       = aws_eip.runtime_egress[0].allocation_id
+    public_subnet_id        = aws_subnet.tier["public-a"].id
+    services_subnet_id      = aws_subnet.tier["services-a"].id
+    services_route_table_id = aws_route_table.private["services-a"].id
+    task_security_group_ids = [
+      aws_security_group.application_tasks[0].id,
+      aws_security_group.runtime_egress[0].id,
+    ]
+  } : null
+}

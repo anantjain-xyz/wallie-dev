@@ -103,9 +103,26 @@ resource "aws_route_table" "private" {
   for_each = local.private_subnets
 
   vpc_id = aws_vpc.main.id
-  # Manage no ordinary non-local routes. Provider 6.65.0 ignores S3 gateway
-  # endpoint prefix-list routes here; aws_vpc_endpoint manages those separately.
-  route = []
+  # Only services-a can reach the public NAT when explicitly enabled. Keep
+  # inline route management: mixing aws_route with this resource conflicts.
+  # Provider 6.65.0 ignores S3 gateway prefix-list routes here; the endpoint
+  # manages those separately.
+  route = each.key == "services-a" && var.enable_runtime_https_egress ? [{
+    cidr_block                 = "0.0.0.0/0"
+    nat_gateway_id             = aws_nat_gateway.runtime_egress[0].id
+    carrier_gateway_id         = null
+    core_network_arn           = null
+    destination_prefix_list_id = null
+    egress_only_gateway_id     = null
+    gateway_id                 = null
+    ipv6_cidr_block            = null
+    local_gateway_id           = null
+    network_interface_id       = null
+    odb_network_arn            = null
+    transit_gateway_id         = null
+    vpc_endpoint_id            = null
+    vpc_peering_connection_id  = null
+  }] : []
 
   tags = {
     Name = "wallie-staging-${each.key}"
