@@ -40,7 +40,7 @@ node scripts/prepare-aws-state.mjs access-policy --account-id "$WALLIE_AWS_ACCOU
 node scripts/prepare-aws-state.mjs backend --component application --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$AWS_REGION" > .wallie/aws/application.backend.hcl
 ```
 
-- Create customer-managed **WallieStagingApplication** from the rendered policy; attach it to `wallie-local`.
+- Create customer-managed **WallieStagingApplication** from the rendered policy, or update its default version if it already exists; attach it to `wallie-local`.
 - Update **WallieStagingStateAccess** with the rendered policy as its default version. It preserves foundation/registry access and adds only the application state key and lock; no state-object deletion.
 - Keep existing backend files unchanged. Use Terraform's default workspace and the application key only.
 - Rendering is offline. Plans, state, and local files stay under ignored `.wallie/`; no credentials are written by the renderer.
@@ -68,6 +68,8 @@ aws logs describe-log-groups --log-group-name-prefix /wallie/staging/
 | IAM                 | Read the exact pre-existing ECS service-linked role only                                     |
 
 - All configuration writes require the ownership marker. ECS initial tagging is restricted to `CreateCluster`; Logs has no equivalent create-only condition, so its initial-tag grant can claim an untagged group at either exact name. The absence check is required.
+- A live tagged `CreateLogGroup` request was denied despite the bare-ARN tagging grant. Initial tagging now covers both bare and `:*` forms of the two exact group names, retaining every condition. A dependent-authorization ARN mismatch is inferred; this correction still needs live qualification. [Creation tagging permission](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogGroup.html)
+- Standalone tag reads, metadata updates, and tag removal keep the bare ARN. [CloudWatch ARN forms](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_LogGroup.html)
 - Ownership tags cannot be removed or changed by this policy. Metadata tags can be maintained on owned resources.
 - IAM permits owned-cluster configuration changes and cannot constrain log retention to exactly 30 days or force deletion protection to remain enabled; Terraform enforces the reviewed values. There are no resource-delete grants. [ECS tagging](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/supported-iam-actions-tagging.html), [Logs ARN forms](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_LogGroup.html)
 
@@ -94,5 +96,12 @@ terraform -chdir=infra/aws/staging-application plan -var-file="$WALLIE_AWS_FILES
 ```
 
 - Require an ACTIVE empty cluster, no capacity providers, zero services/running/pending tasks/registered instances, and the reviewed settings/tags. Verify both log groups match the table; final plan must exit **0**.
-- Mock tests establish configuration behavior, not live IAM or deployment qualification. This batch has not been applied to AWS.
+- Mock tests establish configuration behavior, not live IAM or deployment qualification. A complete apply and zero-drift check remain required.
 - Next: qualified images; private networking/egress; task execution and application roles; secrets; web ingress; drain-aware worker deployment; monitoring and rollback.
+
+## Recover a partial first apply
+
+- If cluster creation succeeds but both log groups fail, preserve the cluster and remote state. Do not import, delete, or reuse the original saved plan.
+- Confirm the cluster matches state, ownership, and empty-cluster checks above; require both exact log-group names to remain absent.
+- After the reviewed policy update, create and review a **new saved plan: 2 additions, 0 changes, 0 deletions**. Stop if the cluster changes or any other resource appears.
+- Apply only that reviewed recovery plan; repeat all live checks and require the final drift plan to exit **0**.

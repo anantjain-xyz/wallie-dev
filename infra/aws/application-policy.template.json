@@ -114,7 +114,9 @@
       "Action": "logs:TagResource",
       "Resource": [
         "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web",
-        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker"
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web:*",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker:*"
       ],
       "Condition": {
         "StringEquals": {
