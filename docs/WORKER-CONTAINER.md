@@ -1,9 +1,10 @@
 # Worker container
 
 - Packages the existing worker for an always-on container host.
-- Pinned Node 22.23.2/Debian 13 slim image, non-root user, locked production dependencies.
+- Pinned Amazon Linux 2023 minimal image and Node 22.23.2 RPM, non-root user, locked production dependencies.
 - Configuration is supplied when the container starts; no credentials are needed to build.
 - Web hosting, Supabase, and sandbox providers remain separate services.
+- OS packages come from the fixed `2023.12.20260918` repository snapshot; RPM inventory remains available to scanners. See [image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary).
 
 ## Build and verify
 
@@ -13,6 +14,7 @@ node scripts/check-worker-container.mjs wallie-worker:local
 ```
 
 - Smoke check: registration, empty queue polling, direct `SIGTERM`, and pre-stop draining while heartbeats continue and work polling stops.
+- Also checks npm, locale support, compression, sharp, Next SWC, and Cursor parser bindings in the final image.
 - Uses a synthetic Supabase API on an internal Docker network; no external services or real credentials.
 - Checks non-root execution and exclusion of local environment files; removes its containers and network afterward.
 - This verifies packaging and idle drain/shutdown. Unit tests cover pending claims, active jobs, and maintenance barriers; full pipeline and active-job recovery remain separate release checks.

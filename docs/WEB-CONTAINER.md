@@ -1,9 +1,10 @@
 # Web container
 
 - Packages the Next.js website, dashboard, and API; run the [worker](WORKER-CONTAINER.md) separately.
-- Pinned Node 22.23.2/Debian 13 slim image, non-root user, locked Linux production dependencies.
+- Pinned Amazon Linux 2023 minimal image and Node 22.23.2 RPM, non-root user, locked Linux production dependencies.
 - Builds without installation URLs or credentials. Package and Google Fonts downloads require network access during the build.
 - Uses `next start` and retains its configuration files, so the same image supports different runtime installations.
+- OS packages come from the fixed `2023.12.20260918` repository snapshot; RPM inventory remains available to scanners. See [image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary).
 
 ## Build and verify
 
@@ -14,6 +15,7 @@ node scripts/check-web-container.mjs wallie-web:local
 
 - Smoke runs the identical image with two sets of synthetic installation settings.
 - Checks runtime metadata/public configuration, authentication requests, static assets, avatar restrictions, production fixture protection, and shutdown.
+- Also checks npm, locale support, compression, sharp, Next SWC, and Cursor parser bindings in the final image.
 - Uses isolated local fixtures; no AWS account, Supabase project, or real credentials.
 
 ## Run
