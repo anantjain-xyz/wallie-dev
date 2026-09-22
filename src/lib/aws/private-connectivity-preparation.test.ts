@@ -52,7 +52,7 @@ function statements() {
 }
 
 describe("private connectivity policy preparation", () => {
-  it.each(["us-west-2", "ap-southeast-7"])("renders a bounded offline policy for %s", (region) => {
+  it.each(["us-west-2", "us-east-1"])("renders a bounded offline policy for %s", (region) => {
     const result = render(
       argsFor({
         ...inputs,
@@ -185,13 +185,15 @@ describe("private connectivity policy preparation", () => {
     },
   );
 
-  it("fails closed when the extra allowance exceeds the managed-policy quota", () => {
+  it("fails closed when a longer region exceeds the managed-policy quota", () => {
     const parameters = argsFor({
       ...inputs,
       region: "ap-southeast-7",
       "s3-prefix-list-arn": "arn:aws:ec2:ap-southeast-7:aws:prefix-list/pl-0123456789abcdef0",
     });
-    expect(render(parameters).status).toBe(0);
+    const baseline = render(parameters);
+    expect(baseline.status).toBe(1);
+    expect(baseline.stderr).toContain("customer-managed policy size limit");
     const result = render([...parameters, "--runtime-secrets"]);
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
@@ -238,7 +240,11 @@ describe("private connectivity ownership boundaries", () => {
   it("requires both ownership markers and the fixed names at resource creation", () => {
     const grants = statements();
     const names = {
-      "security-group": ["wallie-staging-application-tasks", "wallie-staging-aws-endpoints"],
+      "security-group": [
+        "wallie-staging-application-tasks",
+        "wallie-staging-aws-endpoints",
+        "wallie-staging-runtime-egress",
+      ],
       "vpc-endpoint": [
         "wallie-staging-ecr-api",
         "wallie-staging-ecr-dkr",
@@ -249,6 +255,7 @@ describe("private connectivity ownership boundaries", () => {
         "wallie-staging-endpoint-https",
         "wallie-staging-task-endpoint-https",
         "wallie-staging-task-layer-https",
+        "wallie-staging-runtime-egress-https",
       ],
     };
     for (const [resourceType, expected] of Object.entries(names)) {

@@ -74,18 +74,15 @@ function main() {
     new URL("../infra/aws/network-policy.template.json", import.meta.url),
     "utf8",
   );
-  console.log(
-    JSON.stringify(
-      JSON.parse(
-        template
-          .replaceAll("<ACCOUNT_ID>", accountId)
-          .replaceAll("<REGION>", region)
-          .replaceAll("<PARTITION>", partition),
-      ),
-      null,
-      2,
-    ),
+  const policy = JSON.parse(
+    template
+      .replaceAll("<ACCOUNT_ID>", accountId)
+      .replaceAll("<REGION>", region)
+      .replaceAll("<PARTITION>", partition),
   );
+  if (JSON.stringify(policy).length > 6144)
+    throw new Error("Rendered policy exceeds the customer-managed policy size limit");
+  console.log(JSON.stringify(policy, null, 2));
 }
 
 try {
