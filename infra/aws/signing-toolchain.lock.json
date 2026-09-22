@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "arch": "arm64",
+  "installer": {
+    "version": "2.2.0-1",
+    "identifier": "com.amazonaws.signer.notation.installer.pkg",
+    "url": "https://d2hvyiie56hcat.cloudfront.net/darwin/arm64/installer/latest/aws-signer-notation-cli_arm64.pkg",
+    "sha256": "a4dd2f5ea08cff1ead8541914fe5bdc3c5bc115dad7f339ea109811e18bee8c4",
+    "maxBytes": 12582912,
+    "publisher": "Developer ID Installer: AMZN Mobile LLC (94KV3E626L)",
+    "certificateSha256": "4968394ABA833BF0CC5E983BE7C172AC85976518B94CBA3462BFE9237698C5DA"
+  },
+  "notationVersion": "1.3.2",
+  "plugin": {
+    "name": "com.amazonaws.signer.notation.plugin",
+    "version": "1.0.2292",
+    "teamIdentifier": "94KV3E626L"
+  },
+  "rootCertificate": {
+    "file": "aws-signer-notation-root.crt",
+    "fingerprintSha256": "90A87D0543C3F094DBFF9589B6649AFFE2F3D6E0F308799BE2258461C686473F"
+  },
+  "files": [
+    {
+      "source": "notation",
+      "destination": "bin/notation",
+      "sha256": "dbc981acc3064ecf5750d99c7b8c0893da5a11a576846e3dc90f98d653384ce2",
+      "executable": true
+    },
+    {
+      "source": "notation-com.amazonaws.signer.notation.plugin",
+      "destination": "libexec/plugins/com.amazonaws.signer.notation.plugin/notation-com.amazonaws.signer.notation.plugin",
+      "sha256": "43d34e08925358646943b22f49d6d7618dcf993b962270b52262e6a2ef00e8c4",
+      "executable": true
+    },
+    {
+      "source": "aws-signer-notation-root.crt",
+      "destination": "config/truststore/x509/signingAuthority/aws-signer-ts/aws-signer-notation-root.crt",
+      "sha256": "0ccf529561f610b9eb7f9b0ee02fffe2f74f7ffdf0ac56348ca224e879461c9b"
+    },
+    {
+      "source": "NOTATION_LICENSE",
+      "destination": "licenses/NOTATION_LICENSE",
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    {
+      "source": "NOTATION_THIRD_PARTY_LICENSES",
+      "destination": "licenses/NOTATION_THIRD_PARTY_LICENSES",
+      "sha256": "8efc7d9ef2a2611f408db2e09d66d1c10ff5ee9711cde3b0011cb704f918ade1"
+    },
+    {
+      "source": "PLUGIN_LICENSE",
+      "destination": "licenses/PLUGIN_LICENSE",
+      "sha256": "20cf52973bf8fdc6f390e856727f83c7aa9dd5fe4824c6ed0e1b0aeff23768c3"
+    },
+    {
+      "source": "PLUGIN_THIRD_PARTY_LICENSES",
+      "destination": "licenses/PLUGIN_THIRD_PARTY_LICENSES",
+      "sha256": "964ee6e9e47d9bf5b91c013832d3ee3cb13ac1cde91b5e264a5827545bc109d0"
+    }
+  ]
+}
