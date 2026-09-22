@@ -81,6 +81,15 @@ describe("offline AWS runtime configuration contract", () => {
     expect(result.stdout).not.toMatch(/SecretString|SecretBinary|WALLIE_SMOKE_CANARY|iam:PassRole/);
   });
 
+  it("accepts an existing version ID containing an underscore without changing the selector", () => {
+    const customVersionId = `${"a".repeat(31)}_`;
+    const result = run(replace("--web-version-id", customVersionId));
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).components.web.secrets[0].valueFrom).toBe(
+      `${secretArn("web")}:SUPABASE_SECRET_KEY::${customVersionId}`,
+    );
+  });
+
   it.each([
     ["wrong account", "--account-id", "111"],
     ["China partition", "--region", "cn-north-1"],

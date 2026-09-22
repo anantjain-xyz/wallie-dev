@@ -26,7 +26,7 @@ function prepare(values) {
     );
     if (!ownSecretArn.test(secretArn ?? ""))
       throw new Error(`Expected the full owned ${component} runtime secret ARN`);
-    if (!/^[A-Za-z0-9-]{32,64}$/.test(versionId ?? ""))
+    if (!/^[A-Za-z0-9_-]{32,64}$/.test(versionId ?? ""))
       throw new Error(`Expected a 32–64 character ${component} Secrets Manager version ID`);
 
     components[component] = {
