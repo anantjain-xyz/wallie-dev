@@ -19,7 +19,10 @@ try {
   const { values, positionals, tokens } = parseArgs({
     allowPositionals: true,
     tokens: true,
-    options: Object.fromEntries(Object.keys(inputs).map((key) => [key, { type: "string" }])),
+    options: {
+      ...Object.fromEntries(Object.keys(inputs).map((key) => [key, { type: "string" }])),
+      "runtime-secrets": { type: "boolean" },
+    },
   });
   if (
     positionals.length !== 0 ||
@@ -44,6 +47,18 @@ try {
   if (!values["s3-prefix-list-arn"].startsWith(`arn:aws:ec2:${values.region}:aws:prefix-list/`))
     throw new Error("The AWS-owned S3 prefix-list ARN must match --region");
   const policy = JSON.parse(template);
+  if (values["runtime-secrets"]) {
+    const endpoint = policy.Statement.find(
+      (statement) =>
+        statement.Action === "ec2:CreateVpcEndpoint" &&
+        statement.Resource ===
+          `arn:aws:ec2:${values.region}:${values["account-id"]}:vpc-endpoint/*`,
+    );
+    endpoint.Condition.StringEquals["ec2:VpceServiceName"].push(
+      `com.amazonaws.${values.region}.secretsmanager`,
+    );
+    endpoint.Condition.StringEquals["aws:RequestTag/Name"].push("wallie-staging-runtime-secrets");
+  }
   if (JSON.stringify(policy).length > 6144)
     throw new Error("Rendered policy exceeds the customer-managed policy size limit");
   console.log(JSON.stringify(policy, null, 2));
