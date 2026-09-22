@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "trustPolicies": [
+    {
+      "name": "wallie-staging-images",
+      "registryScopes": [
+        "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/wallie-staging/web",
+        "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/wallie-staging/worker"
+      ],
+      "signatureVerification": {
+        "level": "strict"
+      },
+      "trustStores": ["signingAuthority:<TRUST_STORE>"],
+      "trustedIdentities": [
+        "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images/<PROFILE_VERSION>"
+      ]
+    }
+  ]
+}

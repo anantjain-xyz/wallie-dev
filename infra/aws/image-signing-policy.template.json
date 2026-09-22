@@ -1,0 +1,62 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SignWithReviewedProfileVersion",
+      "Effect": "Allow",
+      "Action": ["signer:SignPayload", "signer:GetSigningProfile"],
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry",
+          "aws:ResourceTag/Component": "signing",
+          "signer:ProfileVersion": "<PROFILE_VERSION>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadOwnedSigningProfile",
+      "Effect": "Allow",
+      "Action": ["signer:ListTagsForResource", "signer:GetRevocationStatus"],
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-profiles/wallie_staging_images",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry",
+          "aws:ResourceTag/Component": "signing"
+        }
+      }
+    },
+    {
+      "Sid": "CheckAccountSigningJobRevocation",
+      "Effect": "Allow",
+      "Action": "signer:GetRevocationStatus",
+      "Resource": "arn:<PARTITION>:signer:<REGION>:<ACCOUNT_ID>:/signing-jobs/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadOwnedRepositoryLayers",
+      "Effect": "Allow",
+      "Action": "ecr:GetDownloadUrlForLayer",
+      "Resource": [
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        }
+      }
+    }
+  ]
+}
