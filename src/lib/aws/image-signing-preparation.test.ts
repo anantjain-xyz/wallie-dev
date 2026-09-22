@@ -55,6 +55,7 @@ describe("AWS image signing preparation", () => {
       expect(policy.Version).toBe("2012-10-17");
       expect(JSON.stringify(policy).length).toBeLessThanOrEqual(6_144);
       const statements = policy.Statement as Statement[];
+      expect(statements).toHaveLength(5);
       expect(
         [...new Set(statements.flatMap((statement) => array(statement.Action)))].sort(),
       ).toEqual(actions);
@@ -95,6 +96,10 @@ describe("AWS image signing preparation", () => {
           expect(statementActions).toEqual(["signer:GetRevocationStatus"]);
           expect(resources).toEqual([signingJobsArn]);
           expect(statement.Condition).toEqual({ StringEquals: accountAndRegion });
+        } else if (statementActions.includes("signer:GetRevocationStatus")) {
+          expect(statementActions).toEqual(["signer:GetRevocationStatus"]);
+          expect(resources).toEqual([profileArn]);
+          expect(statement.Condition).toEqual({ StringEquals: accountAndRegion });
         } else {
           expect(resources).toEqual([profileArn]);
           const needsVersion = statementActions.some((action) =>
@@ -113,6 +118,13 @@ describe("AWS image signing preparation", () => {
         expect(grants).toHaveLength(1);
         expect(grants[0].Condition.StringEquals["signer:ProfileVersion"]).toBe(profileVersion);
       }
+      const tagReads = statements.filter((statement) =>
+        array(statement.Action).includes("signer:ListTagsForResource"),
+      );
+      expect(tagReads).toHaveLength(1);
+      expect(array(tagReads[0].Action)).toEqual(["signer:ListTagsForResource"]);
+      expect(array(tagReads[0].Resource)).toEqual([profileArn]);
+      expect(tagReads[0].Condition).toEqual({ StringEquals: ownedProfile });
       const revocationResources = statements
         .filter((statement) => array(statement.Action).includes("signer:GetRevocationStatus"))
         .flatMap((statement) => array(statement.Resource));

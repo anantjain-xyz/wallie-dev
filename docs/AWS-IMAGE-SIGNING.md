@@ -1,6 +1,6 @@
 # Sign qualified staging images
 
-**Optionally sign and strictly verify the image produced by the publisher's current run.** Existing images still fail the High/Critical scan gate. Keep signing access unattached until the merged workflow can qualify a supported remediation.
+**Optionally sign and strictly verify the image produced by the publisher's current run.** Every image must pass the unchanged fresh High/Critical scan gate before signing.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ node scripts/prepare-aws-image-signing.mjs policy --account-id "$WALLIE_AWS_ACCO
 node scripts/prepare-aws-image-signing.mjs trust-policy --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$WALLIE_AWS_REGION" --profile-version "$WALLIE_SIGNING_PROFILE_VERSION" > .wallie/aws/image-signing-trust-policy.json
 ```
 
-- For live qualification after merge and a supported image remediation, create customer-managed **WallieStagingImageSigning** from the reviewed policy. Attach it alongside **WallieStagingImagePublishing**; detach the bootstrap grant first. Scripts do not attach policies.
+- For live qualification after merge and a supported image remediation, create customer-managed **WallieStagingImageSigning** from the reviewed policy, or update its default version if it already exists. Attach it alongside **WallieStagingImagePublishing**; detach the bootstrap grant first. Scripts do not attach policies.
 - The offline renderer also supports GovCloud formatting; runtime GovCloud qualification remains separate. China and isolated partitions are rejected.
 - Rendered files are for review. The runtime generates fresh private trust configuration; it does not load an editable policy or old receipt from disk.
 
@@ -69,16 +69,18 @@ node scripts/publish-aws-image.mjs \
 | ---------------------------------- | -------------------------------------------------------- |
 | `SignPayload`, `GetSigningProfile` | Exact owned profile, pinned version, account and region  |
 | `ListTagsForResource`              | Exact owned profile                                      |
-| `GetRevocationStatus`              | Exact owned profile and account/region `signing-jobs/*`  |
+| `GetRevocationStatus`              | Exact profile and `signing-jobs/*`; account and region   |
 | `GetDownloadUrlForLayer`           | All image/signature layers in the two owned repositories |
 
 - Job IDs are assigned during signing; job resources do not support profile tag/version conditions. [AWS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_signer.html)
+- Our live profile revocation check was denied under the tag-conditioned grant despite verified tags and policy. This correction separates the exact-profile read with account/region conditions; signing and profile inspection retain their ownership/version controls.
+- AWS documents tag support for profile revocation reads; the observed denial does not establish a universal limitation. The correction remains unqualified until strict verification succeeds. A denied revocation check remains a verification failure.
 - IAM cannot bind `SignPayload` to a repository, digest, or passing scan; the publisher enforces those gates. Attached policies combine, so remove bootstrap permissions before ordinary use. No creation/tag changes, cancellation, revocation, sharing, deletion, IAM administration, or registry-wide signing configuration is granted. [Version conditions](https://docs.aws.amazon.com/signer/latest/developerguide/authen-apipermissions.html)
 - Strict trust: exactly two repository scopes, one profile **version ARN**, one partition's signing root, and no verification overrides. Rotation requires reviewed policy updates. [Trust setup](https://docs.aws.amazon.com/signer/latest/developerguide/image-verification.html)
 - The plugin signs using the unversioned profile ARN; IAM pins the allowed version and the verifier matches the version ARN. [Signing](https://github.com/aws/aws-signer-notation-plugin/blob/93a2aa12f47cdb281b358d9161bd41aab5bbdd50/internal/signer/signer.go), [verification](https://github.com/aws/aws-signer-notation-plugin/blob/93a2aa12f47cdb281b358d9161bd41aab5bbdd50/internal/verifier/verifier.go)
 
 ## Remaining gates
 
-1. Obtain a supported zlib fix or authoritative scanner correction; keep the scan gate unchanged.
+1. Qualify the supported base for both images with fresh passing High/Critical scans; keep the scan gate unchanged.
 2. Qualify live IAM authorization, signing, and strict verification, including missing, expired, revoked, or untrusted signatures and failed revocation checks. Local tests do not establish AWS interoperability.
 3. Add Linux CI tooling, provenance, broader package scanning, and GitHub OIDC publishing before deployment qualification. A valid signature does not clear vulnerability findings.
