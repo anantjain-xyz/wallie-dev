@@ -57,13 +57,22 @@ const marker = (plan, component, phase) =>
     phase,
   });
 
-function validateSecretInjection(plan, fresh) {
+function validateCanaryWindow(secret, at) {
+  const writeStarted = time(secret.write.requestStartedAt);
+  const versionCreated = time(secret.versions.response.Versions[0].CreatedDate);
+  check(
+    [writeStarted, versionCreated].every((value) => value <= at && at - value <= 60 * 60_000),
+    "Canary creation is outside its one-hour qualification window",
+  );
+}
+
+function validateSecretInjection(plan, fresh, qualificationTime) {
   exactKeys(plan.secretInjection, components, "secret injection components");
   for (const component of components) {
     const secret = plan.secretInjection[component];
     exactKeys(
       secret,
-      ["secretArn", "versionId", "secret", "versions", "resourcePolicy"],
+      ["secretArn", "versionId", "write", "secret", "versions", "resourcePolicy"],
       "canary secret",
     );
     check(
@@ -76,6 +85,23 @@ function validateSecretInjection(plan, fresh) {
       "Expected exact own-component runtime secret ARN",
     );
     equal(secret.versionId, plan.runId, "canary version ID");
+    exactKeys(secret.write, ["requestStartedAt", "capturedAt", "response"], "canary write capture");
+    const writeStarted = time(secret.write.requestStartedAt);
+    const writeCaptured = time(secret.write.capturedAt);
+    check(
+      writeStarted <= writeCaptured && writeCaptured <= time(plan.createdAt),
+      "Invalid original canary write interval",
+    );
+    equal(
+      secret.write.response,
+      {
+        ARN: secret.secretArn,
+        Name: `/wallie/staging/${component}/runtime`,
+        VersionId: plan.runId,
+        VersionStages: ["AWSCURRENT"],
+      },
+      "original canary write response",
+    );
     for (const name of ["secret", "versions", "resourcePolicy"]) {
       const capture = secret[name];
       exactKeys(
@@ -86,8 +112,9 @@ function validateSecretInjection(plan, fresh) {
       fresh(capture.requestStartedAt);
       fresh(capture.capturedAt);
       check(
-        time(capture.requestStartedAt) <= time(capture.capturedAt),
-        "Secret response predates its request",
+        writeCaptured <= time(capture.requestStartedAt) &&
+          time(capture.requestStartedAt) <= time(capture.capturedAt),
+        "Secret metadata must follow the original write response and its own request",
       );
     }
     const identity = { ARN: secret.secretArn, Name: `/wallie/staging/${component}/runtime` };
@@ -147,10 +174,14 @@ function validateSecretInjection(plan, fresh) {
       "Exactly one canary version including deprecated versions is required",
     );
     const version = versions.Versions[0];
+    const versionCreated = time(version.CreatedDate);
     check(
-      time(version.CreatedDate) <= time(secret.versions.capturedAt),
-      "Invalid canary version creation date",
+      versionCreated >= writeStarted - 1_000 &&
+        versionCreated <= writeCaptured + 1_000 &&
+        versionCreated <= time(secret.versions.capturedAt),
+      "Canary version was not created during the original write interval",
     );
+    validateCanaryWindow(secret, qualificationTime);
     delete version.CreatedDate;
     if (version.LastAccessedDate !== undefined) {
       check(
@@ -516,7 +547,8 @@ export function validateManifest(input, now = Date.now(), retrospective = false)
     );
   };
   fresh(input.network?.capturedAt);
-  if (Object.hasOwn(input, "secretInjection")) validateSecretInjection(input, fresh);
+  if (Object.hasOwn(input, "secretInjection"))
+    validateSecretInjection(input, fresh, retrospective ? created : now);
   verifyPrivateNetwork(input);
   exactKeys(input.images, components, "images");
   for (const component of components) {
@@ -685,6 +717,7 @@ export function assembleManifest(input, readback, now = Date.now()) {
           component,
           {
             ...input.secretInjection[component],
+            write: readback[`${component}-put`],
             ...Object.fromEntries(
               [
                 ["secret", "secret"],
@@ -951,6 +984,9 @@ function oneTask(envelope, plan, request, now, deadline) {
       }),
     "Task launch occurred outside its image or network qualification window",
   );
+  if (plan.secretInjection)
+    for (const component of components)
+      validateCanaryWindow(plan.secretInjection[component], time(task.createdAt));
   return task;
 }
 
@@ -1226,7 +1262,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         "worker-verification",
         ...(Object.hasOwn(input, "secretInjection")
           ? components.flatMap((component) =>
-              ["secret", "versions", "resource-policy"].map((suffix) => `${component}-${suffix}`),
+              ["secret", "versions", "resource-policy", "put"].map(
+                (suffix) => `${component}-${suffix}`,
+              ),
             )
           : []),
       ];
