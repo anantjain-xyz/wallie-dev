@@ -584,6 +584,7 @@ export function verifyDefinition(plan, component, response) {
       if (isDeepStrictEqual(container[key], [])) delete container[key];
     if (container.cpu === 0) delete container.cpu;
     if (container.privileged === false) delete container.privileged;
+    if (container.versionConsistency === "enabled") delete container.versionConsistency;
     if (isDeepStrictEqual(container.logConfiguration?.secretOptions, []))
       delete container.logConfiguration.secretOptions;
     if (isDeepStrictEqual(container.linuxParameters?.capabilities?.add, []))

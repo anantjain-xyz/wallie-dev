@@ -633,11 +633,12 @@ describe("private ECS smoke preparation", () => {
   });
 
   it.each(["web", "worker"])(
-    "accepts nested ECS empty defaults for %s without changing the readback",
+    "accepts known ECS defaults for %s without changing the readback",
     (component) => {
       const plan = fixture(),
         { definitions, snapshots } = evidence(plan, component);
       for (const definition of Object.values(definitions)) {
+        setAt(definition.taskDefinition, "containerDefinitions.0.versionConsistency", "enabled");
         setAt(
           definition.taskDefinition,
           "containerDefinitions.0.logConfiguration.secretOptions",
@@ -664,6 +665,9 @@ describe("private ECS smoke preparation", () => {
     ["containerDefinitions.0.environment", [{ name: "SECRET", value: "hidden" }]],
     ["containerDefinitions.0.secrets", [{ name: "SECRET", valueFrom: "anything" }]],
     ["containerDefinitions.0.image", reference("worker")],
+    ["containerDefinitions.0.versionConsistency", "disabled"],
+    ["containerDefinitions.0.versionConsistency", null],
+    ["containerDefinitions.0.versionConsistency", ["enabled"]],
     ["containerDefinitions.0.logConfiguration.options.mode", "non-blocking"],
     [
       "containerDefinitions.0.logConfiguration.secretOptions",
