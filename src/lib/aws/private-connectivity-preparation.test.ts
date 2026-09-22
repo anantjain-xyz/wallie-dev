@@ -158,6 +158,55 @@ describe("private connectivity policy preparation", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).not.toMatch(/unrelated|cn-north-1|must-not-appear/);
   });
+
+  it.each(["us-west-2", "us-east-1"])(
+    "adds only the explicit Secrets Manager service/name allowance for %s",
+    (region) => {
+      const parameters = argsFor({
+        ...inputs,
+        region,
+        "s3-prefix-list-arn": `arn:aws:ec2:${region}:aws:prefix-list/pl-0123456789abcdef0`,
+      });
+      const baseline = JSON.parse(render(parameters).stdout);
+      const result = render([...parameters, "--runtime-secrets"]);
+      expect(result.status).toBe(0);
+      const policy = JSON.parse(result.stdout);
+      expect(JSON.stringify(policy).length).toBeLessThanOrEqual(6144);
+      const endpoint = policy.Statement.find(
+        (s: Statement) => s.Action === "ec2:CreateVpcEndpoint" && typeof s.Resource === "string",
+      );
+      expect(endpoint.Condition.StringEquals["ec2:VpceServiceName"].pop()).toBe(
+        `com.amazonaws.${region}.secretsmanager`,
+      );
+      expect(endpoint.Condition.StringEquals["aws:RequestTag/Name"].pop()).toBe(
+        "wallie-staging-runtime-secrets",
+      );
+      expect(policy).toEqual(baseline);
+    },
+  );
+
+  it("fails closed when the extra allowance exceeds the managed-policy quota", () => {
+    const parameters = argsFor({
+      ...inputs,
+      region: "ap-southeast-7",
+      "s3-prefix-list-arn": "arn:aws:ec2:ap-southeast-7:aws:prefix-list/pl-0123456789abcdef0",
+    });
+    expect(render(parameters).status).toBe(0);
+    const result = render([...parameters, "--runtime-secrets"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("customer-managed policy size limit");
+  });
+
+  it.each([
+    ["--runtime-secrets", "--runtime-secrets"],
+    ["--runtime-secrets=false"],
+    ["--runtime-secrets", "true"],
+  ])("rejects ambiguous runtime-secret opt-in %j", (...extra) => {
+    const result = render([...args, ...extra]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+  });
 });
 
 // Policy structure checks are not an AWS authorization simulator.
