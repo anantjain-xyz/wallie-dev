@@ -28,7 +28,7 @@ node scripts/prepare-aws-image-signing.mjs trust-policy --account-id "$WALLIE_AW
 - Requires Node.js 22; no AWS credentials or other tools. Validates input syntax, not live account/profile availability.
 - Fixed profile `wallie_staging_images`; fixed `wallie-staging/web` and `wallie-staging/worker` repositories.
 - Supports commercial and GovCloud partition formatting. China and isolated partitions are rejected; their trust setup has not been qualified.
-- Keep outputs for review. **Do not attach the signing policy or import trust settings yet**; the gated signing workflow and authenticated tool installation are later changes.
+- Keep outputs for review. **Do not attach the signing policy or import trust settings yet**; the gated signing workflow follows separately. Prepare the [authenticated local toolchain](AWS-SIGNING-TOOLCHAIN.md) first.
 
 ## Permission boundaries
 
@@ -57,7 +57,7 @@ This policy adds to the existing [image-publishing policy](AWS-IMAGE-PUBLISHING.
 
 ## Remaining release gates
 
-1. Qualify supported Notation/plugin binaries and root certificates with reviewed versions, hashes, and vendor signatures; use isolated configuration rather than overwriting local trust settings.
+1. Prepare the [pinned Notation/plugin binaries and root certificates](AWS-SIGNING-TOOLCHAIN.md) in isolated configuration. Linux CI toolchain qualification follows separately.
 2. Recheck the exact source revision, image digest, current scans, profile identity/version/status, and repository ownership before signing. **Existing images still fail the High/Critical gate.**
 3. Sign and strictly verify the digest; reject missing, expired, revoked, or untrusted signatures and failed revocation checks. A successful signature does not clear vulnerability findings.
 4. Add provenance, broader package scanning, and GitHub OIDC publishing before deployment qualification.
