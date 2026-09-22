@@ -10,7 +10,7 @@ flowchart LR
     smoke --> push["Push unique immutable tag"]
     push --> digest["Verify registry digest + image identity"]
     digest --> scan["Require completed basic scan"]
-    scan --> receipt["Private receipt · still unsigned"]
+    scan --> receipt["Private receipt · not deployable"]
 ```
 
 | Guard       | Behavior                                                                                         |
@@ -75,24 +75,20 @@ node scripts/publish-aws-image.mjs \
 - A completed scan must be newer than the upload start and no later than the current time. Keep the host clock synchronized. Stale findings remain unverified while the publisher waits, then fail if no fresh scan arrives. Repeated digests may not receive a new scan because BASIC scanning limits each image to once per 24 hours. [AWS scan limits](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning-basic.html)
 - Scanning is checked **after upload**. A failed scan leaves the image in ECR and returns failure; inspect the receipt. An interrupted/failed upload may also leave an image or layers; verify its tag before retrying.
 - Retry creates a new build/tag. No automatic rollback, image deletion, or expiration policy; storage can accumulate. [ECR usage charges](https://aws.amazon.com/ecr/pricing/)
-- Next gates: qualify live signing/verification, establish release provenance and broader vulnerability checks, then qualify deployment. No compute or production cutover occurs here.
+- Next gates: release provenance, broader package scanning, Linux CI tooling and GitHub OIDC publishing, then deployment qualification. No compute or production cutover occurs here.
 
 ## Verification boundary
 
 - Local tests exercise command ordering and failure handling; real Docker smoke checks exercise both runtimes.
-- **Live check · September 21, 2026:** merged revision `00c0cac9` (Node 22.23.2 / Debian 13) passed both runtime smoke checks, uploads, manifest/config verification, and fresh ECR scans.
+- **Live qualification · September 22, 2026 (UTC):** both images passed runtime smoke checks, uploads, manifest/config verification, fresh ECR BASIC scans, and strict Notation verification, including online revocation checks.
 
-| ECR findings per image | Previous Debian 12 (`d2841540`) | Debian 13 (`00c0cac9`) |
-| ---------------------- | ------------------------------- | ---------------------- |
-| Critical               | 3                               | 0                      |
-| High                   | 14                              | 1                      |
-| Medium                 | 8                               | 0                      |
-| Undefined              | 1                               | 1                      |
+| Image  | Merged source | ECR findings (all severities) | Signature                  |
+| ------ | ------------- | ----------------------------- | -------------------------- |
+| Web    | `fc605b36`    | 0                             | Strict verification passed |
+| Worker | `924e28b8`    | 0                             | Strict verification passed |
 
-- **Release blocked:** both publishers returned failure and retained private receipts. Images remain unsigned and not deployable; no severity overrides or exceptions.
-- Remaining High: `CVE-2026-85091`, source package zlib `1.3.dfsg+really1.3.1-1`. The advisory describes versions **1.3.1.2–1.3.2**; the installed Debian source is 1.3.1. The affected range is unresolved: Ubuntu reports crashes in older versions too, and Debian has not accepted an unaffected classification or shipped a Trixie fix. Keep the finding blocked. [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-85091), [Ubuntu assessment](https://ubuntu.com/security/CVE-2026-85091), [existing Debian report](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1146895)
-- Undefined: `CVE-2026-82560`, source package Perl `5.40.1-6+deb13u1`; retain for triage. A passing BASIC scan will still not establish complete vulnerability clearance.
-- **Replacement candidate:** pinned [Amazon Linux 2023 minimal](https://docs.aws.amazon.com/linux/al2023/ug/minimal-container.html), release `2023.12.20260918`, with AWS-packaged Node 22.23.2. [AWS classifies its zlib package as unaffected](https://explore.alas.aws.amazon.com/CVE-2026-85091.html); this does not establish application-wide vulnerability clearance.
+- **Runtime:** pinned [Amazon Linux 2023 minimal](https://docs.aws.amazon.com/linux/al2023/ug/minimal-container.html), release `2023.12.20260918`, with AWS-packaged Node 22.23.2. [AWS classifies its zlib package as unaffected](https://explore.alas.aws.amazon.com/CVE-2026-85091.html).
 - The dated image digest and [versioned package repository](https://docs.aws.amazon.com/linux/al2023/ug/deterministic-upgrades-usage.html) pin the OS/runtime inputs. Keep the RPM inventory; no package metadata removal or severity exceptions.
-- Next: after review/merge, publish both replacement images and require fresh passing ECR scans before signing. Local smoke/ABI checks do not replace this gate.
-- The [signing profile](AWS-SIGNING-PROFILE.md), [local tools](AWS-SIGNING-TOOLCHAIN.md), and [gated signing workflow](AWS-IMAGE-SIGNING.md) are implemented. Live signing/verification, provenance, and broader package scanning remain release gates.
+- Web's existing signature passed verification after the scoped revocation-read policy correction; its original receipt remains unchanged, with separate verification evidence. Worker completed the publisher with `signed: true` and `signing.status: verified`.
+- **Historical Debian scans:** `d2841540` had 3 Critical / 14 High findings per image; Debian 13 revision `00c0cac9` had 0 Critical / 1 High. The remaining High was zlib `CVE-2026-85091`, with Perl `CVE-2026-82560` also reported as Undefined. Those images failed qualification and received no exception.
+- **Remaining gates:** provenance, language-package scanning, Linux CI tooling, GitHub OIDC publishing, and deployment qualification. These local macOS arm64 runs built Linux AMD64 images; BASIC OS scans and valid signatures do not establish complete vulnerability clearance. Both images retain `deployable: false`.
