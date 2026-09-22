@@ -7,6 +7,7 @@
 
 | Bootstrap grant     | Scope                                                                                         |
 | ------------------- | --------------------------------------------------------------------------------------------- |
+| Check absence       | `iam:GetRole` only; exact pathless `role/AWSServiceRoleForECS` ARN                            |
 | Create              | `iam:CreateServiceLinkedRole`; exact account/role ARN; `iam:AWSServiceName=ecs.amazonaws.com` |
 | Verify role         | Exact role: trust, path, attached policies, absence of inline policies                        |
 | Inspect permissions | Only AWS-owned `AmazonECSServiceRolePolicy` and its versions                                  |
@@ -37,8 +38,9 @@ aws iam get-role --role-name AWSServiceRoleForECS
 ```
 
 - Require the intended account and `wallie-local` non-root identity from the fresh session.
+- [GetRole accepts a role name, without a path](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRole.html). During our missing-role preflight, AWS evaluated `arn:aws:iam::<account>:role/AWSServiceRoleForECS`; the service-path grant returned `AccessDenied`. The temporary policy adds only `GetRole` at that exact pathless ARN. Creation and existing-role inspection keep the service-role path.
 - Create only after an explicit **`NoSuchEntity`** response from `GetRole`. Access denial, expiry, or network failure does not establish absence.
-- If the role already exists, inspect it with the checks below; do not recreate, import, retag, or edit it.
+- If the role already exists, require the service-role ARN/path and all checks below. A role at the pathless ARN is not an acceptable ECS prerequisite; do not recreate, import, retag, or edit it.
 - Recheck identity and absence immediately before the single creation request:
 
 ```sh
