@@ -19,7 +19,7 @@ flowchart LR
 | Deletion   | Terraform `prevent_destroy` on all three resources; native log-group deletion protection         |
 | State      | Existing private bucket; separate `staging/application.tfstate` and lock                         |
 
-- Exactly **three resources**. No services, tasks, task definitions, workload roles, capacity providers, network routes, secrets, or log-event access.
+- The default foundation has **three resources**. The separately enabled [runtime secrets foundation](AWS-SECRETS-FOUNDATION.md) adds two empty containers; preserve existing opt-ins and retain `enable_runtime_secrets = true` after creation. No services, tasks, task definitions, workload roles, capacity providers, network routes, or log-event access.
 - ECS is a regional control-plane grouping. Future task/service configuration places workloads in the staging VPC; this root does not choose subnets.
 - Scope: commercial AWS only. Terraform **1.16.3**, AWS provider **6.65.0**.
 - Log retention expires old events even with deletion protection. Retention and monitoring must be reviewed before production. [CloudWatch encryption](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html), [retention](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html)
