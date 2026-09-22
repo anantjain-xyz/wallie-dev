@@ -1,6 +1,6 @@
 # Publish staging images
 
-**Build and smoke-test one image, then upload that exact image to ECR.** Run after review and merge. These images remain **unsigned and not approved for deployment**.
+**Build and smoke-test one image, then upload that exact image to ECR.** Run after review and merge. The default flow does not sign; [optional signing](AWS-IMAGE-SIGNING.md) adds strict verification. Neither flow approves deployment.
 
 ```mermaid
 flowchart LR
@@ -24,7 +24,7 @@ flowchart LR
 
 - Requires a local Docker Unix socket and AMD64 execution support. Apple Silicon uses emulation; builds can take longer.
 - Source fetching and archiving use fresh Git metadata, with replacement objects and local/global archive attributes disabled. Local untracked/ignored files do not enter the source archive. Container configuration and application secrets are supplied later, at runtime.
-- BuildKit attestations are disabled for this initial single-image flow. Signing, provenance, language-package scanning, and GitHub OIDC remain later PRs.
+- BuildKit attestations are disabled for this initial single-image flow. Provenance, language-package scanning, and GitHub OIDC remain later PRs.
 
 ## Prepare access
 
@@ -47,7 +47,7 @@ node scripts/prepare-aws-image-publishing.mjs policy --account-id "$WALLIE_AWS_A
 - Expired-token responses get one identity-checked retry; Docker uploads are never retried automatically.
 - Every replacement must match the initial account, partition, and principal. A refreshed role session may change its session name; its role ARN and unique role ID must match. Credentials remain in memory.
 - AWS credentials and provider variables are removed from Git, Docker/Buildx, and smoke-test environments. The selected profile configuration is used only by the AWS credential resolver.
-- Inherited `DOCKER_CONTENT_TRUST*` settings and passphrases are removed from those environments, keeping this unsigned flow independent of local [Docker signing settings](https://docs.docker.com/engine/security/trust/).
+- Inherited `DOCKER_CONTENT_TRUST*` settings and passphrases are removed from those environments, keeping Docker qualification independent of local [Docker signing settings](https://docs.docker.com/engine/security/trust/).
 - No AWS keys in `.env`, GitHub secrets, build arguments, or Docker images.
 
 ## Publish one component
@@ -65,16 +65,17 @@ node scripts/publish-aws-image.mjs \
 - The publisher independently fetches `main` and rejects unmerged revisions, root credentials, wrong destinations, mutable tags, remote Docker daemons, or incompatible scanning settings.
 - It checks effective scanning with `BatchGetRepositoryScanningConfiguration`; it never changes account-wide scan settings. BASIC scans cover OS packages only. [AWS scanning scope](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html)
 - The registry manifest must reference the tested local image configuration and match its reported digest. Future deployments use **`repository@sha256:…`**, never a mutable tag.
+- Optional `--signing-profile-version` invokes the [gated signing workflow](AWS-IMAGE-SIGNING.md#publish-with-signing) after qualification; it cannot sign directly from an old receipt.
 
 ## Read the result
 
 - Receipt: `.wallie/aws/image-<component>-<revision>-linux-amd64-<build-id>.json`, mode `0600`.
-- Records source revision, tested image ID and config digest, registry digest, upload status, scan findings and freshness, and `signed: false` / `deployable: false`.
+- Records source revision, tested image ID and config digest, registry digest, upload status, scan findings and freshness. The default flow records `signed: false`; optional signing adds [attempt/verification states](AWS-IMAGE-SIGNING.md#read-the-result). `deployable` always remains `false`.
 - Successful exit requires a completed scan with no High/Critical findings. Lower severities remain in the receipt; success is **not** full vulnerability clearance or deployment approval.
 - A completed scan must be newer than the upload start and no later than the current time. Keep the host clock synchronized. Stale findings remain unverified while the publisher waits, then fail if no fresh scan arrives. Repeated digests may not receive a new scan because BASIC scanning limits each image to once per 24 hours. [AWS scan limits](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning-basic.html)
 - Scanning is checked **after upload**. A failed scan leaves the image in ECR and returns failure; inspect the receipt. An interrupted/failed upload may also leave an image or layers; verify its tag before retrying.
 - Retry creates a new build/tag. No automatic rollback, image deletion, or expiration policy; storage can accumulate. [ECR usage charges](https://aws.amazon.com/ecr/pricing/)
-- Next gate: sign and verify the recorded digest, establish release provenance and broader vulnerability checks, then qualify deployment. No compute or production cutover occurs here.
+- Next gates: qualify live signing/verification, establish release provenance and broader vulnerability checks, then qualify deployment. No compute or production cutover occurs here.
 
 ## Verification boundary
 
@@ -92,4 +93,4 @@ node scripts/publish-aws-image.mjs \
 - Remaining High: `CVE-2026-85091`, source package zlib `1.3.dfsg+really1.3.1-1`. The advisory describes versions **1.3.1.2–1.3.2**; the installed Debian source is 1.3.1. The affected range is unresolved: Ubuntu reports crashes in older versions too, and Debian has not accepted an unaffected classification or shipped a Trixie fix. Keep the finding blocked. [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-85091), [Ubuntu assessment](https://ubuntu.com/security/CVE-2026-85091), [existing Debian report](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1146895)
 - Undefined: `CVE-2026-82560`, source package Perl `5.40.1-6+deb13u1`; retain for triage. A passing BASIC scan will still not establish complete vulnerability clearance.
 - Next: obtain a supported package fix or authoritative scanner-data correction, then publish again and require a fresh passing scan. Do not remove package metadata or bypass the gate.
-- The [signing profile](AWS-SIGNING-PROFILE.md) and offline [signing preparation](AWS-IMAGE-SIGNING.md) establish identity and policy configuration. Actual signing, verification, provenance, and broader package scanning remain later gates.
+- The [signing profile](AWS-SIGNING-PROFILE.md), [local tools](AWS-SIGNING-TOOLCHAIN.md), and [gated signing workflow](AWS-IMAGE-SIGNING.md) are implemented. Live signing/verification, provenance, and broader package scanning remain release gates.

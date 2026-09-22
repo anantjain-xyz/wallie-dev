@@ -1,19 +1,22 @@
-# Prepare image signing
+# Sign qualified staging images
 
-**Render signing permissions and strict trust settings for review.** This step runs offline; it does not attach permissions, install tools, sign images, or approve deployment.
+**Optionally sign and strictly verify the image produced by the publisher's current run.** Existing images still fail the High/Critical scan gate. Keep signing access unattached until the merged workflow can qualify a supported remediation.
 
 ```mermaid
 flowchart LR
-    profile["Verified signing-profile version"] --> prepare["Offline preparation"]
-    prepare --> iam["IAM · sign with that version"]
-    prepare --> trust["Notation · trust that version<br/>Only web + worker repositories"]
-    iam -. "Later workflow" .-> verify["Qualify → sign digest → verify"]
-    trust -. "Later workflow" .-> verify
+    source["Merged source"] --> publish["Build → smoke test → upload"]
+    publish --> scan["Verify digest + fresh passing scan"]
+    scan --> check["Recheck repository + scan + profile"]
+    check --> sign["Sign exact digest + new run marker"]
+    sign --> verify["Strict verification<br/>Pinned profile version + same marker"]
+    verify --> receipt["Private receipt · not deployable"]
 ```
 
-## Render
+## Prepare access
 
-Prerequisite: the [signing profile](AWS-SIGNING-PROFILE.md) is deployed and its identity, status, version, and tags are verified. Take the version from that deployment's recorded readback; do not silently select a newer version.
+- Verify the [signing profile's](AWS-SIGNING-PROFILE.md) identity, Active status, version, and six ownership tags. Use the recorded version; never silently select a newer one.
+- Prepare the [authenticated local toolchain](AWS-SIGNING-TOOLCHAIN.md) and [publishing prerequisites](AWS-IMAGE-PUBLISHING.md#prepare-access). Runtime support is **macOS arm64 / commercial AWS** only.
+- Render permissions and trust settings for review; this step requires only Node.js 22 and makes no AWS calls:
 
 ```sh
 umask 077
@@ -25,41 +28,57 @@ node scripts/prepare-aws-image-signing.mjs policy --account-id "$WALLIE_AWS_ACCO
 node scripts/prepare-aws-image-signing.mjs trust-policy --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$WALLIE_AWS_REGION" --profile-version "$WALLIE_SIGNING_PROFILE_VERSION" > .wallie/aws/image-signing-trust-policy.json
 ```
 
-- Requires Node.js 22; no AWS credentials or other tools. Validates input syntax, not live account/profile availability.
-- Fixed profile `wallie_staging_images`; fixed `wallie-staging/web` and `wallie-staging/worker` repositories.
-- Supports commercial and GovCloud partition formatting. China and isolated partitions are rejected; their trust setup has not been qualified.
-- Keep outputs for review. **Do not attach the signing policy or import trust settings yet**; the gated signing workflow follows separately. Prepare the [authenticated local toolchain](AWS-SIGNING-TOOLCHAIN.md) first.
+- For live qualification after merge and a supported image remediation, create customer-managed **WallieStagingImageSigning** from the reviewed policy. Attach it alongside **WallieStagingImagePublishing**; detach the bootstrap grant first. Scripts do not attach policies.
+- The offline renderer also supports GovCloud formatting; runtime GovCloud qualification remains separate. China and isolated partitions are rejected.
+- Rendered files are for review. The runtime generates fresh private trust configuration; it does not load an editable policy or old receipt from disk.
 
-## Permission boundaries
+## Publish with signing
 
-This policy adds to the existing [image-publishing policy](AWS-IMAGE-PUBLISHING.md#prepare-access).
+```sh
+git fetch origin main
+WALLIE_IMAGE_REVISION="$(git rev-parse origin/main)"
+node scripts/publish-aws-image.mjs \
+  --component web --revision "$WALLIE_IMAGE_REVISION" \
+  --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$WALLIE_AWS_REGION" \
+  --profile wallie-staging --signing-profile-version "$WALLIE_SIGNING_PROFILE_VERSION"
+```
 
-| Grant                              | Scope                                                   |
-| ---------------------------------- | ------------------------------------------------------- |
-| `SignPayload`, `GetSigningProfile` | Exact owned profile, pinned version, account and region |
-| `ListTagsForResource`              | Exact owned profile                                     |
-| `GetRevocationStatus`              | Exact owned profile and account/region `signing-jobs/*` |
-| `GetDownloadUrlForLayer`           | The two owned ECR repositories                          |
+- Repeat for `worker`. Each invocation builds, tests, uploads, and scans independently. Omitting the signing option retains the existing unsigned flow.
+- Rehash pinned tools and root material; reject profile rotation, cancellation, ownership changes, and failing/stale scans.
+- Sign `repository@sha256:…` using OCI referrers. Strict verification requires a fresh marker in the signed metadata; an older signature cannot satisfy this run. [ECR referrers](https://aws.amazon.com/blogs/opensource/diving-into-oci-image-and-distribution-1-1-support-in-amazon-ecr/), [metadata verification](https://github.com/notaryproject/notation-go/blob/v1.3.2/verifier/verifier.go)
+- Refresh and revalidate the AWS principal before each two-minute Notation command; require over 150 seconds of credential lifetime. Credentials and registry authentication stay in child-process memory; inherited configuration is excluded.
+- No automatic signing retry, including inside the AWS SDK. Interruptions terminate Notation and its plugin process group. The private runtime is removed; receipts remain.
 
-- The job wildcard permits revocation reads because job IDs are assigned when signing. Signing-job resources do not support the profile ownership/version conditions. [AWS Signer authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_signer.html)
-- Layer-download access covers **all image/signature layers** in those repositories.
-- IAM restricts the signing profile/version, but cannot bind `SignPayload` to a repository, digest, or passing scan. The later workflow must enforce those gates. [Profile-version conditions](https://docs.aws.amazon.com/signer/latest/developerguide/authen-apipermissions.html)
-- No profile creation/tag changes, cancellation, revocation, sharing, IAM administration, deletion, or registry-wide signing configuration.
-- Detach the bootstrap policy before ordinary publishing/signing. Policies attached to the same identity combine; file separation does not isolate privileges.
+## Read the result
 
-## Trust boundaries
+`signed` describes evidence from this run; `deployable` always remains `false`.
 
-- `signatureVerification.level = strict`; no verification overrides.
-- Exactly two registry scopes: this account/region's web and worker repository URIs.
-- Exactly one trusted identity: the **version ARN** of the verified profile. Future rotation requires separately reviewed policy updates.
-- Use only the selected partition's signing authority: `aws-signer-ts` or `aws-us-gov-signer-ts`. Rendering the name does not install or authenticate its root certificate. [AWS verification setup](https://docs.aws.amazon.com/signer/latest/developerguide/image-verification.html)
-- The plugin signs using an unversioned profile ARN; IAM pins the allowed version. Its verifier supports the exact version ARN in trust policy. [Plugin signing](https://github.com/aws/aws-signer-notation-plugin/blob/93a2aa12f47cdb281b358d9161bd41aab5bbdd50/internal/signer/signer.go), [plugin verification](https://github.com/aws/aws-signer-notation-plugin/blob/93a2aa12f47cdb281b358d9161bd41aab5bbdd50/internal/verifier/verifier.go)
+| `signing.status` | `signed` | Meaning                                                                              |
+| ---------------- | -------- | ------------------------------------------------------------------------------------ |
+| Absent           | `false`  | No signing attempt recorded                                                          |
+| `attempted`      | `null`   | Outcome uncertain; a signing job or uploaded signature may exist                     |
+| `signed`         | `null`   | Signing command succeeded; strict verification is incomplete or failed               |
+| `verified`       | `true`   | Exact digest and new run marker passed strict verification under the pinned identity |
 
-## Remaining release gates
+- Failures return nonzero and preserve the last state. Inspect the receipt before retrying; no signatures or images are automatically deleted.
+- A retry creates another build/tag and marker. The existing [fresh-scan limits](AWS-IMAGE-PUBLISHING.md#read-the-result) still apply.
 
-1. Prepare the [pinned Notation/plugin binaries and root certificates](AWS-SIGNING-TOOLCHAIN.md) in isolated configuration. Linux CI toolchain qualification follows separately.
-2. Recheck the exact source revision, image digest, current scans, profile identity/version/status, and repository ownership before signing. **Existing images still fail the High/Critical gate.**
-3. Sign and strictly verify the digest; reject missing, expired, revoked, or untrusted signatures and failed revocation checks. A successful signature does not clear vulnerability findings.
-4. Add provenance, broader package scanning, and GitHub OIDC publishing before deployment qualification.
+## Permission and trust boundaries
 
-- Tests cover offline rendering, input rejection, IAM scope, and trust configuration. Live IAM authorization and Notation interoperability remain unqualified in this batch.
+| Grant                              | Scope                                                    |
+| ---------------------------------- | -------------------------------------------------------- |
+| `SignPayload`, `GetSigningProfile` | Exact owned profile, pinned version, account and region  |
+| `ListTagsForResource`              | Exact owned profile                                      |
+| `GetRevocationStatus`              | Exact owned profile and account/region `signing-jobs/*`  |
+| `GetDownloadUrlForLayer`           | All image/signature layers in the two owned repositories |
+
+- Job IDs are assigned during signing; job resources do not support profile tag/version conditions. [AWS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_signer.html)
+- IAM cannot bind `SignPayload` to a repository, digest, or passing scan; the publisher enforces those gates. Attached policies combine, so remove bootstrap permissions before ordinary use. No creation/tag changes, cancellation, revocation, sharing, deletion, IAM administration, or registry-wide signing configuration is granted. [Version conditions](https://docs.aws.amazon.com/signer/latest/developerguide/authen-apipermissions.html)
+- Strict trust: exactly two repository scopes, one profile **version ARN**, one partition's signing root, and no verification overrides. Rotation requires reviewed policy updates. [Trust setup](https://docs.aws.amazon.com/signer/latest/developerguide/image-verification.html)
+- The plugin signs using the unversioned profile ARN; IAM pins the allowed version and the verifier matches the version ARN. [Signing](https://github.com/aws/aws-signer-notation-plugin/blob/93a2aa12f47cdb281b358d9161bd41aab5bbdd50/internal/signer/signer.go), [verification](https://github.com/aws/aws-signer-notation-plugin/blob/93a2aa12f47cdb281b358d9161bd41aab5bbdd50/internal/verifier/verifier.go)
+
+## Remaining gates
+
+1. Obtain a supported zlib fix or authoritative scanner correction; keep the scan gate unchanged.
+2. Qualify live IAM authorization, signing, and strict verification, including missing, expired, revoked, or untrusted signatures and failed revocation checks. Local tests do not establish AWS interoperability.
+3. Add Linux CI tooling, provenance, broader package scanning, and GitHub OIDC publishing before deployment qualification. A valid signature does not clear vulnerability findings.
