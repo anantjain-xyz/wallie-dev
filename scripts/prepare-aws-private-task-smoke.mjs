@@ -28,7 +28,10 @@ const tagsObject = (tags) => {
   equal(Object.keys(result).length, tags.length, "duplicate tags");
   return result;
 };
-const family = (component) => `wallie-staging-${component}-connectivity-smoke`;
+const family = (plan, component) =>
+  `wallie-staging-${component}-${plan.secretInjection ? "secret-injection" : "connectivity"}-smoke`;
+const logPrefix = (plan) =>
+  `${plan.secretInjection ? "wallie-secret-smoke" : "wallie-smoke"}-${plan.runId}`;
 const roleArn = (plan, component) =>
   `arn:aws:iam::${plan.account}:role/wallie-staging-${component}-execution`;
 const reference = (plan, component) =>
@@ -38,14 +41,141 @@ const tagValues = (plan) => ({
   Project: "Wallie",
   Environment: "staging",
   ManagedBy: "ManualQualification",
-  Component: "private-task-smoke",
+  Component: plan.secretInjection ? "private-secret-injection-smoke" : "private-task-smoke",
   WallieStack: "wallie-staging-application",
-  Name: "wallie-staging-connectivity-smoke",
+  Name: plan.secretInjection
+    ? "wallie-staging-secret-injection-smoke"
+    : "wallie-staging-connectivity-smoke",
   WallieSmokeRun: plan.runId,
 });
 const tags = (plan) => Object.entries(tagValues(plan)).map(([key, value]) => ({ key, value }));
 const marker = (plan, component, phase) =>
-  JSON.stringify({ kind: "wallie-private-smoke", run: plan.runId, component, phase });
+  JSON.stringify({
+    kind: plan.secretInjection ? "wallie-secret-injection-smoke" : "wallie-private-smoke",
+    run: plan.runId,
+    component,
+    phase,
+  });
+
+function validateSecretInjection(plan, fresh) {
+  exactKeys(plan.secretInjection, components, "secret injection components");
+  for (const component of components) {
+    const secret = plan.secretInjection[component];
+    exactKeys(
+      secret,
+      ["secretArn", "versionId", "secret", "versions", "resourcePolicy"],
+      "canary secret",
+    );
+    check(
+      matches(
+        secret.secretArn,
+        new RegExp(
+          `^arn:aws:secretsmanager:${plan.region}:${plan.account}:secret:/wallie/staging/${component}/runtime-[A-Za-z0-9]{6}$`,
+        ),
+      ),
+      "Expected exact own-component runtime secret ARN",
+    );
+    equal(secret.versionId, plan.runId, "canary version ID");
+    for (const name of ["secret", "versions", "resourcePolicy"]) {
+      const capture = secret[name];
+      exactKeys(
+        capture,
+        ["requestStartedAt", "capturedAt", "response", ...(name === "versions" ? ["request"] : [])],
+        "secret capture",
+      );
+      fresh(capture.requestStartedAt);
+      fresh(capture.capturedAt);
+      check(
+        time(capture.requestStartedAt) <= time(capture.capturedAt),
+        "Secret response predates its request",
+      );
+    }
+    const identity = { ARN: secret.secretArn, Name: `/wallie/staging/${component}/runtime` };
+    const description = structuredClone(secret.secret.response);
+    check(
+      description && typeof description === "object" && !Array.isArray(description),
+      "Invalid secret description",
+    );
+    const secretTags = description.Tags;
+    check(
+      Array.isArray(secretTags) && secretTags.length === 6,
+      "Expected six secret ownership tags",
+    );
+    for (const tag of secretTags) exactKeys(tag, ["Key", "Value"], "secret tag");
+    equal(
+      Object.fromEntries(secretTags.map(({ Key, Value }) => [Key, Value])),
+      {
+        Project: "Wallie",
+        Environment: "staging",
+        ManagedBy: "Terraform",
+        WallieStack: "wallie-staging-application",
+        Component: "runtime-secrets",
+        Name: identity.Name,
+      },
+      "secret ownership",
+    );
+    for (const key of ["CreatedDate", "LastChangedDate", "LastAccessedDate"])
+      if (description[key] !== undefined) {
+        check(
+          time(description[key]) <= time(secret.secret.capturedAt),
+          "Invalid secret metadata date",
+        );
+        delete description[key];
+      }
+    if (description.RotationEnabled === false) delete description.RotationEnabled;
+    if (isDeepStrictEqual(description.RotationRules, {})) delete description.RotationRules;
+    if (isDeepStrictEqual(description.ReplicationStatus, [])) delete description.ReplicationStatus;
+    delete description.Tags;
+    equal(
+      description,
+      {
+        ...identity,
+        Description: `Wallie staging ${component} runtime secret configuration; values managed outside Terraform.`,
+        VersionIdsToStages: { [plan.runId]: ["AWSCURRENT"] },
+      },
+      "unrotated canary-only secret metadata",
+    );
+    equal(secret.resourcePolicy.response, identity, "absence of a secret resource policy");
+    equal(
+      secret.versions.request,
+      { SecretId: secret.secretArn, IncludeDeprecated: true },
+      "complete secret-version request",
+    );
+    const versions = structuredClone(secret.versions.response);
+    check(
+      versions?.Versions?.length === 1,
+      "Exactly one canary version including deprecated versions is required",
+    );
+    const version = versions.Versions[0];
+    check(
+      time(version.CreatedDate) <= time(secret.versions.capturedAt),
+      "Invalid canary version creation date",
+    );
+    delete version.CreatedDate;
+    if (version.LastAccessedDate !== undefined) {
+      check(
+        time(version.LastAccessedDate) <= time(secret.versions.capturedAt),
+        "Invalid canary access date",
+      );
+      delete version.LastAccessedDate;
+    }
+    // Informational key IDs do not establish key ownership; DescribeSecret must
+    // omit KmsKeyId, and the live injection still needs to succeed without a CMK grant.
+    if (version.KmsKeyIds !== undefined) {
+      check(
+        Array.isArray(version.KmsKeyIds) &&
+          version.KmsKeyIds.every((key) => typeof key === "string" && key.length <= 2048),
+        "Unexpected canary encryption key metadata",
+      );
+      delete version.KmsKeyIds;
+    }
+    equal(
+      versions,
+      { ...identity, Versions: [{ VersionId: plan.runId, VersionStages: ["AWSCURRENT"] }] },
+      "complete canary version inventory",
+    );
+  }
+}
 
 function verifyPrivateNetwork(plan) {
   const network = plan.network;
@@ -78,7 +208,10 @@ function verifyPrivateNetwork(plan) {
       "Service subnet is not private IPv4",
     );
   const endpoints = network.endpoints?.VpcEndpoints;
-  check(endpoints?.length === 4, "Exactly four reviewed AWS endpoints are required");
+  check(
+    endpoints?.length === (plan.secretInjection ? 5 : 4),
+    "Exactly the reviewed AWS endpoints are required",
+  );
   const endpoint = (service, type) => {
     const found = endpoints.filter(
       (item) => item.ServiceName === `com.amazonaws.${plan.region}.${service}`,
@@ -206,8 +339,38 @@ function verifyPrivateNetwork(plan) {
     "task egress rules",
   );
   equal(rules(endpointGroup.IpPermissions), [plan.taskSecurityGroupId], "endpoint ingress rules");
-  for (const service of ["ecr.api", "ecr.dkr", "logs"]) {
+  for (const service of [
+    "ecr.api",
+    "ecr.dkr",
+    "logs",
+    ...(plan.secretInjection ? ["secretsmanager"] : []),
+  ]) {
     const item = endpoint(service, "Interface");
+    if (service === "secretsmanager") {
+      check(
+        matches(item.VpcEndpointId, /^vpce-(?:[a-f0-9]{8}|[a-f0-9]{17})$/) &&
+          endpoints.filter((candidate) => candidate.VpcEndpointId === item.VpcEndpointId).length ===
+            1,
+        "Expected one distinct Secrets Manager endpoint ID",
+      );
+      check(
+        Array.isArray(item.Tags) && item.Tags.length === 6,
+        "Expected six Secrets Manager endpoint tags",
+      );
+      for (const tag of item.Tags) exactKeys(tag, ["Key", "Value"], "endpoint tag");
+      equal(
+        Object.fromEntries(item.Tags.map(({ Key, Value }) => [Key, Value])),
+        {
+          Project: "Wallie",
+          Environment: "staging",
+          ManagedBy: "Terraform",
+          WallieStack: "wallie-staging-network",
+          Component: "private-connectivity",
+          Name: "wallie-staging-runtime-secrets",
+        },
+        "Secrets Manager endpoint ownership",
+      );
+    }
     check(item.PrivateDnsEnabled === true, "Endpoint private DNS must be enabled");
     equal([...item.SubnetIds].sort(), [...plan.subnetIds].sort(), "interface endpoint subnets");
     equal(
@@ -216,42 +379,54 @@ function verifyPrivateNetwork(plan) {
       "interface endpoint groups",
     );
     const statements =
-      service === "logs"
-        ? [
-            {
-              Sid: "WriteApplicationLogs",
-              Effect: "Allow",
-              Principal: "*",
-              Action: ["logs:CreateLogStream", "logs:PutLogEvents"],
-              Resource: components.map(
-                (component) =>
-                  `arn:aws:logs:${plan.region}:${plan.account}:log-group:/wallie/staging/${component}:log-stream:*`,
-              ),
-              Condition: accountCondition,
+      service === "secretsmanager"
+        ? components.map((component) => ({
+            Sid: `Read${component === "web" ? "Web" : "Worker"}RuntimeSecret`,
+            Effect: "Allow",
+            Principal: "*",
+            Action: "secretsmanager:GetSecretValue",
+            Resource: plan.secretInjection[component].secretArn,
+            Condition: {
+              ArnEquals: { "aws:PrincipalArn": roleArn(plan, component) },
+              ...accountCondition,
             },
-          ]
-        : [
-            {
-              Sid: "AuthenticateExpectedAccount",
-              Effect: "Allow",
-              Principal: "*",
-              Action: "ecr:GetAuthorizationToken",
-              Resource: "*",
-              Condition: accountCondition,
-            },
-            {
-              Sid: "PullApplicationImages",
-              Effect: "Allow",
-              Principal: "*",
-              Action: [
-                "ecr:BatchCheckLayerAvailability",
-                "ecr:BatchGetImage",
-                "ecr:GetDownloadUrlForLayer",
-              ],
-              Resource: repositories,
-              Condition: accountCondition,
-            },
-          ];
+          }))
+        : service === "logs"
+          ? [
+              {
+                Sid: "WriteApplicationLogs",
+                Effect: "Allow",
+                Principal: "*",
+                Action: ["logs:CreateLogStream", "logs:PutLogEvents"],
+                Resource: components.map(
+                  (component) =>
+                    `arn:aws:logs:${plan.region}:${plan.account}:log-group:/wallie/staging/${component}:log-stream:*`,
+                ),
+                Condition: accountCondition,
+              },
+            ]
+          : [
+              {
+                Sid: "AuthenticateExpectedAccount",
+                Effect: "Allow",
+                Principal: "*",
+                Action: "ecr:GetAuthorizationToken",
+                Resource: "*",
+                Condition: accountCondition,
+              },
+              {
+                Sid: "PullApplicationImages",
+                Effect: "Allow",
+                Principal: "*",
+                Action: [
+                  "ecr:BatchCheckLayerAvailability",
+                  "ecr:BatchGetImage",
+                  "ecr:GetDownloadUrlForLayer",
+                ],
+                Resource: repositories,
+                Condition: accountCondition,
+              },
+            ];
     equal(
       JSON.parse(item.PolicyDocument),
       { Version: "2012-10-17", Statement: statements },
@@ -287,6 +462,7 @@ export function validateManifest(input, now = Date.now(), retrospective = false)
       "profileVersion",
       "images",
       "network",
+      ...(Object.hasOwn(input, "secretInjection") ? ["secretInjection"] : []),
     ],
     "manifest",
   );
@@ -340,6 +516,7 @@ export function validateManifest(input, now = Date.now(), retrospective = false)
     );
   };
   fresh(input.network?.capturedAt);
+  if (Object.hasOwn(input, "secretInjection")) validateSecretInjection(input, fresh);
   verifyPrivateNetwork(input);
   exactKeys(input.images, components, "images");
   for (const component of components) {
@@ -445,6 +622,7 @@ export function assembleManifest(input, readback, now = Date.now()) {
       "taskSecurityGroupId",
       "profileVersion",
       "images",
+      ...(Object.hasOwn(input, "secretInjection") ? ["secretInjection"] : []),
     ],
     "reviewed inputs",
   );
@@ -493,6 +671,36 @@ export function assembleManifest(input, readback, now = Date.now()) {
       ];
     }),
   );
+  let secretInjection;
+  if (Object.hasOwn(input, "secretInjection")) {
+    exactKeys(input.secretInjection, components, "secret injection components");
+    secretInjection = Object.fromEntries(
+      components.map((component) => {
+        exactKeys(
+          input.secretInjection[component],
+          ["secretArn", "versionId"],
+          "reviewed canary identity",
+        );
+        return [
+          component,
+          {
+            ...input.secretInjection[component],
+            ...Object.fromEntries(
+              [
+                ["secret", "secret"],
+                ["versions", "versions"],
+                ["resourcePolicy", "resource-policy"],
+              ].map(([field, suffix]) => {
+                const capture = readback[`${component}-${suffix}`];
+                freshCapture(capture);
+                return [field, capture];
+              }),
+            ),
+          },
+        ];
+      }),
+    );
+  }
   return validateManifest(
     {
       ...input,
@@ -500,6 +708,7 @@ export function assembleManifest(input, readback, now = Date.now()) {
       identity: readback.identity.response,
       network,
       images,
+      ...(secretInjection ? { secretInjection } : {}),
     },
     now,
   );
@@ -507,9 +716,12 @@ export function assembleManifest(input, readback, now = Date.now()) {
 
 export function taskDefinition(plan, component) {
   check(components.includes(component), "Invalid component");
-  const program = `if(process.platform!=="linux"||process.arch!=="x64"||["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN","AWS_CONTAINER_CREDENTIALS_RELATIVE_URI","AWS_CONTAINER_CREDENTIALS_FULL_URI","SUPABASE_SECRET_KEY","WALLIE_ENCRYPTION_KEY"].some(k=>process.env[k]))process.exit(70);console.log(${JSON.stringify(marker(plan, component, "started"))});setTimeout(()=>{console.log(${JSON.stringify(marker(plan, component, "completed"))});},60000);`;
+  const canaryCheck = plan.secretInjection
+    ? `if(process.env.WALLIE_SMOKE_CANARY!==${JSON.stringify(`wallie-smoke:${component}:${plan.runId}`)})process.exit(71);delete process.env.WALLIE_SMOKE_CANARY;`
+    : "";
+  const program = `if(process.platform!=="linux"||process.arch!=="x64"||["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN","AWS_CONTAINER_CREDENTIALS_RELATIVE_URI","AWS_CONTAINER_CREDENTIALS_FULL_URI","SUPABASE_SECRET_KEY","WALLIE_ENCRYPTION_KEY"].some(k=>process.env[k]))process.exit(70);${canaryCheck}console.log(${JSON.stringify(marker(plan, component, "started"))});setTimeout(()=>{console.log(${JSON.stringify(marker(plan, component, "completed"))});},60000);`;
   return {
-    family: family(component),
+    family: family(plan, component),
     executionRoleArn: roleArn(plan, component),
     networkMode: "awsvpc",
     requiresCompatibilities: ["FARGATE"],
@@ -527,12 +739,22 @@ export function taskDefinition(plan, component) {
         readonlyRootFilesystem: true,
         stopTimeout: 30,
         linuxParameters: { capabilities: { drop: ["ALL"] } },
+        ...(plan.secretInjection
+          ? {
+              secrets: [
+                {
+                  name: "WALLIE_SMOKE_CANARY",
+                  valueFrom: `${plan.secretInjection[component].secretArn}:WALLIE_SMOKE_CANARY::${plan.secretInjection[component].versionId}`,
+                },
+              ],
+            }
+          : {}),
         logConfiguration: {
           logDriver: "awslogs",
           options: {
             "awslogs-group": `/wallie/staging/${component}`,
             "awslogs-region": plan.region,
-            "awslogs-stream-prefix": `wallie-smoke-${plan.runId}`,
+            "awslogs-stream-prefix": logPrefix(plan),
             mode: "blocking",
           },
         },
@@ -550,7 +772,7 @@ export function verifyDefinition(plan, component, response) {
     Number.isSafeInteger(actual.revision) && actual.revision > 0,
     "Invalid task-definition revision",
   );
-  const arn = `arn:aws:ecs:${plan.region}:${plan.account}:task-definition/${family(component)}:${actual.revision}`;
+  const arn = `arn:aws:ecs:${plan.region}:${plan.account}:task-definition/${family(plan, component)}:${actual.revision}`;
   equal(actual.taskDefinitionArn, arn, "task-definition ARN");
   equal(tagsObject(response.tags), tagValues(plan), "task-definition tags");
   for (const key of [
@@ -604,9 +826,9 @@ export function runInput(plan, component, subnetIndex, definitions) {
     launchType: "FARGATE",
     platformVersion: "1.4.0",
     count: 1,
-    clientToken: `${plan.runId}-${component}-${subnetIndex}`,
-    startedBy: `ws-${plan.runId}`,
-    group: "wallie-private-smoke",
+    clientToken: `${plan.runId}-${component}-${subnetIndex}${plan.secretInjection ? "-secret" : ""}`,
+    startedBy: `${plan.secretInjection ? "wi" : "ws"}-${plan.runId}`,
+    group: plan.secretInjection ? "wallie-private-secret-smoke" : "wallie-private-smoke",
     enableExecuteCommand: false,
     enableECSManagedTags: false,
     networkConfiguration: {
@@ -627,6 +849,9 @@ export function smokePolicy(plan, definitions) {
     RUN_ID: plan.runId,
     WEB_DEFINITION_ARN: verifyDefinition(plan, "web", definitions.web),
     WORKER_DEFINITION_ARN: verifyDefinition(plan, "worker", definitions.worker),
+    SMOKE_COMPONENT: tagValues(plan).Component,
+    SMOKE_NAME: tagValues(plan).Name,
+    LOG_PREFIX: logPrefix(plan),
   };
   let source = readFileSync(
     new URL("../infra/aws/private-task-smoke-policy.template.json", import.meta.url),
@@ -703,6 +928,14 @@ function oneTask(envelope, plan, request, now, deadline) {
       plan.images[component].scan.capturedAt,
       plan.images[component].verification.capturedAt,
     ]),
+    ...(plan.secretInjection
+      ? components.flatMap((component) =>
+          ["secret", "versions", "resourcePolicy"].flatMap((name) => [
+            plan.secretInjection[component][name].requestStartedAt,
+            plan.secretInjection[component][name].capturedAt,
+          ]),
+        )
+      : []),
   ];
   check(
     captures.every(
@@ -849,7 +1082,7 @@ export function verifyResult(
       stopped <= deadline,
     "Missing live ENI capture or exceeded smoke deadline",
   );
-  const stream = `wallie-smoke-${plan.runId}/smoke/${task.taskArn.split("/").at(-1)}`;
+  const stream = `${logPrefix(plan)}/smoke/${task.taskArn.split("/").at(-1)}`;
   const pages = evidence.logs;
   check(
     Array.isArray(pages) && pages.length >= 2 && pages.length <= 20,
@@ -911,7 +1144,9 @@ export function verifyResult(
   );
   return {
     schemaVersion: 1,
-    status: "offline-smoke-evidence-matches",
+    status: plan.secretInjection
+      ? "offline-secret-injection-evidence-matches"
+      : "offline-smoke-evidence-matches",
     runId: plan.runId,
     component,
     ...network,
@@ -919,8 +1154,16 @@ export function verifyResult(
     logStream: stream,
     exitCode: 0,
     deployable: false,
-    limitation:
-      "Offline comparison cannot authenticate evidence or prove capture freshness. Four reviewed live results are required; Wallie startup, secrets and services remain unqualified.",
+    ...(plan.secretInjection
+      ? {
+          qualification: "non-sensitive-canary-injection-only",
+          secretArn: plan.secretInjection[component].secretArn,
+          versionId: plan.secretInjection[component].versionId,
+        }
+      : {}),
+    limitation: plan.secretInjection
+      ? "Offline comparison cannot authenticate captures. Four reviewed live canary-injection results and cleanup are required; actual application secrets, startup and services remain unqualified."
+      : "Offline comparison cannot authenticate evidence or prove capture freshness. Four reviewed live results are required; Wallie startup, secrets and services remain unqualified.",
   };
 }
 
@@ -981,6 +1224,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         "worker-scan",
         "web-verification",
         "worker-verification",
+        ...(Object.hasOwn(input, "secretInjection")
+          ? components.flatMap((component) =>
+              ["secret", "versions", "resource-policy"].map((suffix) => `${component}-${suffix}`),
+            )
+          : []),
       ];
       const readback = Object.fromEntries(
         names.map((name) => [name, readJson(join(values["readback-dir"], `${name}.json`))]),

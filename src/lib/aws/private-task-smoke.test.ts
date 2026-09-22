@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { beforeAll, describe, expect, it } from "vitest";
 
 type Data = Record<string, unknown>;
@@ -265,7 +266,7 @@ function registered(plan = fixture()) {
           tags,
           taskDefinition: {
             ...definition,
-            taskDefinitionArn: `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-${component}-connectivity-smoke:1`,
+            taskDefinitionArn: `arn:aws:ecs:${region}:${account}:task-definition/${definition.family}:1`,
             revision: 1,
             status: "ACTIVE",
             requiresAttributes: [],
@@ -345,7 +346,7 @@ function evidence(plan = fixture(), component = "web", index = 0) {
   stoppedTask.stoppedAt = "2026-09-22T12:02:05Z";
   const logRequest = {
     logGroupName: `/wallie/staging/${component}`,
-    logStreamName: `wallie-smoke-${runId}/smoke/${taskId}`,
+    logStreamName: `${"secretInjection" in plan ? "wallie-secret-smoke" : "wallie-smoke"}-${runId}/smoke/${taskId}`,
     startFromHead: true,
   };
   return {
@@ -390,7 +391,10 @@ function evidence(plan = fixture(), component = "web", index = 0) {
           response: {
             events: ["started", "completed"].map((phase, index) => ({
               message: JSON.stringify({
-                kind: "wallie-private-smoke",
+                kind:
+                  "secretInjection" in plan
+                    ? "wallie-secret-injection-smoke"
+                    : "wallie-private-smoke",
                 run: runId,
                 component,
                 phase,
@@ -558,8 +562,7 @@ describe("private ECS smoke preparation", () => {
     ).toThrow(/qualification window/);
   });
 
-  function assemblyFixture() {
-    const plan = fixture();
+  function assemblyFixture(plan = fixture()) {
     const { createdAt: _created, identity, network, images, ...header } = plan;
     void _created;
     return {
@@ -607,6 +610,36 @@ describe("private ECS smoke preparation", () => {
       network: { capturedAt: new Date(createdAt).toISOString() },
     });
     expect(helper.validateManifest(assembled, now)).toEqual(assembled);
+  });
+
+  it("assembles raw canary metadata and rejects arbitrary payload inputs", () => {
+    const plan = injectionFixture();
+    const { input, readback } = assemblyFixture(plan);
+    setAt(
+      input,
+      "secretInjection",
+      Object.fromEntries(
+        Object.entries(plan.secretInjection).map(([component, secret]) => [
+          component,
+          { secretArn: secret.secretArn, versionId: secret.versionId },
+        ]),
+      ),
+    );
+    Object.assign(
+      readback,
+      Object.fromEntries(
+        Object.entries(plan.secretInjection).flatMap(([component, secret]) => [
+          [`${component}-secret`, secret.secret],
+          [`${component}-versions`, secret.versions],
+          [`${component}-resource-policy`, secret.resourcePolicy],
+        ]),
+      ),
+    );
+    const assembled = helper.assembleManifest(input, readback, now);
+    expect(assembled.secretInjection).toEqual(plan.secretInjection);
+    expect(helper.validateManifest(assembled, now)).toEqual(assembled);
+    setAt(input, "secretInjection.web.expectedValue", "private-value-must-not-appear");
+    expect(() => helper.assembleManifest(input, readback, now)).toThrow(/reviewed canary identity/);
   });
 
   it("accepts a task created during RunTask and rejects impossible request/response timing", () => {
@@ -924,5 +957,326 @@ describe("private ECS smoke preparation", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+const canaryArn = (component: string) =>
+  `arn:aws:secretsmanager:${region}:${account}:secret:/wallie/staging/${component}/runtime-Ab12Cd`;
+function injectionFixture() {
+  const plan = fixture();
+  const secretInjection = Object.fromEntries(
+    ["web", "worker"].map((component) => {
+      const identity = { ARN: canaryArn(component), Name: `/wallie/staging/${component}/runtime` };
+      const envelope = (response: unknown) => ({
+        requestStartedAt: createdAt,
+        capturedAt: createdAt,
+        response,
+      });
+      return [
+        component,
+        {
+          secretArn: identity.ARN,
+          versionId: runId,
+          secret: envelope({
+            ...identity,
+            Description: `Wallie staging ${component} runtime secret configuration; values managed outside Terraform.`,
+            CreatedDate: createdAt,
+            LastChangedDate: createdAt,
+            Tags: Object.entries({
+              Project: "Wallie",
+              Environment: "staging",
+              ManagedBy: "Terraform",
+              WallieStack: "wallie-staging-application",
+              Component: "runtime-secrets",
+              Name: identity.Name,
+            }).map(([Key, Value]) => ({ Key, Value })),
+            VersionIdsToStages: { [runId]: ["AWSCURRENT"] },
+          }),
+          resourcePolicy: envelope(identity),
+          versions: {
+            ...envelope({
+              ...identity,
+              Versions: [
+                { VersionId: runId, VersionStages: ["AWSCURRENT"], CreatedDate: createdAt },
+              ],
+            }),
+            request: { SecretId: identity.ARN, IncludeDeprecated: true },
+          },
+        },
+      ];
+    }),
+  );
+  const secretEndpoint = {
+    VpcEndpointId: "vpce-00000000000000005",
+    ServiceName: `com.amazonaws.${region}.secretsmanager`,
+    VpcId: vpcId,
+    OwnerId: account,
+    State: "available",
+    VpcEndpointType: "Interface",
+    IpAddressType: "ipv4",
+    PrivateDnsEnabled: true,
+    SubnetIds: subnetIds,
+    Groups: [{ GroupId: endpointSg }],
+    Tags: Object.entries({
+      Project: "Wallie",
+      Environment: "staging",
+      ManagedBy: "Terraform",
+      WallieStack: "wallie-staging-network",
+      Component: "private-connectivity",
+      Name: "wallie-staging-runtime-secrets",
+    }).map(([Key, Value]) => ({ Key, Value })),
+    PolicyDocument: JSON.stringify({
+      Version: "2012-10-17",
+      Statement: ["web", "worker"].map((component) => ({
+        Sid: `Read${component === "web" ? "Web" : "Worker"}RuntimeSecret`,
+        Effect: "Allow",
+        Principal: "*",
+        Action: "secretsmanager:GetSecretValue",
+        Resource: canaryArn(component),
+        Condition: {
+          ArnEquals: {
+            "aws:PrincipalArn": `arn:aws:iam::${account}:role/wallie-staging-${component}-execution`,
+          },
+          ...endpointCondition,
+        },
+      })),
+    }),
+  };
+  plan.network.endpoints.VpcEndpoints.push(secretEndpoint);
+  return { ...plan, secretInjection };
+}
+
+describe("private canary secret-injection qualification", () => {
+  it.each(["web", "worker"])(
+    "pins only the %s canary key and version in its distinct smoke definition",
+    (component) => {
+      const plan = helper.validateManifest(injectionFixture(), now);
+      const definition = helper.taskDefinition(plan, component);
+      const containers = definition.containerDefinitions as Data[];
+      expect(definition.family).toBe(`wallie-staging-${component}-secret-injection-smoke`);
+      expect(containers[0].secrets).toEqual([
+        {
+          name: "WALLIE_SMOKE_CANARY",
+          valueFrom: `${canaryArn(component)}:WALLIE_SMOKE_CANARY::${runId}`,
+        },
+      ]);
+      expect(containers[0].environment).toBeUndefined();
+      expect(definition.taskRoleArn).toBeUndefined();
+      const { definitions, snapshots } = evidence(injectionFixture(), component);
+      const request = helper.runInput(plan, component, 0, definitions);
+      expect(request.clientToken).toBe(`${runId}-${component}-0-secret`);
+      expect(request.startedBy).toBe(`wi-${runId}`);
+      expect(request.group).toBe("wallie-private-secret-smoke");
+      const result = helper.verifyResult(plan, component, 0, definitions, snapshots, now);
+      expect(result).toMatchObject({
+        status: "offline-secret-injection-evidence-matches",
+        qualification: "non-sensitive-canary-injection-only",
+        secretArn: canaryArn(component),
+        versionId: runId,
+        deployable: false,
+      });
+      expect(result.logStream).toContain(`wallie-secret-smoke-${runId}/`);
+      expect(JSON.stringify(result)).not.toContain(`wallie-smoke:${component}:${runId}`);
+      const policy = helper.smokePolicy(plan, definitions);
+      expect(JSON.stringify(policy)).toContain(
+        '"aws:RequestTag/Component":"private-secret-injection-smoke"',
+      );
+      expect(JSON.stringify(policy)).toContain(`wallie-secret-smoke-${runId}/smoke/*`);
+      expect(JSON.stringify(policy)).not.toMatch(/secretsmanager:|PutSecretValue|GetSecretValue/);
+    },
+  );
+
+  it.each([
+    undefined,
+    "wrong-canary-must-not-be-printed",
+    `wallie-smoke:worker:${runId}`,
+    `wallie-smoke:web:${"2".repeat(32)}`,
+  ])("rejects missing or wrong injected data without printing it (%j)", (value) => {
+    const definition = helper.taskDefinition(injectionFixture(), "web");
+    const container = (definition.containerDefinitions as Data[])[0];
+    const program = (container.command as string[])[1];
+    const logs: unknown[] = [];
+    const env = { WALLIE_SMOKE_CANARY: value };
+    expect(() =>
+      runInNewContext(
+        program,
+        {
+          process: {
+            platform: "linux",
+            arch: "x64",
+            env,
+            exit: (code: number) => {
+              throw new Error(`exit ${code}`);
+            },
+          },
+          console: { log: (message: unknown) => logs.push(message) },
+          setTimeout: () => {
+            throw new Error("Timer must not start on failed injection");
+          },
+        },
+        { timeout: 1000 },
+      ),
+    ).toThrow("exit 71");
+    expect(logs).toEqual([]);
+  });
+
+  it("checks then deletes the canary environment value and prints only two fixed markers", () => {
+    const definition = helper.taskDefinition(injectionFixture(), "web");
+    const program = ((definition.containerDefinitions as Data[])[0].command as string[])[1];
+    const env: Record<string, string> = { WALLIE_SMOKE_CANARY: `wallie-smoke:web:${runId}` };
+    const logs: string[] = [];
+    runInNewContext(
+      program,
+      {
+        process: {
+          platform: "linux",
+          arch: "x64",
+          env,
+          exit: () => {
+            throw new Error("Unexpected exit");
+          },
+        },
+        console: { log: (message: string) => logs.push(message) },
+        setTimeout: (callback: () => void, duration: number) => {
+          expect(duration).toBe(60_000);
+          callback();
+        },
+      },
+      { timeout: 1000 },
+    );
+    expect(env).toEqual({});
+    expect(logs.map((message) => JSON.parse(message))).toEqual(
+      ["started", "completed"].map((phase) => ({
+        kind: "wallie-secret-injection-smoke",
+        run: runId,
+        component: "web",
+        phase,
+      })),
+    );
+    expect(logs.join()).not.toContain("wallie-smoke:web:");
+  });
+
+  it.each([
+    ["secretInjection", null],
+    ["secretInjection", false],
+    ["secretInjection.web.secretArn", canaryArn("worker")],
+    ["secretInjection.web.secretArn", canaryArn("web").replace(account, "999999999999")],
+    ["secretInjection.web.secretArn", canaryArn("web").replace(region, "us-east-1")],
+    ["secretInjection.web.secretArn", canaryArn("web").replace("Ab12Cd", "??????")],
+    ["secretInjection.web.secretArn", `${canaryArn("web")}:WALLIE_SMOKE_CANARY::${runId}`],
+    ["secretInjection.web.versionId", "2".repeat(32)],
+    ["secretInjection.web.expectedValue", "must-not-be-accepted"],
+    ["secretInjection.web.secret.requestStartedAt", "2026-09-22T11:40:00Z"],
+    ["secretInjection.web.versions.capturedAt", "2026-09-22T12:01:00Z"],
+    ["secretInjection.web.secret.response.KmsKeyId", "custom-key"],
+    ["secretInjection.web.secret.response.RotationEnabled", true],
+    ["secretInjection.web.secret.response.RotationEnabled", null],
+    ["secretInjection.web.secret.response.RotationRules", null],
+    ["secretInjection.web.secret.response.DeletedDate", createdAt],
+    ["secretInjection.web.secret.response.ReplicationStatus", [{ Region: "us-east-1" }]],
+    ["secretInjection.web.secret.response.Tags", []],
+    [
+      "secretInjection.web.secret.response.VersionIdsToStages",
+      { [runId]: ["AWSCURRENT", "AWSPENDING"] },
+    ],
+    ["secretInjection.web.secret.response.SecretString", "must-not-be-printed"],
+    ["secretInjection.web.resourcePolicy.response.ResourcePolicy", "{}"],
+    ["secretInjection.web.resourcePolicy.response.SecretBinary", null],
+    ["secretInjection.web.versions.response.SecretString", "must-not-be-printed"],
+    ["secretInjection.web.versions.response.Versions.0.SecretBinary", ""],
+    ["secretInjection.web.versions.response.Versions.0.KmsKeyIds", null],
+    ["secretInjection.web.versions.request.IncludeDeprecated", false],
+    ["secretInjection.web.versions.request.IncludeDeprecated", undefined],
+    ["secretInjection.web.versions.request.SecretId", canaryArn("worker")],
+    ["secretInjection.web.versions.response.NextToken", "more"],
+    ["secretInjection.web.versions.response.Versions", []],
+    [
+      "secretInjection.web.versions.response.Versions",
+      [
+        { VersionId: runId, VersionStages: ["AWSCURRENT"], CreatedDate: createdAt },
+        { VersionId: "2".repeat(32), VersionStages: [], CreatedDate: createdAt },
+      ],
+    ],
+    ["secretInjection.web.versions.response.Versions.0.VersionId", "2".repeat(32)],
+    ["secretInjection.web.versions.response.Versions.0.VersionStages", ["AWSPREVIOUS"]],
+    ["network.endpoints.VpcEndpoints.4.PrivateDnsEnabled", false],
+    ["network.endpoints.VpcEndpoints.4.VpcEndpointId", "vpce-invalid"],
+    ["network.endpoints.VpcEndpoints.4.VpcEndpointId", s3Id],
+    ["network.endpoints.VpcEndpoints.4.Tags", []],
+    ["network.endpoints.VpcEndpoints.4.Tags.0.Value", "OtherProject"],
+    ["network.endpoints.VpcEndpoints.4.Groups.0.GroupId", taskSg],
+    ["network.endpoints.VpcEndpoints.4.SubnetIds", [subnetIds[0]]],
+    [
+      "network.endpoints.VpcEndpoints.4.PolicyDocument",
+      JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: "secretsmanager:GetSecretValue",
+            Principal: "*",
+            Resource: "*",
+          },
+        ],
+      }),
+    ],
+  ])("rejects canary metadata or endpoint drift at %s", (path, replacement) => {
+    const plan = injectionFixture();
+    setAt(plan, path as string, replacement);
+    expect(() => helper.validateManifest(plan, now)).toThrow();
+  });
+
+  it("keeps the four-endpoint connectivity gate separate from secret injection", () => {
+    const plan = injectionFixture();
+    const { secretInjection: _secretInjection, ...withoutOptIn } = plan;
+    void _secretInjection;
+    expect(() => helper.validateManifest(withoutOptIn, now)).toThrow(/endpoints/);
+    plan.network.endpoints.VpcEndpoints.pop();
+    expect(() => helper.validateManifest(plan, now)).toThrow(/endpoints/);
+  });
+
+  it("accepts only harmless optional secret metadata representations without altering evidence", () => {
+    const plan = injectionFixture();
+    setAt(plan, "secretInjection.web.secret.response.RotationEnabled", false);
+    setAt(plan, "secretInjection.web.secret.response.RotationRules", {});
+    setAt(plan, "secretInjection.web.secret.response.ReplicationStatus", []);
+    setAt(plan, "secretInjection.web.versions.response.Versions.0.KmsKeyIds", []);
+    const original = structuredClone(plan);
+    expect(helper.validateManifest(plan, now)).toEqual(plan);
+    expect(plan).toEqual(original);
+  });
+
+  it("rejects removed, remapped, or plaintext canary injection in registered definitions", () => {
+    for (const [path, value] of [
+      ["secrets", []],
+      ["secrets.0.name", "SUPABASE_SECRET_KEY"],
+      ["secrets.0.valueFrom", `${canaryArn("web")}:WALLIE_SMOKE_CANARY:AWSCURRENT:`],
+      ["environment", [{ name: "WALLIE_SMOKE_CANARY", value: `wallie-smoke:web:${runId}` }]],
+    ] as [string, unknown][]) {
+      const plan = injectionFixture();
+      const definitions = registered(plan);
+      setAt(definitions.web, `taskDefinition.containerDefinitions.0.${path}`, value);
+      expect(() => helper.verifyDefinition(plan, "web", definitions.web)).toThrow(
+        /complete task definition/,
+      );
+    }
+  });
+
+  it("rejects connectivity-only logs and late secret qualification even in retrospective checks", () => {
+    const plan = injectionFixture();
+    const { definitions, snapshots } = evidence(plan);
+    snapshots.logs[0].response.events[0].message =
+      snapshots.logs[0].response.events[0].message.replace(
+        "wallie-secret-injection-smoke",
+        "wallie-private-smoke",
+      );
+    expect(() => helper.verifyResult(plan, "web", 0, definitions, snapshots, now)).toThrow(
+      /log markers/,
+    );
+    const fresh = evidence(plan);
+    setAt(plan, "secretInjection.web.versions.requestStartedAt", "2026-09-22T11:40:00Z");
+    expect(() =>
+      helper.verifyResult(plan, "web", 0, fresh.definitions, fresh.snapshots, now + 60 * 60_000),
+    ).toThrow(/qualification window/);
   });
 });

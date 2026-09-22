@@ -14,9 +14,9 @@
           "aws:RequestTag/Project": "Wallie",
           "aws:RequestTag/Environment": "staging",
           "aws:RequestTag/ManagedBy": "ManualQualification",
-          "aws:RequestTag/Component": "private-task-smoke",
+          "aws:RequestTag/Component": "<SMOKE_COMPONENT>",
           "aws:RequestTag/WallieStack": "wallie-staging-application",
-          "aws:RequestTag/Name": "wallie-staging-connectivity-smoke",
+          "aws:RequestTag/Name": "<SMOKE_NAME>",
           "aws:RequestTag/WallieSmokeRun": "<RUN_ID>"
         },
         "ForAllValues:StringEquals": {
@@ -62,9 +62,9 @@
           "aws:RequestTag/Project": "Wallie",
           "aws:RequestTag/Environment": "staging",
           "aws:RequestTag/ManagedBy": "ManualQualification",
-          "aws:RequestTag/Component": "private-task-smoke",
+          "aws:RequestTag/Component": "<SMOKE_COMPONENT>",
           "aws:RequestTag/WallieStack": "wallie-staging-application",
-          "aws:RequestTag/Name": "wallie-staging-connectivity-smoke",
+          "aws:RequestTag/Name": "<SMOKE_NAME>",
           "aws:RequestTag/WallieSmokeRun": "<RUN_ID>"
         },
         "ForAllValues:StringEquals": {
@@ -90,7 +90,7 @@
           "aws:PrincipalAccount": "<ACCOUNT_ID>",
           "aws:RequestedRegion": "<REGION>",
           "aws:ResourceTag/WallieStack": "wallie-staging-application",
-          "aws:ResourceTag/Component": "private-task-smoke",
+          "aws:ResourceTag/Component": "<SMOKE_COMPONENT>",
           "aws:ResourceTag/WallieSmokeRun": "<RUN_ID>"
         }
       }
@@ -100,8 +100,8 @@
       "Effect": "Allow",
       "Action": "logs:GetLogEvents",
       "Resource": [
-        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web:log-stream:wallie-smoke-<RUN_ID>/smoke/*",
-        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker:log-stream:wallie-smoke-<RUN_ID>/smoke/*"
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/web:log-stream:<LOG_PREFIX>/smoke/*",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/worker:log-stream:<LOG_PREFIX>/smoke/*"
       ],
       "Condition": {
         "StringEquals": {
