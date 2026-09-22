@@ -2,16 +2,16 @@
 
 Proposal · September 19, 2026
 
-**Progress · September 21, 2026**
+**Progress · September 22, 2026 (UTC)**
 
-- **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, and an active OCI signing profile.
+- **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, an active OCI signing profile, and the [empty ECS cluster with web/worker log groups](AWS-APPLICATION-FOUNDATION.md).
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
-- **Live image checks (`00c0cac9`):** both runtimes, uploads, and manifest verification passed. Debian 13 reduced each ECR scan from 3 Critical / 14 High to 0 Critical / 1 High; release remains blocked. Images are unsigned and not deployable.
-- **Parallel tracks:** qualify replacement runtime images and prepare the [ECS application foundation](AWS-APPLICATION-FOUNDATION.md). Optional [digest signing and strict verification](AWS-IMAGE-SIGNING.md) are implemented; live signing still needs qualifying images. No application or database is running on AWS yet.
+- **Live image checks:** web `fc605b36` and worker `924e28b8` passed smoke tests, uploads, manifest/config verification, fresh ECR BASIC scans with zero findings, and strict signature verification. Both use the pinned Amazon Linux 2023 runtime; [qualification details](AWS-IMAGE-PUBLISHING.md#verification-boundary). Neither image is approved for deployment.
+- **Next:** private task connectivity, release provenance, broader package scanning, and Linux CI/GitHub OIDC publishing. No application or database is running on AWS yet.
 
 | Remaining               | Exit check                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
-| Image releases          | Live upload, scan, signing/verification, provenance, and GitHub OIDC publishing              |
+| Image releases          | Provenance, broader package scanning, Linux CI tooling, and GitHub OIDC publishing           |
 | AWS application hosting | ECS web/workers, TLS/ingress, secrets, egress, monitoring, drain-aware rollouts and rollback |
 | AWS Supabase            | Database/API deployment, object storage, backups, restore/failover, and upgrades             |
 | In-account sandboxes    | Supported controller/runners; isolation, cleanup, and every sandbox use case qualified       |

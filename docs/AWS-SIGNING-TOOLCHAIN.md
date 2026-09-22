@@ -52,10 +52,8 @@ node scripts/prepare-aws-signing-toolchain.mjs
 - Real setup passed: package authentication, seven payload hashes, binary signatures, root identity/validity, and runtime inventory.
 - Installed binaries still worked after the final directory move; repeat preparation rejected the existing installation.
 - Notation accepted the version-pinned trust policy in a disposable configuration. The installation itself contains no trust policy or registry authentication.
-- Private receipts record the checked files. No AWS API calls or signing occurred; live signature and revocation verification remain unqualified.
+- Toolchain preparation makes no AWS API calls and does not sign. Subsequent [live image qualification](AWS-IMAGE-PUBLISHING.md#verification-boundary) passed strict signature and revocation verification.
 
 ## Next
 
-- Qualify the [gated signing workflow](AWS-IMAGE-SIGNING.md) against live AWS once the image blocker is resolved.
 - Add Linux CI packaging, provenance, broader package scanning, and GitHub OIDC publishing.
-- Existing web and worker images still fail the High-severity scan gate.
