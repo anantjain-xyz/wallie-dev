@@ -198,6 +198,23 @@
       }
     },
     {
+      "Sid": "ReadExecutionRoleConfiguration",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-web-execution",
+        "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-worker-execution"
+      ],
+      "Condition": {
+        "StringEquals": { "aws:PrincipalAccount": "<ACCOUNT_ID>" }
+      }
+    },
+    {
       "Sid": "ReadExistingEcsServiceRole",
       "Effect": "Allow",
       "Action": "iam:GetRole",

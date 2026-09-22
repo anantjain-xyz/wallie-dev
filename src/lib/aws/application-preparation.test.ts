@@ -14,6 +14,9 @@ const logs = ["web", "worker"].map(
   (component) => `arn:aws:logs:${region}:${account}:log-group:/wallie/staging/${component}`,
 );
 const metadata = ["Project", "Environment", "ManagedBy", "Component", "Name"];
+const executionRoles = ["web", "worker"].map(
+  (component) => `arn:aws:iam::${account}:role/wallie-staging-${component}-execution`,
+);
 const array = (value: string | string[]) => (Array.isArray(value) ? value : [value]);
 type Statement = {
   Sid: string;
@@ -58,6 +61,9 @@ describe("AWS application foundation preparation", () => {
       "ecs:UntagResource",
       "ecs:UpdateCluster",
       "iam:GetRole",
+      "iam:GetRolePolicy",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListRolePolicies",
       "logs:CreateLogGroup",
       "logs:DescribeLogGroups",
       "logs:ListTagsForResource",
@@ -80,6 +86,7 @@ describe("AWS application foundation preparation", () => {
               ...logs,
               ...logs.map((arn) => `${arn}:*`),
               `arn:aws:iam::${account}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS`,
+              ...executionRoles,
             ]).toContain(resource);
         }
       }
@@ -137,7 +144,9 @@ describe("AWS application foundation preparation", () => {
   });
 
   it("permits prerequisite role reads but cannot create a service-linked role or pass one to a workload", () => {
-    expect(grants("iam:GetRole")).toEqual([
+    expect(
+      grants("iam:GetRole").filter((item) => item.Sid === "ReadExistingEcsServiceRole"),
+    ).toEqual([
       {
         Sid: "ReadExistingEcsServiceRole",
         Effect: "Allow",
@@ -146,6 +155,28 @@ describe("AWS application foundation preparation", () => {
         Condition: { StringEquals: { "aws:PrincipalAccount": account } },
       },
     ]);
+  });
+
+  it("adds only configuration reads for the two exact execution roles, without a new managed attachment", () => {
+    const expected = {
+      Sid: "ReadExecutionRoleConfiguration",
+      Effect: "Allow",
+      Action: [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+      ],
+      Resource: executionRoles,
+      Condition: { StringEquals: { "aws:PrincipalAccount": account } },
+    };
+    for (const action of expected.Action)
+      expect(grants(action).filter((item) => item.Sid !== "ReadExistingEcsServiceRole")).toEqual([
+        expected,
+      ]);
+    const largest = render("policy", ["--account-id", account, "--region", "ap-southeast-7"]);
+    expect(largest.status).toBe(0);
+    expect(JSON.stringify(JSON.parse(largest.stdout)).length).toBeLessThanOrEqual(6144);
   });
 
   it("requires the ownership marker when creating resources and limits initial ECS tagging to creation", () => {
