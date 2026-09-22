@@ -58,7 +58,8 @@
           "aws:RequestTag/Component": "private-connectivity",
           "aws:RequestTag/Name": [
             "wallie-staging-application-tasks",
-            "wallie-staging-aws-endpoints"
+            "wallie-staging-aws-endpoints",
+            "wallie-staging-runtime-egress"
           ]
         },
         "ForAllValues:StringEquals": {
@@ -143,7 +144,8 @@
           "aws:RequestTag/Name": [
             "wallie-staging-endpoint-https",
             "wallie-staging-task-endpoint-https",
-            "wallie-staging-task-layer-https"
+            "wallie-staging-task-layer-https",
+            "wallie-staging-runtime-egress-https"
           ]
         },
         "ForAllValues:StringEquals": {

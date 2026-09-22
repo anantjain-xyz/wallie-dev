@@ -6,7 +6,9 @@
       "Effect": "Allow",
       "Action": [
         "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeAddresses",
         "ec2:DescribeInternetGateways",
+        "ec2:DescribeNatGateways",
         "ec2:DescribeNetworkAcls",
         "ec2:DescribeNetworkInterfaces",
         "ec2:DescribeRouteTables",
@@ -212,6 +214,51 @@
         },
         "Null": {
           "aws:TagKeys": "false"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:AllocateAddress",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:elastic-ip/*",
+      "Condition": {
+        "StringEquals": { "aws:RequestTag/WallieStack": "wallie-staging-network" }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateNatGateway",
+      "Resource": "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:natgateway/*",
+      "Condition": {
+        "StringEquals": { "aws:RequestTag/WallieStack": "wallie-staging-network" }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateNatGateway",
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:elastic-ip/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:subnet/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:vpc/*"
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/WallieStack": "wallie-staging-network" }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:elastic-ip/*",
+        "arn:<PARTITION>:ec2:<REGION>:<ACCOUNT_ID>:natgateway/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "ec2:CreateAction": ["AllocateAddress", "CreateNatGateway"]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
         }
       }
     }

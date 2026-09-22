@@ -19,7 +19,7 @@ flowchart TB
 | Tier                | Default /24 ranges         | Non-local routes                           |
 | ------------------- | -------------------------- | ------------------------------------------ |
 | Public              | `10.42.0.0`, `10.42.1.0`   | IPv4 default route to the internet gateway |
-| Services            | `10.42.16.0`, `10.42.17.0` | None                                       |
+| Services            | `10.42.16.0`, `10.42.17.0` | None initially; opt-in NAT route in a only |
 | Database            | `10.42.32.0`, `10.42.33.0` | None                                       |
 | Sandbox reservation | `10.42.48.0`, `10.42.49.0` | None                                       |
 
@@ -150,3 +150,35 @@ terraform -chdir=infra/aws/staging-network show "$WALLIE_AWS_FILES/private-conne
 - After apply, inspect `application_connectivity` outputs and AWS readback: all four endpoints available; exact services/VPC/subnets/route tables; reviewed policies, tags, and private DNS. **Inspect every rule:** task SG has zero ingress and exactly the two outbound HTTPS rules; endpoint SG has exactly the inbound task-SG HTTPS rule and zero egress. No IPv6 or CIDR rules.
 - Standalone rule resources do not detect unrelated extra rules. Exact live rule inspection remains required even when the final full Terraform plan exits **0**. Do not attach workloads until both checks pass.
 - This batch is unqualified until post-merge live apply/readback. A future private task must prove image pull and log delivery with its reviewed execution role; mocked Terraform tests do not establish live IAM or connectivity.
+
+## One-AZ outbound HTTPS for first real tasks
+
+**Opt in only when ready to start one web and one worker task in `services-a`.** Hosted Supabase and external integrations need outbound HTTPS; the private ECR/Logs/Secrets endpoints do not provide internet access.
+
+```mermaid
+flowchart LR
+    tasks["Web + worker<br/>services-a · no public IP"] -->|"two task SGs · TCP 443"| nat["Public NAT<br/>public-a"]
+    nat --> igw[Internet gateway] --> hosted["Hosted Supabase + HTTPS integrations"]
+    tasks -->|"existing task SG"| endpoints["Private AWS endpoints + S3 gateway"]
+```
+
+| Add/change                  | Scope                                                                        |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| One EIP + public NAT        | `public-a` in the same AZ as the tasks                                       |
+| One default route           | Existing `services-a` table → NAT; `services-b`, database, sandbox unchanged |
+| One separate task SG + rule | No ingress; one outbound IPv4 TCP/443 rule to `0.0.0.0/0`                    |
+
+- Attach the two IDs in `runtime_https_egress.task_security_group_ids` to each real task. The existing task SG keeps its narrow endpoint/S3 rules; the new SG adds internet HTTPS. Security groups combine their allowed traffic.
+- `0.0.0.0/0` permits any HTTPS destination; security groups cannot allowlist DNS names. This is a staging bootstrap boundary, not a domain-restricted egress design. No new task ingress is opened.
+- One zonal NAT is a single-AZ failure domain. Add a second same-AZ NAT/route for `services-b` before placing tasks there or claiming two-AZ service availability. [AWS NAT guidance](https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-basics.html)
+
+### Review and deploy
+
+1. Update the **existing** customer-managed `WallieStagingNetwork` policy default version from `prepare-aws-network.mjs policy`. Update the **existing** `WallieStagingPrivateConnectivity` policy default version from `prepare-aws-private-connectivity.mjs` with the same verified live IDs and `--runtime-secrets`. Review the diff: the first adds tagged EIP/NAT creation and inventory reads; the second adds only the two exact egress SG/rule names. No eleventh policy attachment is needed. The renderers fail when a policy exceeds IAM's 6,144-character limit; the target account/region renders are 5,649 / 6,144 and 6,092 / 6,144 respectively. Re-render and check the exact current output before changing policy versions.
+   - EIP/NAT creation requires the `WallieStack` request tag. The creation-only `CreateTags` grant restricts allowed tag keys; [EC2 checks both actions when creating with tags](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/supported-iam-actions-tagging.html).
+2. Preserve all current values in private `network.tfvars.json`, including `enable_private_connectivity`, `enable_runtime_secret_connectivity`, and both exact runtime secret ARNs. Add `"enable_runtime_https_egress": true`. Never rerender the variables file without restoring all opt-in flags and ARNs.
+3. Create and inspect an untargeted saved Terraform plan. Expected network delta: **4 additions** (EIP, NAT, SG, rule) and **1 in-place change** (`services-a` route table), with no deletion or change to existing task/endpoint SGs, endpoints, other route tables, or hardening resources. Apply only that reviewed plan.
+4. Read back AWS and Terraform: NAT `available`, EIP assigned to it, `public-a` default route to IGW, `services-a` default route to NAT, and no default routes in `services-b`/database/sandbox. Confirm the old task SG still has zero ingress and exactly two narrow outbound rules. Confirm the new SG has **zero ingress and exactly one outbound IPv4 TCP/443 rule**; AWS's default all-egress rule must be absent. A zero-diff full plan does not detect unrelated extra SG rules, so inspect every live rule.
+5. Start the first web and worker tasks only in `services-a`, `assignPublicIp=DISABLED`, with both task SGs. Prove hosted Supabase HTTPS access by a real worker heartbeat/DB read and a web task health check that reads staging Supabase; inspect their application log groups. The task launch and proof are separate reviewed batches.
+
+**Cost:** AWS's illustrative rates imply about **$36.50 per 730-hour month** for one $0.045/hour NAT plus one $0.005/hour public IPv4, before NAT processing, internet data transfer, compute, or logs. Confirm the final Oregon rate before apply. NAT remains billed while idle; deleting it requires a separately reviewed teardown because `prevent_destroy` protects the EIP/NAT/SG. [AWS VPC pricing](https://aws.amazon.com/vpc/pricing/)

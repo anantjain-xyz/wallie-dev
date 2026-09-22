@@ -9,7 +9,14 @@ const marker = "wallie-staging-network";
 const common = ["--account-id", account, "--region", region];
 const zones = ["--availability-zones", "us-west-2a,us-west-2b"];
 const creationActions = ["CreateVpc", "CreateSubnet", "CreateRouteTable", "CreateInternetGateway"];
-const resourceTypes = ["vpc", "subnet", "route-table", "internet-gateway"];
+const resourceTypes = [
+  "vpc",
+  "subnet",
+  "route-table",
+  "internet-gateway",
+  "elastic-ip",
+  "natgateway",
+];
 const array = (value: string | string[]) => (Array.isArray(value) ? value : [value]);
 
 type Statement = {
@@ -48,10 +55,18 @@ describe("AWS network preparation", () => {
     expect(JSON.stringify(policy).length).toBeLessThanOrEqual(6_144);
     for (const statement of policy.Statement as Statement[]) {
       expect(statement.Effect).toBe("Allow");
-      expect(statement.Condition.StringEquals).toMatchObject({
-        "aws:PrincipalAccount": account,
-        "aws:RequestedRegion": awsRegion,
-      });
+      // New EIP/NAT grants are account/region scoped by their resource ARNs;
+      // omitting duplicate conditions keeps the managed policy under 6,144.
+      if (
+        !array(statement.Resource).some(
+          (resource) => resource.includes(":elastic-ip/") || resource.includes(":natgateway/"),
+        )
+      ) {
+        expect(statement.Condition.StringEquals).toMatchObject({
+          "aws:PrincipalAccount": account,
+          "aws:RequestedRegion": awsRegion,
+        });
+      }
       for (const action of array(statement.Action)) {
         expect(action).toMatch(/^ec2:[A-Za-z]+$/);
       }
@@ -152,8 +167,12 @@ describe("network policy ownership", () => {
     for (const statement of statements()) {
       const mutations = array(statement.Action).filter(
         (action) =>
-          ![...creationActions.map((name) => `ec2:${name}`), "ec2:CreateTags"].includes(action) &&
-          !action.startsWith("ec2:Describe"),
+          ![
+            ...creationActions.map((name) => `ec2:${name}`),
+            "ec2:AllocateAddress",
+            "ec2:CreateNatGateway",
+            "ec2:CreateTags",
+          ].includes(action) && !action.startsWith("ec2:Describe"),
       );
       if (mutations.length > 0) {
         expect(statement.Condition.StringEquals["aws:ResourceTag/WallieStack"]).toBe(marker);
@@ -170,7 +189,10 @@ describe("network policy ownership", () => {
         expect(condition.StringEqualsIfExists["aws:RequestTag/WallieStack"]).toBe(marker);
       } else {
         expect(array(condition.StringEquals["ec2:CreateAction"]).sort()).toEqual(
-          [...creationActions].sort(),
+          (array(condition.StringEquals["ec2:CreateAction"]).includes("AllocateAddress")
+            ? ["AllocateAddress", "CreateNatGateway"]
+            : creationActions
+          ).sort(),
         );
         expect(condition.StringEquals["aws:RequestTag/WallieStack"]).toBe(marker);
       }
@@ -193,5 +215,40 @@ describe("network policy ownership", () => {
       ]);
       expect(condition.Null["aws:TagKeys"]).toBe("false");
     }
+  });
+
+  it("limits NAT creation to tagged EIP, NAT, subnet, and VPC resources", () => {
+    const grants = statements();
+    const createNat = grants.filter((s) => array(s.Action).includes("ec2:CreateNatGateway"));
+    expect(createNat).toHaveLength(2);
+    const requested = createNat.find((s) =>
+      array(s.Resource).some((r) => r.includes(":natgateway/")),
+    )!;
+    expect(requested.Condition.StringEquals["aws:RequestTag/WallieStack"]).toBe(marker);
+    const parents = createNat.find((s) => array(s.Resource).some((r) => r.includes(":subnet/")))!;
+    expect(array(parents.Resource).sort()).toEqual(
+      ["elastic-ip", "subnet", "vpc"]
+        .map((type) => `arn:aws:ec2:${region}:${account}:${type}/*`)
+        .sort(),
+    );
+    expect(parents.Condition.StringEquals["aws:ResourceTag/WallieStack"]).toBe(marker);
+    const allocate = grants.find((s) => array(s.Action).includes("ec2:AllocateAddress"))!;
+    expect(allocate.Resource).toBe(`arn:aws:ec2:${region}:${account}:elastic-ip/*`);
+    expect(allocate.Condition.StringEquals["aws:RequestTag/WallieStack"]).toBe(marker);
+    const tag = grants.find(
+      (s) =>
+        array(s.Action).includes("ec2:CreateTags") &&
+        array(s.Resource).some((r) => r.includes(":natgateway/")),
+    )!;
+    expect(tag.Condition["ForAllValues:StringEquals"]["aws:TagKeys"]).toEqual([
+      "WallieStack",
+      "Project",
+      "Environment",
+      "ManagedBy",
+      "Component",
+      "Name",
+    ]);
+    expect(grants.flatMap((s) => array(s.Action))).not.toContain("ec2:DeleteNatGateway");
+    expect(grants.flatMap((s) => array(s.Action))).not.toContain("ec2:ReleaseAddress");
   });
 });
