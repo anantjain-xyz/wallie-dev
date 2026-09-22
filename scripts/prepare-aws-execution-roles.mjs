@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
 const usage =
-  "Usage: node scripts/prepare-aws-execution-roles.mjs create-role-input|put-role-policy-input|manifest|verify --account-id <12 digits> --region <commercial AWS region> --component web|worker [--readback-dir <directory> (verify only)]";
+  "Usage: node scripts/prepare-aws-execution-roles.mjs create-role-input|put-role-policy-input|manifest|verify --account-id <12 digits> --region <commercial AWS region> --component web|worker [--runtime-secret-arn <full own-component runtime secret ARN>] [--readback-dir <directory> (verify only)]";
 
 function renderTemplate(name, account, region, component) {
   return JSON.parse(
@@ -14,7 +14,7 @@ function renderTemplate(name, account, region, component) {
   );
 }
 
-function artifacts(account, region, component) {
+function artifacts(account, region, component, runtimeSecretArn) {
   const name = `wallie-staging-${component}-execution`;
   const role = {
     RoleName: name,
@@ -41,6 +41,16 @@ function artifacts(account, region, component) {
     PolicyName: "WallieStagingExecution",
     PolicyDocument: renderTemplate("execution-role-policy", account, region, component),
   };
+  if (runtimeSecretArn !== undefined)
+    inline.PolicyDocument.Statement.push({
+      Sid: "ReadOwnRuntimeSecret",
+      Effect: "Allow",
+      Action: "secretsmanager:GetSecretValue",
+      Resource: runtimeSecretArn,
+      Condition: {
+        StringEquals: { "aws:PrincipalAccount": account, "aws:RequestedRegion": region },
+      },
+    });
   return {
     createRole: {
       ...role,
@@ -52,6 +62,7 @@ function artifacts(account, region, component) {
       account,
       region,
       component,
+      ...(runtimeSecretArn === undefined ? {} : { runtimeSecretArn }),
       role: { ...role, Arn: `arn:aws:iam::${account}:role/${name}`, PermissionsBoundary: null },
       inlinePolicy: inline,
       inlinePolicyNames: [inline.PolicyName],
@@ -153,8 +164,13 @@ function verify(manifest, directory) {
     roleArn: manifest.role.Arn,
     component: manifest.component,
     region: manifest.region,
+    ...(manifest.runtimeSecretArn === undefined
+      ? {}
+      : { runtimeSecretArn: manifest.runtimeSecretArn }),
     limitation:
-      "Offline metadata comparison; live task image pull and log delivery remain unqualified.",
+      manifest.runtimeSecretArn === undefined
+        ? "Offline metadata comparison; live task image pull and log delivery remain unqualified."
+        : "Offline metadata comparison; live image pull, log delivery and secret injection remain unqualified.",
   };
 }
 
@@ -163,7 +179,7 @@ try {
     allowPositionals: true,
     tokens: true,
     options: Object.fromEntries(
-      ["account-id", "region", "component", "readback-dir"].map((name) => [
+      ["account-id", "region", "component", "runtime-secret-arn", "readback-dir"].map((name) => [
         name,
         { type: "string" },
       ]),
@@ -172,7 +188,8 @@ try {
   const [command] = positionals;
   const account = values["account-id"],
     region = values.region,
-    component = values.component;
+    component = values.component,
+    runtimeSecretArn = values["runtime-secret-arn"];
   if (
     positionals.length !== 1 ||
     !["create-role-input", "put-role-policy-input", "manifest", "verify"].includes(command) ||
@@ -185,7 +202,17 @@ try {
   )
     throw new Error(usage);
 
-  const result = artifacts(account, region, component);
+  if (
+    runtimeSecretArn !== undefined &&
+    !new RegExp(
+      `^arn:aws:secretsmanager:${region}:${account}:secret:/wallie/staging/${component}/runtime-[A-Za-z0-9]{6}$`,
+    ).test(runtimeSecretArn)
+  )
+    throw new Error(
+      "Expected the full own-component runtime secret ARN, including its six-character suffix",
+    );
+
+  const result = artifacts(account, region, component, runtimeSecretArn);
   const output =
     command === "create-role-input"
       ? result.createRole
