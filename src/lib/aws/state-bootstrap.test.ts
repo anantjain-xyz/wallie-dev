@@ -66,7 +66,7 @@ describe("AWS state preparation", () => {
     }
   });
 
-  it("limits backend writes to foundation and registry state and permits deletion only of their locks", () => {
+  it("limits backend writes to foundation, registry, and application state and permits deletion only of their locks", () => {
     const { Statement: statements } = JSON.parse(render("access-policy").stdout);
     const objects = new Map<string, Set<string>>();
     for (const statement of statements as Statement[]) {
@@ -81,13 +81,16 @@ describe("AWS state preparation", () => {
         `${bucketArn}/staging/foundation.tfstate`,
         `${bucketArn}/staging/foundation.tfstate.tflock`,
         `${bucketArn}/staging/registry.tfstate`,
+        `${bucketArn}/staging/application.tfstate`,
         `${bucketArn}/staging/registry.tfstate.tflock`,
+        `${bucketArn}/staging/application.tfstate.tflock`,
       ]),
     );
     expect(objects.get("s3:DeleteObject")).toEqual(
       new Set([
         `${bucketArn}/staging/foundation.tfstate.tflock`,
         `${bucketArn}/staging/registry.tfstate.tflock`,
+        `${bucketArn}/staging/application.tfstate.tflock`,
       ]),
     );
     expect(objects.get("s3:ListBucket")).toEqual(new Set([bucketArn]));
@@ -106,7 +109,7 @@ describe("AWS state preparation", () => {
     expect(result.stdout).not.toMatch(/access_key|secret_key|token|profile/);
   });
 
-  it.each(["foundation", "registry"])(
+  it.each(["foundation", "registry", "application"])(
     "selects only the %s backend without changing other safeguards",
     (component) => {
       const result = render("backend", [
