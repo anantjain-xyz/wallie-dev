@@ -1,3 +1,4 @@
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createClient = vi.hoisted(() => vi.fn());
@@ -52,6 +53,16 @@ async function rejectedPromptly(promise: Promise<unknown>, reason: unknown) {
 }
 
 function setup() {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const kid = randomUUID();
+  const header = Buffer.from(JSON.stringify({ alg: "ES256", kid })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ role: "authenticated" })).toString("base64url");
+  const signed = `${header}.${payload}`;
+  const accessToken = `${signed}.${sign("sha256", Buffer.from(signed), {
+    key: privateKey,
+    dsaEncoding: "ieee-p1363",
+  }).toString("base64url")}`;
+  const jwks = { keys: [{ ...publicKey.export({ format: "jwk" }), kid }] };
   const controller = new AbortController();
   const options = {
     url: "http://127.0.0.1:54321",
@@ -95,7 +106,7 @@ function setup() {
   const users = [0, 1].map((index) => ({
     auth: {
       signInWithPassword: vi.fn(async () => ({
-        data: { user: { id: `user-${index}` }, session: { access_token: "test-token" } },
+        data: { user: { id: `user-${index}` }, session: { access_token: accessToken } },
         error: null,
       })),
       signOut: cleanup,
@@ -149,6 +160,7 @@ function setup() {
     listeners,
     leave,
     channel,
+    jwks,
     fetch: (...args: Parameters<typeof fetch>) => requestFetch(...args),
   };
 }
@@ -169,13 +181,14 @@ describe("self-hosted service probe cancellation", () => {
   it("aborts an in-flight HTTP request and skips remaining probes and API cleanup", async () => {
     const fixture = setup();
     const entered = deferred<AbortSignal>();
-    const fetch = vi.fn(
-      (_url, init: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          const signal = init.signal!;
-          entered.resolve(signal);
-          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        }),
+    const fetch = vi.fn((url, init: RequestInit) =>
+      String(url).endsWith("/auth/v1/.well-known/jwks.json")
+        ? Promise.resolve(new Response(JSON.stringify(fixture.jwks)))
+        : new Promise<Response>((_resolve, reject) => {
+            const signal = init.signal!;
+            entered.resolve(signal);
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
     );
     vi.stubGlobal("fetch", fetch);
     fixture.users[0].auth.signInWithPassword.mockImplementation(async () => {
@@ -187,7 +200,7 @@ describe("self-hosted service probe cancellation", () => {
     fixture.controller.abort(new Error("Stop qualification"));
     await rejectedPromptly(pending, fixture.controller.signal.reason);
     expect(requestSignal.aborted).toBe(true);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
     expect(fixture.admin.auth.admin.createUser).toHaveBeenCalledTimes(1);
     expect(fixture.users[0].rpc).not.toHaveBeenCalled();
     expect(fixture.cleanup).not.toHaveBeenCalled();
@@ -200,7 +213,10 @@ describe("self-hosted service probe cancellation", () => {
       const fixture = setup();
       vi.stubGlobal(
         "fetch",
-        vi.fn(() => {
+        vi.fn((url) => {
+          if (String(url).endsWith("/auth/v1/.well-known/jwks.json")) {
+            return Promise.resolve(new Response(JSON.stringify(fixture.jwks)));
+          }
           throw new Error("Unexpected network request");
         }),
       );

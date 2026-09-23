@@ -33,6 +33,7 @@ flowchart LR
 
 - Fetches the pinned upstream configuration; creates a unique Compose project with fresh synthetic data.
 - Runs PostgreSQL, Envoy, Auth, PostgREST, Realtime, Storage, and imgproxy. Studio, Meta, Edge Functions, and pooling are outside this check.
+- Uses the pinned upstream key generator to create fresh `sb_publishable_` / `sb_secret_` keys and ES256 signing keys; no Supabase Cloud project or billing organization is needed.
 - Publishes the test endpoint on loopback only; generates fresh credentials in a private OS temporary directory.
 - Uses its own containers and data; leaves an existing Supabase CLI stack untouched.
 - Cleans up its containers, volumes, and temporary stack files automatically. Cleanup failure returns a failure and prints the project/configuration path for recovery.
@@ -41,14 +42,14 @@ flowchart LR
 
 ## Checks
 
-| Area           | Required evidence from the run                                            |
-| -------------- | ------------------------------------------------------------------------- |
-| Schema         | All Wallie migrations and seed apply; existing database pgTAP tests pass  |
-| Auth           | Synthetic users obtain usable sessions through the real Auth service      |
-| Data API / RLS | Members can access their workspace; another workspace's user cannot       |
-| RPCs           | Wallie RPC behavior works through the Data API                            |
-| Storage        | Service upload/download, signed URL, and denied direct user access        |
-| Realtime       | Authenticated member receives an update after database-listener readiness |
+| Area           | Required evidence from the run                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| Schema         | All Wallie migrations and seed apply; existing database pgTAP tests pass                       |
+| Auth           | Opaque keys work; synthetic sessions have ES256 signatures verified against Auth's public JWKS |
+| Data API / RLS | Members can access their workspace; another workspace's user cannot                            |
+| RPCs           | Wallie RPC behavior works through the Data API                                                 |
+| Storage        | Service upload/download, signed URL, and denied direct user access                             |
+| Realtime       | Authenticated member receives an update after database-listener readiness                      |
 
 Use the command's exit status and check output as evidence. A failed or interrupted run does not qualify the stack.
 
@@ -60,7 +61,7 @@ The dedicated GitHub Actions job reruns this check when the bundle, harness, dat
 - **Durability:** high availability, failover, database/object/key backup and restore, measured recovery targets.
 - **Storage:** S3 backend and its IAM/VPC endpoint behavior; local object storage is insufficient evidence.
 - **Identity:** real email, OAuth/SSO callbacks, invitations, session behavior, and access removal.
-- **Keys:** this baseline uses fresh legacy HS256 keys; asymmetric signing and opaque API-key rollout need their own checks.
+- **Keys:** this check qualifies fresh opaque API keys and ES256 sessions locally. AWS key storage, rotation, and real-user session migration need separate checks.
 - **Wallie:** complete worker stage/review/retry workflow and sandbox isolation/cleanup.
 - **Release operations:** forward-only upgrade and rollback rehearsals; rerun qualification for each pinned stack change.
 
