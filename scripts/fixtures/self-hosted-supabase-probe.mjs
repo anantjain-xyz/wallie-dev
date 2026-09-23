@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const checked = async (request, label) => {
@@ -101,6 +101,10 @@ export async function checkSelfHostedSupabase({
     global: { fetch: boundedFetch },
   };
   const admin = createClient(url, serviceRoleKey, options);
+  const jwksResponse = await boundedFetch(`${url}/auth/v1/.well-known/jwks.json`);
+  assert.equal(jwksResponse.status, 200, "Auth must publish its public signing keys");
+  const jwks = await jwksResponse.json();
+  assert.ok(Array.isArray(jwks.keys), "Auth must publish a JWKS key set");
   const users = [];
   const workspaceIds = [];
   const storagePaths = [];
@@ -120,6 +124,21 @@ export async function checkSelfHostedSupabase({
       const session = await checked(client.auth.signInWithPassword({ email, password }), "Sign in");
       assert.equal(session.user?.id, user.id, "Auth session must identify the synthetic user");
       assert.ok(session.session?.access_token, "Auth must issue an access token");
+      const tokenParts = session.session.access_token.split(".");
+      assert.equal(tokenParts.length, 3, "Auth must issue a signed JWT");
+      const header = JSON.parse(Buffer.from(tokenParts[0], "base64url").toString("utf8"));
+      assert.equal(header.alg, "ES256", "Auth must sign sessions asymmetrically");
+      const jwk = jwks.keys.find((key) => key.kid === header.kid && key.kty === "EC");
+      assert.ok(jwk, "Auth must publish the session signing key");
+      assert.ok(
+        verify(
+          "sha256",
+          Buffer.from(`${tokenParts[0]}.${tokenParts[1]}`),
+          { key: createPublicKey({ key: jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" },
+          Buffer.from(tokenParts[2], "base64url"),
+        ),
+        "The published key must verify the Auth session",
+      );
       const profile = await checked(
         client.rpc("ensure_own_profile", { actor_email: email, actor_full_name: name }),
         "Authenticated profile RPC",
@@ -238,7 +257,7 @@ export async function checkSelfHostedSupabase({
     throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
   }
   return {
-    auth: "password sign-in with two synthetic users",
+    auth: "password sign-in with two synthetic users and verified ES256 sessions",
     rest: "workspace and profile isolation through user JWTs",
     rpc: "authenticated profile creation and service workspace creation",
     realtime: "published workspace update delivered to its authenticated member",

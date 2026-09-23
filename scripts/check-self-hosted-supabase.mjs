@@ -39,7 +39,11 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-async function run(command, args, { cwd = root, env = process.env, input, cleanup = false } = {}) {
+async function run(
+  command,
+  args,
+  { cwd = root, env = process.env, input, cleanup = false, sensitive = false } = {},
+) {
   if (interrupted && !cleanup) throw new Error("Qualification interrupted");
   const output = await new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -76,8 +80,13 @@ async function run(command, args, { cwd = root, env = process.env, input, cleanu
     child.stdin.end(input);
   });
   // Service logs can contain ephemeral tokens; keep diagnostics local and private.
-  await appendFile(logPath, output.stdout + output.stderr, { mode: 0o600 });
+  if (!sensitive) await appendFile(logPath, output.stdout + output.stderr, { mode: 0o600 });
   if (output.code !== 0 || output.tooLarge) {
+    if (sensitive) {
+      throw new Error(
+        `${command} failed (${output.signal ?? output.code}); sensitive output withheld`,
+      );
+    }
     throw new Error(
       `${command} failed (${output.signal ?? output.code}); see private log ${logPath}`,
     );
@@ -148,47 +157,8 @@ try {
   await run("git", ["checkout", "--detach", lock.commit], { cwd: checkout });
   await cp(join(checkout, "docker"), stack, { recursive: true });
 
-  const upstream = parse(await readFile(join(stack, "docker-compose.yml"), "utf8"));
-  const services = {};
-  for (const [name, image] of Object.entries(lock.images)) {
-    const service = upstream.services[name];
-    if (service?.image !== image) throw new Error(`Upstream image changed for ${name}`);
-    if (!/^sha256:[a-f0-9]{64}$/.test(lock.digests[name] ?? "")) {
-      throw new Error(`Missing image digest for ${name}`);
-    }
-    service.image = `${image}@${lock.digests[name]}`;
-    delete service.container_name;
-    delete service.ports;
-    service.restart = "no";
-    if (service.depends_on) {
-      service.depends_on = Object.fromEntries(
-        Object.entries(service.depends_on).filter(([dependency]) => dependency in lock.images),
-      );
-    }
-    services[name] = service;
-  }
-  services.realtime.networks = { default: { aliases: ["realtime-dev.supabase-realtime"] } };
-  const port = await unusedPort();
-  services["api-gw"].ports = [`127.0.0.1:${port}:8000`];
-  // Named volumes avoid host filesystem permissions and are removed with this project.
-  services.db.volumes = services.db.volumes.map((volume) =>
-    volume.replace("./volumes/db/data:", "db-data:"),
-  );
-  for (const name of ["storage", "imgproxy"]) {
-    services[name].volumes = services[name].volumes.map((volume) =>
-      volume.replace("./volumes/storage:", "storage-data:"),
-    );
-  }
-  await writeFile(
-    join(stack, "qualification.yml"),
-    stringify({
-      services,
-      volumes: { "db-data": {}, "db-config": {}, "storage-data": {} },
-    }),
-    { mode: 0o600 },
-  );
-
   const env = parseEnv(await readFile(join(stack, ".env.example"), "utf8"));
+  const port = await unusedPort();
   const url = `http://127.0.0.1:${port}`;
   Object.assign(env, {
     POSTGRES_PASSWORD: randomBytes(32).toString("hex"),
@@ -214,6 +184,26 @@ try {
   });
   env.ANON_KEY = jwt("anon", env.JWT_SECRET);
   env.SERVICE_ROLE_KEY = jwt("service_role", env.JWT_SECRET);
+  // Use the locked upstream generator and compose changes rather than inventing
+  // a second key format. Its output and temporary files stay private here.
+  await writeFile(join(stack, ".env"), `JWT_SECRET=${env.JWT_SECRET}\n`, { mode: 0o600 });
+  await run("sh", ["utils/add-new-auth-keys.sh", "--update-env"], {
+    cwd: stack,
+    sensitive: true,
+  });
+  const generated = parseEnv(await readFile(join(stack, ".env"), "utf8"));
+  for (const [name, prefix] of [
+    ["SUPABASE_PUBLISHABLE_KEY", "sb_publishable_"],
+    ["SUPABASE_SECRET_KEY", "sb_secret_"],
+  ]) {
+    if (!new RegExp(`^${prefix}[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{8}$`).test(generated[name] ?? "")) {
+      throw new Error(`Upstream did not generate a valid ${name}`);
+    }
+  }
+  if (!generated.JWT_KEYS || !generated.JWT_JWKS) {
+    throw new Error("Upstream did not generate asymmetric signing keys");
+  }
+  Object.assign(env, generated);
   await writeFile(
     join(stack, ".env"),
     Object.entries(env)
@@ -221,6 +211,46 @@ try {
       .join("\n") + "\n",
     { mode: 0o600 },
   );
+
+  const upstream = parse(await readFile(join(stack, "docker-compose.yml"), "utf8"));
+  const services = {};
+  for (const [name, image] of Object.entries(lock.images)) {
+    const service = upstream.services[name];
+    if (service?.image !== image) throw new Error(`Upstream image changed for ${name}`);
+    if (!/^sha256:[a-f0-9]{64}$/.test(lock.digests[name] ?? "")) {
+      throw new Error(`Missing image digest for ${name}`);
+    }
+    service.image = `${image}@${lock.digests[name]}`;
+    delete service.container_name;
+    delete service.ports;
+    service.restart = "no";
+    if (service.depends_on) {
+      service.depends_on = Object.fromEntries(
+        Object.entries(service.depends_on).filter(([dependency]) => dependency in lock.images),
+      );
+    }
+    services[name] = service;
+  }
+  services.realtime.networks = { default: { aliases: ["realtime-dev.supabase-realtime"] } };
+  services["api-gw"].ports = [`127.0.0.1:${port}:8000`];
+  // Named volumes avoid host filesystem permissions and are removed with this project.
+  services.db.volumes = services.db.volumes.map((volume) =>
+    volume.replace("./volumes/db/data:", "db-data:"),
+  );
+  for (const name of ["storage", "imgproxy"]) {
+    services[name].volumes = services[name].volumes.map((volume) =>
+      volume.replace("./volumes/storage:", "storage-data:"),
+    );
+  }
+  await writeFile(
+    join(stack, "qualification.yml"),
+    stringify({
+      services,
+      volumes: { "db-data": {}, "db-config": {}, "storage-data": {} },
+    }),
+    { mode: 0o600 },
+  );
+
   composeEnv = { ...process.env, ...env };
   delete composeEnv.DOCKER_CONTEXT;
   delete composeEnv.DOCKER_HOST;
@@ -289,8 +319,8 @@ try {
   console.log("[self-hosted] Probing real Auth, REST/RLS, RPC, Realtime, and Storage");
   const checks = await checkSelfHostedSupabase({
     url,
-    anonKey: env.ANON_KEY,
-    serviceRoleKey: env.SERVICE_ROLE_KEY,
+    anonKey: env.SUPABASE_PUBLISHABLE_KEY,
+    serviceRoleKey: env.SUPABASE_SECRET_KEY,
     signal: cancellation.signal,
   });
   const images = parse(await compose(["images", "--format", "json"]));
