@@ -151,14 +151,14 @@ terraform -chdir=infra/aws/staging-network show "$WALLIE_AWS_FILES/private-conne
 - Standalone rule resources do not detect unrelated extra rules. Exact live rule inspection remains required even when the final full Terraform plan exits **0**. Do not attach workloads until both checks pass.
 - This batch is unqualified until post-merge live apply/readback. A future private task must prove image pull and log delivery with its reviewed execution role; mocked Terraform tests do not establish live IAM or connectivity.
 
-## One-AZ outbound HTTPS for first real tasks
+## One-AZ outbound HTTPS for external integrations
 
-**Opt in only when ready to start one web and one worker task in `services-a`.** Hosted Supabase and external integrations need outbound HTTPS; the private ECR/Logs/Secrets endpoints do not provide internet access.
+**Opt in when reviewed external integrations need outbound HTTPS from `services-a`.** The self-hosted Supabase app path needs separate private TLS/DNS work; the private ECR/Logs/Secrets endpoints do not provide internet access.
 
 ```mermaid
 flowchart LR
     tasks["Web + worker<br/>services-a · no public IP"] -->|"two task SGs · TCP 443"| nat["Public NAT<br/>public-a"]
-    nat --> igw[Internet gateway] --> hosted["Hosted Supabase + HTTPS integrations"]
+    nat --> igw[Internet gateway] --> external["External HTTPS integrations"]
     tasks -->|"existing task SG"| endpoints["Private AWS endpoints + S3 gateway"]
 ```
 
@@ -179,6 +179,6 @@ flowchart LR
 2. Preserve all current values in private `network.tfvars.json`, including `enable_private_connectivity`, `enable_runtime_secret_connectivity`, and both exact runtime secret ARNs. Add `"enable_runtime_https_egress": true`. Never rerender the variables file without restoring all opt-in flags and ARNs.
 3. Create and inspect an untargeted saved Terraform plan. Expected network delta: **4 additions** (EIP, NAT, SG, rule) and **1 in-place change** (`services-a` route table), with no deletion or change to existing task/endpoint SGs, endpoints, other route tables, or hardening resources. Apply only that reviewed plan.
 4. Read back AWS and Terraform: NAT `available`, EIP assigned to it, `public-a` default route to IGW, `services-a` default route to NAT, and no default routes in `services-b`/database/sandbox. Confirm the old task SG still has zero ingress and exactly two narrow outbound rules. Confirm the new SG has **zero ingress and exactly one outbound IPv4 TCP/443 rule**; AWS's default all-egress rule must be absent. A zero-diff full plan does not detect unrelated extra SG rules, so inspect every live rule.
-5. Start the first web and worker tasks only in `services-a`, `assignPublicIp=DISABLED`, with both task SGs. Prove hosted Supabase HTTPS access by a real worker heartbeat/DB read and a web task health check that reads staging Supabase; inspect their application log groups. The task launch and proof are separate reviewed batches.
+5. Do not treat NAT as proof of self-hosted Supabase reachability. Before any real web/worker task, implement the [shared HTTPS/443 Supabase origin](AWS-APP-TASK-DEFINITIONS.md#before-rendering), verify its private DNS/TLS route from `services-a`, and update the two-SG [launch renderer](AWS-APP-TASK-LAUNCH.md) to match the reviewed network. Task launch and proof are separate reviewed batches.
 
 **Cost:** AWS's illustrative rates imply about **$36.50 per 730-hour month** for one $0.045/hour NAT plus one $0.005/hour public IPv4, before NAT processing, internet data transfer, compute, or logs. Confirm the final Oregon rate before apply. NAT remains billed while idle; deleting it requires a separately reviewed teardown because `prevent_destroy` protects the EIP/NAT/SG. [AWS VPC pricing](https://aws.amazon.com/vpc/pricing/)

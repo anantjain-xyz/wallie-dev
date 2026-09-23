@@ -23,7 +23,7 @@ function fixture() {
     existingWallieSupabaseUrl: "https://production.supabase.co",
     publicConfig: {
       NEXT_PUBLIC_APP_URL: "https://staging.wallie.dev",
-      NEXT_PUBLIC_SUPABASE_URL: "https://isolated-staging.supabase.co",
+      NEXT_PUBLIC_SUPABASE_URL: "https://supabase.staging.wallie.dev",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_staging_public",
     },
     images: { web: `sha256:${"a".repeat(64)}`, worker: `sha256:${"b".repeat(64)}` },
@@ -71,7 +71,7 @@ describe("real one-off AWS app task definitions", () => {
     expect(container).not.toHaveProperty("command");
     expect(container.environment).toEqual([
       { name: "NEXT_PUBLIC_APP_URL", value: "https://staging.wallie.dev" },
-      { name: "NEXT_PUBLIC_SUPABASE_URL", value: "https://isolated-staging.supabase.co" },
+      { name: "NEXT_PUBLIC_SUPABASE_URL", value: "https://supabase.staging.wallie.dev" },
       { name: "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", value: "sb_publishable_staging_public" },
       { name: "WALLIE_DEPLOY_ENV", value: "production" },
     ]);
@@ -135,7 +135,10 @@ describe("real one-off AWS app task definitions", () => {
         input.publicConfig.NEXT_PUBLIC_SUPABASE_URL = "https://production.supabase.co.";
       },
       (input) => {
-        input.publicConfig.NEXT_PUBLIC_SUPABASE_URL = "https://isolated-staging.supabase.co:8443";
+        input.publicConfig.NEXT_PUBLIC_SUPABASE_URL = "https://supabase.staging.wallie.dev:8443";
+      },
+      (input) => {
+        input.publicConfig.NEXT_PUBLIC_SUPABASE_URL = "https://isolated-staging.supabase.co";
       },
       (input) => {
         Object.assign(input.publicConfig, { SUPABASE_SECRET_KEY: "must-not-enter" });

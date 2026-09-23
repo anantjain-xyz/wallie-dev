@@ -14,16 +14,16 @@ locals {
   supabase_tags = { Component = "self-hosted-supabase" }
 }
 
-# Attach this alongside the existing application task group to the web and
-# worker. It adds only an internal gateway path; the original group's rules
-# for private AWS endpoints remain unchanged.
-resource "aws_security_group" "supabase_client" {
+# Reserve this group for the future private TLS proxy's connection to the
+# Supabase gateway. Wallie tasks require a separate HTTPS/443 path to that
+# proxy; this group alone cannot serve NEXT_PUBLIC_SUPABASE_URL.
+resource "aws_security_group" "supabase_proxy" {
   count = var.enable_self_hosted_supabase_connectivity ? 1 : 0
 
-  name        = "wallie-staging-supabase-client"
-  description = "Web and worker access to the private Supabase API gateway"
+  name        = "wallie-staging-supabase-proxy"
+  description = "Private TLS proxy access to the Supabase API gateway"
   vpc_id      = aws_vpc.main.id
-  tags        = merge(local.supabase_tags, { Name = "wallie-staging-supabase-client" })
+  tags        = merge(local.supabase_tags, { Name = "wallie-staging-supabase-proxy" })
 
   lifecycle {
     prevent_destroy = true
@@ -31,7 +31,7 @@ resource "aws_security_group" "supabase_client" {
 }
 
 # Attach this to the future private Supabase API task. Its only network path
-# at this stage is gateway ingress from Wallie and Postgres egress.
+# at this stage is gateway ingress from the TLS proxy and Postgres egress.
 resource "aws_security_group" "supabase_api" {
   count = var.enable_self_hosted_supabase_connectivity ? 1 : 0
 
@@ -60,26 +60,26 @@ resource "aws_security_group" "supabase_db" {
   }
 }
 
-resource "aws_vpc_security_group_egress_rule" "supabase_client_api" {
+resource "aws_vpc_security_group_egress_rule" "supabase_proxy_api" {
   count                        = var.enable_self_hosted_supabase_connectivity ? 1 : 0
-  security_group_id            = aws_security_group.supabase_client[0].id
+  security_group_id            = aws_security_group.supabase_proxy[0].id
   referenced_security_group_id = aws_security_group.supabase_api[0].id
   ip_protocol                  = "tcp"
   from_port                    = 8000
   to_port                      = 8000
   description                  = "Private Supabase API gateway"
-  tags                         = merge(local.supabase_tags, { Name = "wallie-staging-supabase-client-api" })
+  tags                         = merge(local.supabase_tags, { Name = "wallie-staging-supabase-proxy-api" })
 }
 
-resource "aws_vpc_security_group_ingress_rule" "supabase_api_client" {
+resource "aws_vpc_security_group_ingress_rule" "supabase_api_proxy" {
   count                        = var.enable_self_hosted_supabase_connectivity ? 1 : 0
   security_group_id            = aws_security_group.supabase_api[0].id
-  referenced_security_group_id = aws_security_group.supabase_client[0].id
+  referenced_security_group_id = aws_security_group.supabase_proxy[0].id
   ip_protocol                  = "tcp"
   from_port                    = 8000
   to_port                      = 8000
-  description                  = "Private gateway requests from Wallie"
-  tags                         = merge(local.supabase_tags, { Name = "wallie-staging-supabase-api-client" })
+  description                  = "Private gateway requests from the TLS proxy"
+  tags                         = merge(local.supabase_tags, { Name = "wallie-staging-supabase-api-proxy" })
 }
 
 resource "aws_vpc_security_group_egress_rule" "supabase_api_db" {
@@ -107,10 +107,10 @@ resource "aws_vpc_security_group_ingress_rule" "supabase_db_api" {
 output "self_hosted_supabase_connectivity" {
   description = "Private security groups and planned first-AZ placement; no database or API compute is created."
   value = var.enable_self_hosted_supabase_connectivity ? {
-    client_security_group_id = aws_security_group.supabase_client[0].id
-    api_security_group_id    = aws_security_group.supabase_api[0].id
-    db_security_group_id     = aws_security_group.supabase_db[0].id
-    api_subnet_id            = aws_subnet.tier["services-a"].id
-    db_subnet_id             = aws_subnet.tier["database-a"].id
+    proxy_security_group_id = aws_security_group.supabase_proxy[0].id
+    api_security_group_id   = aws_security_group.supabase_api[0].id
+    db_security_group_id    = aws_security_group.supabase_db[0].id
+    api_subnet_id           = aws_subnet.tier["services-a"].id
+    db_subnet_id            = aws_subnet.tier["database-a"].id
   } : null
 }

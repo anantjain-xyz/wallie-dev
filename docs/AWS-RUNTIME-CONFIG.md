@@ -10,7 +10,7 @@
 
 - Web and worker use the same public configuration. The publishable key is browser-visible; the Supabase secret key bypasses RLS and must remain server-only.
 - Both components must use the same Wallie encryption key for a shared database. Preserve the existing key when migrating encrypted rows; a fresh isolated staging database can use a new key.
-- Point the first worker task only at an isolated staging Supabase project or branch with a verified empty queue. The worker registers and can claim jobs at startup.
+- Point the first worker task only at an isolated self-hosted staging Supabase stack with a verified empty queue. The worker registers and can claim jobs at startup. Its public Supabase URL must also resolve to the private HTTPS route inside the VPC; see the [task launch gate](AWS-APP-TASK-DEFINITIONS.md#before-rendering).
 - The map covers minimum shared runtime settings. GitHub App, model provider, sandbox, and worker control settings require separate review when those features are enabled. No Vercel token or sandbox provider is selected here.
 - Each component has its own full `/wallie/staging/<component>/runtime-<suffix>` ARN. A later task definition must use its own ARN, exact JSON key, and reviewed **version ID**, never an implicit `AWSCURRENT` selector.
 
