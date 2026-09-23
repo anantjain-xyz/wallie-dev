@@ -20,6 +20,7 @@ Proposal · September 19, 2026
 | Enterprise profile      | Private access, customer SSO, webhook strategy, independent install/upgrade/support          |
 
 - **Open dependencies:** supported full sandbox self-hosting; database availability and recovery targets.
+- [Self-hosted Supabase staging network](AWS-SUPABASE-NETWORK.md) prepares private API/database paths without deploying either service.
 - Continue in small PRs; the owner reviews and merges each before dependent deployment work.
 
 **Direction**
