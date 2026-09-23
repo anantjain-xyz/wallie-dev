@@ -131,6 +131,13 @@ export function registrationPolicy(rawManifest, expiry, now = Date.now()) {
     Resource: "*",
     Condition: policyCondition(manifest, expiresAt),
   });
+  statements.push({
+    Sid: "ReadApplicationDefinitionTags",
+    Effect: "Allow",
+    Action: "ecs:ListTagsForResource",
+    Resource: components.map((component) => familyArn(manifest, component)),
+    Condition: policyCondition(manifest, expiresAt),
+  });
   return policy(statements);
 }
 
@@ -171,6 +178,7 @@ export function verifyDefinition(rawManifest, component, response) {
       "environmentFiles",
       "mountPoints",
       "volumesFrom",
+      "portMappings",
       "systemControls",
       "resourceRequirements",
       "ulimits",

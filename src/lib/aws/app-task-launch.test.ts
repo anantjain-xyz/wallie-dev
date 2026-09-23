@@ -79,6 +79,7 @@ function readbacks(input = manifest()) {
                 privileged: false,
                 environmentFiles: [],
                 mountPoints: [],
+                ...(component === "worker" ? { portMappings: [] } : {}),
                 versionConsistency: "enabled",
               },
             ],
@@ -131,6 +132,18 @@ describe("one-off application task launch grant", () => {
       `arn:aws:iam::${account}:role/wallie-staging-worker-execution`,
     ]);
     expect(pass.Condition.StringEquals["iam:PassedToService"]).toBe("ecs-tasks.amazonaws.com");
+    const tagRead = result.Statement.find(
+      (item: { Sid: string }) => item.Sid === "ReadApplicationDefinitionTags",
+    );
+    expect(tagRead.Action).toBe("ecs:ListTagsForResource");
+    expect(tagRead.Resource).toEqual([
+      `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-web-app:*`,
+      `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-worker-app:*`,
+    ]);
+    expect(tagRead.Condition).toEqual({
+      StringEquals: { "aws:PrincipalAccount": account, "aws:RequestedRegion": region },
+      DateLessThan: { "aws:CurrentTime": expires },
+    });
     const actions = JSON.stringify(result.Statement.map((item: { Action: string }) => item.Action));
     expect(actions).not.toMatch(/RunTask|StopTask|GetSecretValue|CreateService|ExecuteCommand/);
     expect(JSON.stringify(result).length).toBeLessThan(6145);
@@ -141,6 +154,10 @@ describe("one-off application task launch grant", () => {
     const definitions = readbacks(input);
     expect(verifyDefinition(input, "web", definitions.web)).toBe(
       `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-web-app:1`,
+    );
+    expect(definitions.worker.taskDefinition.containerDefinitions[0].portMappings).toEqual([]);
+    expect(verifyDefinition(input, "worker", definitions.worker)).toBe(
+      `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-worker-app:2`,
     );
     const result = runPolicy(input, definitions, runId, expires, now);
     const launches = result.Statement.filter(
@@ -208,6 +225,11 @@ describe("one-off application task launch grant", () => {
       },
       (value: ReturnType<typeof readbacks>) => {
         value.web.taskDefinition.taskDefinitionArn = `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-web-app:99`;
+      },
+      (value: ReturnType<typeof readbacks>) => {
+        Object.assign(value.worker.taskDefinition.containerDefinitions[0], {
+          portMappings: [{ containerPort: 9999, hostPort: 9999, protocol: "tcp" }],
+        });
       },
     ];
     for (const change of changes) {
