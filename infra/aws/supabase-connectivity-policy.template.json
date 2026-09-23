@@ -1,0 +1,136 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateGroupsInOwnedVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Sid": "CreateThreeNamedGroups",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "self-hosted-supabase",
+          "aws:RequestTag/Name": [
+            "wallie-staging-supabase-proxy",
+            "wallie-staging-supabase-api",
+            "wallie-staging-supabase-db"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ManageOwnedGroupRulesInVpc",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupEgress"
+      ],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "self-hosted-supabase",
+          "aws:ResourceTag/Name": [
+            "wallie-staging-supabase-proxy",
+            "wallie-staging-supabase-api",
+            "wallie-staging-supabase-db"
+          ]
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateFourNamedRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "self-hosted-supabase",
+          "aws:RequestTag/Name": [
+            "wallie-staging-supabase-proxy-api",
+            "wallie-staging-supabase-api-proxy",
+            "wallie-staging-supabase-api-db",
+            "wallie-staging-supabase-db-api"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedGroupsOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "self-hosted-supabase",
+          "aws:RequestTag/Name": [
+            "wallie-staging-supabase-proxy",
+            "wallie-staging-supabase-api",
+            "wallie-staging-supabase-db"
+          ],
+          "ec2:CreateAction": "CreateSecurityGroup"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedRulesOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "self-hosted-supabase",
+          "aws:RequestTag/Name": [
+            "wallie-staging-supabase-proxy-api",
+            "wallie-staging-supabase-api-proxy",
+            "wallie-staging-supabase-api-db",
+            "wallie-staging-supabase-db-api"
+          ],
+          "ec2:CreateAction": ["AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    }
+  ]
+}
