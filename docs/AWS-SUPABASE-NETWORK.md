@@ -19,7 +19,7 @@ flowchart LR
 - First-AZ placement is `services-a` for APIs and `database-a` for PostgreSQL. Both subnets are private; the database route table still has no default route. This is a qualification topology, not high availability.
 - The output exposes those two subnet IDs and three group IDs only. No credentials or deployment requests are produced.
 
-**Do not enable or apply this flag yet.** A later PR must prepare a scoped IAM grant for these exact groups/rules and review an untargeted saved Terraform plan. `wallie-local` already uses all ten managed-policy attachment slots; plan an explicit temporary swap or policy consolidation instead of adding an eleventh attachment. After apply, inspect every live rule: Terraform's standalone rule resources do not detect unrelated extra rules.
+**Do not enable or apply this flag yet.** The offline [temporary IAM grant](AWS-SUPABASE-NETWORK-GRANT.md) prepares a one-for-one policy attachment swap; it does not create the private TLS proxy or a browser HTTPS route. Review the full, untargeted saved Terraform plan before any apply. After apply, inspect every live rule: Terraform's standalone rule resources do not detect unrelated extra rules.
 
 | Later batch       | Required before running Supabase in AWS                                                                                                                         |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
