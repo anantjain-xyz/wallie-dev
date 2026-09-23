@@ -108,9 +108,9 @@ output "self_hosted_supabase_connectivity" {
   description = "Private security groups and planned first-AZ placement; no database or API compute is created."
   value = var.enable_self_hosted_supabase_connectivity ? {
     proxy_security_group_id = aws_security_group.supabase_proxy[0].id
-    api_security_group_id    = aws_security_group.supabase_api[0].id
-    db_security_group_id     = aws_security_group.supabase_db[0].id
-    api_subnet_id            = aws_subnet.tier["services-a"].id
-    db_subnet_id             = aws_subnet.tier["database-a"].id
+    api_security_group_id   = aws_security_group.supabase_api[0].id
+    db_security_group_id    = aws_security_group.supabase_db[0].id
+    api_subnet_id           = aws_subnet.tier["services-a"].id
+    db_subnet_id            = aws_subnet.tier["database-a"].id
   } : null
 }
