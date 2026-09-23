@@ -155,7 +155,10 @@ describe("one-off application task launch grant", () => {
         `arn:aws:ecs:${region}:${account}:cluster/wallie-staging`,
       );
       expect(launch.Condition.StringEquals["aws:RequestTag/WallieRun"]).toBe(runId);
-      expect(launch.Condition.Bool["ecs:enable-execute-command"]).toBe("false");
+      expect(launch.Condition.StringEquals["ecs:enable-execute-command"]).toBe("false");
+      expect(launch.Condition.StringEqualsIfExists["ecs:enable-ebs-volumes"]).toBe("false");
+      expect(launch.Condition).not.toHaveProperty("Bool");
+      expect(launch.Condition).not.toHaveProperty("BoolIfExists");
     }
     const tagWrites = result.Statement.filter(
       (item: { Action: string }) => item.Action === "ecs:TagResource",

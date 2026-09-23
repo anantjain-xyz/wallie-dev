@@ -221,12 +221,12 @@ export function runPolicy(rawManifest, definitions, runId, expiry, now = Date.no
       Condition: {
         ...tagCondition(manifest, expiresAt, tags),
         ArnEquals: { "ecs:cluster": clusterArn(manifest) },
-        Bool: { "ecs:enable-execute-command": "false" },
-        BoolIfExists: { "ecs:enable-ebs-volumes": "false" },
         StringEquals: {
           ...tagCondition(manifest, expiresAt, tags).StringEquals,
           "aws:ResourceTag/WallieStack": "wallie-staging-application",
+          "ecs:enable-execute-command": "false",
         },
+        StringEqualsIfExists: { "ecs:enable-ebs-volumes": "false" },
       },
     });
     statements.push({
