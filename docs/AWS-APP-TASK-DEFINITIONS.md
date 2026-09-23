@@ -93,3 +93,5 @@ done
 5. Before `ecs stop-task`, keep submissions disabled and recheck zero active/queued jobs plus empty heartbeat `active_job_ids`. Require worker log `graceful shutdown complete` and heartbeat deregistration. **Do not stop an active worker**: ECS offers at most 120 seconds after SIGTERM, while jobs can need 45 minutes. Exact-task pre-drain and automatic rollouts need a later PR.
 
 The staging HTTPS origin remains a configuration target until ingress/DNS/TLS are deployed. These tasks verify private startup, not the public site cutover.
+
+Use the [one-off ECS launch guide](AWS-APP-TASK-LAUNCH.md) for the temporary deployment grant, exact-revision readback, run requests, and cleanup.
