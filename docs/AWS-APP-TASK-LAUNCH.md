@@ -1,6 +1,6 @@
 # One-off ECS app launch
 
-**Register and run one reviewed web task and one reviewed worker task in private staging.** The helper only renders policies and requests. It makes no AWS calls.
+**Prepare a one-off web and worker launch, then wait for the self-hosted HTTPS/network adapter.** The helper only renders policies and requests. It makes no AWS calls. **Do not register or run real tasks yet:** its current run mode requires NAT and exactly two task security groups; the [Supabase network skeleton](AWS-SUPABASE-NETWORK.md) adds only TCP/8000 and is not the shared HTTPS/443 path required by the app.
 
 ```mermaid
 flowchart LR
@@ -12,14 +12,16 @@ flowchart LR
     stop --> revoke[Revoke grant<br/>restore Registry attachment]
 ```
 
-| Gate     | Required before either task starts                                                                                                                             |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Database | Fresh, schema-only isolated Supabase target; [all activity tables empty](AWS-APP-TASK-DEFINITIONS.md#before-rendering); no integrations or submissions enabled |
-| Runtime  | Real version-pinned web/worker secrets; reviewed app task JSON; fresh scan and strict signature for each image digest                                          |
-| Network  | Live `runtime_https_egress` output, NAT route in `services-a`, both task SGs, no public task IP                                                                |
-| IAM      | Account `111614490109`, region `us-west-2`, signed-in non-root `wallie-local`; administrator available for temporary policy swap                               |
+| Gate     | Required before either task starts                                                                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Database | Fresh, schema-only self-hosted Supabase stack; [all activity tables empty](AWS-APP-TASK-DEFINITIONS.md#before-rendering); no integrations or submissions enabled       |
+| Runtime  | Real version-pinned web/worker secrets; reviewed app task JSON; fresh scan and strict signature for each image digest                                                  |
+| Network  | Same HTTPS/443 Supabase hostname reachable from browser and `services-a` via public/private TLS routes; exact task SG contract updated and verified, no public task IP |
+| IAM      | Account `111614490109`, region `us-west-2`, signed-in non-root `wallie-local`; administrator available for temporary policy swap                                       |
 
-## Temporary grant
+The next ingress/network PR must establish split-horizon DNS and private TLS, restrict public paths to Auth/Data API/Storage/Realtime, and adapt the run renderer to its exact SG outputs. It must also prove the API topology, image/log delivery, database durability, and needed Storage/Auth egress. A local Compose pass or NAT route is insufficient. Until then, the steps below describe the later launch procedure, not an executable deployment.
+
+## Temporary grant (after the network gate)
 
 1. An administrator checks **both exact task families** for existing active and inactive revisions. `wallie-local` currently lacks the pre-grant inventory read; an access denial is not proof of absence. Stop for review if either family already has revisions.
 2. Render and review one registration policy. Use an explicit UTC expiry 5 minutes–24 hours ahead. The run-phase expiry must cover observation **and stop/cleanup**; an administrator must be ready to stop the exact recorded task if the grant expires early. Registration permits `RegisterTaskDefinition` only for `wallie-staging-web-app:*` and `wallie-staging-worker-app:*`, 512 CPU/1024 MiB, Fargate compatibility, fixed tags, tag readback for those families, and `PassRole` only for the two existing execution roles. It grants no `RunTask`.
@@ -63,9 +65,9 @@ node scripts/prepare-aws-app-task-launch.mjs run-policy \
 - The run version permits only those two **exact revision ARNs** on cluster `wallie-staging`, with this run's tag, no ECS Exec/EBS, and exact execution-role `PassRole`. Read/stop access is limited to this run's tagged tasks and app log streams. No service creation, task-definition registration, deregistration, secrets read, or IAM write.
 - [ECS IAM conditions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ecs.html) cannot enforce the exact definition payload, task count, subnet/security groups, public IP, overrides, or absence of a task-role override. The strict readback and reviewed run requests are required. This policy is temporary and time-limited; IAM expiry does **not** stop running tasks.
 
-## Launch and observe
+## Launch and observe (after the run renderer is updated)
 
-1. Capture the current Terraform network outputs, then render a separate input per component. The renderer requires the enabled HTTPS-egress output, `services-a`, and both distinct task SGs. Review the complete requests; they use one Fargate 1.4.0 task, no public IP or overrides, and a stable client token.
+1. After the future network/renderer change is reviewed, capture the live Terraform outputs and render a separate input per component. The **current** renderer requires `runtime_https_egress`, `services-a`, and exactly two task SGs; it does not verify the self-hosted private TLS route. Review the complete requests; they use one Fargate 1.4.0 task, no public IP or overrides, and a stable client token.
 
 ```sh
 terraform -chdir=infra/aws/staging-network output -json > .wallie/aws/app-tasks/network-output.json
@@ -80,7 +82,7 @@ done
 ```
 
 2. Launch **web first** with `aws ecs run-task --cli-input-json file://.wallie/aws/app-tasks/web-run-input.json`, save the response, and require `failures: []` plus one recorded task ARN. If the response is ambiguous, use `ecs list-tasks --cluster wallie-staging --started-by "wa-$RUN_ID"` and an administrator to resolve it; do not generate a new token or run ID.
-3. Require web `RUNNING` and `HEALTHY`, expected image digest, private ENI in `services-a`, exact two SGs, no public association, and a Next.js ready log. The health probe checks local HTTP and the isolated staging Data API. Then launch **one worker** from its saved input. Require `RUNNING`, advancing isolated-DB heartbeat, empty active job IDs, and no scheduler/processor errors over five polls. Follow [the full startup checks](AWS-APP-TASK-DEFINITIONS.md#reviewed-launch-and-evidence).
+3. Require web `RUNNING` and `HEALTHY`, expected image digest, private ENI in `services-a`, the reviewed exact SG set, no public association, and a Next.js ready log. The health probe checks local HTTP and the isolated staging Data API. Then launch **one worker** from its saved input. Require `RUNNING`, advancing isolated-DB heartbeat, empty active job IDs, and no scheduler/processor errors over five polls. Follow [the full startup checks](AWS-APP-TASK-DEFINITIONS.md#reviewed-launch-and-evidence).
 4. Keep submissions disabled. Before any worker stop, recheck zero runnable/active jobs and empty heartbeat `active_job_ids`. Stop only each **recorded task ARN** using `aws ecs stop-task --cluster wallie-staging --task "$ARN"`; wait for `STOPPED`, graceful worker log, and heartbeat deregistration. If work is active, do not stop: ECS gives only 120 seconds after SIGTERM, while a Wallie job may need 45 minutes. Planned drain/rollout protection remains a later change.
 5. The administrator detaches `WallieStagingAppTaskLaunch`, reattaches the **exact saved** `WallieStagingRegistry` policy, verifies attachment/default versions, and checks no task from this run remains running. Retain requests/readbacks under ignored `.wallie/aws/app-tasks/`. Only an administrator may later deregister exact unused revisions after checking no tasks reference them.
 

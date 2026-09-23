@@ -35,7 +35,7 @@ function manifest() {
     existingWallieSupabaseUrl: "https://production.supabase.co",
     publicConfig: {
       NEXT_PUBLIC_APP_URL: "https://staging.wallie.dev",
-      NEXT_PUBLIC_SUPABASE_URL: "https://isolated-staging.supabase.co",
+      NEXT_PUBLIC_SUPABASE_URL: "https://supabase.staging.wallie.dev",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_staging_public",
     },
     images: { web: `sha256:${"a".repeat(64)}`, worker: `sha256:${"b".repeat(64)}` },

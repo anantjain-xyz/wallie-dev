@@ -66,6 +66,10 @@ export function validateManifest(input) {
     "NEXT_PUBLIC_SUPABASE_URL",
   );
   check(supabaseUrl.port === "", "Staging Supabase must use HTTPS port 443");
+  check(
+    supabaseUrl.hostname !== "supabase.co" && !supabaseUrl.hostname.endsWith(".supabase.co"),
+    "Use the self-hosted staging Supabase HTTPS origin, not a Supabase Cloud project",
+  );
   const existingUrl = httpsOrigin(input.existingWallieSupabaseUrl, "existingWallieSupabaseUrl");
   check(
     supabaseUrl.origin !== existingUrl.origin,

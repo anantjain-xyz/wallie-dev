@@ -1,11 +1,14 @@
 # First real staging tasks
 
-**Prepare one web and one worker Fargate task definition for an isolated staging database.** The renderer is offline: it registers nothing and never handles secret values.
+**Prepare one web and one worker Fargate task definition for an isolated, self-hosted staging Supabase stack.** The renderer is offline: it registers nothing and never handles secret values. Task launch remains blocked until the HTTPS path below exists.
 
 ```mermaid
 flowchart LR
-    web[Web task<br/>Next.js :3000] --> db[Isolated staging Supabase]
-    worker[Worker task<br/>one-job cap] --> db
+    web[Web task<br/>Next.js :3000] --> tls[Private HTTPS :443<br/>same public hostname]
+    worker[Worker task<br/>one-job cap] --> tls
+    browser[Browser] --> public[Public HTTPS :443<br/>API paths only]
+    tls & public --> proxy[Private TLS proxy<br/>proxy SG]
+    proxy -->|TCP 8000| gateway[Private Supabase gateway]
     web & worker --> logs[Existing CloudWatch logs]
     secrets[Version-pinned runtime secrets] --> web & worker
 ```
@@ -23,11 +26,12 @@ flowchart LR
 
 ## Before rendering
 
-- Use a **fresh, schema-only staging Supabase project or branch**. Apply current migrations without seeds or copied application rows. Require the empty-data check below before either task starts. The worker's scheduler, Cursor auth processor, cleanup, and reaper can act on existing data immediately; never aim it at the existing Wallie database.
+- Use a **fresh, schema-only self-hosted staging Supabase stack** in this AWS account. Apply current migrations without seeds or copied application rows. Require the empty-data check below before either task starts. The worker's scheduler, Cursor auth processor, cleanup, and reaper can act on existing data immediately; never aim it at the existing Wallie database. Use the [pinned local qualification](SELF-HOSTED-SUPABASE.md) as a compatibility check, not as AWS deployment evidence.
 - Confirm the web and worker secret containers have reviewed **real** versions with both `SUPABASE_SECRET_KEY` and the same `WALLIE_ENCRYPTION_KEY` for this database. Empty containers and old synthetic canary versions are unsuitable. Preserve an existing encryption key only when migrating encrypted rows.
-- Use the staging project's `sb_publishable_` key for the browser-visible setting; the renderer rejects legacy JWTs and `sb_secret_` keys in that field. [Supabase API key types](https://supabase.com/docs/guides/getting-started/api-keys)
+- Use this stack's generated `sb_publishable_` key for the browser-visible setting; the renderer rejects legacy JWTs and `sb_secret_` keys in that field. [Supabase self-hosted credentials](https://supabase.com/docs/guides/self-hosting/docker#where-to-find-your-credentials)
 - Recheck each exact image digest's scan and strict signature. The renderer validates digest syntax, not image qualification or secret contents.
-- Require the live network plan/readback to show `enable_runtime_https_egress = true`, an available NAT route for `services-a`, and both task SGs from `runtime_https_egress.task_security_group_ids`. Review the separate staging HTTPS app origin, existing execution-role secret access, and a temporary deployment grant for only these task revisions. No AWS write is included here.
+- `NEXT_PUBLIC_SUPABASE_URL` is used by browser clients, server clients, worker, and the web health check. Give all of them **one HTTPS hostname on port 443**. Public DNS must reach a TLS route for required API paths; private VPC DNS must resolve that hostname to a private TLS route. Both routes reach a private proxy carrying the proxy SG; it forwards only the needed Auth, Data API, Storage, and Realtime paths to the gateway on port 8000, including WebSocket upgrade. Keep Studio and admin paths private. Verify certificate, DNS, and API/key behavior from both a browser and a task in `services-a`.
+- The [current TCP/8000 security-group path](AWS-SUPABASE-NETWORK.md) does **not** provide this HTTPS route. A later ingress/DNS PR must add it and update the exact task SG/run-request contract. The existing NAT/two-SG launch renderer alone is not proof of private Supabase reachability. Do not register or launch real tasks until that work and the self-hosted API/database/storage stack are qualified. Review execution-role secret access and the temporary deployment grant separately.
 
 Require all counts to be zero after migrations:
 
@@ -55,7 +59,7 @@ Create `.wallie/aws/app-tasks/manifest.json` privately (it contains public value
   "existingWallieSupabaseUrl": "https://<existing-project>.supabase.co",
   "publicConfig": {
     "NEXT_PUBLIC_APP_URL": "https://<separate-staging-origin>",
-    "NEXT_PUBLIC_SUPABASE_URL": "https://<isolated-staging-project>.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://supabase.staging.<your-domain>",
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "<staging-publishable-key>"
   },
   "images": {
@@ -72,7 +76,7 @@ Create `.wallie/aws/app-tasks/manifest.json` privately (it contains public value
 }
 ```
 
-The renderer refuses identical existing/staging Supabase origins, the production `wallie.dev` app origin, non-443 Supabase URLs, extra fields, floating image tags, and implicit secret labels. It cannot establish that the staging database is empty or that a URL belongs to the intended project; verify those separately.
+The renderer refuses identical existing/staging Supabase origins, the production `wallie.dev` app origin, default `*.supabase.co` Cloud origins, non-443 Supabase URLs, extra fields, floating image tags, and implicit secret labels. It cannot prove hosting ownership, private DNS/TLS reachability, or database emptiness; verify those separately.
 
 ```sh
 umask 077
@@ -86,8 +90,8 @@ done
 
 ## Reviewed launch and evidence
 
-1. Review both complete JSON definitions, exact digest/secret selectors, and isolated Supabase URL. Register one revision per component with `aws ecs register-task-definition --cli-input-json file://...` using the approved administrator/deployment grant. Save exact returned revision ARNs; do not repeat uncertain registrations. Keep `wallie-local`'s standing permissions unchanged until a separate grant is reviewed.
-2. Run **one** web task, then **one** worker task on cluster `wallie-staging`, launch type `FARGATE`, platform `1.4.0`, the reviewed `services-a` subnet and both task SGs, `assignPublicIp=DISABLED`, and no command/environment/role override. Do not create a service yet.
+1. **After the HTTPS and self-hosted stack gates pass**, review both complete JSON definitions, exact digest/secret selectors, and isolated Supabase URL. Register one revision per component with `aws ecs register-task-definition --cli-input-json file://...` using the approved administrator/deployment grant. Save exact returned revision ARNs; do not repeat uncertain registrations. Keep `wallie-local`'s standing permissions unchanged until a separate grant is reviewed.
+2. Run **one** web task, then **one** worker task on cluster `wallie-staging`, launch type `FARGATE`, platform `1.4.0`, the reviewed `services-a` subnet and exact SG set from the updated run renderer, `assignPublicIp=DISABLED`, and no command/environment/role override. Do not create a service yet.
 3. Web: require task/container `RUNNING`, container `HEALTHY`, no OOM, and a Next.js ready line in `/wallie/staging/web`. Its health check fetches localhost port 3000 and performs a read-only `worker_heartbeats` Data API query with the injected key every 30 seconds per task. Budget that ongoing API traffic. It never prints credentials or rows. A healthy task proves startup and this task's DB path; it does not prove external browser access.
 4. Worker: require `RUNNING`, `[worker] starting` and `[worker] entering scheduler loop` in `/wallie/staging/worker`; query the isolated database for its new `worker_heartbeats` row and advancing `last_heartbeat_at`. Observe at least 10 seconds (five default poll intervals) with no `[worker] atomic claim failed`, `[cursor-auth] processor failed`, or `[worker] fatal error` log. Check that `active_job_ids` stays empty and no jobs are claimed. A heartbeat alone does not prove the scheduler can call its claim RPC.
 5. Before `ecs stop-task`, keep submissions disabled and recheck zero active/queued jobs plus empty heartbeat `active_job_ids`. Require worker log `graceful shutdown complete` and heartbeat deregistration. **Do not stop an active worker**: ECS offers at most 120 seconds after SIGTERM, while jobs can need 45 minutes. Exact-task pre-drain and automatic rollouts need a later PR.
