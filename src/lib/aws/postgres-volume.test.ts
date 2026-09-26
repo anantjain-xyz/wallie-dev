@@ -48,6 +48,38 @@ read_mountpoint_entries() {
   ls -A "$MOUNTPOINT"
 }
 canonical_device() { printf '%s\n' "$1"; }
+verify_fstab() {
+  [[ $MOCK_VERIFY_FAIL == 0 ]] || return 1
+  awk '$0 !~ /^[[:space:]]*#/ && NF && NF != 6 { bad=1 } END { exit bad }' "$FSTAB"
+}
+read_fstab_entries() {
+  awk -v omit="$MOCK_PARSER_OMIT" '
+    $0 !~ /^[[:space:]]*#/ && NF {
+      if (omit == 1 && ++count > 1) next
+      print $1, $2
+    }
+  ' "$FSTAB"
+}
+resolve_fstab_tag() {
+  case "$1" in
+    UUID="$MOCK_UUID"|LABEL=wallie) printf '%s\n' "$MOCK_DEVICE" ;;
+    LABEL=duplicate) printf '/dev/nvme2n1\n%s\n' "$MOCK_DEVICE" ;;
+    UUID=other|LABEL=unrelated) printf '/dev/nvme2n1\n' ;;
+    *) return 2 ;;
+  esac
+}
+canonical_existing_device() {
+  case "$1" in
+    /dev/disk/by-id/wallie) printf '%s\n' "$MOCK_DEVICE" ;;
+    /dev/missing) return 1 ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+is_block_device() { [[ $1 == /dev/* && $1 != /dev/not-block ]]; }
+device_identity() {
+  if [[ $1 == "$MOCK_DEVICE" ]]; then printf '259:1\n'
+  else printf '259:2\n'; fi
+}
 format_xfs() { printf 'format:%s\n' "$1" >> "$TEST_DIR/calls"; MOCK_FORMATTED=1; }
 mount_xfs() { printf 'mount:%s\n' "$1" >> "$TEST_DIR/calls"; MOCK_MOUNTED=1; }
 if [[ $MOCK_PRECREATE_MOUNTPOINT == 1 ]]; then mkdir -p "$MOUNTPOINT"; fi
@@ -55,11 +87,7 @@ main "$@"
 if [[ $MOCK_RERUN == 1 ]]; then main mount --volume-id "$MOCK_VOLUME" --expected-uuid "$MOCK_UUID"; fi
 `;
 
-function run(
-  args: string[],
-  overrides: Record<string, string> = {},
-  fstab = "UUID=root / xfs defaults 0 0\n",
-) {
+function run(args: string[], overrides: Record<string, string> = {}, fstab = "") {
   const dir = mkdtempSync(join(tmpdir(), "wallie-postgres-volume-"));
   testDirs.push(dir);
   writeFileSync(
@@ -93,6 +121,8 @@ function run(
       MOCK_PRECREATE_MOUNTPOINT: "0",
       MOCK_FINDMNT_STATUS: "1",
       MOCK_MOUNTPOINT_STATUS: "32",
+      MOCK_VERIFY_FAIL: "0",
+      MOCK_PARSER_OMIT: "0",
       ...overrides,
     },
   });
@@ -278,5 +308,81 @@ describe("staging PostgreSQL EBS preparation", () => {
       MOCK_NESTED: "1",
     });
     expect(nested.status).not.toBe(0);
+  });
+
+  it("rejects aliases for the same EBS disk at other fstab targets", () => {
+    for (const source of [
+      device,
+      "/dev/disk/by-id/wallie",
+      `UUID=${uuid}`,
+      "LABEL=wallie",
+      "LABEL=duplicate",
+    ]) {
+      const result = run(
+        ["mount", "--volume-id", volume, "--expected-uuid", uuid],
+        { MOCK_FORMATTED: "1" },
+        `${source} /mnt/elsewhere xfs defaults 0 0\n`,
+      );
+      expect(result.status, `${source}: ${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain("aliases the PostgreSQL data disk");
+      expect(result.calls).toBe("");
+      expect(result.fstab).not.toContain("/postgres");
+    }
+
+    const blankDiskAlias = run(
+      ["initialize", "--volume-id", volume, "--confirm-format", volume],
+      {},
+      `${device} /mnt/elsewhere xfs defaults 0 0\n`,
+    );
+    expect(blankDiskAlias.status).not.toBe(0);
+    expect(blankDiskAlias.calls).toBe("");
+  });
+
+  it("rejects unresolved, malformed, and omitted fstab entries", () => {
+    const cases: Array<{ fstab: string; overrides?: Record<string, string>; error: string }> = [
+      {
+        fstab: "LABEL=missing /mnt/elsewhere xfs defaults 0 0\n",
+        error: "Cannot resolve fstab tag",
+      },
+      {
+        fstab: "/dev/missing /mnt/elsewhere xfs defaults 0 0\n",
+        error: "Unresolvable fstab device",
+      },
+      { fstab: "broken entry\n", error: "parser/verification rejected" },
+      {
+        fstab: "UUID=other / xfs defaults 0 0\nLABEL=unrelated /mnt/elsewhere xfs defaults 0 0\n",
+        overrides: { MOCK_PARSER_OMIT: "1" },
+        error: "parser omitted",
+      },
+    ];
+    for (const item of cases) {
+      const result = run(
+        ["mount", "--volume-id", volume, "--expected-uuid", uuid],
+        { MOCK_FORMATTED: "1", ...item.overrides },
+        item.fstab,
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(item.error);
+      expect(result.calls).toBe("");
+    }
+  });
+
+  it("permits unrelated root fstab sources and an exact existing entry", () => {
+    const unrelated = run(
+      ["mount", "--volume-id", volume, "--expected-uuid", uuid],
+      { MOCK_FORMATTED: "1" },
+      "UUID=other / xfs defaults 0 0\n",
+    );
+    expect(unrelated.status, unrelated.stderr).toBe(0);
+    expect(unrelated.fstab).toContain(`UUID=${uuid}`);
+
+    const exact = run(
+      ["mount", "--volume-id", volume, "--expected-uuid", uuid],
+      { MOCK_FORMATTED: "1", MOCK_MOUNTED: "1", MOCK_PRECREATE_MOUNTPOINT: "1" },
+      `UUID=${uuid} /srv/wallie/postgres xfs defaults,nofail,x-systemd.device-timeout=30s 0 0\n`,
+    );
+    expect(exact.status, exact.stderr).toBe(0);
+    expect(exact.calls).toBe("");
+    expect(exact.fstab.match(new RegExp(`UUID=${uuid}`, "g"))).toHaveLength(1);
   });
 });

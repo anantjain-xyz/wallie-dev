@@ -131,22 +131,94 @@ fstab_entry() {
   printf 'UUID=%s %s xfs defaults,nofail,x-systemd.device-timeout=30s 0 0' "$1" "$MOUNTPOINT"
 }
 
+verify_fstab() { findmnt --verify --tab-file "$FSTAB" >/dev/null; }
+read_fstab_entries() {
+  findmnt --fstab --all --tab-file "$FSTAB" --noheadings --raw --output SOURCE,TARGET
+}
+resolve_fstab_tag() {
+  # Without --list-one, blkid returns every device sharing a label or UUID.
+  blkid --cache-file /dev/null --match-token "$1" --output device
+}
+canonical_existing_device() { readlink -e "$1"; }
+is_block_device() { [[ -b $1 ]]; }
+device_identity() { stat -Lc '%t:%T' "$1"; }
+
+active_fstab_count() {
+  awk '$0 !~ /^[[:space:]]*#/ && NF { count++ } END { print count + 0 }' "$FSTAB"
+}
+
+exact_fstab_entry_count() {
+  local entry=$1
+  awk -v wanted="$entry" '$0 == wanted { count++ } END { print count + 0 }' "$FSTAB"
+}
+
+ensure_fstab_source_unrelated() {
+  local source=$1 selected=$2 resolved candidate canonical selected_identity candidate_identity count=0
+  case "$source" in
+    UUID=*|LABEL=*|PARTUUID=*|PARTLABEL=*)
+      resolved=$(resolve_fstab_tag "$source") || die "Cannot resolve fstab tag: $source"
+      [[ -n $resolved ]] || die "Fstab tag has no block device: $source"
+      ;;
+    /dev/*)
+      resolved=$source
+      ;;
+    none|tmpfs|proc|sysfs|devpts|cgroup|cgroup2)
+      return
+      ;;
+    *)
+      # Unknown aliases, including bind mounts and remote sources, require a
+      # separate review before a database volume is prepared.
+      die "Unsupported fstab source: $source"
+      ;;
+  esac
+
+  selected_identity=$(device_identity "$selected") || die 'Cannot identify selected block device'
+  while IFS= read -r candidate; do
+    [[ -n $candidate && $candidate == /dev/* ]] || die "Unexpected resolved fstab source: $source"
+    canonical=$(canonical_existing_device "$candidate") || die "Unresolvable fstab device: $source"
+    is_block_device "$canonical" || die "Fstab source is not a block device: $source"
+    candidate_identity=$(device_identity "$canonical") || die "Cannot identify fstab device: $source"
+    [[ $candidate_identity != "$selected_identity" ]] ||
+      die "Fstab source aliases the PostgreSQL data disk: $source"
+    ((count += 1))
+  done <<< "$resolved"
+  (( count > 0 )) || die "Fstab source has no resolved device: $source"
+}
+
 fstab_state() {
-  local uuid=$1 entry
+  local uuid=$1 selected=$2 entry active entries source target extra exact=0 parsed=0
   [[ -f $FSTAB && ! -L $FSTAB ]] || die 'Expected a regular /etc/fstab'
   entry=$(fstab_entry "$uuid")
-  awk -v wanted="$entry" -v spec="UUID=$uuid" -v target="$MOUNTPOINT" '
-    $0 !~ /^[[:space:]]*#/ && NF {
-      if ($1 == spec || $2 == target) {
-        if ($0 == wanted) exact++
-        else conflict++
-      }
-    }
-    END {
-      if (conflict || exact > 1) exit 2
-      print (exact == 1 ? "exact" : "missing")
-    }
-  ' "$FSTAB" || die 'Conflicting or duplicate fstab entry for volume UUID or mount point'
+  active=$(active_fstab_count) || die 'Cannot read fstab entries'
+  if (( active == 0 )); then
+    printf 'missing\n'
+    return
+  fi
+  verify_fstab || die 'Fstab parser/verification rejected an existing entry'
+  entries=$(read_fstab_entries) || die 'Cannot enumerate parsed fstab entries'
+  [[ -n $entries ]] || die 'Fstab contains entries but parser returned none'
+  while read -r source target extra; do
+    [[ -n ${source:-} && -n ${target:-} && -z ${extra:-} ]] ||
+      die 'Malformed parsed fstab entry'
+    ((parsed += 1))
+    [[ $source != *\\x* && $target != *\\x* ]] ||
+      die 'Escaped fstab source or target requires manual review'
+    if [[ $target == "$MOUNTPOINT" ]]; then
+      [[ $source == "UUID=$uuid" ]] || die 'Conflicting fstab mount target'
+      ((exact += 1))
+      continue
+    fi
+    ensure_fstab_source_unrelated "$source" "$selected"
+  done <<< "$entries"
+  (( parsed == active )) || die 'Fstab parser omitted one or more active entries'
+  (( exact <= 1 )) || die 'Duplicate PostgreSQL fstab mount target'
+  if (( exact == 1 )); then
+    [[ $(exact_fstab_entry_count "$entry") == 1 ]] ||
+      die 'PostgreSQL fstab entry differs from the reviewed exact line'
+    printf 'exact\n'
+  else
+    printf 'missing\n'
+  fi
 }
 
 ensure_empty_mountpoint() {
@@ -175,7 +247,7 @@ ensure_data_dirs() {
 }
 
 append_fstab_entry() {
-  local uuid=$1 backup
+  local uuid=$1 device=$2 backup
   backup=$(mktemp "${FSTAB}.wallie-backup.XXXXXX") || die 'Cannot stage fstab backup'
   cp -p "$FSTAB" "$backup"
   # Append in place to preserve /etc/fstab's inode, ACLs, xattrs, and SELinux
@@ -183,7 +255,7 @@ append_fstab_entry() {
   if ! printf '\n%s\n' "$(fstab_entry "$uuid")" >> "$FSTAB"; then
     die "fstab write failed; inspect the unchanged-inode file and backup $backup"
   fi
-  [[ $(fstab_state "$uuid") == exact ]] ||
+  [[ $(fstab_state "$uuid" "$device") == exact ]] ||
     die "fstab verification failed; inspect the file and backup $backup"
   rm -f "$backup"
 }
@@ -211,12 +283,13 @@ main() {
   if [[ $action == initialize ]]; then
     [[ $state == blank ]] || die 'Initialize only accepts a completely blank disk; never reformat an existing filesystem'
     [[ $(ensure_mount_state "$device") == unmounted ]] || die 'Blank disk is mounted'
-    [[ $(fstab_state UNFORMATTED) == missing ]] || die 'Mount point already has an fstab entry'
+    [[ $(fstab_state UNFORMATTED "$device") == missing ]] || die 'Mount point already has an fstab entry'
     ensure_empty_mountpoint
     # Repeat the signature read immediately before the sole destructive call.
     [[ $(resolve_device "$volume_id") == "$device" ]] || die 'EBS serial changed before formatting'
     ensure_unpartitioned "$device"
     [[ $(ensure_mount_state "$device") == unmounted ]] || die 'Disk mounted before formatting'
+    [[ $(fstab_state UNFORMATTED "$device") == missing ]] || die 'Fstab changed before formatting'
     [[ $(filesystem_state "$device") == blank ]] || die 'Disk changed before formatting'
     format_xfs "$device"
     state=$(filesystem_state "$device")
@@ -225,7 +298,7 @@ main() {
     [[ $state == xfs:* ]] || {
       if [[ $action == inspect ]]; then
         [[ $(ensure_mount_state "$device") == unmounted ]] || die 'Blank disk is mounted'
-        [[ $(fstab_state UNFORMATTED) == missing ]] || die 'Mount point already has an fstab entry'
+        [[ $(fstab_state UNFORMATTED "$device") == missing ]] || die 'Mount point already has an fstab entry'
         ensure_empty_mountpoint
         printf 'volume_id=%s device=%s serial=%s partitions=none signatures=none filesystem=blank mount=unmounted fstab=missing\n' \
           "$volume_id" "$device" "$volume_id"
@@ -241,7 +314,7 @@ main() {
   fi
   ensure_unique_uuid "$device" "$uuid"
   mount_state=$(ensure_mount_state "$device" "$uuid")
-  fstab_status=$(fstab_state "$uuid")
+  fstab_status=$(fstab_state "$uuid" "$device")
   if [[ $action == inspect ]]; then
     if [[ $mount_state == unmounted ]]; then ensure_empty_mountpoint; fi
     printf 'volume_id=%s device=%s serial=%s partitions=none signatures=xfs filesystem=xfs uuid=%s mount=%s fstab=%s\n' \
@@ -256,6 +329,7 @@ main() {
     ensure_unpartitioned "$device"
     [[ $(filesystem_state "$device") == "xfs:$uuid" ]] || die 'Filesystem changed before mounting'
     ensure_unique_uuid "$device" "$uuid"
+    [[ $(fstab_state "$uuid" "$device") == "$fstab_status" ]] || die 'Fstab changed before mounting'
     mount_xfs "$uuid"
     [[ $(ensure_mount_state "$device" "$uuid") == mounted ]] || die 'Mount verification failed'
   fi
@@ -266,7 +340,8 @@ main() {
     [[ $(filesystem_state "$device") == "xfs:$uuid" ]] || die 'Filesystem changed before fstab update'
     ensure_unique_uuid "$device" "$uuid"
     [[ $(ensure_mount_state "$device" "$uuid") == mounted ]] || die 'Mount changed before fstab update'
-    append_fstab_entry "$uuid"
+    [[ $(fstab_state "$uuid" "$device") == missing ]] || die 'Fstab changed before update'
+    append_fstab_entry "$uuid" "$device"
   fi
   printf 'volume_id=%s device=%s filesystem=xfs uuid=%s mount=mounted fstab=exact\n' \
     "$volume_id" "$device" "$uuid"
