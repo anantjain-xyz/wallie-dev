@@ -25,7 +25,8 @@
       ],
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {
@@ -48,7 +49,8 @@
       ],
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {

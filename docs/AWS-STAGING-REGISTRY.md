@@ -1,12 +1,12 @@
 # AWS staging image registry
 
-**Manage three private ECR repositories and one image-signing profile.** Deploy after review and merge. The existing staging installation adds only the empty Supabase PostgreSQL repository; image mirroring is a later batch.
+**Manage three private ECR repositories and one image-signing profile.** Deploy after review and merge. The existing staging installation adds only the empty Supabase PostgreSQL repository; [image mirroring](AWS-POSTGRES-IMAGE-MIRROR.md) is a separate operation.
 
 ```mermaid
 flowchart LR
     build["Tested container builds"] -. publish .-> web["ECR · wallie-staging/web"]
     build -. publish .-> worker["ECR · wallie-staging/worker"]
-    upstream["Pinned Supabase PostgreSQL image"] -. later mirror .-> dbimage["ECR · wallie-staging/supabase-postgres"]
+    upstream["Pinned Supabase PostgreSQL image"] -. mirror separately .-> dbimage["ECR · wallie-staging/supabase-postgres"]
     web -. pull by digest .-> ecs["Later: ECS services"]
     worker -. pull by digest .-> ecs
     dbimage -. later pull by digest .-> database["Future PostgreSQL host"]
@@ -87,4 +87,4 @@ terraform -chdir=infra/aws/staging-registry plan -var-file="$WALLIE_AWS_FILES/re
 
 - Verify repository and [signing profile readback](AWS-SIGNING-PROFILE.md#verify-and-remove-bootstrap-access) match the plan; the final plan must exit **0**. CI mocks do not prove live IAM or effective scanning. On a fresh installation, detach the signing bootstrap grant afterward, before image publishing.
 - No fixed repository charge; stored images and applicable transfer incur [ECR usage charges](https://aws.amazon.com/ecr/pricing/). Empty repositories add no image storage; Terraform state retains its separate S3 usage.
-- Continue with [manual web/worker image publishing](AWS-IMAGE-PUBLISHING.md) and the [signing workflow](AWS-IMAGE-SIGNING.md). Those two images passed live scan/signature qualification. Mirroring, scanning, and qualifying the pinned Supabase PostgreSQL image are separate work; this repository starts empty. Retention must preserve deployed and rollback images; no expiration policy is added here.
+- Continue with [manual web/worker image publishing](AWS-IMAGE-PUBLISHING.md), the [signing workflow](AWS-IMAGE-SIGNING.md), and the separate [PostgreSQL image mirror](AWS-POSTGRES-IMAGE-MIRROR.md). The web and worker images passed live scan/signature qualification; PostgreSQL mirroring still needs live verification. Retention must preserve deployed and rollback images; no expiration policy is added here.
