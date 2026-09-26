@@ -132,9 +132,60 @@ run "ssm_only_admin_path" {
         "ssmmessages:OpenControlChannel",
         "ssmmessages:OpenDataChannel",
       ]) &&
-      jsondecode(aws_iam_role_policy.ssm.policy).Statement[0].Resource == "*"
+      jsondecode(aws_iam_role_policy.ssm.policy).Statement[0].Resource == "*" &&
+      length(aws_cloudwatch_log_group.session) == 0 &&
+      length(aws_iam_role_policy.session_logs) == 0 &&
+      output.session_log_group == null
     )
-    error_message = "SSM must use only SG-referenced HTTPS and the five minimal instance-role actions."
+    error_message = "Default SSM must use only SG-referenced HTTPS and the five minimal instance-role actions; session logging stays off."
+  }
+}
+
+run "scoped_session_transcript_destination" {
+  command   = apply
+  state_key = "session_logging"
+
+  variables {
+    enable_postgres_session_logging = true
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_log_group.session) == 1 &&
+      aws_cloudwatch_log_group.session[0].name == "/wallie/staging/postgres/session" &&
+      aws_cloudwatch_log_group.session[0].log_group_class == "STANDARD" &&
+      aws_cloudwatch_log_group.session[0].retention_in_days == 90 &&
+      aws_cloudwatch_log_group.session[0].deletion_protection_enabled &&
+      output.session_log_group == {
+        name = "/wallie/staging/postgres/session"
+        arn  = "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session"
+      }
+    )
+    error_message = "Opt-in must create only the dedicated, retained and deletion-protected PostgreSQL session log group."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.session_logs) == 1 &&
+      aws_iam_role_policy.session_logs[0].role == aws_iam_role.host.id &&
+      length(jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement) == 3 &&
+      jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[0].Action == "logs:DescribeLogGroups" &&
+      jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[0].Resource == "*" &&
+      jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[1].Action == "logs:DescribeLogStreams" &&
+      jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[1].Resource == "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session" &&
+      toset(jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[2].Action) == toset([
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+      ]) &&
+      jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[2].Resource == "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session:log-stream:*" &&
+      alltrue([for statement in jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement :
+        statement.Condition.StringEquals == {
+          "aws:PrincipalAccount" = var.aws_account_id
+          "aws:RequestedRegion"  = var.aws_region
+        }
+      ])
+    )
+    error_message = "Only the exact session log group and its streams may be discovered or written by the host role."
   }
 }
 

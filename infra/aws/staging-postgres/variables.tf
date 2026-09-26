@@ -99,3 +99,10 @@ variable "data_volume_gib" {
     error_message = "data_volume_gib must be an integer between 100 and 1024."
   }
 }
+
+variable "enable_postgres_session_logging" {
+  description = "Opt in to the retained PostgreSQL Session Manager log group and narrowly scoped host write permissions after the private Logs network path and session preferences are reviewed."
+  type        = bool
+  default     = false
+  nullable    = false
+}

@@ -21,3 +21,11 @@ output "ssm_endpoints" {
   description = "Private administration endpoints; verify service registration and an actual session."
   value       = { for service, endpoint in aws_vpc_endpoint.ssm : service => endpoint.id }
 }
+
+output "session_log_group" {
+  description = "Dedicated Session Manager transcript destination when explicitly enabled."
+  value = var.enable_postgres_session_logging ? {
+    name = aws_cloudwatch_log_group.session[0].name
+    arn  = local.session_log_group_arn
+  } : null
+}
