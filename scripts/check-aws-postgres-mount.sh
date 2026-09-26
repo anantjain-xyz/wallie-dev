@@ -67,12 +67,12 @@ ensure_writable_mount() {
 main() {
   local volume_id expected_uuid device state
   (( $# == 4 )) && [[ $1 == --volume-id && $3 == --expected-uuid ]] ||
-    die 'Usage: check-aws-postgres-mount.sh --volume-id vol-<17 hex> --expected-uuid <recorded XFS UUID>'
+    die 'Usage: check-aws-postgres-mount.sh --volume-id vol-<17 hex> --expected-uuid <canonical lowercase XFS UUID>'
   volume_id=$2
   expected_uuid=$4
   [[ $volume_id =~ ^vol-[0-9a-f]{17}$ ]] || die 'Use an exact 17-digit hexadecimal EBS volume ID'
-  [[ $expected_uuid =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] ||
-    die 'Expected UUID must be a recorded XFS filesystem UUID'
+  [[ $expected_uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+    die 'Expected UUID must be the canonical lowercase recorded XFS filesystem UUID'
   require_root
 
   device=$(resolve_device "$volume_id") || die 'Cannot resolve the exact EBS volume'

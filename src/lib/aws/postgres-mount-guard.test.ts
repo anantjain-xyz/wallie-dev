@@ -129,6 +129,16 @@ describe("staging PostgreSQL runtime mount guard", () => {
     }
   });
 
+  it("rejects uppercase UUID input before any disk probe", () => {
+    const result = run(["--volume-id", volume, "--expected-uuid", uuid.toUpperCase()], {
+      MOCK_INVENTORY_FAIL: "1",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("canonical lowercase recorded XFS filesystem UUID");
+    expect(result.stderr).not.toContain("NVMe inventory");
+    expect(result.stdout).toBe("");
+  });
+
   it("rejects an absent mount, including a directory on the disposable root disk", () => {
     const result = run(undefined, { MOCK_MOUNTED: "0" });
     expect(result.status).not.toBe(0);
