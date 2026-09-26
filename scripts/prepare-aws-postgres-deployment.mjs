@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 const usage =
-  "Usage: node scripts/prepare-aws-postgres-deployment.mjs --policy identity-network|compute-storage --account-id <12 digits> --region <commercial AWS region> --vpc-id <vpc-id> --subnet-id <database-a-subnet-id> --database-security-group-id <db-sg-id> --ami-id <amazon-al2023-ami-id> --kms-key-arn <verified-default-ebs-key-arn> --expires-at <UTC timestamp>";
+  "Usage: node scripts/prepare-aws-postgres-deployment.mjs --policy identity-network|compute-storage --account-id <12 digits> --region <commercial AWS region> --vpc-id <vpc-id> --subnet-id <database-a-subnet-id> --database-security-group-id <db-sg-id> --ami-id <amazon-al2023-ami-id> --kms-key-arn <reviewed-customer-managed-ebs-key-arn> --expires-at <UTC timestamp>";
 
 const computeStorageSids = new Set([
   "ReadEc2Inventory",
+  "PassOnlyHostRole",
   "LaunchPinnedHostInputs",
   "LaunchNamedHost",
   "LaunchPrivateInterface",

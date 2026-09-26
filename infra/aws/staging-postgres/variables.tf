@@ -65,6 +65,17 @@ variable "ami_id" {
   }
 }
 
+variable "ebs_kms_key_arn" {
+  description = "Reviewed same-account, same-region customer-managed EBS KMS key ARN for both root and persistent data volumes."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^arn:aws:kms:${var.aws_region}:${var.aws_account_id}:key/(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|mrk-[0-9a-f]{32})$", var.ebs_kms_key_arn))
+    error_message = "ebs_kms_key_arn must be an exact KMS key ARN in the expected account and region."
+  }
+}
+
 variable "instance_type" {
   description = "Reviewed x86-64 Nitro instance size for first-AZ staging qualification."
   type        = string

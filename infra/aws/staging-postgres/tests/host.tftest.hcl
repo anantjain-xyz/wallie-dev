@@ -44,6 +44,7 @@ variables {
   database_subnet_id         = "subnet-0123456789abcdef0"
   database_security_group_id = "sg-0123456789abcdef0"
   ami_id                     = "ami-0123456789abcdef0"
+  ebs_kms_key_arn            = "arn:aws:kms:us-west-2:123456789012:key/01234567-89ab-cdef-0123-456789abcdef"
 }
 
 run "private_host_and_persistent_data" {
@@ -68,6 +69,7 @@ run "private_host_and_persistent_data" {
       one(aws_instance.host.metadata_options).http_tokens == "required" &&
       one(aws_instance.host.metadata_options).http_put_response_hop_limit == 1 &&
       one(aws_instance.host.root_block_device).encrypted &&
+      one(aws_instance.host.root_block_device).kms_key_id == var.ebs_kms_key_arn &&
       one(aws_instance.host.root_block_device).delete_on_termination
     )
     error_message = "Require IMDSv2 and a separately disposable encrypted OS volume."
@@ -77,6 +79,7 @@ run "private_host_and_persistent_data" {
     condition = (
       aws_ebs_volume.data.availability_zone == data.aws_subnet.database.availability_zone &&
       aws_ebs_volume.data.encrypted &&
+      aws_ebs_volume.data.kms_key_id == var.ebs_kms_key_arn &&
       aws_ebs_volume.data.type == "gp3" &&
       !aws_ebs_volume.data.multi_attach_enabled &&
       aws_volume_attachment.data.volume_id == aws_ebs_volume.data.id &&
@@ -198,4 +201,12 @@ run "reject_invalid_volume_size" {
     data_volume_gib = 10
   }
   expect_failures = [var.data_volume_gib]
+}
+
+run "reject_wrong_kms_key_account" {
+  command = plan
+  variables {
+    ebs_kms_key_arn = "arn:aws:kms:us-west-2:999999999999:key/01234567-89ab-cdef-0123-456789abcdef"
+  }
+  expect_failures = [var.ebs_kms_key_arn]
 }

@@ -5,14 +5,14 @@
 | Policy           | Grant                                                                                                                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Identity/network | Named host role with the fixed five-action permissions boundary and matching inline SSM policy; `PassRole` only for that role. Reviewed VPC, `database-a` subnet, Supabase database group, SSM endpoint group/rules, and `ssm`/`ssmmessages` endpoints. |
-| Compute/storage  | Exact Amazon-owned AL2023 AMI, one named EC2 host, separate encrypted 100 GiB gp3 data volume and attachment, verified default EBS KMS key.                                                                                                             |
+| Compute/storage  | Exact Amazon-owned AL2023 AMI, one named EC2 host, separate encrypted 100 GiB gp3 data volume and attachment, reviewed customer-managed EBS KMS key.                                                                                                    |
 | Both             | Every permission expires at the same required UTC deadline 2–24 hours after rendering. No operator `StartSession`, database runtime, secrets, backups, public routes, SSH, termination, or teardown.                                                    |
 
-IAM conditions cannot prove the **number** of resources, exact security-group rule tuples, complete endpoint configuration, or absence of unmodeled resources. The fixed [permissions boundary](../infra/aws/postgres-host-boundary-policy.json) caps the role even if an inline policy is changed during the grant. The full saved Terraform plan and live readback remain required.
+IAM conditions cannot prove the **number** of resources, exact security-group rule tuples, complete endpoint configuration, or absence of unmodeled resources. `ec2:KmsKeyId` applies to standalone `CreateVolume`, not the `RunInstances` root volume: Terraform pins both keys, while the saved plan and live readback must verify the root. The fixed [permissions boundary](../infra/aws/postgres-host-boundary-policy.json) caps the role even if an inline policy is changed during the grant.
 
 ## Prepare offline
 
-1. Renew non-root `wallie-staging` login. Confirm the account, VPC, subnet, network-owned database group and its complete rules, exact AMI and SSM Agent version, existing instances/volumes/endpoints, IAM role/profile, and account quota. Confirm the default EBS KMS key with an authorized identity; for a customer-managed key, confirm its key policy permits this grant to work. Stop if any Terraform-managed PostgreSQL host resource already exists.
+1. Renew non-root `wallie-staging` login. Confirm the account, VPC, subnet, network-owned database group and its complete rules, exact AMI and SSM Agent version, existing instances/volumes/endpoints, IAM role/profile, and account quota. Select an enabled same-account, same-region customer-managed symmetric KMS key; verify its key policy permits the operator's EBS use actions. Prepare a key in a separate reviewed batch if none exists. Stop if any Terraform-managed PostgreSQL host resource already exists.
 2. Update the live `WallieStagingStateAccess` policy to include `staging/postgres.tfstate` and its `.tflock` key. Compare its deployed default document with the [merged template](../infra/aws/state-access-policy.template.json); merely changing the template did not update AWS.
 3. An administrator creates `WallieStagingPostgresHostBoundary` from the exact [five-action policy](../infra/aws/postgres-host-boundary-policy.json) **before** the host plan. Verify the default document and ARN `arn:aws:iam::<account-id>:policy/WallieStagingPostgresHostBoundary`. Keep it as the host role's permanent boundary; the temporary grant must not edit or remove it.
 4. Render both grants with the same reviewed identifiers and UTC expiry. Save them only under ignored `.wallie/aws/`, then inspect every statement. An administrator creates unattached customer-managed `WallieStagingPostgresIdentityNetwork` and `WallieStagingPostgresComputeStorage` policies. Confirm each default document and that both have no attached identities.
@@ -27,7 +27,7 @@ IAM conditions cannot prove the **number** of resources, exact security-group ru
      --subnet-id '<reviewed-database-a-subnet-id>' \
      --database-security-group-id '<reviewed-supabase-db-group-id>' \
      --ami-id '<reviewed-al2023-ami-id>' \
-     --kms-key-arn '<verified-default-ebs-key-arn>' \
+     --kms-key-arn '<reviewed-customer-managed-ebs-key-arn>' \
      --expires-at '<YYYY-MM-DDTHH:MM:SSZ>' \
      > .wallie/aws/postgres-identity-network-policy.json
    node scripts/prepare-aws-postgres-deployment.mjs \
@@ -37,7 +37,7 @@ IAM conditions cannot prove the **number** of resources, exact security-group ru
      --subnet-id '<reviewed-database-a-subnet-id>' \
      --database-security-group-id '<reviewed-supabase-db-group-id>' \
      --ami-id '<reviewed-al2023-ami-id>' \
-     --kms-key-arn '<verified-default-ebs-key-arn>' \
+     --kms-key-arn '<reviewed-customer-managed-ebs-key-arn>' \
      --expires-at '<same-UTC-deadline>' \
      > .wallie/aws/postgres-compute-storage-policy.json
    ```

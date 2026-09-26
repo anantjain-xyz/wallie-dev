@@ -240,7 +240,8 @@
         "StringEquals": {
           "aws:RequestTag/WallieStack": "wallie-staging-postgres",
           "aws:RequestTag/Name": "wallie-staging-postgres-data",
-          "ec2:VolumeType": "gp3"
+          "ec2:VolumeType": "gp3",
+          "ec2:KmsKeyId": "<KMS_KEY_ARN>"
         },
         "Bool": { "ec2:Encrypted": "true" },
         "NumericGreaterThanEquals": { "ec2:VolumeSize": "100" },

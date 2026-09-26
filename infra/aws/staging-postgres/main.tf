@@ -160,7 +160,8 @@ resource "aws_instance" "host" {
   root_block_device {
     volume_type           = "gp3"
     volume_size           = 20
-    encrypted             = true # Uses the account default EBS key; verify its ID after apply.
+    encrypted             = true
+    kms_key_id            = var.ebs_kms_key_arn
     delete_on_termination = true
   }
 
@@ -229,6 +230,7 @@ resource "aws_ebs_volume" "data" {
   iops                 = 3000
   throughput           = 125
   encrypted            = true
+  kms_key_id           = var.ebs_kms_key_arn
   multi_attach_enabled = false
   tags                 = { Name = "${local.name}-data" }
 

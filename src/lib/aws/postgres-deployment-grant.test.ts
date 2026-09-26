@@ -124,7 +124,8 @@ describe("offline PostgreSQL host deployment grants", () => {
     const putPolicy = findStatement(policy, "iam:PutRolePolicy")[0];
     expect(resources(putPolicy)).toEqual([roleArn]);
     expect(putPolicy.Condition.StringEquals["iam:PermissionsBoundary"]).toBe(boundaryArn);
-    const passRole = findStatement(policy, "iam:PassRole")[0];
+    const compute = rendered("compute-storage");
+    const passRole = findStatement(compute, "iam:PassRole")[0];
     expect(resources(passRole)).toEqual([roleArn]);
     expect(passRole.Condition.StringEquals["iam:PassedToService"]).toBe("ec2.amazonaws.com");
     expect(passRole.Condition).not.toHaveProperty("ArnEquals");
@@ -143,7 +144,6 @@ describe("offline PostgreSQL host deployment grants", () => {
         "iam:TagInstanceProfile",
         "iam:PutRolePolicy",
         "iam:AddRoleToInstanceProfile",
-        "iam:PassRole",
         "iam:GetRole",
         "iam:GetRolePolicy",
         "iam:GetInstanceProfile",
@@ -151,6 +151,8 @@ describe("offline PostgreSQL host deployment grants", () => {
         "iam:ListAttachedRolePolicies",
       ].sort(),
     );
+    expect(findStatement(compute, "iam:PassRole")).toHaveLength(1);
+    expect(policy.Statement.flatMap(actions)).not.toContain("iam:PassRole");
     const boundary = JSON.parse(readFileSync(boundaryPath, "utf8")) as Policy;
     expect(boundary.Statement.flatMap(actions).sort()).toEqual(
       [
@@ -161,6 +163,21 @@ describe("offline PostgreSQL host deployment grants", () => {
         "ssmmessages:OpenDataChannel",
       ].sort(),
     );
+  });
+
+  it("keeps both managed policies under the IAM size limit in a longer valid region", () => {
+    const longRegion = "ap-southeast-7";
+    const args = baseArgs.map((value) => {
+      if (value === region) return longRegion;
+      if (value === keyArn) return keyArn.replace(region, longRegion);
+      return value;
+    });
+    for (const selectedPolicy of ["identity-network", "compute-storage"]) {
+      const result = run(selectedPolicy, args);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.stringify(JSON.parse(result.stdout)).length).toBeLessThanOrEqual(6_144);
+    }
   });
 
   it("limits the network slice to the reviewed VPC, DB subnet/group, and SSM endpoints", () => {
@@ -226,6 +243,7 @@ describe("offline PostgreSQL host deployment grants", () => {
     const dataVolume = findStatement(policy, "ec2:CreateVolume")[0];
     expect(dataVolume.Condition.Bool["ec2:Encrypted"]).toBe("true");
     expect(dataVolume.Condition.StringEquals["ec2:VolumeType"]).toBe("gp3");
+    expect(dataVolume.Condition.StringEquals["ec2:KmsKeyId"]).toBe(keyArn);
     expect(dataVolume.Condition.StringEquals["aws:RequestTag/Name"]).toBe(
       "wallie-staging-postgres-data",
     );
