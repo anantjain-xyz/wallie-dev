@@ -35,6 +35,18 @@ run "repository_configuration" {
   }
 
   assert {
+    condition = (
+      aws_ecr_repository.supabase_postgres.name == "wallie-staging/supabase-postgres" &&
+      aws_ecr_repository.supabase_postgres.image_tag_mutability == "IMMUTABLE" &&
+      length(aws_ecr_repository.supabase_postgres.image_tag_mutability_exclusion_filter) == 0 &&
+      !aws_ecr_repository.supabase_postgres.force_delete &&
+      one(aws_ecr_repository.supabase_postgres.encryption_configuration).encryption_type == "AES256" &&
+      one(aws_ecr_repository.supabase_postgres.image_scanning_configuration).scan_on_push
+    )
+    error_message = "Reserve one immutable, encrypted, scanned Supabase PostgreSQL repository."
+  }
+
+  assert {
     condition = alltrue([
       for repository in aws_ecr_repository.application :
       repository.image_tag_mutability == "IMMUTABLE" &&
@@ -65,6 +77,18 @@ run "repository_configuration" {
       })
     ])
     error_message = "Repositories must carry the registry ownership marker and reviewed metadata."
+  }
+
+  assert {
+    condition = aws_ecr_repository.supabase_postgres.tags == tomap({
+      Name        = "wallie-staging/supabase-postgres"
+      Project     = "Wallie"
+      Environment = "staging"
+      ManagedBy   = "Terraform"
+      Component   = "registry"
+      WallieStack = "wallie-staging-registry"
+    })
+    error_message = "The Supabase PostgreSQL repository must carry the same ownership marker."
   }
 }
 
@@ -113,6 +137,17 @@ run "repository_outputs" {
   }
 
   assert {
+    condition = (
+      output.supabase_postgres_repository.name == aws_ecr_repository.supabase_postgres.name &&
+      output.supabase_postgres_repository.arn == aws_ecr_repository.supabase_postgres.arn &&
+      output.supabase_postgres_repository.repository_url == aws_ecr_repository.supabase_postgres.repository_url &&
+      length(output.supabase_postgres_repository.arn) > 0 &&
+      length(output.supabase_postgres_repository.repository_url) > 0
+    )
+    error_message = "Expose the separate Supabase PostgreSQL repository without changing application outputs."
+  }
+
+  assert {
     condition = output.signing_profile == {
       name        = "wallie_staging_images"
       arn         = "arn:aws:signer:us-west-2:123456789012:/signing-profiles/wallie_staging_images"
@@ -149,7 +184,7 @@ run "reject_wrong_caller_account" {
       arn        = "arn:aws:iam::999999999999:user/registry-test"
     }
   }
-  expect_failures = [aws_ecr_repository.application, aws_signer_signing_profile.images]
+  expect_failures = [aws_ecr_repository.application, aws_ecr_repository.supabase_postgres, aws_signer_signing_profile.images]
 }
 
 run "reject_root_caller" {
@@ -161,5 +196,5 @@ run "reject_root_caller" {
       arn        = "arn:aws:iam::123456789012:root"
     }
   }
-  expect_failures = [aws_ecr_repository.application, aws_signer_signing_profile.images]
+  expect_failures = [aws_ecr_repository.application, aws_ecr_repository.supabase_postgres, aws_signer_signing_profile.images]
 }

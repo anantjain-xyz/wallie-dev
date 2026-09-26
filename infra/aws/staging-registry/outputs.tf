@@ -9,6 +9,15 @@ output "repositories" {
   }
 }
 
+output "supabase_postgres_repository" {
+  description = "Private repository reserved for a later verified mirror of the pinned Supabase PostgreSQL image."
+  value = {
+    name           = aws_ecr_repository.supabase_postgres.name
+    arn            = aws_ecr_repository.supabase_postgres.arn
+    repository_url = aws_ecr_repository.supabase_postgres.repository_url
+  }
+}
+
 output "signing_profile" {
   description = "OCI signing profile identity for a later image-signing and verification workflow."
   value = {

@@ -66,7 +66,7 @@ describe("AWS registry preparation", () => {
         "aws:RequestedRegion": awsRegion,
       });
       expect(array(statement.Resource)).toEqual(
-        ["web", "worker"].map(
+        ["web", "worker", "supabase-postgres"].map(
           (name) =>
             `arn:${partition}:ecr:${awsRegion}:${account}:repository/wallie-staging/${name}`,
         ),

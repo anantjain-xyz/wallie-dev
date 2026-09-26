@@ -7,7 +7,8 @@
       "Action": ["ecr:DescribeRepositories", "ecr:ListTagsForResource"],
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {
@@ -22,7 +23,8 @@
       "Action": ["ecr:CreateRepository", "ecr:TagResource"],
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {
@@ -44,7 +46,8 @@
       "Action": ["ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability"],
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {
@@ -60,7 +63,8 @@
       "Action": "ecr:TagResource",
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {
@@ -82,7 +86,8 @@
       "Action": "ecr:UntagResource",
       "Resource": [
         "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/web",
-        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker"
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/worker",
+        "arn:<PARTITION>:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres"
       ],
       "Condition": {
         "StringEquals": {
