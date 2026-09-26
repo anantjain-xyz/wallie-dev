@@ -7,7 +7,7 @@ const script = fileURLToPath(
   new URL("../../../scripts/prepare-aws-postgres-deployment.mjs", import.meta.url),
 );
 const boundaryPath = fileURLToPath(
-  new URL("../../../infra/aws/postgres-host-boundary-policy.json", import.meta.url),
+  new URL("../../../infra/aws/postgres-host-boundary-policy.template.json", import.meta.url),
 );
 const account = "123456789012";
 const region = "us-west-2";
@@ -70,6 +70,21 @@ function rendered(policy: "identity-network" | "compute-storage") {
   expect(document.Version).toBe("2012-10-17");
   expect(JSON.stringify(document).length).toBeLessThanOrEqual(6_144);
   expect(result.stdout).not.toMatch(/<[A-Z_]+>/);
+  return document;
+}
+
+function renderedBoundary() {
+  const result = spawnSync(
+    process.execPath,
+    [script, "--policy", "host-boundary", "--account-id", account, "--region", region],
+    { encoding: "utf8", timeout: 5_000, env: { PATH: "", NODE_ENV: "test" } },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout).not.toMatch(/<[A-Z_]+>/);
+  const document = JSON.parse(result.stdout) as Policy;
+  expect(document.Version).toBe("2012-10-17");
+  expect(JSON.stringify(document).length).toBeLessThanOrEqual(6_144);
   return document;
 }
 
@@ -158,7 +173,10 @@ describe("offline PostgreSQL host deployment grants", () => {
     );
     expect(findStatement(compute, "iam:PassRole")).toHaveLength(1);
     expect(policy.Statement.flatMap(actions)).not.toContain("iam:PassRole");
-    const boundary = JSON.parse(readFileSync(boundaryPath, "utf8")) as Policy;
+    const template = JSON.parse(readFileSync(boundaryPath, "utf8")) as Policy;
+    expect(JSON.stringify(template)).toContain("<ACCOUNT_ID>");
+    expect(JSON.stringify(template)).toContain("<REGION>");
+    const boundary = renderedBoundary();
     expect(boundary.Statement.flatMap(actions).sort()).toEqual(
       [
         "ssm:UpdateInstanceInformation",
@@ -166,8 +184,75 @@ describe("offline PostgreSQL host deployment grants", () => {
         "ssmmessages:CreateDataChannel",
         "ssmmessages:OpenControlChannel",
         "ssmmessages:OpenDataChannel",
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
       ].sort(),
     );
+  });
+
+  it("caps the permanent host role at ECR auth and exact owned PostgreSQL repository reads", () => {
+    const boundary = renderedBoundary();
+    const auth = findStatement(boundary, "ecr:GetAuthorizationToken");
+    expect(auth).toHaveLength(1);
+    expect(auth[0].Resource).toBe("*");
+    expect(auth[0].Condition.StringEquals).toEqual({
+      "aws:PrincipalAccount": account,
+      "aws:RequestedRegion": region,
+    });
+
+    const repositoryArn = `arn:aws:ecr:${region}:${account}:repository/wallie-staging/supabase-postgres`;
+    const pull = findStatement(boundary, "ecr:BatchGetImage");
+    expect(pull).toHaveLength(1);
+    expect(actions(pull[0]).sort()).toEqual(
+      ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"].sort(),
+    );
+    expect(pull[0].Resource).toBe(repositoryArn);
+    expect(pull[0].Condition.StringEquals).toEqual({
+      "aws:PrincipalAccount": account,
+      "aws:RequestedRegion": region,
+      "aws:ResourceTag/WallieStack": "wallie-staging-registry",
+    });
+    expect(
+      boundary.Statement.flatMap(actions).some((action) =>
+        /ecr:(?:Put|Delete|BatchDelete)/.test(action),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["missing account", ["--policy", "host-boundary", "--region", region]],
+    [
+      "duplicate account",
+      [
+        "--policy",
+        "host-boundary",
+        "--account-id",
+        account,
+        "--account-id",
+        account,
+        "--region",
+        region,
+      ],
+    ],
+    [
+      "extra deployment option",
+      ["--policy", "host-boundary", "--account-id", account, "--region", region, "--vpc-id", vpc],
+    ],
+    [
+      "invalid region",
+      ["--policy", "host-boundary", "--account-id", account, "--region", "cn-north-1"],
+    ],
+  ])("rejects host boundary %s", (_name, args) => {
+    const result = spawnSync(process.execPath, [script, ...args], {
+      encoding: "utf8",
+      timeout: 5_000,
+      env: { PATH: "", NODE_ENV: "test" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("[aws-postgres-deployment]");
   });
 
   it("keeps both managed policies under the IAM size limit in a longer valid region", () => {

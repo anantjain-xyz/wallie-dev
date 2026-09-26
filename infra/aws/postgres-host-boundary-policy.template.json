@@ -1,0 +1,46 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlyPrivateSessionAgent",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:UpdateInstanceInformation",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AuthenticateEcrInExpectedAccountAndRegion",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "PullOnlyOwnedPostgresImage",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "arn:aws:ecr:<REGION>:<ACCOUNT_ID>:repository/wallie-staging/supabase-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-registry"
+        }
+      }
+    }
+  ]
+}

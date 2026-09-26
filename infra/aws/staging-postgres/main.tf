@@ -31,8 +31,8 @@ locals {
   name = "wallie-staging-postgres"
 }
 
-# This profile is for SSM registration and sessions only. The database runtime
-# will need a separately reviewed image, secret, and backup policy.
+# This profile supports private SSM registration and pull of the pinned
+# PostgreSQL image. Database secrets and backups need separate review.
 resource "aws_iam_role" "host" {
   name                 = local.name
   permissions_boundary = "arn:aws:iam::${var.aws_account_id}:policy/WallieStagingPostgresHostBoundary"
@@ -71,6 +71,51 @@ resource "aws_iam_role_policy" "ssm" {
       ]
       Resource = "*"
     }]
+  })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# The host can authenticate to ECR and pull only the dedicated PostgreSQL
+# repository. The repository tag check fails closed if ownership drifts.
+resource "aws_iam_role_policy" "postgres_image_pull" {
+  name = "${local.name}-image-pull"
+  role = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "AuthenticateEcr"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalAccount" = var.aws_account_id
+            "aws:RequestedRegion"  = var.aws_region
+          }
+        }
+      },
+      {
+        Sid    = "PullPostgresImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+        ]
+        Resource = "arn:aws:ecr:${var.aws_region}:${var.aws_account_id}:repository/wallie-staging/supabase-postgres"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalAccount"        = var.aws_account_id
+            "aws:RequestedRegion"         = var.aws_region
+            "aws:ResourceTag/WallieStack" = "wallie-staging-registry"
+          }
+        }
+      },
+    ]
   })
 
   lifecycle {
@@ -176,6 +221,7 @@ resource "aws_instance" "host" {
 
   depends_on = [
     aws_iam_role_policy.ssm,
+    aws_iam_role_policy.postgres_image_pull,
     aws_vpc_security_group_egress_rule.database_ssm,
     aws_vpc_security_group_ingress_rule.ssm_database,
     aws_vpc_endpoint.ssm,

@@ -138,6 +138,35 @@ run "ssm_only_admin_path" {
   }
 }
 
+run "scoped_postgres_image_pull" {
+  command = apply
+
+  assert {
+    condition = (
+      aws_iam_role_policy.postgres_image_pull.role == aws_iam_role.host.id &&
+      length(jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement) == 2 &&
+      jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement[0].Action == "ecr:GetAuthorizationToken" &&
+      jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement[0].Resource == "*" &&
+      jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement[0].Condition.StringEquals == {
+        "aws:PrincipalAccount" = var.aws_account_id
+        "aws:RequestedRegion"  = var.aws_region
+      } &&
+      toset(jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement[1].Action) == toset([
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+      ]) &&
+      jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement[1].Resource == "arn:aws:ecr:us-west-2:123456789012:repository/wallie-staging/supabase-postgres" &&
+      jsondecode(aws_iam_role_policy.postgres_image_pull.policy).Statement[1].Condition.StringEquals == {
+        "aws:PrincipalAccount"        = var.aws_account_id
+        "aws:RequestedRegion"         = var.aws_region
+        "aws:ResourceTag/WallieStack" = "wallie-staging-registry"
+      }
+    )
+    error_message = "The host role must only authenticate to ECR and pull the tagged staging PostgreSQL repository in its account and region."
+  }
+}
+
 run "reject_public_subnet" {
   command = plan
   override_data {
