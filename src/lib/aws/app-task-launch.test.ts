@@ -52,6 +52,58 @@ function manifest() {
   };
 }
 
+function hostedManifest() {
+  const input = manifest();
+  return {
+    schemaVersion: 2,
+    mode: "hosted-web-existing",
+    account,
+    region,
+    existingWallieSupabaseUrl: input.existingWallieSupabaseUrl,
+    hostedSupabaseUrl: input.existingWallieSupabaseUrl,
+    publicConfig: {
+      ...input.publicConfig,
+      NEXT_PUBLIC_APP_URL: "https://aws-staging.wallie.dev",
+      NEXT_PUBLIC_SUPABASE_URL: input.existingWallieSupabaseUrl,
+    },
+    images: { web: input.images.web },
+    runtimeSecrets: { web: input.runtimeSecrets.web },
+  };
+}
+
+function hostedReadbacks() {
+  const { tags, ...definition } = taskDefinition(hostedManifest(), "web");
+  return {
+    web: {
+      taskDefinition: {
+        ...definition,
+        taskDefinitionArn: `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-web-app:1`,
+        revision: 1,
+        status: "ACTIVE",
+        registeredAt: "2026-09-22T20:01:00Z",
+        registeredBy: `arn:aws:iam::${account}:user/wallie-local`,
+        requiresAttributes: [],
+        compatibilities: ["FARGATE"],
+        volumes: [],
+        placementConstraints: [],
+        ephemeralStorage: { sizeInGiB: 20 },
+        enableFaultInjection: false,
+        containerDefinitions: [
+          {
+            ...definition.containerDefinitions[0],
+            cpu: 0,
+            privileged: false,
+            environmentFiles: [],
+            mountPoints: [],
+            versionConsistency: "enabled",
+          },
+        ],
+      },
+      tags,
+    },
+  };
+}
+
 function readbacks(input = manifest()) {
   return Object.fromEntries(
     (["web", "worker"] as const).map((component, index) => {
@@ -105,6 +157,40 @@ function network() {
 }
 
 describe("one-off application task launch grant", () => {
+  it("scopes hosted mode registration and launch to web alone", () => {
+    const input = hostedManifest();
+    const definitions = hostedReadbacks();
+    const register = registrationPolicy(input, expires, now);
+    const run = runPolicy(input, definitions, runId, expires, now);
+    const registrationArns = register.Statement.filter(
+      (item: { Action: string }) => item.Action === "ecs:RegisterTaskDefinition",
+    ).map((item: { Resource: string }) => item.Resource);
+    expect(registrationArns).toEqual([
+      `arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-web-app:*`,
+    ]);
+    expect(
+      register.Statement.find((item: { Action: string }) => item.Action === "iam:PassRole")
+        .Resource,
+    ).toEqual([`arn:aws:iam::${account}:role/wallie-staging-web-execution`]);
+    expect(
+      run.Statement.filter((item: { Action: string }) => item.Action === "ecs:RunTask").map(
+        (item: { Resource: string }) => item.Resource,
+      ),
+    ).toEqual([`arn:aws:ecs:${region}:${account}:task-definition/wallie-staging-web-app:1`]);
+    expect(
+      run.Statement.find((item: { Action: string }) => item.Action === "iam:PassRole").Resource,
+    ).toEqual([`arn:aws:iam::${account}:role/wallie-staging-web-execution`]);
+    expect(JSON.stringify(register)).not.toContain("worker");
+    expect(JSON.stringify(run)).not.toContain("worker");
+    expect(
+      runInput(input, definitions, network(), "web", runId).networkConfiguration.awsvpcConfiguration
+        .securityGroups,
+    ).toEqual(["sg-12345678", "sg-abcdef12"]);
+    expect(() => runInput(input, definitions, network(), "worker", runId)).toThrow();
+    expect(() =>
+      runPolicy(input, { ...definitions, worker: readbacks().worker }, runId, expires, now),
+    ).toThrow();
+  });
   it("registers only two exact families, bounded resources, and reviewed execution roles", () => {
     const result = registrationPolicy(manifest(), expires, now);
     const registrations = result.Statement.filter(

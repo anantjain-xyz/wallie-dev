@@ -6,6 +6,8 @@ import { parseArgs } from "node:util";
 const usage =
   "Usage: node scripts/prepare-aws-app-task-definition.mjs --manifest <private JSON file> --component web|worker";
 const components = ["web", "worker"];
+const hostedComponents = ["web"];
+const hostedAppOrigin = "https://aws-staging.wallie.dev";
 const envNames = [
   "NEXT_PUBLIC_APP_URL",
   "NEXT_PUBLIC_SUPABASE_URL",
@@ -39,42 +41,77 @@ function httpsOrigin(value, name) {
 }
 
 export function validateManifest(input) {
+  const hosted = input?.schemaVersion === 2;
   exactKeys(
     input,
-    [
-      "schemaVersion",
-      "account",
-      "region",
-      "existingWallieSupabaseUrl",
-      "publicConfig",
-      "images",
-      "runtimeSecrets",
-    ],
+    hosted
+      ? [
+          "schemaVersion",
+          "mode",
+          "account",
+          "region",
+          "existingWallieSupabaseUrl",
+          "hostedSupabaseUrl",
+          "publicConfig",
+          "images",
+          "runtimeSecrets",
+        ]
+      : [
+          "schemaVersion",
+          "account",
+          "region",
+          "existingWallieSupabaseUrl",
+          "publicConfig",
+          "images",
+          "runtimeSecrets",
+        ],
     "manifest",
   );
-  check(input.schemaVersion === 1, "Unsupported manifest schemaVersion");
+  check(
+    input.schemaVersion === 1 || (hosted && input.mode === "hosted-web-existing"),
+    "Unsupported manifest mode",
+  );
   check(/^\d{12}$/.test(input.account), "Invalid AWS account");
   check(/^(?!cn-|us-gov-)[a-z]{2}-[a-z]+-\d+$/.test(input.region), "Invalid commercial AWS region");
   exactKeys(input.publicConfig, envNames, "public configuration");
   const appUrl = httpsOrigin(input.publicConfig.NEXT_PUBLIC_APP_URL, "NEXT_PUBLIC_APP_URL");
   check(
-    !["wallie.dev", "www.wallie.dev"].includes(appUrl.hostname),
-    "Use a separate staging app origin",
+    hosted
+      ? appUrl.origin === hostedAppOrigin
+      : !["wallie.dev", "www.wallie.dev"].includes(appUrl.hostname),
+    "Use the reviewed separate staging app origin",
   );
   const supabaseUrl = httpsOrigin(
     input.publicConfig.NEXT_PUBLIC_SUPABASE_URL,
     "NEXT_PUBLIC_SUPABASE_URL",
   );
   check(supabaseUrl.port === "", "Staging Supabase must use HTTPS port 443");
-  check(
-    supabaseUrl.hostname !== "supabase.co" && !supabaseUrl.hostname.endsWith(".supabase.co"),
-    "Use the self-hosted staging Supabase HTTPS origin, not a Supabase Cloud project",
-  );
-  const existingUrl = httpsOrigin(input.existingWallieSupabaseUrl, "existingWallieSupabaseUrl");
-  check(
-    supabaseUrl.origin !== existingUrl.origin,
-    "Staging Supabase must differ from existing Wallie Supabase",
-  );
+  if (hosted) {
+    const reviewedUrl = httpsOrigin(input.hostedSupabaseUrl, "hostedSupabaseUrl");
+    const existingUrl = httpsOrigin(input.existingWallieSupabaseUrl, "existingWallieSupabaseUrl");
+    check(
+      /^[a-z0-9-]+\.supabase\.co$/.test(supabaseUrl.hostname),
+      "Expected a hosted Supabase project origin",
+    );
+    check(
+      supabaseUrl.origin === reviewedUrl.origin,
+      "Hosted Supabase origin differs from the reviewed origin",
+    );
+    check(
+      supabaseUrl.origin === existingUrl.origin,
+      "Hosted web must use the reviewed existing Wallie Supabase project",
+    );
+  } else {
+    check(
+      supabaseUrl.hostname !== "supabase.co" && !supabaseUrl.hostname.endsWith(".supabase.co"),
+      "Use the self-hosted staging Supabase HTTPS origin, not a Supabase Cloud project",
+    );
+    const existingUrl = httpsOrigin(input.existingWallieSupabaseUrl, "existingWallieSupabaseUrl");
+    check(
+      supabaseUrl.origin !== existingUrl.origin,
+      "Staging Supabase must differ from existing Wallie Supabase",
+    );
+  }
   const publicKey = input.publicConfig.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   check(
     typeof publicKey === "string" &&
@@ -85,9 +122,10 @@ export function validateManifest(input) {
       !/\s/.test(publicKey),
     "Invalid Supabase publishable key",
   );
-  exactKeys(input.images, components, "images");
-  exactKeys(input.runtimeSecrets, components, "runtime secrets");
-  for (const component of components) {
+  const allowedComponents = hosted ? hostedComponents : components;
+  exactKeys(input.images, allowedComponents, "images");
+  exactKeys(input.runtimeSecrets, allowedComponents, "runtime secrets");
+  for (const component of allowedComponents) {
     check(
       /^sha256:[0-9a-f]{64}$/.test(input.images[component]),
       `Invalid ${component} image digest`,
@@ -108,7 +146,11 @@ export function validateManifest(input) {
   return input;
 }
 
-// This proves the one real web container serves HTTP and can read the isolated
+export function manifestComponents(manifest) {
+  return validateManifest(manifest).schemaVersion === 2 ? hostedComponents : components;
+}
+
+// This proves the one real web container serves HTTP and can read its reviewed
 // Supabase Data API. It logs neither credentials nor database rows.
 const webHealthProgram = `import { createClient } from "@supabase/supabase-js";
 try {
@@ -125,7 +167,10 @@ try {
 
 export function taskDefinition(rawManifest, component) {
   const manifest = validateManifest(rawManifest);
-  check(components.includes(component), "Expected web or worker component");
+  check(
+    manifestComponents(manifest).includes(component),
+    "Component is not available in this manifest mode",
+  );
   const { account, region } = manifest;
   const family = `wallie-staging-${component}-app`;
   const secret = manifest.runtimeSecrets[component];

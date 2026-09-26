@@ -1,6 +1,6 @@
 # First real staging tasks
 
-**Prepare one web and one worker Fargate task definition for an isolated, self-hosted staging Supabase stack.** The renderer is offline: it registers nothing and never handles secret values. Task launch remains blocked until the HTTPS path below exists.
+**Prepare one web and one worker Fargate task definition for an isolated, self-hosted staging Supabase stack (manifest v1).** The renderer is offline: it registers nothing and never handles secret values. Task launch remains blocked until the HTTPS path below exists. The separate [existing-project web canary](AWS-VISIBLE-WEB.md) uses manifest v2 and never starts a worker.
 
 ```mermaid
 flowchart LR
@@ -76,7 +76,7 @@ Create `.wallie/aws/app-tasks/manifest.json` privately (it contains public value
 }
 ```
 
-The renderer refuses identical existing/staging Supabase origins, the production `wallie.dev` app origin, default `*.supabase.co` Cloud origins, non-443 Supabase URLs, extra fields, floating image tags, and implicit secret labels. It cannot prove hosting ownership, private DNS/TLS reachability, or database emptiness; verify those separately.
+For manifest v1, the renderer refuses identical existing/staging Supabase origins, the production `wallie.dev` app origin, default `*.supabase.co` Cloud origins, non-443 Supabase URLs, extra fields, floating image tags, and implicit secret labels. It cannot prove hosting ownership, private DNS/TLS reachability, or database emptiness; verify those separately.
 
 ```sh
 umask 077
