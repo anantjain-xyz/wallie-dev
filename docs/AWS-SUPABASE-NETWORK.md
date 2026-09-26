@@ -20,7 +20,11 @@ flowchart LR
 - First-AZ placement is `services-a` for APIs and `database-a` for PostgreSQL. Both subnets are private; the database route table still has no default route. This is a qualification topology, not high availability.
 - The base `self_hosted_supabase_connectivity` output exposes those two subnet IDs and three group IDs only. Neither output contains credentials or deployment requests.
 
-**Do not enable or apply either flag yet.** The offline [temporary IAM grant](AWS-SUPABASE-NETWORK-GRANT.md) prepares a one-for-one policy attachment swap for the base three groups/four rules; it does not cover the image-pull endpoint, route, or security-group changes. The private TLS proxy and browser HTTPS route are also absent. Review the full, untargeted saved Terraform plan before any later apply. After apply, inspect every live rule: Terraform's standalone rule resources do not detect unrelated extra rules.
+**Base network apply gate:** The [first-task contract](AWS-APP-TASK-DEFINITIONS.md) already specifies one HTTPS/443 hostname with public API routing and private VPC TLS routing to the proxy. Its listener, DNS, and certificate are later work; this security-group-only slice does not depend on them.
+
+- Enable only the base flag, keeping `enable_postgres_image_pull=false` and `enable_postgres_session_logging=false`, after the [temporary IAM grant](AWS-SUPABASE-NETWORK-GRANT.md) and a full, untargeted saved plan show exactly three group and four rule additions with no other changes.
+- After apply, inspect every live rule: Terraform's standalone rule resources do not detect unrelated extra rules. Keep workloads detached until their runtime and HTTPS gates pass.
+- The base grant does not cover the separate image-pull endpoint, route, or security-group changes.
 
 | Later batch       | Required before running Supabase in AWS                                                                                                                                                           |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

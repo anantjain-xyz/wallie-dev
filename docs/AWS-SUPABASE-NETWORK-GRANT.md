@@ -15,7 +15,7 @@ IAM does not constrain actual EC2 `GroupName`, resource count, or a rule's TCP p
 
 ## Offline preparation
 
-1. After the runtime-contract PR merges, refresh main and confirm Terraform uses the proxy SG and rule names. At the later apply gate, confirm the staging VPC ID and `WallieStack` tag from AWS; confirm no group with any reviewed actual name **or** Name tag already exists. Choose a UTC expiry 2–24 hours ahead. Render and review the policy:
+1. Refresh main and confirm Terraform uses the proxy SG and rule names from the [first-task contract](AWS-APP-TASK-DEFINITIONS.md). Confirm the staging VPC ID and `WallieStack` tag from AWS; confirm no group with any reviewed actual name **or** Name tag already exists. Choose a UTC expiry 2–24 hours ahead. Render and review the policy:
 
    ```sh
    umask 077
@@ -35,7 +35,21 @@ IAM does not constrain actual EC2 `GroupName`, resource count, or a rule's TCP p
 
 1. Record all ten attached policy ARNs and default version IDs. Record the exact `WallieStagingRegistry` ARN, default policy JSON, and every attached identity. Stop if the identity inventory differs from the reviewed state or registry provisioning is active.
 2. The administrator detaches **only `WallieStagingRegistry` from `wallie-local`**, then attaches `WallieStagingSupabaseConnectivity`. Verify exactly ten attachments, only that one-for-one difference, and the expected new policy default. If attachment fails, immediately restore the exact Registry ARN and stop. Keep network, private connectivity, hardening, state, and sign-in grants attached.
-3. Only after a separate browser HTTPS routing decision and a reviewed, untargeted saved network plan: require **exactly 3 SG and 4 rule additions; 0 updates/deletes**. Require actual SG names, Name tags, and four rule names to match the policy; require SG peers only, TCP 8000 for proxy/API and TCP 5432 for API/database, or the separately reviewed revised port contract. No CIDR rule, broad egress, endpoint edit, NAT, route, compute, or storage addition. Confirm at least 90 minutes remain before IAM expiry; do not apply an outdated plan after a routing change.
+3. The [shared-hostname HTTPS routing contract](AWS-APP-TASK-DEFINITIONS.md) is set; its listener, DNS, and certificate need not exist for this security-group-only apply. Preserve every existing value in the private `network.tfvars.json`, add `"enable_self_hosted_supabase_connectivity": true`, and leave `enable_postgres_image_pull` and `enable_postgres_session_logging` false. Keep the base flag true in every later network plan; omitting it requests group removal. With the original private backend and variables files, save and review a full, untargeted plan:
+
+   ```sh
+   umask 077
+   terraform -chdir=infra/aws/staging-network init -lockfile=readonly \
+     -backend-config="$PWD/.wallie/aws/staging.backend.hcl"
+   terraform -chdir=infra/aws/staging-network plan \
+     -var-file="$PWD/.wallie/aws/network.tfvars.json" \
+     -out="$PWD/.wallie/aws/supabase-base.tfplan"
+   terraform -chdir=infra/aws/staging-network show \
+     "$PWD/.wallie/aws/supabase-base.tfplan"
+   ```
+
+   Require **exactly 3 SG and 4 rule additions; 0 updates/deletes**. Require actual SG names, Name tags, and four rule names to match the policy; require SG peers only, TCP 8000 for proxy/API and TCP 5432 for API/database. No CIDR rule, broad egress, endpoint edit, NAT, route, compute, or storage addition. Confirm at least 90 minutes remain before IAM expiry; do not apply an outdated plan after a routing change. Apply only this reviewed saved plan.
+
 4. After any reviewed apply, enumerate all groups with the Supabase component and reviewed Name tags in the VPC; inspect actual group names and **every** rule, including unmodeled extras. Require exactly the three planned groups/four planned rules, reviewed peers/directions/ports, no default egress, and a zero-diff network plan. Stop for investigation if the readback differs.
 5. The administrator detaches `WallieStagingSupabaseConnectivity`, reattaches the **exact recorded** `WallieStagingRegistry` ARN, and verifies all ten original attachments and default versions. Leave the temporary policy unattached; delete it when no further network apply is planned.
 
