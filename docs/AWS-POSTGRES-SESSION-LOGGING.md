@@ -18,7 +18,7 @@ After an opt-in apply, keep that root's flag enabled; protected resources requir
 
 ## Live activation gates
 
-1. Apply and verify the [base Supabase network](AWS-SUPABASE-NETWORK.md) and [private host](AWS-POSTGRES-HOST.md) separately. Their existing grants do not authorize this extension; obtain narrowly scoped, expiring deployment permissions.
+1. Apply and verify the [base Supabase network](AWS-SUPABASE-NETWORK.md) and [private host](AWS-POSTGRES-HOST.md) separately. Their existing grants do not authorize this extension; use the [narrow, expiring deployment grants](AWS-POSTGRES-SESSION-GRANT.md).
 2. Review, update, and read back the separately managed host permissions boundary before enabling the host flag. Review **saved, untargeted plans** for both roots with `enable_postgres_session_logging=true`:
    - Network: DB-only endpoint group, two referenced TCP/443 rules, in-place Logs endpoint policy and group updates. No public route, new endpoint, ECR/S3 change, broad CIDR, replacement, or deletion.
    - Host: named log group and scoped inline role policy. No database runtime or storage replacement.

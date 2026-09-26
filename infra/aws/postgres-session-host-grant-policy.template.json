@@ -1,0 +1,113 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadLogGroupsForTerraform",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateNamedSessionLogGroup",
+      "Effect": "Allow",
+      "Action": "logs:CreateLogGroup",
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Component": "postgres-host",
+          "aws:RequestTag/Name": "/wallie/staging/postgres/session"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedSessionLogGroup",
+      "Effect": "Allow",
+      "Action": ["logs:TagResource", "logs:TagLogGroup"],
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Component": "postgres-host",
+          "aws:RequestTag/Name": "/wallie/staging/postgres/session"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "SetSessionLogRetention",
+      "Effect": "Allow",
+      "Action": "logs:PutRetentionPolicy",
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
+          "aws:ResourceTag/Component": "postgres-host",
+          "aws:ResourceTag/Name": "/wallie/staging/postgres/session"
+        }
+      }
+    },
+    {
+      "Sid": "ReadNamedSessionLogGroupTags",
+      "Effect": "Allow",
+      "Action": ["logs:ListTagsForResource", "logs:ListTagsLogGroup"],
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadBoundedHostRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListRoleTags",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "PutBoundedHostSessionLogsPolicy",
+      "Effect": "Allow",
+      "Action": "iam:PutRolePolicy",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
+          "aws:ResourceTag/Name": "wallie-staging-postgres"
+        },
+        "ArnEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::<ACCOUNT_ID>:policy/WallieStagingPostgresHostBoundary"
+        }
+      }
+    }
+  ]
+}
