@@ -119,7 +119,7 @@ export function buildPutRequest(config, component, credentials) {
   };
 }
 
-function cliEnv() {
+export function cliEnv() {
   // Keep only the local CLI login context. In particular, ambient endpoint and
   // proxy overrides must never redirect a request that carries SecretString.
   return {
@@ -232,7 +232,7 @@ export async function populateRuntimeSecrets(config, { aws = command, prompt, re
   }
 }
 
-async function hiddenPrompt(label) {
+export async function hiddenPrompt(label) {
   requireCondition(process.stdin.isTTY && process.stdout.isTTY && process.stdin.setRawMode);
   return new Promise((resolve, reject) => {
     let value = "";

@@ -34,6 +34,25 @@ function fixture() {
   };
 }
 
+function hostedFixture() {
+  const input = fixture();
+  return {
+    schemaVersion: 2,
+    mode: "hosted-web-existing",
+    account,
+    region,
+    existingWallieSupabaseUrl: input.existingWallieSupabaseUrl,
+    hostedSupabaseUrl: input.existingWallieSupabaseUrl,
+    publicConfig: {
+      ...input.publicConfig,
+      NEXT_PUBLIC_APP_URL: "https://aws-staging.wallie.dev",
+      NEXT_PUBLIC_SUPABASE_URL: input.existingWallieSupabaseUrl,
+    },
+    images: { web: input.images.web },
+    runtimeSecrets: { web: input.runtimeSecrets.web },
+  };
+}
+
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -41,6 +60,66 @@ afterEach(() => {
 });
 
 describe("real one-off AWS app task definitions", () => {
+  it("renders hosted Supabase only for the staging web task", () => {
+    const input = hostedFixture();
+    const definition = taskDefinition(input, "web");
+    expect(definition.family).toBe("wallie-staging-web-app");
+    expect(definition.containerDefinitions[0].environment).toContainEqual({
+      name: "NEXT_PUBLIC_SUPABASE_URL",
+      value: "https://production.supabase.co",
+    });
+    expect(
+      definition.containerDefinitions[0].secrets.map((item: { name: string }) => item.name),
+    ).toEqual(["SUPABASE_SECRET_KEY", "WALLIE_ENCRYPTION_KEY"]);
+    expect(() => taskDefinition(input, "worker")).toThrow();
+    expect(() =>
+      validateManifest({ ...input, images: { ...input.images, worker: fixture().images.worker } }),
+    ).toThrow();
+    expect(() =>
+      validateManifest({
+        ...input,
+        runtimeSecrets: { ...input.runtimeSecrets, worker: fixture().runtimeSecrets.worker },
+      }),
+    ).toThrow();
+    expect(() => validateManifest({ ...input, mode: "hosted-worker" })).toThrow();
+    expect(() =>
+      validateManifest({ ...input, hostedSupabaseUrl: "https://other.supabase.co" }),
+    ).toThrow();
+    expect(() =>
+      validateManifest({
+        ...input,
+        hostedSupabaseUrl: "https://isolated-staging.supabase.co",
+        publicConfig: {
+          ...input.publicConfig,
+          NEXT_PUBLIC_SUPABASE_URL: "https://isolated-staging.supabase.co",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      validateManifest({
+        ...input,
+        publicConfig: { ...input.publicConfig, NEXT_PUBLIC_APP_URL: "https://wallie.dev" },
+      }),
+    ).toThrow();
+    expect(() =>
+      validateManifest({
+        ...input,
+        publicConfig: {
+          ...input.publicConfig,
+          NEXT_PUBLIC_SUPABASE_URL: "https://other.supabase.co",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      validateManifest({
+        ...input,
+        publicConfig: {
+          ...input.publicConfig,
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_secret_private",
+        },
+      }),
+    ).toThrow();
+  });
   it("renders a real web image with a local HTTP + read-only Supabase health check", () => {
     const manifest = fixture();
     const definition = taskDefinition(manifest, "web");
