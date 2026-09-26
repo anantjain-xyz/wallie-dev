@@ -1,0 +1,54 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StartReviewedPostgresShellOnly",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/<INSTANCE_ID>",
+        "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:document/SSM-SessionManagerRunShell"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        },
+        "ArnEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::<ACCOUNT_ID>:user/wallie-local"
+        }
+      }
+    },
+    {
+      "Sid": "OpenDataChannelForReviewedOperator",
+      "Effect": "Allow",
+      "Action": "ssmmessages:OpenDataChannel",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        },
+        "ArnEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::<ACCOUNT_ID>:user/wallie-local"
+        }
+      }
+    },
+    {
+      "Sid": "EndOnlyOwnPostgresSessions",
+      "Effect": "Allow",
+      "Action": "ssm:TerminateSession",
+      "Resource": "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:session/${aws:username}-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "ssm:resourceTag/aws:ssmmessages:target-id": "<INSTANCE_ID>"
+        },
+        "ArnEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::<ACCOUNT_ID>:user/wallie-local"
+        }
+      }
+    }
+  ]
+}
