@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 const usage =
-  "Usage: node scripts/prepare-aws-state.mjs bootstrap-policy|access-policy|backend --account-id <12 digits> --region <region> [--component foundation|registry|application|postgres (backend only)]";
+  "Usage: node scripts/prepare-aws-state.mjs bootstrap-policy|access-policy|backend --account-id <12 digits> --region <region> [--component foundation|registry|application|postgres|backup (backend only)]";
 
 function main() {
   const { values, positionals, tokens } = parseArgs({
@@ -25,7 +25,9 @@ function main() {
     !/^(?:[a-z]{2}-[a-z]+|us-gov-[a-z]+)-\d+$/.test(region ?? "") ||
     (values.component !== undefined &&
       (command !== "backend" ||
-        !["foundation", "registry", "application", "postgres"].includes(values.component)))
+        !["foundation", "registry", "application", "postgres", "backup"].includes(
+          values.component,
+        )))
   ) {
     throw new Error(usage);
   }
