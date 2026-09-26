@@ -1,0 +1,80 @@
+# Private PostgreSQL host foundation
+
+**Prepare one private EC2 host and a separate encrypted data volume in `database-a`.** This root creates no PostgreSQL process, formatted filesystem, backup, or production data.
+
+```mermaid
+flowchart LR
+    operator["Operator · scoped grant"] --> ssm["Session Manager"]
+    ssm --> endpoints["Private SSM endpoints<br/>database-a"]
+    endpoints -->|"443 · SG references"| host["AL2023 EC2<br/>no public IP"]
+    api["Future API SG"] -->|"5432"| host
+    host --> data[("Encrypted gp3 EBS<br/>PGDATA + pgsodium key later")]
+```
+
+| Resource       | Contract                                                                                                              |
+| -------------- | --------------------------------------------------------------------------------------------------------------------- |
+| AMI            | Exact Amazon-owned AL2023 x86-64 EBS ID; no moving `latest` lookup.                                                   |
+| Host           | Reviewed DB subnet/group, IMDSv2, no public IP, SSH key, user data, or database listener.                             |
+| Administration | Minimal five-action SSM instance policy; two private endpoints; no Parameter Store reads. Operator grant is separate. |
+| Storage        | Independent 100 GiB gp3 data volume, encrypted with the account's default EBS key. Root volume is disposable.         |
+| Availability   | One AZ for staging qualification; no failover claim.                                                                  |
+| State          | Separate `staging/postgres.tfstate` and lock in the existing private bucket.                                          |
+
+## Before a live plan
+
+- **AWS:** Renew the non-root `wallie-staging` login. Recheck account, VPC, `database-a` subnet/routes, DB group and all rules, existing endpoints/instances/volumes, and quota. The September 22 inventory is historical. Stop if named resources already exist.
+- **Network:** The [Supabase network slice](AWS-SUPABASE-NETWORK.md) must be separately reviewed, applied, and verified to supply `db_security_group_id`. Its guide currently blocks apply; stop here until that gate is cleared.
+- **AMI:** Verify the exact regional image is Amazon-owned, named `al2023-ami-2023.*`, x86-64, and EBS-backed. Confirm its SSM Agent supports `ssmmessages`. [AWS endpoint guidance](https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-create-vpc.html).
+- **EBS key:** Check `aws ec2 get-ebs-default-kms-key-id` and selected key metadata before plan and again before apply. The temporary deployment grant must cover that key.
+- **IAM:** Update `WallieStagingStateAccess` for the new state/lock objects. This PR has no deployment or operator grant. `wallie-local` already has 10/10 policy attachments; use a reviewed one-for-one temporary swap and restore it afterward. Scope operator `StartSession` to the exact instance and shell document.
+- **Session settings:** Inspect account Session Manager preferences. CloudWatch/S3 transcripts or KMS session encryption need additional private network and role permissions. If enabled, defer sessions until those paths exist. The first no-secrets connection probe may use CloudTrail StartSession/TerminateSession events; database administration requires transcript logging.
+
+Write IDs only to ignored `.wallie/aws/postgres.tfvars.json`:
+
+```json
+{
+  "aws_account_id": "<12-digit-account>",
+  "aws_region": "us-west-2",
+  "vpc_id": "<reviewed-vpc-id>",
+  "database_subnet_id": "<reviewed-database-a-subnet-id>",
+  "database_security_group_id": "<reviewed-supabase-db-group-id>",
+  "ami_id": "<reviewed-al2023-ami-id>"
+}
+```
+
+```sh
+umask 077
+mkdir -p .wallie/aws
+node scripts/prepare-aws-state.mjs backend \
+  --account-id '<12-digit-account>' --region us-west-2 --component postgres \
+  > .wallie/aws/postgres.backend.hcl
+terraform -chdir=infra/aws/staging-postgres init \
+  -backend-config="$PWD/.wallie/aws/postgres.backend.hcl" -lockfile=readonly
+terraform -chdir=infra/aws/staging-postgres plan \
+  -var-file="$PWD/.wallie/aws/postgres.tfvars.json" \
+  -out="$PWD/.wallie/aws/postgres.tfplan"
+terraform -chdir=infra/aws/staging-postgres show "$PWD/.wallie/aws/postgres.tfplan"
+```
+
+**Review the full saved plan:** one host, data volume and attachment, role/profile/inline policy, endpoint group, two endpoints, and two HTTPS rules. Require no replacement, deletion, or unrelated changes. EC2, EBS, and interface endpoints accrue charges while idle. Apply only after the separate grant and plan review.
+
+`prevent_destroy` blocks a planned destroy or replacement while its resource block remains. It does not guard in-place edits or a removed block, and it is not a backup.
+
+## Live proof after an approved apply
+
+| Check   | Evidence                                                                                                                                                                                                                      |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Network | No public ENI address or subnet default route. DB SG has only reviewed API/5432 ingress and SSM/443 egress. Endpoint SG has only DB/443 ingress and no egress. Inspect all live rules; standalone rules do not detect extras. |
+| SSM     | Both endpoints available with private DNS; node registered; no-secrets session works if account preferences allow; record agent version and CloudTrail events.                                                                |
+| Storage | gp3 volume encrypted, attached in host AZ, independent of root. Record volume ID and actual KMS key. Leave unformatted.                                                                                                       |
+| Drift   | Full Terraform plan has zero changes. No database or application task is claimed.                                                                                                                                             |
+
+## Before PostgreSQL starts
+
+- Add a private session-transcript destination with scoped network/IAM access. Current Logs access excludes this host; `database-a` has no S3 gateway route. [AWS Session Manager logging](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-logging.html).
+- Mirror the [pinned Supabase database image](SELF-HOSTED-SUPABASE.md) by digest and add narrow image, secret, and S3 paths. This root has none of them.
+- Mount by stable EBS identity. Never format a volume with an existing filesystem. Persist **both** PGDATA and `/etc/postgresql-custom` (`pgsodium_root.key`); verify reboot/remount. [Nitro device names](https://docs.aws.amazon.com/ebs/latest/userguide/identify-nvme-ebs-device.html).
+- Add PostgreSQL 17 base backups, continuous WAL archival, retention, monitoring, and an isolated timed restore. Back up the pgsodium key separately. An online EBS snapshot or `pg_verifybackup` alone does not prove recovery. [PostgreSQL recovery](https://www.postgresql.org/docs/17/continuous-archiving.html), [Supabase key guidance](https://supabase.com/docs/guides/self-hosting/postgres-upgrade-17).
+- Set recovery targets and qualify failover before production. The [first Wallie task gate](AWS-APP-TASK-DEFINITIONS.md) still requires the API stack and shared HTTPS path.
+
+**Offline check:** Terraform `fmt -check`, `init -backend=false -lockfile=readonly`, `validate`, and `test` for `infra/aws/staging-postgres`. Mocked tests do not prove live IAM, AMI contents, SSM reachability, backup quality, or drift.
