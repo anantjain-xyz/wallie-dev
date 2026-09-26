@@ -3,9 +3,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
-import { taskDefinition, validateManifest } from "./prepare-aws-app-task-definition.mjs";
+import {
+  manifestComponents,
+  taskDefinition,
+  validateManifest,
+} from "./prepare-aws-app-task-definition.mjs";
 
-const components = ["web", "worker"];
 const tagKeys = ["Project", "Environment", "ManagedBy", "Component", "WallieStack", "Name"];
 const check = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -83,9 +86,10 @@ function policy(statements) {
 
 export function registrationPolicy(rawManifest, expiry, now = Date.now()) {
   const manifest = validateManifest(rawManifest);
+  const allowedComponents = manifestComponents(manifest);
   const expiresAt = validateExpiry(expiry, now);
   const statements = [];
-  for (const component of components) {
+  for (const component of allowedComponents) {
     const tags = definitionTags(manifest, component);
     statements.push({
       Sid: `Register${component === "web" ? "Web" : "Worker"}FamilyOnly`,
@@ -115,7 +119,7 @@ export function registrationPolicy(rawManifest, expiry, now = Date.now()) {
     Sid: "PassOnlyApplicationExecutionRoles",
     Effect: "Allow",
     Action: "iam:PassRole",
-    Resource: components.map((component) => executionRoleArn(manifest, component)),
+    Resource: allowedComponents.map((component) => executionRoleArn(manifest, component)),
     Condition: {
       StringEquals: {
         "aws:PrincipalAccount": manifest.account,
@@ -135,7 +139,7 @@ export function registrationPolicy(rawManifest, expiry, now = Date.now()) {
     Sid: "ReadApplicationDefinitionTags",
     Effect: "Allow",
     Action: "ecs:ListTagsForResource",
-    Resource: components.map((component) => familyArn(manifest, component)),
+    Resource: allowedComponents.map((component) => familyArn(manifest, component)),
     Condition: policyCondition(manifest, expiresAt),
   });
   return policy(statements);
@@ -150,7 +154,10 @@ function tagsObject(tags) {
 
 export function verifyDefinition(rawManifest, component, response) {
   const manifest = validateManifest(rawManifest);
-  check(components.includes(component), "Expected web or worker");
+  check(
+    manifestComponents(manifest).includes(component),
+    "Component is not available in this manifest mode",
+  );
   const expected = taskDefinition(manifest, component);
   const actual = structuredClone(response?.taskDefinition);
   check(actual?.status === "ACTIVE", "Task definition is not ACTIVE");
@@ -204,9 +211,10 @@ function verifiedArns(manifest, definitions) {
     definitions && typeof definitions === "object" && !Array.isArray(definitions),
     "Missing readbacks",
   );
-  equal(Object.keys(definitions).sort(), components, "readback components");
+  const allowedComponents = manifestComponents(manifest);
+  equal(Object.keys(definitions).sort(), allowedComponents, "readback components");
   return Object.fromEntries(
-    components.map((component) => [
+    allowedComponents.map((component) => [
       component,
       verifyDefinition(manifest, component, definitions[component]),
     ]),
@@ -215,11 +223,12 @@ function verifiedArns(manifest, definitions) {
 
 export function runPolicy(rawManifest, definitions, runId, expiry, now = Date.now()) {
   const manifest = validateManifest(rawManifest);
+  const allowedComponents = manifestComponents(manifest);
   const arns = verifiedArns(manifest, definitions);
   const run = validateRunId(runId);
   const expiresAt = validateExpiry(expiry, now);
   const statements = [];
-  for (const component of components) {
+  for (const component of allowedComponents) {
     const tags = { ...definitionTags(manifest, component), WallieRun: run };
     statements.push({
       Sid: `RunReviewed${component === "web" ? "Web" : "Worker"}Revision`,
@@ -249,7 +258,7 @@ export function runPolicy(rawManifest, definitions, runId, expiry, now = Date.no
     Sid: "PassOnlyApplicationExecutionRoles",
     Effect: "Allow",
     Action: "iam:PassRole",
-    Resource: components.map((component) => executionRoleArn(manifest, component)),
+    Resource: allowedComponents.map((component) => executionRoleArn(manifest, component)),
     Condition: {
       StringEquals: {
         "aws:PrincipalAccount": manifest.account,
@@ -308,7 +317,7 @@ export function runPolicy(rawManifest, definitions, runId, expiry, now = Date.no
     Sid: "ReadApplicationTaskLogs",
     Effect: "Allow",
     Action: "logs:GetLogEvents",
-    Resource: components.map(
+    Resource: allowedComponents.map(
       (component) =>
         `arn:aws:logs:${manifest.region}:${manifest.account}:log-group:/wallie/staging/${component}:log-stream:app/${component}/*`,
     ),
@@ -338,7 +347,10 @@ function validateNetwork(output) {
 export function runInput(rawManifest, definitions, network, component, runId) {
   const manifest = validateManifest(rawManifest);
   const arns = verifiedArns(manifest, definitions);
-  check(components.includes(component), "Expected web or worker");
+  check(
+    manifestComponents(manifest).includes(component),
+    "Component is not available in this manifest mode",
+  );
   const run = validateRunId(runId);
   const { subnet, groups } = validateNetwork(network);
   return {

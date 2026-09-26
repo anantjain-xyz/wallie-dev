@@ -135,6 +135,22 @@ describe("AWS network preparation", () => {
 
 // Structural regression guards for this policy, not an AWS authorization simulator.
 describe("network policy ownership", () => {
+  it("reads EIP address attributes for Terraform's NAT/EIP refresh only in the reviewed account and region", () => {
+    const inventory = statements().find((statement) =>
+      array(statement.Action).includes("ec2:DescribeAddressesAttribute"),
+    );
+    expect(inventory).toMatchObject({
+      Resource: "*",
+      Condition: {
+        StringEquals: {
+          "aws:PrincipalAccount": account,
+          "aws:RequestedRegion": region,
+        },
+      },
+    });
+    expect(array(inventory!.Action)).toContain("ec2:DescribeAddresses");
+  });
+
   it("separates tagged resource creation from authorization of the existing parent VPC", () => {
     const grants = statements();
     for (const [action, type] of creationActions.map((action, index) => [
