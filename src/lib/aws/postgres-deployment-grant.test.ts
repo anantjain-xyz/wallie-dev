@@ -188,6 +188,10 @@ describe("offline PostgreSQL host deployment grants", () => {
         "ecr:BatchCheckLayerAvailability",
         "ecr:BatchGetImage",
         "ecr:GetDownloadUrlForLayer",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
       ].sort(),
     );
   });
@@ -219,6 +223,42 @@ describe("offline PostgreSQL host deployment grants", () => {
         /ecr:(?:Put|Delete|BatchDelete)/.test(action),
       ),
     ).toBe(false);
+  });
+
+  it("caps PostgreSQL shell transcripts at the named CloudWatch log group", () => {
+    const boundary = renderedBoundary();
+    const logGroupArn = `arn:aws:logs:${region}:${account}:log-group:/wallie/staging/postgres/session`;
+    const logStreamArn = `${logGroupArn}:log-stream:*`;
+    expect(findStatement(boundary, "logs:DescribeLogGroups")).toMatchObject([
+      {
+        Resource: "*",
+        Condition: {
+          StringEquals: {
+            "aws:PrincipalAccount": account,
+            "aws:RequestedRegion": region,
+          },
+        },
+      },
+    ]);
+    const describeStreams = findStatement(boundary, "logs:DescribeLogStreams");
+    expect(describeStreams).toHaveLength(1);
+    expect(resources(describeStreams[0])).toHaveLength(2);
+    expect(resources(describeStreams[0]).sort()).toEqual([logGroupArn, `${logGroupArn}:*`].sort());
+    for (const action of ["logs:CreateLogStream", "logs:PutLogEvents"]) {
+      expect(findStatement(boundary, action)).toMatchObject([{ Resource: logStreamArn }]);
+    }
+    expect(
+      boundary.Statement.flatMap(actions)
+        .filter((action) => action.startsWith("logs:"))
+        .sort(),
+    ).toEqual(
+      [
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+      ].sort(),
+    );
   });
 
   it.each([

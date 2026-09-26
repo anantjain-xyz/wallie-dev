@@ -50,7 +50,7 @@ locals {
   })
   logs_endpoint_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
+    Statement = concat([{
       Sid       = "WriteApplicationLogs"
       Effect    = "Allow"
       Principal = "*"
@@ -60,7 +60,35 @@ locals {
         "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/worker:log-stream:*",
       ]
       Condition = local.endpoint_account_condition
-    }]
+      }], [for statement in [
+      {
+        Sid       = "DescribePostgresSessionLogGroups"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "logs:DescribeLogGroups"
+        Resource  = "*"
+        Condition = local.postgres_session_logs_endpoint_condition
+      },
+      {
+        Sid       = "DescribePostgresSessionLogStreams"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "logs:DescribeLogStreams"
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/postgres/session",
+          "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/postgres/session:*",
+        ]
+        Condition = local.postgres_session_logs_endpoint_condition
+      },
+      {
+        Sid       = "WritePostgresSessionLogs"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource  = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/postgres/session:log-stream:*"
+        Condition = local.postgres_session_logs_endpoint_condition
+      },
+    ] : statement if local.postgres_session_logging_enabled])
   })
   interface_endpoints = {
     "ecr.api" = local.ecr_endpoint_policy
@@ -144,7 +172,8 @@ resource "aws_vpc_endpoint" "application" {
   subnet_ids          = [for subnet in local.service_subnets : subnet.id]
   security_group_ids = concat(
     [aws_security_group.aws_endpoints[0].id],
-    local.postgres_image_pull_enabled && each.key != "logs" ? aws_security_group.postgres_ecr_endpoints[*].id : []
+    local.postgres_image_pull_enabled && each.key != "logs" ? aws_security_group.postgres_ecr_endpoints[*].id : [],
+    local.postgres_session_logging_enabled && each.key == "logs" ? aws_security_group.postgres_logs_endpoints[*].id : []
   )
   policy = each.value
   tags   = merge(local.connectivity_tags, { Name = "wallie-staging-${replace(each.key, ".", "-")}" })

@@ -28,7 +28,9 @@ data "aws_security_group" "database" {
 }
 
 locals {
-  name = "wallie-staging-postgres"
+  name                   = "wallie-staging-postgres"
+  session_log_group_name = "/wallie/staging/postgres/session"
+  session_log_group_arn  = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:${local.session_log_group_name}"
 }
 
 # This profile supports private SSM registration and pull of the pinned
@@ -76,6 +78,82 @@ resource "aws_iam_role_policy" "ssm" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+# The private Logs endpoint is enabled separately in staging-network. Until
+# both roots opt in, the host retains its original five-action SSM profile.
+resource "aws_cloudwatch_log_group" "session" {
+  count = var.enable_postgres_session_logging ? 1 : 0
+
+  name                        = local.session_log_group_name
+  log_group_class             = "STANDARD"
+  retention_in_days           = 90
+  deletion_protection_enabled = true
+  tags                        = { Name = local.session_log_group_name }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# The group already exists: SSM Agent needs to discover it and create/write
+# streams, but cannot create log groups or read session transcripts.
+resource "aws_iam_role_policy" "session_logs" {
+  count = var.enable_postgres_session_logging ? 1 : 0
+
+  name = "${local.name}-session-logs"
+  role = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "DiscoverSessionLogGroup"
+        Effect   = "Allow"
+        Action   = "logs:DescribeLogGroups"
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalAccount" = var.aws_account_id
+            "aws:RequestedRegion"  = var.aws_region
+          }
+        }
+      },
+      {
+        Sid    = "DescribeSessionLogStreams"
+        Effect = "Allow"
+        Action = "logs:DescribeLogStreams"
+        # AWS documents both the bare log-group ARN and its IAM-form :* suffix.
+        Resource = [local.session_log_group_arn, "${local.session_log_group_arn}:*"]
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalAccount" = var.aws_account_id
+            "aws:RequestedRegion"  = var.aws_region
+          }
+        }
+      },
+      {
+        Sid    = "WriteSessionLogStreams"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.session_log_group_arn}:log-stream:*"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalAccount" = var.aws_account_id
+            "aws:RequestedRegion"  = var.aws_region
+          }
+        }
+      },
+    ]
+  })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [aws_cloudwatch_log_group.session]
 }
 
 # The host can authenticate to ECR and pull only the dedicated PostgreSQL
@@ -221,6 +299,7 @@ resource "aws_instance" "host" {
 
   depends_on = [
     aws_iam_role_policy.ssm,
+    aws_iam_role_policy.session_logs,
     aws_iam_role_policy.postgres_image_pull,
     aws_vpc_security_group_egress_rule.database_ssm,
     aws_vpc_security_group_ingress_rule.ssm_database,
