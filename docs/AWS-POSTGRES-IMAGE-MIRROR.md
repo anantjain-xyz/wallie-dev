@@ -37,6 +37,10 @@ node scripts/prepare-aws-image-publishing.mjs policy \
 
 Run the mirror command from a networked operator machine with the reviewed account, region, merged revision, and temporary profile. It uses the locked index digest and a private disposable ECR authentication file. Do not put an ECR token in command arguments or logs.
 
+- **AWS calls:** Require more than 150 seconds of temporary credentials before each call. [AWS CLI login credentials refresh every 15 minutes](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html).
+- **Copy:** Obtain a fresh [12-hour ECR authorization token](https://docs.aws.amazon.com/cli/latest/reference/ecr/get-login-password.html) just before the 30-minute-bounded Skopeo transfer. Skopeo receives no AWS session credentials.
+- **Readback:** Refresh AWS credentials and verify the same principal after copy. If renewal fails, the receipt remains unverified; inventory ECR before any separately reviewed retry.
+
 ```sh
 export AWS_PROFILE=wallie-staging
 export AWS_REGION=us-west-2

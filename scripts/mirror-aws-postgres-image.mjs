@@ -31,7 +31,6 @@ const imageTypes = new Set([
 const repository = "wallie-staging/supabase-postgres";
 const awsCallTimeout = 120_000;
 const copyTimeout = 30 * 60_000;
-const copyCredentialMargin = 5 * 60_000;
 const severityNames = ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL", "UNDEFINED"];
 const usage =
   "Usage: node scripts/mirror-aws-postgres-image.mjs --account-id <12 digits> --region <region> --revision <full merged Git SHA> [--profile <temporary-login profile>]";
@@ -455,7 +454,7 @@ export async function mirrorPostgresImage(options, dependencies = {}) {
     }
 
     await refreshCredentials();
-    requireLifetime(credentials, copyTimeout + copyCredentialMargin);
+    // Skopeo uses the 12-hour ECR token, not the short-lived AWS CLI credentials.
     const password = await aws("ecr", "get-login-password", [], true);
     requireThat(typeof password === "string" && password.length > 0, "ECR returned no login token");
     await run(
@@ -473,7 +472,6 @@ export async function mirrorPostgresImage(options, dependencies = {}) {
       { ...common, input: password, timeout: 60_000 },
     );
     chmodSync(authFile, 0o600);
-    requireLifetime(credentials, copyTimeout + copyCredentialMargin);
     const uploadStartedAt = now();
     receipt = {
       schemaVersion: 1,
