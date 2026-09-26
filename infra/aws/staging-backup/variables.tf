@@ -20,3 +20,18 @@ variable "aws_region" {
     error_message = "aws_region must be a standard commercial, China, or GovCloud region name."
   }
 }
+
+variable "backup_retention_days" {
+  description = "Reviewed staging Object Lock retention for new backup object versions, in whole days."
+  type        = number
+  nullable    = false
+
+  validation {
+    condition = (
+      var.backup_retention_days >= 1 &&
+      var.backup_retention_days <= 365 &&
+      var.backup_retention_days == floor(var.backup_retention_days)
+    )
+    error_message = "backup_retention_days must be a whole number from 1 to 365."
+  }
+}

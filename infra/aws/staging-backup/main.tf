@@ -41,6 +41,26 @@ resource "aws_s3_bucket_versioning" "postgres_backups" {
   }
 }
 
+# A reviewed duration is required for every apply. The separate upload deny
+# remains in force until the backup writer and restore path are qualified.
+resource "aws_s3_bucket_object_lock_configuration" "postgres_backups" {
+  bucket              = aws_s3_bucket.postgres_backups.id
+  object_lock_enabled = "Enabled"
+
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = var.backup_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.postgres_backups]
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "postgres_backups" {
   bucket = aws_s3_bucket.postgres_backups.id
 
