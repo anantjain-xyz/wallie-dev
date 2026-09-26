@@ -186,13 +186,17 @@ function harness() {
       }
       if (args[0] === "copy") {
         if (overrides.copyError) throw new Error("copy failed without secrets");
-        time += 20_000;
+        time += Number(overrides.copyDurationMs ?? 20_000);
         return "copied";
       }
     }
     if (command === "aws") {
       if (args[0] === "configure" && args[1] === "export-credentials")
-        return JSON.stringify(overrides.credentials ?? credentials);
+        return JSON.stringify(
+          calls.some((call) => call.command === "skopeo" && call.args[0] === "copy")
+            ? (overrides.credentialsAfterCopy ?? overrides.credentials ?? credentials)
+            : (overrides.credentials ?? credentials),
+        );
       const operation = args[1];
       if (operation === "get-caller-identity")
         return JSON.stringify(
@@ -428,19 +432,91 @@ describe("PostgreSQL ECR image mirror", () => {
     );
   });
 
-  it("requires temporary credentials with enough life for a bounded copy", async () => {
+  it("uses a fresh ECR token for a bounded copy that outlives 15-minute AWS credentials", async () => {
+    const h = harness();
+    const beforeCopy = {
+      Version: 1,
+      AccessKeyId: "synthetic-temporary-key",
+      SecretAccessKey: "synthetic-temporary-secret",
+      SessionToken: "synthetic-session-token",
+      Expiration: "2026-09-25T00:15:00Z",
+    };
+    const afterCopy = {
+      ...beforeCopy,
+      AccessKeyId: "renewed-temporary-key",
+      Expiration: "2026-09-25T00:45:00Z",
+    };
+    h.overrides.credentials = beforeCopy;
+    h.overrides.credentialsAfterCopy = afterCopy;
+    h.overrides.copyDurationMs = 20 * 60_000;
+    const result = await mirrorPostgresImage(base, h.dependencies);
+    const token = h.calls.find(
+      (call) => call.command === "aws" && call.args[1] === "get-login-password",
+    )!;
+    const copy = h.calls.find((call) => call.command === "skopeo" && call.args[0] === "copy")!;
+    const afterCopyCalls = h.calls.slice(h.calls.indexOf(copy) + 1);
+    expect(token.options.env?.AWS_ACCESS_KEY_ID).toBe(beforeCopy.AccessKeyId);
+    expect(token.options.timeout).toBe(120_000);
+    expect(
+      h.calls
+        .slice(h.calls.indexOf(token) + 1, h.calls.indexOf(copy))
+        .map((call) => `${call.command}:${call.args[0]}`),
+    ).toEqual(["skopeo:login"]);
+    expect(copy.options.timeout).toBe(30 * 60_000);
+    expect(afterCopyCalls.slice(0, 3).map((call) => call.args[1])).toEqual([
+      "export-credentials",
+      "get-caller-identity",
+      "describe-images",
+    ]);
+    expect(afterCopyCalls[2].options.env?.AWS_ACCESS_KEY_ID).toBe(afterCopy.AccessKeyId);
+    expect(
+      h.calls.filter((call) => call.command === "skopeo" && call.args[0] === "copy"),
+    ).toHaveLength(1);
+    expect(result.receipt).toMatchObject({ uploadStatus: "confirmed", digest: indexDigest });
+  });
+
+  it("requires more than 150 seconds of credentials before any AWS call or upload", async () => {
     const h = harness();
     h.overrides.credentials = {
       Version: 1,
       AccessKeyId: "synthetic-temporary-key",
       SecretAccessKey: "synthetic-temporary-secret",
       SessionToken: "synthetic-session-token",
-      Expiration: "2026-09-25T00:20:00Z",
+      Expiration: "2026-09-25T00:02:30Z",
     };
     await expect(mirrorPostgresImage(base, h.dependencies)).rejects.toThrow("expire too soon");
+    expect(h.calls.filter((call) => call.command === "aws").map((call) => call.args[1])).toEqual([
+      "export-credentials",
+    ]);
     expect(h.calls.some((call) => call.command === "skopeo" && call.args[0] === "copy")).toBe(
       false,
     );
+  });
+
+  it("leaves an unverified receipt and does not retry when credentials cannot renew after copy", async () => {
+    const h = harness();
+    h.overrides.credentials = {
+      Version: 1,
+      AccessKeyId: "synthetic-temporary-key",
+      SecretAccessKey: "synthetic-temporary-secret",
+      SessionToken: "synthetic-session-token",
+      Expiration: "2026-09-25T00:15:00Z",
+    };
+    h.overrides.copyDurationMs = 20 * 60_000;
+    const error = (await mirrorPostgresImage(base, h.dependencies).catch(
+      (failure: Error & { receiptPath?: string }) => failure,
+    )) as Error & { receiptPath?: string };
+    expect(error.message).toContain("unexpired temporary session credentials");
+    expect(error.receiptPath).toBeDefined();
+    expect(JSON.parse(readFileSync(error.receiptPath!, "utf8"))).toMatchObject({
+      uploadStatus: "confirmed",
+      digest: null,
+      deployable: false,
+    });
+    expect(
+      h.calls.filter((call) => call.command === "skopeo" && call.args[0] === "copy"),
+    ).toHaveLength(1);
+    expect(h.calls.slice(-1)[0].args[1]).toBe("export-credentials");
   });
 
   it("leaves a private attempted receipt after a partial copy failure", async () => {
