@@ -11,7 +11,7 @@ locals {
   }
   ecr_endpoint_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid       = "AuthenticateExpectedAccount"
         Effect    = "Allow"
@@ -31,7 +31,22 @@ locals {
         ]
         Condition = local.endpoint_account_condition
       },
-    ]
+      ], local.postgres_image_pull_enabled ? [{
+        Sid       = "PullPostgresImage"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+        Resource  = "arn:aws:ecr:${var.aws_region}:${var.aws_account_id}:repository/wallie-staging/supabase-postgres"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = "arn:aws:iam::${var.aws_account_id}:role/wallie-staging-postgres"
+          }
+          StringEquals = {
+            "aws:PrincipalAccount" = var.aws_account_id
+            "aws:RequestedRegion"  = var.aws_region
+          }
+        }
+    }] : [])
   })
   logs_endpoint_policy = jsonencode({
     Version = "2012-10-17"
@@ -127,9 +142,12 @@ resource "aws_vpc_endpoint" "application" {
   ip_address_type     = "ipv4"
   private_dns_enabled = true
   subnet_ids          = [for subnet in local.service_subnets : subnet.id]
-  security_group_ids  = [aws_security_group.aws_endpoints[0].id]
-  policy              = each.value
-  tags                = merge(local.connectivity_tags, { Name = "wallie-staging-${replace(each.key, ".", "-")}" })
+  security_group_ids = concat(
+    [aws_security_group.aws_endpoints[0].id],
+    local.postgres_image_pull_enabled && each.key != "logs" ? aws_security_group.postgres_ecr_endpoints[*].id : []
+  )
+  policy = each.value
+  tags   = merge(local.connectivity_tags, { Name = "wallie-staging-${replace(each.key, ".", "-")}" })
 
   lifecycle {
     prevent_destroy = true
@@ -143,8 +161,11 @@ resource "aws_vpc_endpoint" "image_layers" {
   service_name      = "com.amazonaws.${var.aws_region}.s3"
   vpc_endpoint_type = "Gateway"
   ip_address_type   = "ipv4"
-  route_table_ids   = [for key, subnet in local.service_subnets : aws_route_table.private[key].id]
-  tags              = merge(local.connectivity_tags, { Name = "wallie-staging-ecr-image-layers" })
+  route_table_ids = concat(
+    [for key, subnet in local.service_subnets : aws_route_table.private[key].id],
+    local.postgres_image_pull_enabled ? [aws_route_table.private["database-a"].id] : []
+  )
+  tags = merge(local.connectivity_tags, { Name = "wallie-staging-ecr-image-layers" })
 
   # ECR supplies presigned URLs using an AWS-owned principal/bucket. Requiring
   # our PrincipalAccount or ResourceAccount here would block image layer pulls.
