@@ -82,7 +82,7 @@
       "Sid": "SetSessionLogRetention",
       "Effect": "Allow",
       "Action": "logs:PutRetentionPolicy",
-      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session:*",
       "Condition": {
         "StringEquals": {
           "aws:PrincipalAccount": "<ACCOUNT_ID>",

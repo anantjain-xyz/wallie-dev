@@ -186,9 +186,8 @@ describe("temporary private PostgreSQL session-logging deployment grants", () =>
       "aws:RequestTag/Name": "/wallie/staging/postgres/session",
     });
     expect(bySid.TagNamedSessionLogGroup.Resource).toEqual([logGroupArn, `${logGroupArn}:*`]);
-    for (const sid of ["SetSessionLogRetention", "ReadNamedSessionLogGroupTags"]) {
-      expect(bySid[sid].Resource).toBe(logGroupArn);
-    }
+    expect(bySid.SetSessionLogRetention.Resource).toBe(`${logGroupArn}:*`);
+    expect(bySid.ReadNamedSessionLogGroupTags.Resource).toBe(logGroupArn);
     expect(bySid.SetSessionLogRetention.Condition.StringEquals).toMatchObject({
       "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
       "aws:ResourceTag/Name": "/wallie/staging/postgres/session",
