@@ -81,6 +81,7 @@ export function visibleWebGrant(kind, { account, region, expiresAt }, now = Date
           "elasticloadbalancing:DescribeTargetGroups",
           "elasticloadbalancing:DescribeTargetGroupAttributes",
           "elasticloadbalancing:DescribeListeners",
+          "elasticloadbalancing:DescribeListenerAttributes",
           "elasticloadbalancing:DescribeTags",
         ],
         Resource: "*",

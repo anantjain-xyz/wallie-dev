@@ -15,6 +15,14 @@ const config = {
 describe("visible staging web deployment grants", () => {
   it("scopes tagged security-group-rule creation and grants no DNS write", () => {
     const policy = visibleWebGrant("infrastructure", config, now);
+    const read = policy.Statement.find((item: { Sid: string }) => item.Sid === "Read");
+    expect(read.Action).toContain("elasticloadbalancing:DescribeListenerAttributes");
+    expect(read.Resource).toBe("*");
+    expect(read.Condition.StringEquals).toEqual({
+      "aws:PrincipalAccount": config.account,
+      "aws:RequestedRegion": config.region,
+    });
+    expect(read.Condition.DateLessThan).toEqual({ "aws:CurrentTime": config.expiresAt });
     const createRule = policy.Statement.find(
       (item: { Sid: string }) => item.Sid === "CreateSGRule",
     );
