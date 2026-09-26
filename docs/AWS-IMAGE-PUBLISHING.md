@@ -39,8 +39,10 @@ WALLIE_AWS_ACCOUNT_ID='<your-12-digit-account-id>'
 node scripts/prepare-aws-image-publishing.mjs policy --account-id "$WALLIE_AWS_ACCOUNT_ID" --region "$AWS_REGION" > .wallie/aws/image-publishing-policy.json
 ```
 
-- In IAM, create customer-managed **WallieStagingImagePublishing** from that file and attach it to the temporary-login identity.
-- Grants uploads and verification reads for the two exact owned repositories. Authentication and registry scan-mode reads require `Resource: "*"`, constrained to the account/region.
+- Fresh installation: in IAM, create customer-managed **WallieStagingImagePublishing** from that file and attach it to the temporary-login identity.
+- Existing staging: an administrator records the policy's current default version, JSON, and attachments. Require only `wallie-local`, which already has 10/10 managed-policy attachments.
+- Make the rendered document the new default version, preserving the previous default for rollback. Its diff must add only the `supabase-postgres` ARN to the two repository statements. Stop if the five-version limit prevents a rollback version. Read back the default and attachments; do not attach another policy.
+- Grants uploads and verification reads for three exact owned repositories. This publisher accepts only web or worker; use the separate [PostgreSQL mirror workflow](AWS-POSTGRES-IMAGE-MIRROR.md) for the third repository. Authentication and registry scan-mode reads require `Resource: "*"`, constrained to the account/region.
 - This policy grants no image/repository deletion, setting changes, manual scans, signing, IAM administration, or layer downloads. Existing infrastructure policies remain separate grants.
 - The selected profile must provide expiring session credentials; long-lived access-key profiles are rejected. [AWS CLI temporary login](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html)
 - Refresh after build/push and as needed before each AWS request. Require over 150 seconds remaining: a two-minute timeout plus a 30-second margin. Recheck after identity validation; stop if renewal cannot supply enough time.
