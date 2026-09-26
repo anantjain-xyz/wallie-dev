@@ -2,6 +2,32 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "ReadHostEc2InventoryForTerraform",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeInstanceCreditSpecifications",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeTags",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVolumeStatus"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>"
+        }
+      }
+    },
+    {
       "Sid": "ReadLogGroupsForTerraform",
       "Effect": "Allow",
       "Action": "logs:DescribeLogGroups",
@@ -17,7 +43,7 @@
       "Sid": "CreateNamedSessionLogGroup",
       "Effect": "Allow",
       "Action": "logs:CreateLogGroup",
-      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session:*",
       "Condition": {
         "StringEquals": {
           "aws:PrincipalAccount": "<ACCOUNT_ID>",
@@ -35,7 +61,10 @@
       "Sid": "TagNamedSessionLogGroup",
       "Effect": "Allow",
       "Action": ["logs:TagResource", "logs:TagLogGroup"],
-      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+      "Resource": [
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session",
+        "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/wallie/staging/postgres/session:*"
+      ],
       "Condition": {
         "StringEquals": {
           "aws:PrincipalAccount": "<ACCOUNT_ID>",
@@ -87,6 +116,17 @@
         "iam:ListAttachedRolePolicies"
       ],
       "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadHostInstanceProfile",
+      "Effect": "Allow",
+      "Action": "iam:GetInstanceProfile",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:instance-profile/wallie-staging-postgres",
       "Condition": {
         "StringEquals": {
           "aws:PrincipalAccount": "<ACCOUNT_ID>"

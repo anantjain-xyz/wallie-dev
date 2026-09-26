@@ -151,27 +151,42 @@ describe("temporary private PostgreSQL session-logging deployment grants", () =>
   it("limits the host grant to one protected log group and the bounded host role", () => {
     const statements = rendered(hostArgs).Statement;
     expect(statements.map((statement) => statement.Sid)).toEqual([
+      "ReadHostEc2InventoryForTerraform",
       "ReadLogGroupsForTerraform",
       "CreateNamedSessionLogGroup",
       "TagNamedSessionLogGroup",
       "SetSessionLogRetention",
       "ReadNamedSessionLogGroupTags",
       "ReadBoundedHostRole",
+      "ReadHostInstanceProfile",
       "PutBoundedHostSessionLogsPolicy",
     ]);
     const bySid = Object.fromEntries(statements.map((statement) => [statement.Sid, statement]));
+    expect(bySid.ReadHostEc2InventoryForTerraform.Resource).toBe("*");
+    expect(actions(bySid.ReadHostEc2InventoryForTerraform)).toEqual([
+      "ec2:DescribeImages",
+      "ec2:DescribeInstances",
+      "ec2:DescribeInstanceAttribute",
+      "ec2:DescribeInstanceCreditSpecifications",
+      "ec2:DescribeInstanceTypes",
+      "ec2:DescribeSecurityGroups",
+      "ec2:DescribeSecurityGroupRules",
+      "ec2:DescribeSubnets",
+      "ec2:DescribeTags",
+      "ec2:DescribeVpcs",
+      "ec2:DescribeVpcEndpoints",
+      "ec2:DescribeVolumes",
+      "ec2:DescribeVolumeStatus",
+    ]);
     expect(bySid.ReadLogGroupsForTerraform.Resource).toBe("*");
-    expect(bySid.CreateNamedSessionLogGroup.Resource).toBe(logGroupArn);
+    expect(bySid.CreateNamedSessionLogGroup.Resource).toBe(`${logGroupArn}:*`);
     expect(bySid.CreateNamedSessionLogGroup.Condition.StringEquals).toMatchObject({
       "aws:RequestTag/WallieStack": "wallie-staging-postgres",
       "aws:RequestTag/Component": "postgres-host",
       "aws:RequestTag/Name": "/wallie/staging/postgres/session",
     });
-    for (const sid of [
-      "TagNamedSessionLogGroup",
-      "SetSessionLogRetention",
-      "ReadNamedSessionLogGroupTags",
-    ]) {
+    expect(bySid.TagNamedSessionLogGroup.Resource).toEqual([logGroupArn, `${logGroupArn}:*`]);
+    for (const sid of ["SetSessionLogRetention", "ReadNamedSessionLogGroupTags"]) {
       expect(bySid[sid].Resource).toBe(logGroupArn);
     }
     expect(bySid.SetSessionLogRetention.Condition.StringEquals).toMatchObject({
@@ -179,6 +194,10 @@ describe("temporary private PostgreSQL session-logging deployment grants", () =>
       "aws:ResourceTag/Name": "/wallie/staging/postgres/session",
     });
     expect(bySid.ReadBoundedHostRole.Resource).toBe(roleArn);
+    expect(bySid.ReadHostInstanceProfile.Action).toBe("iam:GetInstanceProfile");
+    expect(bySid.ReadHostInstanceProfile.Resource).toBe(
+      `arn:aws:iam::${account}:instance-profile/wallie-staging-postgres`,
+    );
     expect(bySid.PutBoundedHostSessionLogsPolicy.Resource).toBe(roleArn);
     expect(
       bySid.PutBoundedHostSessionLogsPolicy.Condition.ArnEquals["iam:PermissionsBoundary"],
