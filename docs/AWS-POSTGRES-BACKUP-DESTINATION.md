@@ -39,7 +39,7 @@ node scripts/prepare-aws-state.mjs backend --component backup --account-id <acco
 
 1. Reauthenticate as a non-root staging operator and verify the account and region. Inspect the intended bucket name; an access error is not proof of absence. Stop if it already exists or is in another account.
 2. Have an administrator compare the live `WallieStagingStateAccess` default document with the [merged template](../infra/aws/state-access-policy.template.json). Add only `staging/backup.tfstate` and its lock to the existing policy, preserving its old default version for rollback. The `wallie-local` identity already has 10/10 managed-policy attachments.
-3. Review a separate, scoped bucket deployment grant before a live plan or apply. This PR does not grant S3 bucket administration, change IAM, or create AWS resources. Require an additions-only plan for one bucket and its five control resources, followed by readback of versioning, Object Lock, encryption, ownership, public-access blocks, and both policy denies.
+3. Follow the [temporary bucket deployment grant](AWS-POSTGRES-BACKUP-DEPLOYMENT-GRANT.md) before a live plan or apply. Require an additions-only plan for one bucket and its five control resources, followed by readback of versioning, Object Lock, encryption, ownership, public-access blocks, and both policy denies.
 
 ## Before the first backup
 
