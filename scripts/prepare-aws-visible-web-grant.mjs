@@ -153,13 +153,14 @@ export function visibleWebGrant(kind, { account, region, expiresAt }, now = Date
   } else if (kind === "service") {
     statements = [
       {
-        Sid: "ReadCertificates",
+        Sid: "ReadCertificatesAndTargetHealth",
         Effect: "Allow",
         Action: [
           "acm:ListCertificates",
           "acm:DescribeCertificate",
           "acm:GetCertificate",
           "acm:ListTagsForCertificate",
+          "elasticloadbalancing:DescribeTargetHealth",
         ],
         Resource: "*",
         Condition: condition,

@@ -184,6 +184,7 @@ resource "aws_ecs_service" "web" {
   cluster                            = aws_ecs_cluster.application.id
   task_definition                    = var.web_task_definition_arn
   desired_count                      = var.web_desired_count
+  force_new_deployment               = var.web_desired_count == 1
   launch_type                        = "FARGATE"
   platform_version                   = "1.4.0"
   deployment_minimum_healthy_percent = 100

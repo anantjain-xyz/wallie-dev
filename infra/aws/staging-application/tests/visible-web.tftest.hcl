@@ -62,7 +62,7 @@ run "certificate_request_only" {
 }
 
 run "reviewed_web_topology" {
-  command = plan
+  command = apply
   variables {
     enable_visible_web            = true
     request_web_certificate       = true
@@ -72,6 +72,25 @@ run "reviewed_web_topology" {
     web_service_subnet_id         = "subnet-87654321"
     web_egress_security_group_ids = ["sg-12345678", "sg-abcdef12"]
     web_task_definition_arn       = "arn:aws:ecs:us-west-2:123456789012:task-definition/wallie-staging-web-app:7"
+  }
+
+  override_resource {
+    target = aws_acm_certificate.web[0]
+    values = {
+      arn = "arn:aws:acm:us-west-2:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+    }
+  }
+  override_resource {
+    target = aws_lb.web[0]
+    values = {
+      arn = "arn:aws:elasticloadbalancing:us-west-2:123456789012:loadbalancer/app/wallie-staging-web/1234567890abcdef"
+    }
+  }
+  override_resource {
+    target = aws_lb_target_group.web[0]
+    values = {
+      arn = "arn:aws:elasticloadbalancing:us-west-2:123456789012:targetgroup/wallie-staging-web/1234567890abcdef"
+    }
   }
 
   override_data {
@@ -130,6 +149,7 @@ run "reviewed_web_topology" {
     condition = (
       aws_ecs_service.web[0].name == "wallie-staging-web" &&
       aws_ecs_service.web[0].desired_count == 0 &&
+      aws_ecs_service.web[0].force_new_deployment == false &&
       aws_ecs_service.web[0].task_definition == var.web_task_definition_arn &&
       aws_ecs_service.web[0].launch_type == "FARGATE" &&
       aws_ecs_service.web[0].platform_version == "1.4.0" &&
@@ -138,5 +158,68 @@ run "reviewed_web_topology" {
       one(aws_ecs_service.web[0].deployment_circuit_breaker).rollback
     )
     error_message = "Service phase must create a private zero-task web service with rollback enabled."
+  }
+}
+
+run "first_canary_scale_forces_deployment" {
+  command = plan
+  variables {
+    enable_visible_web            = true
+    request_web_certificate       = true
+    web_validated_certificate_arn = "arn:aws:acm:us-west-2:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+    web_vpc_id                    = "vpc-12345678"
+    web_public_subnet_ids         = { a = "subnet-12345678", b = "subnet-abcdef12" }
+    web_service_subnet_id         = "subnet-87654321"
+    web_egress_security_group_ids = ["sg-12345678", "sg-abcdef12"]
+    web_task_definition_arn       = "arn:aws:ecs:us-west-2:123456789012:task-definition/wallie-staging-web-app:7"
+    web_desired_count             = 1
+  }
+
+  override_data {
+    target = data.aws_subnet.web_public["a"]
+    values = {
+      vpc_id            = "vpc-12345678"
+      availability_zone = "us-west-2a"
+      tags              = { Tier = "public" }
+    }
+  }
+  override_data {
+    target = data.aws_subnet.web_public["b"]
+    values = {
+      vpc_id            = "vpc-12345678"
+      availability_zone = "us-west-2b"
+      tags              = { Tier = "public" }
+    }
+  }
+  override_data {
+    target = data.aws_subnet.web_service[0]
+    values = {
+      vpc_id = "vpc-12345678"
+      tags   = { Tier = "services" }
+    }
+  }
+  override_data {
+    target = data.aws_security_group.web_egress[0]
+    values = {
+      vpc_id = "vpc-12345678"
+      name   = "wallie-staging-application-tasks"
+    }
+  }
+  override_data {
+    target = data.aws_security_group.web_egress[1]
+    values = {
+      vpc_id = "vpc-12345678"
+      name   = "wallie-staging-runtime-egress"
+    }
+  }
+
+  assert {
+    condition = (
+      aws_ecs_service.web[0].desired_count == 1 &&
+      aws_ecs_service.web[0].force_new_deployment &&
+      one(aws_ecs_service.web[0].deployment_circuit_breaker).enable &&
+      one(aws_ecs_service.web[0].deployment_circuit_breaker).rollback
+    )
+    error_message = "The first zero-to-one canary scale must force a new ECS deployment with rollback enabled."
   }
 }

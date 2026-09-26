@@ -59,6 +59,16 @@ describe("visible staging web deployment grants", () => {
     ]);
     expect(JSON.stringify(policy)).toContain("acm:GetCertificate");
     expect(JSON.stringify(policy)).toContain("acm:ListCertificates");
+    const healthRead = policy.Statement.find(
+      (item: { Sid: string }) => item.Sid === "ReadCertificatesAndTargetHealth",
+    );
+    expect(healthRead.Action).toContain("elasticloadbalancing:DescribeTargetHealth");
+    expect(healthRead.Resource).toBe("*");
+    expect(healthRead.Condition.StringEquals).toEqual({
+      "aws:PrincipalAccount": config.account,
+      "aws:RequestedRegion": config.region,
+    });
+    expect(healthRead.Condition.DateLessThan).toEqual({ "aws:CurrentTime": config.expiresAt });
     const create = policy.Statement.find(
       (item: { Action: string }) => item.Action === "ecs:CreateService",
     );
