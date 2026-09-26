@@ -1,0 +1,191 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateGroupInOwnedVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Sid": "CreateNamedEndpointGroup",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-image-pull",
+          "aws:RequestTag/Name": "wallie-staging-postgres-ecr-endpoints"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ManageNewEndpointGroupRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "postgres-image-pull",
+          "aws:ResourceTag/Name": "wallie-staging-postgres-ecr-endpoints"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "AddDatabaseEgress",
+      "Effect": "Allow",
+      "Action": "ec2:AuthorizeSecurityGroupEgress",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DATABASE_SECURITY_GROUP_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "self-hosted-supabase",
+          "aws:ResourceTag/Name": "wallie-staging-supabase-db"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateThreeNamedImageRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-image-pull",
+          "aws:RequestTag/Name": [
+            "wallie-staging-postgres-ecr-ingress",
+            "wallie-staging-postgres-ecr-egress",
+            "wallie-staging-postgres-ecr-layers"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedGroupOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-image-pull",
+          "aws:RequestTag/Name": "wallie-staging-postgres-ecr-endpoints",
+          "ec2:CreateAction": "CreateSecurityGroup"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedRulesOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-image-pull",
+          "aws:RequestTag/Name": [
+            "wallie-staging-postgres-ecr-ingress",
+            "wallie-staging-postgres-ecr-egress",
+            "wallie-staging-postgres-ecr-layers"
+          ],
+          "ec2:CreateAction": ["AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ModifyThreeReviewedEndpoints",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVpcEndpoint",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/<ECR_API_ENDPOINT_ID>",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/<ECR_DKR_ENDPOINT_ID>",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/<IMAGE_LAYERS_ENDPOINT_ID>"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "private-connectivity",
+          "aws:ResourceTag/Name": [
+            "wallie-staging-ecr-api",
+            "wallie-staging-ecr-dkr",
+            "wallie-staging-ecr-image-layers"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "UseNewPostgresEndpointGroup",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "postgres-image-pull",
+          "aws:ResourceTag/Name": "wallie-staging-postgres-ecr-endpoints"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "UseDatabaseRouteTable",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:route-table/<DATABASE_ROUTE_TABLE_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Name": "wallie-staging-database-a"
+        }
+      }
+    }
+  ]
+}
