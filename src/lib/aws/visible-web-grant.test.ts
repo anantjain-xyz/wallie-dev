@@ -69,6 +69,20 @@ describe("visible staging web deployment grants", () => {
       "aws:RequestedRegion": config.region,
     });
     expect(healthRead.Condition.DateLessThan).toEqual({ "aws:CurrentTime": config.expiresAt });
+    const logs = policy.Statement.find((item: { Sid: string }) => item.Sid === "ReadWebTaskLogs");
+    expect(logs).toMatchObject({
+      Action: "logs:GetLogEvents",
+      Resource:
+        "arn:aws:logs:us-west-2:111614490109:log-group:/wallie/staging/web:log-stream:app/web/*",
+      Condition: {
+        StringEquals: {
+          "aws:PrincipalAccount": config.account,
+          "aws:RequestedRegion": config.region,
+        },
+        DateLessThan: { "aws:CurrentTime": config.expiresAt },
+      },
+    });
+    expect(JSON.stringify(policy)).not.toContain("logs:PutLogEvents");
     const create = policy.Statement.find(
       (item: { Action: string }) => item.Action === "ecs:CreateService",
     );
@@ -82,6 +96,7 @@ describe("visible staging web deployment grants", () => {
     expect(JSON.stringify(policy)).not.toMatch(
       /worker|RunTask|StopTask|DeleteService|ExecuteCommand/,
     );
+    expect(JSON.stringify(policy).length).toBeLessThanOrEqual(6144);
   });
 
   it("rejects the wrong account, grant kind, and expiry", () => {

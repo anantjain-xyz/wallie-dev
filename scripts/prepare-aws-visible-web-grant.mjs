@@ -244,6 +244,13 @@ export function visibleWebGrant(kind, { account, region, expiresAt }, now = Date
         Condition: condition,
       },
       {
+        Sid: "ReadWebTaskLogs",
+        Effect: "Allow",
+        Action: "logs:GetLogEvents",
+        Resource: `arn:aws:logs:${region}:${account}:log-group:/wallie/staging/web:log-stream:app/web/*`,
+        Condition: condition,
+      },
+      {
         Sid: "CreateTaggedWebService",
         Effect: "Allow",
         Action: "ecs:CreateService",
