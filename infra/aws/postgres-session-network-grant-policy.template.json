@@ -1,0 +1,167 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateLogsGroupInOwnedVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network"
+        }
+      }
+    },
+    {
+      "Sid": "CreateNamedLogsEndpointGroup",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-session-logging",
+          "aws:RequestTag/Name": "wallie-staging-postgres-logs-endpoints"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ManageNewLogsEndpointGroupRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "postgres-session-logging",
+          "aws:ResourceTag/Name": "wallie-staging-postgres-logs-endpoints"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "AddDatabaseLogsEgress",
+      "Effect": "Allow",
+      "Action": "ec2:AuthorizeSecurityGroupEgress",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DATABASE_SECURITY_GROUP_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "self-hosted-supabase",
+          "aws:ResourceTag/Name": "wallie-staging-supabase-db"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    },
+    {
+      "Sid": "CreateTwoNamedLogsRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-session-logging",
+          "aws:RequestTag/Name": [
+            "wallie-staging-postgres-logs-ingress",
+            "wallie-staging-postgres-logs-egress"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedLogsGroupOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-session-logging",
+          "aws:RequestTag/Name": "wallie-staging-postgres-logs-endpoints",
+          "ec2:CreateAction": "CreateSecurityGroup"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "TagNamedLogsRulesOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:RequestTag/WallieStack": "wallie-staging-network",
+          "aws:RequestTag/Component": "postgres-session-logging",
+          "aws:RequestTag/Name": [
+            "wallie-staging-postgres-logs-ingress",
+            "wallie-staging-postgres-logs-egress"
+          ],
+          "ec2:CreateAction": ["AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "ModifyReviewedLogsEndpoint",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/<LOGS_ENDPOINT_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "private-connectivity",
+          "aws:ResourceTag/Name": "wallie-staging-logs"
+        }
+      }
+    },
+    {
+      "Sid": "UseNewLogsEndpointGroup",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "<ACCOUNT_ID>",
+          "aws:RequestedRegion": "<REGION>",
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "postgres-session-logging",
+          "aws:ResourceTag/Name": "wallie-staging-postgres-logs-endpoints"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>"
+        }
+      }
+    }
+  ]
+}
