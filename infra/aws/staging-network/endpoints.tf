@@ -74,7 +74,10 @@ locals {
         Effect    = "Allow"
         Principal = "*"
         Action    = "logs:DescribeLogStreams"
-        Resource  = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/postgres/session"
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/postgres/session",
+          "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/wallie/staging/postgres/session:*",
+        ]
         Condition = local.postgres_session_logs_endpoint_condition
       },
       {

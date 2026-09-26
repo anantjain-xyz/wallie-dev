@@ -240,9 +240,10 @@ describe("offline PostgreSQL host deployment grants", () => {
         },
       },
     ]);
-    expect(findStatement(boundary, "logs:DescribeLogStreams")).toMatchObject([
-      { Resource: logGroupArn },
-    ]);
+    const describeStreams = findStatement(boundary, "logs:DescribeLogStreams");
+    expect(describeStreams).toHaveLength(1);
+    expect(resources(describeStreams[0])).toHaveLength(2);
+    expect(resources(describeStreams[0]).sort()).toEqual([logGroupArn, `${logGroupArn}:*`].sort());
     for (const action of ["logs:CreateLogStream", "logs:PutLogEvents"]) {
       expect(findStatement(boundary, action)).toMatchObject([{ Resource: logStreamArn }]);
     }

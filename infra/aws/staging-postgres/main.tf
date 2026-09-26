@@ -119,10 +119,11 @@ resource "aws_iam_role_policy" "session_logs" {
         }
       },
       {
-        Sid      = "DescribeSessionLogStreams"
-        Effect   = "Allow"
-        Action   = "logs:DescribeLogStreams"
-        Resource = local.session_log_group_arn
+        Sid    = "DescribeSessionLogStreams"
+        Effect = "Allow"
+        Action = "logs:DescribeLogStreams"
+        # AWS documents both the bare log-group ARN and its IAM-form :* suffix.
+        Resource = [local.session_log_group_arn, "${local.session_log_group_arn}:*"]
         Condition = {
           StringEquals = {
             "aws:PrincipalAccount" = var.aws_account_id

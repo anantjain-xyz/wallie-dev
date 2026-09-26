@@ -172,7 +172,11 @@ run "scoped_session_transcript_destination" {
       jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[0].Action == "logs:DescribeLogGroups" &&
       jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[0].Resource == "*" &&
       jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[1].Action == "logs:DescribeLogStreams" &&
-      jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[1].Resource == "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session" &&
+      length(jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[1].Resource) == 2 &&
+      toset(jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[1].Resource) == toset([
+        "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session",
+        "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session:*",
+      ]) &&
       toset(jsondecode(aws_iam_role_policy.session_logs[0].policy).Statement[2].Action) == toset([
         "logs:CreateLogStream",
         "logs:PutLogEvents",

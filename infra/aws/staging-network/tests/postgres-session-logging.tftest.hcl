@@ -146,7 +146,10 @@ run "private_postgres_logs_path" {
           Effect    = "Allow"
           Principal = "*"
           Action    = "logs:DescribeLogStreams"
-          Resource  = "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session"
+          Resource = [
+            "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session",
+            "arn:aws:logs:us-west-2:123456789012:log-group:/wallie/staging/postgres/session:*",
+          ]
           Condition = {
             ArnEquals    = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/wallie-staging-postgres" }
             StringEquals = { "aws:PrincipalAccount" = "123456789012", "aws:RequestedRegion" = "us-west-2" }
