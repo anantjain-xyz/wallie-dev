@@ -15,8 +15,9 @@ mock_provider "aws" {
 }
 
 variables {
-  aws_account_id = "123456789012"
-  aws_region     = "us-west-2"
+  aws_account_id        = "123456789012"
+  aws_region            = "us-west-2"
+  backup_retention_days = 30
 }
 
 run "empty_destination_controls" {
@@ -36,6 +37,16 @@ run "empty_destination_controls" {
       aws_s3_bucket_public_access_block.postgres_backups.restrict_public_buckets
     )
     error_message = "The empty backup bucket must be retained, versioned, encrypted, owner-enforced, and private."
+  }
+
+  assert {
+    condition = (
+      aws_s3_bucket_object_lock_configuration.postgres_backups.bucket == aws_s3_bucket.postgres_backups.id &&
+      aws_s3_bucket_object_lock_configuration.postgres_backups.object_lock_enabled == "Enabled" &&
+      one(one(aws_s3_bucket_object_lock_configuration.postgres_backups.rule).default_retention).mode == "GOVERNANCE" &&
+      one(one(aws_s3_bucket_object_lock_configuration.postgres_backups.rule).default_retention).days == 30
+    )
+    error_message = "New backup versions need the explicitly reviewed governance retention rule."
   }
 
   assert {
@@ -112,4 +123,28 @@ run "reject_invalid_region" {
     aws_region = "us_west_2"
   }
   expect_failures = [var.aws_region]
+}
+
+run "reject_zero_retention" {
+  command = plan
+  variables {
+    backup_retention_days = 0
+  }
+  expect_failures = [var.backup_retention_days]
+}
+
+run "reject_fractional_retention" {
+  command = plan
+  variables {
+    backup_retention_days = 1.5
+  }
+  expect_failures = [var.backup_retention_days]
+}
+
+run "reject_unbounded_retention" {
+  command = plan
+  variables {
+    backup_retention_days = 366
+  }
+  expect_failures = [var.backup_retention_days]
 }
