@@ -1,5 +1,6 @@
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,14 +18,29 @@ const harness = String.raw`
 source "$WALLIE_SCRIPT"
 MOUNTPOINT="$TEST_DIR/postgres"
 FSTAB="$TEST_DIR/fstab"
+LOCKDIR="$TEST_DIR/locks"
 require_root() { :; }
-read_inventory() { printf '%s\n' "$MOCK_INVENTORY"; }
+lock_directory_identity() { printf '0:700\n'; }
+lock_fd() {
+  printf 'lock\n' >> "$TEST_DIR/events"
+  "$TEST_PERL" -e 'open my $fh, ">&=9" or die "$!"; flock($fh, 6) or exit 1'
+}
+trigger_udev_change() {
+  printf 'trigger:%s\n' "$1" >> "$TEST_DIR/events"
+  [[ $MOCK_TRIGGER_FAIL == 0 ]]
+}
+settle_udev() {
+  printf 'settle\n' >> "$TEST_DIR/events"
+  [[ $MOCK_SETTLE_FAIL == 0 ]]
+}
+read_inventory() { printf 'inventory\n' >> "$TEST_DIR/events"; printf '%s\n' "$MOCK_INVENTORY"; }
 read_device_tree() { printf '%s\n' "$MOCK_TREE"; }
 read_device_mounts() {
   if [[ $MOCK_MOUNTED == 1 ]]; then printf '%s\n' "$MOUNTPOINT"
   else printf '%s\n' "$MOCK_MOUNTS"; fi
 }
 read_uuid_inventory() {
+  printf 'uuid-inventory\n' >> "$TEST_DIR/events"
   if [[ -n $MOCK_UUID_INVENTORY ]]; then printf '%s\n' "$MOCK_UUID_INVENTORY"
   elif [[ $MOCK_FORMATTED == 1 ]]; then printf '%s %s\n' "$MOCK_DEVICE" "$MOCK_UUID"
   else printf '%s\n' "$MOCK_DEVICE"; fi
@@ -80,20 +96,27 @@ device_identity() {
   if [[ $1 == "$MOCK_DEVICE" ]]; then printf '259:1\n'
   else printf '259:2\n'; fi
 }
-format_xfs() { printf 'format:%s\n' "$1" >> "$TEST_DIR/calls"; MOCK_FORMATTED=1; }
-mount_xfs() { printf 'mount:%s\n' "$1" >> "$TEST_DIR/calls"; MOCK_MOUNTED=1; }
+format_xfs() { printf 'format:%s\n' "$1" >> "$TEST_DIR/calls"; printf 'format\n' >> "$TEST_DIR/events"; MOCK_FORMATTED=1; }
+mount_xfs() { printf 'mount:%s\n' "$1" >> "$TEST_DIR/calls"; printf 'mount\n' >> "$TEST_DIR/events"; MOCK_MOUNTED=1; }
 if [[ $MOCK_PRECREATE_MOUNTPOINT == 1 ]]; then mkdir -p "$MOUNTPOINT"; fi
 main "$@"
 if [[ $MOCK_RERUN == 1 ]]; then main mount --volume-id "$MOCK_VOLUME" --expected-uuid "$MOCK_UUID"; fi
 `;
 
-function run(args: string[], overrides: Record<string, string> = {}, fstab = "") {
-  const dir = mkdtempSync(join(tmpdir(), "wallie-postgres-volume-"));
-  testDirs.push(dir);
-  writeFileSync(
-    join(dir, "fstab"),
-    fstab.replaceAll("/srv/wallie/postgres", join(dir, "postgres")),
-  );
+function run(
+  args: string[],
+  overrides: Record<string, string> = {},
+  fstab = "",
+  existingDir?: string,
+) {
+  const dir = existingDir ?? mkdtempSync(join(tmpdir(), "wallie-postgres-volume-"));
+  if (!existingDir) {
+    testDirs.push(dir);
+    writeFileSync(
+      join(dir, "fstab"),
+      fstab.replaceAll("/srv/wallie/postgres", join(dir, "postgres")),
+    );
+  }
   const result = spawnSync("bash", ["-c", harness, "bash", ...args], {
     encoding: "utf8",
     timeout: 5_000,
@@ -102,6 +125,7 @@ function run(args: string[], overrides: Record<string, string> = {}, fstab = "")
       PATH: process.env.PATH,
       TEST_DIR: dir,
       WALLIE_SCRIPT: script,
+      TEST_PERL: "/usr/bin/perl",
       MOCK_VOLUME: volume,
       MOCK_DEVICE: device,
       MOCK_UUID: uuid,
@@ -123,16 +147,29 @@ function run(args: string[], overrides: Record<string, string> = {}, fstab = "")
       MOCK_MOUNTPOINT_STATUS: "32",
       MOCK_VERIFY_FAIL: "0",
       MOCK_PARSER_OMIT: "0",
+      MOCK_TRIGGER_FAIL: "0",
+      MOCK_SETTLE_FAIL: "0",
       ...overrides,
     },
   });
   return {
     ...result,
+    dir,
     calls: existsSync(join(dir, "calls")) ? readFileSync(join(dir, "calls"), "utf8") : "",
+    events: existsSync(join(dir, "events")) ? readFileSync(join(dir, "events"), "utf8") : "",
     fstab: readFileSync(join(dir, "fstab"), "utf8"),
     dataExists: existsSync(join(dir, "postgres", "data")),
     configExists: existsSync(join(dir, "postgres", "postgresql-custom")),
   };
+}
+
+async function waitForFile(path: string) {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${path}`);
 }
 
 afterEach(() => {
@@ -155,12 +192,90 @@ describe("staging PostgreSQL EBS preparation", () => {
     const result = run(["initialize", "--volume-id", volume, "--confirm-format", volume]);
     expect(result.status, result.stderr).toBe(0);
     expect(result.calls).toBe(`format:${device}\nmount:${uuid}\n`);
+    const events = result.events.trim().split("\n");
+    expect(events.indexOf("lock")).toBeLessThan(events.indexOf("inventory"));
+    expect(events.indexOf("format")).toBeLessThan(events.indexOf(`trigger:${device}`));
+    expect(events.indexOf(`trigger:${device}`)).toBeLessThan(events.indexOf("settle"));
+    expect(events.indexOf("settle")).toBeLessThan(events.indexOf("uuid-inventory"));
+    expect(events.indexOf("uuid-inventory")).toBeLessThan(events.indexOf("mount"));
     expect(result.fstab).toMatch(
       new RegExp(`UUID=${uuid} .*/postgres xfs defaults,nofail,x-systemd.device-timeout=30s 0 0`),
     );
     expect(result.dataExists).toBe(true);
     expect(result.configExists).toBe(true);
   });
+
+  it("stops after formatting when udev trigger or settle fails, then permits recorded-UUID recovery", () => {
+    for (const failure of ["MOCK_TRIGGER_FAIL", "MOCK_SETTLE_FAIL"]) {
+      const failed = run(["initialize", "--volume-id", volume, "--confirm-format", volume], {
+        [failure]: "1",
+      });
+      expect(failed.status).not.toBe(0);
+      expect(failed.calls).toBe(`format:${device}\n`);
+      expect(failed.events).toContain(`trigger:${device}\n`);
+      if (failure === "MOCK_TRIGGER_FAIL") expect(failed.events).not.toContain("settle\n");
+      else expect(failed.events).toContain("settle\n");
+      expect(failed.events).not.toContain("uuid-inventory\n");
+      expect(failed.fstab).toBe("");
+
+      const recovered = run(
+        ["mount", "--volume-id", volume, "--expected-uuid", uuid],
+        { MOCK_FORMATTED: "1" },
+        "",
+        failed.dir,
+      );
+      expect(recovered.status, recovered.stderr).toBe(0);
+      expect(recovered.calls).toBe(`format:${device}\nmount:${uuid}\n`);
+    }
+  });
+
+  it("refuses an active shared lock before inspecting either volume and recovers after release", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wallie-postgres-volume-"));
+    testDirs.push(dir);
+    writeFileSync(join(dir, "fstab"), "");
+    mkdirSync(join(dir, "locks"), { mode: 0o700 });
+    const ready = join(dir, "holder-ready");
+    const release = join(dir, "holder-release");
+    const holder = spawn(
+      "/usr/bin/perl",
+      [
+        "-e",
+        'use Fcntl ":flock"; open my $fh, ">>", $ARGV[0] or die $!; flock($fh, LOCK_EX) or die $!; open my $ready, ">", $ARGV[1] or die $!; close $ready; until (-e $ARGV[2]) { select undef, undef, undef, 0.02; }',
+        join(dir, "locks", "prepare-volume.lock"),
+        ready,
+        release,
+      ],
+      { stdio: "ignore" },
+    );
+    const holderExit = once(holder, "exit");
+    try {
+      await waitForFile(ready);
+      for (const candidate of [volume, "vol-11111111111111111"]) {
+        const blocked = run(
+          ["initialize", "--volume-id", candidate, "--confirm-format", candidate],
+          {},
+          "",
+          dir,
+        );
+        expect(blocked.status).not.toBe(0);
+        expect(blocked.stderr).toContain("exclusive lock");
+        expect(blocked.events).not.toContain("inventory\n");
+        expect(blocked.calls).toBe("");
+      }
+
+      writeFileSync(release, "");
+      const [exitCode] = await holderExit;
+      expect(exitCode).toBe(0);
+      const recovered = run(["inspect", "--volume-id", volume], {}, "", dir);
+      expect(recovered.status, recovered.stderr).toBe(0);
+      expect(recovered.events).toContain("inventory\n");
+    } finally {
+      if (holder.exitCode === null) {
+        holder.kill();
+        await holderExit;
+      }
+    }
+  }, 10_000);
 
   it("mounts an existing XFS filesystem without formatting and reruns idempotently", () => {
     const result = run(["mount", "--volume-id", volume, "--expected-uuid", uuid], {

@@ -9,6 +9,8 @@ umask 077
 
 MOUNTPOINT=/srv/wallie/postgres
 FSTAB=/etc/fstab
+LOCKDIR=/run/wallie-postgres
+LOCKFILE=prepare-volume.lock
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
@@ -17,6 +19,10 @@ usage() {
 }
 
 require_root() { (( EUID == 0 )) || die 'Run as root to inspect the complete block-device signatures and change mounts'; }
+lock_directory_identity() { stat -c '%u:%a' "$LOCKDIR"; }
+lock_fd() { flock --exclusive --nonblock 9; }
+trigger_udev_change() { udevadm trigger --action=change "$1"; }
+settle_udev() { udevadm settle --timeout=30; }
 read_inventory() { lsblk --nodeps --noheadings --output PATH,TYPE,SERIAL; }
 read_device_tree() { lsblk --noheadings --raw --output PATH,TYPE "$1"; }
 read_device_mounts() { lsblk --noheadings --raw --output MOUNTPOINTS "$1"; }
@@ -33,6 +39,21 @@ read_mountpoint_entries() { ls -A "$MOUNTPOINT"; }
 canonical_device() { readlink -f "$1"; }
 format_xfs() { mkfs.xfs "$1" >/dev/null; }
 mount_xfs() { mount --types xfs "UUID=$1" "$MOUNTPOINT"; }
+
+acquire_volume_lock() {
+  local lock_file
+  [[ ! -L $LOCKDIR ]] || die 'Volume lock directory is a symlink'
+  mkdir -p -m 0700 "$LOCKDIR" || die 'Cannot create private volume lock directory'
+  [[ -d $LOCKDIR && ! -L $LOCKDIR ]] || die 'Volume lock directory is invalid'
+  [[ $(lock_directory_identity) == 0:700 ]] || die 'Volume lock directory must be root-owned and mode 0700'
+  lock_file="$LOCKDIR/$LOCKFILE"
+  [[ ! -L $lock_file ]] || die 'Volume lock file is a symlink'
+  [[ ! -e $lock_file || -f $lock_file ]] || die 'Volume lock file is not a regular file'
+  exec 9>>"$lock_file" || die 'Cannot open volume lock file'
+  lock_fd || die 'Another PostgreSQL volume preparation holds the exclusive lock'
+}
+
+release_volume_lock() { exec 9>&-; }
 
 resolve_device() {
   local wanted=${1//-/} inventory path kind serial extra found= count=0
@@ -276,6 +297,7 @@ main() {
   esac
   [[ $volume_id =~ ^vol-[0-9a-f]{17}$ ]] || die 'Use an exact 17-digit hexadecimal EBS volume ID'
   require_root
+  acquire_volume_lock
 
   device=$(resolve_device "$volume_id")
   ensure_unpartitioned "$device"
@@ -292,6 +314,8 @@ main() {
     [[ $(fstab_state UNFORMATTED "$device") == missing ]] || die 'Fstab changed before formatting'
     [[ $(filesystem_state "$device") == blank ]] || die 'Disk changed before formatting'
     format_xfs "$device"
+    trigger_udev_change "$device" || die 'udevadm could not trigger the formatted device change'
+    settle_udev || die 'udevadm settle failed after formatting; stop before UUID inspection'
     state=$(filesystem_state "$device")
     [[ $state == xfs:* ]] || die 'Formatted filesystem cannot be verified'
   else
@@ -302,6 +326,7 @@ main() {
         ensure_empty_mountpoint
         printf 'volume_id=%s device=%s serial=%s partitions=none signatures=none filesystem=blank mount=unmounted fstab=missing\n' \
           "$volume_id" "$device" "$volume_id"
+        release_volume_lock
         return
       fi
       die 'Disk is blank; use initialize with explicit matching format confirmation'
@@ -319,6 +344,7 @@ main() {
     if [[ $mount_state == unmounted ]]; then ensure_empty_mountpoint; fi
     printf 'volume_id=%s device=%s serial=%s partitions=none signatures=xfs filesystem=xfs uuid=%s mount=%s fstab=%s\n' \
       "$volume_id" "$device" "$volume_id" "$uuid" "$mount_state" "$fstab_status"
+    release_volume_lock
     return
   fi
 
@@ -345,6 +371,7 @@ main() {
   fi
   printf 'volume_id=%s device=%s filesystem=xfs uuid=%s mount=mounted fstab=exact\n' \
     "$volume_id" "$device" "$uuid"
+  release_volume_lock
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
