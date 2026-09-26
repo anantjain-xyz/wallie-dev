@@ -91,6 +91,11 @@ describe("offline PostgreSQL host deployment grants", () => {
     expect(
       compute.Statement.some((statement) => actions(statement).includes("ec2:RunInstances")),
     ).toBe(true);
+    expect(findStatement(compute, "ec2:DescribeInstanceCreditSpecifications")[0].Resource).toBe(
+      "*",
+    );
+    expect(findStatement(compute, "ec2:DescribeInstanceTypes")[0].Resource).toBe("*");
+    expect(findStatement(compute, "ec2:DescribeTags")[0].Resource).toBe("*");
     for (const statement of [...identity.Statement, ...compute.Statement]) {
       expect(statement.Effect).toBe("Allow");
       expect(statement.Condition.StringEquals["aws:PrincipalAccount"]).toBe(account);

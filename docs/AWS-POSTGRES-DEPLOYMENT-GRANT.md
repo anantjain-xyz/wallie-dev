@@ -2,11 +2,11 @@
 
 **Render two expiring IAM policies for the private host foundation.** The renderer makes no AWS calls. It does not enable a database, an operator session, or a backup path.
 
-| Policy           | Grant                                                                                                                                                                                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity/network | Named host role with the fixed five-action permissions boundary and matching inline SSM policy; `PassRole` only for that role. Reviewed VPC, `database-a` subnet, Supabase database group, SSM endpoint group/rules, and `ssm`/`ssmmessages` endpoints. |
-| Compute/storage  | Exact Amazon-owned AL2023 AMI, one named EC2 host, separate encrypted 100 GiB gp3 data volume and attachment, reviewed customer-managed EBS KMS key.                                                                                                    |
-| Both             | Every permission expires at the same required UTC deadline 2–24 hours after rendering. No operator `StartSession`, database runtime, secrets, backups, public routes, SSH, termination, or teardown.                                                    |
+| Policy           | Grant                                                                                                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Identity/network | Named host role with the fixed five-action permissions boundary and matching inline SSM policy. Reviewed VPC, `database-a` subnet, Supabase database group, SSM endpoint group/rules, and `ssm`/`ssmmessages` endpoints. |
+| Compute/storage  | `PassRole` only for the named host role. Exact Amazon-owned AL2023 AMI, one named EC2 host, separate encrypted 100 GiB gp3 data volume and attachment, reviewed customer-managed EBS KMS key.                            |
+| Both             | Every permission expires at the same required UTC deadline 2–24 hours after rendering. No operator `StartSession`, database runtime, secrets, backups, public routes, SSH, termination, or teardown.                     |
 
 IAM conditions cannot prove the **number** of resources, exact security-group rule tuples, complete endpoint configuration, or absence of unmodeled resources. `ec2:KmsKeyId` applies to standalone `CreateVolume`, not the `RunInstances` root volume: Terraform pins both keys, while the saved plan and live readback must verify the root. The fixed [permissions boundary](../infra/aws/postgres-host-boundary-policy.json) caps the role even if an inline policy is changed during the grant.
 
