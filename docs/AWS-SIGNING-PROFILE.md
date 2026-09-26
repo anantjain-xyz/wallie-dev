@@ -1,6 +1,6 @@
 # AWS image-signing profile
 
-**Provision one AWS Signer profile.** Apply infrastructure changes only after review and merge; image signing uses the separate [qualified workflow](AWS-IMAGE-PUBLISHING.md#verification-boundary).
+**Provision one AWS Signer profile on a fresh installation.** The existing staging profile is active; adding the Supabase PostgreSQL repository does not change it. Image signing uses the separate [qualified workflow](AWS-IMAGE-PUBLISHING.md#verification-boundary).
 
 ```mermaid
 flowchart LR
@@ -37,7 +37,7 @@ aws sts get-caller-identity
 ```
 
 - Confirm the expected account and a non-root identity.
-- Create customer-managed **WallieStagingSigningProfileBootstrap** from that file. Attach it to `wallie-local` only for the reviewed infrastructure operation; detach it after verification and before publishing.
+- Only when creating the profile: create customer-managed **WallieStagingSigningProfileBootstrap** from that file. Attach it to `wallie-local` for the reviewed infrastructure operation; detach it after verification and before publishing. The existing staging repository-only addition needs no Signer bootstrap grant.
 - Existing registry/state grants are still required. The image-publishing policy is unchanged; separate policy files do not isolate privileges when attached to the same identity.
 - **Creation scope:** AWS requires `Resource: "*"` for `PutSigningProfile`. Conditions require the expected account, region, and six fixed request tags. The `Name` tag does **not** constrain the API's profile-name argument, platform, or validity. [AWS Signer IAM reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_signer.html)
 - Read/tag grants target the exact profile ARN; metadata updates preserve the ownership marker. Bootstrap tagging can claim an untagged profile at that name, so the absence check below is mandatory.
@@ -55,8 +55,8 @@ aws signer get-signing-profile --profile-name wallie_staging_images --region "$A
 
 Follow the [registry saved-plan procedure](AWS-STAGING-REGISTRY.md#plan-review-apply).
 
-- Existing staging: **1 addition, 0 changes, 0 deletions**. Both ECR repositories must remain unchanged.
-- Fresh installation: **3 additions** (two repositories + profile).
+- Existing staging with its verified profile: **1 addition, 0 changes, 0 deletions** (Supabase PostgreSQL repository only). The web/worker repositories and profile remain unchanged.
+- Fresh installation: **4 additions** (three repositories + profile). A state with all three repositories but no profile adds only the profile.
 - Review the exact account/region, name, platform, one-year validity, and ownership tags before applying the saved plan.
 
 ## Verify and remove bootstrap access
@@ -75,7 +75,7 @@ aws signer list-tags-for-resource --resource-arn "$WALLIE_SIGNING_PROFILE_ARN" -
 ```
 
 - Require all six tags: `Name=wallie_staging_images`, `Project=Wallie`, `Environment=staging`, `ManagedBy=Terraform`, `Component=signing`, `WallieStack=wallie-staging-registry`. Stop on a read error or any missing/mismatched value.
-- Run the final registry plan with `-detailed-exitcode`; require **0**. Then detach **WallieStagingSigningProfileBootstrap** in IAM.
+- Run the final registry plan with `-detailed-exitcode`; require **0**. If the profile was created in this operation, detach **WallieStagingSigningProfileBootstrap** in IAM.
 - Mock tests cover configuration, output wiring, and account/root guards. Mock results alone do not prove live IAM or creation; see the recorded live check below.
 - Use the [gated signing workflow](AWS-IMAGE-SIGNING.md) with fresh passing image scans. Both images have passed [live signing and strict verification](AWS-IMAGE-PUBLISHING.md#verification-boundary); deployment approval remains separate.
 
