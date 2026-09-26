@@ -41,7 +41,7 @@ encode, but they are not repository policy.
 ## Reading order
 
 For the proposed shared AWS deployment and review batches, see the
-[AWS migration plan](AWS_VPC_DEPLOYMENT_PLAN.md). The [self-hosting guide](SELF_HOSTING.md)
+[AWS migration plan](AWS_VPC_DEPLOYMENT_PLAN.md) and [private PostgreSQL host foundation](AWS-POSTGRES-HOST.md). The [self-hosting guide](SELF_HOSTING.md)
 remains the current deployment procedure.
 
 1. Read `AGENTS.md` and the one task-specific document from the table above.
