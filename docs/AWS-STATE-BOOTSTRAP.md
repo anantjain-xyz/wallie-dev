@@ -88,7 +88,7 @@ aws s3api get-bucket-policy --bucket "$WALLIE_STATE_BUCKET" --expected-bucket-ow
 ## Reduce permissions afterward
 
 - After the checks pass, create and attach `WallieStagingStateAccess` from `state-access-policy.json`, then detach `WallieStagingStateBootstrap`.
-- Backend access is scoped to `staging/foundation.tfstate`, `staging/registry.tfstate`, `staging/application.tfstate`, and `staging/postgres.tfstate`, plus their `.tflock` files; it cannot delete state objects. Existing installations update this policy before first use of a new backend, as with the [image registry](AWS-STAGING-REGISTRY.md), [application foundation](AWS-APPLICATION-FOUNDATION.md), and PostgreSQL host.
+- Backend access is scoped to `staging/foundation.tfstate`, `staging/registry.tfstate`, `staging/application.tfstate`, `staging/postgres.tfstate`, and `staging/backup.tfstate`, plus their `.tflock` files; it cannot delete state objects. Existing installations update this policy before first use of a new backend, as with the [image registry](AWS-STAGING-REGISTRY.md), [application foundation](AWS-APPLICATION-FOUNDATION.md), [PostgreSQL host](AWS-POSTGRES-HOST.md), and [backup destination](AWS-POSTGRES-BACKUP-DESTINATION.md).
 - The generated [S3 backend configuration](https://developer.hashicorp.com/terraform/language/backend/s3) enables locking, encryption, and the expected-account guard. It contains no credentials and is for the default Terraform workspace.
 - Continue with the [network foundation](AWS-STAGING-NETWORK.md) and its separate deployment permissions; verify Terraform backend initialization and locking with the reduced state policy.
 
