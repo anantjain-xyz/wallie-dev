@@ -11,14 +11,14 @@ flowchart LR
     host --> data[("Encrypted gp3 EBS<br/>PGDATA + pgsodium key later")]
 ```
 
-| Resource       | Contract                                                                                                              |
-| -------------- | --------------------------------------------------------------------------------------------------------------------- |
-| AMI            | Exact Amazon-owned AL2023 x86-64 EBS ID; no moving `latest` lookup.                                                   |
-| Host           | Reviewed DB subnet/group, IMDSv2, no public IP, SSH key, user data, or database listener.                             |
-| Administration | Minimal five-action SSM instance policy; two private endpoints; no Parameter Store reads. Operator grant is separate. |
-| Storage        | Independent 100 GiB gp3 data volume, encrypted with the account's default EBS key. Root volume is disposable.         |
-| Availability   | One AZ for staging qualification; no failover claim.                                                                  |
-| State          | Separate `staging/postgres.tfstate` and lock in the existing private bucket.                                          |
+| Resource       | Contract                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AMI            | Exact Amazon-owned AL2023 x86-64 EBS ID; no moving `latest` lookup.                                                                                     |
+| Host           | Reviewed DB subnet/group, IMDSv2, no public IP, SSH key, user data, or database listener.                                                               |
+| Administration | Minimal five-action SSM instance policy and matching permissions boundary; two private endpoints; no Parameter Store reads. Operator grant is separate. |
+| Storage        | Independent 100 GiB gp3 data volume, encrypted with the account's default EBS key. Root volume is disposable.                                           |
+| Availability   | One AZ for staging qualification; no failover claim.                                                                                                    |
+| State          | Separate `staging/postgres.tfstate` and lock in the existing private bucket.                                                                            |
 
 ## Before a live plan
 
@@ -26,7 +26,7 @@ flowchart LR
 - **Network:** The [Supabase network slice](AWS-SUPABASE-NETWORK.md) must be separately reviewed, applied, and verified to supply `db_security_group_id`. Its guide currently blocks apply; stop here until that gate is cleared.
 - **AMI:** Verify the exact regional image is Amazon-owned, named `al2023-ami-2023.*`, x86-64, and EBS-backed. Confirm its SSM Agent supports `ssmmessages`. [AWS endpoint guidance](https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-create-vpc.html).
 - **EBS key:** Check `aws ec2 get-ebs-default-kms-key-id` and selected key metadata before plan and again before apply. The temporary deployment grant must cover that key.
-- **IAM:** Update `WallieStagingStateAccess` for the new state/lock objects. This PR has no deployment or operator grant. `wallie-local` already has 10/10 policy attachments; use a reviewed one-for-one temporary swap and restore it afterward. Scope operator `StartSession` to the exact instance and shell document.
+- **IAM:** Update the live `WallieStagingStateAccess` policy for the new state/lock objects. Have an administrator create and verify the fixed five-action `WallieStagingPostgresHostBoundary` policy, then render and review the [two temporary host deployment policies](AWS-POSTGRES-DEPLOYMENT-GRANT.md). `wallie-local` already has 10/10 policy attachments; use a reviewed two-for-two temporary swap and restore it afterward. Scope a later operator `StartSession` grant to the exact instance and shell document.
 - **Session settings:** Inspect account Session Manager preferences. CloudWatch/S3 transcripts or KMS session encryption need additional private network and role permissions. If enabled, defer sessions until those paths exist. The first no-secrets connection probe may use CloudTrail StartSession/TerminateSession events; database administration requires transcript logging.
 
 Write IDs only to ignored `.wallie/aws/postgres.tfvars.json`:

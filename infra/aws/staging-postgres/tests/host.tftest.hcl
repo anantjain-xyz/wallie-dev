@@ -91,6 +91,7 @@ run "ssm_only_admin_path" {
 
   assert {
     condition = (
+      aws_iam_role.host.permissions_boundary == "arn:aws:iam::123456789012:policy/WallieStagingPostgresHostBoundary" &&
       toset(keys(aws_vpc_endpoint.ssm)) == toset(["ssm", "ssmmessages"]) &&
       alltrue([for endpoint in aws_vpc_endpoint.ssm :
         endpoint.vpc_id == var.vpc_id &&

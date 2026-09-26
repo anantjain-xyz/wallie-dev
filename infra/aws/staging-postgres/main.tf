@@ -34,7 +34,8 @@ locals {
 # This profile is for SSM registration and sessions only. The database runtime
 # will need a separately reviewed image, secret, and backup policy.
 resource "aws_iam_role" "host" {
-  name = local.name
+  name                 = local.name
+  permissions_boundary = "arn:aws:iam::${var.aws_account_id}:policy/WallieStagingPostgresHostBoundary"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

@@ -1,0 +1,330 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadEc2Inventory",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVolumeStatus"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CreateBoundedHostRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": "wallie-staging-postgres",
+          "iam:PermissionsBoundary": "arn:aws:iam::<ACCOUNT_ID>:policy/WallieStagingPostgresHostBoundary"
+        }
+      }
+    },
+    {
+      "Sid": "TagHostRole",
+      "Effect": "Allow",
+      "Action": "iam:TagRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": "wallie-staging-postgres"
+        }
+      }
+    },
+    {
+      "Sid": "CreateHostProfile",
+      "Effect": "Allow",
+      "Action": ["iam:CreateInstanceProfile", "iam:TagInstanceProfile"],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:instance-profile/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": "wallie-staging-postgres"
+        }
+      }
+    },
+    {
+      "Sid": "PutBoundedSessionPolicy",
+      "Effect": "Allow",
+      "Action": "iam:PutRolePolicy",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::<ACCOUNT_ID>:policy/WallieStagingPostgresHostBoundary"
+        }
+      }
+    },
+    {
+      "Sid": "AddRoleToHostProfile",
+      "Effect": "Allow",
+      "Action": "iam:AddRoleToInstanceProfile",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:instance-profile/wallie-staging-postgres"
+    },
+    {
+      "Sid": "PassOnlyHostRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+      "Condition": { "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" } }
+    },
+    {
+      "Sid": "ReadHostIdentity",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:GetInstanceProfile",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/wallie-staging-postgres",
+        "arn:aws:iam::<ACCOUNT_ID>:instance-profile/wallie-staging-postgres"
+      ]
+    },
+    {
+      "Sid": "UseOwnedVpc",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSecurityGroup", "ec2:CreateVpcEndpoint"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>",
+      "Condition": { "StringEquals": { "aws:ResourceTag/WallieStack": "wallie-staging-network" } }
+    },
+    {
+      "Sid": "CreateNamedSsmGroup",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": "wallie-staging-postgres-ssm-endpoints"
+        }
+      }
+    },
+    {
+      "Sid": "UseReviewedDatabaseSubnet",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpcEndpoint", "ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:subnet/<SUBNET_ID>"
+    },
+    {
+      "Sid": "UseNamedSsmGroup",
+      "Effect": "Allow",
+      "Action": "ec2:CreateVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
+          "aws:ResourceTag/Name": "wallie-staging-postgres-ssm-endpoints"
+        }
+      }
+    },
+    {
+      "Sid": "CreateOnlySsmEndpoints",
+      "Effect": "Allow",
+      "Action": "ec2:CreateVpcEndpoint",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": [
+            "wallie-staging-postgres-ssm",
+            "wallie-staging-postgres-ssmmessages"
+          ],
+          "ec2:VpceServiceOwner": "amazon",
+          "ec2:VpceServiceName": [
+            "com.amazonaws.<REGION>.ssm",
+            "com.amazonaws.<REGION>.ssmmessages"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageSsmGroupRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
+          "aws:ResourceTag/Name": "wallie-staging-postgres-ssm-endpoints"
+        },
+        "ArnEquals": { "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>" }
+      }
+    },
+    {
+      "Sid": "AddDatabaseSsmEgress",
+      "Effect": "Allow",
+      "Action": "ec2:AuthorizeSecurityGroupEgress",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DATABASE_SECURITY_GROUP_ID>",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-network",
+          "aws:ResourceTag/Component": "self-hosted-supabase",
+          "aws:ResourceTag/Name": "wallie-staging-supabase-db"
+        },
+        "ArnEquals": { "ec2:Vpc": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc/<VPC_ID>" }
+      }
+    },
+    {
+      "Sid": "CreateNamedSsmRules",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress"],
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": [
+            "wallie-staging-postgres-ssm-ingress",
+            "wallie-staging-postgres-ssm-egress"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "LaunchPinnedHostInputs",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:<REGION>::image/<AMI_ID>",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/<DATABASE_SECURITY_GROUP_ID>"
+      ]
+    },
+    {
+      "Sid": "LaunchNamedHost",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": "wallie-staging-postgres",
+          "ec2:InstanceType": ["t3.large", "m6i.large", "m7i.large"],
+          "ec2:MetadataHttpTokens": "required",
+          "ec2:InstanceProfile": "arn:aws:iam::<ACCOUNT_ID>:instance-profile/wallie-staging-postgres"
+        }
+      }
+    },
+    {
+      "Sid": "LaunchPrivateInterface",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:network-interface/*",
+      "Condition": { "Bool": { "ec2:AssociatePublicIpAddress": "false" } }
+    },
+    {
+      "Sid": "LaunchEncryptedRootVolume",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:volume/*",
+      "Condition": { "Bool": { "ec2:Encrypted": "true" } }
+    },
+    {
+      "Sid": "CreateEncryptedDataVolume",
+      "Effect": "Allow",
+      "Action": "ec2:CreateVolume",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "aws:RequestTag/Name": "wallie-staging-postgres-data",
+          "ec2:VolumeType": "gp3"
+        },
+        "Bool": { "ec2:Encrypted": "true" },
+        "NumericGreaterThanEquals": { "ec2:VolumeSize": "100" },
+        "NumericLessThanEquals": { "ec2:VolumeSize": "1024" }
+      }
+    },
+    {
+      "Sid": "AttachOnlyNamedHostData",
+      "Effect": "Allow",
+      "Action": "ec2:AttachVolume",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
+          "aws:ResourceTag/Name": ["wallie-staging-postgres", "wallie-staging-postgres-data"]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectNamedHostTermination",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyInstanceAttribute",
+      "Resource": "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/WallieStack": "wallie-staging-postgres",
+          "aws:ResourceTag/Name": "wallie-staging-postgres",
+          "ec2:Attribute": "disableApiTermination"
+        }
+      }
+    },
+    {
+      "Sid": "TagOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:security-group-rule/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:vpc-endpoint/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/*",
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/WallieStack": "wallie-staging-postgres",
+          "ec2:CreateAction": [
+            "CreateSecurityGroup",
+            "AuthorizeSecurityGroupIngress",
+            "AuthorizeSecurityGroupEgress",
+            "CreateVpcEndpoint",
+            "RunInstances",
+            "CreateVolume"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["WallieStack", "Project", "Environment", "ManagedBy", "Component", "Name"]
+        }
+      }
+    },
+    {
+      "Sid": "UseVerifiedEbsKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:ReEncryptFrom",
+        "kms:ReEncryptTo"
+      ],
+      "Resource": "<KMS_KEY_ARN>",
+      "Condition": { "StringEquals": { "kms:ViaService": "ec2.<REGION>.amazonaws.com" } }
+    },
+    {
+      "Sid": "GrantVerifiedEbsKeyToEc2",
+      "Effect": "Allow",
+      "Action": "kms:CreateGrant",
+      "Resource": "<KMS_KEY_ARN>",
+      "Condition": {
+        "Bool": { "kms:GrantIsForAWSResource": "true" },
+        "StringEquals": { "kms:ViaService": "ec2.<REGION>.amazonaws.com" }
+      }
+    }
+  ]
+}
