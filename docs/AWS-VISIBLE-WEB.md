@@ -1,5 +1,7 @@
 # Visible AWS web canary
 
+**Milestone · September 26, 2026:** the hosted-Supabase web canary returned HTTP 200 at `https://aws-staging.wallie.dev` with valid TLS and reached 1/1 healthy ECS task. The service was then scaled to 0/0. See [milestone, replay, and teardown](AWS-STAGING-MILESTONE.md). The instructions below are the original deployment sequence; teardown is not yet verified complete.
+
 **Deploy only the Wallie web container at `aws-staging.wallie.dev`.** This uses the **existing hosted Wallie Supabase project and live data**. It does not move `wallie.dev`, the Railway worker, or Supabase data into the VPC. The first service apply has zero tasks; traffic and task startup are separate reviewed steps.
 
 ```mermaid

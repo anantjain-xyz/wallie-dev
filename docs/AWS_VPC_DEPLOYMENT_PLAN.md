@@ -2,22 +2,23 @@
 
 Proposal · September 19, 2026
 
-**Progress · September 22, 2026 (UTC)**
+**Progress · September 26, 2026**
 
-- **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, an active OCI signing profile, and the [empty ECS cluster with web/worker log groups](AWS-APPLICATION-FOUNDATION.md).
+- **Web milestone:** [`aws-staging.wallie.dev` served HTTP 200 over valid TLS](AWS-STAGING-MILESTONE.md) from one healthy private ECS web task through a public ALB. That task used the existing hosted Wallie Supabase project via NAT. The ECS service is now scaled to 0/0, and the unused PostgreSQL qualification EC2 host is stopped. Billable-resource teardown is planned, with completion subject to AWS readback.
+- **Deployed foundations:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, an active OCI signing profile, ECS cluster/log groups, networking, secret containers, and a private PostgreSQL qualification host. The host never ran PostgreSQL.
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
-- **Live image checks:** web `fc605b36` and worker `924e28b8` passed smoke tests, uploads, manifest/config verification, fresh ECR BASIC scans with zero findings, and strict signature verification. Both use the pinned Amazon Linux 2023 runtime; [qualification details](AWS-IMAGE-PUBLISHING.md#verification-boundary). Neither image is approved for deployment.
-- **Next:** private task connectivity, release provenance, broader package scanning, and Linux CI/GitHub OIDC publishing. No application or database is running on AWS yet.
+- **Earlier image checks:** web `fc605b36` and worker `924e28b8` passed smoke tests, uploads, manifest/config verification, fresh ECR BASIC scans with zero findings, and strict signature verification. Both use the pinned Amazon Linux 2023 runtime; [qualification details](AWS-IMAGE-PUBLISHING.md#verification-boundary). The later canary used a separately reviewed pinned web digest; no worker image has been launched on AWS.
+- **Next for the full migration:** AWS worker, self-hosted Supabase API/database/storage, sandbox execution, release provenance, broader package scanning, and Linux CI/GitHub OIDC publishing. The canary did not qualify these or move production traffic.
 
-| Remaining               | Exit check                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
-| Image releases          | Provenance, broader package scanning, Linux CI tooling, and GitHub OIDC publishing           |
-| AWS application hosting | ECS web/workers, TLS/ingress, secrets, egress, monitoring, drain-aware rollouts and rollback |
-| AWS Supabase            | Database/API deployment, object storage, backups, restore/failover, and upgrades             |
-| In-account sandboxes    | Supported controller/runners; isolation, cleanup, and every sandbox use case qualified       |
-| Staging validation      | Full session/review/rejection workflow, integrations, streaming, and crash recovery          |
-| wallie.dev cutover      | Move compute, migrate state, rehearse rollback, then retire old hosting services             |
-| Enterprise profile      | Private access, customer SSO, webhook strategy, independent install/upgrade/support          |
+| Remaining               | Exit check                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| Image releases          | Provenance, broader package scanning, Linux CI tooling, and GitHub OIDC publishing                        |
+| AWS application hosting | Web canary proved ECS/HTTPS; production web and worker need monitoring, drain-aware rollouts and rollback |
+| AWS Supabase            | Database/API deployment, object storage, backups, restore/failover, and upgrades                          |
+| In-account sandboxes    | Supported controller/runners; isolation, cleanup, and every sandbox use case qualified                    |
+| Staging validation      | Full session/review/rejection workflow, integrations, streaming, and crash recovery                       |
+| wallie.dev cutover      | Move compute, migrate state, rehearse rollback, then retire old hosting services                          |
+| Enterprise profile      | Private access, customer SSO, webhook strategy, independent install/upgrade/support                       |
 
 - **Open dependencies:** supported full sandbox self-hosting; database availability and recovery targets.
 - [Self-hosted Supabase staging network](AWS-SUPABASE-NETWORK.md) prepares private API/database paths without deploying either service.
