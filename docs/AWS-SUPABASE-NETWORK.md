@@ -1,5 +1,7 @@
 # Self-hosted Supabase staging network
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Reserve private paths for Supabase before deploying its database or APIs.** This opt-in Terraform change prepares security groups only; it creates no compute, storage, public ingress, TLS, or paid endpoint.
 
 ```mermaid

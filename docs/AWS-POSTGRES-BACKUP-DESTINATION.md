@@ -1,5 +1,7 @@
 # AWS staging PostgreSQL backup destination
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare an empty S3 bucket outside the PostgreSQL host state with a reviewed default retention period.** Uploads remain denied until writer access, a private network path, and recovery testing are reviewed.
 
 ```mermaid

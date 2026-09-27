@@ -1,5 +1,7 @@
 # Mirror the locked Supabase PostgreSQL image
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Copy the reviewed Supabase PostgreSQL OCI index into the private staging ECR repository without rebuilding it.** The mirror is an image inventory step; it does not start PostgreSQL or authorize deployment.
 
 | Item                | Required value                                                                                                                                                          |

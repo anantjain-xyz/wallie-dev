@@ -1,5 +1,7 @@
 # Private runtime-secret injection smoke
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Qualify one non-sensitive canary per component through ECS secret injection.** Reuse the [private task smoke](AWS-PRIVATE-TASK-SMOKE.md) lifecycle; Wallie never starts and `deployable: false` remains.
 
 ```mermaid

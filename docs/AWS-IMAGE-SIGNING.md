@@ -1,5 +1,7 @@
 # Sign qualified staging images
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Optionally sign and strictly verify the image produced by the publisher's current run.** Every image must pass the unchanged fresh High/Critical scan gate before signing.
 
 ```mermaid

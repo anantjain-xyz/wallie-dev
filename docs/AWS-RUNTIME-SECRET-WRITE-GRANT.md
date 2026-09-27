@@ -1,5 +1,7 @@
 # Temporary runtime-secret write grant
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Add `PutSecretValue` to the existing `WallieStagingRuntimeSecrets` policy only long enough to populate the two empty staging secrets.** This renderer makes no AWS calls and contains no values.
 
 | Boundary  | Requirement                                                                                                                                                                                                          |

@@ -1,5 +1,7 @@
 # AWS staging image registry
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Manage three private ECR repositories and one image-signing profile.** Deploy after review and merge. The existing staging installation adds only the empty Supabase PostgreSQL repository; [image mirroring](AWS-POSTGRES-IMAGE-MIRROR.md) is a separate operation.
 
 ```mermaid

@@ -1,5 +1,7 @@
 # ECS service-linked-role bootstrap
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Create the missing account-wide ECS service-linked role before the [application foundation](AWS-APPLICATION-FOUNDATION.md). Review and merge this PR before live creation.**
 
 - Commercial AWS only; IAM is global. This creates no cluster, task, network, or application role.

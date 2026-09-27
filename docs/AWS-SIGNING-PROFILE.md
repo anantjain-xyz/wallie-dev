@@ -1,5 +1,7 @@
 # AWS image-signing profile
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Provision one AWS Signer profile on a fresh installation.** The existing staging profile is active; adding the Supabase PostgreSQL repository does not change it. Image signing uses the separate [qualified workflow](AWS-IMAGE-PUBLISHING.md#verification-boundary).
 
 ```mermaid

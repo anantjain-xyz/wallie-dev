@@ -1,5 +1,7 @@
 # Temporary PostgreSQL backup destination grant
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Permit one reviewed apply of the empty staging backup bucket.** The renderer makes no AWS calls. Its 2–24 hour policy grants bucket configuration and readback on one exact name to `wallie-local`; it grants no object writes, replication, bucket deletion, or IAM changes.
 
 | Boundary      | Requirement                                                                                                    |

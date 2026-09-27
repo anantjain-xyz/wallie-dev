@@ -1,5 +1,7 @@
 # Temporary PostgreSQL host deployment grant
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Render two expiring IAM policies for the private host foundation.** The renderer makes no AWS calls. It does not enable a database, an operator session, or a backup path.
 
 | Policy           | Grant                                                                                                                                                                                                         |

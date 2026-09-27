@@ -1,5 +1,7 @@
 # First real staging tasks
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare one web and one worker Fargate task definition for an isolated, self-hosted staging Supabase stack (manifest v1).** The renderer is offline: it registers nothing and never handles secret values. Task launch remains blocked until the HTTPS path below exists. The separate [existing-project web canary](AWS-VISIBLE-WEB.md) uses manifest v2 and never starts a worker.
 
 ```mermaid

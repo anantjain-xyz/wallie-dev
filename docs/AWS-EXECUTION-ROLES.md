@@ -1,5 +1,7 @@
 # ECS execution roles
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **An administrator manages two fixed roles; the deployment identity can only inspect them.** Image pulls and log delivery are the default. An explicit option adds access to each role's own runtime secret. Apply changes only after review and merge.
 
 ```mermaid

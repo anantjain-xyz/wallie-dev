@@ -1,5 +1,7 @@
 # Runtime secret canary preparation
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare one non-sensitive version in each empty runtime secret before testing ECS injection.** This offline helper renders requests and compares metadata; it never calls AWS or accepts real secret values.
 
 | Contract  | Value                                                                              |

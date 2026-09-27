@@ -1,5 +1,7 @@
 # Private PostgreSQL session transcripts
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare a private CloudWatch Logs path for shell sessions on the staging PostgreSQL host.** The Terraform change does not enable Session Manager logging, grant an operator `StartSession`, start PostgreSQL, or apply live infrastructure.
 
 ```mermaid

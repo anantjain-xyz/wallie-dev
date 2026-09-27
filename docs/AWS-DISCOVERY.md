@@ -1,5 +1,7 @@
 # AWS staging discovery
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Collect regional inventory before choosing the database and sandbox infrastructure.** No resources are created or changed.
 
 ## Access

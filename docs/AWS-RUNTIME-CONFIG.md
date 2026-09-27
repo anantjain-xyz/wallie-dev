@@ -1,5 +1,7 @@
 # AWS runtime configuration contract
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare the minimum web/worker variable map without writing values or registering tasks.** Use before populating the real runtime secrets for an isolated staging database.
 
 | Category              | Existing variables                                                                        | Source                                          |

@@ -1,5 +1,7 @@
 # Runtime secrets foundation
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Create two empty secret containers; populate values in a later reviewed workflow.** The application root keeps its existing state and defaults to no secrets.
 
 ```mermaid

@@ -1,5 +1,7 @@
 # Private ECS pull and log smoke
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare four short-lived tasks: each qualified image in each private service subnet.** This batch provides offline request rendering and evidence comparison. Live execution requires review and merge; no task has been qualified by this change.
 
 ```mermaid
@@ -22,6 +24,8 @@ flowchart LR
 | Logs           | Existing component log group; blocking delivery; unique run/task stream                       |
 
 Fargate 1.4.0 sends ECR authentication, image pulls, and logs through the task ENI. Capture the ENI **while RUNNING**: stopping releases it. [AWS networking](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html)
+
+The separate [secret injection smoke](AWS-SECRET-INJECTION-SMOKE.md) extends this lifecycle with non-sensitive canaries.
 
 ## Prerequisites and access
 
