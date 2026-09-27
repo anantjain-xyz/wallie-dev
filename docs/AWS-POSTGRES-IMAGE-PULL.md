@@ -1,5 +1,7 @@
 # Private PostgreSQL image pull path
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare a default-off path from the private PostgreSQL host to its exact ECR repository.** This change does not mirror an image, start a host or database, supply a secret, or make the repository reachable from the Internet.
 
 ```mermaid

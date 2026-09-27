@@ -1,6 +1,8 @@
 # Visible AWS web canary
 
-**Deploy only the Wallie web container at `aws-staging.wallie.dev`.** This uses the **existing hosted Wallie Supabase project and live data**. It does not move `wallie.dev`, the Railway worker, or Supabase data into the VPC. The first service apply has zero tasks; traffic and task startup are separate reviewed steps.
+**Milestone · September 26–27, 2026:** the hosted-Supabase web canary returned HTTP 200 at `https://aws-staging.wallie.dev` with valid TLS and reached 1/1 healthy ECS task. The service was scaled to 0/0, then its AWS infrastructure was destroyed and verified. See [milestone, replay, and teardown](AWS-STAGING-MILESTONE.md). The instructions below record the original deployment sequence and require new account, domain, and isolated Supabase inputs before reuse.
+
+**Original canary scope:** Only the Wallie web container ran at `aws-staging.wallie.dev`, using the **existing hosted Wallie Supabase project and live data**. It did not move `wallie.dev`, the Railway worker, or Supabase data into the VPC. The original first service apply had zero tasks; traffic and task startup were separate reviewed steps. Do not reuse Wallie's production project or encryption key for a new installation.
 
 ```mermaid
 flowchart LR
@@ -15,7 +17,7 @@ flowchart LR
 | Project | Compare the **existing** project reference and HTTPS origin from the current Wallie deployment with both `existingWallieSupabaseUrl` and `hostedSupabaseUrl`; all three manifest origins must match. Review reuse of the existing production `WALLIE_ENCRYPTION_KEY`.                                                                                                               |
 | DNS     | `wallie.dev` is currently delegated outside Route 53. Confirm control of `aws-staging.wallie.dev`, no existing A/CNAME, and an operator for the current DNS provider. Terraform never edits DNS.                                                                                                                                                                                    |
 | Runtime | Apply the already merged `services-a` HTTPS NAT option; verify the route and two task security groups. Populate only the web runtime secret. The existing web digest `sha256:038383bb66be04cd81d4c6110d3d4a18aca427110ebab0502e31a84131602e4b` is aligned with current runtime inputs; require fresh ECR image/scanning readback and strict signature verification before using it. |
-| Auth    | Add `https://aws-staging.wallie.dev/auth/confirm` to the **existing** Supabase Auth redirect allowlist before testing sign-in. Do not change the production site URL.                                                                                                                                                                                                               |
+| Auth    | Add `https://aws-staging.wallie.dev/auth/confirm**` to the **existing** Supabase Auth redirect allowlist before testing sign-in. The `**` covers the app's `?next=...` callbacks. Do not change the production site URL.                                                                                                                                                            |
 | Scope   | The web image receives only the Supabase secret and encryption key. GitHub app, OAuth, webhook, and other optional integration credentials are absent. This is a login/read canary, not full Wallie functionality. The existing Railway worker may process jobs created through this web app; session progress does not prove an AWS worker.                                        |
 
 ## 1. Review and write the web secret

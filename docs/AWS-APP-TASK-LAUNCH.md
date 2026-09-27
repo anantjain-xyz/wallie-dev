@@ -1,5 +1,7 @@
 # One-off ECS app launch
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare a one-off web and worker launch for manifest v1, then wait for the self-hosted HTTPS/network adapter.** The helper only renders policies and requests. It makes no AWS calls. **Do not register or run v1 real tasks yet:** its run mode requires NAT and exactly two task security groups; the [Supabase network skeleton](AWS-SUPABASE-NETWORK.md) adds only TCP/8000 and is not the shared HTTPS/443 path required by the app. The [v2 existing-project web canary](AWS-VISIBLE-WEB.md) is separate and web-only.
 
 ```mermaid

@@ -1,5 +1,7 @@
 # Private runtime secret connectivity
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare one private Secrets Manager endpoint for later ECS secret injection.** Apply only after this change is reviewed and merged.
 
 ```mermaid

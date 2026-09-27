@@ -1,5 +1,7 @@
 # Private PostgreSQL host foundation
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare one private EC2 host and a separate encrypted data volume in `database-a`.** This root creates no PostgreSQL process, formatted filesystem, backup, or production data.
 
 ```mermaid

@@ -1,5 +1,7 @@
 # Temporary PostgreSQL image-pull network grant
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Render one expiring IAM policy for the [default-off private image path](AWS-POSTGRES-IMAGE-PULL.md).** The renderer makes no AWS calls. This grant does not apply Terraform, mirror an image, create a host, or start PostgreSQL.
 
 | Scope              | Limit                                                                                                                                                                                                                                                                                                      |

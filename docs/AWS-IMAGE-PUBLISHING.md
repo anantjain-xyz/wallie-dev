@@ -1,5 +1,7 @@
 # Publish staging images
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Build and smoke-test one image, then upload that exact image to ECR.** Run after review and merge. The default flow does not sign; [optional signing](AWS-IMAGE-SIGNING.md) adds strict verification. Neither flow approves deployment.
 
 ```mermaid

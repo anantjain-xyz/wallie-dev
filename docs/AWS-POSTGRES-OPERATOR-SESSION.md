@@ -1,5 +1,7 @@
 # Temporary PostgreSQL operator shell
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Grant `wallie-local` a short-lived shell on one verified staging PostgreSQL instance.** The renderer is offline; it does not attach a policy, start a session, change regional preferences, or start PostgreSQL.
 
 | Permission                    | Boundary                                                                                                                                                                                                    |

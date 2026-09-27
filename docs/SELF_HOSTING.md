@@ -67,7 +67,7 @@ See [Next.js runtime environment guidance](https://nextjs.org/docs/app/guides/se
 
    `supabase db push` runs the baseline migration plus all forward migrations against your hosted database. Do **not** load `supabase/seed.sql` — that's local development demo data.
 
-3. **Auth:** in **Authentication → URL Configuration**, set the **Site URL** to your production origin (e.g. `https://wallie.example.com`) and add the email/magic-link/invite callback to **Redirect URLs**. The app's email sign-in and workspace invites redirect to `/auth/confirm`, so allow-list the exact `https://wallie.example.com/auth/confirm` (or a wildcard like `https://wallie.example.com/**`) — Supabase ignores `redirectTo` URLs that aren't allow-listed, which would silently break login and invite acceptance. Enable email sign-in. If you want the branded emails, copy the templates from `supabase/templates/auth/` into **Authentication → Email Templates**.
+3. **Auth:** in **Authentication → URL Configuration**, set the **Site URL** to your production origin (e.g. `https://wallie.example.com`) and add the email/magic-link/invite callback to **Redirect URLs**. The app's email sign-in and workspace invites redirect to `/auth/confirm`, sometimes with `?next=...`; allow-list `https://wallie.example.com/auth/confirm**` to cover both forms. Supabase ignores `redirectTo` URLs that aren't allow-listed, which would silently break login and invite acceptance. Enable email sign-in. If you want the branded emails, copy the templates from `supabase/templates/auth/` into **Authentication → Email Templates**.
 4. From **Project Settings → API**, collect:
    - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
    - Publishable / anon key → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`

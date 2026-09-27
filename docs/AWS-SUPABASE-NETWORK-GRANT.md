@@ -1,5 +1,7 @@
 # Temporary Supabase network grant
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare an offline IAM grant for the three security groups and four rules from [the default-off network slice](AWS-SUPABASE-NETWORK.md).** This renderer makes no AWS calls. The proxy SG names must match the merged runtime contract before live use; do not render or apply against a `supabase_client` configuration.
 
 | Boundary     | Grant                                                                                                                  |

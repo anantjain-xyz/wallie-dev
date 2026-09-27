@@ -1,5 +1,7 @@
 # AWS state bootstrap
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Create one private S3 bucket for Terraform state. Review and merge this PR before running the AWS steps.**
 
 ```mermaid

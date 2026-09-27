@@ -1,5 +1,7 @@
 # Temporary PostgreSQL session-logging deployment grants
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Render two expiring IAM policies for the [default-off transcript path](AWS-POSTGRES-SESSION-LOGGING.md).** The renderer makes no AWS calls. These grants do not enable the Terraform flags, change regional Session Manager preferences, or authorize an operator shell.
 
 | Policy                                | Apply scope                                                                                                                                                                      |

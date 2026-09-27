@@ -1,5 +1,7 @@
 # AWS staging network
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Reserve a dedicated two-AZ network before adding workloads.** Deploy 26 foundation resources, then four [hardening resources](AWS-NETWORK-HARDENING.md). The separately enabled [private connectivity batch](#private-application-connectivity) adds nine resources. Each deployment follows review and merge.
 
 ```mermaid

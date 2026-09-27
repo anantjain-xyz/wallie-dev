@@ -1,5 +1,7 @@
 # AWS network hardening
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Harden the empty staging network before deploying workloads.** Same Terraform root and S3 state; four additional managed resources.
 
 | Resource                         | Change                                         |

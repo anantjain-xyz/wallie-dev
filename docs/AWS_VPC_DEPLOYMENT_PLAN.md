@@ -2,28 +2,31 @@
 
 Proposal · September 19, 2026
 
-**Progress · September 22, 2026 (UTC)**
+**Historical proposal · staging was torn down September 27, 2026.** Production remains on Vercel, hosted Supabase, and Railway. Use the [milestone and replay guide](AWS-STAGING-MILESTONE.md) before any new AWS deployment.
 
-- **Deployed:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, an active OCI signing profile, and the [empty ECS cluster with web/worker log groups](AWS-APPLICATION-FOUNDATION.md).
+**Progress · September 27, 2026**
+
+- **Web milestone:** [`aws-staging.wallie.dev` served HTTP 200 over valid TLS](AWS-STAGING-MILESTONE.md) from one healthy private ECS web task through a public ALB. That task used the existing hosted Wallie Supabase project via NAT. The canary ended with **94 Terraform-managed staging resources destroyed** across five roots; the state bucket and image manifests were also removed. The owner reports the external staging DNS and Auth entries removed. The hosted Supabase project, production Vercel site, and Railway worker remain in use.
+- **Previously deployed foundations:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, an active OCI signing profile, ECS cluster/log groups, networking, secret containers, and a private PostgreSQL qualification host. The host never ran PostgreSQL.
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
-- **Live image checks:** web `fc605b36` and worker `924e28b8` passed smoke tests, uploads, manifest/config verification, fresh ECR BASIC scans with zero findings, and strict signature verification. Both use the pinned Amazon Linux 2023 runtime; [qualification details](AWS-IMAGE-PUBLISHING.md#verification-boundary). Neither image is approved for deployment.
-- **Next:** private task connectivity, release provenance, broader package scanning, and Linux CI/GitHub OIDC publishing. No application or database is running on AWS yet.
+- **Earlier image checks:** web `fc605b36` and worker `924e28b8` passed smoke tests, uploads, manifest/config verification, fresh ECR BASIC scans with zero findings, and strict signature verification. Both use the pinned Amazon Linux 2023 runtime; [qualification details](AWS-IMAGE-PUBLISHING.md#verification-boundary). The later canary used a separately reviewed pinned web digest; no worker image has been launched on AWS.
+- **Next for the full migration:** AWS worker, self-hosted Supabase API/database/storage, sandbox execution, release provenance, broader package scanning, and Linux CI/GitHub OIDC publishing. The canary did not qualify these or move production traffic.
 
-| Remaining               | Exit check                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
-| Image releases          | Provenance, broader package scanning, Linux CI tooling, and GitHub OIDC publishing           |
-| AWS application hosting | ECS web/workers, TLS/ingress, secrets, egress, monitoring, drain-aware rollouts and rollback |
-| AWS Supabase            | Database/API deployment, object storage, backups, restore/failover, and upgrades             |
-| In-account sandboxes    | Supported controller/runners; isolation, cleanup, and every sandbox use case qualified       |
-| Staging validation      | Full session/review/rejection workflow, integrations, streaming, and crash recovery          |
-| wallie.dev cutover      | Move compute, migrate state, rehearse rollback, then retire old hosting services             |
-| Enterprise profile      | Private access, customer SSO, webhook strategy, independent install/upgrade/support          |
+| Remaining               | Exit check                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| Image releases          | Provenance, broader package scanning, Linux CI tooling, and GitHub OIDC publishing                        |
+| AWS application hosting | Web canary proved ECS/HTTPS; production web and worker need monitoring, drain-aware rollouts and rollback |
+| AWS Supabase            | Database/API deployment, object storage, backups, restore/failover, and upgrades                          |
+| In-account sandboxes    | Supported controller/runners; isolation, cleanup, and every sandbox use case qualified                    |
+| Staging validation      | Full session/review/rejection workflow, integrations, streaming, and crash recovery                       |
+| wallie.dev cutover      | Move compute, migrate state, rehearse rollback, then retire old hosting services                          |
+| Enterprise profile      | Private access, customer SSO, webhook strategy, independent install/upgrade/support                       |
 
 - **Open dependencies:** supported full sandbox self-hosting; database availability and recovery targets.
 - [Self-hosted Supabase staging network](AWS-SUPABASE-NETWORK.md) prepares private API/database paths without deploying either service.
-- Continue in small PRs; the owner reviews and merges each before dependent deployment work.
+- If the migration resumes, review each dependent deployment step before applying it.
 
-**Direction**
+**Proposed direction if resumed**
 
 - Make AWS the primary hosting platform. Migrate **wallie.dev first**, then deploy the same stack for enterprises.
 - **Next.js serves the website, dashboard, and API** on ECS Fargate. [Self-hosting is supported](https://nextjs.org/docs/app/guides/self-hosting).
@@ -130,20 +133,6 @@ flowchart TB
 - **Enterprise webhooks:** narrow signed/deduplicated ingress, or an outbound relay/polling implementation.
 - **Operations:** restore database, objects, and keys; test rotation, forward-only upgrades, audit export, retention, alerts, and spend limits.
 - **Completion:** retire Vercel, Railway, and hosted Supabase after validation; verify no production dependency remains.
-
-**Review batches**
-
-- Batch 1: this plan and platform-independent production checks, in separate PRs.
-- Batch 2: runtime public configuration, then container packaging.
-- Later: database/sandbox qualification, AWS staging, cutover, enterprise installation.
-- Start qualification with [read-only AWS discovery](AWS-DISCOVERY.md); inventory does not establish database or sandbox compatibility.
-- Prepare [private Terraform state storage](AWS-STATE-BOOTSTRAP.md) before the network foundation; this batch creates no compute.
-- Reserve the [two-AZ staging network](AWS-STAGING-NETWORK.md); workload security controls and compute follow after its review and deployment.
-- Apply [network hardening](AWS-NETWORK-HARDENING.md) to the empty VPC: remove default-SG rules and block ordinary traffic in the sandbox reservation.
-- Prepare [private image repositories](AWS-STAGING-REGISTRY.md) for the web app and worker; image publishing and compute follow in separate PRs.
-- [Publish smoke-tested images](AWS-IMAGE-PUBLISHING.md) with immutable tags and recorded digests; signing and deployment approval remain separate gates.
-- Foundation code needs no AWS credentials. Infrastructure work needs an AWS account, region, and SSO/assumable role.
-- Each PR waits for human review and merge; dependent batches follow after merge.
 
 **Later**
 

@@ -1,5 +1,7 @@
 # Prepare the local signing tools
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Qualify a pinned Notation toolchain in an isolated project directory.** This batch supports macOS on Apple silicon and the commercial AWS signing root. Linux CI packaging and GovCloud qualification follow separately.
 
 ```mermaid

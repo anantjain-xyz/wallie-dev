@@ -1,5 +1,7 @@
 # Staging PostgreSQL data volume
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Prepare the dedicated EBS volume before PostgreSQL starts.** Keep both database files and the Supabase `pgsodium_root.key` on the same durable mount. This procedure creates no database, backup, or secret.
 
 | Host path                                | Future container path      | Contents                              |

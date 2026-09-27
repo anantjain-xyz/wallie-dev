@@ -1,5 +1,7 @@
 # Populate staging runtime secrets
 
+> **Historical AWS staging runbook:** The canary was torn down September 27, 2026. Account-specific status and instructions below are not current; see the [milestone](AWS-STAGING-MILESTONE.md) before reuse.
+
 **Write the first real web and worker versions only for an isolated self-hosted staging Supabase database.** Run this locally after reviewing and merging the helper. It does not create a database, grant IAM access, or start tasks.
 
 | Gate         | Requirement                                                                                                                                                                                                                     |
