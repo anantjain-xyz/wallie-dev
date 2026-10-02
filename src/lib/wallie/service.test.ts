@@ -179,6 +179,7 @@ const baseTimestamp = "2026-01-01T00:00:00.000Z";
 function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
   return {
     agent_job_id: "job-1",
+    branch_name: null,
     created_at: baseTimestamp,
     finished_at: null,
     id: "run-1",

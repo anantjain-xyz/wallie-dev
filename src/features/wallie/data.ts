@@ -100,6 +100,7 @@ export function nextAttemptOrdinal(
 export function mapAgentRunRow(
   row: Pick<
     Tables<"agent_runs">,
+    | "branch_name"
     | "created_at"
     | "finished_at"
     | "id"
@@ -123,6 +124,7 @@ export function mapAgentRunRow(
 ): WallieRun {
   return {
     attemptCount: options?.attemptCount && options.attemptCount > 0 ? options.attemptCount : 1,
+    branchName: row.branch_name ?? null,
     canCancel: false,
     canRetry: false,
     createdAt: row.created_at,
@@ -171,6 +173,7 @@ export function mergeWallieRuns(runs: readonly WallieRun[], incomingRuns: readon
     nextRuns = upsertWallieRun(nextRuns, {
       ...incomingRun,
       attemptCount: Math.max(incomingRun.attemptCount, previousRun?.attemptCount ?? 1),
+      branchName: incomingRun.branchName ?? previousRun?.branchName ?? null,
       messages: previousRun?.messages ?? incomingRun.messages,
       requestedByMember: incomingRun.requestedByMember ?? previousRun?.requestedByMember ?? null,
       sandboxId: incomingRun.sandboxId ?? previousRun?.sandboxId ?? null,
@@ -222,6 +225,7 @@ export function buildWallieSessionData(input: {
   requiresVercelSandbox: boolean;
   runs: readonly (Pick<
     Tables<"agent_runs">,
+    | "branch_name"
     | "created_at"
     | "finished_at"
     | "id"

@@ -15,6 +15,7 @@ function run(
 ): WallieRun {
   return {
     attemptCount: 1,
+    branchName: null,
     canCancel: false,
     canRetry: false,
     createdAt,
@@ -42,6 +43,12 @@ function run(
 }
 
 describe("Wallie run history data", () => {
+  it("retains persisted execution branches while merging partial metadata", () => {
+    const persisted = run("run-1", undefined, { branchName: "wallie/build-original-attempt" });
+    const incoming = run("run-1", undefined, { branchName: null, stageSlug: "renamed" });
+    expect(mergeWallieRuns([persisted], [incoming])[0]?.branchName).toBe(persisted.branchName);
+  });
+
   it("uses id as the deterministic descending tie-breaker", () => {
     expect(
       normalizeWallieRuns([run("run-a"), run("run-c"), run("run-b")]).map((row) => row.id),

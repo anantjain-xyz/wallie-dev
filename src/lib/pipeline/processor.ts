@@ -197,7 +197,10 @@ async function runStage(input: {
     installationId: number;
     repo: { default_branch: string | null; full_name: string; id: string };
   } | null = null;
-  let branch: string | null = null;
+  const branch = buildStageBranchName(session.id, stage.slug, {
+    jobId: job.id,
+    attemptCount: job.attempt_count,
+  });
   let installationToken: string | undefined;
   const collectedText: string[] = [];
   let finalOutput: string | undefined;
@@ -206,6 +209,7 @@ async function runStage(input: {
   let sessionPointerAdvanced = false;
   try {
     runId = await startAgentRun(admin, {
+      branchName: branch,
       jobId: job.id,
       model: config.model,
       provider,
@@ -271,7 +275,6 @@ async function runStage(input: {
       });
     }
     installationToken = await mintInstallationToken(github.installationId);
-    branch = buildStageBranchName(session.id, stage.slug);
     throwIfAborted(signal);
     sandbox = await createSessionSandbox({
       agentProvider: provider,
@@ -1101,6 +1104,7 @@ async function mintInstallationToken(installationId: number): Promise<string> {
 async function startAgentRun(
   admin: AdminClient,
   input: {
+    branchName: string;
     jobId: string;
     sessionId: string;
     model: string;
@@ -1115,6 +1119,7 @@ async function startAgentRun(
   const { data: existingRun, error: updateError } = await admin
     .from("agent_runs")
     .update({
+      branch_name: input.branchName,
       model_name: input.model,
       model_provider: input.provider,
       stage_id: input.stage?.id ?? null,
@@ -1125,7 +1130,8 @@ async function startAgentRun(
       triggered_by_member_id: input.requestedByMemberId,
     })
     .eq("agent_job_id", input.jobId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES)
+    // A retry must not reuse the run still owned by an earlier attempt.
+    .eq("status", "queued")
     .select("id")
     .maybeSingle();
 
@@ -1141,6 +1147,7 @@ async function startAgentRun(
     .from("agent_runs")
     .insert({
       agent_job_id: input.jobId,
+      branch_name: input.branchName,
       model_name: input.model,
       model_provider: input.provider,
       run_type: input.runType,

@@ -16,6 +16,7 @@ import type { WallieRun } from "@/features/wallie/types";
 function run(overrides: Partial<WallieRun> = {}): WallieRun {
   return {
     attemptCount: 1,
+    branchName: null,
     canCancel: false,
     canRetry: false,
     createdAt: "2026-07-18T12:00:00.000Z",

@@ -253,6 +253,7 @@ interface MockOptions {
   latestFeedback?: { feedback_text: string } | null;
   runSandboxUpdateError?: { message: string } | null;
   runSandboxUpdateMissed?: boolean;
+  runRows?: Array<Record<string, unknown>>;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
     default_branch: string | null;
@@ -465,8 +466,10 @@ function buildAdminMock(opts: MockOptions) {
   const agentRunsTable = {
     insert: (row: Record<string, unknown>) => {
       insertedRuns.push(row);
+      const id = opts.runRows ? `run-${opts.runRows.length + 1}` : "run-1";
+      opts.runRows?.push({ id, ...row });
       return {
-        select: () => ({ single: async () => ({ data: { id: "run-1" }, error: null }) }),
+        select: () => ({ single: async () => ({ data: { id }, error: null }) }),
       };
     },
     select: () => {
@@ -481,11 +484,24 @@ function buildAdminMock(opts: MockOptions) {
     },
     update: (patch: Record<string, unknown>) => {
       updatedRuns.push(patch);
+      const filters: Array<(row: Record<string, unknown>) => boolean> = [];
+      const applyUpdate = () => {
+        if (!opts.runRows) return [{ id: "run-1", workspace_id: "ws-1" }];
+        const rows = opts.runRows.filter((row) => filters.every((matches) => matches(row)));
+        for (const row of rows) Object.assign(row, patch);
+        return rows as Array<{ id: string; workspace_id: string }>;
+      };
       const chain = {
-        eq: () => chain,
-        in: () => chain,
+        eq: (column: string, value: unknown) => {
+          filters.push((row) => row[column] === value);
+          return chain;
+        },
+        in: (column: string, values: unknown[]) => {
+          filters.push((row) => values.includes(row[column]));
+          return chain;
+        },
         select: () => chain,
-        maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
+        maybeSingle: async () => ({ data: applyUpdate()[0] ?? null, error: null }),
         then: (
           resolve: (value: {
             data: { id: string; workspace_id: string }[];
@@ -496,7 +512,7 @@ function buildAdminMock(opts: MockOptions) {
           // an empty result so updateRunSandbox reports "not attached".
           const sandboxUpdateMissed = "sandbox_id" in patch && opts.runSandboxUpdateMissed === true;
           resolve({
-            data: sandboxUpdateMissed ? [] : [{ id: "run-1", workspace_id: "ws-1" }],
+            data: sandboxUpdateMissed ? [] : applyUpdate(),
             error:
               "sandbox_id" in patch && opts.runSandboxUpdateError
                 ? opts.runSandboxUpdateError
@@ -1163,6 +1179,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(insertedRuns).toHaveLength(0);
     expect(updatedRuns[0]).toMatchObject({
+      branch_name: "wallie/product-sess-1-job-job-1-attempt-0",
       model_name: "gpt-5.5",
       model_provider: "codex",
       stage_id: "stage-product",
@@ -1171,6 +1188,65 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "running",
     });
     expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
+  });
+
+  it("keeps overlapping job attempts on distinct branches and distinct run rows", async () => {
+    const runRows: Array<Record<string, unknown>> = [
+      { id: "run-1", agent_job_id: "job-1", workspace_id: "ws-1", status: "queued" },
+    ];
+    const { admin } = buildAdminMock({ session: baseSession(), runRows });
+    let firstSetupStarted!: () => void;
+    const firstSetup = new Promise<void>((resolve) => {
+      firstSetupStarted = resolve;
+    });
+    let releaseFirstSetup!: () => void;
+    const blockedSetup = new Promise<void>((resolve) => {
+      releaseFirstSetup = resolve;
+    });
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      firstSetupStarted();
+      await blockedSetup;
+      await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-old" });
+      return new FakeSandbox("sandbox-old");
+    });
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-new" });
+      return new FakeSandbox("sandbox-new");
+    });
+
+    const first = processPipelineJob({ admin, job: baseJob({ attempt_count: 1 }) });
+    await firstSetup;
+    const second = await processPipelineJob({ admin, job: baseJob({ attempt_count: 2 }) });
+    expect(second.runId).toBe("run-2");
+    expect(runRows[0]).toMatchObject({
+      branch_name: "wallie/product-sess-1-job-job-1-attempt-1",
+      status: "running",
+    });
+    releaseFirstSetup();
+    expect((await first).runId).toBe("run-1");
+
+    expect(runRows).toMatchObject([
+      {
+        id: "run-1",
+        branch_name: "wallie/product-sess-1-job-job-1-attempt-1",
+        sandbox_id: "sandbox-old",
+      },
+      {
+        id: "run-2",
+        branch_name: "wallie/product-sess-1-job-job-1-attempt-2",
+        sandbox_id: "sandbox-new",
+      },
+    ]);
+    expect(
+      mocked.createSessionSandbox.mock.calls.map(([input]) => [input.ownerId, input.branch]),
+    ).toEqual([
+      ["run-1", runRows[0].branch_name],
+      ["run-2", runRows[1].branch_name],
+    ]);
+    expect(mocked.openSessionPullRequest.mock.calls.map(([input]) => input.branch)).toEqual([
+      runRows[1].branch_name,
+      runRows[0].branch_name,
+    ]);
   });
 
   it("marks the prepared run errored and stops its sandbox when credential resolution fails", async () => {
@@ -1547,7 +1623,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.workspaceId).toBe(session.workspace_id);
     expect(typeof call.branch).toBe("string");
     expect((call.branch as string).startsWith("wallie/")).toBe(true);
-    expect((call.branch as string).endsWith(session.id)).toBe(true);
+    expect(call.branch).toBe(`wallie/product-${session.id}-job-job-1-attempt-0`);
     expect(call.title).toBe(`${productStage.name}: ${session.title}`);
     expect(call.body).toContain("Drafted spec body");
   });

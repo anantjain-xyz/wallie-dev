@@ -143,6 +143,7 @@ export type Database = {
       agent_runs: {
         Row: {
           agent_job_id: string | null
+          branch_name: string | null
           created_at: string
           finished_at: string | null
           id: string
@@ -170,6 +171,7 @@ export type Database = {
         }
         Insert: {
           agent_job_id?: string | null
+          branch_name?: string | null
           created_at?: string
           finished_at?: string | null
           id?: string
@@ -197,6 +199,7 @@ export type Database = {
         }
         Update: {
           agent_job_id?: string | null
+          branch_name?: string | null
           created_at?: string
           finished_at?: string | null
           id?: string

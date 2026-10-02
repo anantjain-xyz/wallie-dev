@@ -29,6 +29,7 @@ function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
   const id = `run-${index}`;
   return {
     attemptCount: 1,
+    branchName: null,
     canCancel: false,
     canRetry: false,
     createdAt: `2026-07-18T12:${(59 - index).toString().padStart(2, "0")}:00.000Z`,
@@ -1121,6 +1122,41 @@ describe("SessionWalliePanel activity states", () => {
         view.container.querySelector('[data-run-id="run-retry-live"]') as HTMLElement,
       ).getByText("Attempt 2"),
     ).not.toBeNull();
+  });
+
+  it("shows each run's persisted branch and falls back only for legacy rows", () => {
+    const current = run(1, {
+      branchName: "wallie/build-session-1-job-new-attempt-2",
+      sandboxId: "sandbox-new",
+      stageSlug: "renamed-stage",
+    });
+    const prior = run(2, {
+      branchName: "wallie/build-session-1-job-old-attempt-1",
+      sandboxId: "sandbox-old",
+      stageSlug: null,
+    });
+    const legacy = run(3, { sandboxId: "sandbox-legacy", stageSlug: "original-stage" });
+    const fake = fakeSupabase();
+    const view = render(
+      <SessionWalliePanel
+        initialData={data([current, prior, legacy])}
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    for (const [id, branch] of [
+      ["run-1", current.branchName!],
+      ["run-2", prior.branchName!],
+      ["run-3", "wallie/original-stage-session-1"],
+    ]) {
+      const card = view.container.querySelector(`[data-run-id="${id}"]`) as HTMLElement;
+      fireEvent.click(card.querySelector("button[aria-expanded]")!);
+      fireEvent.click(within(card).getByText("Run details"));
+      expect(within(card).getByText(branch)).not.toBeNull();
+    }
+    expect(view.container.textContent).not.toContain("wallie/renamed-stage-session-1");
   });
 
   it("hides the derived branch when no sandbox was created", () => {
