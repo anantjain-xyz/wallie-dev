@@ -210,6 +210,7 @@ function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
 function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
   return {
     agent_job_id: "job-1",
+    branch_name: null,
     created_at: baseTimestamp,
     finished_at: null,
     id: "run-1",

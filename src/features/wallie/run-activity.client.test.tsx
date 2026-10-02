@@ -42,6 +42,7 @@ function cardProps(): WallieRunCardProps {
     stallTimeoutMs: 900_000,
     run: {
       attemptCount: 1,
+      branchName: null,
       canCancel: true,
       canRetry: false,
       createdAt: now,

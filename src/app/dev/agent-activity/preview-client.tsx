@@ -80,6 +80,10 @@ function ActivityPreview({ initialNow }: { initialNow: string }) {
             : "success";
   const run: WallieRun = {
     attemptCount: 1,
+    branchName:
+      state === "Queued"
+        ? null
+        : "wallie/build-6ba7b810-9dad-41d1-80b4-00c04fd430c8-job-17f0b00c-6aba-4525-9b46-16e9c846d621-attempt-2",
     canCancel: active,
     canRetry: status === "error" || status === "canceled",
     createdAt: now,
@@ -185,7 +189,7 @@ function ActivityPreview({ initialNow }: { initialNow: string }) {
         <h2 className="mb-3 text-sm font-semibold">Agent activity</h2>
         <WallieRunCard
           actionPending={false}
-          branchName="wallie/preview/build"
+          branchName={run.branchName}
           cancelLocked={false}
           connectionState={connection}
           isExpanded={expanded}

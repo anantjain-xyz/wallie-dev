@@ -60,6 +60,7 @@ export type WallieRunMessage = {
 
 export type WallieRun = {
   attemptCount: number;
+  branchName: string | null;
   canCancel: boolean;
   canRetry: boolean;
   createdAt: string;

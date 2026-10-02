@@ -13,6 +13,7 @@ import type { WallieRun } from "@/features/wallie/types";
 const now = "2026-09-04T12:00:00Z";
 const run: WallieRun = {
   attemptCount: 1,
+  branchName: null,
   canCancel: true,
   canRetry: false,
   createdAt: now,
