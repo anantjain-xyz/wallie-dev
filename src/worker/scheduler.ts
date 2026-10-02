@@ -37,12 +37,12 @@ export function createScheduler(
   config: WorkerConfig,
   options: SchedulerOptions,
 ): Scheduler {
-  const inFlight = new Map<string, Promise<void>>();
+  const inFlight = new Map<string, { jobId: string; promise: Promise<void> }>();
   const heartbeats = new Set<Promise<void>>();
   const delay = options.delay ?? defaultDelay;
 
   function getActiveJobIds(): string[] {
-    return [...inFlight.keys()];
+    return [...new Set([...inFlight.values()].map((attempt) => attempt.jobId))];
   }
 
   function emitHeartbeat(): Promise<void> {
@@ -54,6 +54,10 @@ export function createScheduler(
   }
 
   function startJob(job: AgentJobRow): void {
+    // A lease can expire while its processor is still unwinding. Track both
+    // attempts so old completion cannot erase its replacement's heartbeat or
+    // make shutdown/capacity accounting forget work still running locally.
+    const attemptKey = `${job.id}:${job.attempt_count}`;
     const promise = runClaimedJob(admin, job)
       .catch((error) => {
         // runClaimedJob is designed never to reject; guard anyway so an
@@ -64,11 +68,11 @@ export function createScheduler(
         });
       })
       .finally(() => {
-        inFlight.delete(job.id);
+        inFlight.delete(attemptKey);
         // Stop advertising the freed job before the next interval tick.
         void emitHeartbeat();
       });
-    inFlight.set(job.id, promise);
+    inFlight.set(attemptKey, { jobId: job.id, promise });
   }
 
   async function run(): Promise<void> {
@@ -100,7 +104,10 @@ export function createScheduler(
       } else if (inFlight.size > 0) {
         // At capacity, or holding work with nothing new to claim — wake when a
         // slot frees, but re-poll at least every interval to catch new work.
-        await Promise.race([...inFlight.values(), delay(config.pollIntervalMs)]);
+        await Promise.race([
+          ...[...inFlight.values()].map((attempt) => attempt.promise),
+          delay(config.pollIntervalMs),
+        ]);
       } else {
         // Fully idle — nothing in flight and nothing to claim.
         await delay(config.pollIntervalMs);
@@ -109,7 +116,7 @@ export function createScheduler(
   }
 
   async function waitForIdle(): Promise<void> {
-    await Promise.allSettled([...inFlight.values()]);
+    await Promise.allSettled([...inFlight.values()].map((attempt) => attempt.promise));
     // Completion removes a job before its final heartbeat finishes. These
     // writes must settle too, including when the in-flight set is already empty.
     await Promise.allSettled([...heartbeats]);
