@@ -36,10 +36,11 @@ export const cancelAgentRunParamsSchema = z.object({
 });
 
 export type AgentRunActionResponse = {
-  code?: "active_run";
+  code?: "active_run" | "active_job";
   created: boolean;
+  jobId: string | null;
   processScheduled: boolean;
-  run: WallieRun;
+  run: WallieRun | null;
 };
 
 export type AgentRunActionErrorResponse = {

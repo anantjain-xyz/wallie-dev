@@ -241,7 +241,7 @@ function buildSupabaseMocks(opts: {
   enqueueCalls: Array<Record<string, unknown>>;
   enqueueError?: PostgrestError | null;
   enqueueReceipt?: { created: boolean; job_id: string; run_id: string | null };
-  receiptRun?: AgentRunRow;
+  receiptRun?: AgentRunRow | null;
   existingRun?: AgentRunRow | null;
   primaryRepositoryId?: string | null;
   repositories?: Array<{
@@ -304,7 +304,8 @@ function buildSupabaseMocks(opts: {
     },
   };
 
-  let queuedRun: AgentRunRow | undefined;
+  let queuedRun: AgentRunRow | null | undefined;
+  let receiptRunId: string | null = null;
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
     if (name !== "enqueue_session_job_with_run") throw new Error(`unexpected RPC: ${name}`);
     opts.enqueueCalls.push(args);
@@ -314,13 +315,12 @@ function buildSupabaseMocks(opts: {
       job_id: "job-queued",
       run_id: "run-queued",
     };
+    receiptRunId = receipt.run_id;
     if (receipt.run_id) {
       queuedRun =
-        opts.receiptRun ??
-        buildAgentRunRow({
-          agent_job_id: receipt.job_id,
-          id: receipt.run_id,
-        });
+        opts.receiptRun === undefined
+          ? buildAgentRunRow({ agent_job_id: receipt.job_id, id: receipt.run_id })
+          : opts.receiptRun;
     }
     return { data: [receipt], error: null };
   });
@@ -353,8 +353,8 @@ function buildSupabaseMocks(opts: {
               if (filters.has("id")) {
                 return {
                   data:
-                    queuedRun?.id === filters.get("id")
-                      ? queuedRun
+                    receiptRunId === filters.get("id")
+                      ? (queuedRun ?? null)
                       : opts.existingRun === undefined
                         ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
                         : opts.existingRun,
@@ -810,26 +810,17 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
 });
 
 describe("retryWallieRun legacy runless job compatibility", () => {
-  it("returns the existing run when run visibility is delayed beyond the old 200 ms window", async () => {
+  it("acknowledges accepted work without waiting for a capacity-blocked worker", async () => {
     vi.useFakeTimers();
-    const startTime = Date.parse(baseTimestamp);
-    vi.setSystemTime(startTime);
-
-    const lookupOffsets: number[] = [];
-    const delayedRun = buildAgentRunRow({ agent_job_id: "job-existing", id: "run-existing" });
+    const lookup = vi.fn(() => null);
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
       enqueueCalls: [],
       enqueueReceipt: { created: false, job_id: "job-existing", run_id: null },
-      loadRunByJobId: () => {
-        const offset = Date.now() - startTime;
-        lookupOffsets.push(offset);
-
-        return offset > 200 ? delayedRun : null;
-      },
+      loadRunByJobId: lookup,
     });
 
-    const resultPromise = retryWallieRun({
+    const result = await retryWallieRun({
       admin,
       runId: "run-1",
       requestedByMemberId: "mem-1",
@@ -837,112 +828,9 @@ describe("retryWallieRun legacy runless job compatibility", () => {
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
-    await vi.advanceTimersByTimeAsync(40);
-    await vi.advanceTimersByTimeAsync(80);
-    await vi.advanceTimersByTimeAsync(160);
-
-    const result = await resultPromise;
-
-    expect(result.created).toBe(false);
-    expect(result.jobId).toBe("job-existing");
-    expect(result.run.id).toBe("run-existing");
-    expect(lookupOffsets.some((offset) => offset > 200)).toBe(true);
-  });
-
-  it("throws a typed retryable error and logs when the run lookup budget is exhausted", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(baseTimestamp);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { admin, supabase } = buildSupabaseMocks({
-      agentConfig: [],
-      enqueueCalls: [],
-      enqueueReceipt: { created: false, job_id: "job-existing", run_id: null },
-      loadRunByJobId: () => null,
-    });
-
-    const resultPromise = retryWallieRun({
-      admin,
-      runLookupRetry: {
-        initialDelayMs: 40,
-        maxDelayMs: 80,
-        maxElapsedMs: 120,
-      },
-      runId: "run-1",
-      requestedByMemberId: "mem-1",
-      supabase,
-      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
-    });
-    const rejection = expect(resultPromise).rejects.toMatchObject({
-      code: "run_lookup_timeout",
-      statusCode: 503,
-    });
-
-    await vi.advanceTimersByTimeAsync(40);
-    await vi.advanceTimersByTimeAsync(80);
-
-    await rejection;
-    expect(consoleError).toHaveBeenCalledWith(
-      "Wallie run lookup exhausted after duplicate enqueue",
-      expect.objectContaining({
-        jobId: "job-existing",
-        maxElapsedMs: 120,
-      }),
-    );
-  });
-
-  it("aborts an in-flight run lookup when the deadline expires", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(baseTimestamp);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    let lookupCount = 0;
-    const { admin, supabase } = buildSupabaseMocks({
-      agentConfig: [],
-      enqueueCalls: [],
-      enqueueReceipt: { created: false, job_id: "job-existing", run_id: null },
-      loadRunByJobId: (signal) => {
-        lookupCount += 1;
-
-        return new Promise((_, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => {
-              reject(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
-            },
-            { once: true },
-          );
-        });
-      },
-    });
-
-    const resultPromise = retryWallieRun({
-      admin,
-      runLookupRetry: {
-        initialDelayMs: 40,
-        maxDelayMs: 80,
-        maxElapsedMs: 120,
-      },
-      runId: "run-1",
-      requestedByMemberId: "mem-1",
-      supabase,
-      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
-    });
-    const rejection = expect(resultPromise).rejects.toMatchObject({
-      code: "run_lookup_timeout",
-      statusCode: 503,
-    });
-
-    await vi.advanceTimersByTimeAsync(120);
-
-    await rejection;
-    expect(lookupCount).toBe(1);
-    expect(consoleError).toHaveBeenCalledWith(
-      "Wallie run lookup exhausted after duplicate enqueue",
-      expect.objectContaining({
-        attempts: 1,
-        jobId: "job-existing",
-        maxElapsedMs: 120,
-      }),
-    );
+    expect(result).toEqual({ created: false, jobId: "job-existing", run: null });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
@@ -986,6 +874,28 @@ describe("enqueueSessionJobWithRun atomic receipt", () => {
     );
     expect(legacyLookup).not.toHaveBeenCalled();
   });
+
+  it.each(["success", "error", "canceled", null] as const)(
+    "preserves an accepted job when its receipt run becomes %s before it is fetched",
+    async (status) => {
+      const { admin } = buildSupabaseMocks({
+        agentConfig: [],
+        enqueueCalls: [],
+        enqueueReceipt: { created: false, job_id: "job-legacy", run_id: "run-legacy" },
+        receiptRun: status
+          ? buildAgentRunRow({ agent_job_id: "job-legacy", id: "run-legacy", status })
+          : null,
+      });
+      const result = await enqueueSessionJobWithRun({
+        admin: admin!,
+        requestedByMemberId: "mem-1",
+        runType: "project",
+        session: { id: "sess-1", workspace_id: "ws-1", current_stage_id: "stage-product" },
+        triggerType: "manual_retry",
+      });
+      expect(result).toEqual({ created: false, jobId: "job-legacy", run: null });
+    },
+  );
 
   it("propagates an atomic enqueue failure without compensating deletes or polling", async () => {
     const failure = {

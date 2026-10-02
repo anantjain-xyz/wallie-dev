@@ -62,6 +62,21 @@ select is((select run_id from repeated_pair), (select run_id from new_queue_pair
 select is((select count(*) from public.agent_runs where agent_job_id = (select job_id from new_queue_pair)), 1::bigint, 'dedupe never adds a second run');
 select is((select phase_status::text from public.sessions where id = (select session_id from queue_test_session)), 'awaiting_review', 'new enqueue also preserves review state');
 
+-- A rescheduled legacy job is accepted without returning its terminal attempt.
+update public.agent_jobs set dedupe_key = 'pipeline:legacy-rescheduled:active' where id = (select job_id from new_queue_pair);
+update public.agent_runs set status = 'error' where id = (select run_id from new_queue_pair);
+create temp table errored_prior_attempt as select * from pg_temp.enqueue_fixture((select session_id from queue_test_session));
+select ok((select run_id is null and not created and job_id = (select job_id from new_queue_pair) from errored_prior_attempt), 'queued legacy job with errored prior attempt returns accepted runless work');
+update public.agent_runs set status = 'success' where id = (select run_id from new_queue_pair);
+create temp table successful_prior_attempt as select * from pg_temp.enqueue_fixture((select session_id from queue_test_session));
+select ok((select run_id is null and not created from successful_prior_attempt), 'successful prior attempt is not represented as active work');
+update public.agent_runs set status = 'canceled' where id = (select run_id from new_queue_pair);
+create temp table canceled_prior_attempt as select * from pg_temp.enqueue_fixture((select session_id from queue_test_session));
+select ok((select run_id is null and not created from canceled_prior_attempt), 'canceled prior attempt is not represented as active work');
+select is((select status::text from public.agent_runs where id = (select run_id from new_queue_pair)), 'canceled', 'adoption leaves terminal history unchanged');
+select is((select count(*) from public.agent_runs where agent_job_id = (select job_id from new_queue_pair)), 1::bigint, 'runless acceptance does not synthesize a replacement run');
+select is((select status::text from public.agent_jobs where id = (select job_id from new_queue_pair)), 'queued', 'runless acceptance preserves the queued job');
+
 -- A bare legacy job may race the worker's separate run INSERT. Do not repair it.
 delete from public.agent_runs where id = (select run_id from new_queue_pair);
 update public.agent_jobs set stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from new_queue_pair);
@@ -80,6 +95,14 @@ from queue_test_session;
 update public.sessions set current_stage_id = (select id from public.pipeline_stages where pipeline_id = (select id from queue_test_pipeline) and slug = 'build')
 where id = (select session_id from queue_test_session);
 select throws_ok($q$select * from pg_temp.enqueue_fixture((select session_id from queue_test_session))$q$, '55000', 'Session has an active job for a different stage.', 'a NULL job stage cannot hide its old-stage run snapshot');
+update public.agent_runs set status = 'error' where agent_job_id = (select job_id from new_queue_pair);
+select throws_ok($q$select * from pg_temp.enqueue_fixture((select session_id from queue_test_session))$q$, '55000', 'Session has an active job for a different stage.', 'terminal historical stage evidence still prevents adopting a prior-stage job');
+update public.agent_runs set status = 'running' where agent_job_id = (select job_id from new_queue_pair);
+insert into public.agent_runs(workspace_id, session_id, agent_job_id, stage_id, stage_slug, stage_name, model_provider, model_name, run_type, status, created_at)
+select 'b1b2c3d4-0001-4000-8000-000000000001', session_id, (select job_id from new_queue_pair),
+  (select id from public.pipeline_stages where pipeline_id = (select id from queue_test_pipeline) and slug = 'build'), 'build', 'Build', 'codex', 'gpt-5.5', 'project', 'success', now() + interval '1 second'
+from queue_test_session;
+select throws_ok($q$select * from pg_temp.enqueue_fixture((select session_id from queue_test_session))$q$, '55000', 'Session has an active job for a different stage.', 'newer terminal history cannot hide the selected active run stage');
 update public.agent_jobs set stage_id = (select id from public.pipeline_stages where pipeline_id = (select id from queue_test_pipeline) and slug = 'plan') where id = (select job_id from new_queue_pair);
 select throws_ok($q$select * from pg_temp.enqueue_fixture((select session_id from queue_test_session))$q$, '55000', 'Session has an active job for a different stage.', 'explicit old-stage jobs are not adopted or retired');
 select is((select status::text from public.agent_jobs where id = (select job_id from new_queue_pair)), 'running', 'stage mismatch preserves the running worker');

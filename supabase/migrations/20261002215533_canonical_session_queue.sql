@@ -1,8 +1,9 @@
 -- Never retire work during rollout: unfenced legacy workers may still finish.
--- Block concurrent claims/inserts while checking and enforcing the invariant.
-lock table public.agent_jobs in share row exclusive mode;
+-- Keep the lock, guard, and index in one statement so both transaction-wrapped
+-- migrations and autocommit psql runners enforce the invariant atomically.
 do $$
 begin
+  lock table public.agent_jobs in share row exclusive mode;
   if exists (
     select 1 from public.agent_jobs
     where status in ('queued', 'started', 'running')
@@ -12,10 +13,10 @@ begin
       using errcode = '55000',
         hint = 'Pause enqueue producers and drain or explicitly resolve duplicate active jobs, then retry the migration. No work was canceled.';
   end if;
+
+  CREATE UNIQUE INDEX agent_jobs_active_session_idx ON public.agent_jobs USING btree (workspace_id, session_id) WHERE (status = ANY (ARRAY['queued'::public.agent_job_status, 'started'::public.agent_job_status, 'running'::public.agent_job_status]));
 end;
 $$;
-
-CREATE UNIQUE INDEX agent_jobs_active_session_idx ON public.agent_jobs USING btree (workspace_id, session_id) WHERE (status = ANY (ARRAY['queued'::public.agent_job_status, 'started'::public.agent_job_status, 'running'::public.agent_job_status]));
 
 set check_function_bodies = off;
 
@@ -93,6 +94,14 @@ begin
     end if;
     select * into existing_run from public.agent_runs
     where agent_job_id = active_job.id
+    order by created_at desc, id desc limit 1;
+    if existing_run.stage_id is not null and existing_run.stage_id <> current_stage.id then
+      raise exception 'Session has an active job for a different stage.' using errcode = '55000';
+    end if;
+    -- Historical stage evidence above still matters when a previous attempt
+    -- finished. Only an active execution can represent the adopted work.
+    select * into existing_run from public.agent_runs
+    where agent_job_id = active_job.id and status in ('queued', 'started', 'running')
     order by created_at desc, id desc limit 1;
     if existing_run.stage_id is not null and existing_run.stage_id <> current_stage.id then
       raise exception 'Session has an active job for a different stage.' using errcode = '55000';

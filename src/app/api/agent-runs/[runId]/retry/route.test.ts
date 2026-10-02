@@ -121,6 +121,26 @@ describe("POST /api/agent-runs/:runId/retry rate limiting", () => {
     expect(response.status).toBe(201);
   });
 
+  it("accepts an existing job without a run instead of failing or fabricating a DTO", async () => {
+    mocked.retryWallieRun.mockResolvedValueOnce({
+      created: false,
+      jobId: "job-existing",
+      run: null,
+    });
+
+    const response = await POST(makeRequest(), routeContext());
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({
+      code: "active_job",
+      created: false,
+      jobId: "job-existing",
+      processScheduled: false,
+      run: null,
+    });
+    expect(mocked.loadAttemptOrdinalForRun).not.toHaveBeenCalled();
+  });
+
   it("returns 200 when active-run dedupe resolves an existing run", async () => {
     mocked.retryWallieRun.mockResolvedValueOnce({
       created: false,

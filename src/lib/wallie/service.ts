@@ -51,19 +51,6 @@ const sessionSelect =
   "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
 const runSelect =
   "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
-const DEFAULT_RUN_LOOKUP_RETRY = {
-  initialDelayMs: 40,
-  maxDelayMs: 640,
-  maxElapsedMs: 1_200,
-} as const;
-
-export type WallieRunLookupRetryOptions = {
-  initialDelayMs?: number;
-  maxDelayMs?: number;
-  maxElapsedMs?: number;
-  signal?: AbortSignal;
-};
-
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
   readonly provider?: "vercel" | "e2b" | "daytona";
@@ -83,37 +70,16 @@ export class WallieActionError extends Error {
   }
 }
 
-class WallieRunLookupTimeoutError extends WallieActionError {
-  readonly attempts: number;
-  readonly elapsedMs: number;
-  readonly jobId: string;
-  readonly maxElapsedMs: number;
-
-  constructor(input: { attempts: number; elapsedMs: number; jobId: string; maxElapsedMs: number }) {
-    super({
-      code: "run_lookup_timeout",
-      message: "Timed out waiting for the queued Wallie run to become visible. Please retry.",
-      statusCode: 503,
-    });
-    this.attempts = input.attempts;
-    this.elapsedMs = input.elapsedMs;
-    this.jobId = input.jobId;
-    this.maxElapsedMs = input.maxElapsedMs;
-    this.name = "WallieRunLookupTimeoutError";
-  }
-}
-
 export type EnqueueWallieRunResult = {
   created: boolean;
   jobId: string | null;
-  run: AgentRunRow;
+  /** The accepted job may be waiting for its worker to create an active run. */
+  run: AgentRunRow | null;
 };
 
 export type EnqueueSessionJobWithRunInput = {
   admin: AdminClient;
   requestedByMemberId: string | null;
-  /** Retry budget while a legacy job waits for its worker to create a run. */
-  runLookupRetry?: WallieRunLookupRetryOptions;
   /**
    * Mode stamped on the queued run. Defaults to the mode inferred from the
    * session's effective repository — the same resolution the processor
@@ -131,72 +97,6 @@ export type CreateSessionWithFirstJobResult = {
   sessionId: string;
   workspaceSlug: string;
 };
-
-function toAbortError(signal: AbortSignal) {
-  return signal.reason instanceof Error ? signal.reason : new Error("Wallie run lookup aborted.");
-}
-
-function delay(milliseconds: number, signal?: AbortSignal) {
-  if (signal?.aborted) {
-    return Promise.reject(toAbortError(signal));
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    const onAbort = () => {
-      clearTimeout(timeout);
-      reject(signal ? toAbortError(signal) : new Error("Wallie run lookup aborted."));
-    };
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-function createRunLookupSignal(input: { parentSignal?: AbortSignal; timeoutMs: number }) {
-  const controller = new AbortController();
-  const abortFromParent = () => {
-    if (input.parentSignal) {
-      controller.abort(toAbortError(input.parentSignal));
-    }
-  };
-  const timeout = setTimeout(() => {
-    controller.abort(new Error("Wallie run lookup deadline exceeded."));
-  }, input.timeoutMs);
-
-  if (input.parentSignal?.aborted) {
-    abortFromParent();
-    clearTimeout(timeout);
-  } else {
-    input.parentSignal?.addEventListener("abort", abortFromParent, { once: true });
-  }
-
-  return {
-    dispose: () => {
-      clearTimeout(timeout);
-      input.parentSignal?.removeEventListener("abort", abortFromParent);
-    },
-    signal: controller.signal,
-  };
-}
-
-function throwRunLookupTimeout(input: {
-  attempts: number;
-  elapsedMs: number;
-  jobId: string;
-  maxElapsedMs: number;
-}): never {
-  console.error("Wallie run lookup exhausted after duplicate enqueue", {
-    attempts: input.attempts,
-    elapsedMs: input.elapsedMs,
-    jobId: input.jobId,
-    maxElapsedMs: input.maxElapsedMs,
-  });
-
-  throw new WallieRunLookupTimeoutError(input);
-}
 
 function toBlockingActionError(reasons: WallieBlockingReason[]) {
   const blockingReason = reasons.find((reason) => reason.code !== "active_run");
@@ -486,98 +386,6 @@ async function loadRunById(admin: AdminClient, runId: string) {
   return data as AgentRunRow | null;
 }
 
-async function loadRunByJobId(admin: AdminClient, jobId: string, signal?: AbortSignal) {
-  const query = admin
-    .from("agent_runs")
-    .select(runSelect)
-    .eq("agent_job_id", jobId)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as AgentRunRow | null;
-}
-
-async function waitForRunByJobId(
-  admin: AdminClient,
-  jobId: string,
-  options: WallieRunLookupRetryOptions = {},
-) {
-  const initialDelayMs = options.initialDelayMs ?? DEFAULT_RUN_LOOKUP_RETRY.initialDelayMs;
-  const maxDelayMs = options.maxDelayMs ?? DEFAULT_RUN_LOOKUP_RETRY.maxDelayMs;
-  const maxElapsedMs = options.maxElapsedMs ?? DEFAULT_RUN_LOOKUP_RETRY.maxElapsedMs;
-  const startedAt = Date.now();
-  let attempts = 0;
-  let nextDelayMs = initialDelayMs;
-
-  while (true) {
-    if (options.signal?.aborted) {
-      throw toAbortError(options.signal);
-    }
-
-    const elapsedBeforeLookupMs = Date.now() - startedAt;
-
-    if (elapsedBeforeLookupMs >= maxElapsedMs) {
-      throwRunLookupTimeout({
-        attempts,
-        elapsedMs: elapsedBeforeLookupMs,
-        jobId,
-        maxElapsedMs,
-      });
-    }
-
-    attempts += 1;
-    const lookupSignal = createRunLookupSignal({
-      parentSignal: options.signal,
-      timeoutMs: maxElapsedMs - elapsedBeforeLookupMs,
-    });
-    let run: AgentRunRow | null;
-
-    try {
-      run = await loadRunByJobId(admin, jobId, lookupSignal.signal);
-    } catch (error) {
-      if (lookupSignal.signal.aborted) {
-        if (options.signal?.aborted) {
-          throw toAbortError(options.signal);
-        }
-
-        throwRunLookupTimeout({
-          attempts,
-          elapsedMs: Date.now() - startedAt,
-          jobId,
-          maxElapsedMs,
-        });
-      }
-
-      throw error;
-    } finally {
-      lookupSignal.dispose();
-    }
-
-    if (run) {
-      return run;
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-
-    if (elapsedMs >= maxElapsedMs) {
-      throwRunLookupTimeout({
-        attempts,
-        elapsedMs,
-        jobId,
-        maxElapsedMs,
-      });
-    }
-
-    await delay(Math.min(nextDelayMs, maxElapsedMs - elapsedMs), options.signal);
-    nextDelayMs = Math.min(nextDelayMs * 2, maxDelayMs);
-  }
-}
-
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
   sessionId: string | null;
@@ -725,8 +533,8 @@ export async function resolveQueuedRunConfig(
 
 /**
  * Commit a new job and its run together, or adopt the session's active job.
- * Legacy producers may have inserted a job without a run: only that case uses
- * the bounded compatibility wait while its worker creates the run.
+ * Legacy producers may have inserted a job without an active run. A durable
+ * accepted job is enough to acknowledge enqueue without waiting for a worker.
  */
 export async function enqueueSessionJobWithRun(
   input: EnqueueSessionJobWithRunInput,
@@ -747,17 +555,17 @@ export async function enqueueSessionJobWithRun(
   const queued = data?.[0];
   if (!queued) throw new Error("Wallie enqueue returned no job.");
 
-  const run = queued.run_id
-    ? await loadRunById(admin, queued.run_id)
-    : await waitForRunByJobId(admin, queued.job_id, input.runLookupRetry);
-  if (!run) throw new Error("The queued Wallie run no longer exists. Please retry.");
-  return { created: queued.created, jobId: queued.job_id, run };
+  const run = queued.run_id ? await loadRunById(admin, queued.run_id) : null;
+  return {
+    created: queued.created,
+    jobId: queued.job_id,
+    run: run && isActiveAgentRunStatus(run.status) ? run : null,
+  };
 }
 
 export async function retryWallieRun(input: {
   admin?: AdminClient;
   requestedByMemberId: string;
-  runLookupRetry?: WallieRunLookupRetryOptions;
   runId: string;
   supabase: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
@@ -800,7 +608,6 @@ export async function retryWallieRun(input: {
   return enqueueSessionJobWithRun({
     admin,
     requestedByMemberId: input.requestedByMemberId,
-    runLookupRetry: input.runLookupRetry,
     runType: validated.runType,
     session: validated.session,
     triggerType: "manual_retry",
