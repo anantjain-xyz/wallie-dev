@@ -518,6 +518,16 @@ function SessionWalliePanelContent({
           workspaceId: session.workspaceId,
         });
 
+        if (!payload.run) {
+          setExpandedRunId(null);
+          setFlashMessage({
+            kind: "info",
+            text: "Wallie already has queued or running work for this session.",
+          });
+          recovery.retry();
+          return;
+        }
+
         const run = hydrateRequestedByMember(payload.run, memberIndex);
 
         setRuns((currentRuns) =>
@@ -552,7 +562,7 @@ function SessionWalliePanelContent({
         setPendingActionId(null);
       }
     },
-    [memberIndex, session.workspaceId],
+    [memberIndex, recovery, session.workspaceId],
   );
 
   const handleCancelRun = useCallback(

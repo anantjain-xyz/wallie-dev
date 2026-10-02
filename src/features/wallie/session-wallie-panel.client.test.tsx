@@ -546,6 +546,83 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(view.container.querySelectorAll('[data-run-id="run-21"]')).toHaveLength(1);
   });
 
+  it("acknowledges accepted work without a run and refreshes without inventing an attempt", async () => {
+    const initialRun = run(1, { canRetry: true, status: "error", stageId: "stage-build" });
+    const fake = fakeSupabase();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            code: "active_job",
+            created: false,
+            jobId: "job-existing",
+            processScheduled: false,
+            run: null,
+          }),
+          { status: 202 },
+        );
+      }
+      return new Response(JSON.stringify({ nextCursor: null, runs: [initialRun] }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = panel(data([initialRun]), fake.supabase);
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const initialRefreshes = fetchMock.mock.calls.filter(
+      ([, init]) => init?.method !== "POST",
+    ).length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry Run" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Wallie already has queued or running work for this session."),
+      ).not.toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST").length,
+      ).toBeGreaterThan(initialRefreshes),
+    );
+    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(1);
+    expect(view.container.querySelector('[data-run-id="run-1"]')).not.toBeNull();
+
+    await act(async () => {
+      sessionChannel?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          created_at: "2026-07-18T13:30:00.000Z",
+          finished_at: null,
+          id: "run-worker-created",
+          last_activity_at: "2026-07-18T13:30:00.000Z",
+          model_name: "gpt-5",
+          model_provider: "codex",
+          run_type: "code",
+          sandbox_id: null,
+          sandbox_provider: null,
+          stage_id: "stage-build",
+          stage_name: "Build",
+          stage_slug: "build",
+          started_at: "2026-07-18T13:30:00.000Z",
+          status: "running",
+          triggered_by_member_id: null,
+          updated_at: "2026-07-18T13:30:00.000Z",
+        },
+      });
+    });
+    const workerRun = view.container.querySelector(
+      '[data-run-id="run-worker-created"]',
+    ) as HTMLElement;
+    expect(workerRun).not.toBeNull();
+    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(2);
+    fireEvent.click(workerRun.querySelector("button[aria-expanded]")!);
+    expect(within(workerRun).getByText("Attempt 2")).not.toBeNull();
+  });
+
   it("updates the pagination cursor when reconcile returns a newer first page", async () => {
     const initialRuns = Array.from({ length: 20 }, (_, index) => run(index + 21));
     const reconciledRuns = Array.from({ length: 20 }, (_, index) => run(index + 1));

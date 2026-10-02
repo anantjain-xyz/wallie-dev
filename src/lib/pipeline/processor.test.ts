@@ -2221,40 +2221,17 @@ describe("processPipelineJob (generic stage runner)", () => {
 /**
  * Admin mock for the post-approval enqueue: the approval RPC itself is stubbed
  * via `rpc`, and the tables below are exactly those the shared
- * `enqueueSessionJobWithRun` path touches (agent config, stage snapshot,
- * effective-repository resolution, job + run inserts, dedupe recovery).
+ * `enqueueSessionJobWithRun` path touches (effective-repository resolution,
+ * atomic enqueue receipt, and returned run lookup).
  */
 function buildApprovalEnqueueMock(opts: {
-  jobInsertError: { code: string; message: string } | null;
+  adoptExisting: boolean;
   rpc: (fn: string, args?: unknown) => unknown;
 }) {
   const enqueuedJobs: Array<Record<string, unknown>> = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
 
   const tables: Record<string, unknown> = {
-    agent_jobs: {
-      insert: (row: Record<string, unknown>) => {
-        enqueuedJobs.push(row);
-        return {
-          select: () => ({
-            single: async () => ({
-              data: opts.jobInsertError ? null : { ...row, id: "job-next" },
-              error: opts.jobInsertError,
-            }),
-          }),
-        };
-      },
-      select: () => {
-        const chain = {
-          eq: () => chain,
-          in: () => chain,
-          limit: () => chain,
-          maybeSingle: async () => ({ data: { id: "job-active" }, error: null }),
-          order: () => chain,
-        };
-        return chain;
-      },
-    },
     agent_runs: {
       insert: (row: Record<string, unknown>) => {
         insertedRuns.push(row);
@@ -2277,16 +2254,6 @@ function buildApprovalEnqueueMock(opts: {
         };
         return chain;
       },
-    },
-    pipeline_stages: {
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({
-            data: { id: "stage-design", name: "Design", slug: "design" },
-            error: null,
-          }),
-        }),
-      }),
     },
     sessions: {
       select: () => {
@@ -2341,7 +2308,20 @@ function buildApprovalEnqueueMock(opts: {
   return {
     admin: createProcessorTestAdminClient({
       from: (name: string) => tables[name] ?? {},
-      rpc: opts.rpc,
+      rpc: (name, args) => {
+        if (name !== "enqueue_session_job_with_run") return opts.rpc(name, args);
+        enqueuedJobs.push(args as Record<string, unknown>);
+        return Promise.resolve({
+          data: [
+            {
+              created: !opts.adoptExisting,
+              job_id: opts.adoptExisting ? "job-active" : "job-next",
+              run_id: opts.adoptExisting ? "run-active" : "run-next",
+            },
+          ],
+          error: null,
+        });
+      },
     }),
     enqueuedJobs,
     insertedRuns,
@@ -2406,7 +2386,7 @@ describe("handleApproval", () => {
       error: null,
     });
     const { admin, enqueuedJobs, insertedRuns } = buildApprovalEnqueueMock({
-      jobInsertError: null,
+      adoptExisting: false,
       rpc,
     });
 
@@ -2429,34 +2409,20 @@ describe("handleApproval", () => {
       },
       success: true,
     });
-    // Job and run carry the same stage snapshot and identity the create RPC
-    // stamps, keyed on the session's single active dedupe key.
+    // Approval passes the expected next stage and configured run to one enqueue RPC.
     expect(enqueuedJobs).toEqual([
       {
-        dedupe_key: "session:sess-1:active",
-        requested_by_member_id: "mem-1",
-        session_id: "sess-1",
-        stage_id: "stage-design",
-        stage_name: "Design",
-        stage_slug: "design",
-        trigger_type: "assignment",
-        workspace_id: "ws-1",
+        p_session_id: "sess-1",
+        p_workspace_id: "ws-1",
+        p_expected_stage_id: "stage-design",
+        p_requested_by_member_id: "mem-1",
+        p_trigger_type: "assignment",
+        p_agent_model_provider: "codex",
+        p_agent_model_name: "gpt-5.5",
+        p_run_type: "project",
       },
     ]);
-    expect(insertedRuns).toEqual([
-      expect.objectContaining({
-        agent_job_id: "job-next",
-        model_name: "gpt-5.5",
-        model_provider: "codex",
-        run_type: "project",
-        session_id: "sess-1",
-        stage_id: "stage-design",
-        stage_name: "Design",
-        stage_slug: "design",
-        triggered_by_member_id: "mem-1",
-        workspace_id: "ws-1",
-      }),
-    ]);
+    expect(insertedRuns).toEqual([]);
   });
 
   it("reports the live job when the next-stage enqueue loses the dedupe race", async () => {
@@ -2472,7 +2438,7 @@ describe("handleApproval", () => {
       error: null,
     });
     const { admin, insertedRuns } = buildApprovalEnqueueMock({
-      jobInsertError: { code: "23505", message: "duplicate key value violates unique constraint" },
+      adoptExisting: true,
       rpc,
     });
 
@@ -2492,7 +2458,7 @@ describe("handleApproval", () => {
 
   it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const rpc = vi.fn().mockResolvedValue({
+    const rpc = vi.fn().mockResolvedValueOnce({
       data: [
         {
           archived_at: null,
@@ -2507,6 +2473,7 @@ describe("handleApproval", () => {
       code: "deadlock",
       message: "queue write failed",
     };
+    rpc.mockResolvedValue({ data: null, error: enqueueError });
     const tables: Record<string, unknown> = {
       agent_jobs: {
         insert: () => ({

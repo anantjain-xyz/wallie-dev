@@ -15,7 +15,6 @@ export type WallieBlockingCode =
 
 export type WallieActionErrorCode =
   | WallieBlockingCode
-  | "run_lookup_timeout"
   | "session_not_found"
   | "session_archived"
   | "session_not_runnable"

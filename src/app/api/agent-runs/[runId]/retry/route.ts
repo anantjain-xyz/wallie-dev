@@ -60,19 +60,20 @@ export async function POST(request: Request, { params }: RetryAgentRunRouteProps
       workspace: access.context.workspace,
     });
     const processScheduled = result.created && result.jobId !== null;
-    const attemptCount = await loadAttemptOrdinalForRun(result.run.session_id, result.run.id).catch(
-      () => 1,
-    );
+    const attemptCount = result.run
+      ? await loadAttemptOrdinalForRun(result.run.session_id, result.run.id).catch(() => 1)
+      : undefined;
 
     const response: AgentRunActionResponse = buildAgentRunActionResponse({
       attemptCount,
       created: result.created,
+      jobId: result.jobId,
       processScheduled,
       run: result.run,
     });
 
     return NextResponse.json(response, {
-      status: result.created ? 201 : 200,
+      status: result.run ? (result.created ? 201 : 200) : 202,
     });
   } catch (error) {
     const response = buildAgentRunActionErrorResponse(error);

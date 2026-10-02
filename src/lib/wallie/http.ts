@@ -13,16 +13,18 @@ const emptyMemberIndex = new Map<string, WorkspaceMember>();
 export function buildAgentRunActionResponse(input: {
   attemptCount?: number;
   created: boolean;
+  jobId: string | null;
   processScheduled: boolean;
-  run: Tables<"agent_runs">;
+  run: Tables<"agent_runs"> | null;
 }) {
   return {
-    code: input.created ? undefined : "active_run",
+    code: input.run ? (input.created ? undefined : "active_run") : "active_job",
     created: input.created,
+    jobId: input.jobId,
     processScheduled: input.processScheduled,
-    run: mapAgentRunRow(input.run, emptyMemberIndex, [], {
-      attemptCount: input.attemptCount,
-    }),
+    run: input.run
+      ? mapAgentRunRow(input.run, emptyMemberIndex, [], { attemptCount: input.attemptCount })
+      : null,
   } satisfies AgentRunActionResponse;
 }
 
