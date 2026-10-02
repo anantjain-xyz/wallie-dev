@@ -34,8 +34,11 @@ const config: WorkerConfig = {
 
 const admin = {} as never;
 
-function job(id: string): ClaimNextResult {
-  return { job: { id, workspace_id: "ws-1" } as never, outcome: "claimed" };
+function job(id: string, attemptCount = 1): ClaimNextResult {
+  return {
+    job: { id, attempt_count: attemptCount, workspace_id: "ws-1" } as never,
+    outcome: "claimed",
+  };
 }
 
 function deferred() {
@@ -126,6 +129,53 @@ describe("createScheduler", () => {
       "job-2",
       "job-3",
     ]);
+  });
+
+  it("counts overlapping attempts separately and keeps the replacement tracked after old completion", async () => {
+    const oldAttempt = deferred();
+    const replacement = deferred();
+    let claimCount = 0;
+    let shuttingDown = false;
+    mocked.claimNextJob.mockImplementation(async () => job("retried-job", ++claimCount));
+    mocked.runClaimedJob.mockImplementation((_admin: never, claimed: { attempt_count: number }) =>
+      claimed.attempt_count === 1 ? oldAttempt.promise : replacement.promise,
+    );
+    mocked.sendHeartbeat.mockResolvedValue(undefined);
+
+    const scheduler = createScheduler(
+      admin,
+      { ...config, maxConcurrentJobs: 2 },
+      {
+        // Bound a broken implementation that counts one job instead of two
+        // local attempts, so it fails without hanging the test.
+        isShuttingDown: () => shuttingDown || claimCount >= 3,
+        delay: async () => {
+          shuttingDown = true;
+        },
+      },
+    );
+    await scheduler.run();
+
+    expect(mocked.claimNextJob).toHaveBeenCalledTimes(2);
+    expect(scheduler.getActiveJobIds()).toEqual(["retried-job"]);
+    expect(mocked.sendHeartbeat).toHaveBeenLastCalledWith(admin, "worker-test", ["retried-job"]);
+
+    let drained = false;
+    const draining = scheduler.waitForIdle().then(() => {
+      drained = true;
+    });
+    oldAttempt.resolve();
+    await oldAttempt.promise;
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    expect(scheduler.getActiveJobIds()).toEqual(["retried-job"]);
+    expect(mocked.sendHeartbeat).toHaveBeenLastCalledWith(admin, "worker-test", ["retried-job"]);
+
+    replacement.resolve();
+    await draining;
+    expect(drained).toBe(true);
+    expect(scheduler.getActiveJobIds()).toEqual([]);
+    expect(mocked.sendHeartbeat).toHaveBeenLastCalledWith(admin, "worker-test", []);
   });
 
   it("waits on the poll interval when there is no work", async () => {
