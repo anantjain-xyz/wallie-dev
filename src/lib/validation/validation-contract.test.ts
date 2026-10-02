@@ -41,7 +41,7 @@ describe("validation contract verifier", () => {
 
   it("rejects workflow drift with a direct repair", () => {
     expect(verifyFixture("workflow-drift")).toContain(
-      '.github/workflows/test.yml drifted from its approved exact shape. Restore the direct "pnpm check" delegation and approved trigger, permissions, job, and step controls; update the explicit contract only when that required check intentionally changes.',
+      '.github/workflows/test.yml drifted from its approved exact shape. Restore the direct "pnpm test" delegation and approved trigger, permissions, job, and step controls; update the explicit contract only when that required check intentionally changes.',
     );
   });
 
@@ -54,7 +54,7 @@ describe("validation contract verifier", () => {
     workflow.jobs["database-tests"][control] = control === "if" ? "false" : true;
     writeFileSync(workflowPath, stringify(workflow));
     expect(verifyValidationContract(projectDirectory)).toContain(
-      '.github/workflows/test.yml drifted from its approved exact shape. Restore the direct "pnpm check" delegation and approved trigger, permissions, job, and step controls; update the explicit contract only when that required check intentionally changes.',
+      '.github/workflows/test.yml drifted from its approved exact shape. Restore the direct "pnpm test" delegation and approved trigger, permissions, job, and step controls; update the explicit contract only when that required check intentionally changes.',
     );
   });
 

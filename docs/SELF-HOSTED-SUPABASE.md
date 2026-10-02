@@ -53,7 +53,7 @@ flowchart LR
 
 Use the command's exit status and check output as evidence. A failed or interrupted run does not qualify the stack.
 
-The dedicated GitHub Actions job reruns this check when the bundle, harness, database, or dependency lock changes. It needs no repository secrets.
+This is an optional local qualification command. Its GitHub Actions workflow was retired because the current deployment uses hosted Supabase. The application database tests remain in CI; see [CI scope](VERIFICATION.md#ci-scope).
 
 ## Gates before AWS cutover
 

@@ -22,11 +22,28 @@ verify:validation → format:check → lint → typecheck → check:privileged-i
 The full profile runs `check:fast` and then the complete Vitest suite. Before
 review, run `pnpm check`, the repository-owned full pre-PR gate.
 
-Pull-request CI delegates directly to both canonical profiles: the fast
-validation job runs `pnpm check:fast`, and the test job runs `pnpm check`.
-Typechecking therefore runs in PR CI. A separate CI job builds the production
+Pull-request CI runs `pnpm check:fast` in the `lint-and-format` job and
+`pnpm test` in the `test` job. Together these cover the full `pnpm check`
+profile, including typechecking, without repeating fast validation. A separate CI job builds the production
 app and enforces route budgets; production builds and route-budget checks are
 not part of either canonical profile.
+
+## CI scope
+
+The workflows run four jobs on pull requests and main pushes:
+
+| Job               | Coverage                                                             |
+| ----------------- | -------------------------------------------------------------------- |
+| `lint-and-format` | Validation contract, formatting, lint, types, and privileged imports |
+| `test`            | Complete Vitest suite                                                |
+| `route-budgets`   | Production Next.js build and route bundle ceilings                   |
+| `database-tests`  | Disposable local Supabase, migrations, and pgTAP                     |
+
+- Deployment target: Vercel web, hosted Supabase, and the Railway worker configured in `railway.json`.
+- Local Supabase tests protect application database behavior used by hosted Supabase; keep them in CI.
+- Retired checks: six AWS infrastructure workflows, AWS web/worker container qualification, and upstream self-hosted Supabase qualification. Their infrastructure, scripts, and local verification commands remain available for an explicitly resumed AWS effort.
+- `Lint and Format` retains fast validation; `Test` runs Vitest directly instead of repeating `check:fast` through `pnpm check`.
+- Required check names `lint-and-format`, `test`, and `route-budgets` are preserved to match the existing GitHub ruleset. `database-tests` also remains an automatic CI job.
 
 ## Verification lanes
 
