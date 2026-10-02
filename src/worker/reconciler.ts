@@ -1,3 +1,4 @@
+import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
@@ -464,9 +465,7 @@ async function ensurePipelineJobQueued(
   statusName: string,
 ): Promise<void> {
   const { error } = await admin.from("agent_jobs").insert({
-    dedupe_key: session.linear_issue_id
-      ? `pipeline:${session.linear_issue_id}:active`
-      : `pipeline:session:${session.id}:active`,
+    dedupe_key: buildWallieJobDedupeKey(session.id),
     requested_by_member_id: null,
     session_id: session.id,
     trigger_type: "assignment",

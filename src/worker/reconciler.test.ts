@@ -675,7 +675,7 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iCustomDone:active",
+          dedupe_key: "session:sCustomDone:active",
           session_id: "sCustomDone",
         }),
       }),
@@ -759,7 +759,7 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iRework:active",
+          dedupe_key: "session:sRework:active",
           session_id: "sRework",
           trigger_type: "assignment",
           workspace_id: "wA",
@@ -815,7 +815,7 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iMerge:active",
+          dedupe_key: "session:sMerge:active",
           session_id: "sMerge",
           trigger_type: "assignment",
         }),
@@ -872,7 +872,7 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iDone:active",
+          dedupe_key: "session:sDone:active",
           session_id: "sDone",
           trigger_type: "assignment",
         }),
@@ -1089,7 +1089,7 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iReworkCurrent:active",
+          dedupe_key: "session:sReworkCurrent:active",
           session_id: "sReworkCurrent",
           trigger_type: "assignment",
         }),
@@ -1147,7 +1147,7 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iApprovedRework:active",
+          dedupe_key: "session:sApprovedRework:active",
           session_id: "sApprovedRework",
         }),
       }),
@@ -1185,12 +1185,38 @@ describe("reconcileLinearState", () => {
         op: "insert",
         table: "agent_jobs",
         update: expect.objectContaining({
-          dedupe_key: "pipeline:iTodo:active",
+          dedupe_key: "session:sReview:active",
           session_id: "sReview",
           trigger_type: "assignment",
         }),
       }),
     );
+  });
+
+  it("queues separate session identities when two sessions reference the same Linear issue", async () => {
+    const { admin, calls } = buildAdmin({
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: ["session-one", "session-two"].map((id) => ({
+        id,
+        current_stage_id: "stage-engineering",
+        pipeline_id: "pipe-1",
+        workspace_id: "wA",
+        linear_issue_id: "shared-issue",
+        phase_status: "rejected",
+        created_at: "2026-05-01T00:00:00Z",
+      })),
+    });
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "shared-issue", state: { name: "Todo" } }] } },
+      }),
+    );
+    await reconcileLinearState(admin as never, { sleep: vi.fn() });
+    expect(
+      calls
+        .filter((call) => call.table === "agent_jobs" && call.op === "insert")
+        .map((call) => call.update?.dedupe_key),
+    ).toEqual(["session:session-one:active", "session:session-two:active"]);
   });
 
   it("treats started pipeline jobs as active before queueing new work", async () => {

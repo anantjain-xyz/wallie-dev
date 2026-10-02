@@ -5,6 +5,7 @@ import type { Tables } from "@/lib/supabase/database.types";
 import {
   assertSessionFirstRunReady,
   createSessionWithFirstJob,
+  enqueueSessionJobWithRun,
   retryWallieRun,
 } from "@/lib/wallie/service";
 import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
@@ -154,7 +155,7 @@ describe("wallie service helpers", () => {
 //
 // The queued `agent_runs` row used to be stamped with the literal placeholder
 // "wallie-control-plane-stub". Here we drive the public retry path with a
-// fake admin/server client and assert the row instead carries the model the
+// fake admin/server client and assert the RPC receives the model the
 // workspace has configured.
 
 interface AgentConfigRow {
@@ -162,7 +163,6 @@ interface AgentConfigRow {
   value_json: unknown;
 }
 
-type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 type QueryResult = Promise<{ data: unknown; error: PostgrestError | null }>;
 type QueryBuilder = {
@@ -175,37 +175,6 @@ type QueryBuilder = {
 };
 
 const baseTimestamp = "2026-01-01T00:00:00.000Z";
-
-const uniqueViolationError = {
-  code: "23505",
-  details: "",
-  hint: "",
-  message: "duplicate key value violates unique constraint",
-  name: "PostgrestError",
-} satisfies PostgrestError;
-
-function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
-  return {
-    attempt_count: 0,
-    created_at: baseTimestamp,
-    dedupe_key: "session:sess-1:active",
-    finished_at: null,
-    id: "job-1",
-    last_error: null,
-    requested_by_member_id: "mem-1",
-    scheduled_at: null,
-    session_id: "sess-1",
-    started_at: null,
-    stage_id: null,
-    stage_name: null,
-    stage_slug: null,
-    status: "queued",
-    trigger_type: "manual_retry",
-    updated_at: baseTimestamp,
-    workspace_id: "ws-1",
-    ...overrides,
-  };
-}
 
 function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
   return {
@@ -266,13 +235,13 @@ function createMaybeSingleQuery(
 
 function buildSupabaseMocks(opts: {
   agentConfig: AgentConfigRow[];
-  activeJobRow?: AgentJobRow | null;
   activeRunForSession?: AgentRunRow | null;
   archivedAt?: string | null;
   phaseStatus?: string;
-  insertedJobRow?: AgentJobRow;
-  insertedRunRows: Array<Record<string, unknown>>;
-  jobInsertError?: PostgrestError | null;
+  enqueueCalls: Array<Record<string, unknown>>;
+  enqueueError?: PostgrestError | null;
+  enqueueReceipt?: { created: boolean; job_id: string; run_id: string | null };
+  receiptRun?: AgentRunRow;
   existingRun?: AgentRunRow | null;
   primaryRepositoryId?: string | null;
   repositories?: Array<{
@@ -335,9 +304,29 @@ function buildSupabaseMocks(opts: {
     },
   };
 
-  const insertedJobRow = opts.insertedJobRow ?? buildAgentJobRow();
+  let queuedRun: AgentRunRow | undefined;
+  const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
+    if (name !== "enqueue_session_job_with_run") throw new Error(`unexpected RPC: ${name}`);
+    opts.enqueueCalls.push(args);
+    if (opts.enqueueError) return { data: null, error: opts.enqueueError };
+    const receipt = opts.enqueueReceipt ?? {
+      created: true,
+      job_id: "job-queued",
+      run_id: "run-queued",
+    };
+    if (receipt.run_id) {
+      queuedRun =
+        opts.receiptRun ??
+        buildAgentRunRow({
+          agent_job_id: receipt.job_id,
+          id: receipt.run_id,
+        });
+    }
+    return { data: [receipt], error: null };
+  });
 
   const admin = {
+    rpc,
     from: (table: string) => {
       if (table === "sessions") {
         return {
@@ -364,58 +353,17 @@ function buildSupabaseMocks(opts: {
               if (filters.has("id")) {
                 return {
                   data:
-                    opts.existingRun === undefined
-                      ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
-                      : opts.existingRun,
+                    queuedRun?.id === filters.get("id")
+                      ? queuedRun
+                      : opts.existingRun === undefined
+                        ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
+                        : opts.existingRun,
                   error: null,
                 };
               }
 
               return { data: opts.activeRunForSession ?? null, error: null };
             }),
-          insert: (row: Record<string, unknown>) => {
-            opts.insertedRunRows.push(row);
-            return {
-              select: () => ({
-                single: async () => ({
-                  data: buildAgentRunRow({
-                    ...(row as Partial<AgentRunRow>),
-                    id: "run-1",
-                  }),
-                  error: null,
-                }),
-              }),
-            };
-          },
-        };
-      }
-      if (table === "agent_jobs") {
-        return {
-          insert: () => ({
-            select: () => ({
-              single: async () => ({
-                data: opts.jobInsertError ? null : insertedJobRow,
-                error: opts.jobInsertError ?? null,
-              }),
-            }),
-          }),
-          select: () =>
-            createMaybeSingleQuery(async () => ({
-              data: opts.activeJobRow ?? insertedJobRow,
-              error: null,
-            })),
-        };
-      }
-      if (table === "pipeline_stages") {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { id: "stage-product", name: "Product", slug: "product" },
-                error: null,
-              }),
-            }),
-          }),
         };
       }
       if (table === "session_pull_requests") {
@@ -509,20 +457,21 @@ function buildSupabaseMocks(opts: {
   };
 
   return {
+    rpc,
     admin: admin as unknown as Parameters<typeof retryWallieRun>[0]["admin"],
     supabase: supabase as unknown as Parameters<typeof retryWallieRun>[0]["supabase"],
   };
 }
 
-describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
+describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
   it("stamps the queued run with the workspace's configured model and provider", async () => {
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [
         { key: "agent_model", value_json: "claude-sonnet-4-20250514" },
         { key: "agent_provider", value_json: "claude_code" },
       ],
-      insertedRunRows,
+      enqueueCalls,
     });
 
     const result = await retryWallieRun({
@@ -534,24 +483,22 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     expect(result.created).toBe(true);
-    expect(insertedRunRows).toHaveLength(1);
-    const inserted = insertedRunRows[0]!;
-    expect(inserted.model_name).toBe("claude-sonnet-4-20250514");
-    expect(inserted.model_name).not.toBe("wallie-control-plane-stub");
+    expect(enqueueCalls).toHaveLength(1);
+    const inserted = enqueueCalls[0]!;
+    expect(inserted.p_agent_model_name).toBe("claude-sonnet-4-20250514");
+    expect(inserted.p_agent_model_name).not.toBe("wallie-control-plane-stub");
     // Underscore aliases that the settings UI persists must be normalized to
     // the canonical dashed form runners expect.
-    expect(inserted.model_provider).toBe("claude-code");
-    expect(inserted.stage_id).toBe("stage-product");
-    expect(inserted.stage_name).toBe("Product");
-    expect(inserted.stage_slug).toBe("product");
+    expect(inserted.p_agent_model_provider).toBe("claude-code");
+    expect(inserted.p_expected_stage_id).toBe("stage-product");
   });
 
   it("refuses to enqueue a run for an archived session", async () => {
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
       archivedAt: "2026-06-07T12:00:00.000Z",
-      insertedRunRows,
+      enqueueCalls,
     });
 
     await expect(
@@ -564,15 +511,15 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       }),
     ).rejects.toMatchObject({ code: "session_archived" });
 
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("refuses to enqueue a run for a completed (approved) session", async () => {
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
       phaseStatus: "approved",
-      insertedRunRows,
+      enqueueCalls,
     });
 
     await expect(
@@ -585,14 +532,14 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       }),
     ).rejects.toMatchObject({ code: "session_not_runnable" });
 
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("falls back to the runner default when the workspace has not configured a model", async () => {
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
-      insertedRunRows,
+      enqueueCalls,
     });
 
     await retryWallieRun({
@@ -603,16 +550,16 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
-    const inserted = insertedRunRows[0]!;
-    expect(inserted.model_name).not.toBe("wallie-control-plane-stub");
-    expect(typeof inserted.model_name).toBe("string");
-    expect((inserted.model_name as string).length).toBeGreaterThan(0);
-    expect(typeof inserted.model_provider).toBe("string");
-    expect((inserted.model_provider as string).length).toBeGreaterThan(0);
+    const inserted = enqueueCalls[0]!;
+    expect(inserted.p_agent_model_name).not.toBe("wallie-control-plane-stub");
+    expect(typeof inserted.p_agent_model_name).toBe("string");
+    expect((inserted.p_agent_model_name as string).length).toBeGreaterThan(0);
+    expect(typeof inserted.p_agent_model_provider).toBe("string");
+    expect((inserted.p_agent_model_provider as string).length).toBeGreaterThan(0);
   });
 
   it("preserves code mode from the original run when retrying", async () => {
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
       existingRun: buildAgentRunRow({
@@ -620,7 +567,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
         run_type: "code",
         status: "error",
       }),
-      insertedRunRows,
+      enqueueCalls,
       primaryRepositoryId: "repo-1",
       repositories: [{ full_name: "acme/app", id: "repo-1" }],
     });
@@ -633,7 +580,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
-    expect(insertedRunRows[0]!.run_type).toBe("code");
+    expect(enqueueCalls[0]!.p_run_type).toBe("code");
   });
 
   it("returns the affected provider when its capability check is stale", async () => {
@@ -659,10 +606,10 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
     mocks.assertCurrentSandboxCapabilityCheck.mockRejectedValueOnce(
       new SandboxCapabilityCheckStaleError("e2b"),
     );
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
-      insertedRunRows,
+      enqueueCalls,
       primaryRepositoryId: "repo-1",
       repositories: [{ full_name: "acme/app", id: "repo-1" }],
     });
@@ -680,11 +627,11 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       provider: "e2b",
       statusCode: 422,
     });
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("blocks code mode when the configured repository id does not resolve", async () => {
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
       existingRun: buildAgentRunRow({
@@ -692,7 +639,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
         run_type: "code",
         status: "error",
       }),
-      insertedRunRows,
+      enqueueCalls,
       primaryRepositoryId: "repo-missing",
       repositories: [],
     });
@@ -710,7 +657,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       statusCode: 422,
     });
 
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("blocks queued runs when the workspace Vercel Sandbox connection is missing", async () => {
@@ -721,10 +668,10 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       revision: 1,
       updatedAt: baseTimestamp,
     });
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
-      insertedRunRows,
+      enqueueCalls,
     });
 
     await expect(
@@ -740,7 +687,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       statusCode: 422,
     });
 
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("blocks queued runs when the active sandbox provider is disabled", async () => {
@@ -763,10 +710,10 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       revision: 2,
       updatedAt: baseTimestamp,
     });
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
-      insertedRunRows,
+      enqueueCalls,
       primaryRepositoryId: "repo-1",
       repositories: [{ full_name: "acme/app", id: "repo-1" }],
     });
@@ -785,7 +732,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       statusCode: 422,
     });
     expect(mocks.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("blocks queued runs when Daytona's saved control plane is no longer allowed", async () => {
@@ -810,10 +757,10 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       revision: 2,
       updatedAt: baseTimestamp,
     });
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
-      insertedRunRows,
+      enqueueCalls,
       primaryRepositoryId: "repo-1",
       repositories: [{ full_name: "acme/app", id: "repo-1" }],
     });
@@ -832,7 +779,7 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       statusCode: 422,
     });
     expect(mocks.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
-    expect(insertedRunRows).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
@@ -844,10 +791,10 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       revision: 1,
       updatedAt: baseTimestamp,
     });
-    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
-      insertedRunRows,
+      enqueueCalls,
     });
 
     await retryWallieRun({
@@ -858,11 +805,11 @@ describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
-    expect(insertedRunRows).toHaveLength(1);
+    expect(enqueueCalls).toHaveLength(1);
   });
 });
 
-describe("retryWallieRun duplicate job dedupe", () => {
+describe("retryWallieRun legacy runless job compatibility", () => {
   it("returns the existing run when run visibility is delayed beyond the old 200 ms window", async () => {
     vi.useFakeTimers();
     const startTime = Date.parse(baseTimestamp);
@@ -871,10 +818,9 @@ describe("retryWallieRun duplicate job dedupe", () => {
     const lookupOffsets: number[] = [];
     const delayedRun = buildAgentRunRow({ agent_job_id: "job-existing", id: "run-existing" });
     const { admin, supabase } = buildSupabaseMocks({
-      activeJobRow: buildAgentJobRow({ id: "job-existing" }),
       agentConfig: [],
-      insertedRunRows: [],
-      jobInsertError: uniqueViolationError,
+      enqueueCalls: [],
+      enqueueReceipt: { created: false, job_id: "job-existing", run_id: null },
       loadRunByJobId: () => {
         const offset = Date.now() - startTime;
         lookupOffsets.push(offset);
@@ -908,10 +854,9 @@ describe("retryWallieRun duplicate job dedupe", () => {
     vi.setSystemTime(baseTimestamp);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { admin, supabase } = buildSupabaseMocks({
-      activeJobRow: buildAgentJobRow({ id: "job-existing" }),
       agentConfig: [],
-      insertedRunRows: [],
-      jobInsertError: uniqueViolationError,
+      enqueueCalls: [],
+      enqueueReceipt: { created: false, job_id: "job-existing", run_id: null },
       loadRunByJobId: () => null,
     });
 
@@ -951,10 +896,9 @@ describe("retryWallieRun duplicate job dedupe", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     let lookupCount = 0;
     const { admin, supabase } = buildSupabaseMocks({
-      activeJobRow: buildAgentJobRow({ id: "job-existing" }),
       agentConfig: [],
-      insertedRunRows: [],
-      jobInsertError: uniqueViolationError,
+      enqueueCalls: [],
+      enqueueReceipt: { created: false, job_id: "job-existing", run_id: null },
       loadRunByJobId: (signal) => {
         lookupCount += 1;
 
@@ -999,5 +943,75 @@ describe("retryWallieRun duplicate job dedupe", () => {
         maxElapsedMs: 120,
       }),
     );
+  });
+});
+
+describe("enqueueSessionJobWithRun atomic receipt", () => {
+  it("uses the committed existing run receipt without legacy polling or direct mutations", async () => {
+    const enqueueCalls: Array<Record<string, unknown>> = [];
+    const legacyLookup = vi.fn();
+    const { admin, rpc } = buildSupabaseMocks({
+      agentConfig: [],
+      enqueueCalls,
+      enqueueReceipt: { created: false, job_id: "job-legacy", run_id: "run-legacy" },
+      receiptRun: buildAgentRunRow({
+        agent_job_id: "job-legacy",
+        id: "run-legacy",
+        status: "running",
+      }),
+      loadRunByJobId: legacyLookup,
+    });
+    const result = await enqueueSessionJobWithRun({
+      admin: admin!,
+      requestedByMemberId: "mem-1",
+      runType: "project",
+      session: { id: "sess-1", workspace_id: "ws-1", current_stage_id: "stage-product" },
+      triggerType: "manual_retry",
+    });
+    expect(result).toMatchObject({
+      created: false,
+      jobId: "job-legacy",
+      run: { id: "run-legacy", status: "running" },
+    });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "enqueue_session_job_with_run",
+      expect.objectContaining({
+        p_session_id: "sess-1",
+        p_workspace_id: "ws-1",
+        p_expected_stage_id: "stage-product",
+        p_requested_by_member_id: "mem-1",
+        p_trigger_type: "manual_retry",
+        p_run_type: "project",
+      }),
+    );
+    expect(legacyLookup).not.toHaveBeenCalled();
+  });
+
+  it("propagates an atomic enqueue failure without compensating deletes or polling", async () => {
+    const failure = {
+      code: "55000",
+      details: "",
+      hint: "",
+      message: "Session stage changed.",
+      name: "PostgrestError",
+    } satisfies PostgrestError;
+    const legacyLookup = vi.fn();
+    const { admin, rpc } = buildSupabaseMocks({
+      agentConfig: [],
+      enqueueCalls: [],
+      enqueueError: failure,
+      loadRunByJobId: legacyLookup,
+    });
+    await expect(
+      enqueueSessionJobWithRun({
+        admin: admin!,
+        requestedByMemberId: "mem-1",
+        runType: "project",
+        session: { id: "sess-1", workspace_id: "ws-1", current_stage_id: "stage-product" },
+        triggerType: "manual_retry",
+      }),
+    ).rejects.toEqual(failure);
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(legacyLookup).not.toHaveBeenCalled();
   });
 });

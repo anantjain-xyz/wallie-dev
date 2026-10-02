@@ -1,13 +1,10 @@
 import "server-only";
 
-import type { PostgrestError } from "@supabase/supabase-js";
-
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
+import type { Enums, Tables } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import {
-  ACTIVE_AGENT_JOB_STATUSES,
   ACTIVE_AGENT_RUN_STATUSES,
   cancelSessionWork,
   isActiveAgentRunStatus,
@@ -31,7 +28,6 @@ import {
   SandboxCapabilityCheckStaleError,
 } from "@/lib/sandbox-capabilities/readiness";
 import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
-import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -48,15 +44,11 @@ type SessionForRun = Pick<
   | "title"
   | "workspace_id"
 >;
-type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
-type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
 type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "workspace_id">;
 
 const sessionSelect =
   "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
-const jobSelect =
-  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
   "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 const DEFAULT_RUN_LOOKUP_RETRY = {
@@ -120,7 +112,7 @@ export type EnqueueWallieRunResult = {
 export type EnqueueSessionJobWithRunInput = {
   admin: AdminClient;
   requestedByMemberId: string | null;
-  /** Retry budget while waiting for a concurrently enqueued run to become visible. */
+  /** Retry budget while a legacy job waits for its worker to create a run. */
   runLookupRetry?: WallieRunLookupRetryOptions;
   /**
    * Mode stamped on the queued run. Defaults to the mode inferred from the
@@ -204,10 +196,6 @@ function throwRunLookupTimeout(input: {
   });
 
   throw new WallieRunLookupTimeoutError(input);
-}
-
-function isUniqueViolation(error: PostgrestError | null) {
-  return error?.code === "23505";
 }
 
 function toBlockingActionError(reasons: WallieBlockingReason[]) {
@@ -383,49 +371,6 @@ export async function findSessionCreationRequest(input: {
     : null;
 }
 
-function createRunInsert(input: {
-  sessionId: string;
-  jobId: string;
-  modelName: string;
-  modelProvider: string;
-  requestedByMemberId: string | null;
-  runType: WallieRunMode;
-  stage: StageSnapshot | null;
-  workspaceId: string;
-}): TablesInsert<"agent_runs"> {
-  return {
-    agent_job_id: input.jobId,
-    session_id: input.sessionId,
-    model_name: input.modelName,
-    model_provider: input.modelProvider,
-    run_type: input.runType,
-    stage_id: input.stage?.id ?? null,
-    stage_name: input.stage?.name ?? null,
-    stage_slug: input.stage?.slug ?? null,
-    triggered_by_member_id: input.requestedByMemberId,
-    workspace_id: input.workspaceId,
-  };
-}
-
-function createJobInsert(input: {
-  sessionId: string;
-  requestedByMemberId: string | null;
-  stage: StageSnapshot | null;
-  triggerType: Enums<"agent_trigger_type">;
-  workspaceId: string;
-}): TablesInsert<"agent_jobs"> {
-  return {
-    dedupe_key: buildWallieJobDedupeKey(input.sessionId),
-    session_id: input.sessionId,
-    requested_by_member_id: input.requestedByMemberId,
-    trigger_type: input.triggerType,
-    stage_id: input.stage?.id ?? null,
-    stage_name: input.stage?.name ?? null,
-    stage_slug: input.stage?.slug ?? null,
-    workspace_id: input.workspaceId,
-  };
-}
-
 async function loadSessionForRun(
   supabase: SupabaseServerClient,
   sessionId: string | null,
@@ -449,25 +394,6 @@ async function loadSessionForRun(
   }
 
   return data as SessionForRun;
-}
-
-async function loadStageSnapshot(
-  admin: AdminClient,
-  stageId: string | null,
-): Promise<StageSnapshot | null> {
-  if (!stageId) return null;
-
-  const { data, error } = await admin
-    .from("pipeline_stages")
-    .select("id, name, slug")
-    .eq("id", stageId)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as StageSnapshot | null;
 }
 
 async function loadWallieVercelSandboxConnection(
@@ -544,31 +470,6 @@ async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
   }
 
   return data as AgentRunRow | null;
-}
-
-async function loadActiveJobByDedupeKey(
-  admin: AdminClient,
-  workspaceId: string,
-  dedupeKey: string,
-) {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select(jobSelect)
-    .eq("workspace_id", workspaceId)
-    .eq("dedupe_key", dedupeKey)
-    // Must match the partial unique index that raised the 23505 we are
-    // recovering from; a narrower set here made the dedupe lookup miss a
-    // `started` job and rethrow the violation as a hard failure.
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as AgentJobRow | null;
 }
 
 async function loadRunById(admin: AdminClient, runId: string) {
@@ -780,17 +681,6 @@ async function validateQueuedRunRequest(input: {
   };
 }
 
-async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
-  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
-
-  if (error) {
-    console.error("Failed to clean up orphaned Wallie job", {
-      error,
-      jobId,
-    });
-  }
-}
-
 async function inferSessionRunType(
   admin: AdminClient,
   session: Pick<SessionForEnqueue, "id" | "workspace_id">,
@@ -834,91 +724,34 @@ export async function resolveQueuedRunConfig(
 }
 
 /**
- * The one TypeScript enqueue path: insert a `queued` job under the session's
- * `session:<id>:active` dedupe key and its matching `queued` run in the shape
- * `create_session_with_first_job` produces, so the worker sees an identical row
- * pair regardless of whether a session was created, approved into its next
- * stage, or retried by hand.
- *
- * Losing the dedupe race is an idempotent success: the partial unique index
- * rejects the second active job, so we return the live job and wait (bounded)
- * for its run row to become visible. A run-insert failure deletes the orphaned
- * queued job before rethrowing so a retry is not deduped against a job that
- * has no run.
+ * Commit a new job and its run together, or adopt the session's active job.
+ * Legacy producers may have inserted a job without a run: only that case uses
+ * the bounded compatibility wait while its worker creates the run.
  */
 export async function enqueueSessionJobWithRun(
   input: EnqueueSessionJobWithRunInput,
 ): Promise<EnqueueWallieRunResult> {
   const { admin, session } = input;
-  const [runConfig, stage] = await Promise.all([
-    resolveQueuedRunConfig(admin, session, input.runType),
-    loadStageSnapshot(admin, session.current_stage_id),
-  ]);
-
-  const jobInsert = createJobInsert({
-    sessionId: session.id,
-    requestedByMemberId: input.requestedByMemberId,
-    stage,
-    triggerType: input.triggerType,
-    workspaceId: session.workspace_id,
+  const runConfig = await resolveQueuedRunConfig(admin, session, input.runType);
+  const { data, error } = await admin.rpc("enqueue_session_job_with_run", {
+    p_session_id: session.id,
+    p_workspace_id: session.workspace_id,
+    p_expected_stage_id: session.current_stage_id,
+    p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+    p_trigger_type: input.triggerType,
+    p_agent_model_provider: runConfig.modelProvider,
+    p_agent_model_name: runConfig.modelName,
+    p_run_type: runConfig.runType,
   });
-  const { data: job, error: jobError } = await admin
-    .from("agent_jobs")
-    .insert(jobInsert)
-    .select(jobSelect)
-    .single();
+  if (error) throw error;
+  const queued = data?.[0];
+  if (!queued) throw new Error("Wallie enqueue returned no job.");
 
-  if (isUniqueViolation(jobError)) {
-    const activeJob = await loadActiveJobByDedupeKey(
-      admin,
-      session.workspace_id,
-      buildWallieJobDedupeKey(session.id),
-    );
-
-    if (!activeJob) {
-      throw jobError;
-    }
-
-    const activeRun = await waitForRunByJobId(admin, activeJob.id, input.runLookupRetry);
-
-    return {
-      created: false,
-      jobId: activeJob.id,
-      run: activeRun,
-    } satisfies EnqueueWallieRunResult;
-  }
-
-  if (jobError) {
-    throw jobError;
-  }
-
-  const { data: run, error: runError } = await admin
-    .from("agent_runs")
-    .insert(
-      createRunInsert({
-        sessionId: session.id,
-        jobId: job.id,
-        modelName: runConfig.modelName,
-        modelProvider: runConfig.modelProvider,
-        requestedByMemberId: input.requestedByMemberId,
-        runType: runConfig.runType,
-        stage,
-        workspaceId: session.workspace_id,
-      }),
-    )
-    .select(runSelect)
-    .single();
-
-  if (runError) {
-    await cleanupQueuedJob(admin, job.id);
-    throw runError;
-  }
-
-  return {
-    created: true,
-    jobId: job.id,
-    run,
-  } satisfies EnqueueWallieRunResult;
+  const run = queued.run_id
+    ? await loadRunById(admin, queued.run_id)
+    : await waitForRunByJobId(admin, queued.job_id, input.runLookupRetry);
+  if (!run) throw new Error("The queued Wallie run no longer exists. Please retry.");
+  return { created: queued.created, jobId: queued.job_id, run };
 }
 
 export async function retryWallieRun(input: {

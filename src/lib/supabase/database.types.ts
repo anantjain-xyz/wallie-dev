@@ -2312,6 +2312,23 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      enqueue_session_job_with_run: {
+        Args: {
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_expected_stage_id: string
+          p_requested_by_member_id?: string
+          p_run_type?: string
+          p_session_id: string
+          p_trigger_type?: Database["public"]["Enums"]["agent_trigger_type"]
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          job_id: string
+          run_id: string
+        }[]
+      }
       ensure_own_profile: {
         Args: {
           actor_avatar_url?: string
