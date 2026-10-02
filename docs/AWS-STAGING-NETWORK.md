@@ -83,7 +83,7 @@ terraform -chdir=infra/aws/staging-network output
 
 - These empty [VPC/subnet/route resources](https://aws.amazon.com/vpc/faqs/) and the [internet gateway](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html) have **no fixed network service charge**. State storage retains its separate usage charges.
 - Before workloads: scoped workload IAM, TLS, secrets, monitoring, and a reviewed external-egress/capacity cost estimate. Private image/log connectivity is the next separately enabled batch below.
-- CI uses mocked providers only: formatting, locked provider initialization without a backend, validation, and network safety tests. Live IAM, state locking, provisioning, and final drift checks are separate deployment gates.
+- The former CI workflow used mocked providers only: formatting, locked provider initialization without a backend, validation, and network safety tests. Run these checks locally before reusing this infrastructure; AWS workflows are retired from [current CI](VERIFICATION.md#ci-scope). Live IAM, state locking, provisioning, and final drift checks are separate deployment gates.
 
 ## Private application connectivity
 

@@ -94,7 +94,7 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
     path: ".github/workflows/lint-and-format.yml",
   },
   {
-    delegation: "pnpm check",
+    delegation: "pnpm test",
     expected: {
       name: "Test",
       on: triggers,
@@ -106,8 +106,8 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
           steps: [
             ...setupSteps,
             {
-              name: "Run full validation",
-              run: "pnpm check",
+              name: "Run unit tests",
+              run: "pnpm test",
             },
           ],
         },
@@ -252,7 +252,7 @@ if (isEntrypoint) {
   const errors = verifyValidationContract();
   if (errors.length === 0) {
     console.log(
-      "Validation contract verified: exact fast/full PR profiles match CI; route-budget and environment-dependent checks remain explicitly classified.",
+      "Validation contract verified: fast validation and unit tests match CI without duplicate checks; route-budget and environment-dependent checks remain explicitly classified.",
     );
   } else {
     console.error("Validation contract drift detected:");

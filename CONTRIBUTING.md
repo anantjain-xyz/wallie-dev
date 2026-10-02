@@ -28,8 +28,9 @@ pnpm worker                  # in another
 
 ## Before you open a PR
 
-Run the full check suite locally — this is the pre-PR gate. PR CI delegates to
-the canonical `check:fast` and `check` profiles, so it includes typechecking:
+Run the full check suite locally — this is the pre-PR gate. PR CI runs
+`check:fast` and `test` in separate jobs, covering the same full profile without
+repeating fast validation. This includes typechecking:
 
 ```bash
 pnpm check   # check:fast + test

@@ -32,7 +32,7 @@ supabase start                  # local Postgres/Auth/Realtime/Storage via Docke
 supabase db reset               # re-apply migrations + seed
 ```
 
-PR CI runs the canonical `check:fast` and `check` profiles, including `typecheck`. Production builds and route-budget checks run separately; environment-dependent verification still requires its relevant local service or credentials.
+PR CI runs `check:fast` (including `typecheck`) and `test` in separate jobs, together covering the canonical `check` profile without duplicate validation. Production builds and route-budget checks run separately; environment-dependent verification still requires its relevant local service or credentials.
 
 Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Without the worker, sessions stay stuck in `in_progress`.
 
