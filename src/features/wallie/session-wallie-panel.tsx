@@ -37,7 +37,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
-import { buildStageBranchName } from "@/lib/pipeline/branch-name";
+import { buildLegacyStageBranchName } from "@/lib/pipeline/branch-name";
 import { cn } from "@/lib/utils";
 
 /** Cap auto-loaded message history so opening a busy run cannot mount unbounded logs. */
@@ -709,8 +709,11 @@ function SessionWalliePanelContent({
               key={summaryRun.id}
               actionPending={pendingActionId === summaryRun.id}
               branchName={
-                summaryRun.sandboxId && summaryRun.stageSlug
-                  ? buildStageBranchName(session.id, summaryRun.stageSlug)
+                summaryRun.sandboxId
+                  ? (summaryRun.branchName ??
+                    (summaryRun.stageSlug
+                      ? buildLegacyStageBranchName(session.id, summaryRun.stageSlug)
+                      : null))
                   : null
               }
               cancelLocked={pendingActionId !== null}
@@ -751,8 +754,11 @@ function SessionWalliePanelContent({
                   key={run.id}
                   actionPending={pendingActionId === run.id}
                   branchName={
-                    run.sandboxId && run.stageSlug
-                      ? buildStageBranchName(session.id, run.stageSlug)
+                    run.sandboxId
+                      ? (run.branchName ??
+                        (run.stageSlug
+                          ? buildLegacyStageBranchName(session.id, run.stageSlug)
+                          : null))
                       : null
                   }
                   cancelLocked={pendingActionId !== null}

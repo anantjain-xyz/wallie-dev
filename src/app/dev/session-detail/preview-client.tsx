@@ -135,6 +135,10 @@ export function SessionDetailPreview({
     stageSlug: "build",
     stageName: "Build",
     attemptCount: mode === "Revising" ? 2 : 1,
+    branchName:
+      mode === "Queued"
+        ? null
+        : "wallie/build-6ba7b810-9dad-41d1-80b4-00c04fd430c8-job-17f0b00c-6aba-4525-9b46-16e9c846d621-attempt-2",
     canCancel: active && !archived,
     canRetry: mode === "Failed" && !archived,
     createdAt: at(389),
@@ -159,6 +163,7 @@ export function SessionDetailPreview({
     {
       ...run,
       id: "preview-plan",
+      branchName: null,
       stageId: "plan",
       stageSlug: "plan",
       stageName: "Plan",
@@ -184,7 +189,7 @@ export function SessionDetailPreview({
       run={value}
       isPrimary={primary}
       actionPending={false}
-      branchName={null}
+      branchName={value.branchName}
       cancelLocked={false}
       cancelControl={primary ? stopControl : undefined}
       connectionState="live"

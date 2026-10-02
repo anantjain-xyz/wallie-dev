@@ -49,6 +49,7 @@ function row(index: number, overrides: Partial<ReturnType<typeof baseRow>> = {})
 
 function baseRow(index: number) {
   return {
+    branch_name: null as string | null,
     created_at: "2026-07-18T12:00:00.000Z",
     finished_at: "2026-07-18T12:01:00.000Z",
     id: uuid(index),
@@ -90,6 +91,18 @@ beforeEach(() => {
 });
 
 describe("loadWallieRunPage", () => {
+  it("selects and returns the recorded branch after a stage slug changes", async () => {
+    const branch = "wallie/build-session-1-job-job-1-attempt-2";
+    const { query, supabase } = client([row(1, { branch_name: branch, stage_slug: "renamed" })]);
+    const page = await loadWallieRunPage({
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+    expect(query.select).toHaveBeenCalledWith(expect.stringContaining("branch_name"));
+    expect(page.runs[0]?.branchName).toBe(branch);
+  });
+
   it("caps a 200-run scale fixture at 20 metadata rows and zero messages", async () => {
     const fixture = Array.from({ length: 200 }, (_, index) => row(200 - index));
     const { query, supabase } = client(fixture.slice(0, WALLIE_RUN_PAGE_SIZE + 1));
