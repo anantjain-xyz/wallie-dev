@@ -2,9 +2,9 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
+import type { SessionCredentialOwner } from "@/lib/agent-credentials/session-owner";
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
-import type { Database, Tables } from "@/lib/supabase/database.types";
+import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 
 type AdminClient = SupabaseClient<Database>;
@@ -18,15 +18,21 @@ export class ClaudeCodeNotConnectedError extends Error {
 
 export async function getClaudeCodeCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: SessionCredentialOwner,
 ): Promise<ClaudeCodeCredential> {
-  const userId = await resolveSessionOwnerUserId(admin, session);
-  if (!userId) {
-    throw new ClaudeCodeNotConnectedError(
-      "Session has no human owner with a connected Anthropic API key.",
+  const notConnected = () =>
+    new ClaudeCodeNotConnectedError(
+      "Session has no active human owner in this workspace with a connected Anthropic API key.",
     );
-  }
-  return getClaudeCodeCredentialForUser(admin, userId);
+  if (!session.creator_member_id) throw notConnected();
+  const { data, error } = await admin.rpc("load_session_claude_code_credential", {
+    p_creator_member_id: session.creator_member_id,
+    p_workspace_id: session.workspace_id,
+  });
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) throw notConnected();
+  return { secret: decryptSecretValue(row.encrypted_api_key) };
 }
 
 export async function getClaudeCodeCredentialForUser(

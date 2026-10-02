@@ -17,7 +17,9 @@ export const CODEX_SANDBOX_MODE = "danger-full-access";
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
-  credential: CodexCredential;
+  credential?: CodexCredential;
+  /** Resolve after nonsecret sandbox setup, immediately before credential delivery. */
+  loadCredential?: () => Promise<CodexCredential>;
   /** Required for ChatGPT subscription auth so the runner can persist refreshed auth.json. */
   chatGptAuthStore?: CodexChatGptAuthStore;
   /** Model identifier (e.g. "gpt-5.6-sol"). */
@@ -42,7 +44,7 @@ export class CodexRunner implements AgentRunner {
   readonly requiresSandbox = true;
 
   constructor(private readonly options: CodexRunnerOptions) {
-    if (!options.credential?.secret) {
+    if (!options.loadCredential && !options.credential?.secret) {
       throw new Error("CodexRunner requires a Codex credential.");
     }
   }
@@ -53,25 +55,40 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner requires a sandbox.");
     }
 
-    if (this.options.credential.type === "chatgpt_auth_json") {
-      yield* this.startWithChatGptAuth(input);
-      return;
-    }
-
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
     const promptFile = promptFileFor(sandbox);
     const codexHome = codexHomeFor(sandbox);
 
     await sandbox.writeFile(promptFile, input.prompt);
-    if (this.options.credential.type !== "codex_access_token") {
+    if (this.options.loadCredential || this.options.credential?.type !== "codex_access_token") {
       await ensureCodexHome(sandbox, codexHome);
+    }
+
+    // All nonsecret remote setup precedes the current authorization read.
+    // The next remote operation sends this credential, without another setup await.
+    const credential = this.options.loadCredential
+      ? await this.options.loadCredential()
+      : this.options.credential;
+    if (!credential?.secret) throw new Error("CodexRunner requires a Codex credential.");
+    if (credential.type === "chatgpt_auth_json") {
+      const store = this.options.chatGptAuthStore;
+      if (!store) {
+        throw new Error("CodexRunner requires a ChatGPT auth store for subscription auth.");
+      }
+      // Pipeline loaders already return fresh authorized auth. Eager callers
+      // retain the store reload, now after prompt/home preparation as well.
+      const currentCredential = this.options.loadCredential
+        ? credential
+        : await store.loadChatGptAuth({ userId: credential.userId });
+      yield* this.runWithChatGptAuth(input, currentCredential, store);
+      return;
     }
 
     const shellCmd = codexCommandForCredential(
       model,
       effort,
-      this.options.credential,
+      credential,
       codexHome,
       promptFile,
       sandbox.repoPath,
@@ -83,7 +100,7 @@ export class CodexRunner implements AgentRunner {
         CI: "1",
         CODEX_HOME: codexHome,
         ...WALLIE_GIT_IDENTITY_ENV,
-        ...codexCredentialEnv(this.options.credential),
+        ...codexCredentialEnv(credential),
       },
       signal: input.signal,
     });
@@ -127,26 +144,6 @@ export class CodexRunner implements AgentRunner {
     };
   }
 
-  private async *startWithChatGptAuth(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
-    const { sandbox } = input;
-    if (!sandbox) {
-      throw new Error("CodexRunner requires a sandbox.");
-    }
-
-    const configuredCredential = this.options.credential;
-    if (configuredCredential.type !== "chatgpt_auth_json") {
-      throw new Error("CodexRunner expected ChatGPT subscription auth.");
-    }
-
-    const store = this.options.chatGptAuthStore;
-    if (!store) {
-      throw new Error("CodexRunner requires a ChatGPT auth store for subscription auth.");
-    }
-
-    const credential = await store.loadChatGptAuth({ userId: configuredCredential.userId });
-    yield* this.runWithChatGptAuth(input, credential, store);
-  }
-
   private async *runWithChatGptAuth(
     input: AgentRunnerStartInput,
     credential: ChatGptCodexCredential,
@@ -160,8 +157,6 @@ export class CodexRunner implements AgentRunner {
     const promptFile = promptFileFor(sandbox);
     const codexHome = codexHomeFor(sandbox);
     const codexAuthFile = codexAuthFileFor(sandbox);
-    await sandbox.writeFile(promptFile, input.prompt);
-    await ensureCodexHome(sandbox, codexHome);
     await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
 
     const proc = await sandbox.exec(

@@ -19,21 +19,10 @@ import {
 } from "@/lib/agent-config/contracts";
 import { enqueueSessionJobWithRun, resolveQueuedRunConfig } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
-import {
-  ClaudeCodeNotConnectedError,
-  getClaudeCodeCredentialForSession,
-} from "@/lib/claude-code/tokens";
-import {
-  createCodexChatGptAuthStore,
-  CodexNotConnectedError,
-  getCodexCredentialForSession,
-} from "@/lib/codex/tokens";
-import {
-  CursorNotConnectedError,
-  getCursorCredentialForSession,
-  markCursorReconnectRequired,
-} from "@/lib/cursor/tokens";
-import { getOpenCodeAuthForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
+import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
+import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
+import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
+import { getOpenCodeAuthForSession } from "@/lib/opencode/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
@@ -216,18 +205,10 @@ async function runStage(input: {
   let runFailureMessageRecorded = false;
   let sessionPointerAdvanced = false;
   try {
-    const resolvedRunner = await resolveAgentRunner({
-      admin,
-      effort: config.effort,
-      model: config.model,
-      provider,
-      session,
-    });
-
     runId = await startAgentRun(admin, {
       jobId: job.id,
       model: config.model,
-      provider: resolvedRunner.runner.provider,
+      provider,
       requestedByMemberId: job.requested_by_member_id,
       runType: "project",
       sessionId: session.id,
@@ -251,98 +232,95 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    // CLI-backed runners require a GitHub repo to clone into the sandbox.
-    if (resolvedRunner.runner.requiresSandbox) {
-      if (runId) {
-        await persistStartupProgress(admin, runId, session.workspace_id, {
-          type: "progress",
-          text: "Preparing sandbox and repository…",
-        });
-      }
-      github = await loadGitHubContext(admin, session.workspace_id, session.id);
-      if (!github) {
-        const message =
-          "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.";
-        if (runId) {
-          await persistRunFailureDiagnostic(admin, {
-            error: message,
-            runId,
-            workspaceId: session.workspace_id,
-          });
-          await markRunError(admin, runId);
-        }
-        await updateSessionStatus(admin, session.id, "rejected");
-        await markPipelineJobError(admin, job, message);
-        return { jobId: job.id, processed: true, result: "error", runId: null };
-      }
-      const sandboxImplementation = resolveSandboxImplementation();
-      const sandboxSelection =
-        sandboxImplementation === "fake"
-          ? null
-          : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
-      if (sandboxSelection) {
-        await assertCurrentSandboxCapabilityCheck({
-          admin,
-          agent: { model: config.model, provider },
-          connection: sandboxSelection.connection,
-          repositoryId: github.repo.id,
-          workspaceId: session.workspace_id,
-        });
-      }
-      installationToken = await mintInstallationToken(github.installationId);
-      branch = buildStageBranchName(session.id, stage.slug);
-      throwIfAborted(signal);
-      sandbox = await createSessionSandbox({
-        agentProvider: provider,
-        baseBranch: github.repo.default_branch ?? "main",
-        branch,
-        implementation: sandboxSelection?.provider ?? "fake",
-        connection: sandboxSelection?.connection,
-        installationToken,
-        ownerId: runId ?? undefined,
-        repoFullName: github.repo.full_name,
-        signal,
-        sessionId: session.id,
-        workspaceId: session.workspace_id,
-        onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
-          if (!runId) return;
-          if (sandboxProvider === "fake") {
-            const attached = await updateRunSandbox(admin, runId, sandboxId, {
-              provider: "fake",
-            });
-            if (!attached) {
-              await stopSandboxById(sandboxId);
-            }
-            return;
-          }
-          if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
-            throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
-          }
-          const attached = await updateRunSandbox(admin, runId, sandboxId, {
-            connection: sandboxSelection.connection,
-            provider: sandboxSelection.provider,
-          });
-          if (!attached) {
-            // The run was canceled before its sandbox id landed; stop the
-            // sandbox we just created so it doesn't keep executing detached
-            // from the now-canceled run.
-            await stopSandboxById(sandboxId, {
-              connection: sandboxSelection.connection,
-            });
-          }
-        },
+    // Every supported provider runs its CLI in a repository sandbox. Provision
+    // it before resolving personal credentials so setup cannot retain a revoked key.
+    if (runId) {
+      await persistStartupProgress(admin, runId, session.workspace_id, {
+        type: "progress",
+        text: "Preparing sandbox and repository…",
       });
     }
+    github = await loadGitHubContext(admin, session.workspace_id, session.id);
+    if (!github) {
+      const message =
+        "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.";
+      if (runId) {
+        await persistRunFailureDiagnostic(admin, {
+          error: message,
+          runId,
+          workspaceId: session.workspace_id,
+        });
+        await markRunError(admin, runId);
+      }
+      await updateSessionStatus(admin, session.id, "rejected");
+      await markPipelineJobError(admin, job, message);
+      return { jobId: job.id, processed: true, result: "error", runId: null };
+    }
+    const sandboxImplementation = resolveSandboxImplementation();
+    const sandboxSelection =
+      sandboxImplementation === "fake"
+        ? null
+        : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
+    if (sandboxSelection) {
+      await assertCurrentSandboxCapabilityCheck({
+        admin,
+        agent: { model: config.model, provider },
+        connection: sandboxSelection.connection,
+        repositoryId: github.repo.id,
+        workspaceId: session.workspace_id,
+      });
+    }
+    installationToken = await mintInstallationToken(github.installationId);
+    branch = buildStageBranchName(session.id, stage.slug);
+    throwIfAborted(signal);
+    sandbox = await createSessionSandbox({
+      agentProvider: provider,
+      baseBranch: github.repo.default_branch ?? "main",
+      branch,
+      implementation: sandboxSelection?.provider ?? "fake",
+      connection: sandboxSelection?.connection,
+      installationToken,
+      ownerId: runId ?? undefined,
+      repoFullName: github.repo.full_name,
+      signal,
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
+      onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
+        if (!runId) return;
+        if (sandboxProvider === "fake") {
+          const attached = await updateRunSandbox(admin, runId, sandboxId, {
+            provider: "fake",
+          });
+          if (!attached) {
+            await stopSandboxById(sandboxId);
+          }
+          return;
+        }
+        if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
+          throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
+        }
+        const attached = await updateRunSandbox(admin, runId, sandboxId, {
+          connection: sandboxSelection.connection,
+          provider: sandboxSelection.provider,
+        });
+        if (!attached) {
+          // The run was canceled before its sandbox id landed; stop the
+          // sandbox we just created so it doesn't keep executing detached
+          // from the now-canceled run.
+          await stopSandboxById(sandboxId, {
+            connection: sandboxSelection.connection,
+          });
+        }
+      },
+    });
 
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
-    if (sessionAttachments.length > 0 && !sandbox) {
-      throw new Error("The configured agent runner cannot receive session image attachments.");
-    }
-
-    const materializedAttachments = sandbox
-      ? await materializeSessionAttachments(admin, sandbox, sessionAttachments)
-      : [];
+    const materializedAttachments = await materializeSessionAttachments(
+      admin,
+      sandbox,
+      sessionAttachments,
+    );
     const prompt = renderStagePrompt(
       {
         promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
@@ -386,7 +364,16 @@ async function runStage(input: {
         text: "Starting agent…",
       });
     }
-    for await (const event of resolvedRunner.runner.start({
+    // Runners load credentials after their own nonsecret remote setup, directly
+    // before delivering the secret. Construction never decrypts personal keys.
+    const runner = createSessionAgentRunner({
+      admin,
+      effort: config.effort,
+      model: config.model,
+      provider,
+      session,
+    });
+    for await (const event of runner.start({
       maxTokens: undefined,
       prompt,
       runId: runId ?? undefined,
@@ -1003,99 +990,58 @@ async function deleteUnpublishedArtifact(
   if (error) throw error;
 }
 
-async function resolveAgentRunner(input: {
+function createSessionAgentRunner(input: {
   admin: AdminClient;
   effort: AgentEffort;
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
-}): Promise<{ runner: AgentRunner }> {
-  if (input.provider === "codex") {
-    try {
-      const credential = await getCodexCredentialForSession(input.admin, input.session);
-      return {
-        runner: createAgentRunner("codex", {
-          codex: {
-            chatGptAuthStore: createCodexChatGptAuthStore(input.admin),
-            credential,
-            effort: input.effort,
-            model: input.model,
-          },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof CodexNotConnectedError) {
-        throw new Error(error.message);
-      }
-      throw error;
-    }
+}): AgentRunner {
+  switch (input.provider) {
+    case "codex":
+      return createAgentRunner("codex", {
+        codex: {
+          chatGptAuthStore: createCodexChatGptAuthStore(input.admin, input.session),
+          loadCredential: () => getCodexCredentialForSession(input.admin, input.session),
+          effort: input.effort,
+          model: input.model,
+        },
+      });
+    case "claude-code":
+      return createAgentRunner("claude-code", {
+        claudeCode: {
+          loadCredential: () => getClaudeCodeCredentialForSession(input.admin, input.session),
+          effort: input.effort,
+          model: input.model,
+        },
+      });
+    case "cursor":
+      return createAgentRunner("cursor", {
+        cursor: {
+          loadCredential: () => getCursorCredentialForSession(input.admin, input.session),
+          model: input.model,
+          onAuthenticationFailure: (reason, credential) =>
+            markCursorReconnectRequired(
+              input.admin,
+              credential.userId,
+              credential.generation,
+              reason,
+            ),
+        },
+      });
+    case "opencode":
+      return createAgentRunner("opencode", {
+        openCode: {
+          loadAuth: () =>
+            getOpenCodeAuthForSession(
+              input.admin,
+              input.session,
+              input.model ?? DEFAULT_OPENCODE_MODEL,
+            ),
+          model: input.model,
+        },
+      });
   }
-
-  if (input.provider === "claude-code") {
-    try {
-      const credential = await getClaudeCodeCredentialForSession(input.admin, input.session);
-      return {
-        runner: createAgentRunner("claude-code", {
-          claudeCode: { credential, effort: input.effort, model: input.model },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof ClaudeCodeNotConnectedError) {
-        throw new Error(error.message);
-      }
-      throw error;
-    }
-  }
-
-  if (input.provider === "cursor") {
-    try {
-      const credential = await getCursorCredentialForSession(input.admin, input.session);
-      return {
-        runner: createAgentRunner("cursor", {
-          cursor: {
-            credential,
-            model: input.model,
-            onAuthenticationFailure: (reason) =>
-              markCursorReconnectRequired(
-                input.admin,
-                credential.userId,
-                credential.generation,
-                reason,
-              ),
-          },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof CursorNotConnectedError) throw new Error(error.message);
-      throw error;
-    }
-  }
-
-  if (input.provider === "opencode") {
-    try {
-      const auth = await getOpenCodeAuthForSession(
-        input.admin,
-        input.session,
-        input.model ?? DEFAULT_OPENCODE_MODEL,
-      );
-      return {
-        runner: createAgentRunner("opencode", {
-          openCode: {
-            credential: auth.credential,
-            model: input.model,
-            providerCredentials: auth.providerCredentials,
-          },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof OpenCodeNotConnectedError) throw new Error(error.message);
-      throw error;
-    }
-  }
-
-  return {
-    runner: createAgentRunner(input.provider),
-  };
 }
 
 interface GitHubContext {

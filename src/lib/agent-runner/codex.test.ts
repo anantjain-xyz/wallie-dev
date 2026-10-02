@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import type { CodexCredential } from "@/lib/codex/contracts";
 
 import {
   CODEX_EXTERNAL_SANDBOX_FLAG,
@@ -17,6 +18,111 @@ function expectExternalSandboxMode(command: string) {
 }
 
 describe("CodexRunner", () => {
+  const launchCredentials = [
+    { expiresAt: null, secret: "cached-api-key", type: "platform_api_key" },
+    { expiresAt: null, secret: "cached-access-token", type: "codex_access_token" },
+    {
+      authCacheLastRefresh: null,
+      credentialGeneration: "11111111-1111-4111-8111-111111111111",
+      credentialVersion: 1,
+      expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
+      secret: "cached-auth-json",
+      type: "chatgpt_auth_json",
+      userId: "user-1",
+    },
+  ] satisfies CodexCredential[];
+
+  it.each(
+    launchCredentials.flatMap((credential) =>
+      ["prompt", "auth directory"].map((setup) => ({ credential, setup, type: credential.type })),
+    ),
+  )(
+    "blocks $type revoked during $setup setup without using cached credentials",
+    async ({ credential, setup }) => {
+      const sandbox = new FakeSandbox();
+      let memberActive = true;
+      let releaseSetup!: () => void;
+      const pendingSetup = new Promise<void>((resolve) => {
+        releaseSetup = resolve;
+      });
+      let markSetupStarted!: () => void;
+      const setupStarted = new Promise<void>((resolve) => {
+        markSetupStarted = resolve;
+      });
+      const writeFile = sandbox.writeFile.bind(sandbox);
+      vi.spyOn(sandbox, "writeFile").mockImplementation(async (...args) => {
+        if (setup === "prompt") {
+          markSetupStarted();
+          await pendingSetup;
+        }
+        await writeFile(...args);
+      });
+      const exec = sandbox.exec.bind(sandbox);
+      vi.spyOn(sandbox, "exec").mockImplementation(async (...args) => {
+        if (setup === "auth directory" && args[1]?.[1]?.startsWith("mkdir -p ")) {
+          markSetupStarted();
+          await pendingSetup;
+        }
+        return exec(...args);
+      });
+      const loadCredential = vi.fn(async () => {
+        if (!memberActive) throw new Error("Session owner membership revoked");
+        return credential;
+      });
+      const runner = new CodexRunner({ credential, loadCredential });
+      const run = (async () => {
+        for await (const event of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+          void event;
+        }
+      })();
+      await setupStarted;
+      expect(loadCredential).not.toHaveBeenCalled();
+      memberActive = false;
+      releaseSetup();
+      await expect(run).rejects.toThrow("membership revoked");
+      expect(loadCredential).toHaveBeenCalledOnce();
+      expect([...sandbox.files.keys()]).toEqual([`${sandbox.repoPath}/.wallie-prompt.txt`]);
+      expect(sandbox.calls).toEqual([
+        expect.objectContaining({ args: ["-lc", expect.stringMatching(/^mkdir -p /)] }),
+      ]);
+    },
+  );
+
+  it.each(launchCredentials)("delivers freshly loaded $type after setup", async (credential) => {
+    const sandbox = new FakeSandbox();
+    const fresh = { ...credential, secret: "fresh-authorized-secret" };
+    const loadCredential = vi.fn(async () => {
+      expect(sandbox.files.has(`${sandbox.repoPath}/.wallie-prompt.txt`)).toBe(true);
+      expect(sandbox.calls.at(-1)?.args[1]).toMatch(/^mkdir -p /);
+      return fresh;
+    });
+    const store = {
+      loadChatGptAuth: vi.fn(),
+      markChatGptAuthReconnectRequired: vi.fn(),
+      persistChatGptAuthJson: vi.fn(),
+    };
+    const runner = new CodexRunner({ credential, loadCredential, chatGptAuthStore: store });
+    expect(loadCredential).not.toHaveBeenCalled();
+    for await (const event of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      void event;
+    }
+    expect(loadCredential).toHaveBeenCalledOnce();
+    expect(store.loadChatGptAuth).not.toHaveBeenCalled();
+    const cli = sandbox.calls.at(-1)!;
+    if (credential.type === "chatgpt_auth_json") {
+      expect(await sandbox.readFile(`${sandbox.repoPath}/.codex/auth.json`)).toBe(fresh.secret);
+    } else {
+      expect(cli.opts.env).toMatchObject(
+        credential.type === "platform_api_key"
+          ? { OPENAI_API_KEY: fresh.secret, CODEX_API_KEY: fresh.secret }
+          : { CODEX_ACCESS_TOKEN: fresh.secret },
+      );
+    }
+    expect(JSON.stringify(sandbox.calls)).not.toContain(credential.secret);
+  });
+
   it("has the correct provider name", () => {
     const runner = new CodexRunner({
       credential: { expiresAt: null, secret: "test-token", type: "codex_access_token" },

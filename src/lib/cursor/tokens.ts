@@ -2,7 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
+import type { SessionCredentialOwner } from "@/lib/agent-credentials/session-owner";
 import type { CursorCredential } from "@/lib/cursor/contracts";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -18,13 +18,21 @@ export class CursorNotConnectedError extends Error {
 
 export async function getCursorCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: SessionCredentialOwner,
 ): Promise<CursorCredential> {
-  const userId = await resolveSessionOwnerUserId(admin, session);
-  if (!userId) {
-    throw new CursorNotConnectedError("Session has no human owner connected to Cursor.");
-  }
-  return getCursorCredentialForUser(admin, userId);
+  const notConnected = () =>
+    new CursorNotConnectedError(
+      "Session has no active human owner in this workspace connected to Cursor.",
+    );
+  if (!session.creator_member_id) throw notConnected();
+  const { data, error } = await admin.rpc("load_session_cursor_credential", {
+    p_creator_member_id: session.creator_member_id,
+    p_workspace_id: session.workspace_id,
+  });
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) throw notConnected();
+  return mapCredentialRow(row.user_id, row);
 }
 
 export async function getCursorCredentialForUser(
@@ -45,6 +53,20 @@ export async function getCursorCredentialForUser(
       "Cursor is not connected. Ask the session owner to sign in with Cursor in Settings.",
     );
   }
+  return mapCredentialRow(userId, data);
+}
+
+function mapCredentialRow(
+  userId: string,
+  data: Pick<
+    Tables<"user_cursor_credentials">,
+    | "reconnect_required"
+    | "reconnect_reason"
+    | "api_key_expires_at"
+    | "credential_generation"
+    | "encrypted_api_key"
+  >,
+): CursorCredential {
   if (data.reconnect_required) {
     throw new CursorNotConnectedError(
       data.reconnect_reason ?? "Cursor needs to be reconnected in Settings.",

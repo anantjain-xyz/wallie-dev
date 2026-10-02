@@ -2,14 +2,14 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
+import type { SessionCredentialOwner } from "@/lib/agent-credentials/session-owner";
 import {
   isCodexCredentialType,
   type CodexChatGptAuthStore,
   type CodexCredential,
   type CodexCredentialType,
 } from "@/lib/codex/contracts";
-import type { Database, Tables } from "@/lib/supabase/database.types";
+import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 
 type AdminClient = SupabaseClient<Database>;
@@ -34,20 +34,35 @@ export class CodexNotConnectedError extends Error {
 
 /**
  * Resolve a Codex credential for the user who created the session.
- * Throws CodexNotConnectedError when the session has no human owner or the
+ * Throws CodexNotConnectedError when the session has no active human owner or the
  * owner has not connected Codex.
  */
 export async function getCodexCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: SessionCredentialOwner,
 ): Promise<CodexCredential> {
-  const userId = await resolveSessionOwnerUserId(admin, session);
-  if (!userId) {
-    throw new CodexNotConnectedError(
-      "Session has no human owner with a connected Codex credential.",
+  return loadSessionCredential(admin, session);
+}
+
+async function loadSessionCredential(
+  admin: AdminClient,
+  session: SessionCredentialOwner,
+  expectedUserId?: string,
+): Promise<CodexCredential> {
+  const notConnected = () =>
+    new CodexNotConnectedError(
+      "Session has no active human owner in this workspace with a matching connected Codex credential.",
     );
-  }
-  return getCodexCredentialForUser(admin, userId);
+  if (!session.creator_member_id) throw notConnected();
+  const { data, error } = await admin.rpc("load_session_codex_credential", {
+    p_creator_member_id: session.creator_member_id,
+    p_workspace_id: session.workspace_id,
+    ...(expectedUserId !== undefined ? { p_expected_user_id: expectedUserId } : {}),
+  });
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) throw notConnected();
+  return mapCredentialRow(row.user_id, row);
 }
 
 /**
@@ -77,10 +92,14 @@ export async function getCodexCredentialForUser(
   return mapCredentialRow(userId, data as CodexCredentialRow);
 }
 
-export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAuthStore {
+export function createCodexChatGptAuthStore(
+  admin: AdminClient,
+  session: SessionCredentialOwner,
+): CodexChatGptAuthStore {
   return {
     async loadChatGptAuth(input) {
-      const credential = await getCodexCredentialForUser(admin, input.userId);
+      // Reload membership and ciphertext together after sandbox setup.
+      const credential = await loadSessionCredential(admin, session, input.userId);
       if (credential.type !== "chatgpt_auth_json") {
         throw new CodexNotConnectedError(
           "The saved Codex credential is no longer a ChatGPT subscription credential.",

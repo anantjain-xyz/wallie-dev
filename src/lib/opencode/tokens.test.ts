@@ -2,15 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   decryptSecretValue: vi.fn((value: string) => value.replace(/^encrypted:/, "")),
-  resolveSessionOwnerUserId: vi.fn(),
 }));
 
 vi.mock("@/lib/secrets/crypto", () => ({
   decryptSecretValue: mocked.decryptSecretValue,
-}));
-
-vi.mock("@/lib/agent-credentials/session-owner", () => ({
-  resolveSessionOwnerUserId: mocked.resolveSessionOwnerUserId,
 }));
 
 import {
@@ -62,28 +57,39 @@ describe("OpenCode credentials", () => {
     );
   });
 
-  it("resolves the session creator before loading the key", async () => {
-    mocked.resolveSessionOwnerUserId.mockResolvedValueOnce("owner-1");
-    const admin = adminWithRows({
-      user_opencode_credentials: { encrypted_api_key: "encrypted:zen-owner-key" },
+  it("loads the session owner's Zen key in one authorized read", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [
+        {
+          user_id: "owner-1",
+          encrypted_api_key: "encrypted:zen-owner-key",
+          zen_encrypted_api_key: null,
+        },
+      ],
+      error: null,
     });
+    const admin = { rpc } as never;
 
     await expect(
-      getOpenCodeCredentialForSession(admin, { creator_member_id: "member-1" }),
+      getOpenCodeCredentialForSession(admin, {
+        creator_member_id: "member-1",
+        workspace_id: "workspace-1",
+      }),
     ).resolves.toEqual({ secret: "zen-owner-key" });
-    expect(mocked.resolveSessionOwnerUserId).toHaveBeenCalledWith(admin, {
-      creator_member_id: "member-1",
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("load_session_opencode_credentials", {
+      p_creator_member_id: "member-1",
+      p_workspace_id: "workspace-1",
+      p_provider_id: "opencode",
     });
   });
 
   it("rejects sessions without a human owner", async () => {
-    mocked.resolveSessionOwnerUserId.mockResolvedValueOnce(null);
-
     await expect(
       getOpenCodeCredentialForSession(adminWithRows({}), {
         creator_member_id: null,
+        workspace_id: "workspace-1",
       }),
-    ).rejects.toThrow(/Session has no human owner/);
+    ).rejects.toThrow(/Session has no active human owner/);
   });
 });
 
@@ -152,19 +158,38 @@ describe("OpenCode per-provider auth", () => {
     ).rejects.toThrow(/not a valid "<provider-id>\/<model-id>" identifier/);
   });
 
-  it("resolves session auth from the session owner", async () => {
-    mocked.resolveSessionOwnerUserId.mockResolvedValueOnce("owner-1");
-    const admin = adminWithRows({
-      user_opencode_provider_credentials: { encrypted_api_key: "encrypted:go-owner-key" },
-    });
+  it.each([null, "encrypted:zen-owner-key"])(
+    "loads custom session auth and optional Zen key together (%s)",
+    async (zenKey) => {
+      const rpc = vi.fn().mockResolvedValue({
+        data: [
+          {
+            user_id: "owner-1",
+            encrypted_api_key: "encrypted:go-owner-key",
+            zen_encrypted_api_key: zenKey,
+          },
+        ],
+        error: null,
+      });
+      const admin = { rpc } as never;
 
-    await expect(
-      getOpenCodeAuthForSession(admin, { creator_member_id: "member-1" }, "opencode-go/glm-5.3"),
-    ).resolves.toEqual({
-      credential: null,
-      providerCredentials: { "opencode-go": { secret: "go-owner-key" } },
-    });
-  });
+      await expect(
+        getOpenCodeAuthForSession(
+          admin,
+          { creator_member_id: "member-1", workspace_id: "workspace-1" },
+          "opencode-go/glm-5.3",
+        ),
+      ).resolves.toEqual({
+        credential: zenKey ? { secret: "zen-owner-key" } : null,
+        providerCredentials: { "opencode-go": { secret: "go-owner-key" } },
+      });
+      expect(rpc).toHaveBeenCalledExactlyOnceWith("load_session_opencode_credentials", {
+        p_creator_member_id: "member-1",
+        p_workspace_id: "workspace-1",
+        p_provider_id: "opencode-go",
+      });
+    },
+  );
 
   it("lists provider credential metadata without secrets", async () => {
     const providers = await listOpenCodeProviderCredentialMeta(

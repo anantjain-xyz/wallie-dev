@@ -8,9 +8,12 @@ import { DEFAULT_CURSOR_MODEL } from "./types";
 const PROMPT_FILE_NAME = ".wallie-cursor-prompt.txt";
 
 export interface CursorRunnerOptions {
-  credential: CursorCredential;
+  /** Pre-resolved credentials; session callers use loadCredential. */
+  credential?: CursorCredential;
+  /** Session credentials are loaded after remote setup, immediately before launch. */
+  loadCredential?: () => Promise<CursorCredential>;
   model?: string;
-  onAuthenticationFailure?: (reason: string) => Promise<void>;
+  onAuthenticationFailure?: (reason: string, credential: CursorCredential) => Promise<void>;
 }
 
 export class CursorRunner implements AgentRunner {
@@ -18,7 +21,9 @@ export class CursorRunner implements AgentRunner {
   readonly requiresSandbox = true;
 
   constructor(private readonly options: CursorRunnerOptions) {
-    if (!options.credential?.secret) throw new Error("CursorRunner requires a Cursor API key.");
+    if (!options.loadCredential && !options.credential?.secret) {
+      throw new Error("CursorRunner requires a Cursor API key.");
+    }
   }
 
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
@@ -45,13 +50,18 @@ export class CursorRunner implements AgentRunner {
       `"$cursor_bin" ${args.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`,
     ].join("\n");
 
+    const credential = this.options.loadCredential
+      ? await this.options.loadCredential()
+      : this.options.credential;
+    if (!credential?.secret) throw new Error("CursorRunner requires a Cursor API key.");
+
     const proc = await sandbox.exec("bash", ["-lc", command], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CURSOR_API_KEY: this.options.credential.secret, ...WALLIE_GIT_IDENTITY_ENV },
+      env: { CI: "1", CURSOR_API_KEY: credential.secret, ...WALLIE_GIT_IDENTITY_ENV },
       signal: input.signal,
     });
 
-    const secrets = [this.options.credential.secret, ...(input.secrets ?? [])];
+    const secrets = [credential.secret, ...(input.secrets ?? [])];
     let stdout = "";
     let stderr = "";
     let sessionId: string | undefined;
@@ -82,7 +92,9 @@ export class CursorRunner implements AgentRunner {
     if (code !== 0) {
       const redactedStderr = redactSecrets(stderr.trim(), secrets);
       const reason = `Cursor CLI exited with code ${code}: ${redactedStderr.slice(0, 500)}`;
-      if (isCursorAuthenticationError(stderr)) await this.options.onAuthenticationFailure?.(reason);
+      if (isCursorAuthenticationError(stderr)) {
+        await this.options.onAuthenticationFailure?.(reason, credential);
+      }
       yield { message: reason, type: "error" };
       return;
     }
