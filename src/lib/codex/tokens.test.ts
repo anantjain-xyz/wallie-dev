@@ -18,14 +18,15 @@ import {
 
 const session = { creator_member_id: "member-1", workspace_id: "workspace-1" };
 
-function adminWithCredential(row: unknown) {
+function adminWithCredential(row: Record<string, unknown> | null) {
   return {
-    from: (table: string) => {
+    rpc: async () => ({ data: row ? [{ ...row, user_id: "user-1" }] : [], error: null }),
+    from: () => {
       const query = {
         select: () => query,
         eq: () => query,
         maybeSingle: async () => ({
-          data: table === "workspace_members" ? { user_id: "user-1" } : row,
+          data: row,
           error: null,
         }),
       };

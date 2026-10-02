@@ -2397,6 +2397,82 @@ export type Database = {
           total_runs: number
         }[]
       }
+      load_session_claude_code_credential: {
+        Args: { p_creator_member_id: string; p_workspace_id: string }
+        Returns: {
+          created_at: string
+          encrypted_api_key: string
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "user_claude_code_credentials"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      load_session_codex_credential: {
+        Args: {
+          p_creator_member_id: string
+          p_expected_user_id?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          access_token_expires_at: string | null
+          account_email: string | null
+          account_id: string | null
+          auth_cache_last_refresh: string | null
+          auth_reconnect_reason: string | null
+          auth_reconnect_required: boolean
+          created_at: string
+          credential_generation: string
+          credential_type: string
+          credential_version: number
+          encrypted_credential: string
+          scope: string | null
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "user_codex_credentials"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      load_session_cursor_credential: {
+        Args: { p_creator_member_id: string; p_workspace_id: string }
+        Returns: {
+          account_email: string | null
+          api_key_expires_at: string
+          created_at: string
+          credential_generation: string
+          encrypted_api_key: string
+          reconnect_reason: string | null
+          reconnect_required: boolean
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "user_cursor_credentials"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      load_session_opencode_credentials: {
+        Args: {
+          p_creator_member_id: string
+          p_provider_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          encrypted_api_key: string
+          user_id: string
+          zen_encrypted_api_key: string
+        }[]
+      }
       load_workspace_onboarding_sandbox_checks: {
         Args: { target_workspace_id: string }
         Returns: Json

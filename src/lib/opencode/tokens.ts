@@ -2,7 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
+import type { SessionCredentialOwner } from "@/lib/agent-credentials/session-owner";
 import { OPENCODE_ZEN_PROVIDER_ID, parseOpenCodeModelId } from "@/lib/agent-config/contracts";
 import type {
   OpenCodeAuth,
@@ -10,7 +10,7 @@ import type {
   OpenCodeProviderCredentialMeta,
 } from "@/lib/opencode/contracts";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
-import type { Database, Tables } from "@/lib/supabase/database.types";
+import type { Database } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -23,15 +23,10 @@ export class OpenCodeNotConnectedError extends Error {
 
 export async function getOpenCodeCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
+  session: SessionCredentialOwner,
 ): Promise<OpenCodeCredential> {
-  const userId = await resolveSessionOwnerUserId(admin, session);
-  if (!userId) {
-    throw new OpenCodeNotConnectedError(
-      "Session has no active human owner in this workspace with a connected OpenCode Zen API key.",
-    );
-  }
-  return getOpenCodeCredentialForUser(admin, userId);
+  const row = await loadSessionCredentials(admin, session, OPENCODE_ZEN_PROVIDER_ID);
+  return { secret: decryptSecretValue(row.encrypted_api_key) };
 }
 
 export async function getOpenCodeCredentialForUser(
@@ -49,16 +44,47 @@ export async function getOpenCodeCredentialForUser(
 
 export async function getOpenCodeAuthForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
+  session: SessionCredentialOwner,
   model: string,
 ): Promise<OpenCodeAuth> {
-  const userId = await resolveSessionOwnerUserId(admin, session);
-  if (!userId) {
+  const parsed = parseOpenCodeModelId(model);
+  if (!parsed) {
     throw new OpenCodeNotConnectedError(
-      "Session has no active human owner in this workspace with a connected OpenCode API key.",
+      `OpenCode model "${model}" is not a valid "<provider-id>/<model-id>" identifier.`,
     );
   }
-  return getOpenCodeAuthForUser(admin, userId, model);
+  const row = await loadSessionCredentials(admin, session, parsed.providerId);
+  const credential = { secret: decryptSecretValue(row.encrypted_api_key) };
+  if (parsed.providerId === OPENCODE_ZEN_PROVIDER_ID) {
+    return { credential, providerCredentials: {} };
+  }
+  return {
+    credential: row.zen_encrypted_api_key
+      ? { secret: decryptSecretValue(row.zen_encrypted_api_key) }
+      : null,
+    providerCredentials: { [parsed.providerId]: credential },
+  };
+}
+
+async function loadSessionCredentials(
+  admin: AdminClient,
+  session: SessionCredentialOwner,
+  providerId: string,
+) {
+  const notConnected = () =>
+    new OpenCodeNotConnectedError(
+      `Session has no active human owner in this workspace with a connected OpenCode API key for "${providerId}".`,
+    );
+  if (!session.creator_member_id) throw notConnected();
+  const { data, error } = await admin.rpc("load_session_opencode_credentials", {
+    p_creator_member_id: session.creator_member_id,
+    p_workspace_id: session.workspace_id,
+    p_provider_id: providerId,
+  });
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) throw notConnected();
+  return row;
 }
 
 export async function getOpenCodeAuthForUser(
