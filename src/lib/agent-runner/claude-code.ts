@@ -7,8 +7,10 @@ import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 
 export interface ClaudeCodeRunnerOptions {
-  /** User-supplied Anthropic API key resolved by getClaudeCodeCredentialForUser. */
-  credential: ClaudeCodeCredential;
+  /** Pre-resolved credentials; session callers use loadCredential. */
+  credential?: ClaudeCodeCredential;
+  /** Session credentials are loaded after remote setup, immediately before launch. */
+  loadCredential?: () => Promise<ClaudeCodeCredential>;
   /** Model identifier or Claude Code alias, e.g. "claude-opus-4-8[1m]". */
   model?: string;
   /** Reasoning effort passed to Claude Code. */
@@ -28,7 +30,7 @@ export class ClaudeCodeRunner implements AgentRunner {
   readonly requiresSandbox = true;
 
   constructor(private readonly options: ClaudeCodeRunnerOptions) {
-    if (!options.credential?.secret) {
+    if (!options.loadCredential && !options.credential?.secret) {
       throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
     }
   }
@@ -73,10 +75,15 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     const shellCmd = `claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 
+    const credential = this.options.loadCredential
+      ? await this.options.loadCredential()
+      : this.options.credential;
+    if (!credential?.secret) throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
+
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
       env: {
-        ANTHROPIC_API_KEY: this.options.credential.secret,
+        ANTHROPIC_API_KEY: credential.secret,
         CI: "1",
         ...WALLIE_GIT_IDENTITY_ENV,
       },

@@ -237,7 +237,7 @@ describe("Codex subscription auth reload", () => {
     expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
   });
 
-  it("blocks auth reload and CLI launch if the creator is removed during sandbox setup", async () => {
+  it("blocks auth reload and CLI launch if the creator is removed during runner setup", async () => {
     const member = { ...activeMember };
     const { admin, from, rpc } = createAdmin(member);
     const credential = await getCodexCredentialForSession(admin, session);
@@ -246,7 +246,11 @@ describe("Codex subscription auth reload", () => {
       chatGptAuthStore: createCodexChatGptAuthStore(admin, session),
     });
     const sandbox = new FakeSandbox();
-    member.is_active = false;
+    const writeFile = sandbox.writeFile.bind(sandbox);
+    vi.spyOn(sandbox, "writeFile").mockImplementation(async (...args) => {
+      await writeFile(...args);
+      member.is_active = false;
+    });
     rpc.mockClear();
     mocked.decryptSecretValue.mockClear();
 
@@ -268,7 +272,9 @@ describe("Codex subscription auth reload", () => {
     });
     expect(from).not.toHaveBeenCalled();
     expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
-    expect(sandbox.files.size).toBe(0);
-    expect(sandbox.calls).toHaveLength(0);
+    expect([...sandbox.files.keys()]).toEqual([`${sandbox.repoPath}/.wallie-prompt.txt`]);
+    expect(sandbox.calls).toEqual([
+      expect.objectContaining({ args: ["-lc", expect.stringMatching(/^mkdir -p /)] }),
+    ]);
   });
 });

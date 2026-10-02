@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
@@ -18,9 +18,12 @@ describe("ClaudeCodeRunner", () => {
     expect(typeof runner.start).toBe("function");
   });
 
-  it("throws when constructed without an Anthropic API key", () => {
-    expect(() => new ClaudeCodeRunner({ credential: { secret: "" } })).toThrow(/Anthropic API key/);
-  });
+  it.each([{}, { credential: { secret: "" } }])(
+    "rejects missing eager and lazy credentials (%j)",
+    (options) => {
+      expect(() => new ClaudeCodeRunner(options)).toThrow(/Anthropic API key/);
+    },
+  );
 
   it("throws when started without a sandbox", async () => {
     const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
@@ -90,6 +93,81 @@ describe("ClaudeCodeRunner", () => {
       GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
       GIT_COMMITTER_NAME: "wallie-dev[bot]",
     });
+  });
+
+  it("does not load or inject credentials while a prompt write is pending", async () => {
+    const sandbox = new FakeSandbox();
+    let promptStarted!: () => void;
+    let finishPrompt!: () => void;
+    const started = new Promise<void>((resolve) => {
+      promptStarted = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finishPrompt = resolve;
+    });
+    const writeFile = sandbox.writeFile.bind(sandbox);
+    vi.spyOn(sandbox, "writeFile").mockImplementation(async (...args) => {
+      promptStarted();
+      await pending;
+      await writeFile(...args);
+    });
+    let activeMember = true;
+    const loadCredential = vi.fn(async () => {
+      if (!activeMember) throw new Error("Session creator is no longer active");
+      return { secret: "fresh-anthropic-key" };
+    });
+    const readOriginalSecret = vi.fn(() => "stale-anthropic-key");
+    const runner = new ClaudeCodeRunner({
+      credential: {
+        get secret() {
+          return readOriginalSecret();
+        },
+      },
+      loadCredential,
+    });
+    const consume = async () => {
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+        void event;
+      }
+    };
+    const run = consume();
+    await started;
+    expect(loadCredential).not.toHaveBeenCalled();
+    expect(readOriginalSecret).not.toHaveBeenCalled();
+    expect(sandbox.calls).toHaveLength(0);
+
+    activeMember = false;
+    const rejected = expect(run).rejects.toThrow(/no longer active/);
+    finishPrompt();
+    await rejected;
+
+    expect(loadCredential).toHaveBeenCalledOnce();
+    expect(readOriginalSecret).not.toHaveBeenCalled();
+    expect(sandbox.calls).toHaveLength(0);
+    expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual(["p"]);
+  });
+
+  it("loads the latest key after every prompt write and injects only that key", async () => {
+    const sandbox = new FakeSandbox();
+    let secret = "fresh-anthropic-key";
+    const loadCredential = vi.fn(async () => {
+      expect(sandbox.files.has("/vercel/sandbox/.wallie-prompt.txt")).toBe(true);
+      return { secret };
+    });
+    const runner = new ClaudeCodeRunner({ loadCredential });
+
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+      void event;
+    }
+    secret = "newer-anthropic-key";
+    for await (const event of runner.start({ prompt: "p2", sandbox, sessionId: "s" })) {
+      void event;
+    }
+
+    expect(loadCredential).toHaveBeenCalledTimes(2);
+    expect(sandbox.calls).toHaveLength(2);
+    expect(sandbox.calls[0]?.opts.env).toMatchObject({ ANTHROPIC_API_KEY: "fresh-anthropic-key" });
+    expect(sandbox.calls[1]?.opts.env).toMatchObject({ ANTHROPIC_API_KEY: "newer-anthropic-key" });
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {

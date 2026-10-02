@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
@@ -32,6 +32,128 @@ describe("OpenCodeRunner", () => {
         }
       })(),
     ).rejects.toThrow(/requires a sandbox/);
+  });
+
+  it.each(["opencode/gpt-5.6-sol", "opencode-go/glm-5.3"])(
+    "blocks %s authentication when the creator is removed during prompt setup",
+    async (model) => {
+      const sandbox = new FakeSandbox();
+      let activeMember = true;
+      let beginPromptWrite!: () => void;
+      const promptWriteStarted = new Promise<void>((resolve) => {
+        beginPromptWrite = resolve;
+      });
+      let finishPromptWrite!: () => void;
+      const promptWriteFinished = new Promise<void>((resolve) => {
+        finishPromptWrite = resolve;
+      });
+      const writeFile = sandbox.writeFile.bind(sandbox);
+      const write = vi.spyOn(sandbox, "writeFile").mockImplementation(async (path, data, opts) => {
+        if (path.endsWith("/prompt.txt")) {
+          beginPromptWrite();
+          await promptWriteFinished;
+        }
+        await writeFile(path, data, opts);
+      });
+      const loadAuth = vi.fn(async () => {
+        if (!activeMember) throw new Error("Session creator is no longer an active member");
+        return { credential, providerCredentials: { "opencode-go": credential } };
+      });
+      const runner = new OpenCodeRunner({ model, loadAuth });
+      const running = (async () => {
+        for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "revoked" })) {
+          void event;
+        }
+      })();
+
+      await promptWriteStarted;
+      expect(loadAuth).not.toHaveBeenCalled();
+      expect(sandbox.calls).toHaveLength(0);
+      activeMember = false;
+      finishPromptWrite();
+
+      await expect(running).rejects.toThrow("Session creator is no longer an active member");
+      expect(loadAuth).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(sandbox.files.has("/tmp/wallie-opencode-revoked/data/opencode/auth.json")).toBe(false);
+      expect(sandbox.calls).toHaveLength(0);
+    },
+  );
+
+  it.each(["opencode/gpt-5.6-sol", "opencode-go/glm-5.3"])(
+    "does not fall back to eager credentials when current %s authentication is unavailable",
+    async (model) => {
+      const sandbox = new FakeSandbox();
+      const runner = new OpenCodeRunner({
+        model,
+        credential,
+        providerCredentials: { "opencode-go": credential },
+        loadAuth: async () => ({}),
+      });
+
+      await expect(
+        (async () => {
+          for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "missing" })) {
+            void event;
+          }
+        })(),
+      ).rejects.toThrow(/requires an .*API key/);
+
+      expect(sandbox.files.has("/tmp/wallie-opencode-missing/data/opencode/auth.json")).toBe(false);
+      expect(sandbox.calls).toHaveLength(0);
+    },
+  );
+
+  it("loads refreshed custom and optional Zen credentials after setup and redacts both", async () => {
+    const sandbox = new FakeSandbox();
+    const freshZenSecret = "fresh-zen-key-1234567890";
+    const freshProviderSecret = "fresh-provider-key-1234567890";
+    let currentAuth = {
+      credential,
+      providerCredentials: { "opencode-go": { secret: "old-provider-key-1234567890" } },
+    };
+    const writeFile = sandbox.writeFile.bind(sandbox);
+    vi.spyOn(sandbox, "writeFile").mockImplementation(async (path, data, opts) => {
+      if (path.endsWith("/prompt.txt")) {
+        currentAuth = {
+          credential: { secret: freshZenSecret },
+          providerCredentials: { "opencode-go": { secret: freshProviderSecret } },
+        };
+      }
+      await writeFile(path, data, opts);
+    });
+    sandbox.scriptExec("bash", [
+      {
+        data: `${JSON.stringify({ type: "text", part: { text: `${freshZenSecret} ${freshProviderSecret}` } })}\n`,
+        stream: "stdout",
+      },
+    ]);
+    const loadAuth = vi.fn(async () => currentAuth);
+    const runner = new OpenCodeRunner({
+      ...currentAuth,
+      model: "opencode-go/glm-5.3",
+      loadAuth,
+    });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "refreshed" })) {
+      events.push(event);
+    }
+
+    const authPath = "/tmp/wallie-opencode-refreshed/data/opencode/auth.json";
+    expect(await sandbox.readFile(authPath)).toBe(
+      `${JSON.stringify({
+        opencode: { type: "api", key: freshZenSecret },
+        "opencode-go": { type: "api", key: freshProviderSecret },
+      })}\n`,
+    );
+    expect(sandbox.files.get(authPath)?.mode).toBe(0o600);
+    expect(loadAuth).toHaveBeenCalledOnce();
+    expect(sandbox.calls).toHaveLength(1);
+    expect(JSON.stringify(sandbox.calls)).not.toContain(freshZenSecret);
+    expect(JSON.stringify(sandbox.calls)).not.toContain(freshProviderSecret);
+    expect(events).toContainEqual({ type: "text", text: "[REDACTED] [REDACTED]" });
+    expect(JSON.stringify(events)).not.toContain(freshZenSecret);
+    expect(JSON.stringify(events)).not.toContain(freshProviderSecret);
   });
 
   it("uses isolated auth, parses partial NDJSON, totals usage, and captures continuation", async () => {

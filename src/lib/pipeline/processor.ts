@@ -19,21 +19,10 @@ import {
 } from "@/lib/agent-config/contracts";
 import { enqueueSessionJobWithRun, resolveQueuedRunConfig } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
-import {
-  ClaudeCodeNotConnectedError,
-  getClaudeCodeCredentialForSession,
-} from "@/lib/claude-code/tokens";
-import {
-  createCodexChatGptAuthStore,
-  CodexNotConnectedError,
-  getCodexCredentialForSession,
-} from "@/lib/codex/tokens";
-import {
-  CursorNotConnectedError,
-  getCursorCredentialForSession,
-  markCursorReconnectRequired,
-} from "@/lib/cursor/tokens";
-import { getOpenCodeAuthForSession, OpenCodeNotConnectedError } from "@/lib/opencode/tokens";
+import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
+import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
+import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
+import { getOpenCodeAuthForSession } from "@/lib/opencode/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
@@ -375,16 +364,16 @@ async function runStage(input: {
         text: "Starting agent…",
       });
     }
-    // Sandbox setup, attachment downloads, and progress writes may be slow.
-    // Revalidate membership and decrypt credentials only at the launch boundary.
-    const resolvedRunner = await resolveAgentRunner({
+    // Runners load credentials after their own nonsecret remote setup, directly
+    // before delivering the secret. Construction never decrypts personal keys.
+    const runner = createSessionAgentRunner({
       admin,
       effort: config.effort,
       model: config.model,
       provider,
       session,
     });
-    for await (const event of resolvedRunner.runner.start({
+    for await (const event of runner.start({
       maxTokens: undefined,
       prompt,
       runId: runId ?? undefined,
@@ -1001,99 +990,58 @@ async function deleteUnpublishedArtifact(
   if (error) throw error;
 }
 
-async function resolveAgentRunner(input: {
+function createSessionAgentRunner(input: {
   admin: AdminClient;
   effort: AgentEffort;
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
-}): Promise<{ runner: AgentRunner }> {
-  if (input.provider === "codex") {
-    try {
-      const credential = await getCodexCredentialForSession(input.admin, input.session);
-      return {
-        runner: createAgentRunner("codex", {
-          codex: {
-            chatGptAuthStore: createCodexChatGptAuthStore(input.admin, input.session),
-            credential,
-            effort: input.effort,
-            model: input.model,
-          },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof CodexNotConnectedError) {
-        throw new Error(error.message);
-      }
-      throw error;
-    }
+}): AgentRunner {
+  switch (input.provider) {
+    case "codex":
+      return createAgentRunner("codex", {
+        codex: {
+          chatGptAuthStore: createCodexChatGptAuthStore(input.admin, input.session),
+          loadCredential: () => getCodexCredentialForSession(input.admin, input.session),
+          effort: input.effort,
+          model: input.model,
+        },
+      });
+    case "claude-code":
+      return createAgentRunner("claude-code", {
+        claudeCode: {
+          loadCredential: () => getClaudeCodeCredentialForSession(input.admin, input.session),
+          effort: input.effort,
+          model: input.model,
+        },
+      });
+    case "cursor":
+      return createAgentRunner("cursor", {
+        cursor: {
+          loadCredential: () => getCursorCredentialForSession(input.admin, input.session),
+          model: input.model,
+          onAuthenticationFailure: (reason, credential) =>
+            markCursorReconnectRequired(
+              input.admin,
+              credential.userId,
+              credential.generation,
+              reason,
+            ),
+        },
+      });
+    case "opencode":
+      return createAgentRunner("opencode", {
+        openCode: {
+          loadAuth: () =>
+            getOpenCodeAuthForSession(
+              input.admin,
+              input.session,
+              input.model ?? DEFAULT_OPENCODE_MODEL,
+            ),
+          model: input.model,
+        },
+      });
   }
-
-  if (input.provider === "claude-code") {
-    try {
-      const credential = await getClaudeCodeCredentialForSession(input.admin, input.session);
-      return {
-        runner: createAgentRunner("claude-code", {
-          claudeCode: { credential, effort: input.effort, model: input.model },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof ClaudeCodeNotConnectedError) {
-        throw new Error(error.message);
-      }
-      throw error;
-    }
-  }
-
-  if (input.provider === "cursor") {
-    try {
-      const credential = await getCursorCredentialForSession(input.admin, input.session);
-      return {
-        runner: createAgentRunner("cursor", {
-          cursor: {
-            credential,
-            model: input.model,
-            onAuthenticationFailure: (reason) =>
-              markCursorReconnectRequired(
-                input.admin,
-                credential.userId,
-                credential.generation,
-                reason,
-              ),
-          },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof CursorNotConnectedError) throw new Error(error.message);
-      throw error;
-    }
-  }
-
-  if (input.provider === "opencode") {
-    try {
-      const auth = await getOpenCodeAuthForSession(
-        input.admin,
-        input.session,
-        input.model ?? DEFAULT_OPENCODE_MODEL,
-      );
-      return {
-        runner: createAgentRunner("opencode", {
-          openCode: {
-            credential: auth.credential,
-            model: input.model,
-            providerCredentials: auth.providerCredentials,
-          },
-        }),
-      };
-    } catch (error) {
-      if (error instanceof OpenCodeNotConnectedError) throw new Error(error.message);
-      throw error;
-    }
-  }
-
-  return {
-    runner: createAgentRunner(input.provider),
-  };
 }
 
 interface GitHubContext {

@@ -5,11 +5,16 @@ import { redactSecrets } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 
-export interface OpenCodeRunnerOptions {
+export type OpenCodeRunnerAuth = {
   /** User-supplied OpenCode Zen API key, if connected. */
   credential?: OpenCodeCredential | null;
   /** Custom provider keys keyed by OpenCode provider id. Never includes `opencode`. */
   providerCredentials?: Readonly<Record<string, OpenCodeCredential>>;
+};
+
+export interface OpenCodeRunnerOptions extends OpenCodeRunnerAuth {
+  /** Load current credentials immediately before writing sandbox authentication. */
+  loadAuth?: () => Promise<OpenCodeRunnerAuth>;
   /** OpenCode model identifier in provider/model form. */
   model?: string;
 }
@@ -38,7 +43,6 @@ export class OpenCodeRunner implements AgentRunner {
 
   private readonly model: string;
   private readonly modelProviderId: string;
-  private readonly authEntries: Record<string, { type: "api"; key: string }>;
 
   constructor(private readonly options: OpenCodeRunnerOptions) {
     this.model = options.model ?? DEFAULT_OPENCODE_MODEL;
@@ -49,8 +53,7 @@ export class OpenCodeRunner implements AgentRunner {
       );
     }
     this.modelProviderId = parsed.providerId;
-    this.authEntries = buildOpenCodeAuthEntries(options, parsed.providerId);
-    if (!secretForProvider(options, parsed.providerId)) {
+    if (!options.loadAuth && !secretForProvider(options, parsed.providerId)) {
       throw missingProviderCredentialError(parsed.providerId);
     }
   }
@@ -61,20 +64,20 @@ export class OpenCodeRunner implements AgentRunner {
       throw new Error("OpenCodeRunner requires a sandbox.");
     }
 
-    if (!secretForProvider(this.options, this.modelProviderId)) {
-      throw missingProviderCredentialError(this.modelProviderId);
-    }
-
     const token = safePathToken(input.runId ?? input.sessionId);
     const root = `/tmp/wallie-opencode-${token}`;
     const dataHome = `${root}/data`;
     const authFile = `${dataHome}/opencode/auth.json`;
     const promptFile = `${root}/prompt.txt`;
 
-    await Promise.all([
-      sandbox.writeFile(authFile, `${JSON.stringify(this.authEntries)}\n`, { mode: 0o600 }),
-      sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 }),
-    ]);
+    await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
+
+    const auth = this.options.loadAuth ? await this.options.loadAuth() : this.options;
+    if (!secretForProvider(auth, this.modelProviderId)) {
+      throw missingProviderCredentialError(this.modelProviderId);
+    }
+    const authEntries = buildOpenCodeAuthEntries(auth, this.modelProviderId);
+    await sandbox.writeFile(authFile, `${JSON.stringify(authEntries)}\n`, { mode: 0o600 });
 
     const cliArgs = ["run", "--format", "json", "--model", this.model];
     if (input.continueSessionId) {
@@ -89,10 +92,8 @@ export class OpenCodeRunner implements AgentRunner {
     });
 
     const secrets = [
-      this.options.credential?.secret,
-      ...Object.values(this.options.providerCredentials ?? {}).map(
-        (credential) => credential.secret,
-      ),
+      auth.credential?.secret,
+      ...Object.values(auth.providerCredentials ?? {}).map((credential) => credential.secret),
       ...(input.secrets ?? []),
     ];
     let stdoutBuf = "";
@@ -276,7 +277,7 @@ export function parseOpenCodeLine(
 }
 
 function buildOpenCodeAuthEntries(
-  options: OpenCodeRunnerOptions,
+  options: OpenCodeRunnerAuth,
   modelProviderId: string,
 ): Record<string, { type: "api"; key: string }> {
   const entries: Record<string, { type: "api"; key: string }> = {};
@@ -293,7 +294,7 @@ function buildOpenCodeAuthEntries(
   return entries;
 }
 
-function secretForProvider(options: OpenCodeRunnerOptions, providerId: string): string | undefined {
+function secretForProvider(options: OpenCodeRunnerAuth, providerId: string): string | undefined {
   if (providerId === OPENCODE_ZEN_PROVIDER_ID) {
     return options.credential?.secret || undefined;
   }

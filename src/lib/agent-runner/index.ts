@@ -54,8 +54,8 @@ type AgentProviderName = AgentProvider | "claude_code";
  * Accepts the legacy underscore aliases at this boundary, then runs internally
  * on the canonical dashed provider ids.
  *
- * CLI providers require caller-supplied credentials; resolve them with the
- * provider token helper before calling.
+ * CLI providers require credentials or a loader. Session runs pass loaders
+ * so each runner authorizes credential delivery after its remote setup.
  */
 export function createAgentRunner(
   provider: AgentProviderName,

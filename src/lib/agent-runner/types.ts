@@ -83,8 +83,8 @@ export interface AgentRunner {
 
   /**
    * Whether this runner needs a per-session sandbox. CLI runners do; runners
-   * that hit a hosted API directly do not. The pipeline reads this to skip
-   * sandbox/GitHub provisioning for text-only stages.
+   * that hit a hosted API directly do not. All providers currently supported
+   * by the pipeline require sandbox/GitHub provisioning.
    */
   readonly requiresSandbox: boolean;
 

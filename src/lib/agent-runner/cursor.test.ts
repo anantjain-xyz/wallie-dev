@@ -50,6 +50,122 @@ describe("CursorRunner", () => {
     });
   });
 
+  it.each([{}, { credential: { ...credential, secret: "" } }])(
+    "rejects missing eager and lazy credentials (%j)",
+    (options) => {
+      expect(() => new CursorRunner(options)).toThrow(/Cursor API key/);
+    },
+  );
+
+  it("does not load or inject credentials while a prompt write is pending", async () => {
+    const sandbox = new FakeSandbox();
+    let promptStarted!: () => void;
+    let finishPrompt!: () => void;
+    const started = new Promise<void>((resolve) => {
+      promptStarted = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finishPrompt = resolve;
+    });
+    const writeFile = sandbox.writeFile.bind(sandbox);
+    vi.spyOn(sandbox, "writeFile").mockImplementation(async (...args) => {
+      promptStarted();
+      await pending;
+      await writeFile(...args);
+    });
+    let activeMember = true;
+    const loadCredential = vi.fn(async () => {
+      if (!activeMember) throw new Error("Session creator is no longer active");
+      return { ...credential, secret: "fresh-cursor-key" };
+    });
+    const readOriginalSecret = vi.fn(() => "stale-cursor-key");
+    const runner = new CursorRunner({
+      credential: {
+        ...credential,
+        get secret() {
+          return readOriginalSecret();
+        },
+      },
+      loadCredential,
+    });
+    const consume = async () => {
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+        void event;
+      }
+    };
+    const run = consume();
+    await started;
+    expect(loadCredential).not.toHaveBeenCalled();
+    expect(readOriginalSecret).not.toHaveBeenCalled();
+    expect(sandbox.calls).toHaveLength(0);
+
+    activeMember = false;
+    const rejected = expect(run).rejects.toThrow(/no longer active/);
+    finishPrompt();
+    await rejected;
+
+    expect(loadCredential).toHaveBeenCalledOnce();
+    expect(readOriginalSecret).not.toHaveBeenCalled();
+    expect(sandbox.calls).toHaveLength(0);
+    expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual(["p"]);
+  });
+
+  it("injects and redacts the latest key and reports its generation on auth failure", async () => {
+    const sandbox = new FakeSandbox();
+    const currentCredential = {
+      ...credential,
+      generation: "22222222-2222-4222-8222-222222222222",
+      secret: "fresh-cursor-key",
+    };
+    sandbox.scriptExec(
+      "bash",
+      [{ data: "401 invalid api key fresh-cursor-key", stream: "stderr" }],
+      { exitCode: 1 },
+    );
+    const loadCredential = vi.fn(async () => {
+      expect(sandbox.files.has("/vercel/sandbox/.wallie-cursor-prompt.txt")).toBe(true);
+      expect(sandbox.calls).toHaveLength(0);
+      return currentCredential;
+    });
+    const onAuthenticationFailure = vi.fn();
+    const runner = new CursorRunner({ credential, loadCredential, onAuthenticationFailure });
+    const events = [];
+
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+      events.push(event);
+    }
+
+    expect(loadCredential).toHaveBeenCalledOnce();
+    expect(sandbox.calls).toHaveLength(1);
+    expect(sandbox.calls[0]?.opts.env).toMatchObject({ CURSOR_API_KEY: "fresh-cursor-key" });
+    expect(sandbox.calls[0]?.opts.env?.CURSOR_API_KEY).not.toBe(credential.secret);
+    expect(onAuthenticationFailure).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("401 invalid api key [REDACTED]"),
+      currentCredential,
+    );
+    expect(JSON.stringify(events)).not.toContain(currentCredential.secret);
+  });
+
+  it("rechecks lazy credentials on each start", async () => {
+    const sandbox = new FakeSandbox();
+    const loadCredential = vi
+      .fn()
+      .mockResolvedValueOnce(credential)
+      .mockRejectedValueOnce(new Error("Session creator is no longer active"));
+    const runner = new CursorRunner({ loadCredential });
+    const consume = async () => {
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+        void event;
+      }
+    };
+
+    await consume();
+    await expect(consume()).rejects.toThrow(/no longer active/);
+
+    expect(loadCredential).toHaveBeenCalledTimes(2);
+    expect(sandbox.calls).toHaveLength(1);
+  });
+
   it("marks the connection for reconnect after an authentication failure", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [{ data: "401 invalid api key", stream: "stderr" }], {

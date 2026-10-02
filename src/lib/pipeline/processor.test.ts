@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
+import { FakeSandbox } from "@/lib/sandbox/fake";
 import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
@@ -1172,6 +1174,12 @@ describe("processPipelineJob (generic stage runner)", () => {
   });
 
   it("marks the prepared run errored and stops its sandbox when credential resolution fails", async () => {
+    const { createAgentRunner } =
+      await vi.importActual<typeof import("@/lib/agent-runner")>("@/lib/agent-runner");
+    mocked.createAgentRunner.mockImplementationOnce(createAgentRunner);
+    const sandbox = new FakeSandbox();
+    vi.spyOn(sandbox, "stop");
+    mocked.createSessionSandbox.mockResolvedValueOnce(sandbox);
     mocked.getCodexCredentialForSession.mockRejectedValueOnce(
       new Error("Unsupported state or unable to authenticate data"),
     );
@@ -1205,9 +1213,8 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect.objectContaining({ finished_at: expect.any(String), status: "error" }),
       expect.objectContaining({ finished_at: expect.any(String), status: "error" }),
     ]);
-    const sandbox = await mocked.createSessionSandbox.mock.results[0]?.value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
-    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).toHaveBeenCalledOnce();
     expect(updatedJobs.at(-1)).toMatchObject({
       last_error: "Unsupported state or unable to authenticate data",
       status: "error",
@@ -1299,7 +1306,10 @@ describe("processPipelineJob (generic stage runner)", () => {
         credential: { credential: { secret: "revoked-zen-key" }, providerCredentials: {} },
       },
     ].flatMap((runner) =>
-      ["sandbox provisioning", "attachment preparation"].map((phase) => ({ ...runner, phase })),
+      ["sandbox provisioning", "attachment preparation", "runner preparation"].map((phase) => ({
+        ...runner,
+        phase,
+      })),
     ),
   )("blocks $label credentials revoked during $phase before any agent launch", async (testCase) => {
     let memberActive = true;
@@ -1307,14 +1317,16 @@ describe("processPipelineJob (generic stage runner)", () => {
       if (!memberActive) throw new Error("Session owner is no longer an active workspace member.");
       return testCase.credential;
     });
-    const sandbox = {
-      id: "sandbox-1",
-      repoPath: "/vercel/sandbox",
-      exec: vi.fn(),
-      readFile: vi.fn(),
-      writeFile: vi.fn(),
-      stop: vi.fn().mockResolvedValue(undefined),
-    };
+    const { createAgentRunner } =
+      await vi.importActual<typeof import("@/lib/agent-runner")>("@/lib/agent-runner");
+    mocked.createAgentRunner.mockImplementationOnce(createAgentRunner);
+    const sandbox = new FakeSandbox();
+    vi.spyOn(sandbox, "stop");
+    const writeFile = sandbox.writeFile.bind(sandbox);
+    vi.spyOn(sandbox, "writeFile").mockImplementation(async (...args) => {
+      await writeFile(...args);
+      if (testCase.phase === "runner preparation") memberActive = false;
+    });
     mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
       await input.onSandboxCreated?.({ provider: "vercel", sandboxId: sandbox.id });
       if (testCase.phase === "sandbox provisioning") memberActive = false;
@@ -1324,11 +1336,14 @@ describe("processPipelineJob (generic stage runner)", () => {
       if (testCase.phase === "attachment preparation") memberActive = false;
       return [];
     });
-    const runner = makeRunner([{ type: "text", text: "must not run" }]);
-    mocked.createAgentRunner.mockReturnValue(runner);
     const { admin, insertedArtifacts, updatedRuns, updatedSessions } = buildAdminMock({
       session: baseSession({ creator_member_id: "member-1" }),
-      agentConfig: [{ key: "agent_provider", value_json: testCase.provider }],
+      agentConfig: [
+        { key: "agent_provider", value_json: testCase.provider },
+        ...(testCase.provider === "opencode"
+          ? [{ key: "agent_model", value_json: "opencode/gpt-5.6-sol" }]
+          : []),
+      ],
     });
 
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
@@ -1339,10 +1354,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(testCase.load.mock.invocationCallOrder[0]).toBeGreaterThan(
       mocked.materializeSessionAttachments.mock.invocationCallOrder[0]!,
     );
-    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
-    expect(runner.start).not.toHaveBeenCalled();
-    expect(sandbox.writeFile).not.toHaveBeenCalled();
-    expect(sandbox.exec).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).toHaveBeenCalledOnce();
+    expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual([
+      "rendered prompt",
+    ]);
+    expect(sandbox.calls.every((call) => call.args[1]?.startsWith("mkdir -p "))).toBe(true);
     expect(sandbox.stop).toHaveBeenCalledOnce();
     expect(insertedArtifacts).toHaveLength(0);
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
@@ -1362,10 +1378,13 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     await processPipelineJob({ admin, job: baseJob() });
 
+    expect(mocked.getClaudeCodeCredentialForSession).not.toHaveBeenCalled();
+    const options = mocked.createAgentRunner.mock.calls[0]![1] as CreateAgentRunnerOptions;
+    await options.claudeCode!.loadCredential!();
     expect(mocked.getClaudeCodeCredentialForSession).toHaveBeenCalledWith(admin, session);
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
       claudeCode: {
-        credential: { secret: "sk-ant-test" },
+        loadCredential: expect.any(Function),
         effort: "max",
         model: "claude-sonnet-4-5",
       },
@@ -1388,11 +1407,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("codex", {
       codex: {
         chatGptAuthStore: expect.any(Object),
-        credential: {
-          expiresAt: null,
-          secret: "codex-token",
-          type: "codex_access_token",
-        },
+        loadCredential: expect.any(Function),
         effort: "max",
         model: "gpt-5.5",
       },
@@ -1414,6 +1429,9 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     await processPipelineJob({ admin, job: baseJob() });
 
+    expect(mocked.getOpenCodeAuthForSession).not.toHaveBeenCalled();
+    const options = mocked.createAgentRunner.mock.calls[0]![1] as CreateAgentRunnerOptions;
+    await options.openCode!.loadAuth!();
     expect(mocked.getOpenCodeAuthForSession).toHaveBeenCalledWith(
       admin,
       session,
@@ -1421,9 +1439,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
       openCode: {
-        credential: { secret: "zen-test" },
+        loadAuth: expect.any(Function),
         model: "opencode/gpt-5.6-sol",
-        providerCredentials: {},
       },
     });
     expect(updatedRuns[0]).toMatchObject({
@@ -1451,6 +1468,9 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     await processPipelineJob({ admin, job: baseJob() });
 
+    expect(mocked.getOpenCodeAuthForSession).not.toHaveBeenCalled();
+    const options = mocked.createAgentRunner.mock.calls[0]![1] as CreateAgentRunnerOptions;
+    await options.openCode!.loadAuth!();
     expect(mocked.getOpenCodeAuthForSession).toHaveBeenCalledWith(
       admin,
       session,
@@ -1458,9 +1478,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
       openCode: {
-        credential: null,
+        loadAuth: expect.any(Function),
         model: "opencode-go/glm-5.3",
-        providerCredentials: { "opencode-go": { secret: "go-test" } },
       },
     });
   });
