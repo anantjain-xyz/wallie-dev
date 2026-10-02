@@ -13,7 +13,9 @@ vi.mock("@/lib/secrets/crypto", () => ({
 
 import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
 import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
-import { getCodexCredentialForSession } from "@/lib/codex/tokens";
+import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
+import { CodexRunner } from "@/lib/agent-runner/codex";
+import { FakeSandbox } from "@/lib/sandbox/fake";
 import { getCursorCredentialForSession } from "@/lib/cursor/tokens";
 import { getOpenCodeAuthForSession, getOpenCodeCredentialForSession } from "@/lib/opencode/tokens";
 
@@ -32,12 +34,16 @@ const activeMember: Member = {
   kind: "human",
 };
 
-function createAdmin(member: Member | null, memberError: Error | null = null) {
+function createAdmin(
+  member: Member | null,
+  memberError: Error | null = null,
+  credentialType = "platform_api_key",
+) {
   const credential = {
     user_id: "user-1",
     encrypted_api_key: "encrypted:personal-key",
     encrypted_credential: "encrypted:personal-key",
-    credential_type: "platform_api_key",
+    credential_type: credentialType,
     access_token_expires_at: null,
     api_key_expires_at: "2099-01-01T00:00:00.000Z",
     credential_generation: "generation-1",
@@ -146,5 +152,78 @@ describe("resolveSessionOwnerUserId", () => {
 
     await expect(resolveSessionOwnerUserId(admin, session)).rejects.toThrow(error);
     expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
+  });
+});
+
+describe("Codex subscription auth reload authority", () => {
+  it.each([
+    { name: "inactive member", member: { ...activeMember, is_active: false } },
+    { name: "member in another workspace", member: { ...activeMember, workspace_id: "other" } },
+    { name: "system member", member: { ...activeMember, kind: "system" as const } },
+    { name: "missing member", member: null },
+  ])("refuses to reload credentials for an $name", async ({ member }) => {
+    const { admin, from } = createAdmin(member, null, "chatgpt_auth_json");
+    const store = createCodexChatGptAuthStore(admin, session);
+
+    await expect(store.loadChatGptAuth({ userId: "user-1" })).rejects.toThrow(
+      /no active human owner/,
+    );
+
+    expect(from.mock.calls.map(([table]) => table)).toEqual(["workspace_members"]);
+    expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
+  });
+
+  it("reloads credentials while the matching owner remains active", async () => {
+    const { admin } = createAdmin(activeMember, null, "chatgpt_auth_json");
+    const store = createCodexChatGptAuthStore(admin, session);
+
+    await expect(store.loadChatGptAuth({ userId: "user-1" })).resolves.toMatchObject({
+      type: "chatgpt_auth_json",
+      secret: "personal-key",
+      userId: "user-1",
+    });
+  });
+
+  it("refuses to reload a different user's credential", async () => {
+    const { admin, from } = createAdmin(activeMember, null, "chatgpt_auth_json");
+    const store = createCodexChatGptAuthStore(admin, session);
+
+    await expect(store.loadChatGptAuth({ userId: "another-user" })).rejects.toThrow(
+      /matching the Codex credential/,
+    );
+
+    expect(from.mock.calls.map(([table]) => table)).toEqual(["workspace_members"]);
+    expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
+  });
+
+  it("blocks auth reload and CLI launch if the creator is removed during sandbox setup", async () => {
+    const member = { ...activeMember };
+    const { admin, from } = createAdmin(member, null, "chatgpt_auth_json");
+    const credential = await getCodexCredentialForSession(admin, session);
+    const runner = new CodexRunner({
+      credential,
+      chatGptAuthStore: createCodexChatGptAuthStore(admin, session),
+    });
+    const sandbox = new FakeSandbox();
+    // Membership is removed after initial resolution while the sandbox starts.
+    member.is_active = false;
+    from.mockClear();
+    mocked.decryptSecretValue.mockClear();
+
+    const consume = async () => {
+      for await (const event of runner.start({
+        prompt: "Run stage",
+        sandbox,
+        sessionId: "session-1",
+      })) {
+        void event;
+      }
+    };
+    await expect(consume()).rejects.toThrow(/no active human owner/);
+
+    expect(from.mock.calls.map(([table]) => table)).toEqual(["workspace_members"]);
+    expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
+    expect(sandbox.files.size).toBe(0);
+    expect(sandbox.calls).toHaveLength(0);
   });
 });

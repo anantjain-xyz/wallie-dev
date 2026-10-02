@@ -16,15 +16,21 @@ import {
   getCodexCredentialForUser,
 } from "@/lib/codex/tokens";
 
+const session = { creator_member_id: "member-1", workspace_id: "workspace-1" };
+
 function adminWithCredential(row: unknown) {
   return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: row, error: null }),
+    from: (table: string) => {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({
+          data: table === "workspace_members" ? { user_id: "user-1" } : row,
+          error: null,
         }),
-      }),
-    }),
+      };
+      return query;
+    },
   } as never;
 }
 
@@ -123,6 +129,7 @@ describe("createCodexChatGptAuthStore", () => {
         credential_version: 5,
         encrypted_credential: 'encrypted:{"auth_mode":"chatgpt"}',
       }),
+      session,
     );
 
     await expect(store.loadChatGptAuth({ userId: "user-1" })).resolves.toMatchObject({
@@ -135,7 +142,7 @@ describe("createCodexChatGptAuthStore", () => {
 
   it("persists refreshed auth JSON through the RPC", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ credential_version: 4 }], error: null });
-    const store = createCodexChatGptAuthStore({ rpc } as never);
+    const store = createCodexChatGptAuthStore({ rpc } as never, session);
 
     await expect(
       store.persistChatGptAuthJson({
@@ -164,7 +171,7 @@ describe("createCodexChatGptAuthStore", () => {
 
   it("guards reconnect-required updates by credential version", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
-    const store = createCodexChatGptAuthStore({ rpc } as never);
+    const store = createCodexChatGptAuthStore({ rpc } as never, session);
 
     await store.markChatGptAuthReconnectRequired({
       previousCredentialGeneration: "22222222-2222-4222-8222-222222222222",

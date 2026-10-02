@@ -77,10 +77,21 @@ export async function getCodexCredentialForUser(
   return mapCredentialRow(userId, data as CodexCredentialRow);
 }
 
-export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAuthStore {
+export function createCodexChatGptAuthStore(
+  admin: AdminClient,
+  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
+): CodexChatGptAuthStore {
   return {
     async loadChatGptAuth(input) {
-      const credential = await getCodexCredentialForUser(admin, input.userId);
+      // Sandbox setup can outlast membership authority. Recheck before the
+      // runner reloads and decrypts subscription auth for its CLI launch.
+      const userId = await resolveSessionOwnerUserId(admin, session);
+      if (!userId || userId !== input.userId) {
+        throw new CodexNotConnectedError(
+          "Session has no active human owner in this workspace matching the Codex credential.",
+        );
+      }
+      const credential = await getCodexCredentialForUser(admin, userId);
       if (credential.type !== "chatgpt_auth_json") {
         throw new CodexNotConnectedError(
           "The saved Codex credential is no longer a ChatGPT subscription credential.",
