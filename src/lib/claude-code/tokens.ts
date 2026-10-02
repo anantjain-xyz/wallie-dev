@@ -18,12 +18,12 @@ export class ClaudeCodeNotConnectedError extends Error {
 
 export async function getClaudeCodeCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
 ): Promise<ClaudeCodeCredential> {
   const userId = await resolveSessionOwnerUserId(admin, session);
   if (!userId) {
     throw new ClaudeCodeNotConnectedError(
-      "Session has no human owner with a connected Anthropic API key.",
+      "Session has no active human owner in this workspace with a connected Anthropic API key.",
     );
   }
   return getClaudeCodeCredentialForUser(admin, userId);

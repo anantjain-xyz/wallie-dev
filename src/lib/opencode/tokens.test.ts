@@ -69,10 +69,14 @@ describe("OpenCode credentials", () => {
     });
 
     await expect(
-      getOpenCodeCredentialForSession(admin, { creator_member_id: "member-1" }),
+      getOpenCodeCredentialForSession(admin, {
+        creator_member_id: "member-1",
+        workspace_id: "workspace-1",
+      }),
     ).resolves.toEqual({ secret: "zen-owner-key" });
     expect(mocked.resolveSessionOwnerUserId).toHaveBeenCalledWith(admin, {
       creator_member_id: "member-1",
+      workspace_id: "workspace-1",
     });
   });
 
@@ -82,8 +86,9 @@ describe("OpenCode credentials", () => {
     await expect(
       getOpenCodeCredentialForSession(adminWithRows({}), {
         creator_member_id: null,
+        workspace_id: "workspace-1",
       }),
-    ).rejects.toThrow(/Session has no human owner/);
+    ).rejects.toThrow(/Session has no active human owner/);
   });
 });
 
@@ -159,7 +164,11 @@ describe("OpenCode per-provider auth", () => {
     });
 
     await expect(
-      getOpenCodeAuthForSession(admin, { creator_member_id: "member-1" }, "opencode-go/glm-5.3"),
+      getOpenCodeAuthForSession(
+        admin,
+        { creator_member_id: "member-1", workspace_id: "workspace-1" },
+        "opencode-go/glm-5.3",
+      ),
     ).resolves.toEqual({
       credential: null,
       providerCredentials: { "opencode-go": { secret: "go-owner-key" } },

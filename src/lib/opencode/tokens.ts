@@ -23,12 +23,12 @@ export class OpenCodeNotConnectedError extends Error {
 
 export async function getOpenCodeCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
 ): Promise<OpenCodeCredential> {
   const userId = await resolveSessionOwnerUserId(admin, session);
   if (!userId) {
     throw new OpenCodeNotConnectedError(
-      "Session has no human owner with a connected OpenCode Zen API key.",
+      "Session has no active human owner in this workspace with a connected OpenCode Zen API key.",
     );
   }
   return getOpenCodeCredentialForUser(admin, userId);
@@ -49,13 +49,13 @@ export async function getOpenCodeCredentialForUser(
 
 export async function getOpenCodeAuthForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
   model: string,
 ): Promise<OpenCodeAuth> {
   const userId = await resolveSessionOwnerUserId(admin, session);
   if (!userId) {
     throw new OpenCodeNotConnectedError(
-      "Session has no human owner with a connected OpenCode API key.",
+      "Session has no active human owner in this workspace with a connected OpenCode API key.",
     );
   }
   return getOpenCodeAuthForUser(admin, userId, model);

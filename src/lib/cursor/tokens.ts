@@ -18,11 +18,13 @@ export class CursorNotConnectedError extends Error {
 
 export async function getCursorCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
 ): Promise<CursorCredential> {
   const userId = await resolveSessionOwnerUserId(admin, session);
   if (!userId) {
-    throw new CursorNotConnectedError("Session has no human owner connected to Cursor.");
+    throw new CursorNotConnectedError(
+      "Session has no active human owner in this workspace connected to Cursor.",
+    );
   }
   return getCursorCredentialForUser(admin, userId);
 }

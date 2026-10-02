@@ -34,17 +34,17 @@ export class CodexNotConnectedError extends Error {
 
 /**
  * Resolve a Codex credential for the user who created the session.
- * Throws CodexNotConnectedError when the session has no human owner or the
+ * Throws CodexNotConnectedError when the session has no active human owner or the
  * owner has not connected Codex.
  */
 export async function getCodexCredentialForSession(
   admin: AdminClient,
-  session: Pick<Tables<"sessions">, "creator_member_id">,
+  session: Pick<Tables<"sessions">, "creator_member_id" | "workspace_id">,
 ): Promise<CodexCredential> {
   const userId = await resolveSessionOwnerUserId(admin, session);
   if (!userId) {
     throw new CodexNotConnectedError(
-      "Session has no human owner with a connected Codex credential.",
+      "Session has no active human owner in this workspace with a connected Codex credential.",
     );
   }
   return getCodexCredentialForUser(admin, userId);
