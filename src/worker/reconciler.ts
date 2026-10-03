@@ -1,363 +1,133 @@
-import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
-import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
-import { archiveSession } from "@/lib/pipeline/archive";
-import { ACTIVE_AGENT_JOB_STATUSES, cancelSessionWork } from "@/lib/pipeline/cancel";
-import type { Database } from "@/lib/supabase/database.types";
+import { classifyLinearStatus } from "@/lib/linear-routing/contracts";
+import {
+  fetchLinearStateObservations,
+  LinearRateLimitedError,
+} from "@/lib/linear-routing/observations";
+import { loadLinearRoutingSnapshot } from "@/lib/linear-routing/server";
+import { cleanupSessionWorkReceipt } from "@/lib/pipeline/cancel";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import type { Database } from "@/lib/supabase/database.types";
+import { resolveQueuedRunConfig } from "@/lib/wallie/service";
 
 type AdminClient = SupabaseClient<Database>;
-type SessionRow = {
-  id: string;
-  current_stage_id: string;
-  workspace_id: string;
-  linear_issue_id: string | null;
-  pipeline_id: string;
-  phase_status: string;
-  created_at: string;
-};
-
-const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
-
-/** Session phase states where Linear may still change the work's final disposition. */
-const RECONCILABLE_PHASE_STATUSES = [
-  "in_progress",
-  "awaiting_review",
-  "approved",
-  "rejected",
-] as const;
-
-/** Page size for the reconciliation cursor. */
-const RECONCILE_PAGE_SIZE = 50;
-
-/** Backoff floor when Linear signals a rate limit but no Retry-After is present. */
-const DEFAULT_RATE_LIMIT_BACKOFF_MS = 1_000;
-
-/** Cap any honored Retry-After so a hostile/buggy header can't pause the worker forever. */
-const MAX_RATE_LIMIT_BACKOFF_MS = 30_000;
-
+const PAGE_SIZE = 50;
 export interface ReconcileResult {
   checked: number;
   canceled: number;
-  /** True if the sweep aborted early because Linear stayed rate-limited after a retry. */
   rateLimited: boolean;
 }
-
 export interface ReconcileOptions {
-  /** Sleep function — overridable for tests. */
   sleep?: (ms: number) => Promise<void>;
-  /** Optional workspace scope for manual maintenance ticks. */
   workspaceId?: string;
 }
 
-class RateLimitedError extends Error {
-  constructor() {
-    super("Linear rate limit persisted after retry");
-    this.name = "RateLimitedError";
-  }
-}
-
-/**
- * Reconciliation sweep: for every active session that was triggered from a
- * Linear issue, check the issue's current status and run it through the
- * workspace's configurable Linear status router. Canceled routes cancel active
- * work, Done routes complete manual-merge sessions, and Rework/automated-land
- * routes reset to the configured stage and enqueue a fresh pipeline job.
- *
- * Sessions are grouped by workspace and queried in a single GraphQL `issues`
- * batch per workspace, so a workspace with N active sessions costs one
- * Linear request per page rather than N. The batch fetch honors Linear's
- * `429` and GraphQL `RATELIMITED` envelope: it sleeps for the `Retry-After`
- * (capped) and retries once. If still throttled, the sweep aborts and the
- * cursor stays put — the next reconcile tick will resume from the same row.
+/** Observe each Linear state span once; all routing writes commit in the RPC.
+ * Cleanup uses only that transaction's exact run IDs after it has committed.
  */
 export async function reconcileLinearState(
   admin: AdminClient,
   options: ReconcileOptions = {},
 ): Promise<ReconcileResult> {
-  const sleep = options.sleep ?? defaultSleep;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const result: ReconcileResult = { checked: 0, canceled: 0, rateLimited: false };
-
   let cursor: string | null = null;
-
-  pages: for (;;) {
+  for (;;) {
     let query = admin
       .from("sessions")
-      .select(
-        "id, workspace_id, linear_issue_id, pipeline_id, current_stage_id, phase_status, created_at",
-      )
+      .select("id, workspace_id, linear_issue_id, updated_at, phase_status")
       .not("linear_issue_id", "is", null)
       .is("archived_at", null)
-      .in("phase_status", RECONCILABLE_PHASE_STATUSES)
-      .order("created_at", { ascending: true })
-      .limit(RECONCILE_PAGE_SIZE);
-
-    if (options.workspaceId) {
-      query = query.eq("workspace_id", options.workspaceId);
-    }
-
-    if (cursor) {
-      query = query.gt("created_at", cursor);
-    }
-
-    const { data: sessions, error: sessionsError } = await query;
-
-    if (sessionsError) {
-      console.error("[reconciler] failed to fetch sessions", { error: sessionsError.message });
+      .in("phase_status", ["in_progress", "awaiting_review", "approved", "rejected"])
+      .order("id", { ascending: true })
+      .limit(PAGE_SIZE);
+    if (options.workspaceId) query = query.eq("workspace_id", options.workspaceId);
+    if (cursor) query = query.gt("id", cursor);
+    const { data: sessions, error } = await query;
+    if (error) {
+      console.error("[reconciler] failed to fetch sessions", { error: error.message });
       break;
     }
-
-    if (!sessions || sessions.length === 0) {
-      break;
-    }
-
-    // Group sessions by workspace, then by Linear issue ID. Multiple sessions
-    // can reference the same issue, so the value is a list.
-    const byWorkspace = new Map<string, Map<string, SessionRow[]>>();
-    for (const session of sessions as SessionRow[]) {
-      if (!session.linear_issue_id) continue;
-      let workspaceMap = byWorkspace.get(session.workspace_id);
-      if (!workspaceMap) {
-        workspaceMap = new Map();
-        byWorkspace.set(session.workspace_id, workspaceMap);
-      }
-      const list = workspaceMap.get(session.linear_issue_id);
-      if (list) {
-        list.push(session);
-      } else {
-        workspaceMap.set(session.linear_issue_id, [session]);
-      }
-    }
-
-    const apiKeys = await loadLinearApiKeys(admin, [...byWorkspace.keys()]);
-    const routingConfigs = await loadLinearRoutingConfigs(admin, [...byWorkspace.keys()]);
-
-    for (const [workspaceId, issueMap] of byWorkspace) {
+    if (!sessions?.length) break;
+    const workspaceIds = [...new Set(sessions.map((session) => session.workspace_id))];
+    const apiKeys = await loadLinearApiKeys(admin, workspaceIds);
+    for (const workspaceId of workspaceIds) {
       const apiKey = apiKeys.get(workspaceId);
       if (!apiKey) continue;
-      const routingConfig = routingConfigs.get(workspaceId);
-
-      const issueIds = [...issueMap.keys()];
-      let issueStates: Map<string, LinearIssueState>;
+      const workspaceSessions = sessions.filter((session) => session.workspace_id === workspaceId);
       try {
-        issueStates = await fetchLinearIssueStatesBatch(apiKey, issueIds, sleep);
-      } catch (error) {
-        if (error instanceof RateLimitedError) {
-          console.warn("[reconciler] aborting sweep — Linear rate limit persisted after retry", {
-            workspaceId,
-          });
-          result.rateLimited = true;
-          break pages;
-        }
-        console.error("[reconciler] Linear batch fetch failed", {
-          error: error instanceof Error ? error.message : String(error),
-          workspaceId,
-        });
-        continue;
-      }
-
-      for (const [issueId, sessionsForIssue] of issueMap) {
-        const state = issueStates.get(issueId);
-        const statusName = state?.name ?? state?.type ?? null;
-        for (const session of sessionsForIssue) {
+        const routing = await loadLinearRoutingSnapshot(admin, workspaceId);
+        const issueIds = [
+          ...new Set(
+            workspaceSessions.flatMap((session) =>
+              session.linear_issue_id ? [session.linear_issue_id] : [],
+            ),
+          ),
+        ];
+        const observations = await fetchLinearStateObservations(apiKey, issueIds, sleep);
+        for (const session of workspaceSessions) {
           result.checked++;
-          if (!statusName) continue;
-
-          const classification = classifyLinearStatus(statusName, routingConfig);
+          const observation = session.linear_issue_id
+            ? observations.get(session.linear_issue_id)
+            : undefined;
+          if (!observation || !session.linear_issue_id) continue;
           try {
-            switch (classification.action) {
-              case "archive":
-                if (classification.route === "done") {
-                  await completeSessionForLinearRoute(admin, session, classification.statusName);
-                } else {
-                  await archiveSessionForLinearRoute(admin, session, classification.statusName);
-                  result.canceled++;
-                }
-                break;
-              case "land":
-              case "rework":
-                await routeSessionToStage(admin, session, {
-                  route: classification.route,
-                  stageSlug: classification.stageSlug,
-                  statusName: classification.statusName,
-                });
-                break;
-              case "start_or_continue":
-                if (session.phase_status !== "approved") {
-                  await ensureCurrentStageQueued(admin, session, classification.statusName);
-                }
-                break;
-              case "ignore":
-              case "pause":
-              case "unmapped":
-                break;
-            }
-          } catch (error) {
-            // A transient Supabase write failure must not abort the sweep —
-            // log and move on so the remaining sessions still get checked.
+            const classification = classifyLinearStatus(observation.statusName, routing.config);
+            const needsRun =
+              classification.action === "rework" ||
+              classification.action === "land" ||
+              (classification.action === "start_or_continue" &&
+                ["in_progress", "rejected"].includes(session.phase_status));
+            const run = needsRun ? await resolveQueuedRunConfig(admin, session) : null;
+            const { data, error: routeError } = await admin.rpc("apply_linear_session_transition", {
+              p_session_id: session.id,
+              p_workspace_id: workspaceId,
+              p_linear_issue_id: session.linear_issue_id,
+              p_expected_session_updated_at: session.updated_at,
+              p_expected_routing_updated_at: routing.updatedAt,
+              p_source_span_id: observation.spanId,
+              p_source_started_at: observation.startedAt,
+              p_source_state_id: observation.stateId,
+              p_source_issue_updated_at: observation.issueUpdatedAt,
+              p_status_name: observation.statusName,
+              p_agent_model_provider: run?.modelProvider,
+              p_agent_model_name: run?.modelName,
+              p_run_type: run?.runType,
+            });
+            if (routeError) throw routeError;
+            const receipt = data?.[0];
+            if (!receipt) throw new Error("Linear transition returned no receipt.");
+            if (receipt.outcome === "archived") result.canceled++;
+            await cleanupSessionWorkReceipt(admin, {
+              receipt,
+              workspaceId,
+              reason: `Linear issue moved to "${observation.statusName}".`,
+            });
+          } catch (routeError) {
             console.error("[reconciler] failed to apply Linear route", {
-              error: error instanceof Error ? error.message : String(error),
-              linearIssueId: session.linear_issue_id,
-              linearState: statusName,
+              error: routeError instanceof Error ? routeError.message : String(routeError),
               sessionId: session.id,
             });
           }
         }
+      } catch (workspaceError) {
+        if (workspaceError instanceof LinearRateLimitedError) {
+          result.rateLimited = true;
+          return result;
+        }
+        console.error("[reconciler] failed to observe Linear workspace", {
+          error: workspaceError instanceof Error ? workspaceError.message : String(workspaceError),
+          workspaceId,
+        });
       }
     }
-
-    cursor = sessions[sessions.length - 1]!.created_at;
-
-    if (sessions.length < RECONCILE_PAGE_SIZE) {
-      break;
-    }
+    cursor = sessions[sessions.length - 1]!.id;
+    if (sessions.length < PAGE_SIZE) break;
   }
-
   return result;
 }
-
-async function archiveSessionForLinearRoute(
-  admin: AdminClient,
-  session: SessionRow,
-  statusName: string,
-): Promise<void> {
-  console.log("[reconciler] Linear route archives session, canceling active work", {
-    linearIssueId: session.linear_issue_id,
-    linearState: statusName,
-    sessionId: session.id,
-  });
-
-  await archiveSession(admin, {
-    reason: `Linear issue moved to "${statusName}" — session archived by reconciler.`,
-    sessionId: session.id,
-    workspaceId: session.workspace_id,
-  });
-}
-
-async function completeSessionForLinearRoute(
-  admin: AdminClient,
-  session: SessionRow,
-  statusName: string,
-): Promise<void> {
-  console.log("[reconciler] Linear route completes session, canceling active work", {
-    linearIssueId: session.linear_issue_id,
-    linearState: statusName,
-    sessionId: session.id,
-  });
-
-  await archiveSession(admin, {
-    completed: true,
-    reason: `Linear issue moved to "${statusName}" — session completed by reconciler.`,
-    sessionId: session.id,
-    workspaceId: session.workspace_id,
-  });
-}
-
-async function cancelActiveWorkForSession(
-  admin: AdminClient,
-  session: Pick<SessionRow, "id" | "workspace_id">,
-  reason: string,
-): Promise<void> {
-  // Stage routing still performs its own reset. Cancellation commits before
-  // provider cleanup; it must never park the session after that cleanup await.
-  await cancelSessionWork(admin, {
-    parkPhaseStatus: false,
-    reason,
-    sessionId: session.id,
-    workspaceId: session.workspace_id,
-  });
-}
-
-type StageRouteResult = "completed" | "routed" | "skipped";
-
-async function routeSessionToStage(
-  admin: AdminClient,
-  session: SessionRow,
-  route: { route: "done" | "merging" | "rework"; stageSlug: string; statusName: string },
-): Promise<StageRouteResult> {
-  const stages = await loadPipelineStages(admin, session.pipeline_id, session.id);
-  const targetStage = stages.find((stage) => stage.slug === route.stageSlug);
-  if (!targetStage) {
-    console.warn("[reconciler] configured Linear route stage is not selected on session pipeline", {
-      linearIssueId: session.linear_issue_id,
-      route: route.route,
-      sessionId: session.id,
-      stageSlug: route.stageSlug,
-    });
-    if (route.route === "done") {
-      await completeSessionForLinearRoute(admin, session, route.statusName);
-      return "completed";
-    }
-    return "skipped";
-  }
-
-  const hasActiveJob = await hasActivePipelineJob(admin, session.id);
-  if (session.current_stage_id === targetStage.id && session.phase_status !== "approved") {
-    if (hasActiveJob) return "skipped";
-    await ensurePipelineJobQueued(admin, session, route.statusName);
-    return "routed";
-  }
-
-  const resetStages = stages.filter((stage) => stage.position >= targetStage.position);
-  const resetStageIds = resetStages.map((stage) => stage.id);
-  const resetStageSlugs = resetStages.map((stage) => stage.slug);
-
-  await cancelActiveWorkForSession(
-    admin,
-    session,
-    `Linear issue moved to "${route.statusName}" — rerouting session to ${targetStage.slug}.`,
-  );
-
-  if (resetStageIds.length > 0) {
-    await admin
-      .from("session_artifact_feedback")
-      .delete()
-      .eq("session_id", session.id)
-      .in("stage_id", resetStageIds);
-
-    await admin
-      .from("session_phase_completions")
-      .delete()
-      .eq("session_id", session.id)
-      .in("stage_id", resetStageIds);
-  }
-
-  if (resetStageSlugs.length > 0) {
-    await admin
-      .from("session_artifacts")
-      .delete()
-      .eq("session_id", session.id)
-      .in("stage_slug", resetStageSlugs);
-  }
-
-  await admin
-    .from("sessions")
-    .update({
-      archived_at: null,
-      current_artifact_version: 0,
-      current_stage_id: targetStage.id,
-      phase_status: "rejected",
-      rejection_count: 0,
-    })
-    .eq("id", session.id)
-    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
-
-  await ensurePipelineJobQueued(admin, session, route.statusName);
-  return "routed";
-}
-
-async function ensureCurrentStageQueued(
-  admin: AdminClient,
-  session: SessionRow,
-  statusName: string,
-): Promise<void> {
-  if (await hasActivePipelineJob(admin, session.id)) return;
-  await ensurePipelineJobQueued(admin, session, statusName);
-}
-
-// --- helpers ---
 
 async function loadLinearApiKeys(
   admin: AdminClient,
@@ -386,197 +156,4 @@ async function loadLinearApiKeys(
   }
 
   return result;
-}
-
-async function loadLinearRoutingConfigs(
-  admin: AdminClient,
-  workspaceIds: string[],
-): Promise<Map<string, LinearRoutingConfig>> {
-  const result = new Map<string, LinearRoutingConfig>();
-  await Promise.all(
-    workspaceIds.map(async (workspaceId) => {
-      try {
-        result.set(workspaceId, await loadLinearRoutingConfig(admin, workspaceId));
-      } catch (error) {
-        console.error("[reconciler] failed to load Linear routing config", {
-          error: error instanceof Error ? error.message : String(error),
-          workspaceId,
-        });
-      }
-    }),
-  );
-  return result;
-}
-
-type PipelineStageRoutingRow = {
-  id: string;
-  position: number;
-  slug: string;
-};
-
-async function loadPipelineStages(
-  admin: AdminClient,
-  pipelineId: string,
-  sessionId: string,
-): Promise<PipelineStageRoutingRow[]> {
-  const [{ data, error }, { data: selections, error: selectionError }] = await Promise.all([
-    admin
-      .from("pipeline_stages")
-      .select("id, slug, position")
-      .eq("pipeline_id", pipelineId)
-      .order("position", { ascending: true }),
-    admin.from("session_selected_stages").select("stage_id").eq("session_id", sessionId),
-  ]);
-
-  if (error) throw error;
-  if (selectionError) throw selectionError;
-
-  const selectedIds = new Set((selections ?? []).map((selection) => selection.stage_id));
-  return ((data ?? []) as PipelineStageRoutingRow[]).filter((stage) => selectedIds.has(stage.id));
-}
-
-async function hasActivePipelineJob(admin: AdminClient, sessionId: string): Promise<boolean> {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("id")
-    .eq("session_id", sessionId)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  return Boolean(data);
-}
-
-async function ensurePipelineJobQueued(
-  admin: AdminClient,
-  session: SessionRow,
-  statusName: string,
-): Promise<void> {
-  const { error } = await admin.from("agent_jobs").insert({
-    dedupe_key: buildWallieJobDedupeKey(session.id),
-    requested_by_member_id: null,
-    session_id: session.id,
-    trigger_type: "assignment",
-    workspace_id: session.workspace_id,
-  });
-
-  if (error && error.code !== "23505") throw error;
-  if (!error) {
-    console.log("[reconciler] queued session from Linear route", {
-      linearIssueId: session.linear_issue_id,
-      linearState: statusName,
-      sessionId: session.id,
-    });
-  }
-}
-
-const issueStatesQuery = /* GraphQL */ `
-  query IssueStates($ids: [ID!]) {
-    issues(filter: { id: { in: $ids } }, first: 250) {
-      nodes {
-        id
-        state {
-          name
-          type
-        }
-      }
-    }
-  }
-`;
-
-type LinearIssueState = {
-  name: string | null;
-  type: string | null;
-};
-
-type LinearIssueStatesResponse = {
-  data?: {
-    issues?: {
-      nodes?: Array<{ id: string; state?: { name?: string; type?: string } | null }>;
-    } | null;
-  };
-  errors?: Array<{
-    message: string;
-    extensions?: { code?: string };
-  }>;
-};
-
-async function fetchLinearIssueStatesBatch(
-  apiKey: string,
-  issueIds: string[],
-  sleep: (ms: number) => Promise<void>,
-): Promise<Map<string, LinearIssueState>> {
-  const result = new Map<string, LinearIssueState>();
-  if (issueIds.length === 0) return result;
-
-  let attempt = 0;
-  for (;;) {
-    const response = await fetch(LINEAR_GRAPHQL_ENDPOINT, {
-      body: JSON.stringify({
-        query: issueStatesQuery,
-        variables: { ids: issueIds },
-      }),
-      headers: {
-        Authorization: apiKey,
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-    });
-
-    if (response.status === 429) {
-      if (attempt >= 1) throw new RateLimitedError();
-      attempt++;
-      const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
-      console.warn("[reconciler] Linear returned 429, sleeping before retry", { retryAfterMs });
-      await sleep(retryAfterMs);
-      continue;
-    }
-
-    if (!response.ok) {
-      console.error("[reconciler] Linear batch query failed", { status: response.status });
-      return result;
-    }
-
-    const payload = (await response.json()) as LinearIssueStatesResponse;
-
-    if (payload.errors?.length) {
-      const rateLimited = payload.errors.some((e) => e.extensions?.code === "RATELIMITED");
-      if (rateLimited) {
-        if (attempt >= 1) throw new RateLimitedError();
-        attempt++;
-        const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
-        console.warn("[reconciler] Linear returned RATELIMITED, sleeping before retry", {
-          retryAfterMs,
-        });
-        await sleep(retryAfterMs);
-        continue;
-      }
-      console.error("[reconciler] Linear batch query returned errors", {
-        errors: payload.errors.map((e) => e.message),
-      });
-      return result;
-    }
-
-    for (const node of payload.data?.issues?.nodes ?? []) {
-      const stateName = node.state?.name ?? null;
-      const stateType = node.state?.type;
-      if (stateName || stateType) {
-        result.set(node.id, { name: stateName, type: stateType ?? null });
-      }
-    }
-    return result;
-  }
-}
-
-function parseRetryAfterMs(header: string | null): number {
-  if (!header) return DEFAULT_RATE_LIMIT_BACKOFF_MS;
-  const seconds = Number.parseInt(header, 10);
-  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_RATE_LIMIT_BACKOFF_MS;
-  const ms = Math.min(seconds * 1000, MAX_RATE_LIMIT_BACKOFF_MS);
-  return Math.max(ms, DEFAULT_RATE_LIMIT_BACKOFF_MS);
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

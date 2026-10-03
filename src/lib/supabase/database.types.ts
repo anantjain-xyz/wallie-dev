@@ -2143,6 +2143,30 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_linear_session_transition: {
+        Args: {
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_expected_routing_updated_at: string
+          p_expected_session_updated_at: string
+          p_linear_issue_id: string
+          p_run_type?: string
+          p_session_id: string
+          p_source_issue_updated_at: string
+          p_source_span_id: string
+          p_source_started_at: string
+          p_source_state_id: string
+          p_status_name: string
+          p_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          job_ids: string[]
+          outcome: string
+          run_id: string
+          run_ids: string[]
+        }[]
+      }
       approve_session_stage: {
         Args: {
           approver_member_id?: string

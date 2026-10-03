@@ -155,10 +155,18 @@ export async function loadCompletedStageArtifacts(
 ): Promise<Record<string, string>> {
   // Map slug → latest markdown artifact for every completed stage on this
   // session. Used by the prompt renderer for {{artifact.previousStages.<slug>}}.
+  const { data: completions, error: completionError } = await admin
+    .from("session_phase_completions")
+    .select("stage_slug")
+    .eq("session_id", sessionId);
+  if (completionError) throw completionError;
+  const completedSlugs = (completions ?? []).map((completion) => completion.stage_slug);
+  if (completedSlugs.length === 0) return {};
   const { data, error } = await admin
     .from("session_artifacts")
     .select("stage_slug, version, artifact_json")
     .eq("session_id", sessionId)
+    .in("stage_slug", completedSlugs)
     .order("version", { ascending: true });
   if (error) throw error;
 

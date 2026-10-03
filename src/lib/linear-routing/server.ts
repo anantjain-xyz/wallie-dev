@@ -34,6 +34,25 @@ export async function loadLinearRoutingConfig(
   });
 }
 
+/** Reconciliation must never turn a failed/malformed config read into defaults. */
+export async function loadLinearRoutingSnapshot(admin: AdminClient, workspaceId: string) {
+  const { data, error } = await admin
+    .from("workspace_linear_routing")
+    .select("status_mappings, rework_stage_slug, land_stage_slug, updated_at")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Linear routing configuration is missing.");
+  return {
+    config: linearRoutingUpdateSchema.parse({
+      landStageSlug: data.land_stage_slug,
+      reworkStageSlug: data.rework_stage_slug,
+      statusMappings: data.status_mappings,
+    }),
+    updatedAt: data.updated_at,
+  };
+}
+
 export async function validateLinearRoutingStages(input: {
   admin: AdminClient;
   config: LinearRoutingUpdateInput;

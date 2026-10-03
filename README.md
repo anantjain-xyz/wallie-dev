@@ -165,7 +165,7 @@ The default `plan → build` seed lives in the `internal.default_pipeline_stages
 - [loop.ts](src/worker/loop.ts) -- atomic concurrency-aware job claim + execution.
 - [heartbeat.ts](src/worker/heartbeat.ts) -- worker registration.
 - [stall-detector.ts](src/worker/stall-detector.ts) -- resets runs stuck past timeout.
-- [reconciler.ts](src/worker/reconciler.ts) -- cancels jobs if Linear issue closed.
+- [reconciler.ts](src/worker/reconciler.ts) -- consumes durable Linear transitions and atomically routes or archives sessions.
 - [sandbox-reaper.ts](src/worker/sandbox-reaper.ts) -- shuts down sandboxes whose owning run has ended.
 - [config.ts](src/worker/config.ts) -- process concurrency and worker defaults; workspace concurrency is enforced by `claim_next_agent_job`.
 
@@ -547,7 +547,7 @@ Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phas
 
 ### Deduplication
 
-Linear-linked sessions are deduplicated on `(workspace_id, linear_issue_id)`; sessions without a Linear issue are not subject to that constraint. Interactive create/run/retry paths use `session:<session_id>:active`, while the Linear reconciler retains `pipeline:<linear_issue_id>:active` and `pipeline:session:<session_id>:active` keys. The partial unique index prevents two active jobs with the same `(workspace_id, dedupe_key)`; it does not enforce a universal one-active-job-per-session invariant across different keys.
+Linear-linked sessions are deduplicated on `(workspace_id, linear_issue_id)`; sessions without a Linear issue are not subject to that constraint. All enqueue paths use `session:<session_id>:active` and a session-scoped unique active-job index. Linear additionally records source state-span receipts: repeated polls and unrelated issue edits cannot requeue reviewed work, while an actual leave/return can apply once.
 
 ### Security
 
@@ -569,7 +569,7 @@ Webhook endpoint: `/api/github/webhooks`
 
 ### Linear
 
-Linear is optional. A linked issue keeps its identifier and URL attached to a session and lets the worker reconcile closed issues. The personal API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`; Wallie does not require a Linear webhook or OAuth flow.
+Linear is optional. A linked issue keeps its identifier and URL attached to a session. The worker observes its current state span and applies configured routing once: rerouting, cancellation, and replacement enqueue commit together, preserving published artifact versions. See [the lifecycle contract](docs/PIPELINE-WORKER-LIFECYCLE.md#linear-transition-receipts) for bootstrap and rollout behavior. The personal API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`; Wallie does not require a Linear webhook or OAuth flow.
 
 ## Contributing
 

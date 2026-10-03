@@ -1,1396 +1,276 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
-const mocked = vi.hoisted(() => ({
-  decryptSecretValue: vi.fn((v: string) => `decrypted:${v}`),
+const mocks = vi.hoisted(() => ({
+  observations: vi.fn(),
+  routing: vi.fn(),
+  cleanup: vi.fn(),
+  runConfig: vi.fn(),
 }));
-
+vi.mock("@/lib/linear-routing/observations", async (original) => ({
+  ...(await original<typeof import("@/lib/linear-routing/observations")>()),
+  fetchLinearStateObservations: mocks.observations,
+}));
+vi.mock("@/lib/linear-routing/server", () => ({ loadLinearRoutingSnapshot: mocks.routing }));
+vi.mock("@/lib/pipeline/cancel", () => ({ cleanupSessionWorkReceipt: mocks.cleanup }));
+vi.mock("@/lib/wallie/service", () => ({ resolveQueuedRunConfig: mocks.runConfig }));
 vi.mock("@/lib/secrets/crypto", () => ({
-  decryptSecretValue: mocked.decryptSecretValue,
+  decryptSecretValue: (value: string) => `decoded:${value}`,
 }));
-
 import { reconcileLinearState } from "./reconciler";
-import { DEFAULT_LINEAR_STATUS_MAPPINGS } from "@/lib/linear-routing/contracts";
+import { LinearRateLimitedError } from "@/lib/linear-routing/observations";
 
-type SessionRow = {
-  id: string;
-  current_stage_id?: string;
-  workspace_id: string;
-  linear_issue_id: string | null;
-  pipeline_id?: string;
-  phase_status: string;
-  created_at: string;
-  archived_at?: string | null;
+const updatedAt = "2026-10-02T00:00:00Z";
+const observation = {
+  issueUpdatedAt: updatedAt,
+  spanId: "span-1",
+  startedAt: updatedAt,
+  stateId: "state-1",
+  statusName: "Rework",
 };
-
-type SecretRow = { workspace_id: string; encrypted_value: string };
-type AgentJobRow = { id: string; session_id: string; status?: string };
-type PipelineStageRow = { id: string; pipeline_id: string; position: number; slug: string };
-type RoutingRow = {
-  land_stage_slug: string | null;
-  rework_stage_slug: string;
-  status_mappings: unknown;
-  workspace_id: string;
-};
-
-interface Fixture {
-  sessions: SessionRow[];
-  secrets: SecretRow[];
-  agentJobs?: AgentJobRow[];
-  pipelineStages?: PipelineStageRow[];
-  routingRows?: RoutingRow[];
-  selectedStages?: Array<{ session_id: string; stage_id: string }>;
-  /** Session IDs whose cancellation/archive RPC should reject. */
-  failCancelForSessionIds?: Set<string>;
-}
-
-/**
- * Build a chainable Supabase admin stub that responds to the exact queries
- * the reconciler issues — sessions paging, workspace_secrets lookup,
- * agent_jobs/agent_runs/sessions writes. Records mutations so tests can
- * assert side effects.
- */
-function buildAdmin(fixture: Fixture) {
-  const calls: {
-    table: string;
-    op: "delete" | "insert" | "select" | "update" | "rpc";
-    update?: Record<string, unknown>;
-    filters: Record<string, unknown>;
-  }[] = [];
-
-  function makeBuilder(
-    table: string,
-    op: "delete" | "insert" | "select" | "update",
-    update?: Record<string, unknown>,
-  ) {
-    const filters: Record<string, unknown> = {};
-    let cursorGt: string | null = null;
-    let limit = Infinity;
-
-    const builder: Record<string, unknown> = {
-      not(col: string, _op: string, val: unknown) {
-        filters[`not.${col}`] = val;
-        return builder;
+const session = (id = "session-1", workspace = "workspace-1", phase = "awaiting_review") => ({
+  id,
+  workspace_id: workspace,
+  linear_issue_id: `ISSUE-${id}`,
+  updated_at: updatedAt,
+  phase_status: phase,
+});
+function adminFor(rows = [session()]) {
+  const reads: Array<{ table: string; filters: Record<string, unknown> }> = [];
+  const rpc = vi.fn().mockResolvedValue({
+    data: [
+      {
+        outcome: "routed",
+        job_ids: ["old-job"],
+        run_ids: ["old-run"],
+        job_id: "new-job",
+        run_id: "new-run",
       },
-      eq(col: string, val: unknown) {
-        filters[`eq.${col}`] = val;
-        return builder;
-      },
-      gt(col: string, val: string) {
-        if (col === "created_at") cursorGt = val;
-        filters[`gt.${col}`] = val;
-        return builder;
-      },
-      is(col: string, val: unknown) {
-        filters[`is.${col}`] = val;
-        return builder;
-      },
-      in(col: string, vals: unknown[]) {
-        filters[`in.${col}`] = vals;
-        return builder;
-      },
-      order() {
-        return builder;
-      },
-      select() {
-        // PostgREST returns the affected rows when `.select()` is chained onto
-        // a mutation (e.g. the cancel path's `update(...).eq().in().select()`).
-        return builder;
-      },
-      limit(n: number) {
-        limit = n;
-        return builder;
-      },
-      maybeSingle() {
-        return resolveQuery(true);
-      },
-      single() {
-        return resolveQuery(true);
-      },
-      then(onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) {
-        return resolveQuery(false).then(onFulfilled, onRejected);
-      },
-    };
-
-    function resolveQuery(single: boolean): Promise<{ data: unknown; error: null }> {
-      calls.push({ table, op, update, filters });
-
-      if (op === "select" && table === "sessions") {
-        const eqId = filters["eq.id"] as string | undefined;
-        const eqPhaseStatus = filters["eq.phase_status"] as string | undefined;
-        const eqWorkspaceId = filters["eq.workspace_id"] as string | undefined;
-        const inPhaseStatuses = filters["in.phase_status"] as string[] | undefined;
-        const isArchivedAt = filters["is.archived_at"];
-        let rows = fixture.sessions
-          .filter((s) => s.linear_issue_id !== null)
-          .filter((s) => !eqId || s.id === eqId)
-          .filter((s) => !eqWorkspaceId || s.workspace_id === eqWorkspaceId)
-          .filter((s) => !eqPhaseStatus || s.phase_status === eqPhaseStatus)
-          .filter((s) => !inPhaseStatuses || inPhaseStatuses.includes(s.phase_status))
-          .filter((s) => isArchivedAt !== null || s.archived_at == null)
-          .sort((a, b) => a.created_at.localeCompare(b.created_at));
-        if (cursorGt) rows = rows.filter((s) => s.created_at > cursorGt!);
-        rows = rows.slice(0, limit);
-        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
-      }
-
-      if (op === "select" && table === "workspace_secrets") {
-        const wanted = (filters["in.workspace_id"] as string[] | undefined) ?? [];
-        const rows = fixture.secrets.filter((s) => wanted.includes(s.workspace_id));
-        return Promise.resolve({ data: rows, error: null });
-      }
-
-      if (op === "select" && table === "workspace_linear_routing") {
-        const workspaceId = filters["eq.workspace_id"] as string | undefined;
-        const rows = (fixture.routingRows ?? []).filter(
-          (row) => !workspaceId || row.workspace_id === workspaceId,
-        );
-        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
-      }
-
-      if (op === "select" && table === "pipeline_stages") {
-        const pipelineId = filters["eq.pipeline_id"] as string | undefined;
-        const rows = (fixture.pipelineStages ?? [])
-          .filter((stage) => !pipelineId || stage.pipeline_id === pipelineId)
-          .sort((a, b) => a.position - b.position);
-        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
-      }
-
-      if (op === "select" && table === "session_selected_stages") {
-        const sessionId = filters["eq.session_id"] as string | undefined;
-        const explicitSelections = fixture.selectedStages?.filter(
-          (selection) => !sessionId || selection.session_id === sessionId,
-        );
-        const session = fixture.sessions.find((candidate) => candidate.id === sessionId);
-        const rows =
-          explicitSelections ??
-          (fixture.pipelineStages ?? [])
-            .filter((stage) => !session?.pipeline_id || stage.pipeline_id === session.pipeline_id)
-            .map((stage) => ({ session_id: sessionId ?? "", stage_id: stage.id }));
-        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
-      }
-
-      if (op === "select" && table === "agent_jobs") {
-        const sessionId = filters["eq.session_id"] as string | undefined;
-        const statuses = filters["in.status"] as string[] | undefined;
-        let rows = (fixture.agentJobs ?? [])
-          .filter((j) => !sessionId || j.session_id === sessionId)
-          .filter((j) => !statuses || statuses.includes(j.status ?? "queued"));
-        rows = rows.slice(0, limit);
-        const data = single ? (rows[0] ?? null) : rows.map((j) => ({ id: j.id }));
-        return Promise.resolve({ data, error: null });
-      }
-
-      if (op === "insert" && table === "agent_jobs") {
-        return Promise.resolve({
-          data: { id: "inserted-job", ...(update ?? {}) },
-          error: null,
-        });
-      }
-
-      // For update / unhandled selects — return empty success.
-      return Promise.resolve({ data: single ? null : [], error: null });
-    }
-
-    return builder;
-  }
-
-  const admin = {
-    async rpc(name: string, args: Record<string, unknown>) {
-      calls.push({ table: name, op: "rpc", update: args, filters: {} });
-      if (name !== "archive_session_job_attempts" && name !== "cancel_session_job_attempts") {
-        throw new Error(`Unexpected RPC: ${name}`);
-      }
-      const sessionId = args.p_session_id as string;
-      if (fixture.failCancelForSessionIds?.has(sessionId)) {
-        return { data: null, error: new Error("simulated RPC failure") };
-      }
-      return {
-        data: [{ job_ids: [`job-${sessionId}`], run_ids: [`run-${sessionId}`] }],
-        error: null,
-      };
-    },
-    from(table: string) {
-      return {
-        select() {
-          return makeBuilder(table, "select");
-        },
-        update(values: Record<string, unknown>) {
-          return makeBuilder(table, "update", values);
-        },
-        insert(values: Record<string, unknown>) {
-          return makeBuilder(table, "insert", values);
-        },
-        delete() {
-          return makeBuilder(table, "delete");
-        },
-      };
-    },
-  };
-
-  return { admin, calls };
-}
-
-function expectArchiveReceipt(
-  calls: ReturnType<typeof buildAdmin>["calls"],
-  sessionId: string,
-  completed: boolean,
-) {
-  expect(calls).toContainEqual(
-    expect.objectContaining({
-      table: "archive_session_job_attempts",
-      op: "rpc",
-      update: expect.objectContaining({
-        p_completed: completed,
-        p_session_id: sessionId,
-        p_workspace_id: "wA",
-      }),
-    }),
-  );
-  expect(calls).toContainEqual(
-    expect.objectContaining({
-      table: "agent_runs",
-      op: "select",
-      filters: { "eq.workspace_id": "wA", "in.id": [`run-${sessionId}`] },
-    }),
-  );
-  expect(
-    calls.find(
-      (call) =>
-        call.op === "update" && call.table === "sessions" && call.filters["eq.id"] === sessionId,
-    ),
-  ).toBeUndefined();
-  expect(
-    calls.filter(
-      (call) => call.op === "update" && ["agent_jobs", "agent_runs"].includes(call.table),
-    ),
-  ).toEqual([]);
-}
-
-function makeFetchResponse(body: unknown, init: { status?: number; headers?: HeadersInit } = {}) {
-  return new Response(JSON.stringify(body), {
-    status: init.status ?? 200,
-    headers: init.headers ?? { "Content-Type": "application/json" },
+    ],
+    error: null,
   });
+  const admin = {
+    rpc,
+    from(table: string) {
+      if (!["sessions", "workspace_secrets"].includes(table))
+        throw new Error(`Unexpected direct read/write ${table}`);
+      const filters: Record<string, unknown> = {};
+      const builder = {
+        select: () => builder,
+        not: () => builder,
+        is: () => builder,
+        in: () => builder,
+        order: (column: string) => {
+          filters.order = column;
+          return builder;
+        },
+        limit: (limit: number) => {
+          filters.limit = limit;
+          return builder;
+        },
+        eq: (column: string, value: unknown) => {
+          filters[column] = value;
+          return builder;
+        },
+        gt: (column: string, value: string) => {
+          filters[`gt.${column}`] = value;
+          return builder;
+        },
+        then(resolve: (value: unknown) => unknown) {
+          reads.push({ table, filters });
+          return Promise.resolve(
+            resolve({
+              error: null,
+              data:
+                table === "workspace_secrets"
+                  ? [...new Set(rows.map((row) => row.workspace_id))].map((workspace_id) => ({
+                      workspace_id,
+                      encrypted_value: workspace_id,
+                    }))
+                  : rows
+                      .filter(
+                        (row) =>
+                          (!filters.workspace_id || row.workspace_id === filters.workspace_id) &&
+                          (!filters["gt.id"] || row.id > String(filters["gt.id"])),
+                      )
+                      .slice(0, 50),
+            }),
+          );
+        },
+      };
+      return builder;
+    },
+  };
+  return { admin, rpc, reads };
 }
 
-function routingRow(overrides: Partial<RoutingRow> = {}): RoutingRow {
-  return {
-    land_stage_slug: "land",
-    rework_stage_slug: "engineering",
-    status_mappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
-    workspace_id: "wA",
-    ...overrides,
-  };
-}
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  mocks.routing.mockResolvedValue({ config: DEFAULT_LINEAR_ROUTING_CONFIG, updatedAt });
+  mocks.observations.mockImplementation(
+    async (_key: string, ids: string[]) => new Map(ids.map((id) => [id, observation])),
+  );
+  mocks.runConfig.mockResolvedValue({
+    modelName: "model",
+    modelProvider: "codex",
+    runType: "project",
+  });
+  mocks.cleanup.mockResolvedValue(undefined);
+});
 
 describe("reconcileLinearState", () => {
-  const fetchSpy = vi.fn<typeof fetch>();
-
-  beforeEach(() => {
-    fetchSpy.mockReset();
-    vi.stubGlobal("fetch", fetchSpy);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("issues one batched GraphQL request per workspace per page", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "s1",
-          workspace_id: "wA",
-          linear_issue_id: "i1",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-        {
-          id: "s2",
-          workspace_id: "wA",
-          linear_issue_id: "i2",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:01Z",
-        },
-        {
-          id: "s3",
-          workspace_id: "wA",
-          linear_issue_id: "i3",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:02Z",
-        },
-        {
-          id: "s4",
-          workspace_id: "wB",
-          linear_issue_id: "i4",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:03Z",
-        },
-      ],
-      secrets: [
-        { workspace_id: "wA", encrypted_value: "keyA" },
-        { workspace_id: "wB", encrypted_value: "keyB" },
-      ],
-    };
-    const { admin } = buildAdmin(fixture);
-
-    fetchSpy.mockImplementation(async () => makeFetchResponse({ data: { issues: { nodes: [] } } }));
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const batchedRequests = fetchSpy.mock.calls.map(([, init]) => {
-      const requestInit = init as RequestInit;
-      return {
-        auth: (requestInit.headers as Record<string, string>).Authorization,
-        ids: JSON.parse(requestInit.body as string).variables.ids,
-      };
+  it("passes source identity and both database snapshots to one atomic transition", async () => {
+    const { admin, rpc } = adminFor();
+    await expect(reconcileLinearState(admin as never)).resolves.toEqual({
+      checked: 1,
+      canceled: 0,
+      rateLimited: false,
     });
-    expect(batchedRequests).toEqual([
-      { auth: "decrypted:keyA", ids: ["i1", "i2", "i3"] },
-      { auth: "decrypted:keyB", ids: ["i4"] },
-    ]);
-
-    expect(result.checked).toBe(4);
-    expect(result.canceled).toBe(0);
-    expect(result.rateLimited).toBe(false);
-  });
-
-  it("only reconciles sessions in the requested workspace", async () => {
-    const fixture: Fixture = {
-      secrets: [
-        { workspace_id: "wA", encrypted_value: "keyA" },
-        { workspace_id: "wB", encrypted_value: "keyB" },
-      ],
-      sessions: [
-        {
-          id: "s1",
-          created_at: "2026-05-01T00:00:00Z",
-          linear_issue_id: "i1",
-          phase_status: "in_progress",
-          workspace_id: "wA",
-        },
-        {
-          id: "s2",
-          created_at: "2026-05-01T00:00:01Z",
-          linear_issue_id: "i2",
-          phase_status: "in_progress",
-          workspace_id: "wB",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(makeFetchResponse({ data: { issues: { nodes: [] } } }));
-
-    const result = await reconcileLinearState(admin as never, {
-      sleep: vi.fn(),
-      workspaceId: "wA",
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("apply_linear_session_transition", {
+      p_session_id: "session-1",
+      p_workspace_id: "workspace-1",
+      p_linear_issue_id: "ISSUE-session-1",
+      p_expected_session_updated_at: updatedAt,
+      p_expected_routing_updated_at: updatedAt,
+      p_source_span_id: "span-1",
+      p_source_started_at: updatedAt,
+      p_source_state_id: "state-1",
+      p_source_issue_updated_at: updatedAt,
+      p_status_name: "Rework",
+      p_agent_model_provider: "codex",
+      p_agent_model_name: "model",
+      p_run_type: "project",
     });
-
-    expect(result.checked).toBe(1);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(
-      JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string).variables.ids,
-    ).toEqual(["i1"]);
-    expect(
-      calls.find((call) => call.table === "sessions" && call.op === "select")?.filters,
-    ).toEqual(
+    expect(mocks.cleanup).toHaveBeenCalledWith(
+      admin,
       expect.objectContaining({
-        "eq.workspace_id": "wA",
+        receipt: expect.objectContaining({ run_ids: ["old-run"], job_ids: ["old-job"] }),
+        workspaceId: "workspace-1",
       }),
     );
   });
-
-  it("cancels sessions whose Linear issue is in a terminal state", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "s1",
-          workspace_id: "wA",
-          linear_issue_id: "iActive",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-        {
-          id: "s2",
-          workspace_id: "wA",
-          linear_issue_id: "iDone",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:01Z",
-        },
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: {
-          issues: {
-            nodes: [
-              { id: "iActive", state: { type: "started" } },
-              { id: "iDone", state: { type: "canceled" } },
-            ],
-          },
-        },
+  it("awaits committed cancellation before cleanup and performs no later session mutation", async () => {
+    const { admin, rpc, reads } = adminFor();
+    let finish!: (value: unknown) => void;
+    rpc.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
       }),
     );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(2);
-    expect(result.canceled).toBe(1);
-
-    expectArchiveReceipt(calls, "s2", false);
-
-    expect(
-      calls.find(
-        (c) =>
-          c.table === "sessions" &&
-          c.op === "update" &&
-          c.update?.phase_status === "rejected" &&
-          c.filters["eq.id"] === "s1",
+    const work = reconcileLinearState(admin as never);
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(mocks.cleanup).not.toHaveBeenCalled();
+    finish({
+      data: [{ outcome: "routed", job_ids: ["old-job"], run_ids: ["old-run"] }],
+      error: null,
+    });
+    mocks.cleanup.mockImplementation(async () => {
+      const priorReads = reads.length;
+      await Promise.resolve(); // A replacement may already start while stop is pending.
+      expect(reads).toHaveLength(priorReads);
+    });
+    await work;
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+  it.each(["Backlog", "In Review", "Unknown", "Merging"])(
+    "records %s without requiring run configuration",
+    async (statusName) => {
+      mocks.observations.mockResolvedValue(
+        new Map([["ISSUE-session-1", { ...observation, statusName }]]),
+      );
+      const { admin, rpc } = adminFor();
+      await reconcileLinearState(admin as never);
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_linear_session_transition",
+        expect.objectContaining({ p_status_name: statusName }),
+      );
+      expect(mocks.runConfig).not.toHaveBeenCalled();
+    },
+  );
+  it("does not prepare another run when Todo is observed during review", async () => {
+    mocks.observations.mockResolvedValue(
+      new Map([["ISSUE-session-1", { ...observation, statusName: "Todo" }]]),
+    );
+    const { admin, rpc } = adminFor();
+    await reconcileLinearState(admin as never);
+    expect(rpc).toHaveBeenCalled();
+    expect(mocks.runConfig).not.toHaveBeenCalled();
+  });
+  it("counts only committed canceled dispositions", async () => {
+    const { admin, rpc } = adminFor();
+    rpc.mockResolvedValue({
+      data: [{ outcome: "archived", run_ids: [], job_ids: [] }],
+      error: null,
+    });
+    expect((await reconcileLinearState(admin as never)).canceled).toBe(1);
+  });
+  it("never cleans up IDs from a failed transaction", async () => {
+    const { admin, rpc } = adminFor();
+    rpc.mockResolvedValue({ data: null, error: { message: "enqueue failed" } });
+    await reconcileLinearState(admin as never);
+    expect(mocks.cleanup).not.toHaveBeenCalled();
+  });
+  it("continues after an individual transition fails", async () => {
+    const { admin, rpc } = adminFor([session(), session("session-2")]);
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "temporary failure" } });
+    await reconcileLinearState(admin as never);
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(mocks.cleanup).toHaveBeenCalledTimes(1);
+  });
+  it("fails closed when configuration could not be read", async () => {
+    mocks.routing.mockRejectedValue(new Error("configuration query failed"));
+    const { admin, rpc } = adminFor();
+    await reconcileLinearState(admin as never);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(mocks.observations).not.toHaveBeenCalled();
+  });
+  it("fails closed on incomplete source history", async () => {
+    mocks.observations.mockRejectedValue(new Error("missing open span"));
+    const { admin, rpc } = adminFor();
+    await reconcileLinearState(admin as never);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("aborts a sweep on persistent source rate limit", async () => {
+    mocks.observations.mockRejectedValue(new LinearRateLimitedError());
+    const { admin, rpc } = adminFor();
+    expect((await reconcileLinearState(admin as never)).rateLimited).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("batches source reads once per workspace", async () => {
+    const { admin } = adminFor([
+      session(),
+      session("session-2"),
+      session("session-3", "workspace-2"),
+    ]);
+    await reconcileLinearState(admin as never);
+    expect(mocks.observations).toHaveBeenCalledTimes(2);
+    expect(mocks.observations).toHaveBeenCalledWith(
+      "decoded:workspace-1",
+      ["ISSUE-session-1", "ISSUE-session-2"],
+      expect.any(Function),
+    );
+  });
+  it("honors manual workspace scope", async () => {
+    const { admin, rpc } = adminFor([session(), session("session-2", "workspace-2")]);
+    await reconcileLinearState(admin as never, { workspaceId: "workspace-2" });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ p_workspace_id: "workspace-2" }),
+    );
+  });
+  it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {
+    const { admin, rpc, reads } = adminFor(
+      Array.from({ length: 51 }, (_, index) =>
+        session(`session-${String(index).padStart(3, "0")}`),
       ),
-    ).toBeUndefined();
-  });
-
-  it("archives active, review, and approved sessions without overwriting settled phases", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "sGenerating",
-          workspace_id: "wA",
-          linear_issue_id: "iGenerating",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-        {
-          id: "sReview",
-          workspace_id: "wA",
-          linear_issue_id: "iReview",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:01Z",
-        },
-        {
-          id: "sRejected",
-          workspace_id: "wA",
-          linear_issue_id: "iRejected",
-          phase_status: "rejected",
-          created_at: "2026-05-01T00:00:02Z",
-        },
-        {
-          id: "sApproved",
-          workspace_id: "wA",
-          linear_issue_id: "iApproved",
-          phase_status: "approved",
-          created_at: "2026-05-01T00:00:03Z",
-        },
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      agentJobs: [
-        { id: "jobReview", session_id: "sReview" },
-        { id: "jobRejected", session_id: "sRejected" },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: {
-          issues: {
-            nodes: [
-              { id: "iGenerating", state: { type: "canceled" } },
-              { id: "iReview", state: { type: "canceled" } },
-              { id: "iRejected", state: { type: "canceled" } },
-              { id: "iApproved", state: { type: "canceled" } },
-            ],
-          },
-        },
-      }),
     );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(4);
-    expect(result.canceled).toBe(4);
-
-    const sessionsScan = calls.find((c) => c.table === "sessions" && c.op === "select");
-    expect(sessionsScan?.filters["in.phase_status"]).toEqual([
-      "in_progress",
-      "awaiting_review",
-      "approved",
-      "rejected",
-    ]);
-
-    const fetchBody = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
-    expect(fetchBody.variables.ids).toEqual(["iGenerating", "iReview", "iRejected", "iApproved"]);
-
-    for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
-      expectArchiveReceipt(calls, sessionId, false);
-    }
-    // Settled phases belong to the archive RPC. The reconciler must not turn a
-    // review or approved session into rejected after sandbox cleanup awaits.
-    expect(calls.filter((call) => call.op === "update")).toEqual([]);
-  });
-
-  it("leaves a manual-merge session paused when Linear moves to Merging", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
-      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sManualMerge",
-          current_stage_id: "stage-build",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iManualMerge",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iManualMerge", state: { name: "Merging" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
-    expect(calls.filter((call) => call.op !== "select")).toEqual([]);
-  });
-
-  it("successfully archives a manual-merge session when Linear moves to Done", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
-      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sManualDone",
-          current_stage_id: "stage-build",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iManualDone",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iManualDone", state: { name: "Done" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
-    expectArchiveReceipt(calls, "sManualDone", true);
-    expect(calls).not.toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-      }),
-    );
-  });
-
-  it("routes custom done statuses to the configured land stage", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-      ],
-      routingRows: [
-        routingRow({
-          status_mappings: {
-            ...DEFAULT_LINEAR_STATUS_MAPPINGS,
-            done: ["Ready to Land"],
-          },
-        }),
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sCustomDone",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iCustomDone",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: {
-          issues: {
-            nodes: [{ id: "iCustomDone", state: { name: "Ready to Land", type: "started" } }],
-          },
-        },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({ "eq.id": "sCustomDone" }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          current_stage_id: "stage-land",
-          phase_status: "rejected",
-        }),
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sCustomDone:active",
-          session_id: "sCustomDone",
-        }),
-      }),
-    );
-  });
-
-  it("routes Rework to the configured stage, clears later artifacts, and queues a job", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-product", pipeline_id: "pipe-1", position: 1, slug: "product" },
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 2, slug: "engineering" },
-        { id: "stage-review", pipeline_id: "pipe-1", position: 3, slug: "review" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 4, slug: "land" },
-      ],
-      routingRows: [routingRow({ rework_stage_slug: "engineering" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sRework",
-          current_stage_id: "stage-review",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iRework",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iRework", state: { name: "Rework" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.session_id": "sRework",
-          "in.stage_id": ["stage-engineering", "stage-review", "stage-land"],
-        }),
-        op: "delete",
-        table: "session_artifact_feedback",
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.session_id": "sRework",
-          "in.stage_slug": ["engineering", "review", "land"],
-        }),
-        op: "delete",
-        table: "session_artifacts",
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.id": "sRework",
-          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
-        }),
-        op: "update",
-        table: "sessions",
-        update: {
-          archived_at: null,
-          current_artifact_version: 0,
-          current_stage_id: "stage-engineering",
-          phase_status: "rejected",
-          rejection_count: 0,
-        },
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sRework:active",
-          session_id: "sRework",
-          trigger_type: "assignment",
-          workspace_id: "wA",
-        }),
-      }),
-    );
-  });
-
-  it("routes Merging to the configured land stage", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-      ],
-      routingRows: [routingRow({ land_stage_slug: "land" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sMerge",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iMerge",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iMerge", state: { name: "Merging" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({ "eq.id": "sMerge" }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          current_stage_id: "stage-land",
-          phase_status: "rejected",
-        }),
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sMerge:active",
-          session_id: "sMerge",
-          trigger_type: "assignment",
-        }),
-      }),
-    );
-  });
-
-  it("routes Done to the configured land stage", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-      ],
-      routingRows: [routingRow({ land_stage_slug: "land" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sDone",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iDone",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iDone", state: { name: "Done" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({ "eq.id": "sDone" }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          archived_at: null,
-          current_stage_id: "stage-land",
-          phase_status: "rejected",
-        }),
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sDone:active",
-          session_id: "sDone",
-          trigger_type: "assignment",
-        }),
-      }),
-    );
-  });
-
-  it("ignores nonterminal Linear routes to an excluded stage", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-      ],
-      routingRows: [routingRow({ land_stage_slug: "land" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      selectedStages: [{ session_id: "sSkipMerge", stage_id: "stage-engineering" }],
-      sessions: [
-        {
-          id: "sSkipMerge",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iSkipMerge",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iSkipMerge", state: { name: "Merging" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-    expect(calls.find((call) => call.table === "sessions" && call.op === "update")).toBeUndefined();
-    expect(
-      calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
-    ).toBeUndefined();
-  });
-
-  it("successfully archives Done sessions when the configured target stage is excluded", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-      ],
-      routingRows: [routingRow({ land_stage_slug: "land" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      selectedStages: [{ session_id: "sSkipDone", stage_id: "stage-engineering" }],
-      sessions: [
-        {
-          id: "sSkipDone",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iSkipDone",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iSkipDone", state: { name: "Done" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-    expectArchiveReceipt(calls, "sSkipDone", true);
-    expect(
-      calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
-    ).toBeUndefined();
-  });
-
-  it("successfully archives Done sessions when the configured land stage is missing", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-      ],
-      routingRows: [routingRow({ land_stage_slug: "ship" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sDoneMissingLand",
-          current_stage_id: "stage-land",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iDoneMissingLand",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: {
-          issues: {
-            nodes: [{ id: "iDoneMissingLand", state: { name: "Done" } }],
-          },
-        },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-    expectArchiveReceipt(calls, "sDoneMissingLand", true);
-    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
-  });
-
-  it("does not reroute archived Done sessions back into land", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [{ id: "stage-land", pipeline_id: "pipe-1", position: 1, slug: "land" }],
-      routingRows: [routingRow({ land_stage_slug: "land" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sArchivedDone",
-          archived_at: "2026-05-01T00:00:00Z",
-          current_stage_id: "stage-land",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iArchivedDone",
-          phase_status: "rejected",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iArchivedDone", state: { name: "Done" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(0);
-    expect(result.canceled).toBe(0);
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(calls.find((c) => c.table === "sessions" && c.op === "update")).toBeUndefined();
-    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
-  });
-
-  it("queues rework when the session is awaiting review on the target stage", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
-        { id: "stage-review", pipeline_id: "pipe-1", position: 2, slug: "review" },
-      ],
-      routingRows: [routingRow({ rework_stage_slug: "engineering" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sReworkCurrent",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iReworkCurrent",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iReworkCurrent", state: { name: "Rework" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sReworkCurrent:active",
-          session_id: "sReworkCurrent",
-          trigger_type: "assignment",
-        }),
-      }),
-    );
-  });
-
-  it("reopens an approved manual-merge Build session when Linear moves to Rework", async () => {
-    const fixture: Fixture = {
-      pipelineStages: [{ id: "stage-build", pipeline_id: "pipe-1", position: 1, slug: "build" }],
-      routingRows: [routingRow({ land_stage_slug: null, rework_stage_slug: "build" })],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sApprovedRework",
-          current_stage_id: "stage-build",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iApprovedRework",
-          phase_status: "approved",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iApprovedRework", state: { name: "Rework" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.id": "sApprovedRework",
-          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
-        }),
-        op: "update",
-        table: "sessions",
-        update: {
-          archived_at: null,
-          current_artifact_version: 0,
-          current_stage_id: "stage-build",
-          phase_status: "rejected",
-          rejection_count: 0,
-        },
-      }),
-    );
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sApprovedRework:active",
-          session_id: "sApprovedRework",
-        }),
-      }),
-    );
-  });
-
-  it("requeues awaiting_review sessions when Linear moves back to Todo", async () => {
-    const fixture: Fixture = {
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sReview",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iTodo",
-          phase_status: "awaiting_review",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iTodo", state: { name: "Todo" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "insert",
-        table: "agent_jobs",
-        update: expect.objectContaining({
-          dedupe_key: "session:sReview:active",
-          session_id: "sReview",
-          trigger_type: "assignment",
-        }),
-      }),
-    );
-  });
-
-  it("queues separate session identities when two sessions reference the same Linear issue", async () => {
-    const { admin, calls } = buildAdmin({
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: ["session-one", "session-two"].map((id) => ({
-        id,
-        current_stage_id: "stage-engineering",
-        pipeline_id: "pipe-1",
-        workspace_id: "wA",
-        linear_issue_id: "shared-issue",
-        phase_status: "rejected",
-        created_at: "2026-05-01T00:00:00Z",
-      })),
+    await reconcileLinearState(admin as never);
+    expect(rpc).toHaveBeenCalledTimes(51);
+    expect(reads.filter((read) => read.table === "sessions")[1]?.filters).toMatchObject({
+      order: "id",
+      "gt.id": "session-049",
     });
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "shared-issue", state: { name: "Todo" } }] } },
-      }),
-    );
-    await reconcileLinearState(admin as never, { sleep: vi.fn() });
-    expect(
-      calls
-        .filter((call) => call.table === "agent_jobs" && call.op === "insert")
-        .map((call) => call.update?.dedupe_key),
-    ).toEqual(["session:session-one:active", "session:session-two:active"]);
-  });
-
-  it("treats started pipeline jobs as active before queueing new work", async () => {
-    const fixture: Fixture = {
-      agentJobs: [{ id: "jobStarted", session_id: "sStarted", status: "started" }],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      sessions: [
-        {
-          id: "sStarted",
-          current_stage_id: "stage-engineering",
-          pipeline_id: "pipe-1",
-          workspace_id: "wA",
-          linear_issue_id: "iTodo",
-          phase_status: "rejected",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iTodo", state: { name: "Todo" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
-  });
-
-  it("does not queue approved manual-merge sessions when Linear moves back to Todo", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "sApproved",
-          workspace_id: "wA",
-          linear_issue_id: "iTodo",
-          phase_status: "approved",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: { issues: { nodes: [{ id: "iTodo", state: { name: "Todo" } }] } },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(0);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
-  });
-
-  it("retries once after a 429 with Retry-After", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "s1",
-          workspace_id: "wA",
-          linear_issue_id: "i1",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-    };
-    const { admin } = buildAdmin(fixture);
-    const sleep = vi.fn(() => Promise.resolve());
-
-    fetchSpy
-      .mockResolvedValueOnce(
-        new Response("rate limited", { status: 429, headers: { "Retry-After": "2" } }),
-      )
-      .mockResolvedValueOnce(
-        makeFetchResponse({
-          data: { issues: { nodes: [{ id: "i1", state: { type: "started" } }] } },
-        }),
-      );
-
-    const result = await reconcileLinearState(admin as never, { sleep });
-
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledTimes(1);
-    expect(sleep).toHaveBeenCalledWith(2_000);
-    expect(result.rateLimited).toBe(false);
-    expect(result.checked).toBe(1);
-  });
-
-  it("aborts the sweep if rate-limited a second time", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "s1",
-          workspace_id: "wA",
-          linear_issue_id: "i1",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-        {
-          id: "s2",
-          workspace_id: "wB",
-          linear_issue_id: "i2",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:01Z",
-        },
-      ],
-      secrets: [
-        { workspace_id: "wA", encrypted_value: "keyA" },
-        { workspace_id: "wB", encrypted_value: "keyB" },
-      ],
-    };
-    const { admin } = buildAdmin(fixture);
-    const sleep = vi.fn(() => Promise.resolve());
-
-    fetchSpy.mockImplementation(async () => new Response("rate limited", { status: 429 }));
-
-    const result = await reconcileLinearState(admin as never, { sleep });
-
-    expect(result.rateLimited).toBe(true);
-    expect(result.checked).toBe(0);
-    // First workspace: initial 429 + retry 429 = 2 fetches, then abort.
-    // The second workspace must NOT be fetched.
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-  });
-
-  it("continues the sweep when a single session's cancel write fails", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "sFail",
-          workspace_id: "wA",
-          linear_issue_id: "iDoneFail",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-        {
-          id: "sOk",
-          workspace_id: "wA",
-          linear_issue_id: "iDoneOk",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:01Z",
-        },
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      failCancelForSessionIds: new Set(["sFail"]),
-    };
-    const { admin, calls } = buildAdmin(fixture);
-
-    fetchSpy.mockResolvedValue(
-      makeFetchResponse({
-        data: {
-          issues: {
-            nodes: [
-              { id: "iDoneFail", state: { type: "canceled" } },
-              { id: "iDoneOk", state: { type: "canceled" } },
-            ],
-          },
-        },
-      }),
-    );
-
-    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
-
-    expect(result.checked).toBe(2);
-    // Only the second session gets fully canceled — the first throws mid-cancel.
-    expect(result.canceled).toBe(1);
-
-    expectArchiveReceipt(calls, "sOk", false);
-  });
-
-  it("treats GraphQL RATELIMITED envelope the same as a 429", async () => {
-    const fixture: Fixture = {
-      sessions: [
-        {
-          id: "s1",
-          workspace_id: "wA",
-          linear_issue_id: "i1",
-          phase_status: "in_progress",
-          created_at: "2026-05-01T00:00:00Z",
-        },
-      ],
-      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-    };
-    const { admin } = buildAdmin(fixture);
-    const sleep = vi.fn(() => Promise.resolve());
-
-    fetchSpy
-      .mockResolvedValueOnce(
-        makeFetchResponse({
-          errors: [{ message: "rate limited", extensions: { code: "RATELIMITED" } }],
-        }),
-      )
-      .mockResolvedValueOnce(
-        makeFetchResponse({
-          data: { issues: { nodes: [{ id: "i1", state: { type: "canceled" } }] } },
-        }),
-      );
-
-    const result = await reconcileLinearState(admin as never, { sleep });
-
-    expect(sleep).toHaveBeenCalledTimes(1);
-    expect(result.rateLimited).toBe(false);
-    expect(result.canceled).toBe(1);
   });
 });
