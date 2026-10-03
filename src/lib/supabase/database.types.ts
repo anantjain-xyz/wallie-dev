@@ -2577,18 +2577,6 @@ export type Database = {
         }
         Returns: boolean
       }
-      publish_session_stage_artifact: {
-        Args: {
-          p_artifact_json: string
-          p_expected_artifact_version: number
-          p_session_id: string
-          p_stage_id: string
-          p_stage_slug: string
-          p_version: number
-          p_workspace_id: string
-        }
-        Returns: boolean
-      }
       reject_session_stage: {
         Args: {
           p_agent_model_name: string
@@ -2678,38 +2666,6 @@ export type Database = {
           to: "workspace_repository_profiles"
           isOneToOne: true
           isSetofReturn: false
-        }
-      }
-      schedule_job_retry: {
-        Args: {
-          base_delay_ms?: number
-          max_backoff_ms?: number
-          target_job_id: string
-        }
-        Returns: {
-          attempt_count: number
-          created_at: string
-          dedupe_key: string | null
-          finished_at: string | null
-          id: string
-          last_error: string | null
-          requested_by_member_id: string | null
-          scheduled_at: string | null
-          session_id: string
-          stage_id: string | null
-          stage_name: string | null
-          stage_slug: string | null
-          started_at: string | null
-          status: Database["public"]["Enums"]["agent_job_status"]
-          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
-          updated_at: string
-          workspace_id: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "agent_jobs"
-          isOneToOne: false
-          isSetofReturn: true
         }
       }
       set_active_sandbox_provider: {

@@ -4,11 +4,15 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import { loadAllConnectedSandboxConnections } from "@/lib/sandbox-connections/server";
+import { loadSandboxProtectedJobAttempts } from "@/lib/sandbox-connections/run-cleanup-ownership";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 
 type AdminClient = SupabaseClient<Database>;
-type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "agent_job_id" | "sandbox_id" | "status">;
+type AgentRunSandboxRow = Pick<
+  Tables<"agent_runs">,
+  "agent_job_id" | "attempt_count" | "sandbox_id" | "status"
+>;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
   "checked_at" | "sandbox_id" | "status"
@@ -118,7 +122,7 @@ async function loadKnownConnectionSandboxState(input: {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id, status, agent_job_id")
+      .select("sandbox_id, status, agent_job_id, attempt_count")
       .eq("workspace_id", input.workspaceId)
       .eq("sandbox_provider", input.connection.provider)
       .eq("sandbox_connection_revision", input.connection.revision)
@@ -166,19 +170,25 @@ async function loadKnownConnectionSandboxState(input: {
     }
   }
 
-  const activeJobIds = await loadActiveAgentJobIds(
+  const protectedJobAttempts = await loadProtectedJobAttempts(
     input.admin,
     runRows
       .map((row) => row.agent_job_id)
       .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
   );
 
-  if (!activeJobIds) {
+  if (!protectedJobAttempts) {
     return null;
   }
 
   for (const row of runRows) {
-    if (row.sandbox_id && row.agent_job_id && activeJobIds.has(row.agent_job_id)) {
+    if (
+      row.status === "success" &&
+      row.sandbox_id &&
+      row.agent_job_id &&
+      row.attempt_count !== null &&
+      protectedJobAttempts.get(row.agent_job_id) === row.attempt_count
+    ) {
       active.add(row.sandbox_id);
     }
   }
@@ -186,26 +196,16 @@ async function loadKnownConnectionSandboxState(input: {
   return { active, known };
 }
 
-async function loadActiveAgentJobIds(
+async function loadProtectedJobAttempts(
   admin: AdminClient,
   jobIds: string[],
-): Promise<Set<string> | null> {
-  if (jobIds.length === 0) {
-    return new Set();
-  }
-
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("id")
-    .in("id", [...new Set(jobIds)])
-    .in("status", ["queued", "started", "running"]);
-
-  if (error) {
-    console.error("[sandbox-reaper] failed to load active jobs", { error: error.message });
+): Promise<Map<string, number> | null> {
+  try {
+    return await loadSandboxProtectedJobAttempts(admin, jobIds);
+  } catch (error) {
+    console.error("[sandbox-reaper] failed to load protected job attempts", { error });
     return null;
   }
-
-  return new Set((data ?? []).map((row) => row.id));
 }
 
 function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {

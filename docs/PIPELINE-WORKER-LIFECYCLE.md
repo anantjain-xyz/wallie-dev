@@ -26,15 +26,14 @@ The applied schema is the ordered result of the baseline and every forward
 migration. A function redefined by a later migration is governed by the latest
 definition, not by the copy in the baseline.
 
-## Additive execution ownership APIs
+## Execution ownership
 
-These service-role-only APIs are available for the next worker cutover. Current
-workers still use the existing APIs; adding this contract does not activate the
-ownership guards in production.
+Workers and control paths use these service-role-only APIs for state transitions.
+The ownerless publication and retry APIs have been removed.
 
 An execution owner is the captured `(agent_jobs.id, attempt_count)` from queue
-claim. A started run stores that attempt in `agent_runs.attempt_count`; existing
-runs remain unbound (`null`). New execution intents use new job IDs, and retries
+claim. A started run stores that attempt in `agent_runs.attempt_count`; historical
+runs and queued placeholders may remain unbound (`null`). New execution intents use new job IDs, and retries
 use a new attempt. Callers must never reload the latest attempt to authorize an
 older worker's writes.
 
@@ -51,13 +50,42 @@ run IDs for cleanup outside the transaction. A stale expected run cannot cancel
 its successor attempt. Publication, failure, and completion never authorize a
 worker using artifact version alone.
 
-For the consumer cutover, pause queue producers, stop and drain old workers,
-apply the cutover migration, deploy matching web/worker code, then restart
-workers and producers. Removing the legacy APIs belongs to that cutover PR. Reconcile any legacy
-unpublished artifact rows before activation: guarded publication rejects version
-collisions and never overwrites existing markdown. Reaper protection must compare
-the run attempt with its active job, so a newer retry cannot protect an older
-execution's sandbox.
+## Cutover rollout
+
+This change requires a coordinated deployment; old and new workers must not run
+at the same time.
+
+1. Pause web/Linear queue producers, drain in-flight old control requests,
+   and stop/drain old workers.
+2. Confirm that no job or run is `started` or `running`. Finish or explicitly
+   cancel remaining executions; queued work can remain for the new worker.
+3. Inspect the unpublished artifact report below. For each row, verify whether
+   it was ever reviewed. Restore the correct pointer for reviewed output;
+   export genuinely unpublished rows to a durable backup and remove only those
+   verified IDs in a transaction. Never bulk-delete or overwrite markdown.
+4. Apply `20261003003927_worker_ownership_cutover.sql`, deploy matching web and
+   worker code, then restart workers and producers.
+
+The migration freezes writes while checking readiness and removing the two old
+APIs. It fails without dropping either API when claimed work or unpublished
+current-stage artifacts remain. It does not repair or delete existing data.
+
+```sql
+select 'job' as kind, id, workspace_id, session_id, status::text
+from public.agent_jobs where status in ('started', 'running')
+union all
+select 'run', id, workspace_id, session_id, status::text
+from public.agent_runs where status in ('started', 'running');
+
+select artifact.id, artifact.workspace_id, artifact.session_id,
+       artifact.stage_slug, artifact.version, session.current_artifact_version,
+       artifact.artifact_json
+from public.session_artifacts artifact
+join public.sessions session on session.id = artifact.session_id
+join public.pipeline_stages stage on stage.id = session.current_stage_id
+where artifact.stage_slug = stage.slug
+  and artifact.version > session.current_artifact_version;
+```
 
 ## The three status domains
 
@@ -68,9 +96,11 @@ execution's sandbox.
 | Agent run `status`     | `queued`, `started`, `running`               | `success`, `error`, `canceled` | One observable agent execution            |
 
 `sessions.archived_at` is an orthogonal freeze marker, not another phase.
-Enqueue preflight rejects a session already observed as archived, and processor
-eligibility requires `archived_at is null`. Enqueue is not transactionally
-excluded from racing archive; that gap is detailed below.
+The enqueue and start RPCs lock the session and reject archived work. Archive
+uses the same session lock, so RPC enqueue cannot slip past its cancellation
+pass. Linear reconciliation still inserts jobs directly; a late insert can leave
+a queued row after archive, but the guarded start refuses execution. Atomic
+Linear routing/enqueue is separate follow-up work.
 
 `rejected` is also the general parked/recoverable phase. Reviewer rejection,
 explicit cancellation, generation failure, stall recovery, and some Linear
@@ -93,22 +123,20 @@ reroutes can all place a session there.
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | Create session               | `create_session_with_first_job` runs transactionally                                                                             | Session at first stage, queued job, and queued run are inserted together                                         | Worker polling discovers the job              |
 | Claim job                    | `claim_next_agent_job` locks and CAS-updates a ready queued job while enforcing workspace capacity                               | Job becomes running and its attempt count advances                                                               | Scheduler advertises the job in its heartbeat |
-| Claim session for generation | Processor updates only an unarchived, nonterminal session                                                                        | Session becomes or remains `in_progress`                                                                         | Generic stage execution begins                |
-| Complete generation          | `publish_session_stage_artifact` upserts markdown and claims `awaiting_review` in one transaction, then PR                       | Artifact version becomes current and session becomes `awaiting_review`; the winner force-pushes                  | Run and job finish successfully               |
-| Fail generation              | Guarded compensation and retry scheduling                                                                                        | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored         | A later claim may start the retry             |
+| Claim session for generation | `start_session_job_attempt` validates captured job/attempt, expected stage/version, and archive state                            | Session becomes or remains `in_progress`                                                                         | Generic stage execution begins                |
+| Complete generation          | `publish_session_job_attempt` inserts markdown, claims `awaiting_review`, and records run success atomically, then PR            | Artifact version becomes current and session becomes `awaiting_review`; the winner publishes its attempt branch  | Run and job finish successfully               |
+| Fail generation              | `fail_session_job_attempt` checks the captured job/attempt/run before failure or retry                                           | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored         | A later claim may start the retry             |
 | Reject artifact              | `reject_session_stage` locks the session row and applies feedback, enqueue, and `rejected` in one transaction                    | Feedback is recorded; a queued rerun is inserted or a queued job is adopted; a publishing generation is replaced | Worker claim returns it to `in_progress`      |
 | Approve nonterminal stage    | `approve_session_stage` transaction checks workspace, version, status, and approver; records completion and advances by position | Session points to next stage at version zero and `in_progress`                                                   | TypeScript enqueues the next job/run          |
 | Approve terminal stage       | Same approval transaction                                                                                                        | Session remains `approved` and receives `archived_at`                                                            | No further job is created                     |
 
-The processor publishes canonical markdown and `awaiting_review` together in
-`publish_session_stage_artifact` before force-pushing the shared stage branch,
-so a losing generation cannot rewrite the artifact or PR and reviewers never
-see recovered stale text. If cancellation wins after the artifact insert, the
-processor deletes the unpublished artifact so that its version can be reused
-safely. Deletion re-reads the session pointer first: if another generation
-has already published that version, the row is left in place. A retry after a
-crash that left an unpublished row regenerates in a new sandbox, then that
-same publish transaction writes the retry markdown and claims review.
+The processor calls `start_session_job_attempt` before creating a sandbox, then
+publishes markdown, the review pointer, and exact run success together in
+`publish_session_job_attempt`. Artifact rows are inserted once; publication
+never overwrites existing markdown or deletes a losing attempt's output.
+Attempt-specific branches prevent an expired worker from rewriting a successor's
+branch. A late failure after publication closes the published job successfully
+without changing the artifact or review state.
 
 ## Review concurrency
 
@@ -150,49 +178,44 @@ multi-step workflow.
 
 ## Deduplication
 
-Session creation, stage transitions, and interactive retry use:
+Every enqueue producer uses:
 
 ```text
 session:<session_id>:active
 ```
 
-Linear-driven paths also retain keys based on the linked issue:
-
-```text
-pipeline:<linear_issue_id>:active
-pipeline:session:<session_id>:active
-```
-
-The partial unique index prevents two active jobs with the same
-`(workspace_id, dedupe_key)`. Different key families mean the database does not
-provide a universal one-active-job-per-session guarantee. Code that requires
-that stronger claim must query by session and active statuses or consolidate
-the owner first.
+The database also enforces one active job per session. New execution intents
+create new job IDs; only retries of the same intent reuse a job with an advanced
+attempt. Terminal jobs are never reactivated.
 
 ## Cancellation and archive
 
-[`cancelSessionWork`](../src/lib/pipeline/cancel.ts) is the shared cancellation
-primitive:
+[`cancelSessionWork`](../src/lib/pipeline/cancel.ts) calls
+`cancel_session_job_attempts` to cancel active jobs/runs and park an
+`in_progress` session under one session lock. Run-level cancellation supplies
+`expectedRunId`; an outdated button cannot cancel a successor attempt.
 
-1. Mark active jobs `canceled`.
-2. Mark active runs `canceled`.
-3. Stop any recorded sandboxes on a best-effort basis.
-4. Record cancellation messages.
-5. When requested, park an `in_progress` session in `rejected`.
+The returned run IDs are the cleanup authority. Provider cleanup stops only
+those resources, including a successfully published run whose job was still
+active when canceled. That run and its artifact remain successful. A sandbox
+that attaches after cancellation is stopped by the processor's guarded callback;
+an unrecorded resource after a crash still relies on its provider TTL.
 
-Terminal job/run writes are guarded so a late worker cannot overwrite
-`canceled` with `success` or `error`. The sandbox-attachment callback also
-checks active run status and best-effort stops a sandbox when cancellation wins
-that race. A crash before the callback records ownership remains outside this
-guard.
+Archive uses `archive_session_job_attempts` to set the archive marker and cancel
+work atomically. It preserves an existing review, rejection, or approved phase;
+Linear completion explicitly marks the session approved, including when a
+concurrent user archive won first, and retains the original archive timestamp.
+Cleanup never writes session state after a provider await. A failed metadata read is retried three
+times; cancellation/archive still report the committed result if cleanup must
+be deferred to the reaper.
 
-User-facing archive writes `archived_at` before cancellation. Subsequent
-enqueue validation and processor claims reject the archived session, but the
-marker is not atomic with enqueue: a request that passed validation first can
-insert a job and run after this cancellation pass. That work cannot execute
-while the session remains archived, but its rows may require a later
-archive/cancellation pass to converge. Unarchive only clears the marker; it
-does not enqueue work.
+Workspace deletion commits every session's cancellation before provider cleanup.
+Retries also recover recorded terminal runs, including legacy runs without a
+parent job. A metadata, credential lookup, or provider failure returns `503`
+before the workspace cascade removes those references and credentials. Definite
+provider not-found responses are successful cleanup; a verified absent
+connection is logged and skipped because no credentials remain to preserve.
+Unarchive compares the expected archive marker when supplied and does not enqueue work.
 
 ## Worker scheduling and recovery
 
@@ -200,27 +223,35 @@ does not enqueue work.
   enforces the per-workspace concurrency limit.
 - The worker heartbeat records the full in-flight job set.
 - A fresh heartbeat protects an active job from the stall detector.
-- A running job whose attached run is already `success` is marked `success`
-  rather than retried, so a crash after publish cannot mint a second artifact.
+- A claimed job whose run is already `success` for the same captured attempt
+  is completed through the ownership RPC. Historical successful runs do not
+  complete a newer retry or protect its older sandbox. Recovery skips provider
+  cleanup if publication wins its failure RPC race.
 - A run with no activity beyond its workspace timeout and no fresh owning
-  heartbeat is marked errored. Its sandbox is stopped, and its job is either
-  rescheduled with backoff or marked terminally errored.
+  heartbeat is failed through the captured job/attempt/run guard before its
+  sandbox is stopped. Its job is rescheduled with backoff or terminally errored.
+  Stale snapshots never authorize mutations using a reloaded latest attempt.
 - A running job with no `agent_runs` row is retried only after this
   attempt's `started_at` (falling back to `created_at`) exceeds the
   workspace stall timeout. `claim_next_agent_job` refreshes `started_at` on
   every claim so a retried job is not immediately expired. That covers the
-  claim → heartbeat → `startAgentRun` gap for Linear-routed jobs.
+  claim → heartbeat → `start_session_job_attempt` gap for Linear-routed jobs.
 - Claimed jobs in the legacy `started` status are included in the
   terminal-run recovery sweep so their active dedupe keys cannot stick.
-- Stall recovery parks the session in `rejected`; a retried job returns it to
-  `in_progress` when claimed.
+- Stall recovery parks only the current owned stage in `rejected`; atomic
+  attempt start returns an eligible retry to `in_progress`.
 - Linear reconciliation may keep a current stage queued, reroute a session to a
   configured stage, or archive it. It cancels active work before rerouting.
 - The sandbox reaper stops only provider resources whose IDs Wallie already
-  recorded for the exact connection revision and whose run, job, or capability
+  recorded for the exact connection revision and whose run, matching job attempt, or capability
   check is no longer active. It skips unknown provider sandboxes, including one
   created before a crash that prevented ownership from being recorded; those
-  rely on provider TTLs or operator cleanup.
+  rely on provider TTLs or operator cleanup. Credential rotation/disconnection
+  uses the same matching-attempt rule for terminal run protection. A completed
+  successful job stays protected while a fresh worker heartbeat still reports
+  that job and the run matches its current attempt; canceled/error jobs never gain
+  that protection. Rotation/disconnection waits for protected work in the owning
+  workspace so credentials stay available through PR delivery.
 - Graceful worker shutdown stops new claims, keeps heartbeats and maintenance
   timers active while already-claimed jobs finish, then waits for timer
   callbacks already in progress before deregistering. Hard termination still
@@ -242,8 +273,9 @@ corruption:
 - A retry collides with an existing active dedupe key.
 
 Handled losing-race paths are designed to close or preserve their own job, run,
-artifact, and sandbox state without resurrecting work. The approval/rejection
-gap and unrecorded provider resources documented above are current exceptions.
+artifact, and sandbox state without resurrecting work. The approval/enqueue
+gap, multi-step Linear reroutes, and unrecorded provider resources documented
+above remain for their separate follow-up work.
 
 ## Change checklist
 

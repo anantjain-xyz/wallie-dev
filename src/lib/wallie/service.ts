@@ -50,7 +50,7 @@ type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "w
 const sessionSelect =
   "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
 const runSelect =
-  "id, workspace_id, session_id, agent_job_id, branch_name, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, attempt_count, branch_name, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
   readonly provider?: "vercel" | "e2b" | "daytona";
@@ -649,12 +649,17 @@ export async function cancelWallieRun(input: {
     return { canceled: false, run: existingRun } satisfies CancelWallieRunResult;
   }
 
-  await cancelSessionWork(admin, {
+  const receipt = await cancelSessionWork(admin, {
+    expectedRunId: existingRun.id,
     parkPhaseStatus: true,
     reason: "Run canceled by a workspace member.",
     sessionId: existingRun.session_id,
+    workspaceId: input.workspace.id,
   });
 
   const updatedRun = (await loadRunById(admin, input.runId)) ?? existingRun;
-  return { canceled: true, run: updatedRun } satisfies CancelWallieRunResult;
+  return {
+    canceled: receipt.canceledRunIds.includes(existingRun.id),
+    run: updatedRun,
+  } satisfies CancelWallieRunResult;
 }

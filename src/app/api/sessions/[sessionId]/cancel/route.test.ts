@@ -85,6 +85,12 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(mocked.cancelSessionWork).toHaveBeenCalledWith(expect.anything(), {
+      parkPhaseStatus: true,
+      reason: "Stage canceled by a workspace member.",
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
+    });
     await expect(response.json()).resolves.toEqual({
       archivedAt: null,
       artifactVersion: 2,

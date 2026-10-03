@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { APIError } from "@vercel/sandbox";
 
 import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
 import { createSessionSandbox } from "./index";
@@ -20,13 +21,17 @@ const mocked = vi.hoisted(() => ({
   sandboxList: vi.fn(),
 }));
 
-vi.mock("@vercel/sandbox", () => ({
-  Sandbox: {
-    create: mocked.sandboxCreate,
-    get: mocked.sandboxGet,
-    list: mocked.sandboxList,
-  },
-}));
+vi.mock("@vercel/sandbox", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@vercel/sandbox")>();
+  return {
+    APIError: actual.APIError,
+    Sandbox: {
+      create: mocked.sandboxCreate,
+      get: mocked.sandboxGet,
+      list: mocked.sandboxList,
+    },
+  };
+});
 
 const credentials: VercelSandboxCredentials = {
   projectId: "prj_123",
@@ -175,6 +180,39 @@ describe("stopVercelSandboxById", () => {
       teamId: credentials.teamId,
       token: credentials.token,
     });
+  });
+
+  it.each(["lookup", "stop"])(
+    "accepts provider-confirmed absence during %s in strict mode",
+    async (step) => {
+      const error = new APIError(new Response(null, { status: 404 }), { message: "sandbox gone" });
+      if (step === "lookup") mocked.sandboxGet.mockRejectedValueOnce(error);
+      else mocked.sandboxGet.mockResolvedValueOnce({ stop: vi.fn().mockRejectedValue(error) });
+
+      await expect(
+        stopVercelSandboxById("sandbox-gone", credentials, { throwOnError: true }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it.each([401, 403, 429, 500])("propagates provider status %i in strict mode", async (status) => {
+    const error = new APIError(new Response(null, { status }), { message: `provider ${status}` });
+    mocked.sandboxGet.mockResolvedValueOnce({ stop: vi.fn().mockRejectedValue(error) });
+
+    await expect(
+      stopVercelSandboxById("sandbox-1", credentials, { throwOnError: true }),
+    ).rejects.toThrow(`provider ${status}`);
+  });
+
+  it("does not infer absence from an untyped error message or status field", async () => {
+    mocked.sandboxGet.mockRejectedValueOnce(
+      Object.assign(new Error("404 sandbox not found"), {
+        response: { status: 404 },
+      }),
+    );
+    await expect(
+      stopVercelSandboxById("sandbox-1", credentials, { throwOnError: true }),
+    ).rejects.toThrow("404 sandbox not found");
   });
 
   it("throws stop failures in strict cleanup mode", async () => {

@@ -67,6 +67,7 @@ export async function POST(_request: Request, { params }: Params) {
   const result = await archiveSession(admin, {
     reason: "Session archived by a workspace member.",
     sessionId: resolved.row.id,
+    workspaceId: resolved.row.workspace_id,
   });
 
   return NextResponse.json({
@@ -111,6 +112,7 @@ export async function DELETE(request: Request, { params }: Params) {
       ? { expectedArchivedAt: body.expectedArchivedAt }
       : {}),
     sessionId: resolved.row.id,
+    workspaceId: resolved.row.workspace_id,
   });
 
   return NextResponse.json({

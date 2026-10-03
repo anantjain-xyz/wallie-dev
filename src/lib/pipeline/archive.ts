@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import { cleanupSessionWorkReceipt } from "@/lib/pipeline/cancel";
 import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -14,57 +14,29 @@ export type SessionArchiveState = {
 };
 
 /**
- * Archive a session from any stage. Unlike the reconciler's Linear-route
- * archive, this is the user-facing primitive: it has no `phase_status` gate, so
- * a workspace member can archive a session regardless of where it sits in the
- * pipeline.
- *
- * It first reuses {@link cancelSessionWork} to stop any in-flight work — flip
- * active jobs/runs to `canceled`, stop their sandboxes, record a cancel message,
- * and park an `in_progress` session into `rejected`. `awaiting_review`,
- * `approved`, and already-`rejected` sessions keep their phase, so a later
- * {@link unarchiveSession} restores them where they were.
- *
- * Idempotent: the `archived_at is null` guard means re-archiving an already
- * archived session is a no-op and echoes back the existing state.
+ * Archive and cancel under one session lock, preserving an existing review or
+ * approved phase unless the caller explicitly completes the session. Provider
+ * cleanup uses only the transaction's receipt; it never changes session state.
  */
 export async function archiveSession(
   admin: AdminClient,
-  input: { reason: string; sessionId: string },
+  input: { completed?: boolean; reason: string; sessionId: string; workspaceId: string },
 ): Promise<SessionArchiveState> {
-  // Set the archived marker before canceling work so later enqueue validations
-  // and processor claims reject the session. This is not atomic with enqueue: a
-  // request that already passed validation can still insert after this
-  // cancellation pass. The work cannot execute while archived, and re-running
-  // archive runs cancellation again to converge on any rows this pass missed.
-  const { error } = await admin
-    .from("sessions")
-    .update({ archived_at: new Date().toISOString() })
-    .eq("id", input.sessionId)
-    .is("archived_at", null)
-    .select("id")
-    .maybeSingle();
+  const { data, error } = await admin.rpc("archive_session_job_attempts", {
+    p_completed: input.completed ?? false,
+    p_reason: input.reason,
+    p_session_id: input.sessionId,
+    p_workspace_id: input.workspaceId,
+  });
+  if (error) throw error;
 
-  if (error) {
-    throw error;
-  }
-
-  // Always run cancellation, even when the session was already archived (no row
-  // matched). cancelSessionWork is idempotent — it only touches still-active
-  // jobs/runs — so re-running it lets a retry finish cleanup when a prior
-  // archive's cancellation failed after the marker was already committed.
-  // Otherwise the `!data` path would short-circuit and a worker could keep
-  // writing to a session the UI shows as archived.
-  await cancelSessionWork(admin, {
-    parkPhaseStatus: true,
+  await cleanupSessionWorkReceipt(admin, {
+    receipt: data?.[0] ?? { job_ids: [], run_ids: [] },
     reason: input.reason,
-    sessionId: input.sessionId,
+    workspaceId: input.workspaceId,
   });
 
-  // Cancellation can change phase_status after archived_at is written. Always
-  // reload after it settles so callers receive one authoritative final row,
-  // including updated_at for timestamp-aware client reconciliation.
-  return readSessionArchiveState(admin, input.sessionId);
+  return readSessionArchiveState(admin, input.sessionId, input.workspaceId);
 }
 
 /**
@@ -76,9 +48,13 @@ export async function archiveSession(
  */
 export async function unarchiveSession(
   admin: AdminClient,
-  input: { expectedArchivedAt?: string; sessionId: string },
+  input: { expectedArchivedAt?: string; sessionId: string; workspaceId: string },
 ): Promise<SessionArchiveState> {
-  let update = admin.from("sessions").update({ archived_at: null }).eq("id", input.sessionId);
+  let update = admin
+    .from("sessions")
+    .update({ archived_at: null })
+    .eq("id", input.sessionId)
+    .eq("workspace_id", input.workspaceId);
   update = input.expectedArchivedAt
     ? update.eq("archived_at", input.expectedArchivedAt)
     : update.not("archived_at", "is", null);
@@ -88,17 +64,19 @@ export async function unarchiveSession(
     throw error;
   }
 
-  return readSessionArchiveState(admin, input.sessionId);
+  return readSessionArchiveState(admin, input.sessionId, input.workspaceId);
 }
 
 async function readSessionArchiveState(
   admin: AdminClient,
   sessionId: string,
+  workspaceId: string,
 ): Promise<SessionArchiveState> {
   const { data, error } = await admin
     .from("sessions")
     .select("id, archived_at, phase_status, updated_at")
     .eq("id", sessionId)
+    .eq("workspace_id", workspaceId)
     .single();
 
   if (error) {

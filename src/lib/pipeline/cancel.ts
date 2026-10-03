@@ -57,9 +57,9 @@ export type RunSandboxRef = {
  * Stop the sandbox backing a run using the workspace's current connection for
  * the recorded provider. Credential rotation is serialized with active work,
  * but cancellation must still attempt cleanup if a revision changed instead of
- * silently leaking the sandbox. Best-effort: `stopSandboxById` swallows its
- * own errors so a stale or already-stopped sandbox cannot break the caller's
- * batch. A no-op when the run never acquired a sandbox.
+ * silently leaking the sandbox. Best-effort by default; workspace deletion
+ * requests `throwOnError` so references and credentials survive failed cleanup.
+ * A no-op when the run never acquired a sandbox.
  *
  * Pass a shared `cache` when stopping many runs so each workspace's provider
  * connection is only loaded once.
@@ -68,19 +68,33 @@ export async function stopRunSandbox(
   admin: AdminClient,
   run: RunSandboxRef,
   cache: Map<string, SandboxConnection | null> = new Map(),
-): Promise<void> {
+  options: { throwOnError?: boolean } = {},
+): Promise<boolean> {
   if (!run.sandbox_id) {
-    return;
+    return false;
   }
 
   if (run.sandbox_provider === "fake") {
-    await stopSandboxById(run.sandbox_id);
-    return;
+    if (options.throwOnError) await stopSandboxById(run.sandbox_id, options);
+    else await stopSandboxById(run.sandbox_id);
+    return true;
   }
 
   const connection = await resolveRunSandboxConnection(admin, run, cache);
-  if (!connection) return;
-  await stopSandboxById(run.sandbox_id, { connection });
+  if (!connection) {
+    // A successful lookup found no credentials. Historical references can
+    // outlive an intentionally removed connection; there is nothing left for
+    // the workspace cascade to preserve. Lookup failures still propagate.
+    console.warn("[cancel] sandbox cleanup skipped because its connection is absent", {
+      runId: run.id,
+      sandboxId: run.sandbox_id,
+      provider: run.sandbox_provider,
+      workspaceId: run.workspace_id,
+    });
+    return false;
+  }
+  await stopSandboxById(run.sandbox_id, { connection, ...options });
+  return true;
 }
 
 async function resolveRunSandboxConnection(
@@ -112,85 +126,96 @@ function isSandboxProvider(value: string | null): value is SandboxProvider {
   return value === "vercel" || value === "e2b" || value === "daytona";
 }
 
+export type SessionWorkReceipt =
+  Database["public"]["Functions"]["cancel_session_job_attempts"]["Returns"][number];
+
 export type CancelSessionWorkResult = {
   canceledJobIds: string[];
+  // Cleanup IDs can include a published run whose job was still active.
   canceledRunIds: string[];
   stoppedSandboxIds: string[];
 };
 
-/**
- * Cancel all in-flight work for a session: flip its active jobs and runs to
- * `canceled`, stop their sandboxes, and (optionally) park the session out of
- * `in_progress` so the UI is not stuck "Drafting".
- *
- * This is the single primitive behind both the user-facing cancel endpoints and
- * the reconciler's Linear-route cancellation. Durability against an in-flight
- * worker relies on the status guards in `schedule_job_retry` and the processor's
- * terminal writes: once a job is `canceled`, a late-finishing worker can neither
- * re-queue it nor flip it back to success/error.
- *
- * Setting `parkPhaseStatus` to false leaves `phase_status` untouched — the
- * reconciler uses that because its reroute/archive paths set the phase
- * themselves immediately afterward.
- */
+/** Cancel and park atomically, then stop only the sandboxes in the DB receipt. */
 export async function cancelSessionWork(
   admin: AdminClient,
-  input: { parkPhaseStatus?: boolean; reason: string; sessionId: string },
+  input: {
+    expectedRunId?: string;
+    parkPhaseStatus?: boolean;
+    reason: string;
+    sessionId: string;
+    workspaceId: string;
+  },
 ): Promise<CancelSessionWorkResult> {
-  const parkPhaseStatus = input.parkPhaseStatus ?? true;
-  const nowIso = new Date().toISOString();
+  const { data, error } = await admin.rpc("cancel_session_job_attempts", {
+    ...(input.expectedRunId ? { p_expected_run_id: input.expectedRunId } : {}),
+    p_park_phase_status: input.parkPhaseStatus ?? true,
+    p_reason: input.reason,
+    p_session_id: input.sessionId,
+    p_workspace_id: input.workspaceId,
+  });
+  if (error) throw error;
+
+  return cleanupSessionWorkReceipt(admin, {
+    receipt: data?.[0] ?? { job_ids: [], run_ids: [] },
+    reason: input.reason,
+    workspaceId: input.workspaceId,
+  });
+}
+
+/**
+ * The transaction's run IDs are the cleanup authority, including a successful
+ * publisher whose job was canceled before sandbox shutdown. Never rescan the
+ * session after a provider await: a replacement attempt may already be live.
+ * A sandbox that attaches after cancellation is stopped by the processor's
+ * guarded attach path.
+ */
+export async function cleanupSessionWorkReceipt(
+  admin: AdminClient,
+  input: {
+    receipt: SessionWorkReceipt;
+    reason?: string;
+    workspaceId: string;
+    requireCleanup?: boolean;
+  },
+  connectionCache: Map<string, SandboxConnection | null> = new Map(),
+): Promise<CancelSessionWorkResult> {
   const result: CancelSessionWorkResult = {
-    canceledJobIds: [],
-    canceledRunIds: [],
+    canceledJobIds: input.receipt.job_ids,
+    canceledRunIds: input.receipt.run_ids,
     stoppedSandboxIds: [],
   };
+  if (input.receipt.run_ids.length === 0) return result;
 
-  const { data: canceledJobs, error: jobsError } = await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: nowIso,
-      last_error: input.reason,
-      status: "canceled",
-    })
-    .eq("session_id", input.sessionId)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .select("id");
-
-  if (jobsError) {
-    throw jobsError;
+  let runs: Array<RunSandboxRef & { status: AgentRunStatus }>;
+  try {
+    runs = await loadReceiptRuns(admin, input.workspaceId, input.receipt.run_ids);
+  } catch (error) {
+    if (input.requireCleanup) throw error;
+    // Cancellation already committed. Retain the exact receipt in the response
+    // and leave terminal run metadata intact for the reaper; do not rerun the
+    // mutation, which cannot reproduce its one-shot cleanup receipt.
+    console.error("[cancel] sandbox cleanup deferred to reaper", {
+      error: error instanceof Error ? error.message : String(error),
+      runIds: input.receipt.run_ids,
+      workspaceId: input.workspaceId,
+    });
+    return result;
   }
-  result.canceledJobIds = (canceledJobs ?? []).map((job) => job.id);
 
-  // Returning the updated rows gives us each run's sandbox ref as it stood at
-  // the moment it was canceled — including a sandbox id persisted in the race
-  // window just before this flip. A sandbox attached *after* the flip is caught
-  // instead by the active-status guard in updateRunSandbox, which stops it.
-  const { data: canceledRuns, error: runsError } = await admin
-    .from("agent_runs")
-    .update({
-      finished_at: nowIso,
-      status: "canceled",
-    })
-    .eq("session_id", input.sessionId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES)
-    .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    );
-
-  if (runsError) {
-    throw runsError;
-  }
-  result.canceledRunIds = (canceledRuns ?? []).map((run) => run.id);
-
-  // Stop sandboxes and record a cancel message on each run we flipped.
-  const connectionCache = new Map<string, SandboxConnection | null>();
-  for (const run of canceledRuns ?? []) {
+  for (const run of runs ?? []) {
     if (run.sandbox_id) {
       try {
-        await stopRunSandbox(admin, run, connectionCache);
-        result.stoppedSandboxIds.push(run.sandbox_id);
+        const stopped = await stopRunSandbox(
+          admin,
+          run,
+          connectionCache,
+          input.requireCleanup ? { throwOnError: true } : {},
+        );
+        if (stopped) result.stoppedSandboxIds.push(run.sandbox_id);
       } catch (error) {
-        console.error("[cancel] failed to stop sandbox for canceled run", {
+        if (input.requireCleanup) throw error;
+        console.error("[cancel] failed to stop sandbox from cleanup receipt", {
           error: error instanceof Error ? error.message : String(error),
           runId: run.id,
           sandboxId: run.sandbox_id,
@@ -198,142 +223,143 @@ export async function cancelSessionWork(
       }
     }
 
-    const { error: messageError } = await admin.from("agent_run_messages").insert({
-      agent_run_id: run.id,
-      kind: "error" as const,
-      message_md: `**Canceled:** ${input.reason}`,
-      workspace_id: run.workspace_id,
-    });
-
-    if (messageError) {
-      console.error("[cancel] failed to insert cancel message", {
-        error: messageError.message,
-        runId: run.id,
+    // Published runs remain successful even when their remaining job work is
+    // canceled. Do not label the artifact's successful execution as canceled.
+    if (input.reason && run.status === "canceled") {
+      const { error: messageError } = await admin.from("agent_run_messages").insert({
+        agent_run_id: run.id,
+        kind: "error" as const,
+        message_md: `**Canceled:** ${input.reason}`,
+        workspace_id: run.workspace_id,
       });
+      if (messageError) {
+        console.error("[cancel] failed to insert cancel message", {
+          error: messageError.message,
+          runId: run.id,
+        });
+      }
     }
   }
-
-  if (parkPhaseStatus) {
-    // Only move a session that is mid-generation; awaiting_review / approved /
-    // already-rejected sessions are left as-is. No new job is enqueued — the
-    // session simply parks in `rejected` until the user re-runs or reroutes.
-    const { error: sessionError } = await admin
-      .from("sessions")
-      .update({ phase_status: "rejected" })
-      .eq("id", input.sessionId)
-      .eq("phase_status", "in_progress");
-
-    if (sessionError) {
-      throw sessionError;
-    }
-  }
-
   return result;
 }
 
-export type CancelWorkspaceWorkResult = {
-  canceledJobIds: string[];
-  canceledRunIds: string[];
-  stoppedSandboxIds: string[];
-};
+async function loadReceiptRuns(admin: AdminClient, workspaceId: string, runIds: string[]) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const runs: Array<RunSandboxRef & { status: AgentRunStatus }> = [];
+      for (let offset = 0; offset < runIds.length; offset += 500) {
+        const { data, error } = await admin
+          .from("agent_runs")
+          .select(
+            "id, status, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
+          )
+          .eq("workspace_id", workspaceId)
+          .in("id", runIds.slice(offset, offset + 500));
+        if (error) throw error;
+        runs.push(...(data ?? []));
+      }
+      return runs;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** attempt));
+    }
+  }
+}
+
+/** Terminal owners never reactivate, so their persisted IDs authorize retry cleanup. */
+async function loadTerminalWorkspaceRunIds(admin: AdminClient, workspaceId: string) {
+  const runIds: string[] = [];
+  // Legacy runs can have no parent job. A terminal NULL-job run cannot be bound
+  // by start_session_job_attempt, so it is as safe to recover as a terminal job.
+  for (const withoutJob of [false, true]) {
+    let afterId: string | null = null;
+    while (true) {
+      let query = withoutJob
+        ? admin.from("agent_runs").select("id").is("agent_job_id", null)
+        : admin
+            .from("agent_runs")
+            .select("id, job:agent_jobs!inner(id)")
+            .eq("job.workspace_id", workspaceId)
+            .in("job.status", ["canceled", "error", "success"]);
+      query = query
+        .eq("workspace_id", workspaceId)
+        .in("status", ["canceled", "error", "success"])
+        .not("sandbox_id", "is", null)
+        .order("id")
+        .limit(500);
+      if (afterId) query = query.gt("id", afterId);
+      const { data, error }: { data: { id: string }[] | null; error: unknown } = await query;
+      if (error) throw error;
+      runIds.push(...(data ?? []).map((run) => run.id));
+      if (!data || data.length < 500) break;
+      afterId = data[data.length - 1]!.id;
+    }
+  }
+  return runIds;
+}
+
+export type CancelWorkspaceWorkResult = CancelSessionWorkResult;
 
 /**
- * Cancel every in-flight job and run for a workspace and stop the provider
- * sandboxes those runs own. Called right before a workspace is hard-deleted.
- *
- * The delete relies on the FK cascade, which drops `agent_jobs`, `agent_runs`,
- * AND `workspace_vercel_sandbox_connections` together. A worker still mid-flight
- * when those rows vanish would leak its sandbox: no run record for the reaper to
- * find, and no connection credentials to reach the provider even if it could.
- * Cancelling first closes that window the same way {@link cancelSessionWork}
- * does for a single session:
- *
- *   - A queued job a worker has not claimed yet is refused by the claim CAS once
- *     it is `canceled`, so no new sandbox spins up after this point.
- *   - Flipping a claimed run to `canceled` makes the processor's
- *     `updateRunSandbox` active-status guard refuse a sandbox that attaches
- *     *after* the flip — the worker then stops that orphan itself. The cancel
- *     UPDATE returns each run's sandbox ref as it stood at the flip, so a sandbox
- *     that landed in the race window *just before* it is stopped here.
- *
- * Best-effort, unlike {@link cancelSessionWork}: a query or provider failure is
- * logged, never thrown, so a cleanup hiccup can't fail a delete the owner
- * explicitly confirmed. Provider TTLs bound a missed cleanup. Unlike the
- * session path it does not write a cancel message per run — those rows are
- * about to be cascade-deleted with the run.
+ * Cancel each session before workspace deletion or provider teardown. Commit
+ * every available receipt before waiting on providers, and park generations in
+ * the same transaction so a failed deletion needs no delayed phase rewrite.
+ * Any incomplete lookup or stop blocks deletion so ownership rows and provider
+ * credentials survive for another attempt. Terminal rows recover receipts from
+ * an earlier cancellation whose cleanup did not finish.
  */
 export async function cancelWorkspaceWork(
   admin: AdminClient,
   input: { reason: string; workspaceId: string },
 ): Promise<CancelWorkspaceWorkResult> {
-  const nowIso = new Date().toISOString();
   const result: CancelWorkspaceWorkResult = {
     canceledJobIds: [],
     canceledRunIds: [],
     stoppedSandboxIds: [],
   };
-
-  const { data: canceledJobs, error: jobsError } = await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: nowIso,
-      last_error: input.reason,
-      status: "canceled",
-    })
-    .eq("workspace_id", input.workspaceId)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .select("id");
-
-  if (jobsError) {
-    console.error("[cancel] failed to cancel workspace jobs", {
-      error: jobsError.message,
-      workspaceId: input.workspaceId,
-    });
-  } else {
-    result.canceledJobIds = (canceledJobs ?? []).map((job) => job.id);
-  }
-
-  // Returning the updated rows gives us each run's sandbox ref as it stood at
-  // the flip — including a sandbox id persisted in the race window just before
-  // it. A sandbox attached *after* the flip is caught instead by the
-  // active-status guard in updateRunSandbox, which stops it.
-  const { data: canceledRuns, error: runsError } = await admin
-    .from("agent_runs")
-    .update({
-      finished_at: nowIso,
-      status: "canceled",
-    })
-    .eq("workspace_id", input.workspaceId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES)
-    .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    );
-
-  if (runsError) {
-    console.error("[cancel] failed to cancel workspace runs", {
-      error: runsError.message,
-      workspaceId: input.workspaceId,
-    });
-    return result;
-  }
-  result.canceledRunIds = (canceledRuns ?? []).map((run) => run.id);
-
-  const connectionCache = new Map<string, SandboxConnection | null>();
-  for (const run of canceledRuns ?? []) {
-    if (!run.sandbox_id) {
-      continue;
+  const pageSize = 500;
+  let afterId: string | null = null;
+  while (true) {
+    let query = admin
+      .from("sessions")
+      .select("id")
+      .eq("workspace_id", input.workspaceId)
+      .order("id")
+      .limit(pageSize);
+    if (afterId) query = query.gt("id", afterId);
+    const { data: sessions, error } = await query;
+    if (error) {
+      throw error;
     }
-    try {
-      await stopRunSandbox(admin, run, connectionCache);
-      result.stoppedSandboxIds.push(run.sandbox_id);
-    } catch (error) {
-      console.error("[cancel] failed to stop sandbox for canceled workspace run", {
-        error: error instanceof Error ? error.message : String(error),
-        runId: run.id,
-        sandboxId: run.sandbox_id,
+
+    for (const session of sessions ?? []) {
+      const { data, error: cancelError } = await admin.rpc("cancel_session_job_attempts", {
+        p_park_phase_status: true,
+        p_reason: input.reason,
+        p_session_id: session.id,
+        p_workspace_id: input.workspaceId,
       });
+      if (cancelError) {
+        throw cancelError;
+      }
+      const receipt = data?.[0] ?? { job_ids: [], run_ids: [] };
+      result.canceledJobIds.push(...receipt.job_ids);
+      result.canceledRunIds.push(...receipt.run_ids);
     }
+    if (!sessions || sessions.length < pageSize) break;
+    afterId = sessions[sessions.length - 1]!.id;
   }
 
-  return result;
+  // A previous delete attempt may have committed cancellation before losing
+  // its metadata read. Include durable terminal owners, but never a successful
+  // publisher whose job is still active or any replacement run.
+  const recoveredRunIds = await loadTerminalWorkspaceRunIds(admin, input.workspaceId);
+  return cleanupSessionWorkReceipt(admin, {
+    receipt: {
+      job_ids: result.canceledJobIds,
+      run_ids: [...new Set([...result.canceledRunIds, ...recoveredRunIds])],
+    },
+    requireCleanup: true,
+    workspaceId: input.workspaceId,
+  });
 }

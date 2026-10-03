@@ -4,12 +4,14 @@ import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import { loadSandboxProtectedJobAttempts } from "./run-cleanup-ownership";
+import { SandboxConnectionActiveWorkError } from "./server";
 
 type AdminClient = SupabaseClient<Database>;
 type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
 type AgentRunSandboxRow = Pick<
   Tables<"agent_runs">,
-  "agent_job_id" | "sandbox_id" | "status" | "workspace_id"
+  "agent_job_id" | "attempt_count" | "sandbox_id" | "status" | "workspace_id"
 >;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
@@ -17,7 +19,6 @@ type CapabilityCheckSandboxRow = Pick<
 >;
 
 const activeRunStatuses = ["queued", "started", "running"] as const;
-const activeJobStatuses = ["queued", "started", "running"] as const;
 
 /**
  * Conservatively remove only recorded Wallie sandboxes owned by one workspace.
@@ -43,7 +44,7 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id, status, workspace_id, agent_job_id")
+      .select("sandbox_id, status, workspace_id, agent_job_id, attempt_count")
       .eq("sandbox_provider", "vercel")
       .eq("sandbox_vercel_team_id", credentials.teamId)
       .eq("sandbox_vercel_project_id", credentials.projectId)
@@ -61,7 +62,7 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
 
   const rows = (runResult.data ?? []) as AgentRunSandboxRow[];
   const checkRows = (checkResult.data ?? []) as CapabilityCheckSandboxRow[];
-  const activeJobIds = await loadActiveAgentJobIds(
+  const protectedJobAttempts = await loadSandboxProtectedJobAttempts(
     input.admin,
     rows
       .map((row) => row.agent_job_id)
@@ -76,10 +77,20 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
 
   const activeAnywhere = new Set<string>();
   for (const row of rows) {
+    const protectedPublishedRun =
+      row.status === "success" &&
+      row.agent_job_id &&
+      row.attempt_count !== null &&
+      protectedJobAttempts.get(row.agent_job_id) === row.attempt_count;
+    // Retain this workspace's credentials until post-publication PR work finishes.
+    // Check every row before stopping any sandbox so deferred rotation is side-effect free.
+    if (row.sandbox_id && row.workspace_id === input.workspaceId && protectedPublishedRun) {
+      throw new SandboxConnectionActiveWorkError();
+    }
     if (
       row.sandbox_id &&
       (activeRunStatuses.includes(row.status as (typeof activeRunStatuses)[number]) ||
-        (row.agent_job_id ? activeJobIds.has(row.agent_job_id) : false))
+        protectedPublishedRun)
     ) {
       activeAnywhere.add(row.sandbox_id);
     }
@@ -104,15 +115,4 @@ function isActiveCapabilityCheck(row: CapabilityCheckSandboxRow, now = Date.now(
   const checkedAt = Date.parse(row.checked_at);
   if (Number.isNaN(checkedAt)) return true;
   return now - checkedAt <= STALE_SANDBOX_CAPABILITY_CHECK_MS;
-}
-
-async function loadActiveAgentJobIds(admin: AdminClient, jobIds: string[]) {
-  if (jobIds.length === 0) return new Set<string>();
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("id")
-    .in("id", [...new Set(jobIds)])
-    .in("status", [...activeJobStatuses]);
-  if (error) throw error;
-  return new Set((data ?? []).map((row) => row.id));
 }

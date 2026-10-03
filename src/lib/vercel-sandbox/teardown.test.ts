@@ -126,6 +126,7 @@ describe("stopWorkspaceProviderSandboxes", () => {
     expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_check_1", {
       connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+      throwOnError: true,
     });
   });
 
@@ -143,6 +144,7 @@ describe("stopWorkspaceProviderSandboxes", () => {
     expect(result.stoppedSandboxIds).toEqual(["sbx_auth_1"]);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_auth_1", {
       connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+      throwOnError: true,
     });
     expect(inCalls).toContainEqual(["status", ["starting", "prompted"]]);
   });
@@ -196,19 +198,44 @@ describe("stopWorkspaceProviderSandboxes", () => {
     expect(result.stoppedSandboxIds).toEqual(["sbx_ok"]);
   });
 
-  it("returns the cancel result without throwing when loading the connection fails", async () => {
-    mocked.cancelWorkspaceWork.mockResolvedValue(
-      cancelResult({ canceledRunIds: ["run-1"], stoppedSandboxIds: ["sbx_run"] }),
-    );
+  it("blocks deletion when loading a provider connection fails", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
     mocked.loadVercelSandboxConnection.mockRejectedValue(new Error("db down"));
-
-    const result = await stopWorkspaceProviderSandboxes(buildAdminMock({}).admin, WORKSPACE_ID);
-
-    expect(result.canceledRunIds).toEqual(["run-1"]);
-    expect(result.stoppedSandboxIds).toEqual(["sbx_run"]);
-    // The run sandbox was stopped inside cancelWorkspaceWork; the failed
-    // connection load only blocks capability-check stops.
+    await expect(
+      stopWorkspaceProviderSandboxes(buildAdminMock({}).admin, WORKSPACE_ID),
+    ).rejects.toThrow("db down");
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it.each(["sandbox_capability_checks", "codex_device_auth_flows"] as const)(
+    "blocks deletion when %s ownership lookup fails",
+    async (table) => {
+      mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
+      mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
+      await expect(
+        stopWorkspaceProviderSandboxes(
+          buildAdminMock({ [table]: { error: { message: "lookup failed" } } }).admin,
+          WORKSPACE_ID,
+        ),
+      ).rejects.toEqual({ message: "lookup failed" });
+    },
+  );
+
+  it("blocks deletion when run cleanup or a capability sandbox stop fails", async () => {
+    mocked.cancelWorkspaceWork.mockRejectedValueOnce(new Error("run cleanup failed"));
+    await expect(
+      stopWorkspaceProviderSandboxes(buildAdminMock({}).admin, WORKSPACE_ID),
+    ).rejects.toThrow("run cleanup failed");
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
+    mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
+    mocked.stopSandboxById.mockRejectedValueOnce(new Error("stop failed"));
+    await expect(
+      stopWorkspaceProviderSandboxes(
+        buildAdminMock({ sandbox_capability_checks: { data: [{ sandbox_id: "sbx_check" }] } })
+          .admin,
+        WORKSPACE_ID,
+      ),
+    ).rejects.toThrow("stop failed");
   });
 
   it("still stops capability-check sandboxes after the cancel step ran", async () => {

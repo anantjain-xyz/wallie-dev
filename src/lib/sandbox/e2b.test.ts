@@ -11,6 +11,7 @@ const mocked = vi.hoisted(() => {
     CommandExitError,
     FileNotFoundError,
     connect: vi.fn(),
+    kill: vi.fn(),
     create: vi.fn(),
     list: vi.fn(),
     prepare: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("e2b", () => ({
   FileNotFoundError: mocked.FileNotFoundError,
   Sandbox: {
     connect: mocked.connect,
+    kill: mocked.kill,
     create: mocked.create,
     list: mocked.list,
   },
@@ -90,6 +92,7 @@ function e2bSandbox() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocked.prepare.mockResolvedValue(undefined);
+  mocked.kill.mockResolvedValue(true);
 });
 
 describe("E2B sandbox driver", () => {
@@ -196,10 +199,25 @@ describe("E2B sandbox driver", () => {
         status: "running",
       },
     ]);
-    const priorKillCalls = fixture.sandbox.kill.mock.calls.length;
-    mocked.connect.mockResolvedValue(fixture.sandbox);
     await stopE2BSandboxById("e2b-running", connection);
-    expect(mocked.connect).toHaveBeenCalledWith("e2b-running", { apiKey: "e2b_secret" });
-    expect(fixture.sandbox.kill).toHaveBeenCalledTimes(priorKillCalls + 1);
+    expect(mocked.kill).toHaveBeenCalledWith("e2b-running", { apiKey: "e2b_secret" });
+    expect(mocked.connect).not.toHaveBeenCalled();
   });
+
+  it("accepts an already-gone sandbox without connecting or resuming it", async () => {
+    mocked.kill.mockResolvedValueOnce(false);
+    await expect(stopE2BSandboxById("e2b-gone", connection)).resolves.toBeUndefined();
+    expect(mocked.kill).toHaveBeenCalledWith("e2b-gone", { apiKey: "e2b_secret" });
+    expect(mocked.connect).not.toHaveBeenCalled();
+  });
+
+  it.each(["unauthorized", "network unavailable", "rate limited", "404 in an unrelated error"])(
+    "preserves strict cleanup failure: %s",
+    async (message) => {
+      const error = new Error(message);
+      mocked.kill.mockRejectedValueOnce(error);
+      await expect(stopE2BSandboxById("e2b-running", connection)).rejects.toBe(error);
+      expect(mocked.connect).not.toHaveBeenCalled();
+    },
+  );
 });

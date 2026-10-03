@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const cancelMocks = vi.hoisted(() => ({
-  cancelSessionWork: vi.fn(async () => ({
+  cleanupSessionWorkReceipt: vi.fn(async () => ({
     canceledJobIds: [] as string[],
     canceledRunIds: [] as string[],
     stoppedSandboxIds: [] as string[],
   })),
 }));
 vi.mock("@/lib/pipeline/cancel", () => ({
-  cancelSessionWork: cancelMocks.cancelSessionWork,
+  cleanupSessionWorkReceipt: cancelMocks.cleanupSessionWorkReceipt,
 }));
-
 import { archiveSession, unarchiveSession } from "@/lib/pipeline/archive";
 
 type Row = {
@@ -19,7 +18,6 @@ type Row = {
   phase_status: "in_progress" | "approved" | "awaiting_review" | "rejected";
   updated_at: string;
 };
-
 type Call = {
   filters: Record<string, unknown>;
   op: "select" | "update";
@@ -27,23 +25,17 @@ type Call = {
   table: string;
 };
 
-/**
- * Admin mock for the `sessions` table supporting both the guarded update
- * (`.update().eq().is()/.not().select().maybeSingle()`) and the idempotent
- * fallback read (`.select().eq().single()`).
- */
 function buildAdmin(fixture: { selectRow?: Row; updateRow?: Row | null }) {
   const calls: Call[] = [];
-
-  function makeBuilder(op: Call["op"], table: string, patch?: Record<string, unknown>) {
+  const rpc = vi.fn(async () => ({
+    data: [{ job_ids: ["job-1"], run_ids: ["run-1"] }],
+    error: null as { message: string } | null,
+  }));
+  function makeBuilder(op: Call["op"], patch?: Record<string, unknown>) {
     const filters: Record<string, unknown> = {};
-    const builder: Record<string, unknown> = {
+    const builder = {
       eq(col: string, val: unknown) {
         filters[`eq.${col}`] = val;
-        return builder;
-      },
-      is(col: string, val: unknown) {
-        filters[`is.${col}`] = val;
         return builder;
       },
       not(col: string, operator: string, val: unknown) {
@@ -54,111 +46,118 @@ function buildAdmin(fixture: { selectRow?: Row; updateRow?: Row | null }) {
         return builder;
       },
       maybeSingle() {
-        calls.push({ filters, op, patch, table });
+        calls.push({ filters, op, patch, table: "sessions" });
         return Promise.resolve({ data: fixture.updateRow ?? null, error: null });
       },
       single() {
-        calls.push({ filters, op, patch, table });
+        calls.push({ filters, op, patch, table: "sessions" });
         return Promise.resolve({ data: fixture.selectRow ?? null, error: null });
       },
     };
     return builder;
   }
-
   const admin = {
+    rpc,
     from() {
       return {
-        select() {
-          return makeBuilder("select", "sessions");
-        },
-        update(patch: Record<string, unknown>) {
-          return makeBuilder("update", "sessions", patch);
-        },
+        select: () => makeBuilder("select"),
+        update: (patch: Record<string, unknown>) => makeBuilder("update", patch),
       };
     },
   };
-
-  return { admin, calls };
+  return { admin, calls, rpc };
 }
 
 afterEach(() => {
   vi.clearAllMocks();
 });
+const input = {
+  reason: "Session archived by a workspace member.",
+  sessionId: "s1",
+  workspaceId: "w1",
+};
 
 describe("archiveSession", () => {
-  it("sets archived_at under the is-null guard, then cancels in-flight work", async () => {
-    const { admin, calls } = buildAdmin({
+  it.each(["awaiting_review", "approved", "rejected"] as const)(
+    "preserves the RPC's %s phase without an application-side phase write",
+    async (phase) => {
+      const { admin, calls, rpc } = buildAdmin({
+        selectRow: {
+          archived_at: "2026-06-07T12:00:00.000Z",
+          id: "s1",
+          phase_status: phase,
+          updated_at: "2026-06-07T12:00:00.000Z",
+        },
+      });
+      const result = await archiveSession(admin as never, input);
+      expect(rpc).toHaveBeenCalledExactlyOnceWith("archive_session_job_attempts", {
+        p_completed: false,
+        p_reason: input.reason,
+        p_session_id: "s1",
+        p_workspace_id: "w1",
+      });
+      expect(cancelMocks.cleanupSessionWorkReceipt).toHaveBeenCalledExactlyOnceWith(admin, {
+        receipt: { job_ids: ["job-1"], run_ids: ["run-1"] },
+        reason: input.reason,
+        workspaceId: "w1",
+      });
+      expect(result.phaseStatus).toBe(phase);
+      expect(calls).toEqual([
+        {
+          table: "sessions",
+          op: "select",
+          patch: undefined,
+          filters: { "eq.id": "s1", "eq.workspace_id": "w1" },
+        },
+      ]);
+    },
+  );
+
+  it("commits archive before cleanup and reads later state without overwriting a concurrent unarchive", async () => {
+    const row: Row = {
+      archived_at: "2026-06-07T12:00:00.000Z",
+      id: "s1",
+      phase_status: "rejected",
+      updated_at: "2026-06-07T12:00:00.000Z",
+    };
+    const { admin, calls, rpc } = buildAdmin({ selectRow: row });
+    cancelMocks.cleanupSessionWorkReceipt.mockImplementationOnce(async () => {
+      expect(rpc).toHaveBeenCalledTimes(1);
+      // Another request can unarchive and launch a replacement while the old
+      // sandbox stop is waiting. The archive helper must not park it afterward.
+      row.archived_at = null;
+      row.phase_status = "in_progress";
+      return { canceledJobIds: ["job-1"], canceledRunIds: ["run-1"], stoppedSandboxIds: ["sb-1"] };
+    });
+    const result = await archiveSession(admin as never, input);
+    expect(result).toMatchObject({ archivedAt: null, phaseStatus: "in_progress" });
+    expect(calls.some((call) => call.op === "update")).toBe(false);
+  });
+
+  it("lets an explicit completion archive approve inside the transaction", async () => {
+    const { admin, rpc } = buildAdmin({
       selectRow: {
         archived_at: "2026-06-07T12:00:00.000Z",
         id: "s1",
-        phase_status: "rejected",
-        updated_at: "2026-06-07T12:00:01.000Z",
-      },
-      updateRow: {
-        archived_at: "2026-06-07T12:00:00.000Z",
-        id: "s1",
-        phase_status: "in_progress",
+        phase_status: "approved",
         updated_at: "2026-06-07T12:00:00.000Z",
       },
     });
-
-    const result = await archiveSession(admin as never, {
-      reason: "Session archived by a workspace member.",
-      sessionId: "s1",
-    });
-
-    expect(cancelMocks.cancelSessionWork).toHaveBeenCalledWith(admin, {
-      parkPhaseStatus: true,
-      reason: "Session archived by a workspace member.",
-      sessionId: "s1",
-    });
-
-    const update = calls.find((c) => c.op === "update");
-    expect(typeof update?.patch?.archived_at).toBe("string");
-    expect(update?.filters["eq.id"]).toBe("s1");
-    expect(update?.filters["is.archived_at"]).toBeNull();
-
-    expect(result).toEqual({
-      archivedAt: "2026-06-07T12:00:00.000Z",
-      id: "s1",
-      phaseStatus: "rejected",
-      updatedAt: "2026-06-07T12:00:01.000Z",
-    });
-    // The final read happens after cancellation so phase_status is authoritative.
-    expect(calls.some((c) => c.op === "select")).toBe(true);
+    await archiveSession(admin as never, { ...input, completed: true });
+    expect(rpc).toHaveBeenCalledWith(
+      "archive_session_job_attempts",
+      expect.objectContaining({ p_completed: true }),
+    );
   });
 
-  it("is idempotent: when already archived it reads back the current state", async () => {
-    const { admin, calls } = buildAdmin({
-      updateRow: null,
-      selectRow: {
-        archived_at: "2026-06-01T00:00:00.000Z",
-        id: "s1",
-        phase_status: "awaiting_review",
-        updated_at: "2026-06-01T00:00:00.000Z",
-      },
+  it("does not clean up or rewrite state if the archive transaction fails", async () => {
+    const { admin, calls, rpc } = buildAdmin({});
+    rpc.mockResolvedValueOnce({ data: [], error: { message: "archive failed" } });
+    await expect(archiveSession(admin as never, input)).rejects.toEqual({
+      message: "archive failed",
     });
-
-    const result = await archiveSession(admin as never, {
-      reason: "Session archived by a workspace member.",
-      sessionId: "s1",
-    });
-
-    expect(result).toEqual({
-      archivedAt: "2026-06-01T00:00:00.000Z",
-      id: "s1",
-      phaseStatus: "awaiting_review",
-      updatedAt: "2026-06-01T00:00:00.000Z",
-    });
-    expect(calls.some((c) => c.op === "select")).toBe(true);
-    // cancelSessionWork is idempotent and runs even on the already-archived
-    // path, so a retry can finish cleanup if a prior archive's cancel failed
-    // after the marker landed.
-    expect(cancelMocks.cancelSessionWork).toHaveBeenCalledWith(admin, {
-      parkPhaseStatus: true,
-      reason: "Session archived by a workspace member.",
-      sessionId: "s1",
-    });
+    expect(cancelMocks.cleanupSessionWorkReceipt).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
   });
 });
 
@@ -179,9 +178,9 @@ describe("unarchiveSession", () => {
       },
     });
 
-    const result = await unarchiveSession(admin as never, { sessionId: "s1" });
+    const result = await unarchiveSession(admin as never, { sessionId: "s1", workspaceId: "w1" });
 
-    expect(cancelMocks.cancelSessionWork).not.toHaveBeenCalled();
+    expect(cancelMocks.cleanupSessionWorkReceipt).not.toHaveBeenCalled();
 
     const update = calls.find((c) => c.op === "update");
     expect(update?.patch).toEqual({ archived_at: null });
@@ -206,7 +205,7 @@ describe("unarchiveSession", () => {
       },
     });
 
-    const result = await unarchiveSession(admin as never, { sessionId: "s1" });
+    const result = await unarchiveSession(admin as never, { sessionId: "s1", workspaceId: "w1" });
 
     expect(result).toEqual({
       archivedAt: null,
@@ -232,6 +231,7 @@ describe("unarchiveSession", () => {
     const result = await unarchiveSession(admin as never, {
       expectedArchivedAt,
       sessionId: "s1",
+      workspaceId: "w1",
     });
 
     const update = calls.find((call) => call.op === "update");

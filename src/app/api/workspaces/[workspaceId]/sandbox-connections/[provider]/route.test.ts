@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { Tables } from "@/lib/supabase/database.types";
+
 const mocked = vi.hoisted(() => ({
   acquireSandboxConnectionMutationLock: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
@@ -92,6 +94,7 @@ const vercelPreview = {
 
 type SandboxRunRow = {
   agent_job_id?: string | null;
+  attempt_count: number | null;
   sandbox_id: string | null;
   sandbox_provider?: string | null;
   sandbox_vercel_project_id?: string | null;
@@ -145,7 +148,8 @@ function mockAccess(ok = true) {
 
 function adminMock(
   options: {
-    activeJobIds?: string[];
+    jobRows?: Array<Pick<Tables<"agent_jobs">, "id" | "attempt_count" | "status">>;
+    heartbeats?: Array<Pick<Tables<"worker_heartbeats">, "active_job_ids" | "last_heartbeat_at">>;
     sandboxCheckRows?: SandboxCheckRow[];
     sandboxRunRows?: SandboxRunRow[];
   } = {},
@@ -240,21 +244,37 @@ function adminMock(
                 filters.set(column, value);
                 return builder;
               },
-              then: (resolve: (value: { data: Array<{ id: string }>; error: null }) => void) => {
-                const jobIds = filters.get("id");
-                const activeJobIds = new Set(options.activeJobIds ?? []);
+              then: (
+                resolve: (value: {
+                  data: NonNullable<typeof options.jobRows>;
+                  error: null;
+                }) => void,
+              ) => {
                 resolve({
-                  data: Array.isArray(jobIds)
-                    ? jobIds
-                        .filter((jobId): jobId is string => activeJobIds.has(String(jobId)))
-                        .map((id) => ({ id }))
-                    : [],
+                  data: (options.jobRows ?? []).filter((row) =>
+                    [...filters].every(
+                      ([column, value]) =>
+                        Array.isArray(value) && value.includes(row[column as keyof typeof row]),
+                    ),
+                  ),
                   error: null,
                 });
               },
             };
             return builder;
           },
+        };
+      }
+
+      if (table === "worker_heartbeats") {
+        return {
+          select: () => ({
+            gte: (_column: string, cutoff: string) =>
+              Promise.resolve({
+                data: (options.heartbeats ?? []).filter((row) => row.last_heartbeat_at >= cutoff),
+                error: null,
+              }),
+          }),
         };
       }
 
@@ -409,7 +429,14 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
 
   it("cleans previous Vercel project sandboxes before rotating a connection", async () => {
     const admin = adminMock({
-      sandboxRunRows: [{ sandbox_id: "old-terminal", status: "error", workspace_id: workspaceId }],
+      sandboxRunRows: [
+        {
+          attempt_count: null,
+          sandbox_id: "old-terminal",
+          status: "error",
+          workspace_id: workspaceId,
+        },
+      ],
     });
     mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
     mocked.listRunningSandboxes.mockResolvedValueOnce([
@@ -511,7 +538,14 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
 
   it("stops owned project sandboxes before disconnecting Vercel", async () => {
     const admin = adminMock({
-      sandboxRunRows: [{ sandbox_id: "sandbox-1", status: "error", workspace_id: workspaceId }],
+      sandboxRunRows: [
+        {
+          attempt_count: null,
+          sandbox_id: "sandbox-1",
+          status: "error",
+          workspace_id: workspaceId,
+        },
+      ],
     });
     mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
     mocked.listRunningSandboxes.mockResolvedValueOnce([
@@ -535,7 +569,7 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
 
   it("does not stop unknown or active shared-project sandboxes on disconnect", async () => {
     const admin = adminMock({
-      activeJobIds: ["job-post-run"],
+      jobRows: [{ id: "job-post-run", attempt_count: 1, status: "running" }],
       sandboxCheckRows: [
         { sandbox_id: "capability-terminal", status: "error", workspace_id: workspaceId },
         { sandbox_id: "capability-running", status: "running", workspace_id: workspaceId },
@@ -549,33 +583,38 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
       sandboxRunRows: [
         {
           agent_job_id: "job-terminal",
+          attempt_count: null,
           sandbox_id: "owned-terminal",
           status: "error",
           workspace_id: workspaceId,
         },
         {
           agent_job_id: "job-finished-here-active-elsewhere",
+          attempt_count: null,
           sandbox_id: "owned-but-active-elsewhere",
           status: "error",
           workspace_id: workspaceId,
         },
         {
           agent_job_id: "job-active-elsewhere",
+          attempt_count: null,
           sandbox_id: "owned-but-active-elsewhere",
           status: "running",
           workspace_id: "33333333-3333-4333-8333-333333333333",
         },
         {
           agent_job_id: "job-other-active",
+          attempt_count: null,
           sandbox_id: "other-active",
           status: "running",
           workspace_id: "33333333-3333-4333-8333-333333333333",
         },
         {
           agent_job_id: "job-post-run",
-          sandbox_id: "owned-post-run",
+          attempt_count: 1,
+          sandbox_id: "other-post-run",
           status: "success",
-          workspace_id: workspaceId,
+          workspace_id: "33333333-3333-4333-8333-333333333333",
         },
       ],
     });
@@ -584,7 +623,7 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
       [
         "owned-terminal",
         "owned-but-active-elsewhere",
-        "owned-post-run",
+        "other-post-run",
         "capability-terminal",
         "capability-running",
         "capability-stale",
@@ -610,6 +649,43 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
       throwOnError: true,
     });
   });
+
+  it.each(["running", "success"] as const)(
+    "retains credentials when a published run's %s job still owns PR work",
+    async (status) => {
+      const admin = adminMock({
+        jobRows: [{ id: "job-post-run", attempt_count: 2, status }],
+        heartbeats: [
+          { active_job_ids: ["job-post-run"], last_heartbeat_at: new Date().toISOString() },
+        ],
+        sandboxRunRows: [
+          { attempt_count: null, sandbox_id: "orphan", status: "error", workspace_id: workspaceId },
+          {
+            agent_job_id: "job-post-run",
+            attempt_count: 2,
+            sandbox_id: "published",
+            status: "success",
+            workspace_id: workspaceId,
+          },
+        ],
+      });
+      mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
+      mocked.listRunningSandboxes.mockResolvedValueOnce([
+        { id: "orphan", status: "running", createdAt: 0 },
+        { id: "published", status: "running", createdAt: 0 },
+      ]);
+
+      const response = await DELETE(new Request("http://localhost"), context("vercel"));
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: "Cannot change this sandbox connection while related Wallie work is active.",
+      });
+      expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+      expect(admin.deletedTables).toEqual([]);
+      expect(releaseMutationLock).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps the Vercel connection row when disconnect cleanup fails", async () => {
     const admin = adminMock();

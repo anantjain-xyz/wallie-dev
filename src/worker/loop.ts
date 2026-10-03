@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 
 import type { WorkerConfig } from "./config";
@@ -42,44 +41,41 @@ export async function claimNextJob(
   return { job: row, outcome: "claimed" };
 }
 
-/**
- * Process a single already-claimed job to completion. Touches the linked runs'
- * activity so the stall detector has a fresh baseline even if the processor
- * crashes immediately, then runs the pipeline. Never rejects: a processing
- * failure is recorded via markJobError so one job cannot abort its siblings or
- * the scheduler loop.
- */
+/** Process one captured queue claim. Recovery can only retire that attempt. */
 export async function runClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {
-  // Touch last_activity_at on any linked agent_runs so the stall detector has
-  // a fresh baseline even if the processor crashes immediately.
-  await admin
-    .from("agent_runs")
-    .update({ last_activity_at: new Date().toISOString() })
-    .eq("agent_job_id", job.id)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-
+  const jobId = job.id;
+  const attemptCount = job.attempt_count;
   try {
     await processPipelineJob({ admin, job });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Worker job processing failed";
     console.error("[worker] job processing error", { error: message, jobId: job.id });
-    await markJobError(admin, job, message);
+    try {
+      // The processor may have failed after binding or publishing its run. Look
+      // up only this captured attempt; never borrow a replacement's run identity.
+      const { data: run, error: lookupError } = await admin
+        .from("agent_runs")
+        .select("id")
+        .eq("agent_job_id", jobId)
+        .eq("attempt_count", attemptCount)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+      const { error: recoveryError } = await admin.rpc("fail_session_job_attempt", {
+        p_job_id: jobId,
+        p_attempt_count: attemptCount,
+        p_run_id: run?.id,
+        p_error: message,
+        p_retry: false,
+        p_max_retries: 0,
+      });
+      if (recoveryError) throw recoveryError;
+    } catch (recoveryError) {
+      // A database failure is not permission to bypass the ownership guard.
+      console.error("[worker] failed to record processing error", {
+        error: recoveryError,
+        jobId: job.id,
+        attemptCount,
+      });
+    }
   }
-}
-
-async function markJobError(
-  admin: AdminClient,
-  job: AgentJobRow,
-  errorMessage: string,
-): Promise<void> {
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: errorMessage,
-      status: "error",
-    })
-    .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to error.
-    .neq("status", "canceled");
 }

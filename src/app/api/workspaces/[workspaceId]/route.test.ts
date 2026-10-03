@@ -233,6 +233,28 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     );
   });
 
+  it("keeps workspace records and credentials when cleanup fails, then permits a successful retry", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
+    const calls = mockDeleteResult({});
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocked.stopWorkspaceProviderSandboxes.mockRejectedValueOnce(
+      new Error("metadata lookup failed"),
+    );
+    const failed = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+    expect(failed.status).toBe(503);
+    await expect(failed.json()).resolves.toEqual({
+      error: "Sandbox cleanup is incomplete. Please retry deleting the workspace.",
+    });
+    expect(calls.del).not.toHaveBeenCalled();
+    expect(calls.remove).not.toHaveBeenCalled();
+    expect(mocked.removeWorkspaceSessionAttachments).not.toHaveBeenCalled();
+    const retry = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+    expect(retry.status).toBe(200);
+    expect(calls.del).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
   it("removes orphaned avatar objects from storage after deleting", async () => {
     grantAccess();
     mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
@@ -341,18 +363,17 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to delete workspace." });
   });
 
-  it("parks sessions left mid-generation when the delete fails", async () => {
+  it("does not park a successor after provider cleanup when the delete fails", async () => {
     grantAccess();
     const calls = mockDeleteResult({ error: new Error("db down") });
 
     const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
 
     expect(response.status).toBe(500);
-    // The pre-delete teardown already canceled this workspace's jobs/runs; since
-    // the delete didn't commit, the route must move any still-generating session
-    // out of `in_progress` so it isn't stranded with no job.
-    expect(calls.from).toHaveBeenCalledWith("sessions");
-    expect(calls.sessionsUpdate).toHaveBeenCalledWith({ phase_status: "rejected" });
+    // The cancellation RPC already parked its generation. A replacement can
+    // start while provider cleanup is waiting, so the route must not park again.
+    expect(calls.from).not.toHaveBeenCalledWith("sessions");
+    expect(calls.sessionsUpdate).not.toHaveBeenCalled();
   });
 
   it("does not park sessions when the delete succeeds", async () => {
