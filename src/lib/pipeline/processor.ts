@@ -517,13 +517,12 @@ async function publishArtifact(input: {
     }
   }
 
-  if (runId) {
-    await persistEvent(admin, runId, job.attempt_count, session.workspace_id, {
-      type: "completion",
-      taskComplete: true,
-      summary: `${stage.name} run completed`,
-    });
-  }
+  // Publication already made this run successful. Append its final history
+  // without requiring active execution or refreshing its activity timestamp.
+  await persistRunMessage(admin, runId, session.workspace_id, {
+    kind: "completion",
+    messageMd: `${stage.name} run completed`,
+  });
 
   return "published";
 }
@@ -945,17 +944,24 @@ async function persistEvent(
       break;
   }
 
+  await persistRunMessage(admin, runId, workspaceId, { kind, messageMd });
+  return touchRunActivity(admin, runId, attemptCount);
+}
+
+/** Run history remains append-only after publication and never changes ownership. */
+async function persistRunMessage(
+  admin: AdminClient,
+  runId: string,
+  workspaceId: string,
+  input: { kind: string; messageMd: string },
+): Promise<void> {
   const { error } = await admin.from("agent_run_messages").insert({
     agent_run_id: runId,
-    kind,
-    message_md: messageMd,
+    kind: input.kind,
+    message_md: input.messageMd,
     workspace_id: workspaceId,
   });
-  if (error) {
-    throw error;
-  }
-
-  return touchRunActivity(admin, runId, attemptCount);
+  if (error) throw error;
 }
 
 async function persistRunFailureDiagnostic(

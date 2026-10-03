@@ -853,6 +853,78 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.openSessionPullRequest).toHaveBeenCalledOnce();
   });
 
+  it("appends completion history after publication without refreshing an active run", async () => {
+    const { admin, rpc, runRows, runUpdateFilters, insertedMessages, updatedJobs } = buildAdminMock(
+      {
+        session: baseSession(),
+      },
+    );
+    let updatesBeforePullRequest = 0;
+    mocked.openSessionPullRequest.mockImplementationOnce(async () => {
+      // The real publication transaction terminalizes the run before PR work.
+      expect(runRows[0].status).toBe("success");
+      expect(insertedMessages).not.toContainEqual(
+        expect.objectContaining({
+          message_md: "Product run completed",
+        }),
+      );
+      updatesBeforePullRequest = runUpdateFilters.length;
+      return { kind: "success", prNumber: 42 };
+    });
+
+    expect(await processPipelineJob({ admin, job: baseJob({ attempt_count: 2 }) })).toMatchObject({
+      result: "success",
+      runId: "run-1",
+    });
+    expect(mocked.openSessionPullRequest).toHaveBeenCalledOnce();
+    expect(runUpdateFilters).toHaveLength(updatesBeforePullRequest);
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({
+        agent_run_id: "run-1",
+        kind: "completion",
+        message_md: "Product run completed",
+      }),
+    );
+    expect(rpc).toHaveBeenCalledWith("complete_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 2,
+      p_run_id: "run-1",
+    });
+    expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+    expect(updatedJobs).toEqual([{ status: "success" }]);
+    const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+    expect(sandbox.stop).toHaveBeenCalledOnce();
+    const completeCall = rpc.mock.calls.findIndex(
+      ([name]) => name === "complete_session_job_attempt",
+    );
+    expect(sandbox.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      rpc.mock.invocationCallOrder[completeCall],
+    );
+    expect(runRows[0].status).toBe("success");
+  });
+
+  it("still refuses runner completion after active execution ownership is canceled", async () => {
+    const { admin, rpc, runRows, insertedArtifacts } = buildAdminMock({ session: baseSession() });
+    mocked.createAgentRunner.mockReturnValue({
+      ...makeRunner([]),
+      start: vi.fn(async function* () {
+        runRows[0].status = "canceled";
+        yield {
+          type: "completion",
+          taskComplete: true,
+          finalOutput: "stale output",
+          summary: "Runner done",
+        } as AgentEvent;
+      }),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
+    expect(insertedArtifacts).toEqual([]);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+    expect(sandbox.stop).toHaveBeenCalledOnce();
+  });
+
   it("leaves artifacts untouched and stops its sandbox when publication loses ownership", async () => {
     const { admin, insertedArtifacts, legacyMutationCalls, rpc } = buildAdminMock({
       session: baseSession(),
