@@ -153,29 +153,44 @@ export async function loadCompletedStageArtifacts(
   admin: AdminClient,
   sessionId: string,
 ): Promise<Record<string, string>> {
-  // Map slug → latest markdown artifact for every completed stage on this
-  // session. Used by the prompt renderer for {{artifact.previousStages.<slug>}}.
+  // Completion and artifact snapshots can retain old names after a stage is
+  // renamed. Associate by durable ID, then expose only the current prompt key.
   const { data: completions, error: completionError } = await admin
     .from("session_phase_completions")
-    .select("stage_slug")
+    .select("stage_id")
     .eq("session_id", sessionId);
   if (completionError) throw completionError;
-  const completedSlugs = (completions ?? []).map((completion) => completion.stage_slug);
-  if (completedSlugs.length === 0) return {};
-  const { data, error } = await admin
-    .from("session_artifacts")
-    .select("stage_slug, version, artifact_json")
-    .eq("session_id", sessionId)
-    .in("stage_slug", completedSlugs)
-    .order("version", { ascending: true });
-  if (error) throw error;
+  const completedStageIds = [
+    ...new Set(
+      (completions ?? []).flatMap((completion) =>
+        completion.stage_id ? [completion.stage_id] : [],
+      ),
+    ),
+  ];
+  if (completedStageIds.length === 0) return {};
+  const [{ data: artifacts, error: artifactError }, { data: stages, error: stageError }] =
+    await Promise.all([
+      admin
+        .from("session_artifacts")
+        .select("stage_id, version, artifact_json")
+        .eq("session_id", sessionId)
+        .in("stage_id", completedStageIds)
+        .order("version", { ascending: true }),
+      admin.from("pipeline_stages").select("id, slug").in("id", completedStageIds),
+    ]);
+  if (artifactError) throw artifactError;
+  if (stageError) throw stageError;
 
+  const currentSlugs = new Map((stages ?? []).map((stage) => [stage.id, stage.slug]));
   const result: Record<string, string> = {};
-  for (const row of data ?? []) {
+  for (const row of artifacts ?? []) {
+    const slug = row.stage_id ? currentSlugs.get(row.stage_id) : undefined;
+    // Orphaned historical labels cannot authorize prompt input for another stage.
+    if (!slug) continue;
     const value = row.artifact_json;
     const text = typeof value === "string" ? value : JSON.stringify(value);
     // Later versions win — natural with the ascending sort above.
-    result[row.stage_slug] = text;
+    result[slug] = text;
   }
   return result;
 }

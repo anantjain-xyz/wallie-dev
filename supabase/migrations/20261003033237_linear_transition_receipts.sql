@@ -30,15 +30,14 @@ CREATE OR REPLACE FUNCTION internal.preserve_session_artifact_version_history()
  SECURITY DEFINER
  SET search_path TO ''
 AS $function$
-declare target_slug text;
 begin
   if new.current_stage_id is distinct from old.current_stage_id then
-    select slug into target_slug from public.pipeline_stages
+    perform 1 from public.pipeline_stages
     where id = new.current_stage_id and workspace_id = new.workspace_id and pipeline_id = new.pipeline_id;
     if not found then raise exception 'Session stage is outside its workspace pipeline' using errcode = '23514'; end if;
     new.current_artifact_version := greatest(new.current_artifact_version, coalesce((
       select max(version) from public.session_artifacts
-      where session_id = new.id and stage_slug = target_slug
+      where session_id = new.id and stage_id = new.current_stage_id
     ), 0));
   end if;
   return new;
@@ -178,7 +177,7 @@ begin
       and stage.pipeline_id = s.pipeline_id and stage.position >= target.position;
     update public.sessions set current_stage_id = target.id,
       current_artifact_version = coalesce((select max(version) from public.session_artifacts
-        where session_id = s.id and stage_slug = target.slug), 0),
+        where session_id = s.id and stage_id = target.id), 0),
       phase_status = 'rejected', rejection_count = 0 where id = s.id;
     select queued.job_id, queued.run_id into queued_job, queued_run
     from public.enqueue_session_job_with_run(s.id,s.workspace_id,target.id,null,'assignment',
@@ -220,3 +219,48 @@ revoke all on function internal.seed_session_linear_transition_receipt() from pu
 revoke all on function internal.preserve_session_artifact_version_history() from public,anon,authenticated;
 revoke all on function public.apply_linear_session_transition(uuid,uuid,text,timestamptz,timestamptz,text,timestamptz,text,timestamptz,text,text,text,text) from public,anon,authenticated;
 grant execute on function public.apply_linear_session_transition(uuid,uuid,text,timestamptz,timestamptz,text,timestamptz,text,timestamptz,text,text,text,text) to service_role;
+
+
+CREATE OR REPLACE FUNCTION public.publish_session_job_attempt(p_job_id uuid, p_attempt_count integer, p_run_id uuid, p_expected_artifact_version integer, p_artifact_json text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SET search_path TO ''
+AS $function$
+declare s public.sessions%rowtype; j public.agent_jobs%rowtype; r public.agent_runs%rowtype; next_version integer;
+begin
+  if nullif(btrim(p_artifact_json), '') is null then
+    raise exception 'Artifact markdown must not be blank' using errcode = '23514';
+  end if;
+  select owner.* into s from public.sessions owner
+  join public.agent_jobs candidate on candidate.session_id = owner.id
+  where candidate.id = p_job_id for no key update of owner;
+  if not found then return false; end if;
+  select * into j from public.agent_jobs where id = p_job_id for update;
+  if not found or p_attempt_count is null or j.attempt_count <> p_attempt_count
+     or j.status not in ('started', 'running') or j.session_id <> s.id or j.workspace_id <> s.workspace_id
+     or s.archived_at is not null or s.current_stage_id is distinct from j.stage_id
+     or s.phase_status <> 'in_progress' or p_expected_artifact_version is null
+     or s.current_artifact_version <> p_expected_artifact_version then return false; end if;
+  select * into r from public.agent_runs where id = p_run_id for update;
+  if not found or r.agent_job_id is distinct from j.id or r.attempt_count is distinct from p_attempt_count
+     or r.workspace_id <> s.workspace_id or r.session_id <> s.id
+     or r.stage_id is distinct from j.stage_id or r.status <> 'running' then return false; end if;
+  -- Stage names are mutable snapshots and the retained uniqueness constraint
+  -- still reserves (session, slug, version). Allocate above both the durable
+  -- stage's history and the publishing job's captured label, without rewriting
+  -- either. The session lock serializes allocation with other publishers.
+  select greatest(p_expected_artifact_version, coalesce(max(artifact.version), 0)) + 1
+  into next_version from public.session_artifacts artifact
+  where artifact.session_id = s.id and (artifact.stage_id = j.stage_id or artifact.stage_slug = j.stage_slug);
+  insert into public.session_artifacts(workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
+  values(s.workspace_id, s.id, j.stage_id, j.stage_slug, next_version, to_jsonb(p_artifact_json));
+  update public.sessions set phase_status = 'awaiting_review', current_artifact_version = next_version
+  where id = s.id;
+  update public.agent_runs set status = 'success', finished_at = now(), last_activity_at = now()
+  where id = r.id;
+  return true;
+end;
+$function$
+;
+revoke all on function public.publish_session_job_attempt(uuid,integer,uuid,integer,text) from public,anon,authenticated;
+grant execute on function public.publish_session_job_attempt(uuid,integer,uuid,integer,text) to service_role;

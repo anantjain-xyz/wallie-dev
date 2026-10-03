@@ -154,5 +154,61 @@ select is((select outcome from public.apply_linear_session_transition(
 'done-race',now()+interval '1 second','done',now()+interval '1 second','Done')),'completed','Done dominates concurrent manual archive');
 select is((select phase_status::text from public.sessions where id=(select session_id from linear_session)),'approved','Done upgrades archived phase');
 select is((select archived_at from public.sessions where id=(select session_id from linear_session)),(select archived_at from archived_snapshot),'Done preserves original archive timestamp');
+-- A revisited stage keeps its version sequence through slug changes. Historical
+-- rows retain their original names; another stage's old use of the new slug is
+-- not evidence for this stage's counter.
+update public.sessions set linear_issue_id=null where id=(select session_id from linear_session);
+truncate linear_session;
+insert into linear_session select * from public.create_session_with_first_job(
+'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
+'Renamed stage history','Test stable history','codex','gpt-5.5','TEST-123',null,null,(select id from linear_pipeline));
+create temp table renamed_stage as select id from public.pipeline_stages
+where pipeline_id=(select id from linear_pipeline) and slug='build';
+insert into public.session_artifacts(session_id,workspace_id,stage_id,stage_slug,version,artifact_json)
+select session_id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,(select id from renamed_stage),'build',4,'"published build v4"'::jsonb from linear_session;
+insert into public.session_artifacts(session_id,workspace_id,stage_id,stage_slug,version,artifact_json)
+select session_id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,stage.id,'implement',20,'"other stage history"'::jsonb
+from linear_session cross join public.pipeline_stages stage where stage.pipeline_id=(select id from linear_pipeline) and stage.slug='plan';
+update public.pipeline_stages set slug='implement' where id=(select id from renamed_stage);
+update public.workspace_linear_routing set rework_stage_slug='implement' where workspace_id='b1b2c3d4-0001-4000-8000-000000000001';
+create temp table renamed_route as select * from pg_temp.route(1,'Rework');
+select is((select outcome from renamed_route),'routed','renamed stage is still a valid selected routing target');
+select is((select current_artifact_version from public.sessions where id=(select session_id from linear_session)),4,'reroute counts stable stage history, not matching slug history of another stage');
+select is((select stage_slug from public.agent_runs where id=(select run_id from renamed_route)),'implement','replacement run captures current stage name');
+select is((select stage_slug from public.session_artifacts where session_id=(select session_id from linear_session) and stage_id=(select id from renamed_stage) and version=4),'build','reroute preserves historical artifact slug');
+update public.sessions set current_stage_id=(select id from public.pipeline_stages where pipeline_id=(select id from linear_pipeline) and slug='release'),current_artifact_version=0
+where id=(select session_id from linear_session);
+update public.sessions set current_stage_id=(select id from renamed_stage),current_artifact_version=0 where id=(select session_id from linear_session);
+select is((select current_artifact_version from public.sessions where id=(select session_id from linear_session)),4,'legacy approval-style zero counter normalizes across stage rename');
+insert into public.session_artifacts(session_id,workspace_id,stage_id,stage_slug,version,artifact_json)
+select session_id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,(select id from renamed_stage),'implement',5,'"published implement v5"'::jsonb from linear_session;
+update public.sessions set current_stage_id=(select id from public.pipeline_stages where pipeline_id=(select id from linear_pipeline) and slug='release'),current_artifact_version=0
+where id=(select session_id from linear_session);
+update public.sessions set current_stage_id=(select id from renamed_stage),current_artifact_version=0 where id=(select session_id from linear_session);
+select is((select current_artifact_version from public.sessions where id=(select session_id from linear_session)),5,'later publication continues one version sequence across historical stage names');
+select is((select array_agg(version order by version) from public.session_artifacts where session_id=(select session_id from linear_session) and stage_id=(select id from renamed_stage)),array[4,5],'both artifact versions remain associated with their durable stage');
+-- The physical uniqueness key still includes the captured slug. Another
+-- stage's retained old-name output can occupy the immediate next slot.
+insert into public.session_artifacts(session_id,workspace_id,stage_id,stage_slug,version,artifact_json)
+select session_id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,stage.id,'implement',6,'"occupied legacy label v6"'::jsonb
+from linear_session cross join public.pipeline_stages stage where stage.pipeline_id=(select id from linear_pipeline) and stage.slug='plan';
+update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from renamed_route);
+create temp table publishing_run as select public.start_session_job_attempt(
+(select job_id from renamed_route),1,(select id from renamed_stage),5,'codex','gpt-5.5','project') as id;
+select is((select id from publishing_run),(select run_id from renamed_route),'publication regression owns the exact queued replacement run');
+-- Renaming during execution must not change the run's captured artifact label.
+update public.pipeline_stages set slug='implementation' where id=(select id from renamed_stage);
+select ok(not public.publish_session_job_attempt((select job_id from renamed_route),1,(select id from publishing_run),4,'stale output'),'stale expected base still refuses before version allocation');
+select is((select status::text from public.agent_runs where id=(select id from publishing_run)),'running','refused publication preserves owned running state');
+select ok(public.publish_session_job_attempt((select job_id from renamed_route),1,(select id from publishing_run),5,'new renamed output'),'publication skips occupied legacy label slots');
+select is((select current_artifact_version from public.sessions where id=(select session_id from linear_session)),21,'review pointer records allocation above all captured-label history');
+select ok(exists(select 1 from public.session_artifacts where session_id=(select session_id from linear_session)
+  and stage_id=(select id from renamed_stage) and stage_slug='implement' and version=21 and artifact_json='"new renamed output"'::jsonb),'allocated artifact retains exact stable stage ID and publishing job label');
+select is((select artifact_json #>> '{}' from public.session_artifacts where session_id=(select session_id from linear_session)
+  and stage_slug='implement' and version=6),'occupied legacy label v6','another stage occupied next slot remains unchanged');
+select is((select artifact_json #>> '{}' from public.session_artifacts where session_id=(select session_id from linear_session)
+  and stage_slug='implement' and version=20),'other stage history','highest legacy label artifact remains unchanged');
+select is((select status::text from public.agent_runs where id=(select id from publishing_run)),'success','allocation atomically completes the owned run');
+select ok(not public.publish_session_job_attempt((select job_id from renamed_route),1,(select id from publishing_run),5,'duplicate output'),'same owner cannot republish an already committed artifact');
 select * from finish();
 rollback;
