@@ -219,6 +219,87 @@ describe("SessionDetailPageClient", () => {
     window.history.replaceState(window.history.state, "", "/");
   });
 
+  it("sends the displayed artifact identity and version before optimistic stage advancement", async () => {
+    const data = makeSessionDetailData();
+    data.session.currentArtifactVersion = 2;
+    data.session.artifacts = [
+      {
+        id: "artifact-1",
+        stageSlug: "product",
+        version: 1,
+        payload: "Reviewed output",
+        createdAt: data.session.updatedAt,
+      },
+    ];
+    data.session.pipeline.stages.push({
+      id: "stage-2",
+      slug: "build",
+      name: "Build",
+      position: 1,
+      description: "Build",
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ error: "Review is stale." }, { status: 409 }));
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: null,
+        initialData: data,
+        initialFormattedArtifact: createElement("p", null, "Reviewed output"),
+        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/sessions/${data.session.id}/phase-action`,
+        expect.objectContaining({
+          body: JSON.stringify({
+            action: "approve",
+            artifactId: "artifact-1",
+            stageId: "stage-1",
+            version: 1,
+          }),
+          method: "POST",
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(mocked.pushToast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Review is stale." }),
+      ),
+    );
+  });
+
+  it("requires a hydrated artifact identity before sending a review action", () => {
+    const data = makeSessionDetailData();
+    data.session.artifacts = [
+      {
+        stageSlug: "product",
+        version: 1,
+        payload: "Old cached output",
+        createdAt: data.session.updatedAt,
+      },
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: null,
+        initialData: data,
+        initialFormattedArtifact: createElement("p", null, "Old cached output"),
+        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocked.pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Review unavailable.",
+        description: expect.stringContaining("Refresh this session"),
+      }),
+    );
+  });
+
   it("preserves the feedback dialog and draft when an optimistic rerun fails", async () => {
     const data = makeSessionDetailData();
     data.session.artifacts = [
@@ -226,11 +307,12 @@ describe("SessionDetailPageClient", () => {
         stageSlug: "product",
         version: 1,
         payload: "Review this",
+        id: "artifact-1",
         createdAt: data.session.updatedAt,
       },
     ];
     let finish!: (response: Response) => void;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).includes("phase-action"))
         return new Promise<Response>((resolve) => {
           finish = resolve;
@@ -251,6 +333,18 @@ describe("SessionDetailPageClient", () => {
       target: { value: "Keep the keyboard focus visible." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/sessions/${data.session.id}/phase-action`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          action: "reject",
+          artifactId: "artifact-1",
+          feedbackText: "Keep the keyboard focus visible.",
+          stageId: "stage-1",
+          version: 1,
+        }),
+      }),
+    );
     expect(screen.getByRole("dialog", { name: "Request changes" })).toBeTruthy();
     expect(document.querySelector('[aria-label="Product artifact"]')).not.toBeNull();
     await act(async () => finish(Response.json({ error: "Try again" }, { status: 500 })));

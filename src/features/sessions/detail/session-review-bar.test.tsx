@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
 
+const reviewArtifact = { artifactId: "artifact-1", stageId: "stage-1", version: 1 };
+
 function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = {}) {
   const onApprove = vi.fn();
   const onReject = vi.fn().mockResolvedValue(true);
@@ -22,6 +24,7 @@ function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = 
         mode: { canApprove: true, kind: "reviewable" },
         onApprove,
         onReject,
+        reviewArtifact,
         phaseActionPending: null,
         ...overrides,
       }),
@@ -39,7 +42,7 @@ describe("SessionReviewBar", () => {
   it("approves with a single confirmation click", () => {
     const { onApprove } = renderBar();
     fireEvent.click(screen.getByRole("button", { name: "Approve & advance" }));
-    expect(onApprove).toHaveBeenCalledTimes(1);
+    expect(onApprove).toHaveBeenCalledExactlyOnceWith(reviewArtifact);
   });
 
   it("announces the archive consequence when focusing the approval action", () => {
@@ -48,6 +51,36 @@ describe("SessionReviewBar", () => {
     expect(screen.getByRole("button", { name: "Approve stage" })).toHaveAccessibleDescription(
       description,
     );
+  });
+
+  it("keeps the artifact snapshot from dialog opening when the reviewed output changes", async () => {
+    const onReject = vi.fn().mockResolvedValue(false);
+    const view = renderBar({ onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const feedback = await screen.findByLabelText("Feedback for Wallie");
+    fireEvent.change(feedback, { target: { value: "Feedback for the original artifact." } });
+    view.rerender(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionReviewBar, {
+          approveLabel: "Approve & advance",
+          mode: { canApprove: true, kind: "reviewable" },
+          onApprove: vi.fn(),
+          onReject,
+          reviewArtifact: { artifactId: "replacement-artifact", stageId: "stage-2", version: 1 },
+          phaseActionPending: null,
+        }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    await waitFor(() =>
+      expect(onReject).toHaveBeenCalledExactlyOnceWith(
+        "Feedback for the original artifact.",
+        reviewArtifact,
+      ),
+    );
+    expect(feedback).toHaveValue("Feedback for the original artifact.");
   });
 
   it("rejects whitespace-only feedback and keeps the dialog open", async () => {
@@ -81,7 +114,9 @@ describe("SessionReviewBar", () => {
       target: { value: "Please fix the tone." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
-    await waitFor(() => expect(onReject).toHaveBeenCalledWith("Please fix the tone."));
+    await waitFor(() =>
+      expect(onReject).toHaveBeenCalledWith("Please fix the tone.", reviewArtifact),
+    );
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByLabelText("Feedback for Wallie")).toHaveValue("Please fix the tone.");
   });
@@ -97,7 +132,9 @@ describe("SessionReviewBar", () => {
 
     fireEvent.keyDown(feedback, { key: "Enter", ...modifier });
 
-    await waitFor(() => expect(onReject).toHaveBeenCalledWith("Address the review feedback."));
+    await waitFor(() =>
+      expect(onReject).toHaveBeenCalledWith("Address the review feedback.", reviewArtifact),
+    );
   });
 
   it("leaves bare Enter to the feedback field", async () => {

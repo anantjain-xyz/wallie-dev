@@ -110,6 +110,66 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(fetch).not.toHaveBeenCalled());
   });
 
+  it("reports the immutable identity once a lazily fetched body is displayed", async () => {
+    const onDisplayedArtifactChange = vi.fn();
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifact: {
+          ...latestArtifact,
+          id: "lazy-artifact",
+          sanitizedHtml: "<p>Loaded review output</p>",
+        },
+      }),
+    );
+    renderPanel({
+      latestArtifact: null,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+      onDisplayedArtifactChange,
+    });
+    expect(onDisplayedArtifactChange).toHaveBeenCalledWith(null);
+    expect(await screen.findByText("Loaded review output")).toBeTruthy();
+    await waitFor(() =>
+      expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+        id: "lazy-artifact",
+        stageSlug: "build",
+        version: 2,
+      }),
+    );
+  });
+
+  it("reports the identity of the displayed cached body after a same-version replacement", async () => {
+    const onDisplayedArtifactChange = vi.fn();
+    const original = { ...latestArtifact, id: "original-artifact" };
+    const view = renderPanel({ latestArtifact: original, onDisplayedArtifactChange });
+    await waitFor(() =>
+      expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+        id: "original-artifact",
+        stageSlug: "build",
+        version: 2,
+      }),
+    );
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact: { ...original, id: "replacement-artifact", payload: "Replacement output" },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+        onDisplayedArtifactChange,
+      }),
+    );
+    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+      id: "original-artifact",
+      stageSlug: "build",
+      version: 2,
+    });
+  });
+
   it("loads metadata once on demand and does not mount Markdown trees in Versions", async () => {
     vi.mocked(fetch).mockImplementationOnce(() =>
       response({

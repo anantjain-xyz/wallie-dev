@@ -8,13 +8,13 @@ set local "request.jwt.claim.role" = 'service_role';
 select has_function(
   'public',
   'reject_session_stage',
-  array['uuid', 'uuid', 'integer', 'text', 'text', 'text', 'text', 'uuid'],
+  array['uuid', 'uuid', 'integer', 'text', 'text', 'text', 'uuid', 'uuid', 'text', 'uuid'],
   'transactional reject RPC exists'
 );
 select function_privs_are(
   'public',
   'reject_session_stage',
-  array['uuid', 'uuid', 'integer', 'text', 'text', 'text', 'text', 'uuid'],
+  array['uuid', 'uuid', 'integer', 'text', 'text', 'text', 'uuid', 'uuid', 'text', 'uuid'],
   'service_role',
   array['EXECUTE'],
   'service_role can execute the reject RPC'
@@ -22,7 +22,7 @@ select function_privs_are(
 select ok(
   not has_function_privilege(
     'anon',
-    'public.reject_session_stage(uuid,uuid,integer,text,text,text,text,uuid)',
+    'public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid)',
     'EXECUTE'
   ),
   'anon cannot execute the reject RPC'
@@ -30,7 +30,7 @@ select ok(
 select ok(
   not has_function_privilege(
     'authenticated',
-    'public.reject_session_stage(uuid,uuid,integer,text,text,text,text,uuid)',
+    'public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid)',
     'EXECUTE'
   ),
   'authenticated cannot execute the reject RPC'
@@ -48,6 +48,18 @@ select is(
   'search_path=""',
   'security definer RPC has an empty search_path'
 );
+
+
+create function pg_temp.reject_current_review(target uuid, workspace uuid, version integer, feedback text,
+  provider text, model text, run_type text, reviewer uuid)
+returns table(session_id uuid,workspace_id uuid,current_stage_id uuid,current_artifact_version integer,
+  phase_status public.pipeline_phase_status,rejection_count integer,archived_at timestamptz,job_id uuid,run_id uuid,job_created boolean)
+language sql as $$
+  select result.* from public.sessions s cross join lateral public.reject_session_stage(
+    target,workspace,version,feedback,provider,model,s.current_stage_id,
+    (select a.id from public.session_artifacts a where a.session_id=target and a.stage_id=s.current_stage_id and a.version=s.current_artifact_version),
+    run_type,reviewer) result where s.id=target;
+$$;
 
 create temp table test_baseline as
 select last_issue_number
@@ -72,7 +84,7 @@ from public.create_session_with_first_job(
 select throws_ok(
   $$
     select *
-    from public.reject_session_stage(
+    from pg_temp.reject_current_review(
       (select session_id from phase_session),
       'b1b2c3d4-0001-4000-8000-000000000001',
       1,
@@ -96,7 +108,7 @@ where session.id = result.session_id;
 select throws_ok(
   $$
     select *
-    from public.reject_session_stage(
+    from pg_temp.reject_current_review(
       (select session_id from phase_session),
       'b1b2c3d4-0001-4000-8000-000000000001',
       0,
@@ -120,7 +132,7 @@ where session.id = result.session_id;
 select throws_ok(
   $$
     select *
-    from public.reject_session_stage(
+    from pg_temp.reject_current_review(
       (select session_id from phase_session),
       'b1b2c3d4-0001-4000-8000-000000000001',
       1,
@@ -188,7 +200,7 @@ where session.id = result.session_id;
 select throws_ok(
   $$
     select *
-    from public.reject_session_stage(
+    from pg_temp.reject_current_review(
       (select session_id from happy_session),
       'b1b2c3d4-0001-4000-8000-000000000001',
       1,
@@ -206,7 +218,7 @@ select throws_ok(
 
 create temp table happy_reject as
 select *
-from public.reject_session_stage(
+from pg_temp.reject_current_review(
   (select session_id from happy_session),
   'b1b2c3d4-0001-4000-8000-000000000001',
   1,
@@ -309,7 +321,7 @@ join public.pipeline_stages stage on stage.id = session.current_stage_id;
 
 create temp table adopt_reject as
 select *
-from public.reject_session_stage(
+from pg_temp.reject_current_review(
   (select session_id from adopt_session),
   'b1b2c3d4-0001-4000-8000-000000000001',
   1,
@@ -390,7 +402,7 @@ where job.id = result.job_id;
 
 create temp table zombie_reject as
 select *
-from public.reject_session_stage(
+from pg_temp.reject_current_review(
   (select session_id from zombie_session),
   'b1b2c3d4-0001-4000-8000-000000000001',
   1,
@@ -473,7 +485,7 @@ where job.id = result.job_id;
 
 create temp table publishing_reject as
 select *
-from public.reject_session_stage(
+from pg_temp.reject_current_review(
   (select session_id from publishing_session),
   'b1b2c3d4-0001-4000-8000-000000000001',
   1,

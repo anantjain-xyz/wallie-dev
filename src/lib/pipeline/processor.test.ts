@@ -2316,116 +2316,6 @@ describe("processPipelineJob (generic stage runner)", () => {
 
 // ---- handleApproval -----------------------------------------------------
 
-/**
- * Admin mock for the post-approval enqueue: the approval RPC itself is stubbed
- * via `rpc`, and the tables below are exactly those the shared
- * `enqueueSessionJobWithRun` path touches (effective-repository resolution,
- * atomic enqueue receipt, and returned run lookup).
- */
-function buildApprovalEnqueueMock(opts: {
-  adoptExisting: boolean;
-  rpc: (fn: string, args?: unknown) => unknown;
-}) {
-  const enqueuedJobs: Array<Record<string, unknown>> = [];
-  const insertedRuns: Array<Record<string, unknown>> = [];
-
-  const tables: Record<string, unknown> = {
-    agent_runs: {
-      insert: (row: Record<string, unknown>) => {
-        insertedRuns.push(row);
-        return {
-          select: () => ({
-            single: async () => ({ data: { ...row, id: "run-next" }, error: null }),
-          }),
-        };
-      },
-      select: () => {
-        const chain = {
-          abortSignal: () => chain,
-          eq: () => chain,
-          limit: () => chain,
-          maybeSingle: async () => ({
-            data: { agent_job_id: "job-active", id: "run-active" },
-            error: null,
-          }),
-          order: () => chain,
-        };
-        return chain;
-      },
-    },
-    sessions: {
-      select: () => {
-        const builder = {
-          eq: () => builder,
-          maybeSingle: async () => ({
-            data: baseSession({ current_stage_id: "stage-design" }),
-            error: null,
-          }),
-        };
-        return builder;
-      },
-    },
-    session_pull_requests: {
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            order: () => ({
-              limit: () => ({
-                maybeSingle: async () => ({ data: null, error: null }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    },
-    workspace_agent_config: {
-      select: () => ({
-        eq: () => ({
-          in: async () => ({ data: [], error: null }),
-        }),
-      }),
-    },
-    workspace_onboarding: {
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: null, error: null }),
-        }),
-      }),
-    },
-    workspace_repository_profiles: {
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({ data: null, error: null }),
-          }),
-        }),
-      }),
-    },
-  };
-
-  return {
-    admin: createProcessorTestAdminClient({
-      from: (name: string) => tables[name] ?? {},
-      rpc: (name, args) => {
-        if (name !== "enqueue_session_job_with_run") return opts.rpc(name, args);
-        enqueuedJobs.push(args as Record<string, unknown>);
-        return Promise.resolve({
-          data: [
-            {
-              created: !opts.adoptExisting,
-              job_id: opts.adoptExisting ? "job-active" : "job-next",
-              run_id: opts.adoptExisting ? "run-active" : "run-next",
-            },
-          ],
-          error: null,
-        });
-      },
-    }),
-    enqueuedJobs,
-    insertedRuns,
-  };
-}
-
 describe("handleApproval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2436,252 +2326,124 @@ describe("handleApproval", () => {
     });
   });
 
-  it("calls approve_session_stage with the approver id and returns success on a non-empty result", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: [{ id: "sess-1", current_stage_id: "stage-design" }],
-      error: null,
-    });
-    const admin = createProcessorTestAdminClient({ from: () => ({}), rpc });
-    const result = await handleApproval({
-      admin,
-      approverMemberId: "mem-1",
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
-    });
+  const approvalInput = {
+    approverMemberId: "mem-1",
+    expectedArtifactId: "artifact-1",
+    expectedStageId: "stage-product",
+    expectedWorkspaceId: "ws-1",
+    sessionId: "sess-1",
+    version: 1,
+  };
+  const approvedRow = {
+    archived_at: null,
+    current_artifact_version: 7,
+    current_stage_id: "stage-design",
+    id: "sess-1",
+    job_id: "job-next",
+    run_id: "run-next",
+    phase_status: "in_progress",
+    rejection_count: 0,
+  };
+
+  it("commits the reviewed identity and next job in one RPC and returns its persisted state", async () => {
+    const { admin, rpc } = buildReviewMock({ rpcResult: { data: [approvedRow], error: null } });
+    const result = await handleApproval({ admin, ...approvalInput });
+    expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith("approve_session_stage", {
       approver_member_id: "mem-1",
+      expected_artifact_id: "artifact-1",
+      expected_stage_id: "stage-product",
       expected_version: 1,
       expected_workspace_id: "ws-1",
       target_session_id: "sess-1",
+      p_agent_model_provider: "codex",
+      p_agent_model_name: "gpt-5.5",
+      p_run_type: "project",
     });
-    expect(result.success).toBe(true);
-  });
-
-  it("returns an authorization error when the RPC returns an empty result", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
-    const result = await handleApproval({
-      admin: createProcessorTestAdminClient({ from: () => ({}), rpc }),
-      approverMemberId: null,
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("not authorized");
-  });
-
-  it("queues the next stage through the shared job-with-run enqueue path", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: [
-        {
-          archived_at: null,
-          current_stage_id: "stage-design",
-          id: "sess-1",
-          phase_status: "in_progress",
-        },
-      ],
-      error: null,
-    });
-    const { admin, enqueuedJobs, insertedRuns } = buildApprovalEnqueueMock({
-      adoptExisting: false,
-      rpc,
-    });
-
-    const result = await handleApproval({
-      admin,
-      approverMemberId: "mem-1",
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
-    });
-
     expect(result).toEqual({
+      success: true,
       jobId: "job-next",
       session: {
         archivedAt: null,
-        currentArtifactVersion: 0,
+        currentArtifactVersion: 7,
         currentStageId: "stage-design",
         phaseStatus: "in_progress",
         rejectionCount: 0,
       },
-      success: true,
     });
-    // Approval passes the expected next stage and configured run to one enqueue RPC.
-    expect(enqueuedJobs).toEqual([
-      {
-        p_session_id: "sess-1",
-        p_workspace_id: "ws-1",
-        p_expected_stage_id: "stage-design",
-        p_requested_by_member_id: "mem-1",
-        p_trigger_type: "assignment",
-        p_agent_model_provider: "codex",
-        p_agent_model_name: "gpt-5.5",
-        p_run_type: "project",
-      },
-    ]);
-    expect(insertedRuns).toEqual([]);
   });
 
-  it("reports the live job when the next-stage enqueue loses the dedupe race", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: [
-        {
-          archived_at: null,
-          current_stage_id: "stage-design",
-          id: "sess-1",
-          phase_status: "in_progress",
+  it.each([null, "2026-10-03T00:00:00Z"])(
+    "returns the terminal archive policy from the transaction (%s)",
+    async (archivedAt) => {
+      const { admin, rpc } = buildReviewMock({
+        rpcResult: {
+          data: [
+            {
+              ...approvedRow,
+              archived_at: archivedAt,
+              current_artifact_version: 1,
+              current_stage_id: "stage-product",
+              phase_status: "approved",
+              job_id: null,
+              run_id: null,
+            },
+          ],
+          error: null,
         },
-      ],
-      error: null,
-    });
-    const { admin, insertedRuns } = buildApprovalEnqueueMock({
-      adoptExisting: true,
-      rpc,
-    });
+      });
+      const result = await handleApproval({ admin, ...approvalInput });
+      expect(result).toMatchObject({
+        success: true,
+        jobId: null,
+        session: { archivedAt, phaseStatus: "approved", currentArtifactVersion: 1 },
+      });
+      expect(rpc).toHaveBeenCalledTimes(1);
+    },
+  );
 
-    const result = await handleApproval({
-      admin,
-      approverMemberId: "mem-1",
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
+  it("surfaces queue failure from the atomic transaction without a second enqueue", async () => {
+    const { admin, rpc } = buildReviewMock({
+      rpcResult: { data: null, error: { message: "queue write failed" } },
     });
-
-    expect(result.success).toBe(true);
-    expect(result.jobId).toBe("job-active");
-    // No second run is inserted for the job that already exists.
-    expect(insertedRuns).toEqual([]);
+    expect(await handleApproval({ admin, ...approvalInput })).toEqual({
+      error: "queue write failed",
+      success: false,
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const rpc = vi.fn().mockResolvedValueOnce({
-      data: [
-        {
-          archived_at: null,
-          current_stage_id: "stage-design",
-          id: "sess-1",
-          phase_status: "in_progress",
-        },
-      ],
-      error: null,
+  it("refuses stale or unauthorized reviews when the transaction returns no receipt", async () => {
+    const { admin, rpc } = buildReviewMock({ rpcResult: { data: [], error: null } });
+    expect(await handleApproval({ admin, ...approvalInput })).toMatchObject({
+      success: false,
+      error: expect.stringContaining("review is stale"),
     });
-    const enqueueError = {
-      code: "deadlock",
-      message: "queue write failed",
-    };
-    rpc.mockResolvedValue({ data: null, error: enqueueError });
-    const tables: Record<string, unknown> = {
-      agent_jobs: {
-        insert: () => ({
-          select: () => ({
-            single: async () => ({
-              data: null,
-              error: enqueueError,
-            }),
-          }),
-        }),
-      },
-      pipeline_stages: {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({
-              data: { id: "stage-design", name: "Design", slug: "design" },
-              error: null,
-            }),
-          }),
-        }),
-      },
-      sessions: {
-        select: () => {
-          const builder = {
-            eq: () => builder,
-            maybeSingle: async () => ({
-              data: baseSession({ current_stage_id: "stage-design" }),
-              error: null,
-            }),
-          };
-          return builder;
-        },
-      },
-      session_pull_requests: {
-        select: () => ({
-          eq: () => ({
-            eq: () => ({
-              order: () => ({
-                limit: () => ({
-                  maybeSingle: async () => ({ data: null, error: null }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      },
-      workspace_agent_config: {
-        select: () => ({
-          eq: () => ({
-            in: async () => ({ data: [], error: null }),
-          }),
-        }),
-      },
-      workspace_onboarding: {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({ data: null, error: null }),
-          }),
-        }),
-      },
-      workspace_repository_profiles: {
-        select: () => ({
-          eq: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({ data: null, error: null }),
-            }),
-          }),
-        }),
-      },
-    };
-    const admin = createProcessorTestAdminClient({
-      from: (name: string) => tables[name] ?? {},
-      rpc,
-    });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
 
-    const result = await handleApproval({
-      admin,
-      approverMemberId: "mem-1",
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
-    });
-
-    expect(result).toEqual({
-      jobId: null,
-      session: {
-        archivedAt: null,
-        currentArtifactVersion: 0,
-        currentStageId: "stage-design",
-        phaseStatus: "in_progress",
-        rejectionCount: 0,
-      },
-      success: true,
-    });
-    expect(consoleError).toHaveBeenCalledWith(
-      "Approved stage but failed to queue Wallie",
-      expect.objectContaining({
-        error: "queue write failed",
-        sessionId: "sess-1",
-        workspaceId: "ws-1",
-      }),
+  it("does not invoke approval without a reviewer identity", async () => {
+    const { admin, rpc } = buildReviewMock();
+    expect(await handleApproval({ admin, ...approvalInput, approverMemberId: null })).toMatchObject(
+      { success: false },
     );
+    expect(rpc).not.toHaveBeenCalled();
+  });
 
-    consoleError.mockRestore();
+  it("fails before changing review state if execution configuration cannot be resolved", async () => {
+    const { admin, rpc } = buildReviewMock();
+    mocked.loadWorkspaceAgentConfig.mockRejectedValueOnce(new Error("configuration unavailable"));
+    expect(await handleApproval({ admin, ...approvalInput })).toEqual({
+      success: false,
+      error: "configuration unavailable",
+    });
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
 
 // ---- handleRejection ----------------------------------------------------
 
-interface RejectionMockOptions {
+interface ReviewMockOptions {
   rpcResult?: { data: unknown; error: { code?: string; message: string } | null };
   /** Repository the session's pull request resolves to; drives the run mode. */
   sessionPullRequestRepositoryId?: string | null;
@@ -2703,10 +2465,10 @@ function rejectedSessionRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// Rejection is a single RPC. The only table reads left in the TypeScript path
+// Each review decision is a single RPC. The only table reads left in the TypeScript path
 // resolve the queued run's model + run mode (`resolveQueuedRunConfig`), which
 // walks the effective-repository lookup before the RPC is called.
-function buildRejectionMock(opts: RejectionMockOptions = {}) {
+function buildReviewMock(opts: ReviewMockOptions = {}) {
   const rpc = vi
     .fn()
     .mockResolvedValue(opts.rpcResult ?? { data: [rejectedSessionRow()], error: null });
@@ -2815,10 +2577,12 @@ describe("handleRejection", () => {
   });
 
   it("rejects through the reject_session_stage RPC with the reviewer, version, feedback, and queued-run config", async () => {
-    const { admin, rpc } = buildRejectionMock();
+    const { admin, rpc } = buildReviewMock();
 
     const result = await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "tighten the spec",
       requestedByMemberId: "mem-reviewer",
@@ -2831,6 +2595,8 @@ describe("handleRejection", () => {
       p_agent_model_name: "gpt-5.5",
       p_agent_model_provider: "codex",
       p_artifact_version: 1,
+      p_expected_artifact_id: "artifact-1",
+      p_expected_stage_id: "stage-product",
       p_feedback_text: "tighten the spec",
       p_requested_by_member_id: "mem-reviewer",
       p_run_type: "project",
@@ -2851,10 +2617,12 @@ describe("handleRejection", () => {
   });
 
   it("stamps the code run mode when the session's pull request resolves to a repository", async () => {
-    const { admin, rpc } = buildRejectionMock({ sessionPullRequestRepositoryId: "repo-1" });
+    const { admin, rpc } = buildReviewMock({ sessionPullRequestRepositoryId: "repo-1" });
 
     const result = await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs tests",
       requestedByMemberId: "mem-reviewer",
@@ -2870,10 +2638,12 @@ describe("handleRejection", () => {
   });
 
   it("omits the reviewer when no member id is available", async () => {
-    const { admin, rpc } = buildRejectionMock();
+    const { admin, rpc } = buildReviewMock();
 
     await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
       requestedByMemberId: null,
@@ -2888,7 +2658,7 @@ describe("handleRejection", () => {
   });
 
   it("reports the adopted job when the RPC deduped against an already-active job", async () => {
-    const { admin } = buildRejectionMock({
+    const { admin } = buildReviewMock({
       rpcResult: {
         data: [
           rejectedSessionRow({ job_created: false, job_id: "job-retry-existing", run_id: null }),
@@ -2899,6 +2669,8 @@ describe("handleRejection", () => {
 
     const result = await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "again",
       requestedByMemberId: "mem-reviewer",
@@ -2918,12 +2690,14 @@ describe("handleRejection", () => {
     ["55000", "Version mismatch: a newer version exists."],
     ["42501", "Reviewer is not an active member of workspace ws-1"],
   ])("surfaces the RPC guard failure %s '%s' without a state change", async (code, message) => {
-    const { admin, rpc } = buildRejectionMock({
+    const { admin, rpc } = buildReviewMock({
       rpcResult: { data: null, error: { code, message } },
     });
 
     const result = await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
       requestedByMemberId: "mem-reviewer",
@@ -2936,10 +2710,12 @@ describe("handleRejection", () => {
   });
 
   it("treats an empty RPC result as a lost race", async () => {
-    const { admin } = buildRejectionMock({ rpcResult: { data: [], error: null } });
+    const { admin } = buildReviewMock({ rpcResult: { data: [], error: null } });
 
     const result = await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
       requestedByMemberId: "mem-reviewer",
@@ -2955,10 +2731,12 @@ describe("handleRejection", () => {
     mocked.loadWorkspaceAgentConfig.mockRejectedValueOnce(
       new Error('Unknown agent provider: "nope". Supported: codex, claude-code'),
     );
-    const { admin, rpc } = buildRejectionMock();
+    const { admin, rpc } = buildReviewMock();
 
     const result = await handleRejection({
       admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
       requestedByMemberId: "mem-reviewer",

@@ -27,11 +27,13 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { POST } from "./route";
 
+const ARTIFACT_ID = "a1b2c3d4-0001-4000-8000-000000000001";
+const STAGE_ID = "d1b2c3d4-0001-4000-8000-000000000001";
 const UPDATED_AT = "2026-07-17T12:00:00.000Z";
 
 function makeRequest(body: Record<string, unknown>) {
   return new Request("http://localhost:3000/api/sessions/sess-1/phase-action", {
-    body: JSON.stringify(body),
+    body: JSON.stringify({ artifactId: ARTIFACT_ID, stageId: STAGE_ID, ...body }),
     headers: { "content-type": "application/json" },
     method: "POST",
   });
@@ -144,6 +146,21 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     mocked.handleRejection.mockResolvedValue({ jobId: "job-1", success: true });
   });
 
+  it.each(["approve", "reject"])(
+    "requires the immutable review snapshot for %s",
+    async (action) => {
+      for (const missing of ["artifactId", "stageId"]) {
+        const response = await POST(
+          makeRequest({ action, version: 1, feedback: "revise", [missing]: undefined }),
+          routeContext(),
+        );
+        expect(response.status).toBe(400);
+      }
+      expect(mocked.handleApproval).not.toHaveBeenCalled();
+      expect(mocked.handleRejection).not.toHaveBeenCalled();
+    },
+  );
+
   it("overlaps rate limiting and membership lookup after the session lookup", async () => {
     let resolveRateLimit!: (value: unknown) => void;
     let resolveMember!: (value: { data: { id: string; role: string }; error: null }) => void;
@@ -197,6 +214,8 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
       updatedAt: UPDATED_AT,
     });
     expect(mocked.handleRejection).toHaveBeenCalledWith({
+      expectedArtifactId: ARTIFACT_ID,
+      expectedStageId: STAGE_ID,
       expectedWorkspaceId: "ws-1",
       feedbackText: "Needs sharper scope.",
       requestedByMemberId: "mem-reviewer",

@@ -23,6 +23,11 @@ import type {
 } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
 
+export type DisplayedArtifactIdentity = Pick<
+  SessionArtifactSummary,
+  "id" | "stageSlug" | "version"
+>;
+
 type ArtifactPanelProps = {
   /**
    * The current stage is visible in awaiting_review. Its artifact can arrive just
@@ -48,6 +53,8 @@ type ArtifactPanelProps = {
   rejectionCount?: number;
   /** Fires when the reviewer is (or is not) viewing a non-latest version. */
   onViewingHistoricalChange?: (viewingHistorical: boolean) => void;
+  /** Identity of the body actually presented, including cached or lazily loaded output. */
+  onDisplayedArtifactChange?: (artifact: DisplayedArtifactIdentity | null) => void;
   sessionId: string;
   stageSlug: string;
 };
@@ -234,6 +241,7 @@ function ArtifactPanelStage({
   latestVersionCache,
   metadataCache,
   onViewingHistoricalChange,
+  onDisplayedArtifactChange,
   pendingAuthorRefreshByStage,
   persistStageInUrl = false,
   rejectionCount,
@@ -905,6 +913,27 @@ function ArtifactPanelStage({
       (artifactBodyCacheKey(sessionId, visibleBody.stageSlug, visibleBody.version) ===
         initialFormattedArtifactKey &&
         initialFormattedArtifact !== null));
+  const displayedArtifactId = bodyHasContent ? visibleBody.id : undefined;
+  const displayedArtifactStage = bodyHasContent ? visibleBody.stageSlug : undefined;
+  const displayedArtifactVersion = bodyHasContent ? visibleBody.version : undefined;
+  useEffect(() => {
+    onDisplayedArtifactChange?.(
+      displayedArtifactStage && displayedArtifactVersion !== undefined
+        ? {
+            id: displayedArtifactId,
+            stageSlug: displayedArtifactStage,
+            version: displayedArtifactVersion,
+          }
+        : null,
+    );
+    return () => onDisplayedArtifactChange?.(null);
+  }, [
+    onDisplayedArtifactChange,
+    displayedArtifactId,
+    displayedArtifactStage,
+    displayedArtifactVersion,
+  ]);
+
   const bodyMotionRef = useChangeMotion<HTMLDivElement>(
     `${sessionId}:${visibleBody?.stageSlug ?? stageSlug}:${activeTab}:${bodyHasContent ? visibleBody.version : "loading"}`,
   );

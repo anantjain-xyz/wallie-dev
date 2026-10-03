@@ -19,6 +19,8 @@ type Params = { params: Promise<{ sessionId: string }> };
 
 const PhaseActionBodySchema = z.object({
   action: z.enum(["approve", "reject"]),
+  artifactId: z.string().uuid(),
+  stageId: z.string().uuid(),
   feedbackText: z.string().optional(),
   version: z.number(),
 });
@@ -135,6 +137,8 @@ export async function POST(request: Request, { params }: Params) {
       const result = await timing.segment("mutation", () =>
         handleApproval({
           approverMemberId: memberRow.id,
+          expectedArtifactId: body.artifactId,
+          expectedStageId: body.stageId,
           expectedWorkspaceId: sessionRow.workspace_id,
           sessionId: sessionRow.id,
           version: body.version,
@@ -153,6 +157,8 @@ export async function POST(request: Request, { params }: Params) {
       }
       const result = await timing.segment("mutation", () =>
         handleRejection({
+          expectedArtifactId: body.artifactId,
+          expectedStageId: body.stageId,
           expectedWorkspaceId: sessionRow.workspace_id,
           feedbackText,
           requestedByMemberId: memberRow.id,

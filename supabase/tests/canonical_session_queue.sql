@@ -148,7 +148,10 @@ update public.agent_jobs set dedupe_key = 'pipeline:legacy-rejection:active'
 where id = (select job_id from rejection_legacy_session);
 create temp table rejection_legacy_result as select * from public.reject_session_stage(
   (select session_id from rejection_legacy_session), 'b1b2c3d4-0001-4000-8000-000000000001',
-  1, 'Apply this feedback', 'codex', 'gpt-5.5', 'project', 'c1b2c3d4-0001-4000-8000-000000000001'
+  1, 'Apply this feedback', 'codex', 'gpt-5.5',
+  (select current_stage_id from public.sessions where id=(select session_id from rejection_legacy_session)),
+  (select id from public.session_artifacts where session_id=(select session_id from rejection_legacy_session) and version=1),
+  'project', 'c1b2c3d4-0001-4000-8000-000000000001'
 );
 select is((select job_id from rejection_legacy_result), (select job_id from rejection_legacy_session), 'rejection adopts a queued rerun by session despite its legacy key');
 select is((select run_id from rejection_legacy_result), (select run_id from rejection_legacy_session), 'rejection preserves the adopted queued run');

@@ -2145,19 +2145,29 @@ export type Database = {
       }
       approve_session_stage: {
         Args: {
-          approver_member_id?: string
+          approver_member_id: string
+          expected_artifact_id: string
+          expected_stage_id: string
           expected_version: number
           expected_workspace_id: string
+          p_agent_model_name: string
+          p_agent_model_provider: string
+          p_run_type?: string
           target_session_id: string
         }
         Returns: {
           archived_at: string
+          current_artifact_version: number
           current_stage_id: string
           current_stage_slug: string
           id: string
+          job_created: boolean
+          job_id: string
           linear_issue_url: string
           phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
           pipeline_id: string
+          rejection_count: number
+          run_id: string
           workspace_id: string
         }[]
       }
@@ -2582,6 +2592,8 @@ export type Database = {
           p_agent_model_name: string
           p_agent_model_provider: string
           p_artifact_version: number
+          p_expected_artifact_id: string
+          p_expected_stage_id: string
           p_feedback_text: string
           p_requested_by_member_id?: string
           p_run_type?: string

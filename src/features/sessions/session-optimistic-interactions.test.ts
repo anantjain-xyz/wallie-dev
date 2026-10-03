@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createElement } from "react";
+import { createElement, useEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +10,7 @@ import { SessionActivityPlaceholder } from "@/features/sessions/detail/session-a
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
-import type { SessionSummary } from "@/features/sessions/types";
+import type { SessionSummary, SessionArtifactSummary } from "@/features/sessions/types";
 
 const mocked = vi.hoisted(() => {
   const channel = {
@@ -46,12 +46,26 @@ vi.mock("@/lib/supabase/browser", () => ({
 vi.mock("@/features/sessions/detail/artifact-panel", () => ({
   ARTIFACT_STAGE_PARAM: "artifactStage",
   ARTIFACT_VERSION_PARAM: "artifactVersion",
-  ArtifactPanel: ({ isDrafting, loadLatest }: { isDrafting: boolean; loadLatest: boolean }) =>
-    createElement(
+  ArtifactPanel: function ArtifactPanel({
+    isDrafting,
+    loadLatest,
+    latestArtifact,
+    onDisplayedArtifactChange,
+  }: {
+    isDrafting: boolean;
+    loadLatest: boolean;
+    latestArtifact: SessionArtifactSummary | null;
+    onDisplayedArtifactChange?: (artifact: SessionArtifactSummary | null) => void;
+  }) {
+    useEffect(() => {
+      onDisplayedArtifactChange?.(latestArtifact);
+    }, [latestArtifact, onDisplayedArtifactChange]);
+    return createElement(
       "div",
       null,
       isDrafting ? "Drafting artifact" : loadLatest ? "Artifact ready" : "Artifact",
-    ),
+    );
+  },
 }));
 
 vi.mock("@/features/wallie/session-wallie-panel", () => ({
@@ -198,10 +212,20 @@ describe("optimistic session interactions", () => {
         }),
     );
 
+    const data = makeDetailData();
+    data.session.artifacts = [
+      {
+        id: "artifact-plan",
+        stageSlug: "plan",
+        version: 1,
+        payload: { summary: "Plan" },
+        createdAt: data.session.updatedAt,
+      },
+    ];
     render(
       createElement(SessionDetailPageClient, {
         activity: createElement(SessionActivityPlaceholder, null, "Loading activity…"),
-        initialData: makeDetailData(),
+        initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
       }),
@@ -259,6 +283,15 @@ describe("optimistic session interactions", () => {
       ...data.session,
       currentStageId: "stage-build",
       currentStageSlug: "build",
+      artifacts: [
+        {
+          id: "artifact-build",
+          stageSlug: "build",
+          version: 1,
+          payload: { summary: "Build" },
+          createdAt: data.session.updatedAt,
+        },
+      ],
     };
 
     render(

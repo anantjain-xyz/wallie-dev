@@ -51,6 +51,7 @@ function makeRpcPayload() {
       artifacts: [
         {
           createdAt: "2026-07-11T05:32:06.176Z",
+          id: "artifact-land-1",
           payload: "# Land\n\nMerged and deployed; storage bucket policies configured.",
           stageSlug: "land",
           version: 1,
@@ -152,6 +153,7 @@ describe("session review RSC contract", () => {
         stageSlug: "plan",
       },
     ]);
+    expect(review.session.artifacts[0]?.id).toBe("artifact-land-1");
     expect(JSON.stringify(review)).not.toContain("must-not-cross");
     expect(JSON.stringify(review)).not.toContain("private-to-server");
   });
