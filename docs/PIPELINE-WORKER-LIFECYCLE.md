@@ -97,10 +97,8 @@ where artifact.stage_slug = stage.slug
 
 `sessions.archived_at` is an orthogonal freeze marker, not another phase.
 The enqueue and start RPCs lock the session and reject archived work. Archive
-uses the same session lock, so RPC enqueue cannot slip past its cancellation
-pass. Linear reconciliation still inserts jobs directly; a late insert can leave
-a queued row after archive, but the guarded start refuses execution. Atomic
-Linear routing/enqueue is separate follow-up work.
+uses the same session lock, so interactive and Linear enqueue cannot slip past
+its cancellation pass.
 
 `rejected` is also the general parked/recoverable phase. Reviewer rejection,
 explicit cancellation, generation failure, stall recovery, and some Linear
@@ -240,8 +238,9 @@ Unarchive compares the expected archive marker when supplied and does not enqueu
   terminal-run recovery sweep so their active dedupe keys cannot stick.
 - Stall recovery parks only the current owned stage in `rejected`; atomic
   attempt start returns an eligible retry to `in_progress`.
-- Linear reconciliation may keep a current stage queued, reroute a session to a
-  configured stage, or archive it. It cancels active work before rerouting.
+- Linear reconciliation consumes a durable source transition receipt and commits
+  cancellation, rerouting, and replacement enqueue together. Repeated polls do
+  not restart reviewed or advanced work.
 - The sandbox reaper stops only provider resources whose IDs Wallie already
   recorded for the exact connection revision and whose run, matching job attempt, or capability
   check is no longer active. It skips unknown provider sandboxes, including one
@@ -259,6 +258,42 @@ Unarchive compares the expected archive marker when supplied and does not enqueu
   heartbeat becomes stale; unrecorded provider resources remain outside that
   recovery path.
 
+## Linear transition receipts
+
+- Source identity is Linear's current `IssueStateSpan.id` and `startedAt` from
+  `Issue.stateHistory`; unrelated issue edits retain the span, while a missed
+  leave/return has a new span. History is paginated until the open span is found.
+  Missing, inconsistent, or changing snapshots fail closed until the next sweep.
+- `apply_linear_session_transition` validates session and routing-config
+  snapshots, then locks pipeline → config → session → jobs/runs. Its private
+  receipt rejects older observations and deduplicates the source span plus its
+  effective route/target. Unrelated mapping edits do not restart work.
+- Pause, ignore, and unmapped observations are also recorded. A changed effective
+  route or a later source span can apply once; polls are latest-state observation,
+  not replay of every intermediate Linear transition.
+- The same transaction cancels owned attempts, invalidates target/downstream
+  completion and feedback, preserves artifact history, resets the stage, and
+  enqueues its replacement job/run. Only returned run IDs authorize sandbox
+  cleanup after commit. A failed enqueue rolls back the transition and receipt.
+- Stage changes normalize the artifact counter to at least the highest preserved
+  version. New output appends a version; prompts include only stages with valid
+  completion rows. Stale downstream history remains visible as history but is
+  excluded from `artifact.previousStages`.
+- Session creation atomically seeds a baseline receipt. Its preexisting Linear
+  stage intent is consumed without undoing explicit session creation. Migration
+  adopts existing work the same way. Canceled and manual Done are enforced even
+  on the first poll; a verified Done can complete a concurrently archived session
+  while preserving its archive timestamp. Routing never unarchives a session.
+- Before deploying this migration and worker together, stop/drain old workers:
+  their old reconciler performs separate writes and does not honor receipts.
+  Resume workers only with the matching implementation. No Linear backfill is
+  replayed automatically; this describes rollout requirements, not deployment.
+
+Proof: `supabase test db --local` includes sequential receipt and overlapping
+transition tests; `pnpm test src/worker/reconciler.test.ts
+src/lib/linear-routing/observations.test.ts src/lib/pipeline/stages.test.ts`
+checks observation, receipt cleanup, and prompt-history behavior.
+
 ## Race outcomes that are normal
 
 Callers must treat these as expected concurrency outcomes, not exceptional
@@ -273,9 +308,8 @@ corruption:
 - A retry collides with an existing active dedupe key.
 
 Handled losing-race paths are designed to close or preserve their own job, run,
-artifact, and sandbox state without resurrecting work. The approval/enqueue
-gap, multi-step Linear reroutes, and unrecorded provider resources documented
-above remain for their separate follow-up work.
+artifact, and sandbox state without resurrecting work. Unrecorded provider
+resources remain outside recovery as described above.
 
 ## Change checklist
 

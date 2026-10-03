@@ -4,7 +4,11 @@ import {
   DEFAULT_LINEAR_ROUTING_CONFIG,
   type LinearRoutingUpdateInput,
 } from "@/lib/linear-routing/contracts";
-import { loadLinearRoutingConfig, upsertLinearRoutingConfig } from "@/lib/linear-routing/server";
+import {
+  loadLinearRoutingConfig,
+  loadLinearRoutingSnapshot,
+  upsertLinearRoutingConfig,
+} from "@/lib/linear-routing/server";
 
 function buildAdmin(row: Record<string, unknown> | null) {
   const upserts: Array<{
@@ -159,5 +163,33 @@ describe("upsertLinearRoutingConfig", () => {
       land_stage_slug: null,
       rework_stage_slug: "build",
     });
+  });
+});
+
+describe("loadLinearRoutingSnapshot", () => {
+  it("returns a validated config and its exact revision", async () => {
+    const { admin } = buildAdmin({
+      land_stage_slug: null,
+      rework_stage_slug: "build",
+      status_mappings: DEFAULT_LINEAR_ROUTING_CONFIG.statusMappings,
+      updated_at: "2026-10-02T00:00:00Z",
+    });
+    await expect(loadLinearRoutingSnapshot(admin as never, "workspace")).resolves.toEqual({
+      config: DEFAULT_LINEAR_ROUTING_CONFIG,
+      updatedAt: "2026-10-02T00:00:00Z",
+    });
+  });
+  it("rejects missing config instead of routing with defaults", async () => {
+    const { admin } = buildAdmin(null);
+    await expect(loadLinearRoutingSnapshot(admin as never, "workspace")).rejects.toThrow("missing");
+  });
+  it("rejects malformed persisted config instead of routing with defaults", async () => {
+    const { admin } = buildAdmin({
+      land_stage_slug: null,
+      rework_stage_slug: "build",
+      status_mappings: {},
+      updated_at: "2026-10-02T00:00:00Z",
+    });
+    await expect(loadLinearRoutingSnapshot(admin as never, "workspace")).rejects.toThrow();
   });
 });
