@@ -143,6 +143,7 @@ export type Database = {
       agent_runs: {
         Row: {
           agent_job_id: string | null
+          attempt_count: number | null
           branch_name: string | null
           created_at: string
           finished_at: string | null
@@ -171,6 +172,7 @@ export type Database = {
         }
         Insert: {
           agent_job_id?: string | null
+          attempt_count?: number | null
           branch_name?: string | null
           created_at?: string
           finished_at?: string | null
@@ -199,6 +201,7 @@ export type Database = {
         }
         Update: {
           agent_job_id?: string | null
+          attempt_count?: number | null
           branch_name?: string | null
           created_at?: string
           finished_at?: string | null
@@ -2158,6 +2161,18 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      archive_session_job_attempts: {
+        Args: {
+          p_completed?: boolean
+          p_reason: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          job_ids: string[]
+          run_ids: string[]
+        }[]
+      }
       begin_codex_device_auth_flow: {
         Args: {
           flow_id: string
@@ -2172,6 +2187,19 @@ export type Database = {
       begin_sandbox_connection_mutation: {
         Args: { target_provider: string; target_workspace_id: string }
         Returns: string
+      }
+      cancel_session_job_attempts: {
+        Args: {
+          p_expected_run_id?: string
+          p_park_phase_status?: boolean
+          p_reason: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          job_ids: string[]
+          run_ids: string[]
+        }[]
       }
       claim_expired_session_attachments: {
         Args: { max_count?: number }
@@ -2218,6 +2246,10 @@ export type Database = {
           p_encrypted_api_key: string
           p_flow_id: string
         }
+        Returns: boolean
+      }
+      complete_session_job_attempt: {
+        Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
       }
       create_session_once_with_first_job: {
@@ -2354,6 +2386,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      fail_session_job_attempt: {
+        Args: {
+          p_attempt_count: number
+          p_error: string
+          p_job_id: string
+          p_max_retries: number
+          p_retry: boolean
+          p_run_id?: string
+        }
+        Returns: string
       }
       find_session_creation_request: {
         Args: {
@@ -2523,6 +2566,16 @@ export type Database = {
         Returns: {
           credential_version: number
         }[]
+      }
+      publish_session_job_attempt: {
+        Args: {
+          p_artifact_json: string
+          p_attempt_count: number
+          p_expected_artifact_version: number
+          p_job_id: string
+          p_run_id: string
+        }
+        Returns: boolean
       }
       publish_session_stage_artifact: {
         Args: {
@@ -2697,6 +2750,19 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      start_session_job_attempt: {
+        Args: {
+          p_attempt_count: number
+          p_branch_name?: string
+          p_expected_artifact_version: number
+          p_expected_stage_id: string
+          p_job_id: string
+          p_model_name: string
+          p_model_provider: string
+          p_run_type: string
+        }
+        Returns: string
       }
       update_user_profile: {
         Args: {

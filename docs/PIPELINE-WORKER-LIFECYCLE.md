@@ -26,6 +26,39 @@ The applied schema is the ordered result of the baseline and every forward
 migration. A function redefined by a later migration is governed by the latest
 definition, not by the copy in the baseline.
 
+## Additive execution ownership APIs
+
+These service-role-only APIs are available for the next worker cutover. Current
+workers still use the existing APIs; adding this contract does not activate the
+ownership guards in production.
+
+An execution owner is the captured `(agent_jobs.id, attempt_count)` from queue
+claim. A started run stores that attempt in `agent_runs.attempt_count`; existing
+runs remain unbound (`null`). New execution intents use new job IDs, and retries
+use a new attempt. Callers must never reload the latest attempt to authorize an
+older worker's writes.
+
+| API                                                            | Atomic boundary                                                                                         |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `start_session_job_attempt`                                    | Validate the claimed attempt, expected stage/version, bind legacy job stage, and claim/start its run.   |
+| `publish_session_job_attempt`                                  | Validate ownership, insert markdown, advance the review pointer, and mark the exact run successful.     |
+| `complete_session_job_attempt`                                 | Close only the exact published job/run, including after approval advances the session.                  |
+| `fail_session_job_attempt`                                     | Fail/retry only the captured owner; a published run remains successful and its artifact remains intact. |
+| `cancel_session_job_attempts` / `archive_session_job_attempts` | Cancel owned work and park/archive the session before sandbox cleanup.                                  |
+
+The functions lock the session before its jobs and runs. Cancellation returns
+run IDs for cleanup outside the transaction. A stale expected run cannot cancel
+its successor attempt. Publication, failure, and completion never authorize a
+worker using artifact version alone.
+
+For the consumer cutover, pause queue producers, stop and drain old workers,
+apply the cutover migration, deploy matching web/worker code, then restart
+workers and producers. Removing the legacy APIs belongs to that cutover PR. Reconcile any legacy
+unpublished artifact rows before activation: guarded publication rejects version
+collisions and never overwrites existing markdown. Reaper protection must compare
+the run attempt with its active job, so a newer retry cannot protect an older
+execution's sandbox.
+
 ## The three status domains
 
 | Row                    | Active states                                | Terminal states                | Purpose                                   |
