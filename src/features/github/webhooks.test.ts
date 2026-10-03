@@ -313,7 +313,7 @@ describe("handleGitHubPullRequestEvent", () => {
     const { admin, updates } = buildAdminMock({
       installation: { id: "ghi-1", workspace_id: "ws-1" },
       onboardingRow: {
-        conflict_report: [{ path: ".agents/skills/push/SKILL.md" }],
+        conflict_report: [{ path: ".agents/skills/symphony-push/SKILL.md" }],
         id: "onboarding-1",
         status: "conflict",
       },
@@ -339,7 +339,7 @@ describe("handleGitHubPullRequestEvent", () => {
     const { admin, updates } = buildAdminMock({
       installation: { id: "ghi-1", workspace_id: "ws-1" },
       onboardingRow: {
-        conflict_report: [{ path: ".agents/skills/push/SKILL.md" }],
+        conflict_report: [{ path: ".agents/skills/symphony-push/SKILL.md" }],
         id: "onboarding-1",
         status: "conflict",
       },
