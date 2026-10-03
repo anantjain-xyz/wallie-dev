@@ -973,8 +973,6 @@ export default function RuntimeStep({
               data.setupHealth.sandboxConnection?.connected ??
               data.setupHealth.vercelSandboxConnection.connected
             }
-            vercelConnectionHref="#sandbox"
-            vercelSandboxConnection={data.vercelSandboxConnection}
             variant="embedded"
             workspaceId={data.workspace.id}
           />

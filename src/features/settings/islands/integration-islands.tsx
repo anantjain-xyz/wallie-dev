@@ -365,7 +365,6 @@ export function RuntimeIntegrationIsland({
         setFlashMessage={setMessage}
         tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
         title="Agent"
-        vercelSandboxConnection={sandboxData.vercelSandboxConnection}
         workspaceId={initialData.workspace.id}
       />
     </>
