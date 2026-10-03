@@ -21,20 +21,6 @@ export interface OpenCodeConnectionStatus {
   updatedAt?: string | null;
 }
 
-export function openCodeStatusFromConnection(connection: {
-  checkedAt: string;
-  connected: boolean;
-  providers?: OpenCodeProviderCredentialStatus[];
-  updatedAt: string | null;
-}): OpenCodeConnectionStatus {
-  return {
-    checkedAt: connection.checkedAt,
-    connected: connection.connected,
-    providers: connection.providers ?? [],
-    updatedAt: connection.updatedAt,
-  };
-}
-
 interface OpenCodeConnectionPanelProps {
   initialStatus?: OpenCodeConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */

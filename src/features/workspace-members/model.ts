@@ -1,9 +1,4 @@
-import type {
-  WorkspaceMember,
-  WorkspaceMemberRow,
-  WorkspaceViewerMember,
-  WorkspaceViewerMemberRow,
-} from "@/features/workspace-members/types";
+import type { WorkspaceMember, WorkspaceMemberRow } from "@/features/workspace-members/types";
 
 export function mapWorkspaceMemberRow(row: WorkspaceMemberRow): WorkspaceMember {
   return {
@@ -15,13 +10,6 @@ export function mapWorkspaceMemberRow(row: WorkspaceMemberRow): WorkspaceMember 
     role: row.role,
     userId: row.user_id,
     username: row.username,
-  };
-}
-
-export function mapWorkspaceViewerMemberRow(row: WorkspaceViewerMemberRow): WorkspaceViewerMember {
-  return {
-    ...mapWorkspaceMemberRow(row),
-    preferences: row.preferences,
   };
 }
 

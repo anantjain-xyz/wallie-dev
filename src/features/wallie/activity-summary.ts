@@ -209,10 +209,6 @@ export function messagesFailedCopy() {
   return "Could not load run messages. Collapse and expand this run to retry.";
 }
 
-export function messagesDisconnectedCopy() {
-  return connectionStateCopy("reconnecting");
-}
-
 export function lastActivityTimestamp(run: WallieRun) {
   const latestMessageAt = run.messages.at(-1)?.createdAt ?? null;
   const candidates = [

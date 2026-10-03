@@ -26,15 +26,3 @@ export type WorkspaceMemberRow = Pick<
 export type WorkspaceViewerMemberRow = WorkspaceMemberRow & {
   preferences: Json;
 };
-
-export function getWorkspaceMemberDisplayName(member: WorkspaceMember | null) {
-  if (!member) {
-    return "Unassigned";
-  }
-
-  return member.fullName ?? member.username ?? "Unknown member";
-}
-
-export function isWorkspaceManager(member: Pick<WorkspaceMember, "role"> | null) {
-  return member?.role === "owner" || member?.role === "admin";
-}
