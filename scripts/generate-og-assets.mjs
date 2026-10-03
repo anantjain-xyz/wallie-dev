@@ -239,7 +239,6 @@ function encodeIco(images) {
 
 const assets = [
   { file: "og-image.png", element: ogCard, width: 1200, height: 630 },
-  { file: "wallie-logo-minimal.png", element: markElement(512), width: 512, height: 512 },
   { file: "apple-touch-icon.png", element: iconElement(180), width: 180, height: 180 },
   { file: "icon-192.png", element: iconElement(192), width: 192, height: 192 },
   { file: "icon-512.png", element: iconElement(512), width: 512, height: 512 },

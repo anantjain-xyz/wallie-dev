@@ -154,7 +154,7 @@ The whole module is stage-agnostic. There are no per-phase files; one generic ru
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages`, pipeline operating rules, and the prior-stage artifact map used by the prompt template.
 - [pull-request.ts](src/lib/pipeline/pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- remote PR synchronization and terminal session controls.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
-- [types.ts](src/lib/pipeline/types.ts) -- shared pipeline status and job constants. Active-job dedupe keys live in [src/lib/wallie/constants.ts](src/lib/wallie/constants.ts).
+- [types.ts](src/lib/pipeline/types.ts) -- shared pipeline status and job constants. Active-job dedupe keys (`session:<session_id>:active`) are built in the enqueue SQL RPCs.
 
 The default `plan → build` seed lives in the `internal.default_pipeline_stages()` SQL function in the migration -- workspaces can edit, add, remove, or reorder stages from settings, and `renderStagePrompt` (in `src/lib/prompt-templates/`) handles the `{{session.title}}` / `{{session.prompt}}` / `{{artifact.previousStages.<slug>}}` / `{{attempt.feedback}}` placeholders.
 
