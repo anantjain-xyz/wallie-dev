@@ -224,12 +224,24 @@ select pg_temp.start_owned((select job_id from publishing), 1);
 insert into public.session_artifacts(workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
 select workspace_id, id, current_stage_id, 'plan', 1, to_jsonb('pre-existing artifact'::text)
 from public.sessions where id = (select session_id from publishing);
+-- Occupied historical slots are skipped. Inject an insertion failure to
+-- retain proof that publication cannot partially update review or run state.
+create function pg_temp.reject_owned_artifact() returns trigger language plpgsql as $$
+begin
+  if new.session_id = (select session_id from publishing) then
+    raise exception 'Injected ownership artifact failure' using errcode = 'P0001';
+  end if;
+  return new;
+end;
+$$;
+create trigger ownership_publication_failure before insert on public.session_artifacts for each row execute function pg_temp.reject_owned_artifact();
 select throws_ok($q$select public.publish_session_job_attempt((select job_id from publishing), 1, (select run_id from publishing), 0, 'must not overwrite')$q$,
-  '23505', null, 'artifact collision rejects publication instead of overwriting history');
-select is((select phase_status::text from public.sessions where id = (select session_id from publishing)), 'in_progress', 'artifact collision rolls back the review transition');
-select is((select current_artifact_version from public.sessions where id = (select session_id from publishing)), 0, 'artifact collision rolls back the version pointer');
-select is((select status::text from public.agent_runs where id = (select run_id from publishing)), 'running', 'artifact collision leaves the run unpublished');
-select is((select artifact_json from public.session_artifacts where session_id = (select session_id from publishing)), to_jsonb('pre-existing artifact'::text), 'artifact collision preserves existing markdown');
+  'P0001', 'Injected ownership artifact failure', 'artifact insertion failure aborts publication');
+select is((select phase_status::text from public.sessions where id = (select session_id from publishing)), 'in_progress', 'artifact insertion failure rolls back the review transition');
+select is((select current_artifact_version from public.sessions where id = (select session_id from publishing)), 0, 'artifact insertion failure rolls back the version pointer');
+select is((select status::text from public.agent_runs where id = (select run_id from publishing)), 'running', 'artifact insertion failure leaves the run unpublished');
+select is((select artifact_json from public.session_artifacts where session_id = (select session_id from publishing)), to_jsonb('pre-existing artifact'::text), 'artifact insertion failure preserves existing markdown');
+drop trigger ownership_publication_failure on public.session_artifacts;
 delete from public.session_artifacts where session_id = (select session_id from publishing);
 select ok(public.publish_session_job_attempt((select job_id from publishing), 1, (select run_id from publishing), 0, 'durable output'), 'owner publishes its artifact');
 select is((select status::text from public.agent_runs where id = (select run_id from publishing)), 'success', 'publication marks exactly its run successful');

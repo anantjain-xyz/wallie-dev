@@ -107,7 +107,7 @@ export async function GET(request: Request, context: RouteContext) {
 
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
-    .select("id")
+    .select("id, pipeline_id, workspace_id")
     .eq("id", parsedParams.data.sessionId)
     .maybeSingle();
 
@@ -119,13 +119,30 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   const { latest, stage, version } = parsedQuery.data;
+  // A stage slug is editable; resolve the selected stage once, then load its
+  // immutable artifact/run associations without changing their stored snapshots.
+  const { data: selection, error: stageError } = await supabase
+    .from("session_selected_stages")
+    .select("stage:pipeline_stages!inner(id, slug, pipeline_id)")
+    .eq("session_id", sessionRow.id)
+    .eq("workspace_id", sessionRow.workspace_id)
+    .eq("stage.pipeline_id", sessionRow.pipeline_id)
+    .eq("stage.slug", stage)
+    .maybeSingle();
+  if (stageError) {
+    return NextResponse.json({ error: stageError.message }, { status: 500 });
+  }
+  if (!selection?.stage) {
+    return NextResponse.json({ error: "Selected stage not found." }, { status: 404 });
+  }
+  const selectedStage = selection.stage;
 
   if (latest || version) {
     let bodyQuery = supabase
       .from("session_artifacts")
       .select("artifact_json, created_at, id, stage_slug, version")
       .eq("session_id", parsedParams.data.sessionId)
-      .eq("stage_slug", stage)
+      .eq("stage_id", selectedStage.id)
       .order("version", { ascending: false });
 
     if (version) {
@@ -147,7 +164,7 @@ export async function GET(request: Request, context: RouteContext) {
         id: artifactRow.id,
         payload,
         sanitizedHtml: typeof payload === "string" ? await renderMarkdownToHtml(payload) : null,
-        stageSlug: artifactRow.stage_slug,
+        stageSlug: selectedStage.slug,
         version: artifactRow.version,
       },
     });
@@ -157,7 +174,7 @@ export async function GET(request: Request, context: RouteContext) {
     .from("session_artifacts")
     .select("created_at, id, stage_slug, version")
     .eq("session_id", parsedParams.data.sessionId)
-    .eq("stage_slug", stage)
+    .eq("stage_id", selectedStage.id)
     .order("version", { ascending: false });
 
   if (artifactError) {
@@ -170,12 +187,12 @@ export async function GET(request: Request, context: RouteContext) {
         .from("session_artifact_feedback")
         .select("target_version")
         .eq("session_id", parsedParams.data.sessionId)
-        .eq("stage_slug", stage),
+        .eq("stage_id", selectedStage.id),
       supabase
         .from("agent_runs")
         .select("finished_at, model_name, model_provider, status")
         .eq("session_id", parsedParams.data.sessionId)
-        .eq("stage_slug", stage)
+        .eq("stage_id", selectedStage.id)
         .eq("status", "success")
         .order("finished_at", { ascending: true }),
     ]);
@@ -197,7 +214,7 @@ export async function GET(request: Request, context: RouteContext) {
       changesRequested: rejectedVersions.has(row.version),
       createdAt: row.created_at,
       id: row.id,
-      stageSlug: row.stage_slug,
+      stageSlug: selectedStage.slug,
       version: row.version,
     })),
   });
