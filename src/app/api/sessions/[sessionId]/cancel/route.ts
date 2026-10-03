@@ -53,6 +53,7 @@ export async function POST(_request: Request, { params }: Params) {
     parkPhaseStatus: true,
     reason: "Stage canceled by a workspace member.",
     sessionId: sessionRow.id,
+    workspaceId: sessionRow.workspace_id,
   });
 
   const { data: result, error: resultError } = await admin

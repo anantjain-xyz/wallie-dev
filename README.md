@@ -34,10 +34,10 @@ create_session_with_first_job RPC
   -> session created (pinned to workspace's default pipeline)
   (current_stage_id = first stage, phase_status = in_progress)
   -> first agent job + queued run created in the same transaction
-  -> worker atomically claims the job, then confirms the session stage is eligible
+  -> worker atomically claims the job, then binds its captured attempt to an eligible session/run
   -> runStage() renders prompt, runs agent in sandbox,
-     streams run activity, writes the markdown artifact,
-     best-effort syncs a stage PR, status=awaiting_review
+     streams run activity, atomically publishes the artifact + awaiting_review + run success,
+     best-effort syncs its attempt PR, then completes the owned job
   -> in the dashboard, the reviewer clicks Approve or Request Changes
   -> approve  -> approve_session_stage RPC advances to next stage by position;
                  TypeScript enqueues the next job after the transaction
@@ -91,7 +91,7 @@ Workspace (tenant)
        |-- Phase Completions (one row per approved stage; preserves
        |                      stage_slug snapshot for history)
        |-- Pull Requests (one recorded branch/PR per stage branch)
-       |-- Jobs (work queue entries; active dedupe keys vary by enqueue path)
+       |-- Jobs (work queue entries; one active job per session)
        `-- Runs (one agent execution; provider, usage, messages, sandbox)
 ```
 
@@ -107,15 +107,16 @@ create_session_with_first_job RPC
 Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
       |- atomic, concurrency-aware job claim
       `- processPipelineJob()
-           |- guarded phase_status eligibility update
+           |- start_session_job_attempt validates job/attempt + stage/version
            |- Generic runStage():
            |    * load current stage + prior artifacts
            |    * render prompt_template_md against session
            |    * mint GitHub installation token, spin up sandbox
            |    * run the configured agent runner
            |    * stream events into agent_run_messages
-           |    * best-effort push/open or refresh the stage PR
-           `- Save markdown artifact, status=awaiting_review
+           |    * publish_session_job_attempt commits markdown + review + run success
+           |    * best-effort push/open its attempt PR
+           `- complete_session_job_attempt closes the exact published job
       v
 [POST /api/sessions/[sessionId]/phase-action]  (from the dashboard)
       |- Approve -> approve_session_stage RPC: records completion,

@@ -39,7 +39,7 @@ interface Fixture {
   pipelineStages?: PipelineStageRow[];
   routingRows?: RoutingRow[];
   selectedStages?: Array<{ session_id: string; stage_id: string }>;
-  /** Session ids whose `agent_jobs` cancel write should reject. */
+  /** Session IDs whose cancellation/archive RPC should reject. */
   failCancelForSessionIds?: Set<string>;
 }
 
@@ -52,7 +52,7 @@ interface Fixture {
 function buildAdmin(fixture: Fixture) {
   const calls: {
     table: string;
-    op: "delete" | "insert" | "select" | "update";
+    op: "delete" | "insert" | "select" | "update" | "rpc";
     update?: Record<string, unknown>;
     filters: Record<string, unknown>;
   }[] = [];
@@ -115,12 +115,14 @@ function buildAdmin(fixture: Fixture) {
       calls.push({ table, op, update, filters });
 
       if (op === "select" && table === "sessions") {
+        const eqId = filters["eq.id"] as string | undefined;
         const eqPhaseStatus = filters["eq.phase_status"] as string | undefined;
         const eqWorkspaceId = filters["eq.workspace_id"] as string | undefined;
         const inPhaseStatuses = filters["in.phase_status"] as string[] | undefined;
         const isArchivedAt = filters["is.archived_at"];
         let rows = fixture.sessions
           .filter((s) => s.linear_issue_id !== null)
+          .filter((s) => !eqId || s.id === eqId)
           .filter((s) => !eqWorkspaceId || s.workspace_id === eqWorkspaceId)
           .filter((s) => !eqPhaseStatus || s.phase_status === eqPhaseStatus)
           .filter((s) => !inPhaseStatuses || inPhaseStatuses.includes(s.phase_status))
@@ -128,7 +130,7 @@ function buildAdmin(fixture: Fixture) {
           .sort((a, b) => a.created_at.localeCompare(b.created_at));
         if (cursorGt) rows = rows.filter((s) => s.created_at > cursorGt!);
         rows = rows.slice(0, limit);
-        return Promise.resolve({ data: rows, error: null });
+        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
       }
 
       if (op === "select" && table === "workspace_secrets") {
@@ -178,15 +180,6 @@ function buildAdmin(fixture: Fixture) {
         return Promise.resolve({ data, error: null });
       }
 
-      if (
-        op === "update" &&
-        table === "agent_jobs" &&
-        fixture.failCancelForSessionIds &&
-        fixture.failCancelForSessionIds.has(filters["eq.session_id"] as string)
-      ) {
-        return Promise.reject(new Error("simulated supabase write failure"));
-      }
-
       if (op === "insert" && table === "agent_jobs") {
         return Promise.resolve({
           data: { id: "inserted-job", ...(update ?? {}) },
@@ -202,6 +195,20 @@ function buildAdmin(fixture: Fixture) {
   }
 
   const admin = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ table: name, op: "rpc", update: args, filters: {} });
+      if (name !== "archive_session_job_attempts" && name !== "cancel_session_job_attempts") {
+        throw new Error(`Unexpected RPC: ${name}`);
+      }
+      const sessionId = args.p_session_id as string;
+      if (fixture.failCancelForSessionIds?.has(sessionId)) {
+        return { data: null, error: new Error("simulated RPC failure") };
+      }
+      return {
+        data: [{ job_ids: [`job-${sessionId}`], run_ids: [`run-${sessionId}`] }],
+        error: null,
+      };
+    },
     from(table: string) {
       return {
         select() {
@@ -221,6 +228,42 @@ function buildAdmin(fixture: Fixture) {
   };
 
   return { admin, calls };
+}
+
+function expectArchiveReceipt(
+  calls: ReturnType<typeof buildAdmin>["calls"],
+  sessionId: string,
+  completed: boolean,
+) {
+  expect(calls).toContainEqual(
+    expect.objectContaining({
+      table: "archive_session_job_attempts",
+      op: "rpc",
+      update: expect.objectContaining({
+        p_completed: completed,
+        p_session_id: sessionId,
+        p_workspace_id: "wA",
+      }),
+    }),
+  );
+  expect(calls).toContainEqual(
+    expect.objectContaining({
+      table: "agent_runs",
+      op: "select",
+      filters: { "eq.workspace_id": "wA", "in.id": [`run-${sessionId}`] },
+    }),
+  );
+  expect(
+    calls.find(
+      (call) =>
+        call.op === "update" && call.table === "sessions" && call.filters["eq.id"] === sessionId,
+    ),
+  ).toBeUndefined();
+  expect(
+    calls.filter(
+      (call) => call.op === "update" && ["agent_jobs", "agent_runs"].includes(call.table),
+    ),
+  ).toEqual([]);
 }
 
 function makeFetchResponse(body: unknown, init: { status?: number; headers?: HeadersInit } = {}) {
@@ -399,20 +442,7 @@ describe("reconcileLinearState", () => {
     expect(result.checked).toBe(2);
     expect(result.canceled).toBe(1);
 
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.id": "s2",
-          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
-        }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          archived_at: expect.any(String),
-          phase_status: "rejected",
-        }),
-      }),
-    );
+    expectArchiveReceipt(calls, "s2", false);
 
     expect(
       calls.find(
@@ -425,7 +455,7 @@ describe("reconcileLinearState", () => {
     ).toBeUndefined();
   });
 
-  it("cancels active and approved manual-merge sessions for canceled issues", async () => {
+  it("archives active, review, and approved sessions without overwriting settled phases", async () => {
     const fixture: Fixture = {
       sessions: [
         {
@@ -497,45 +527,11 @@ describe("reconcileLinearState", () => {
     expect(fetchBody.variables.ids).toEqual(["iGenerating", "iReview", "iRejected", "iApproved"]);
 
     for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
-      const sessionRejection = calls.find(
-        (c) =>
-          c.table === "sessions" &&
-          c.op === "update" &&
-          c.update?.phase_status === "rejected" &&
-          c.filters["eq.id"] === sessionId,
-      );
-      expect(sessionRejection).toBeDefined();
-      expect(sessionRejection?.filters["in.phase_status"]).toEqual([
-        "in_progress",
-        "awaiting_review",
-        "approved",
-        "rejected",
-      ]);
+      expectArchiveReceipt(calls, sessionId, false);
     }
-
-    for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
-      const jobCancel = calls.find(
-        (c) =>
-          c.table === "agent_jobs" &&
-          c.op === "update" &&
-          c.update?.status === "canceled" &&
-          c.filters["eq.session_id"] === sessionId,
-      );
-      expect(jobCancel).toBeDefined();
-      expect(jobCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
-    }
-
-    for (const sessionId of ["sGenerating", "sReview", "sRejected", "sApproved"]) {
-      const runCancel = calls.find(
-        (c) =>
-          c.table === "agent_runs" &&
-          c.op === "update" &&
-          c.update?.status === "canceled" &&
-          c.filters["eq.session_id"] === sessionId,
-      );
-      expect(runCancel).toBeDefined();
-      expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
-    }
+    // Settled phases belong to the archive RPC. The reconciler must not turn a
+    // review or approved session into rejected after sandbox cleanup awaits.
+    expect(calls.filter((call) => call.op === "update")).toEqual([]);
   });
 
   it("leaves a manual-merge session paused when Linear moves to Merging", async () => {
@@ -597,17 +593,7 @@ describe("reconcileLinearState", () => {
     const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
 
     expect(result).toEqual({ canceled: 0, checked: 1, rateLimited: false });
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({ "eq.id": "sManualDone" }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          archived_at: expect.any(String),
-          phase_status: "approved",
-        }),
-      }),
-    );
+    expectArchiveReceipt(calls, "sManualDone", true);
     expect(calls).not.toContainEqual(
       expect.objectContaining({
         op: "insert",
@@ -950,16 +936,7 @@ describe("reconcileLinearState", () => {
 
     expect(result.checked).toBe(1);
     expect(result.canceled).toBe(0);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          archived_at: expect.any(String),
-          phase_status: "approved",
-        }),
-      }),
-    );
+    expectArchiveReceipt(calls, "sSkipDone", true);
     expect(
       calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
     ).toBeUndefined();
@@ -1001,20 +978,7 @@ describe("reconcileLinearState", () => {
 
     expect(result.checked).toBe(1);
     expect(result.canceled).toBe(0);
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.id": "sDoneMissingLand",
-          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
-        }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          archived_at: expect.any(String),
-          phase_status: "approved",
-        }),
-      }),
-    );
+    expectArchiveReceipt(calls, "sDoneMissingLand", true);
     expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
   });
 
@@ -1392,20 +1356,7 @@ describe("reconcileLinearState", () => {
     // Only the second session gets fully canceled — the first throws mid-cancel.
     expect(result.canceled).toBe(1);
 
-    expect(calls).toContainEqual(
-      expect.objectContaining({
-        filters: expect.objectContaining({
-          "eq.id": "sOk",
-          "in.phase_status": ["in_progress", "awaiting_review", "approved", "rejected"],
-        }),
-        op: "update",
-        table: "sessions",
-        update: expect.objectContaining({
-          archived_at: expect.any(String),
-          phase_status: "rejected",
-        }),
-      }),
-    );
+    expectArchiveReceipt(calls, "sOk", false);
   });
 
   it("treats GraphQL RATELIMITED envelope the same as a 429", async () => {

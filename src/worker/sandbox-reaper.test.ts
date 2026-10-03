@@ -19,6 +19,7 @@ import { reapOrphanSandboxes } from "./sandbox-reaper";
 
 interface ClaimedRow {
   agent_job_id?: string | null;
+  attempt_count?: number | null;
   checked_at?: string;
   sandbox_id: string;
   sandbox_connection_revision?: string;
@@ -33,6 +34,8 @@ function buildAdminMock(
   claimed: ClaimedRow[],
   opts: {
     activeJobIds?: string[];
+    activeJobAttempts?: Record<string, number>;
+    failJobs?: boolean;
     checks?: ClaimedRow[];
     fail?: boolean;
     failChecks?: boolean;
@@ -46,6 +49,7 @@ function buildAdminMock(
 
     return rows
       .map((row) => ({
+        attempt_count: 1,
         sandbox_provider: "vercel",
         sandbox_connection_revision: "revision-1",
         sandbox_vercel_project_id: "prj_123",
@@ -78,7 +82,7 @@ function buildAdminMock(
             },
             then: (
               resolve: (value: {
-                data: Array<{ id: string }>;
+                data: Array<{ id: string; attempt_count: number }>;
                 error: { message: string } | null;
               }) => void,
             ) => {
@@ -87,9 +91,9 @@ function buildAdminMock(
                 data: Array.isArray(jobIds)
                   ? jobIds
                       .filter((jobId): jobId is string => activeJobIds.has(String(jobId)))
-                      .map((id) => ({ id }))
+                      .map((id) => ({ id, attempt_count: opts.activeJobAttempts?.[id] ?? 1 }))
                   : [],
-                error: null,
+                error: opts.failJobs ? { message: "jobs unavailable" } : null,
               });
             },
           };
@@ -307,6 +311,63 @@ describe("reapOrphanSandboxes", () => {
     const result = await reapOrphanSandboxes(admin as never);
 
     expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("reaps a prior successful attempt when the same job is running a newer attempt", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "old-success", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+      { id: "current-success", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock(
+      [
+        { sandbox_id: "old-success", agent_job_id: "job-1", attempt_count: 1, status: "success" },
+        {
+          sandbox_id: "current-success",
+          agent_job_id: "job-1",
+          attempt_count: 2,
+          status: "success",
+        },
+      ],
+      { activeJobIds: ["job-1"], activeJobAttempts: { "job-1": 2 } },
+    );
+    const result = await reapOrphanSandboxes(admin as never);
+    expect(result.reapedSandboxIds).toEqual(["old-success"]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalledWith("current-success", expect.anything());
+  });
+
+  it("does not let legacy NULL ownership or an errored run protect a newer job's sandbox", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "legacy-success", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+      { id: "failed-attempt", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock(
+      [
+        {
+          sandbox_id: "legacy-success",
+          agent_job_id: "job-1",
+          attempt_count: null,
+          status: "success",
+        },
+        { sandbox_id: "failed-attempt", agent_job_id: "job-1", attempt_count: 2, status: "error" },
+      ],
+      { activeJobIds: ["job-1"], activeJobAttempts: { "job-1": 2 } },
+    );
+    expect((await reapOrphanSandboxes(admin as never)).reapedSandboxIds).toEqual([
+      "legacy-success",
+      "failed-attempt",
+    ]);
+  });
+
+  it("does not reap a published sandbox when its job ownership cannot be read", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "published", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock(
+      [{ sandbox_id: "published", agent_job_id: "job-1", attempt_count: 1, status: "success" }],
+      { failJobs: true },
+    );
+    expect((await reapOrphanSandboxes(admin as never)).reapedSandboxIds).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 

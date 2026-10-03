@@ -130,12 +130,8 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
     .eq("id", access.context.workspace.id);
 
   if (deleteError) {
-    // The teardown above already canceled this workspace's in-flight jobs and
-    // runs in anticipation of the cascade. The delete didn't commit, so the
-    // workspace and its sessions survive — park any session left mid-generation
-    // out of `in_progress` so it doesn't show "Drafting" forever with no
-    // job to advance it. Best-effort; the owner can retry the delete.
-    await parkGeneratingSessions(admin, access.context.workspace.id);
+    // Teardown parks each canceled generation in its cancellation transaction.
+    // Do not touch phases after provider cleanup: a new attempt may be live.
     return NextResponse.json({ error: "Failed to delete workspace." }, { status: 500 });
   }
 
@@ -173,28 +169,6 @@ async function loadWorkspaceAttachmentPaths(
     return data?.map((attachment) => attachment.storage_path) ?? [];
   } catch {
     return [];
-  }
-}
-
-async function parkGeneratingSessions(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  workspaceId: string,
-) {
-  // Compensating action for a delete that failed after pre-delete teardown
-  // canceled the workspace's jobs/runs. Mirrors cancelSessionWork's park: a
-  // session mid-generation with no active job is moved to `rejected` so the user
-  // can re-run it instead of seeing a permanently-stuck "Drafting" state.
-  const { error } = await admin
-    .from("sessions")
-    .update({ phase_status: "rejected" })
-    .eq("workspace_id", workspaceId)
-    .eq("phase_status", "in_progress");
-
-  if (error) {
-    console.error("[workspace-delete] failed to park sessions after delete error", {
-      error: error.message,
-      workspaceId,
-    });
   }
 }
 

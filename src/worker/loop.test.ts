@@ -90,52 +90,112 @@ describe("claimNextJob", () => {
 });
 
 describe("runClaimedJob", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(() => vi.clearAllMocks());
 
-  it("touches run activity and processes the job", async () => {
+  function recoveryAdmin(runId: string | null = "run-attempt-1") {
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn(() => query),
+      maybeSingle: vi.fn(async () => ({
+        data: runId ? { id: runId } : null,
+        error: null as { message: string } | null,
+      })),
+    };
+    return {
+      from: vi.fn(() => query),
+      rpc: vi.fn(async () => ({ data: "error", error: null as { message: string } | null })),
+      query,
+    };
+  }
+
+  it("processes the claim without ownerless activity writes", async () => {
     mocked.processPipelineJob.mockResolvedValue(undefined);
-
-    const runStatusUpdate = { in: vi.fn(async () => ({ error: null })) };
-    const runJobFilter = { eq: vi.fn(() => runStatusUpdate) };
-    const runQuery = { update: vi.fn(() => runJobFilter) };
-    const admin = {
-      from: vi.fn((table: string) => {
-        if (table === "agent_runs") return runQuery;
-        throw new Error(`unexpected table: ${table}`);
-      }),
-    };
-
+    const admin = recoveryAdmin();
     await runClaimedJob(admin as never, baseJob as never);
-
-    expect(runQuery.update).toHaveBeenCalledWith({ last_activity_at: expect.any(String) });
-    expect(runJobFilter.eq).toHaveBeenCalledWith("agent_job_id", "job-1");
     expect(mocked.processPipelineJob).toHaveBeenCalledWith({ admin, job: baseJob });
+    expect(admin.from).not.toHaveBeenCalled();
+    expect(admin.rpc).not.toHaveBeenCalled();
   });
 
-  it("marks the job errored when the processor throws and never rejects", async () => {
+  it("recovers a thrown processor error through the exact owned run", async () => {
     mocked.processPipelineJob.mockRejectedValue(new Error("boom"));
-
-    const runStatusUpdate = { in: vi.fn(async () => ({ error: null })) };
-    const runJobFilter = { eq: vi.fn(() => runStatusUpdate) };
-    const runQuery = { update: vi.fn(() => runJobFilter) };
-    const jobErrorTerminal = { neq: vi.fn(async () => ({ error: null })) };
-    const jobErrorUpdate = { eq: vi.fn(() => jobErrorTerminal) };
-    const jobQuery = { update: vi.fn(() => jobErrorUpdate) };
-    const admin = {
-      from: vi.fn((table: string) => {
-        if (table === "agent_runs") return runQuery;
-        if (table === "agent_jobs") return jobQuery;
-        throw new Error(`unexpected table: ${table}`);
-      }),
-    };
-
+    const admin = recoveryAdmin();
     await expect(runClaimedJob(admin as never, baseJob as never)).resolves.toBeUndefined();
+    expect(admin.query.eq.mock.calls).toEqual([
+      ["agent_job_id", "job-1"],
+      ["attempt_count", 1],
+    ]);
+    expect(admin.rpc).toHaveBeenCalledWith("fail_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: "boom",
+      p_retry: false,
+      p_max_retries: 0,
+    });
+  });
 
-    expect(jobQuery.update).toHaveBeenCalledWith(
-      expect.objectContaining({ last_error: "boom", status: "error" }),
+  it("uses runless recovery only when this attempt has no bound run", async () => {
+    mocked.processPipelineJob.mockRejectedValue(new Error("setup failed"));
+    const admin = recoveryAdmin(null);
+    await runClaimedJob(admin as never, baseJob as never);
+    expect(admin.rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_attempt_count: 1,
+        p_run_id: undefined,
+      }),
     );
-    expect(jobErrorUpdate.eq).toHaveBeenCalledWith("id", "job-1");
+  });
+
+  it("keeps the captured attempt when processing is delayed past a newer claim", async () => {
+    let reject!: (error: Error) => void;
+    mocked.processPipelineJob.mockImplementation(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    const claim = { ...baseJob };
+    const admin = recoveryAdmin();
+    admin.rpc.mockResolvedValueOnce({ data: "stale", error: null });
+    const processing = runClaimedJob(admin as never, claim as never);
+    claim.attempt_count = 2;
+    reject(new Error("old processor failed"));
+    await processing;
+    expect(admin.query.eq).toHaveBeenCalledWith("attempt_count", 1);
+    expect(admin.rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_attempt_count: 1 }),
+    );
+  });
+
+  it("does not bypass an unavailable ownership RPC and never rejects the scheduler", async () => {
+    mocked.processPipelineJob.mockRejectedValue(new Error("boom"));
+    const admin = recoveryAdmin();
+    admin.rpc.mockResolvedValueOnce({ data: "", error: { message: "RPC unavailable" } });
+    await expect(runClaimedJob(admin as never, baseJob as never)).resolves.toBeUndefined();
+    expect(admin.from).toHaveBeenCalledTimes(1);
+    expect(admin.from).toHaveBeenCalledWith("agent_runs");
+    expect(admin.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat a failed run lookup as proof of a runless attempt", async () => {
+    mocked.processPipelineJob.mockRejectedValue(new Error("boom"));
+    const admin = recoveryAdmin();
+    admin.query.maybeSingle.mockResolvedValueOnce({
+      data: null,
+      error: { message: "read failed" },
+    });
+    await expect(runClaimedJob(admin as never, baseJob as never)).resolves.toBeUndefined();
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("contains transport errors from the fallback itself", async () => {
+    mocked.processPipelineJob.mockRejectedValue(new Error("boom"));
+    const admin = recoveryAdmin();
+    admin.rpc.mockRejectedValueOnce(new Error("transport unavailable"));
+    await expect(runClaimedJob(admin as never, baseJob as never)).resolves.toBeUndefined();
+    expect(admin.rpc).toHaveBeenCalledTimes(1);
   });
 });

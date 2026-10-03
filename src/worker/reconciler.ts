@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
+import { archiveSession } from "@/lib/pipeline/archive";
 import { ACTIVE_AGENT_JOB_STATUSES, cancelSessionWork } from "@/lib/pipeline/cancel";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
@@ -228,17 +229,11 @@ async function archiveSessionForLinearRoute(
     sessionId: session.id,
   });
 
-  await cancelActiveWorkForSession(
-    admin,
-    session,
-    `Linear issue moved to "${statusName}" — session archived by reconciler.`,
-  );
-
-  await admin
-    .from("sessions")
-    .update({ archived_at: new Date().toISOString(), phase_status: "rejected" })
-    .eq("id", session.id)
-    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
+  await archiveSession(admin, {
+    reason: `Linear issue moved to "${statusName}" — session archived by reconciler.`,
+    sessionId: session.id,
+    workspaceId: session.workspace_id,
+  });
 }
 
 async function completeSessionForLinearRoute(
@@ -252,32 +247,26 @@ async function completeSessionForLinearRoute(
     sessionId: session.id,
   });
 
-  await cancelActiveWorkForSession(
-    admin,
-    session,
-    `Linear issue moved to "${statusName}" — session completed by reconciler.`,
-  );
-
-  await admin
-    .from("sessions")
-    .update({ archived_at: new Date().toISOString(), phase_status: "approved" })
-    .eq("id", session.id)
-    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
+  await archiveSession(admin, {
+    completed: true,
+    reason: `Linear issue moved to "${statusName}" — session completed by reconciler.`,
+    sessionId: session.id,
+    workspaceId: session.workspace_id,
+  });
 }
 
 async function cancelActiveWorkForSession(
   admin: AdminClient,
-  session: Pick<SessionRow, "id">,
+  session: Pick<SessionRow, "id" | "workspace_id">,
   reason: string,
 ): Promise<void> {
-  // Delegate to the shared cancel primitive, which also stops the runs'
-  // sandboxes. `parkPhaseStatus` is false because every reconciler caller sets
-  // `phase_status` itself right after (archive sets archived_at + rejected,
-  // reroute resets the stage), so the primitive must not pre-empt that.
+  // Stage routing still performs its own reset. Cancellation commits before
+  // provider cleanup; it must never park the session after that cleanup await.
   await cancelSessionWork(admin, {
     parkPhaseStatus: false,
     reason,
     sessionId: session.id,
+    workspaceId: session.workspace_id,
   });
 }
 

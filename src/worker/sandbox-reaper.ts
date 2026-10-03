@@ -8,7 +8,10 @@ import type { SandboxConnection } from "@/lib/sandbox/types";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 
 type AdminClient = SupabaseClient<Database>;
-type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "agent_job_id" | "sandbox_id" | "status">;
+type AgentRunSandboxRow = Pick<
+  Tables<"agent_runs">,
+  "agent_job_id" | "attempt_count" | "sandbox_id" | "status"
+>;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
   "checked_at" | "sandbox_id" | "status"
@@ -118,7 +121,7 @@ async function loadKnownConnectionSandboxState(input: {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id, status, agent_job_id")
+      .select("sandbox_id, status, agent_job_id, attempt_count")
       .eq("workspace_id", input.workspaceId)
       .eq("sandbox_provider", input.connection.provider)
       .eq("sandbox_connection_revision", input.connection.revision)
@@ -166,19 +169,25 @@ async function loadKnownConnectionSandboxState(input: {
     }
   }
 
-  const activeJobIds = await loadActiveAgentJobIds(
+  const activeJobAttempts = await loadActiveAgentJobAttempts(
     input.admin,
     runRows
       .map((row) => row.agent_job_id)
       .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
   );
 
-  if (!activeJobIds) {
+  if (!activeJobAttempts) {
     return null;
   }
 
   for (const row of runRows) {
-    if (row.sandbox_id && row.agent_job_id && activeJobIds.has(row.agent_job_id)) {
+    if (
+      row.status === "success" &&
+      row.sandbox_id &&
+      row.agent_job_id &&
+      row.attempt_count !== null &&
+      activeJobAttempts.get(row.agent_job_id) === row.attempt_count
+    ) {
       active.add(row.sandbox_id);
     }
   }
@@ -186,17 +195,17 @@ async function loadKnownConnectionSandboxState(input: {
   return { active, known };
 }
 
-async function loadActiveAgentJobIds(
+async function loadActiveAgentJobAttempts(
   admin: AdminClient,
   jobIds: string[],
-): Promise<Set<string> | null> {
+): Promise<Map<string, number> | null> {
   if (jobIds.length === 0) {
-    return new Set();
+    return new Map();
   }
 
   const { data, error } = await admin
     .from("agent_jobs")
-    .select("id")
+    .select("id, attempt_count")
     .in("id", [...new Set(jobIds)])
     .in("status", ["queued", "started", "running"]);
 
@@ -205,7 +214,7 @@ async function loadActiveAgentJobIds(
     return null;
   }
 
-  return new Set((data ?? []).map((row) => row.id));
+  return new Map((data ?? []).map((row) => [row.id, row.attempt_count]));
 }
 
 function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {

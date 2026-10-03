@@ -3,7 +3,11 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
+import {
+  resolveEffectiveSessionRepository,
+  type EffectiveSessionRepository,
+} from "@/features/sessions/effective-repository";
+import { inferWallieRunMode } from "@/features/wallie/utils";
 import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -90,68 +94,32 @@ export async function processPipelineJob(input: {
   signal?: AbortSignal;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const job = input.job;
-
+  // Carry the claim's identity through every await, including failure handling.
+  const job = { ...input.job };
+  let session: SessionRow | null;
+  let stage: PipelineStage | null;
   try {
-    const session = await loadSessionById(admin, job.session_id);
-    if (!session) {
-      await markPipelineJobError(admin, job, "No session row found for this job.");
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-
-    const stage = await loadStageById(admin, session.current_stage_id);
-    if (!stage) {
-      await markPipelineJobError(
-        admin,
-        job,
-        `Session ${session.id} references missing stage ${session.current_stage_id}.`,
-      );
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-
-    // Atomic CAS claim: only proceed if the session is in a non-terminal
-    // state for the current stage AND is not archived. Prevents a second worker
-    // from regenerating an artifact that has already been approved, and closes
-    // the archive race — a job enqueued in the narrow window before archive's
-    // marker landed cannot execute against an archived session.
-    //
-    // `awaiting_review` stays in this set even after `reject_session_stage`
-    // became one transaction. Rejection now enqueues the rerun and flips the
-    // session to `rejected` together, so a reject-then-crash no longer leaves
-    // a job stranded against `awaiting_review`. Other enqueue-before-flip
-    // paths still do: Linear `start_or_continue` and same-stage reroute insert
-    // a job without changing phase, and interactive `enqueueSessionJobWithRun`
-    // allows a retry while the session is still awaiting review. Dropping this
-    // status would mark those jobs successful without generating anything.
-    const { data: claimed, error: claimError } = await admin
-      .from("sessions")
-      .update({ phase_status: "in_progress" })
-      .eq("id", session.id)
-      .in("phase_status", ["in_progress", "awaiting_review", "rejected"])
-      .is("archived_at", null)
-      .select("id")
-      .maybeSingle();
-
-    if (claimError) {
-      await markPipelineJobError(admin, job, claimError.message);
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-
-    if (!claimed) {
-      // Terminal state (already approved) or archived — this job has nothing to
-      // generate. Cancel any run queued up-front for it (e.g. by
-      // enqueueSessionJobWithRun or a manual enqueue that raced an archive) so
-      // it does not dangle as a permanently-active run, then close the job.
-      await cancelQueuedRunsForJob(admin, job.id);
-      await markPipelineJobSuccess(admin, job);
-      return { jobId: job.id, processed: true, result: "success", runId: null };
-    }
-
-    return await runStage({ admin, job, session, signal: input.signal, stage });
+    const loaded = await loadSessionById(admin, job.session_id);
+    session = loaded ? { ...loaded } : null;
+    stage = session ? await loadStageById(admin, session.current_stage_id) : null;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Pipeline job failed";
-    await markPipelineJobError(admin, job, message);
-    return { jobId: job.id, processed: true, result: "error", runId: null };
+    const result = await failPipelineJob(admin, job, getErrorMessage(error, "Pipeline job failed"));
+    return { jobId: job.id, processed: true, result, runId: null };
+  }
+  if (!session || !stage) {
+    const message = session
+      ? `Session ${session.id} references missing stage ${session.current_stage_id}.`
+      : "No session row found for this job.";
+    const result = await failPipelineJob(admin, job, message);
+    return { jobId: job.id, processed: true, result, runId: null };
+  }
+  return runStage({ admin, job, session, signal: input.signal, stage });
+}
+
+class ExecutionOwnershipLostError extends Error {
+  constructor() {
+    super("This execution no longer owns its run.");
+    this.name = "ExecutionOwnershipLostError";
   }
 }
 
@@ -171,26 +139,6 @@ async function runStage(input: {
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, session, signal, stage } = input;
 
-  const newVersion = session.current_artifact_version + 1;
-
-  const [config, previousStages, attemptFeedback, operatingRulesMd, sessionAttachments] =
-    await Promise.all([
-      loadWorkspaceAgentConfig(admin, session.workspace_id),
-      loadCompletedStageArtifacts(admin, session.id),
-      loadLatestFeedback(admin, session.id, stage.id),
-      loadPipelineOperatingRules(admin, stage.pipelineId),
-      loadSessionAttachmentInputs(admin, {
-        sessionId: session.id,
-        workspaceId: session.workspace_id,
-      }),
-    ]);
-  const provider = normalizeAgentProviderName(config.provider);
-  if (!provider) {
-    throw new Error(
-      `Unknown agent provider: "${config.provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
-    );
-  }
-
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
   let github: {
@@ -204,61 +152,71 @@ async function runStage(input: {
   let installationToken: string | undefined;
   const collectedText: string[] = [];
   let finalOutput: string | undefined;
-  let artifactInserted = false;
   let runFailureMessageRecorded = false;
-  let sessionPointerAdvanced = false;
   try {
-    runId = await startAgentRun(admin, {
-      branchName: branch,
-      jobId: job.id,
-      model: config.model,
-      provider,
-      requestedByMemberId: job.requested_by_member_id,
-      runType: "project",
-      sessionId: session.id,
-      stage,
-      workspaceId: session.workspace_id,
-    });
+    const [
+      config,
+      previousStages,
+      attemptFeedback,
+      operatingRulesMd,
+      sessionAttachments,
+      repository,
+    ] = await Promise.all([
+      loadWorkspaceAgentConfig(admin, session.workspace_id),
+      loadCompletedStageArtifacts(admin, session.id),
+      loadLatestFeedback(admin, session.id, stage.id),
+      loadPipelineOperatingRules(admin, stage.pipelineId),
+      loadSessionAttachmentInputs(admin, {
+        sessionId: session.id,
+        workspaceId: session.workspace_id,
+      }),
+      resolveEffectiveSessionRepository({
+        sessionId: session.id,
+        supabase: admin,
+        workspaceId: session.workspace_id,
+      }),
+    ]);
+    const provider = normalizeAgentProviderName(config.provider);
+    if (!provider) {
+      throw new Error(
+        `Unknown agent provider: "${config.provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
+      );
+    }
 
-    // A workspace delete or session cancel can flip this job to `canceled`
-    // between the worker's claim and now — both cancel the job (and any run that
-    // already existed) first. The run `startAgentRun` just inserted, though, was
-    // born `running` because the cancel sweep predated it, so the sweep's
-    // run-status guard didn't catch it. Re-check the job here and bail BEFORE
-    // creating a sandbox: for a workspace delete the run row and the Vercel
-    // connection credentials are about to be cascade-deleted together, so a
-    // sandbox spun up past this point would leave nothing for the reaper to find
-    // or stop. Cancelling the run we just started also re-arms `updateRunSandbox`
-    // as the backstop for the narrow race where the cancel lands during sandbox
-    // creation.
-    if (await isJobCanceled(admin, job.id)) {
-      await cancelQueuedRunsForJob(admin, job.id);
+    const { data: startedRunId, error: startError } = await admin.rpc("start_session_job_attempt", {
+      p_job_id: job.id,
+      p_attempt_count: job.attempt_count,
+      p_expected_stage_id: stage.id,
+      p_expected_artifact_version: session.current_artifact_version,
+      p_model_provider: provider,
+      p_model_name: config.model,
+      p_run_type: inferWallieRunMode(repository.repositoryId),
+      p_branch_name: branch,
+    });
+    if (startError) throw startError;
+    runId = startedRunId;
+    if (!runId) {
+      // No authority was acquired. Never guess an active run: another start
+      // carrying the same claim may have won, or a newer attempt may exist.
+      await failPipelineJob(admin, job, "Session execution could not be started.", {
+        retry: false,
+      });
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
     // Every supported provider runs its CLI in a repository sandbox. Provision
     // it before resolving personal credentials so setup cannot retain a revoked key.
     if (runId) {
-      await persistStartupProgress(admin, runId, session.workspace_id, {
+      await persistStartupProgress(admin, runId, job.attempt_count, session.workspace_id, {
         type: "progress",
         text: "Preparing sandbox and repository…",
       });
     }
-    github = await loadGitHubContext(admin, session.workspace_id, session.id);
+    github = await loadGitHubContext(admin, session.workspace_id, repository.repository);
     if (!github) {
-      const message =
-        "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.";
-      if (runId) {
-        await persistRunFailureDiagnostic(admin, {
-          error: message,
-          runId,
-          workspaceId: session.workspace_id,
-        });
-        await markRunError(admin, runId);
-      }
-      await updateSessionStatus(admin, session.id, "rejected");
-      await markPipelineJobError(admin, job, message);
-      return { jobId: job.id, processed: true, result: "error", runId: null };
+      throw new Error(
+        "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
+      );
     }
     const sandboxImplementation = resolveSandboxImplementation();
     const sandboxSelection =
@@ -276,6 +234,8 @@ async function runStage(input: {
     }
     installationToken = await mintInstallationToken(github.installationId);
     throwIfAborted(signal);
+    if (!(await touchRunActivity(admin, runId, job.attempt_count)))
+      throw new ExecutionOwnershipLostError();
     sandbox = await createSessionSandbox({
       agentProvider: provider,
       baseBranch: github.repo.default_branch ?? "main",
@@ -291,18 +251,19 @@ async function runStage(input: {
       onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
         if (!runId) return;
         if (sandboxProvider === "fake") {
-          const attached = await updateRunSandbox(admin, runId, sandboxId, {
+          const attached = await updateRunSandbox(admin, runId, job.attempt_count, sandboxId, {
             provider: "fake",
           });
           if (!attached) {
             await stopSandboxById(sandboxId);
+            throw new ExecutionOwnershipLostError();
           }
           return;
         }
         if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
           throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
         }
-        const attached = await updateRunSandbox(admin, runId, sandboxId, {
+        const attached = await updateRunSandbox(admin, runId, job.attempt_count, sandboxId, {
           connection: sandboxSelection.connection,
           provider: sandboxSelection.provider,
         });
@@ -313,6 +274,7 @@ async function runStage(input: {
           await stopSandboxById(sandboxId, {
             connection: sandboxSelection.connection,
           });
+          throw new ExecutionOwnershipLostError();
         }
       },
     });
@@ -362,11 +324,13 @@ async function runStage(input: {
     );
 
     if (runId) {
-      await persistStartupProgress(admin, runId, session.workspace_id, {
+      await persistStartupProgress(admin, runId, job.attempt_count, session.workspace_id, {
         type: "progress",
         text: "Starting agent…",
       });
     }
+    if (!(await touchRunActivity(admin, runId, job.attempt_count)))
+      throw new ExecutionOwnershipLostError();
     // Runners load credentials after their own nonsecret remote setup, directly
     // before delivering the secret. Construction never decrypts personal keys.
     const runner = createSessionAgentRunner({
@@ -387,7 +351,9 @@ async function runStage(input: {
     })) {
       throwIfAborted(signal);
       if (runId) {
-        await persistEvent(admin, runId, session.workspace_id, event);
+        if (!(await persistEvent(admin, runId, job.attempt_count, session.workspace_id, event))) {
+          throw new ExecutionOwnershipLostError();
+        }
       }
       if (event.type === "error") {
         runFailureMessageRecorded = true;
@@ -409,33 +375,22 @@ async function runStage(input: {
       const message = `${stage.name} did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.`;
 
       if (runId) {
-        await persistEvent(admin, runId, session.workspace_id, { type: "error", message });
+        await persistEvent(admin, runId, job.attempt_count, session.workspace_id, {
+          type: "error",
+          message,
+        });
         runFailureMessageRecorded = true;
       }
 
       throw new MissingReviewableOutputError(message);
     }
 
-    const inserted = await insertArtifact(admin, {
-      artifactJson: artifactMarkdown,
-      sessionId: session.id,
-      stageId: stage.id,
-      stageSlug: stage.slug,
-      version: newVersion,
-      workspaceId: session.workspace_id,
-    });
-    artifactInserted = inserted.inserted;
-
     const published = await publishArtifact({
       admin,
       artifactMarkdown,
       branch,
       github,
-      newVersion,
-      onPointerAdvanced: () => {
-        sessionPointerAdvanced = true;
-      },
-      ownsUnpublishedRow: inserted.inserted,
+      job,
       runId,
       sandbox,
       session,
@@ -446,44 +401,24 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
   } catch (error) {
-    runId = runId ?? (await loadActiveRunIdForJob(admin, job.id));
-    if (runId) {
-      await markRunError(admin, runId);
-      if (!runFailureMessageRecorded) {
-        await persistRunFailureDiagnostic(admin, {
-          error,
-          runId,
-          workspaceId: session.workspace_id,
-        });
-        runFailureMessageRecorded = true;
-      }
+    // Sandbox providers sanitize acquisition errors while preserving their name.
+    if (error instanceof Error && error.name === "ExecutionOwnershipLostError") {
+      return { jobId: job.id, processed: true, result: "idle", runId };
     }
-
-    if (artifactInserted) {
-      // Compensate: drop the orphan so the next retry doesn't hit the
-      // (session_id, stage_slug, version) unique constraint. Skip the delete
-      // when another generation has already published this version.
-      await deleteUnpublishedArtifact(admin, {
-        sessionId: session.id,
-        stageSlug: stage.slug,
-        version: newVersion,
-      });
+    const result = await failPipelineJob(
+      admin,
+      job,
+      getErrorMessage(error, "Stage generation failed"),
+      {
+        runId,
+        retry:
+          !(error instanceof MissingReviewableOutputError) && !isSandboxConnectionSetupError(error),
+      },
+    );
+    if (runId && !runFailureMessageRecorded) {
+      await persistRunFailureDiagnostic(admin, { error, runId, workspaceId: session.workspace_id });
     }
-
-    if (sessionPointerAdvanced) {
-      await updateSessionStatusAfterStageFailure(admin, session.id, {
-        currentArtifactVersion: session.current_artifact_version,
-        phaseStatus: "rejected",
-      });
-    } else {
-      await updateSessionStatus(admin, session.id, "rejected");
-    }
-    const message = getErrorMessage(error, "Stage generation failed");
-    await markPipelineJobError(admin, job, message, {
-      retry:
-        !(error instanceof MissingReviewableOutputError) && !isSandboxConnectionSetupError(error),
-    });
-    return { jobId: job.id, processed: true, result: "error", runId };
+    return { jobId: job.id, processed: true, result, runId };
   } finally {
     try {
       await sandbox?.stop();
@@ -495,18 +430,19 @@ async function runStage(input: {
     }
   }
 
-  await markPipelineJobSuccess(admin, job);
-  return { jobId: job.id, processed: true, result: "success", runId };
+  const { data: completed, error: completeError } = await admin.rpc(
+    "complete_session_job_attempt",
+    {
+      p_job_id: job.id,
+      p_attempt_count: job.attempt_count,
+      p_run_id: runId!,
+    },
+  );
+  if (completeError) throw completeError;
+  return { jobId: job.id, processed: true, result: completed ? "success" : "idle", runId };
 }
 
-/**
- * Publish a generated artifact: claim `awaiting_review` with canonical
- * markdown in one transaction, optionally open a PR, then mark the run
- * successful. Job success stays with the caller so it still lands after
- * `sandbox.stop()` — a crash in that window is recovered by marking the
- * still-running job `success` in the terminal-run sweep, not by moving
- * the write into this function.
- */
+/** Publication atomically commits markdown, review state, and the owned run's success. */
 async function publishArtifact(input: {
   admin: AdminClient;
   artifactMarkdown: string;
@@ -515,50 +451,37 @@ async function publishArtifact(input: {
     installationId: number;
     repo: { default_branch: string | null; full_name: string; id: string };
   } | null;
-  newVersion: number;
-  onPointerAdvanced: () => void;
-  ownsUnpublishedRow: boolean;
-  runId: string | null;
+  job: Tables<"agent_jobs">;
+  runId: string;
   sandbox: SandboxHandle | null;
   session: SessionRow;
   stage: PipelineStage;
   usage: { inputTokens: number; outputTokens: number } | undefined;
 }): Promise<"idle" | "published"> {
-  const { admin, artifactMarkdown, branch, github, newVersion, runId, sandbox, session, stage } =
-    input;
+  const { admin, artifactMarkdown, branch, github, job, runId, sandbox, session, stage } = input;
 
-  // Claim the generation and persist canonical markdown in one transaction
-  // before mutating the shared stage branch. A loser that pushed last would
-  // rewrite the PR while the session kept the winner's markdown; publishing
-  // `awaiting_review` before the markdown write would also let a reviewer
-  // approve stale recovered text.
-  const { data: published, error: publishError } = await publishSessionStageArtifactRpc(admin, {
-    p_artifact_json: artifactMarkdown,
+  const { data: published, error: publishError } = await admin.rpc("publish_session_job_attempt", {
+    p_job_id: job.id,
+    p_attempt_count: job.attempt_count,
+    p_run_id: runId,
     p_expected_artifact_version: session.current_artifact_version,
-    p_session_id: session.id,
-    p_stage_id: stage.id,
-    p_stage_slug: stage.slug,
-    p_version: newVersion,
-    p_workspace_id: session.workspace_id,
+    p_artifact_json: artifactMarkdown,
   });
   if (publishError) throw publishError;
+  if (published !== true) return "idle";
 
-  if (published !== true) {
-    // Cancellation or another generation won the pointer. Delete only a row
-    // this process inserted, and only while it is still unpublished. If a
-    // replacement adopted this row and already advanced the session pointer,
-    // deleting it would leave `current_artifact_version` aiming at nothing.
-    if (input.ownsUnpublishedRow) {
-      await deleteUnpublishedArtifact(admin, {
-        sessionId: session.id,
-        stageSlug: stage.slug,
-        version: newVersion,
-      });
-    }
-    return "idle";
+  if (input.usage) {
+    const { error } = await admin
+      .from("agent_runs")
+      .update({
+        input_tokens: input.usage.inputTokens,
+        output_tokens: input.usage.outputTokens,
+      })
+      .eq("id", runId)
+      .eq("attempt_count", job.attempt_count)
+      .eq("status", "success");
+    if (error) throw error;
   }
-
-  input.onPointerAdvanced();
 
   if (sandbox && github && branch) {
     const prOutcome = await openSessionPullRequest({
@@ -595,12 +518,11 @@ async function publishArtifact(input: {
   }
 
   if (runId) {
-    await persistEvent(admin, runId, session.workspace_id, {
+    await persistEvent(admin, runId, job.attempt_count, session.workspace_id, {
       type: "completion",
       taskComplete: true,
       summary: `${stage.name} run completed`,
     });
-    await markRunSuccess(admin, runId, input.usage);
   }
 
   return "published";
@@ -727,75 +649,6 @@ export async function handleApproval(input: {
   };
 }
 
-// `reject_session_stage` and `publish_session_stage_artifact` (migrations
-// 20260903000001 / 20260903000004) are not yet present in the generated
-// `database.types.ts`, which `pnpm db:types` regenerates against a running
-// local database. Until that regeneration lands, their contracts are declared
-// here and the admin client is viewed through the augmented schema.
-// Delete this block once both functions exist in `Database["public"]["Functions"]`.
-type RejectSessionStageArgs = {
-  p_agent_model_name: string;
-  p_agent_model_provider: string;
-  p_artifact_version: number;
-  p_feedback_text: string;
-  p_requested_by_member_id?: string;
-  p_run_type?: string;
-  p_session_id: string;
-  p_workspace_id: string;
-};
-
-type RejectSessionStageRow = {
-  archived_at: string | null;
-  current_artifact_version: number;
-  current_stage_id: string;
-  job_created: boolean;
-  job_id: string;
-  phase_status: Database["public"]["Enums"]["pipeline_phase_status"];
-  rejection_count: number;
-  run_id: string | null;
-  session_id: string;
-  workspace_id: string;
-};
-
-type PublishSessionStageArtifactArgs = {
-  p_artifact_json: string;
-  p_expected_artifact_version: number;
-  p_session_id: string;
-  p_stage_id: string;
-  p_stage_slug: string;
-  p_version: number;
-  p_workspace_id: string;
-};
-
-type DatabaseWithPipelineRpcs = Omit<Database, "public"> & {
-  public: Omit<Database["public"], "Functions"> & {
-    Functions: Database["public"]["Functions"] & {
-      publish_session_stage_artifact: {
-        Args: PublishSessionStageArtifactArgs;
-        Returns: boolean;
-      };
-      reject_session_stage: {
-        Args: RejectSessionStageArgs;
-        Returns: RejectSessionStageRow[];
-      };
-    };
-  };
-};
-
-function rejectSessionStageRpc(admin: AdminClient, args: RejectSessionStageArgs) {
-  return (admin as unknown as SupabaseClient<DatabaseWithPipelineRpcs>).rpc(
-    "reject_session_stage",
-    args,
-  );
-}
-
-function publishSessionStageArtifactRpc(admin: AdminClient, args: PublishSessionStageArtifactArgs) {
-  return (admin as unknown as SupabaseClient<DatabaseWithPipelineRpcs>).rpc(
-    "publish_session_stage_artifact",
-    args,
-  );
-}
-
 export async function handleRejection(input: {
   admin?: AdminClient;
   expectedWorkspaceId: string;
@@ -830,7 +683,7 @@ export async function handleRejection(input: {
   // session wedged with a bumped rejection count and nothing queued, and a
   // concurrent approval serializes behind the row lock instead of racing the
   // final phase write.
-  const { data, error } = await rejectSessionStageRpc(admin, {
+  const { data, error } = await admin.rpc("reject_session_stage", {
     p_agent_model_name: runConfig.modelName,
     p_agent_model_provider: runConfig.modelProvider,
     p_artifact_version: input.version,
@@ -892,105 +745,6 @@ async function loadLatestFeedback(
     .maybeSingle();
   if (error) throw error;
   return data?.feedback_text ?? null;
-}
-
-async function updateSessionStatus(
-  admin: AdminClient,
-  sessionId: string,
-  status: SessionRow["phase_status"],
-): Promise<void> {
-  const { error } = await admin
-    .from("sessions")
-    .update({ phase_status: status })
-    .eq("id", sessionId)
-    // Every caller runs after the stage was CAS-claimed to `in_progress`,
-    // so this guard is a no-op on the normal path. Its job is to keep a session
-    // that was canceled mid-run parked in `rejected` instead of being moved
-    // back to a live phase by a late-finishing worker.
-    .eq("phase_status", "in_progress");
-  if (error) throw error;
-}
-
-async function updateSessionStatusAfterStageFailure(
-  admin: AdminClient,
-  sessionId: string,
-  input: {
-    currentArtifactVersion: number;
-    phaseStatus: SessionRow["phase_status"];
-  },
-): Promise<void> {
-  const { error } = await admin
-    .from("sessions")
-    .update({
-      current_artifact_version: input.currentArtifactVersion,
-      phase_status: input.phaseStatus,
-    })
-    .eq("id", sessionId)
-    // Reached only after the pointer advanced to `awaiting_review`; the guard
-    // keeps a session canceled in that window parked in `rejected` rather than
-    // rolling its version/phase back.
-    .eq("phase_status", "awaiting_review");
-  if (error) throw error;
-}
-
-async function insertArtifact(
-  admin: AdminClient,
-  input: {
-    artifactJson: string;
-    sessionId: string;
-    stageId: string;
-    stageSlug: string;
-    version: number;
-    workspaceId: string;
-  },
-): Promise<{ inserted: boolean }> {
-  // `newVersion` is computed from the session row loaded at claim time. A
-  // crash after this write and before the pointer CAS leaves an unpublished
-  // row at `(session_id, stage_slug, version)`. A plain insert then hits
-  // `session_artifacts_unique_version` on every retry. ON CONFLICT DO NOTHING
-  // avoids clobbering a row another live generation already published.
-  // `publish_session_stage_artifact` then upserts canonical markdown and
-  // claims `awaiting_review` in one transaction.
-  const { data, error } = await admin
-    .from("session_artifacts")
-    .upsert(
-      {
-        artifact_json: input.artifactJson,
-        session_id: input.sessionId,
-        stage_id: input.stageId,
-        stage_slug: input.stageSlug,
-        version: input.version,
-        workspace_id: input.workspaceId,
-      },
-      { ignoreDuplicates: true, onConflict: "session_id,stage_slug,version" },
-    )
-    .select("id")
-    .maybeSingle();
-  if (error) throw error;
-  return { inserted: data != null };
-}
-
-async function deleteUnpublishedArtifact(
-  admin: AdminClient,
-  input: { sessionId: string; stageSlug: string; version: number },
-): Promise<void> {
-  const { data: session, error: sessionError } = await admin
-    .from("sessions")
-    .select("current_artifact_version")
-    .eq("id", input.sessionId)
-    .maybeSingle();
-  if (sessionError) throw sessionError;
-  if (session?.current_artifact_version === input.version) {
-    return;
-  }
-
-  const { error } = await admin
-    .from("session_artifacts")
-    .delete()
-    .eq("session_id", input.sessionId)
-    .eq("stage_slug", input.stageSlug)
-    .eq("version", input.version);
-  if (error) throw error;
 }
 
 function createSessionAgentRunner(input: {
@@ -1059,15 +813,8 @@ interface GitHubContext {
 async function loadGitHubContext(
   admin: AdminClient,
   workspaceId: string,
-  sessionId: string,
+  repository: EffectiveSessionRepository | null,
 ): Promise<GitHubContext | null> {
-  const resolution = await resolveEffectiveSessionRepository({
-    sessionId,
-    supabase: admin,
-    workspaceId,
-  });
-  const repository = resolution.repository;
-
   if (!repository || repository.isArchived) {
     return null;
   }
@@ -1101,74 +848,10 @@ async function mintInstallationToken(installationId: number): Promise<string> {
   return data.token;
 }
 
-async function startAgentRun(
-  admin: AdminClient,
-  input: {
-    branchName: string;
-    jobId: string;
-    sessionId: string;
-    model: string;
-    provider: AgentProvider;
-    requestedByMemberId: string | null;
-    runType: string;
-    workspaceId: string;
-    stage: Pick<PipelineStage, "id" | "name" | "slug"> | null;
-  },
-): Promise<string | null> {
-  const startedAt = new Date().toISOString();
-  const { data: existingRun, error: updateError } = await admin
-    .from("agent_runs")
-    .update({
-      branch_name: input.branchName,
-      model_name: input.model,
-      model_provider: input.provider,
-      stage_id: input.stage?.id ?? null,
-      stage_name: input.stage?.name ?? null,
-      stage_slug: input.stage?.slug ?? null,
-      started_at: startedAt,
-      status: "running" as const,
-      triggered_by_member_id: input.requestedByMemberId,
-    })
-    .eq("agent_job_id", input.jobId)
-    // A retry must not reuse the run still owned by an earlier attempt.
-    .eq("status", "queued")
-    .select("id")
-    .maybeSingle();
-
-  if (updateError) {
-    throw updateError;
-  }
-
-  if (existingRun) {
-    return existingRun.id;
-  }
-
-  const { data, error } = await admin
-    .from("agent_runs")
-    .insert({
-      agent_job_id: input.jobId,
-      branch_name: input.branchName,
-      model_name: input.model,
-      model_provider: input.provider,
-      run_type: input.runType,
-      session_id: input.sessionId,
-      stage_id: input.stage?.id ?? null,
-      stage_name: input.stage?.name ?? null,
-      stage_slug: input.stage?.slug ?? null,
-      started_at: startedAt,
-      status: "running" as const,
-      triggered_by_member_id: input.requestedByMemberId,
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
-  if (error || !data) return null;
-  return data.id;
-}
-
 async function updateRunSandbox(
   admin: AdminClient,
   runId: string,
+  attemptCount: number,
   sandboxId: string,
   metadata:
     | {
@@ -1199,6 +882,7 @@ async function updateRunSandbox(
       ...vercelMetadata,
     })
     .eq("id", runId)
+    .eq("attempt_count", attemptCount)
     // Only attach the sandbox to a run that is still active. If the run was
     // canceled in the race before its sandbox id landed, this affects zero
     // rows and the caller stops the orphaned sandbox.
@@ -1210,132 +894,20 @@ async function updateRunSandbox(
   return (data?.length ?? 0) > 0;
 }
 
-async function markRunSuccess(
-  admin: AdminClient,
-  runId: string,
-  usage?: { inputTokens: number; outputTokens: number },
-): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "success" as const,
-      ...(usage
-        ? {
-            input_tokens: usage.inputTokens,
-            output_tokens: usage.outputTokens,
-          }
-        : {}),
-    })
-    .eq("id", runId)
-    // Don't resurrect a run that was canceled while this worker was still
-    // processing it.
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-}
-
-async function markRunError(admin: AdminClient, runId: string): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "error" as const,
-    })
-    .eq("id", runId)
-    // Don't flip a canceled run back to error.
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-}
-
-// Best-effort cleanup for a job whose session is no longer claimable (terminal
-// or archived). Flips any still-active run inserted up-front for the job to
-// `canceled` so it cannot linger as a permanently-active run. Logs and swallows
-// errors — failing to tidy a run must not wedge the job-close path.
-async function cancelQueuedRunsForJob(admin: AdminClient, jobId: string): Promise<void> {
-  const { error } = await admin
-    .from("agent_runs")
-    .update({ finished_at: new Date().toISOString(), status: "canceled" })
-    .eq("agent_job_id", jobId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-
-  if (error) {
-    console.error("Failed to cancel runs for an unclaimable job", {
-      error: getErrorMessage(error, "Unknown run cancel error"),
-      jobId,
-    });
-  }
-}
-
-// True only when the job row has been flipped to `canceled` (e.g. by a workspace
-// delete or session cancel) since the worker claimed it. A read error returns
-// false so a transient blip can't strand an otherwise-healthy job — the
-// `updateRunSandbox` status guard and the sandbox reaper remain as backstops.
-async function isJobCanceled(admin: AdminClient, jobId: string): Promise<boolean> {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("status")
-    .eq("id", jobId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Failed to re-check job status before sandbox creation", {
-      error: getErrorMessage(error, "Unknown job status lookup error"),
-      jobId,
-    });
-    return false;
-  }
-
-  return data?.status === "canceled";
-}
-
-async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise<string | null> {
-  try {
-    const { data, error } = await admin
-      .from("agent_runs")
-      .select("id")
-      .eq("agent_job_id", jobId)
-      .in("status", ACTIVE_AGENT_RUN_STATUSES)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      console.error("Failed to load active run for diagnostic", {
-        error: getErrorMessage(error, "Unknown active run lookup error"),
-        jobId,
-      });
-      return null;
-    }
-
-    return data?.id ?? null;
-  } catch (error) {
-    console.error("Failed to load active run for diagnostic", {
-      error: getErrorMessage(error, "Unknown active run lookup error"),
-      jobId,
-    });
-    return null;
-  }
-}
-
-async function markActiveRunsForJobError(admin: AdminClient, jobId: string): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "error" as const,
-    })
-    .eq("agent_job_id", jobId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-}
-
 /** Startup hints are best effort; a logging outage must not prevent execution. */
 async function persistStartupProgress(
   admin: AdminClient,
   runId: string,
+  attemptCount: number,
   workspaceId: string,
   event: Extract<AgentEvent, { type: "progress" }>,
 ) {
   try {
-    await persistEvent(admin, runId, workspaceId, event);
-  } catch {
+    if (!(await persistEvent(admin, runId, attemptCount, workspaceId, event))) {
+      throw new ExecutionOwnershipLostError();
+    }
+  } catch (error) {
+    if (error instanceof ExecutionOwnershipLostError) throw error;
     console.warn("Wallie could not record startup progress.");
   }
 }
@@ -1343,9 +915,10 @@ async function persistStartupProgress(
 async function persistEvent(
   admin: AdminClient,
   runId: string,
+  attemptCount: number,
   workspaceId: string,
   event: AgentEvent,
-): Promise<void> {
+): Promise<boolean> {
   let kind: string;
   let messageMd: string;
 
@@ -1361,8 +934,7 @@ async function persistEvent(
       break;
     case "completion":
       if (isGenericRunnerCompletionSummary(event.summary)) {
-        await touchRunActivity(admin, runId);
-        return;
+        return touchRunActivity(admin, runId, attemptCount);
       }
       kind = "completion";
       messageMd = event.summary;
@@ -1383,7 +955,7 @@ async function persistEvent(
     throw error;
   }
 
-  await touchRunActivity(admin, runId);
+  return touchRunActivity(admin, runId, attemptCount);
 }
 
 async function persistRunFailureDiagnostic(
@@ -1563,27 +1135,20 @@ function isGenericRunnerCompletionSummary(summary: string) {
   return summary.trim().toLowerCase() === "codex session completed";
 }
 
-async function touchRunActivity(admin: AdminClient, runId: string): Promise<void> {
-  await admin
+async function touchRunActivity(
+  admin: AdminClient,
+  runId: string,
+  attemptCount: number,
+): Promise<boolean> {
+  const { data, error } = await admin
     .from("agent_runs")
     .update({ last_activity_at: new Date().toISOString() })
     .eq("id", runId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-}
-
-async function markPipelineJobSuccess(
-  admin: AdminClient,
-  job: Tables<"agent_jobs">,
-): Promise<void> {
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "success",
-    })
-    .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to success.
-    .neq("status", "canceled");
+    .eq("attempt_count", attemptCount)
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
+    .select("id");
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
 }
 
 async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<number> {
@@ -1600,36 +1165,24 @@ async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<
   return 3;
 }
 
-async function markPipelineJobError(
+async function failPipelineJob(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
-  options: { retry?: boolean } = {},
-): Promise<void> {
+  options: { retry?: boolean; runId?: string | null } = {},
+): Promise<ProcessPipelineJobResult["result"]> {
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
-
-  if (options.retry !== false && job.attempt_count < maxRetries) {
-    const { error: retryError } = await admin.rpc("schedule_job_retry", {
-      target_job_id: job.id,
-      base_delay_ms: 5000,
-      max_backoff_ms: 300000,
-    });
-
-    if (!retryError) {
-      await admin.from("agent_jobs").update({ last_error: errorMessage }).eq("id", job.id);
-      return;
-    }
-  }
-
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: errorMessage,
-      status: "error",
-    })
-    .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to error.
-    .neq("status", "canceled");
-  await markActiveRunsForJobError(admin, job.id);
+  const { data, error } = await admin.rpc("fail_session_job_attempt", {
+    p_job_id: job.id,
+    p_attempt_count: job.attempt_count,
+    p_run_id: options.runId ?? undefined,
+    p_error: errorMessage,
+    p_retry: options.retry !== false,
+    p_max_retries: maxRetries,
+  });
+  if (error) throw error;
+  if (data === "stale") return "idle";
+  if (data === "success") return "success";
+  if (data === "queued" || data === "error") return "error";
+  throw new Error("Unexpected execution failure receipt.");
 }

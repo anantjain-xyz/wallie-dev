@@ -173,7 +173,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     id: "job-1",
     workspace_id: "ws-1",
     session_id: "sess-1",
-    status: "queued",
+    status: "running",
     created_at: new Date().toISOString(),
     dedupe_key: "pipeline:TEAM-1:active",
     finished_at: null,
@@ -185,7 +185,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     stage_slug: null,
     trigger_type: "manual_run",
     updated_at: new Date().toISOString(),
-    attempt_count: 0,
+    attempt_count: 1,
     scheduled_at: null,
     ...overrides,
   };
@@ -233,18 +233,11 @@ interface MockOptions {
   session: Tables<"sessions"> | null;
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   claimSucceeds?: boolean;
-  /** Status the agent_jobs row reports when the processor re-checks it after
-   * starting the run (isJobCanceled). Defaults to an active status. */
+  currentAttempt?: number;
+  replacementJobId?: string;
+  failRpcError?: { message: string };
   jobStatus?: string;
   artifactInsertError?: { message: string } | null;
-  /** `false` models ON CONFLICT DO NOTHING (another generation already holds the version). */
-  artifactInserted?: boolean;
-  /** Stored markdown loaded after an upsert conflict when replace is refused. */
-  existingUnpublishedArtifact?: string;
-  /** Alias for existingUnpublishedArtifact (conflict-path stored markdown). */
-  adoptedArtifactMarkdown?: string;
-  /** Session pointer observed after a lost CAS — published version if another generation won. */
-  rereadCurrentArtifactVersion?: number;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
@@ -295,15 +288,24 @@ function createProcessorTestAdminClient(
 
 function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
-  const updatedArtifacts: Array<Record<string, unknown>> = [];
-  const artifactUpsertConflicts: Array<string | undefined> = [];
-  const artifactUpsertIgnoreDuplicates: Array<boolean | undefined> = [];
+  const legacyMutationCalls: string[] = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
   const insertedMessages: Array<Record<string, unknown>> = [];
   const updatedJobs: Array<Record<string, unknown>> = [];
   const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
-  const deletedArtifacts: Array<Record<string, unknown>> = [];
+
+  const runRows = opts.runRows ?? [
+    {
+      id: "run-1",
+      agent_job_id: "job-1",
+      workspace_id: "ws-1",
+      status: "queued",
+      attempt_count: null,
+    },
+  ];
+  let currentAttempt = opts.currentAttempt;
+  const runUpdateFilters: Array<Record<string, unknown>> = [];
 
   const lookup: Record<string, unknown> = {};
   for (const row of opts.agentConfig ?? []) {
@@ -322,118 +324,18 @@ function buildAdminMock(opts: MockOptions) {
   mocked.loadWorkspaceAgentConfig.mockResolvedValue(resolvedConfig);
 
   const sessionsTable = {
-    select: (cols?: string) => {
+    select: () => {
       const builder = {
         eq: () => builder,
-        maybeSingle: async () => {
-          if (
-            cols === "current_artifact_version" &&
-            opts.rereadCurrentArtifactVersion !== undefined
-          ) {
-            return {
-              data: { current_artifact_version: opts.rereadCurrentArtifactVersion },
-              error: null,
-            };
-          }
-          return { data: opts.session, error: null };
-        },
+        maybeSingle: async () => ({ data: opts.session, error: null }),
       };
       return builder;
     },
-    update: (patch: Record<string, unknown>) => {
-      updatedSessions.push(patch);
-      const chain = {
-        eq: () => chain,
-        in: () => chain,
-        is: () => chain,
-        select: () => chain,
-        // The CAS claim ends in `.maybeSingle()`.
-        maybeSingle: async () => ({
-          data: opts.claimSucceeds === false ? null : { id: opts.session?.id },
-          error: null,
-        }),
-        // The pointer write and updateSessionStatus await the chain directly;
-        // an empty data array models a lost CAS (the session was parked while
-        // the run was generating).
-        then: (resolve: (value: { data: { id: string | undefined }[]; error: null }) => void) => {
-          resolve({
-            data: opts.pointerCasMiss ? [] : [{ id: opts.session?.id }],
-            error: null,
-          });
-        },
-      };
-      return chain;
+    update: () => {
+      legacyMutationCalls.push("sessions.update");
+      throw new Error("Processor must mutate session state through ownership RPCs");
     },
-  } as const;
-
-  const artifactsTable = {
-    insert: async (row: Record<string, unknown>) => {
-      insertedArtifacts.push(row);
-      return { error: opts.artifactInsertError ?? null };
-    },
-    select: () => {
-      const chain = {
-        eq: () => chain,
-        maybeSingle: async () => {
-          const markdown = opts.existingUnpublishedArtifact ?? opts.adoptedArtifactMarkdown;
-          return {
-            data: markdown != null ? { artifact_json: markdown } : null,
-            error: null,
-          };
-        },
-      };
-      return chain;
-    },
-    upsert: (
-      row: Record<string, unknown>,
-      options?: { ignoreDuplicates?: boolean; onConflict?: string },
-    ) => {
-      insertedArtifacts.push(row);
-      artifactUpsertConflicts.push(options?.onConflict);
-      artifactUpsertIgnoreDuplicates.push(options?.ignoreDuplicates);
-      return {
-        select: () => ({
-          maybeSingle: async () => ({
-            data:
-              opts.artifactInsertError || opts.artifactInserted === false ? null : { id: "art-1" },
-            error: opts.artifactInsertError ?? null,
-          }),
-        }),
-      };
-    },
-    update: (patch: Record<string, unknown>) => {
-      updatedArtifacts.push(patch);
-      const chain = {
-        eq: () => chain,
-        select: () => ({
-          maybeSingle: async () => {
-            const published =
-              opts.rereadCurrentArtifactVersion !== undefined &&
-              opts.rereadCurrentArtifactVersion >= 1;
-            return {
-              data: published ? null : { id: "art-1" },
-              error: null,
-            };
-          },
-        }),
-      };
-      return chain;
-    },
-    delete: () => {
-      const filters: Record<string, unknown> = {};
-      const chain = {
-        eq: (col: string, val: unknown) => {
-          filters[col] = val;
-          return chain;
-        },
-        then: (resolve: (value: { error: null }) => void) => {
-          deletedArtifacts.push(filters);
-          resolve({ error: null });
-        },
-      };
-      return chain;
-    },
-  } as const;
+  };
 
   const insertedFeedback: Array<Record<string, unknown>> = [];
   const feedbackTable = {
@@ -464,14 +366,6 @@ function buildAdminMock(opts: MockOptions) {
   } as const;
 
   const agentRunsTable = {
-    insert: (row: Record<string, unknown>) => {
-      insertedRuns.push(row);
-      const id = opts.runRows ? `run-${opts.runRows.length + 1}` : "run-1";
-      opts.runRows?.push({ id, ...row });
-      return {
-        select: () => ({ single: async () => ({ data: { id }, error: null }) }),
-      };
-    },
     select: () => {
       const chain = {
         eq: () => chain,
@@ -483,46 +377,42 @@ function buildAdminMock(opts: MockOptions) {
       return chain;
     },
     update: (patch: Record<string, unknown>) => {
-      updatedRuns.push(patch);
-      const filters: Array<(row: Record<string, unknown>) => boolean> = [];
-      const applyUpdate = () => {
-        if (!opts.runRows) return [{ id: "run-1", workspace_id: "ws-1" }];
-        const rows = opts.runRows.filter((row) => filters.every((matches) => matches(row)));
-        for (const row of rows) Object.assign(row, patch);
-        return rows as Array<{ id: string; workspace_id: string }>;
-      };
+      const filters: Record<string, unknown> = {};
+      const matches: Array<(row: Record<string, unknown>) => boolean> = [];
       const chain = {
         eq: (column: string, value: unknown) => {
-          filters.push((row) => row[column] === value);
+          filters[column] = value;
+          matches.push((row) => row[column] === value);
           return chain;
         },
         in: (column: string, values: unknown[]) => {
-          filters.push((row) => values.includes(row[column]));
+          filters[column] = values;
+          matches.push((row) => values.includes(row[column]));
           return chain;
         },
         select: () => chain,
-        maybeSingle: async () => ({ data: applyUpdate()[0] ?? null, error: null }),
         then: (
           resolve: (value: {
-            data: { id: string; workspace_id: string }[];
+            data: Record<string, unknown>[];
             error: { message: string } | null;
           }) => void,
         ) => {
-          // A canceled run won't match the active-status guard; model that as
-          // an empty result so updateRunSandbox reports "not attached".
-          const sandboxUpdateMissed = "sandbox_id" in patch && opts.runSandboxUpdateMissed === true;
+          runUpdateFilters.push(filters);
+          const missed = "sandbox_id" in patch && opts.runSandboxUpdateMissed;
+          const rows = missed ? [] : runRows.filter((row) => matches.every((match) => match(row)));
+          if (rows.length) {
+            updatedRuns.push(patch);
+            for (const row of rows) Object.assign(row, patch);
+          }
           resolve({
-            data: sandboxUpdateMissed ? [] : applyUpdate(),
-            error:
-              "sandbox_id" in patch && opts.runSandboxUpdateError
-                ? opts.runSandboxUpdateError
-                : null,
+            data: rows,
+            error: "sandbox_id" in patch ? (opts.runSandboxUpdateError ?? null) : null,
           });
         },
       };
       return chain;
     },
-  } as const;
+  };
 
   const agentRunMessagesTable = {
     insert: async (row: Record<string, unknown>) => {
@@ -535,45 +425,6 @@ function buildAdminMock(opts: MockOptions) {
 
       insertedMessages.push(row);
       return { error: null };
-    },
-  } as const;
-
-  const agentJobsTable = {
-    delete: () => ({
-      eq: () => ({
-        eq: async () => ({ error: null }),
-      }),
-    }),
-    update: (patch: Record<string, unknown>) => {
-      const chain = {
-        eq: () => chain,
-        neq: () => chain,
-        then: (resolve: (value: { error: { message: string } | null }) => void) => {
-          updatedJobs.push(patch);
-          resolve({ error: null });
-        },
-      };
-      return chain;
-    },
-    insert: () => ({
-      select: () => ({ single: async () => ({ data: { id: "job-enqueued" }, error: null }) }),
-    }),
-    select: () => {
-      // Flexible chain: serves both the enqueued-job lookup
-      // (.eq().eq().eq().in().order().limit().maybeSingle()) and the
-      // isJobCanceled re-check (.eq("id").maybeSingle()). The row carries both
-      // `id` and `status` so either caller finds what it reads.
-      const chain = {
-        eq: () => chain,
-        in: () => chain,
-        order: () => chain,
-        limit: () => chain,
-        maybeSingle: async () => ({
-          data: { id: "job-enqueued", status: opts.jobStatus ?? "running" },
-          error: null,
-        }),
-      };
-      return chain;
     },
   } as const;
 
@@ -707,12 +558,10 @@ function buildAdminMock(opts: MockOptions) {
 
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
-    session_artifacts: artifactsTable,
     session_artifact_feedback: feedbackTable,
     workspace_agent_config: agentConfigTable,
     agent_runs: agentRunsTable,
     agent_run_messages: agentRunMessagesTable,
-    agent_jobs: agentJobsTable,
     workspace_members: workspaceMembersTable,
     github_installations: githubInstallationsTable,
     github_repositories: githubRepositoriesTable,
@@ -722,42 +571,121 @@ function buildAdminMock(opts: MockOptions) {
   };
 
   const rpc = vi.fn(async (fn: string, args?: unknown) => {
-    if (fn === "publish_session_stage_artifact") {
-      const payload = (args ?? {}) as Record<string, unknown>;
-      if (opts.pointerUpdateError) {
-        return { data: null, error: opts.pointerUpdateError };
+    const payload = (args ?? {}) as Record<string, unknown>;
+    const attempt = payload.p_attempt_count as number;
+    const stale =
+      opts.jobStatus === "canceled" ||
+      (opts.replacementJobId && opts.replacementJobId !== payload.p_job_id) ||
+      (opts.currentAttempt ?? currentAttempt ?? attempt) > attempt;
+    if (fn === "start_session_job_attempt") {
+      if (
+        opts.claimSucceeds === false ||
+        stale ||
+        runRows.some((row) => row.attempt_count === attempt)
+      ) {
+        return { data: null, error: null };
       }
-      if (opts.pointerCasMiss) {
+      currentAttempt = attempt;
+      for (const row of runRows) {
+        if (
+          typeof row.attempt_count === "number" &&
+          row.attempt_count < attempt &&
+          ["queued", "started", "running"].includes(String(row.status))
+        )
+          row.status = "error";
+      }
+      let run = runRows.find((row) => row.status === "queued" && row.attempt_count == null);
+      if (!run) {
+        run = {
+          id: `run-${runRows.length + 1}`,
+          agent_job_id: payload.p_job_id,
+          workspace_id: "ws-1",
+        };
+        runRows.push(run);
+        insertedRuns.push(run);
+      }
+      const patch = {
+        status: "running",
+        attempt_count: attempt,
+        branch_name: payload.p_branch_name,
+        model_name: payload.p_model_name,
+        model_provider: payload.p_model_provider,
+        run_type: payload.p_run_type,
+        stage_id: payload.p_expected_stage_id,
+        stage_name: "Product",
+        stage_slug: "product",
+      };
+      Object.assign(run, patch);
+      updatedRuns.push(patch);
+      updatedSessions.push({ phase_status: "in_progress" });
+      return { data: run.id, error: null };
+    }
+    const run = runRows.find((row) => row.id === payload.p_run_id && row.attempt_count === attempt);
+    if (fn === "publish_session_job_attempt") {
+      if (opts.pointerUpdateError || opts.artifactInsertError)
+        return { data: null, error: opts.pointerUpdateError ?? opts.artifactInsertError };
+      if (opts.pointerCasMiss || stale || run?.status !== "running")
         return { data: false, error: null };
-      }
+      insertedArtifacts.push({
+        artifact_json: payload.p_artifact_json,
+        stage_slug: "product",
+        version: Number(payload.p_expected_artifact_version) + 1,
+      });
       updatedSessions.push({
-        current_artifact_version: payload.p_version,
+        current_artifact_version: Number(payload.p_expected_artifact_version) + 1,
         phase_status: "awaiting_review",
       });
-      if (typeof payload.p_artifact_json === "string") {
-        updatedArtifacts.push({ artifact_json: payload.p_artifact_json });
-      }
+      run.status = "success";
+      updatedRuns.push({ status: "success" });
       return { data: true, error: null };
     }
-    return { data: null, error: null };
+    if (fn === "complete_session_job_attempt") {
+      if (stale || run?.status !== "success") return { data: false, error: null };
+      updatedJobs.push({ status: "success" });
+      return { data: true, error: null };
+    }
+    if (fn === "fail_session_job_attempt") {
+      if (opts.failRpcError) return { data: null, error: opts.failRpcError };
+      if (stale || (!payload.p_run_id && runRows.some((row) => row.attempt_count === attempt)))
+        return { data: "stale", error: null };
+      if (run?.status === "success") {
+        updatedJobs.push({ status: "success" });
+        return { data: "success", error: null };
+      }
+      if (run) {
+        run.status = "error";
+        updatedRuns.push({ status: "error" });
+      }
+      const retrying = payload.p_retry && attempt < Number(payload.p_max_retries);
+      updatedJobs.push({ status: retrying ? "queued" : "error", last_error: payload.p_error });
+      if (opts.session?.phase_status !== "approved")
+        updatedSessions.push({ phase_status: "rejected" });
+      return { data: retrying ? "queued" : "error", error: null };
+    }
+    throw new Error(`Unexpected RPC ${fn}`);
   });
 
   return {
     admin: createProcessorTestAdminClient({
-      from: (name: string) => tables[name] ?? {},
+      from: (name: string) => {
+        if (name === "session_artifacts" || name === "agent_jobs") {
+          legacyMutationCalls.push(name);
+          throw new Error(`Processor must mutate ${name} through ownership RPCs`);
+        }
+        return tables[name] ?? {};
+      },
       rpc,
     }),
-    artifactUpsertConflicts,
-    artifactUpsertIgnoreDuplicates,
     insertedArtifacts,
+    legacyMutationCalls,
     insertedMessages,
     insertedRuns,
     insertedFeedback,
-    updatedArtifacts,
     updatedJobs,
     updatedRuns,
     updatedSessions,
-    deletedArtifacts,
+    runRows,
+    runUpdateFilters,
     rpc,
   };
 }
@@ -910,141 +838,79 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("success");
   });
 
-  it("replaces unpublished artifact markdown after winning the pointer, then opens a PR from the new sandbox", async () => {
-    const session = baseSession();
-    const {
-      admin,
-      artifactUpsertConflicts,
-      artifactUpsertIgnoreDuplicates,
-      insertedArtifacts,
-      updatedArtifacts,
-      updatedSessions,
-    } = buildAdminMock({
-      session,
-      agentConfig: [],
-      artifactInserted: false,
-      adoptedArtifactMarkdown: "Stored markdown from the crashed attempt",
-    });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    // A leftover unpublished row at (session, stage, N+1) from a crash after
-    // insert and before the pointer CAS must not become `awaiting_review` until
-    // this generation's markdown is durable. The retry regenerates, then
-    // `publish_session_stage_artifact` writes canonical markdown and claims
-    // review in one transaction before pushing from the new sandbox.
+  it("publishes only through the captured owner RPC before opening its attempt PR", async () => {
+    const { admin, rpc, legacyMutationCalls } = buildAdminMock({ session: baseSession() });
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 4 }) });
     expect(result.result).toBe("success");
-    expect(insertedArtifacts).toHaveLength(1);
-    expect(artifactUpsertConflicts).toEqual(["session_id,stage_slug,version"]);
-    expect(artifactUpsertIgnoreDuplicates).toEqual([true]);
-    expect(mocked.createAgentRunner).toHaveBeenCalled();
-    expect(mocked.createSessionSandbox).toHaveBeenCalled();
-    expect(updatedArtifacts).toContainEqual(
-      expect.objectContaining({
-        artifact_json: "Drafted spec body",
-      }),
-    );
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: "Drafted spec body",
-        branch: expect.stringMatching(/^wallie\//),
-        sandbox: expect.objectContaining({ id: "sandbox-1" }),
-      }),
-    );
-    expect(updatedSessions).toEqual([
-      { phase_status: "in_progress" },
-      { current_artifact_version: 1, phase_status: "awaiting_review" },
-    ]);
-  });
-
-  it("does not overwrite artifact markdown or force-push after another generation publishes the version", async () => {
-    const session = baseSession();
-    const { admin, updatedArtifacts, deletedArtifacts } = buildAdminMock({
-      session,
-      agentConfig: [],
-      artifactInserted: false,
-      adoptedArtifactMarkdown: "Stored markdown from the crashed attempt",
-      pointerCasMiss: true,
-      rereadCurrentArtifactVersion: 1,
+    expect(rpc).toHaveBeenCalledWith("publish_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 4,
+      p_run_id: "run-1",
+      p_expected_artifact_version: 0,
+      p_artifact_json: "Drafted spec body",
     });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    expect(result.result).toBe("idle");
-    expect(updatedArtifacts).toEqual([]);
-    expect(deletedArtifacts).toEqual([]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(legacyMutationCalls).toEqual([]);
+    expect(mocked.openSessionPullRequest).toHaveBeenCalledOnce();
   });
 
-  it("deletes the orphaned artifact when cancellation wins the pointer CAS", async () => {
-    const session = baseSession();
-    const { admin, insertedArtifacts, deletedArtifacts } = buildAdminMock({
-      session,
-      agentConfig: [],
+  it("leaves artifacts untouched and stops its sandbox when publication loses ownership", async () => {
+    const { admin, insertedArtifacts, legacyMutationCalls, rpc } = buildAdminMock({
+      session: baseSession(),
       pointerCasMiss: true,
     });
-
     const result = await processPipelineJob({ admin, job: baseJob() });
-
-    // The artifact was inserted before the guarded pointer update, then dropped
-    // once the CAS reported the session had been parked (canceled) mid-run.
-    expect(insertedArtifacts).toHaveLength(1);
-    expect(deletedArtifacts).toEqual([
-      { session_id: session.id, stage_slug: "product", version: 1 },
-    ]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(result.result).toBe("idle");
+    expect(insertedArtifacts).toEqual([]);
+    expect(legacyMutationCalls).toEqual([]);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
+    const sandbox = await mocked.createSessionSandbox.mock.results[0]!.value;
+    expect(sandbox.stop).toHaveBeenCalledOnce();
   });
 
-  it("does not delete a conflicting unpublished artifact when the pointer CAS misses", async () => {
+  it.each(["newer attempt", "replacement job"])(
+    "cannot publish after a %s takes ownership",
+    async (replacement) => {
+      const opts: MockOptions = { session: baseSession() };
+      const { admin, insertedArtifacts, legacyMutationCalls, updatedJobs } = buildAdminMock(opts);
+      mocked.createAgentRunner.mockReturnValue({
+        ...makeRunner([]),
+        start: vi.fn(async function* () {
+          yield { type: "text", text: "Old output" } as AgentEvent;
+          if (replacement === "newer attempt") opts.currentAttempt = 2;
+          else opts.replacementJobId = "job-replacement";
+        }),
+      });
+      const result = await processPipelineJob({ admin, job: baseJob() });
+      expect(result.result).toBe("idle");
+      expect(insertedArtifacts).toEqual([]);
+      expect(legacyMutationCalls).toEqual([]);
+      expect(updatedJobs).toEqual([]);
+      expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it("recognizes sanitized ownership loss and stops a sandbox that lands after cancellation", async () => {
     const session = baseSession();
-    const { admin, insertedArtifacts, deletedArtifacts } = buildAdminMock({
-      session,
-      agentConfig: [],
-      artifactInserted: false,
-      pointerCasMiss: true,
-      rereadCurrentArtifactVersion: 1,
-    });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    // Another generation already holds (session, stage, version). This process
-    // did not insert the row, so a lost pointer CAS must not delete it.
-    expect(insertedArtifacts).toHaveLength(1);
-    expect(deletedArtifacts).toEqual([]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(result.result).toBe("idle");
-  });
-
-  it("does not delete an inserted artifact after another generation publishes it", async () => {
-    const session = baseSession();
-    const { admin, insertedArtifacts, deletedArtifacts } = buildAdminMock({
-      session,
-      agentConfig: [],
-      pointerCasMiss: true,
-      rereadCurrentArtifactVersion: 1,
-    });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    // This process inserted the row, then stalled long enough for a replacement
-    // to adopt it and win the pointer. The lost CAS must not delete the now-
-    // published version.
-    expect(insertedArtifacts).toHaveLength(1);
-    expect(deletedArtifacts).toEqual([]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(result.result).toBe("idle");
-  });
-
-  it("stops a sandbox that lands after its run was canceled", async () => {
-    const session = baseSession();
-    const { admin } = buildAdminMock({
+    const { admin, rpc, insertedMessages } = buildAdminMock({
       session,
       agentConfig: [],
       runSandboxUpdateMissed: true,
     });
 
-    await processPipelineJob({ admin, job: baseJob() });
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      try {
+        await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
+        throw new Error("Expected ownership callback to reject");
+      } catch (error) {
+        const sanitized = new Error(error instanceof Error ? error.message : String(error));
+        sanitized.name = error instanceof Error ? error.name : "SandboxError";
+        throw sanitized;
+      }
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(insertedMessages.some((message) => message.kind === "error")).toBe(false);
 
     // updateRunSandbox matched zero rows (run already canceled), so the
     // freshly-created sandbox must be stopped instead of left running detached.
@@ -1072,9 +938,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
-    // The run startAgentRun inserted (born `running` because the cancel sweep
-    // predated it) is canceled here so it can't linger as permanently active.
-    expect(updatedRuns).toContainEqual(expect.objectContaining({ status: "canceled" }));
+    // The guarded start creates no run after cancellation.
+    expect(updatedRuns).toEqual([]);
     expect(result.result).toBe("idle");
     expect(result.runId).toBeNull();
   });
@@ -1179,12 +1044,13 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(insertedRuns).toHaveLength(0);
     expect(updatedRuns[0]).toMatchObject({
-      branch_name: "wallie/product-sess-1-job-job-1-attempt-0",
+      branch_name: "wallie/product-sess-1-job-job-1-attempt-1",
       model_name: "gpt-5.5",
       model_provider: "codex",
       stage_id: "stage-product",
       stage_name: "Product",
       stage_slug: "product",
+      run_type: "code",
       status: "running",
     });
     expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
@@ -1220,16 +1086,17 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(second.runId).toBe("run-2");
     expect(runRows[0]).toMatchObject({
       branch_name: "wallie/product-sess-1-job-job-1-attempt-1",
-      status: "running",
+      status: "error",
     });
     releaseFirstSetup();
-    expect((await first).runId).toBe("run-1");
+    expect(await first).toMatchObject({ result: "idle", runId: "run-1" });
 
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-old", expect.anything());
+    expect(runRows[0]).not.toHaveProperty("sandbox_id");
     expect(runRows).toMatchObject([
       {
         id: "run-1",
         branch_name: "wallie/product-sess-1-job-job-1-attempt-1",
-        sandbox_id: "sandbox-old",
       },
       {
         id: "run-2",
@@ -1245,9 +1112,166 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest.mock.calls.map(([input]) => input.branch)).toEqual([
       runRows[1].branch_name,
-      runRows[0].branch_name,
     ]);
   });
+
+  it("keeps the claim identity captured before asynchronous preparation", async () => {
+    const { admin, rpc, runUpdateFilters } = buildAdminMock({ session: baseSession() });
+    const job = baseJob({ attempt_count: 2 });
+    mocked.loadWorkspaceAgentConfig.mockImplementationOnce(async () => {
+      job.id = "replacement-job";
+      job.attempt_count = 3;
+      return { effort: "xhigh", provider: "codex", model: "gpt-5.5" };
+    });
+
+    expect(await processPipelineJob({ admin, job })).toMatchObject({
+      jobId: "job-1",
+      result: "success",
+      runId: "run-1",
+    });
+    for (const [name, args] of rpc.mock.calls) {
+      expect(name).toMatch(/^(start|publish|complete)_session_job_attempt$/);
+      expect(args).toMatchObject({ p_job_id: "job-1", p_attempt_count: 2 });
+    }
+    expect(runUpdateFilters.every((filters) => filters.attempt_count === 2)).toBe(true);
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: "wallie/product-sess-1-job-job-1-attempt-2",
+      }),
+    );
+  });
+
+  it("does not retire a same-attempt start winner when duplicate bootstrap is refused", async () => {
+    const { admin, rpc, runRows, updatedJobs } = buildAdminMock({ session: baseSession() });
+    let setupEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      setupEntered = resolve;
+    });
+    let releaseSetup!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      setupEntered();
+      await blocked;
+      await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
+      return new FakeSandbox("sandbox-1");
+    });
+
+    const first = processPipelineJob({ admin, job: baseJob() });
+    await entered;
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+      result: "idle",
+      runId: null,
+    });
+    expect(runRows[0].status).toBe("running");
+    expect(updatedJobs).toEqual([]);
+    expect(mocked.createSessionSandbox).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_run_id: undefined,
+        p_retry: false,
+      }),
+    );
+    releaseSetup();
+    expect((await first).result).toBe("success");
+    expect(mocked.openSessionPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops its sandbox without launching the CLI after ownership is lost during attachments", async () => {
+    const { admin, runRows, insertedArtifacts, rpc } = buildAdminMock({ session: baseSession() });
+    mocked.materializeSessionAttachments.mockImplementationOnce(async () => {
+      runRows[0].status = "canceled";
+      return [];
+    });
+
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({ result: "idle" });
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+    expect(sandbox.stop).toHaveBeenCalledOnce();
+    expect(insertedArtifacts).toEqual([]);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+  });
+
+  it("fails preparation by captured job and attempt before any run is bound", async () => {
+    const { admin, rpc, insertedRuns } = buildAdminMock({ session: baseSession() });
+    const job = baseJob({ attempt_count: 2 });
+    mocked.loadCompletedStageArtifacts.mockImplementationOnce(async () => {
+      job.attempt_count = 3;
+      throw new Error("context unavailable");
+    });
+
+    expect(await processPipelineJob({ admin, job })).toMatchObject({
+      result: "error",
+      runId: null,
+    });
+    expect(rpc.mock.calls).toEqual([
+      [
+        "fail_session_job_attempt",
+        expect.objectContaining({
+          p_job_id: "job-1",
+          p_attempt_count: 2,
+          p_run_id: undefined,
+          p_error: "context unavailable",
+        }),
+      ],
+    ]);
+    expect(insertedRuns).toEqual([]);
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+  });
+
+  it("propagates failure RPC errors without ownerless job or session fallback", async () => {
+    const { admin, rpc, updatedJobs, updatedSessions } = buildAdminMock({
+      session: baseSession(),
+      failRpcError: { message: "failure RPC unavailable" },
+    });
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([{ type: "error", message: "agent failed" }]),
+    );
+    await expect(processPipelineJob({ admin, job: baseJob() })).rejects.toEqual({
+      message: "failure RPC unavailable",
+    });
+    expect(updatedJobs).toEqual([]);
+    expect(updatedSessions).toEqual([{ phase_status: "in_progress" }]);
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_run_id: "run-1",
+      }),
+    );
+    const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+    expect(sandbox.stop).toHaveBeenCalledOnce();
+  });
+
+  it.each(["pull request", "sandbox shutdown"])(
+    "preserves successful publication when %s throws",
+    async (failure) => {
+      const { admin, insertedArtifacts, runRows, updatedJobs, updatedSessions } = buildAdminMock({
+        session: baseSession(),
+      });
+      if (failure === "pull request") {
+        mocked.openSessionPullRequest.mockRejectedValueOnce(new Error("GitHub unavailable"));
+      } else {
+        mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+          await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
+          return { stop: vi.fn().mockRejectedValue(new Error("shutdown unavailable")) };
+        });
+      }
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+      expect(insertedArtifacts).toHaveLength(1);
+      expect(runRows[0].status).toBe("success");
+      expect(updatedJobs).toEqual([{ status: "success" }]);
+      expect(updatedSessions).toEqual([
+        { phase_status: "in_progress" },
+        { current_artifact_version: 1, phase_status: "awaiting_review" },
+      ]);
+    },
+  );
 
   it("marks the prepared run errored and stops its sandbox when credential resolution fails", async () => {
     const { createAgentRunner } =
@@ -1286,8 +1310,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(updatedRuns[0]).toMatchObject({ status: "running", model_provider: "codex" });
     expect(updatedRuns.filter((patch) => patch.status === "error")).toEqual([
-      expect.objectContaining({ finished_at: expect.any(String), status: "error" }),
-      expect.objectContaining({ finished_at: expect.any(String), status: "error" }),
+      expect.objectContaining({ status: "error" }),
     ]);
     expect(sandbox.stop).toHaveBeenCalledOnce();
     expect(mocked.createAgentRunner).toHaveBeenCalledOnce();
@@ -1304,7 +1327,7 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("refreshes run activity when runner events are persisted", async () => {
     mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Spec body" }]));
     const session = baseSession();
-    const { admin, updatedRuns } = buildAdminMock({
+    const { admin, updatedRuns, runUpdateFilters } = buildAdminMock({
       session,
       agentConfig: [],
     });
@@ -1312,7 +1335,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     await processPipelineJob({ admin, job: baseJob() });
 
     const activityUpdates = updatedRuns.filter((patch) => "last_activity_at" in patch);
-    expect(activityUpdates).toHaveLength(4);
+    expect(activityUpdates.length).toBeGreaterThan(0);
+    expect(
+      runUpdateFilters.every((filters) => filters.id === "run-1" && filters.attempt_count === 1),
+    ).toBe(true);
     expect(activityUpdates[0]).toEqual({ last_activity_at: expect.any(String) });
     expect(activityUpdates[1]).toEqual({ last_activity_at: expect.any(String) });
   });
@@ -1623,7 +1649,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.workspaceId).toBe(session.workspace_id);
     expect(typeof call.branch).toBe("string");
     expect((call.branch as string).startsWith("wallie/")).toBe(true);
-    expect(call.branch).toBe(`wallie/product-${session.id}-job-job-1-attempt-0`);
+    expect(call.branch).toBe(`wallie/product-${session.id}-job-job-1-attempt-1`);
     expect(call.title).toBe(`${productStage.name}: ${session.title}`);
     expect(call.body).toContain("Drafted spec body");
   });
@@ -1754,66 +1780,66 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
-  it("rolls back the artifact pointer when the stage completion message fails", async () => {
+  it("preserves publication when completion logging fails after stage advancement", async () => {
     const session = baseSession({ current_artifact_version: 2 });
     const {
       admin,
       insertedArtifacts,
-      insertedMessages,
       updatedJobs,
       updatedRuns,
       updatedSessions,
+      legacyMutationCalls,
+      rpc,
     } = buildAdminMock({
       session,
       messageInsertError: { message: "completion insert failed" },
       messageInsertErrorOnMessage: "Product run completed",
     });
-
+    mocked.openSessionPullRequest.mockImplementationOnce(async () => {
+      session.current_stage_id = "stage-build";
+      session.current_artifact_version = 0;
+      session.phase_status = "in_progress";
+      return { kind: "success", prNumber: 42 };
+    });
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
-
-    expect(result.result).toBe("error");
-    expect(insertedArtifacts).toHaveLength(1);
-    expect(insertedArtifacts[0]).toMatchObject({
-      version: 3,
-    });
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
-      expect.objectContaining({
-        kind: "text",
-        message_md: "Drafted spec body",
-      }),
-      expect.objectContaining({
-        kind: "completion",
-        message_md: "Done",
-      }),
-      expect.objectContaining({
-        kind: "error",
-        message_md: "**Error:** completion insert failed",
-      }),
-    ]);
-    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
-    expect(updatedJobs.at(-1)).toMatchObject({
-      last_error: "completion insert failed",
-      status: "error",
-    });
+    expect(result.result).toBe("success");
+    expect(insertedArtifacts[0]).toMatchObject({ version: 3 });
+    expect(legacyMutationCalls).toEqual([]);
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
+    expect(updatedJobs.at(-1)).toMatchObject({ status: "success" });
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
       { current_artifact_version: 3, phase_status: "awaiting_review" },
-      { current_artifact_version: 2, phase_status: "rejected" },
     ]);
+    expect(session).toMatchObject({
+      current_stage_id: "stage-build",
+      current_artifact_version: 0,
+      phase_status: "in_progress",
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_job_id: "job-1", p_attempt_count: 3, p_run_id: "run-1" }),
+    );
   });
 
-  it("returns success without running the agent when the CAS claim fails (terminal state)", async () => {
-    const session = baseSession({ phase_status: "approved" });
-    const { admin, updatedRuns } = buildAdminMock({
-      session,
+  it("retires a refused startup by captured claim without guessing a run", async () => {
+    const { admin, rpc } = buildAdminMock({
+      session: baseSession({ phase_status: "approved" }),
       claimSucceeds: false,
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
-    expect(result.result).toBe("success");
-    // Any run queued up-front for this unclaimable job is canceled so it does
-    // not dangle as a permanently-active run.
-    expect(updatedRuns).toContainEqual(expect.objectContaining({ status: "canceled" }));
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ result: "idle", runId: null });
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_run_id: undefined,
+        p_retry: false,
+      }),
+    );
   });
 
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {
@@ -2182,7 +2208,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     consoleError.mockRestore();
   });
 
-  it("treats an agent error event as a stage failure and deletes the orphan artifact", async () => {
+  it("fails the owned attempt on an agent error before any artifact is published", async () => {
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
         { type: "text", text: "partial output" },

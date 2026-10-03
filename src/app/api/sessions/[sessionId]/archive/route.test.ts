@@ -114,7 +114,11 @@ describe("/api/sessions/[sessionId]/archive", () => {
     });
     expect(mocked.archiveSession).toHaveBeenCalledWith(
       {},
-      { reason: "Session archived by a workspace member.", sessionId: SESSION_ID },
+      {
+        reason: "Session archived by a workspace member.",
+        sessionId: SESSION_ID,
+        workspaceId: WORKSPACE_ID,
+      },
     );
     expect(mocked.enforceRateLimit).toHaveBeenCalledWith("phaseAction", `${WORKSPACE_ID}:user-1`);
   });
@@ -129,7 +133,10 @@ describe("/api/sessions/[sessionId]/archive", () => {
       phaseStatus: "awaiting_review",
       updatedAt: "2026-06-07T12:01:00.000Z",
     });
-    expect(mocked.unarchiveSession).toHaveBeenCalledWith({}, { sessionId: SESSION_ID });
+    expect(mocked.unarchiveSession).toHaveBeenCalledWith(
+      {},
+      { sessionId: SESSION_ID, workspaceId: WORKSPACE_ID },
+    );
   });
 
   it("passes the expected archive version through for a guarded Undo", async () => {
@@ -139,7 +146,7 @@ describe("/api/sessions/[sessionId]/archive", () => {
     expect(response.status).toBe(200);
     expect(mocked.unarchiveSession).toHaveBeenCalledWith(
       {},
-      { expectedArchivedAt, sessionId: SESSION_ID },
+      { expectedArchivedAt, sessionId: SESSION_ID, workspaceId: WORKSPACE_ID },
     );
   });
 
