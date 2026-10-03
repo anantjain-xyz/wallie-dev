@@ -58,6 +58,7 @@ type SessionWalliePanelProps = {
   initialData: WallieSessionData;
   initialNow?: string;
   presentation?: SessionActivityPresentation;
+  reviewIdentityUnavailable?: boolean;
   session: WalliePanelSession;
   supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
@@ -127,6 +128,7 @@ function SessionWalliePanelContent({
   initialData,
   initialNow,
   presentation,
+  reviewIdentityUnavailable = false,
   session,
   supabase: injectedSupabase,
   workspaceSlug,
@@ -165,8 +167,27 @@ function SessionWalliePanelContent({
   const currentStageId = presentation?.currentStage.id;
   const summaryRun = useMemo(() => {
     const stageRuns = currentStageId ? runs.filter((run) => run.stageId === currentStageId) : runs;
-    return stageRuns.find((run) => run.isActive) ?? stageRuns[0] ?? null;
-  }, [currentStageId, runs]);
+    const latest = stageRuns.find((run) => run.isActive) ?? stageRuns[0] ?? null;
+    // Legacy reviews with conflicting version labels need a fresh publication.
+    // Retry the current stage through the existing authenticated run endpoint.
+    if (
+      latest?.status === "success" &&
+      currentStageId &&
+      reviewIdentityUnavailable &&
+      presentation?.currentStage.phaseStatus === "awaiting_review" &&
+      !session.archivedAt &&
+      !runs.some((run) => run.isActive)
+    ) {
+      return { ...latest, canRetry: true };
+    }
+    return latest;
+  }, [
+    currentStageId,
+    presentation?.currentStage.phaseStatus,
+    reviewIdentityUnavailable,
+    runs,
+    session.archivedAt,
+  ]);
   const summaryRunId = summaryRun?.id ?? null;
   usePublishExecution({
     sessionId: session.id,

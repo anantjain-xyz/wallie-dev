@@ -292,9 +292,18 @@ Unarchive compares the expected archive marker when supplied and does not enqueu
   enqueues its replacement job/run. Only returned run IDs authorize sandbox
   cleanup after commit. A failed enqueue rolls back the transition and receipt.
 - Stage changes normalize the artifact counter to at least the highest preserved
-  version. New output appends a version; prompts include only stages with valid
-  completion rows. Stale downstream history remains visible as history but is
-  excluded from `artifact.previousStages`.
+  version for that stable stage ID. Publication allocates above both this history
+  and the job's captured slug history; version gaps preserve old labels without
+  collisions. Publication records the allocated version and exact artifact ID
+  atomically. Approval, rejection, and current-review reads require that ID.
+- Legacy reviews receive an artifact ID only when their stage/version identifies
+  exactly one row. Ambiguous history remains intact; review stays unavailable
+  until a fresh run publishes an exact identity. A completed run can be queued
+  again through the existing authenticated retry endpoint.
+- Historical bodies and UI caches use artifact IDs, so duplicate legacy version
+  labels remain independently readable. Prompts require valid completion rows
+  and reject ambiguous latest versions. Stale downstream history remains visible
+  but is excluded from `artifact.previousStages`.
 - Session creation atomically seeds a baseline receipt. Its preexisting Linear
   stage intent is consumed without undoing explicit session creation. Migration
   adopts existing work the same way. Canceled and manual Done are enforced even

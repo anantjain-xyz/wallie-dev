@@ -29,6 +29,8 @@ export type DisplayedArtifactIdentity = Pick<
 >;
 
 type ArtifactPanelProps = {
+  /** Exact current-stage authority; null must not reuse a cached latest artifact. */
+  currentArtifactId?: string | null;
   /**
    * The current stage is visible in awaiting_review. Its artifact can arrive just
    * before the successful agent_run row used for the Versions author label.
@@ -65,6 +67,7 @@ type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
 };
 
 const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions"];
+export const ARTIFACT_ID_PARAM = "artifactId";
 export const ARTIFACT_VERSION_PARAM = "artifactVersion";
 export const ARTIFACT_STAGE_PARAM = "artifactStage";
 
@@ -72,8 +75,13 @@ function stageCacheKey(sessionId: string, stageSlug: string) {
   return `${sessionId}:${stageSlug}`;
 }
 
-export function artifactBodyCacheKey(sessionId: string, stageSlug: string, version: number) {
-  return `${stageCacheKey(sessionId, stageSlug)}:${version}`;
+export function artifactBodyCacheKey(
+  sessionId: string,
+  stageSlug: string,
+  version: number,
+  artifactId?: string,
+) {
+  return `${stageCacheKey(sessionId, stageSlug)}:${artifactId ? `id:${artifactId}` : version}`;
 }
 
 function asCachedBody(artifact: SessionArtifactSummary): CachedArtifactBody {
@@ -140,11 +148,17 @@ function currentSearchParams() {
 
 function applyPendingRejectionMarker(
   rows: SessionArtifactMetadata[],
-  pendingRejectedVersion: number | null,
+  pendingRejectedVersion: string | number | null,
 ): SessionArtifactMetadata[] {
   if (pendingRejectedVersion === null) return rows;
   return rows.map((row) =>
-    row.version === pendingRejectedVersion ? { ...row, changesRequested: true } : row,
+    (
+      typeof pendingRejectedVersion === "string"
+        ? row.id === pendingRejectedVersion
+        : !row.id && row.version === pendingRejectedVersion
+    )
+      ? { ...row, changesRequested: true }
+      : row,
   );
 }
 
@@ -184,6 +198,7 @@ function ArtifactPanelCache({
   const pathname = usePathname();
   const [metadataCache] = useState(() => new Map<string, SessionArtifactMetadata[]>());
   const [bodyCache] = useState(() => new Map<string, CachedArtifactBody>());
+  const [latestArtifactIdCache] = useState(() => new Map<string, string>());
   const [latestVersionCache] = useState(() => new Map<string, number>());
   /** Survives keyed stage remounts so rejection bumps while away are still detected. */
   const [seenRejectionCountByStage] = useState(() => new Map<string, number>());
@@ -200,6 +215,7 @@ function ArtifactPanelCache({
     queueMicrotask(() => setTrackedStageSlug(stageSlug));
     const params = currentSearchParams();
     params.delete(ARTIFACT_VERSION_PARAM);
+    params.delete(ARTIFACT_ID_PARAM);
     if (persistStageInUrl) {
       params.set(ARTIFACT_STAGE_PARAM, stageSlug);
     } else {
@@ -215,6 +231,7 @@ function ArtifactPanelCache({
       bodyCache={bodyCache}
       currentStageKey={currentStageKey}
       ignoreUrlVersion={stageJustChanged}
+      latestArtifactIdCache={latestArtifactIdCache}
       latestVersionCache={latestVersionCache}
       metadataCache={metadataCache}
       pendingAuthorRefreshByStage={pendingAuthorRefreshByStage}
@@ -228,6 +245,7 @@ function ArtifactPanelCache({
 
 function ArtifactPanelStage({
   bodyCache,
+  currentArtifactId,
   currentStageKey,
   emptyText,
   ignoreUrlVersion = false,
@@ -238,6 +256,7 @@ function ArtifactPanelStage({
   isDrafting,
   latestArtifact,
   loadLatest,
+  latestArtifactIdCache,
   latestVersionCache,
   metadataCache,
   onViewingHistoricalChange,
@@ -252,6 +271,7 @@ function ArtifactPanelStage({
   bodyCache: Map<string, CachedArtifactBody>;
   currentStageKey: string;
   ignoreUrlVersion?: boolean;
+  latestArtifactIdCache: Map<string, string>;
   latestVersionCache: Map<string, number>;
   metadataCache: Map<string, SessionArtifactMetadata[]>;
   pendingAuthorRefreshByStage: Map<string, boolean>;
@@ -261,6 +281,10 @@ function ArtifactPanelStage({
   const searchParams = useSearchParams();
   const { pushToast } = useOptionalToast();
 
+  const urlArtifactId = searchParams.get(ARTIFACT_ID_PARAM);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(() =>
+    ignoreUrlVersion || !loadLatest ? null : urlArtifactId,
+  );
   const urlVersion = parseArtifactVersionParam(searchParams.get(ARTIFACT_VERSION_PARAM));
   const [activeTab, setActiveTab] = useState<ArtifactTab>("rendered");
   // URL is authoritative for shared links; local state updates immediately on
@@ -277,7 +301,7 @@ function ArtifactPanelStage({
   const authorRefreshAttempts = useRef(0);
   const authorRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Version marked changes-requested while metadata was still null / in flight. */
-  const pendingRejectedVersion = useRef<number | null>(null);
+  const pendingRejectedVersion = useRef<string | number | null>(null);
   // Prefer the parent-persisted baseline so remounting after a stage switch still
   // sees rejection bumps that landed while this stage panel was unmounted.
   const trackedRejectionCount = useRef(
@@ -287,12 +311,23 @@ function ArtifactPanelStage({
   );
 
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
-    if (!loadLatest) return null;
-    if (latestArtifact) return asCachedBody(latestArtifact);
+    if (!loadLatest || currentArtifactId === null) return null;
+    if (
+      latestArtifact &&
+      (currentArtifactId === undefined || latestArtifact.id === currentArtifactId)
+    )
+      return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
     return cachedVersion === undefined
       ? null
-      : (bodyCache.get(artifactBodyCacheKey(sessionId, stageSlug, cachedVersion)) ?? null);
+      : (bodyCache.get(
+          artifactBodyCacheKey(
+            sessionId,
+            stageSlug,
+            cachedVersion,
+            currentArtifactId ?? latestArtifactIdCache.get(currentStageKey),
+          ),
+        ) ?? null);
   });
   const [latestLoading, setLatestLoading] = useState(false);
   const [latestError, setLatestError] = useState<string | null>(null);
@@ -318,7 +353,12 @@ function ArtifactPanelStage({
   const selectedBodyController = useRef<AbortController | null>(null);
   const tabRefs = useRef(new Map<ArtifactTab, HTMLButtonElement>());
   const latestArtifactKey = latestArtifact
-    ? artifactBodyCacheKey(sessionId, latestArtifact.stageSlug, latestArtifact.version)
+    ? artifactBodyCacheKey(
+        sessionId,
+        latestArtifact.stageSlug,
+        latestArtifact.version,
+        latestArtifact.id,
+      )
     : null;
   const latestVersion = loadLatest
     ? (latestArtifact?.version ??
@@ -326,11 +366,25 @@ function ArtifactPanelStage({
       latestVersionCache.get(currentStageKey) ??
       null)
     : null;
-  const viewingVersion = selectedVersion ?? latestVersion;
-  const viewingIsLatest =
-    viewingVersion !== null && latestVersion !== null && viewingVersion === latestVersion;
-  const viewingHistorical =
-    selectedVersion !== null && latestVersion !== null && selectedVersion !== latestVersion;
+  const latestArtifactId =
+    currentArtifactId !== undefined
+      ? currentArtifactId
+      : (latestArtifact?.id ??
+        latestBody?.id ??
+        latestArtifactIdCache.get(currentStageKey) ??
+        null);
+  const viewingVersion =
+    selectedVersion ??
+    (selectedArtifactId && selectedBody?.id === selectedArtifactId ? selectedBody.version : null) ??
+    metadata?.find((row) => row.id === selectedArtifactId)?.version ??
+    latestVersion;
+  const viewingIsLatest = selectedArtifactId
+    ? selectedArtifactId === latestArtifactId
+    : selectedVersion === null ||
+      (!latestArtifactId && viewingVersion !== null && viewingVersion === latestVersion);
+  const viewingHistorical = selectedArtifactId
+    ? selectedArtifactId !== latestArtifactId
+    : selectedVersion !== null && (latestArtifactId !== null || selectedVersion !== latestVersion);
 
   useEffect(() => {
     onViewingHistoricalChange?.(viewingHistorical);
@@ -345,10 +399,11 @@ function ArtifactPanelStage({
     seenRejectionCountByStage.set(currentStageKey, trackedRejectionCount.current);
   }, [currentStageKey, rejectionCount, seenRejectionCountByStage]);
 
-  function writeArtifactVersionToUrl(version: number | null) {
+  function writeArtifactVersionToUrl(version: number | null, artifactId: string | null) {
     const params = currentSearchParams();
-    if (version === null || (latestVersion !== null && version === latestVersion)) {
+    if (artifactId ? artifactId === latestArtifactId : version === null) {
       params.delete(ARTIFACT_VERSION_PARAM);
+      params.delete(ARTIFACT_ID_PARAM);
       // Prior-stage “Latest” still needs artifactStage so share/refresh stays on
       // that stage; the session’s current stage omits both params (default view).
       if (persistStageInUrl) {
@@ -357,6 +412,8 @@ function ArtifactPanelStage({
         params.delete(ARTIFACT_STAGE_PARAM);
       }
     } else {
+      if (artifactId) params.set(ARTIFACT_ID_PARAM, artifactId);
+      else params.delete(ARTIFACT_ID_PARAM);
       params.set(ARTIFACT_VERSION_PARAM, String(version));
       params.set(ARTIFACT_STAGE_PARAM, stageSlug);
     }
@@ -369,7 +426,14 @@ function ArtifactPanelStage({
     if (latestArtifact && loadLatest) {
       if (previousLatestVersion !== undefined && latestArtifact.version < previousLatestVersion) {
         metadataCache.delete(currentStageKey);
-        bodyCache.delete(artifactBodyCacheKey(sessionId, stageSlug, previousLatestVersion));
+        bodyCache.delete(
+          artifactBodyCacheKey(
+            sessionId,
+            stageSlug,
+            previousLatestVersion,
+            latestArtifactIdCache.get(currentStageKey),
+          ),
+        );
         queueMicrotask(() => setMetadata(null));
       }
 
@@ -377,19 +441,27 @@ function ArtifactPanelStage({
         sessionId,
         latestArtifact.stageSlug,
         latestArtifact.version,
+        latestArtifact.id,
       );
       const body = bodyCache.get(bodyKey) ?? asCachedBody(latestArtifact);
       bodyCache.set(bodyKey, body);
       latestVersionCache.set(currentStageKey, latestArtifact.version);
+      if (latestArtifact.id) latestArtifactIdCache.set(currentStageKey, latestArtifact.id);
 
       const cachedMetadata = metadataCache.get(currentStageKey);
-      if (cachedMetadata && !cachedMetadata.some((row) => row.version === latestArtifact.version)) {
+      if (
+        cachedMetadata &&
+        !cachedMetadata.some((row) =>
+          latestArtifact.id ? row.id === latestArtifact.id : row.version === latestArtifact.version,
+        )
+      ) {
         // Optimistic row for immediate UI. Delay the authoritative refetch until the
         // producing run is marked successful — the API only returns successful runs,
         // and markRunSuccess lands after phase_status flips to awaiting_review.
         const nextMetadata = applyPendingRejectionMarker(
           [
             {
+              id: latestArtifact.id,
               attempt: latestArtifact.version,
               authorLabel: "Agent",
               changesRequested: false,
@@ -464,10 +536,12 @@ function ArtifactPanelStage({
       }
       metadataCache.delete(currentStageKey);
       latestVersionCache.delete(currentStageKey);
+      latestArtifactIdCache.delete(currentStageKey);
       seenRejectionCountByStage.delete(currentStageKey);
 
       const params = currentSearchParams();
       params.delete(ARTIFACT_VERSION_PARAM);
+      params.delete(ARTIFACT_ID_PARAM);
       if (persistStageInUrl) {
         params.set(ARTIFACT_STAGE_PARAM, stageSlug);
       } else {
@@ -483,6 +557,7 @@ function ArtifactPanelStage({
         setMetadataLoading(false);
         setMetadataError(null);
         setSelectedVersion(null);
+        setSelectedArtifactId(null);
         setSelectedBody(null);
         setSelectedBodyLoading(false);
         setSelectedBodyError(null);
@@ -495,6 +570,7 @@ function ArtifactPanelStage({
     isAwaitingReview,
     isDrafting,
     latestArtifact,
+    latestArtifactIdCache,
     latestVersionCache,
     loadLatest,
     metadataCache,
@@ -550,7 +626,10 @@ function ArtifactPanelStage({
     trackedRejectionCount.current = rejectionCount;
     seenRejectionCountByStage.set(currentStageKey, rejectionCount);
     const rejectedVersion =
-      latestArtifact?.version ?? latestVersionCache.get(currentStageKey) ?? null;
+      latestArtifactId ??
+      latestArtifact?.version ??
+      latestVersionCache.get(currentStageKey) ??
+      null;
     if (rejectedVersion !== null) {
       // Survive in-flight / null metadata so a later response cannot drop the marker.
       pendingRejectedVersion.current = rejectedVersion;
@@ -577,6 +656,7 @@ function ArtifactPanelStage({
   }, [
     currentStageKey,
     latestArtifact,
+    latestArtifactId,
     latestVersionCache,
     metadataCache,
     rejectionCount,
@@ -593,25 +673,56 @@ function ArtifactPanelStage({
     // After a stage switch we intentionally ignore a leftover URL version until the
     // router clears the param (or the user picks a version again).
     if (suppressUrlVersion) {
-      if (urlVersion !== null) {
-        queueMicrotask(() => setSelectedVersion(null));
+      if (urlVersion !== null || urlArtifactId !== null) {
+        queueMicrotask(() => {
+          setSelectedVersion(null);
+          setSelectedArtifactId(null);
+        });
         return;
       }
       queueMicrotask(() => setSuppressUrlVersion(false));
     }
-    queueMicrotask(() => setSelectedVersion(urlVersion));
-  }, [suppressUrlVersion, urlVersion]);
+    queueMicrotask(() => {
+      setSelectedVersion(urlVersion);
+      setSelectedArtifactId(urlArtifactId);
+    });
+  }, [suppressUrlVersion, urlVersion, urlArtifactId]);
 
   // Load latest body for cache / default view.
   useEffect(() => {
     if (!loadLatest) return;
+    if (currentArtifactId === null) {
+      latestBodyController.current?.abort();
+      queueMicrotask(() => {
+        setLatestBody(null);
+        setLatestLoading(false);
+        setLatestError(
+          "The current artifact is unavailable. Use Retry Run to generate a new reviewable artifact.",
+        );
+      });
+      return;
+    }
     const cachedLatestVersion = latestArtifact?.version ?? latestVersionCache.get(currentStageKey);
     const cachedLatest =
       cachedLatestVersion === undefined
         ? null
-        : bodyCache.get(artifactBodyCacheKey(sessionId, stageSlug, cachedLatestVersion));
-    const body = cachedLatest ?? (latestArtifact ? asCachedBody(latestArtifact) : null);
-    const bodyKey = body ? artifactBodyCacheKey(sessionId, body.stageSlug, body.version) : null;
+        : bodyCache.get(
+            artifactBodyCacheKey(
+              sessionId,
+              stageSlug,
+              cachedLatestVersion,
+              currentArtifactId ?? latestArtifact?.id ?? latestArtifactIdCache.get(currentStageKey),
+            ),
+          );
+    const body =
+      cachedLatest ??
+      (latestArtifact &&
+      (currentArtifactId === undefined || latestArtifact.id === currentArtifactId)
+        ? asCachedBody(latestArtifact)
+        : null);
+    const bodyKey = body
+      ? artifactBodyCacheKey(sessionId, body.stageSlug, body.version, body.id)
+      : null;
     const hasFormattedBody =
       !body ||
       typeof body.payload !== "string" ||
@@ -622,7 +733,7 @@ function ArtifactPanelStage({
       queueMicrotask(() => {
         setLatestBody((current) => {
           const currentKey = current
-            ? artifactBodyCacheKey(sessionId, current.stageSlug, current.version)
+            ? artifactBodyCacheKey(sessionId, current.stageSlug, current.version, current.id)
             : null;
           return currentKey === bodyKey ? current : body;
         });
@@ -640,7 +751,12 @@ function ArtifactPanelStage({
       setLatestLoading(true);
       setLatestError(null);
     });
-    const selector = body ? `version=${body.version}` : "latest=true";
+    const requestedArtifactId = currentArtifactId ?? body?.id;
+    const selector = requestedArtifactId
+      ? `artifactId=${encodeURIComponent(requestedArtifactId)}`
+      : body
+        ? `version=${body.version}`
+        : "latest=true";
 
     void fetch(
       `/api/sessions/${sessionId}/artifacts?stage=${encodeURIComponent(stageSlug)}&${selector}`,
@@ -653,13 +769,21 @@ function ArtifactPanelStage({
         } | null;
         if (!response.ok) throw new Error(payload?.error ?? "Could not load the artifact.");
         if (!isArtifactBody(payload?.artifact)) throw new Error("Artifact response was invalid.");
+        if (requestedArtifactId && payload.artifact.id !== requestedArtifactId)
+          throw new Error("Artifact response did not match the requested artifact.");
         return payload.artifact;
       })
       .then((artifact) => {
         if (controller.signal.aborted) return;
-        const key = artifactBodyCacheKey(sessionId, artifact.stageSlug, artifact.version);
+        const key = artifactBodyCacheKey(
+          sessionId,
+          artifact.stageSlug,
+          artifact.version,
+          artifact.id,
+        );
         bodyCache.set(key, artifact);
         latestVersionCache.set(currentStageKey, artifact.version);
+        if (artifact.id) latestArtifactIdCache.set(currentStageKey, artifact.id);
         setLatestBody(artifact);
       })
       .catch((error: unknown) => {
@@ -674,6 +798,7 @@ function ArtifactPanelStage({
       controller.abort();
     };
   }, [
+    currentArtifactId,
     currentStageKey,
     initialFormattedArtifactKey,
     latestArtifact,
@@ -681,6 +806,7 @@ function ArtifactPanelStage({
     latestRetry,
     loadLatest,
     bodyCache,
+    latestArtifactIdCache,
     latestVersionCache,
     sessionId,
     stageSlug,
@@ -730,8 +856,10 @@ function ArtifactPanelStage({
         const existing = metadataCache.get(currentStageKey);
         let result = artifacts;
         if (existing) {
-          const apiVersions = new Set(artifacts.map((a) => a.version));
-          const realtimeOnly = existing.filter((a) => !apiVersions.has(a.version));
+          const apiIdentities = new Set(artifacts.map((a) => a.id ?? `version:${a.version}`));
+          const realtimeOnly = existing.filter(
+            (a) => !apiIdentities.has(a.id ?? `version:${a.version}`),
+          );
           if (realtimeOnly.length > 0) {
             result = [...artifacts, ...realtimeOnly].sort((a, b) => b.version - a.version);
           }
@@ -744,7 +872,9 @@ function ArtifactPanelStage({
         // markRunSuccess can lag the awaiting_review session update.
         if (pendingAuthoritativeMetadata.current) {
           const maxVersion = Math.max(0, ...result.map((row) => row.version));
-          const latestRow = result.find((row) => row.version === maxVersion);
+          const latestRow = latestArtifactId
+            ? result.find((row) => row.id === latestArtifactId)
+            : result.find((row) => row.version === maxVersion);
           const stillOptimistic = latestRow?.authorLabel === "Agent";
           if (stillOptimistic && authorRefreshAttempts.current < 8) {
             authorRefreshAttempts.current += 1;
@@ -782,6 +912,7 @@ function ArtifactPanelStage({
   }, [
     activeTab,
     currentStageKey,
+    latestArtifactId,
     loadLatest,
     metadataCache,
     metadataRetry,
@@ -792,10 +923,19 @@ function ArtifactPanelStage({
 
   // Load non-latest selected version body when Rendered/Raw need it.
   useEffect(() => {
-    if (activeTab === "versions" || viewingVersion === null || viewingIsLatest) {
+    if (
+      activeTab === "versions" ||
+      (viewingVersion === null && !selectedArtifactId) ||
+      viewingIsLatest
+    ) {
       return;
     }
-    const key = artifactBodyCacheKey(sessionId, stageSlug, viewingVersion);
+    const key = artifactBodyCacheKey(
+      sessionId,
+      stageSlug,
+      viewingVersion ?? 0,
+      selectedArtifactId ?? undefined,
+    );
     const cached = bodyCache.get(key);
     const canUseCached =
       cached &&
@@ -821,7 +961,7 @@ function ArtifactPanelStage({
     });
 
     void fetch(
-      `/api/sessions/${sessionId}/artifacts?stage=${encodeURIComponent(stageSlug)}&version=${viewingVersion}`,
+      `/api/sessions/${sessionId}/artifacts?stage=${encodeURIComponent(stageSlug)}&${selectedArtifactId ? `artifactId=${encodeURIComponent(selectedArtifactId)}` : `version=${viewingVersion}`}`,
       { signal: controller.signal },
     )
       .then(async (response) => {
@@ -831,6 +971,8 @@ function ArtifactPanelStage({
         } | null;
         if (!response.ok) throw new Error(payload?.error ?? "Could not load this version.");
         if (!isArtifactBody(payload?.artifact)) throw new Error("Artifact response was invalid.");
+        if (selectedArtifactId && payload.artifact.id !== selectedArtifactId)
+          throw new Error("Artifact response did not match the requested artifact.");
         return payload.artifact;
       })
       .then((artifact) => {
@@ -860,19 +1002,23 @@ function ArtifactPanelStage({
     stageSlug,
     viewingIsLatest,
     viewingVersion,
+    selectedArtifactId,
   ]);
 
   function selectTab(tab: ArtifactTab) {
     setActiveTab(tab);
   }
 
-  function selectVersion(version: number) {
+  function selectVersion(artifact: SessionArtifactMetadata) {
+    const { version, id } = artifact;
+    const isLatest = id ? id === latestArtifactId : version === latestVersion;
     setSuppressUrlVersion(false);
-    setSelectedVersion(version === latestVersion ? null : version);
+    setSelectedVersion(isLatest ? null : version);
+    setSelectedArtifactId(isLatest ? null : (id ?? null));
     setSelectedBody(null);
     setSelectedBodyError(null);
     setSelectedBodyLoading(false);
-    writeArtifactVersionToUrl(version === latestVersion ? null : version);
+    writeArtifactVersionToUrl(isLatest ? null : version, id ?? null);
     setActiveTab("rendered");
     // Versions buttons unmount with the tab; move focus into the reader so the
     // next Tab key continues through the artifact surface instead of document body.
@@ -897,12 +1043,25 @@ function ArtifactPanelStage({
   }
 
   const cachedSelectedBody =
-    viewingVersion === null
+    viewingVersion === null && !selectedArtifactId
       ? null
-      : (bodyCache.get(artifactBodyCacheKey(sessionId, stageSlug, viewingVersion)) ?? null);
+      : (bodyCache.get(
+          artifactBodyCacheKey(
+            sessionId,
+            stageSlug,
+            viewingVersion ?? 0,
+            selectedArtifactId ?? undefined,
+          ),
+        ) ?? null);
   const visibleBody = viewingIsLatest
-    ? latestBody
-    : selectedBody?.version === viewingVersion
+    ? currentArtifactId !== undefined && latestBody?.id !== currentArtifactId
+      ? null
+      : latestBody
+    : (
+          selectedArtifactId
+            ? selectedBody?.id === selectedArtifactId
+            : selectedBody?.version === viewingVersion
+        )
       ? selectedBody
       : cachedSelectedBody;
   const bodyHasContent =
@@ -910,8 +1069,12 @@ function ArtifactPanelStage({
     (activeTab === "raw" ||
       typeof visibleBody.payload !== "string" ||
       typeof visibleBody.sanitizedHtml === "string" ||
-      (artifactBodyCacheKey(sessionId, visibleBody.stageSlug, visibleBody.version) ===
-        initialFormattedArtifactKey &&
+      (artifactBodyCacheKey(
+        sessionId,
+        visibleBody.stageSlug,
+        visibleBody.version,
+        visibleBody.id,
+      ) === initialFormattedArtifactKey &&
         initialFormattedArtifact !== null));
   const displayedArtifactId = bodyHasContent ? visibleBody.id : undefined;
   const displayedArtifactStage = bodyHasContent ? visibleBody.stageSlug : undefined;
@@ -993,10 +1156,16 @@ function ArtifactPanelStage({
           {metadata && metadata.length > 0 ? (
             <ul aria-labelledby="artifact-version-heading" className="space-y-2">
               {metadata.map((artifact) => {
-                const isSelected = viewingVersion === artifact.version;
-                const isLatest = artifact.version === latestVersion;
+                const isLatest = artifact.id
+                  ? artifact.id === latestArtifactId
+                  : artifact.version === latestVersion;
+                const isSelected = selectedArtifactId
+                  ? artifact.id === selectedArtifactId
+                  : viewingIsLatest
+                    ? isLatest
+                    : viewingVersion === artifact.version;
                 return (
-                  <li key={artifact.version}>
+                  <li key={artifact.id ?? artifact.version}>
                     <button
                       type="button"
                       aria-current={isSelected ? "true" : undefined}
@@ -1006,7 +1175,7 @@ function ArtifactPanelStage({
                           ? "border-accent/40 bg-accent-soft"
                           : "border-border hover:border-border-strong hover:bg-control-muted/40",
                       )}
-                      onClick={() => selectVersion(artifact.version)}
+                      onClick={() => selectVersion(artifact)}
                     >
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="text-xs font-semibold text-foreground">
@@ -1149,7 +1318,7 @@ function ArtifactBodyView({
 }) {
   const formatted = useMemo(() => formatPayload(artifact.payload), [artifact.payload]);
   const isMarkdown = typeof artifact.payload === "string";
-  const key = artifactBodyCacheKey(sessionId, artifact.stageSlug, artifact.version);
+  const key = artifactBodyCacheKey(sessionId, artifact.stageSlug, artifact.version, artifact.id);
   const serverTree = key === initialFormattedArtifactKey ? initialFormattedArtifact : null;
   const showRaw = !isMarkdown || displayMode === "raw";
   const [copyPending, setCopyPending] = useState(false);

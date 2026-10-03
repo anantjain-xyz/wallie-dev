@@ -21,11 +21,15 @@ const artifactQuerySchema = z
   .object({
     stage: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     latest: z.literal("true").optional(),
+    artifactId: z.string().uuid("Artifact id is invalid.").optional(),
     version: z.coerce.number().int().positive().optional(),
   })
-  .refine(({ latest, version }) => !(latest && version), {
-    message: "Choose either latest or a version, not both.",
-  });
+  .refine(
+    ({ artifactId, latest, version }) => [artifactId, latest, version].filter(Boolean).length <= 1,
+    {
+      message: "Choose one artifact id, latest, or version selector.",
+    },
+  );
 
 function formatAuthorLabel(provider: string | null | undefined, model: string | null | undefined) {
   if (!provider && !model) return "Agent";
@@ -89,6 +93,7 @@ export async function GET(request: Request, context: RouteContext) {
   const url = new URL(request.url);
   const parsedQuery = artifactQuerySchema.safeParse({
     latest: url.searchParams.get("latest") ?? undefined,
+    artifactId: url.searchParams.get("artifactId") ?? undefined,
     stage: url.searchParams.get("stage") ?? undefined,
     version: url.searchParams.get("version") ?? undefined,
   });
@@ -107,7 +112,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
-    .select("id")
+    .select(
+      "id, pipeline_id, workspace_id, current_stage_id, current_artifact_id, current_artifact_version",
+    )
     .eq("id", parsedParams.data.sessionId)
     .maybeSingle();
 
@@ -118,26 +125,77 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  const { latest, stage, version } = parsedQuery.data;
+  const { artifactId, latest, stage, version } = parsedQuery.data;
+  // A stage slug is editable; resolve the selected stage once, then load its
+  // immutable artifact/run associations without changing their stored snapshots.
+  const { data: selection, error: stageError } = await supabase
+    .from("session_selected_stages")
+    .select("stage:pipeline_stages!inner(id, slug, pipeline_id)")
+    .eq("session_id", sessionRow.id)
+    .eq("workspace_id", sessionRow.workspace_id)
+    .eq("stage.pipeline_id", sessionRow.pipeline_id)
+    .eq("stage.slug", stage)
+    .maybeSingle();
+  if (stageError) {
+    return NextResponse.json({ error: stageError.message }, { status: 500 });
+  }
+  if (!selection?.stage) {
+    return NextResponse.json({ error: "Selected stage not found." }, { status: 404 });
+  }
+  const selectedStage = selection.stage;
 
-  if (latest || version) {
+  if (artifactId || latest || version) {
+    const currentLatest = latest && selectedStage.id === sessionRow.current_stage_id;
+    const exactArtifactId = artifactId ?? (currentLatest ? sessionRow.current_artifact_id : null);
+    if (currentLatest && !exactArtifactId) {
+      return NextResponse.json(
+        {
+          code: "review_artifact_unavailable",
+          error:
+            "The current review artifact is unavailable or ambiguous. Regenerate the stage or reconcile its history before reviewing.",
+        },
+        { status: 409 },
+      );
+    }
     let bodyQuery = supabase
       .from("session_artifacts")
       .select("artifact_json, created_at, id, stage_slug, version")
       .eq("session_id", parsedParams.data.sessionId)
-      .eq("stage_slug", stage)
+      .eq("stage_id", selectedStage.id)
       .order("version", { ascending: false });
 
-    if (version) {
-      bodyQuery = bodyQuery.eq("version", version);
-    }
+    if (exactArtifactId) bodyQuery = bodyQuery.eq("id", exactArtifactId);
+    if (version) bodyQuery = bodyQuery.eq("version", version);
+    if (currentLatest) bodyQuery = bodyQuery.eq("version", sessionRow.current_artifact_version);
 
-    const { data: artifactRow, error: artifactError } = await bodyQuery.limit(1).maybeSingle();
+    // Two candidates suffice to detect a repeated legacy version. Never turn
+    // physical row order into authority for the review or historical body.
+    const { data: candidates, error: artifactError } = await bodyQuery.limit(2);
     if (artifactError) {
       return NextResponse.json({ error: artifactError.message }, { status: 500 });
     }
+    const artifactRow = candidates?.[0];
     if (!artifactRow) {
+      if (currentLatest) {
+        return NextResponse.json(
+          {
+            code: "review_artifact_unavailable",
+            error:
+              "The current review artifact is unavailable. Refresh or regenerate the stage before reviewing.",
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json({ error: "Artifact not found." }, { status: 404 });
+    }
+    if (!exactArtifactId && candidates?.[1]?.version === artifactRow.version) {
+      return NextResponse.json(
+        {
+          code: "artifact_version_ambiguous",
+          error: "Multiple historical artifacts share this version. Select an artifact by its id.",
+        },
+        { status: 409 },
+      );
     }
 
     const payload = artifactRow.artifact_json;
@@ -147,7 +205,7 @@ export async function GET(request: Request, context: RouteContext) {
         id: artifactRow.id,
         payload,
         sanitizedHtml: typeof payload === "string" ? await renderMarkdownToHtml(payload) : null,
-        stageSlug: artifactRow.stage_slug,
+        stageSlug: selectedStage.slug,
         version: artifactRow.version,
       },
     });
@@ -157,7 +215,7 @@ export async function GET(request: Request, context: RouteContext) {
     .from("session_artifacts")
     .select("created_at, id, stage_slug, version")
     .eq("session_id", parsedParams.data.sessionId)
-    .eq("stage_slug", stage)
+    .eq("stage_id", selectedStage.id)
     .order("version", { ascending: false });
 
   if (artifactError) {
@@ -170,12 +228,12 @@ export async function GET(request: Request, context: RouteContext) {
         .from("session_artifact_feedback")
         .select("target_version")
         .eq("session_id", parsedParams.data.sessionId)
-        .eq("stage_slug", stage),
+        .eq("stage_id", selectedStage.id),
       supabase
         .from("agent_runs")
         .select("finished_at, model_name, model_provider, status")
         .eq("session_id", parsedParams.data.sessionId)
-        .eq("stage_slug", stage)
+        .eq("stage_id", selectedStage.id)
         .eq("status", "success")
         .order("finished_at", { ascending: true }),
     ]);
@@ -197,7 +255,7 @@ export async function GET(request: Request, context: RouteContext) {
       changesRequested: rejectedVersions.has(row.version),
       createdAt: row.created_at,
       id: row.id,
-      stageSlug: row.stage_slug,
+      stageSlug: selectedStage.slug,
       version: row.version,
     })),
   });

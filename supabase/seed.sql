@@ -1067,6 +1067,28 @@ BEGIN
       now() - interval '13 days' - scale_run_index * interval '10 minutes' + interval '8 minutes');
   END LOOP;
 
+  -- These exact fixture publications were inserted above, after migrations ran.
+  -- Bind their known physical keys explicitly; STRICT refuses any missing or
+  -- ambiguous fixture instead of inventing provenance for legacy data.
+  DECLARE
+    seed_review record;
+    seed_artifact_id uuid;
+  BEGIN
+    FOR seed_review IN
+      SELECT session.id,session.current_stage_id,session.current_artifact_version,stage.slug
+      FROM public.sessions session JOIN public.pipeline_stages stage ON stage.id=session.current_stage_id
+      WHERE session.id=ANY(ARRAY[sess1_id,sess2_id,sess3_id,sess4_id,sess5_id,sess6_id,
+        sess7_id,sess8_id,sess9_id,sess10_id,sess11_id,sess12_id,sess13_id,sess14_id,
+        sess15_id,sess16_id,sess17_id,sess18_id]) AND session.current_artifact_version>0
+    LOOP
+      SELECT artifact.id INTO STRICT seed_artifact_id FROM public.session_artifacts artifact
+      WHERE artifact.session_id=seed_review.id AND artifact.workspace_id=ws_id
+        AND artifact.stage_id=seed_review.current_stage_id AND artifact.stage_slug=seed_review.slug
+        AND artifact.version=seed_review.current_artifact_version;
+      UPDATE public.sessions SET current_artifact_id=seed_artifact_id WHERE id=seed_review.id;
+    END LOOP;
+  END;
+
 END;
 $$;
 

@@ -82,6 +82,7 @@ function buildSupabase(
                   data: columns.includes("current_artifact_version")
                     ? {
                         archived_at: null,
+                        current_artifact_id: "artifact-current",
                         current_artifact_version: 1,
                         currentStage: {
                           description: "Product work",
@@ -199,6 +200,7 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       archivedAt: null,
+      currentArtifactId: "artifact-current",
       artifactVersion: 1,
       currentStage: {
         description: "Product work",

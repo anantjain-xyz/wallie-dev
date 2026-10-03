@@ -101,7 +101,9 @@ select throws_ok(
 );
 
 update public.sessions session
-set phase_status = 'awaiting_review', current_artifact_version = 1
+set phase_status = 'awaiting_review', current_artifact_version = 1,
+  current_artifact_id = (select artifact.id from public.session_artifacts artifact
+    where artifact.session_id=session.id and artifact.stage_id=session.current_stage_id and artifact.version=1)
 from phase_session result
 where session.id = result.session_id;
 
@@ -193,7 +195,9 @@ join public.sessions session on session.id = result.session_id
 join public.pipeline_stages stage on stage.id = session.current_stage_id;
 
 update public.sessions session
-set phase_status = 'awaiting_review', current_artifact_version = 1
+set phase_status = 'awaiting_review', current_artifact_version = 1,
+  current_artifact_id = (select artifact.id from public.session_artifacts artifact
+    where artifact.session_id=session.id and artifact.stage_id=session.current_stage_id and artifact.version=1)
 from happy_session result
 where session.id = result.session_id;
 
@@ -305,7 +309,9 @@ join public.sessions session on session.id = result.session_id
 join public.pipeline_stages stage on stage.id = session.current_stage_id;
 
 update public.sessions session
-set phase_status = 'awaiting_review', current_artifact_version = 1
+set phase_status = 'awaiting_review', current_artifact_version = 1,
+  current_artifact_id = (select artifact.id from public.session_artifacts artifact
+    where artifact.session_id=session.id and artifact.stage_id=session.current_stage_id and artifact.version=1)
 from adopt_session result
 where session.id = result.session_id;
 
@@ -386,7 +392,9 @@ join public.sessions session on session.id = result.session_id
 join public.pipeline_stages stage on stage.id = session.current_stage_id;
 
 update public.sessions session
-set phase_status = 'awaiting_review', current_artifact_version = 1
+set phase_status = 'awaiting_review', current_artifact_version = 1,
+  current_artifact_id = (select artifact.id from public.session_artifacts artifact
+    where artifact.session_id=session.id and artifact.stage_id=session.current_stage_id and artifact.version=1)
 from zombie_session result
 where session.id = result.session_id;
 
@@ -469,7 +477,9 @@ join public.sessions session on session.id = result.session_id
 join public.pipeline_stages stage on stage.id = session.current_stage_id;
 
 update public.sessions session
-set phase_status = 'awaiting_review', current_artifact_version = 1
+set phase_status = 'awaiting_review', current_artifact_version = 1,
+  current_artifact_id = (select artifact.id from public.session_artifacts artifact
+    where artifact.session_id=session.id and artifact.stage_id=session.current_stage_id and artifact.version=1)
 from publishing_session result
 where session.id = result.session_id;
 

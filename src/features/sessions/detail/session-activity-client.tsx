@@ -50,6 +50,7 @@ export function SessionActivityPanel({
   return (
     <SessionWalliePanel
       presentation={presentation}
+      reviewIdentityUnavailable={presentation?.reviewIdentityUnavailable}
       initialData={initialData}
       initialNow={initialNow}
       session={{

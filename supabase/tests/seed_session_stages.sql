@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(4);
+select plan(5);
 
 -- Exercise the actual fresh seed, without repairing its relationships in the test.
 create temp table demo_sessions as
@@ -29,6 +29,13 @@ select is((select count(*) from demo_sessions s
   where jsonb_array_length(public.get_session_detail_page('acme-corp', s.number)
     #> '{session,pipeline,stages}') = 4),
   18::bigint, 'the authenticated detail endpoint exposes all four stages for every demo session');
+
+select is((select count(*) from demo_sessions session
+  where session.current_artifact_version>0 and not exists (
+    select 1 from public.session_artifacts artifact where artifact.id=session.current_artifact_id
+      and artifact.session_id=session.id and artifact.workspace_id=session.workspace_id
+      and artifact.stage_id=session.current_stage_id and artifact.version=session.current_artifact_version
+  )),0::bigint,'seeded publications carry their exact current artifact identity');
 
 select * from finish();
 rollback;

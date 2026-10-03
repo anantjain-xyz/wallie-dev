@@ -1188,6 +1188,7 @@ export type Database = {
           archived_at: string | null
           created_at: string
           creator_member_id: string | null
+          current_artifact_id: string | null
           current_artifact_version: number
           current_stage_id: string
           github_repository_id: string | null
@@ -1209,6 +1210,7 @@ export type Database = {
           archived_at?: string | null
           created_at?: string
           creator_member_id?: string | null
+          current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id: string
           github_repository_id?: string | null
@@ -1230,6 +1232,7 @@ export type Database = {
           archived_at?: string | null
           created_at?: string
           creator_member_id?: string | null
+          current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id?: string
           github_repository_id?: string | null
@@ -1253,6 +1256,13 @@ export type Database = {
             columns: ["creator_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_current_artifact_id_fkey"
+            columns: ["current_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "session_artifacts"
             referencedColumns: ["id"]
           },
           {

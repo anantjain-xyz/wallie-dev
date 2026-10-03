@@ -139,6 +139,7 @@ export function reconcilePhaseMutationResult(
 ): SessionReviewSession {
   return reconcileSessionMutationPatch(mergeSessionReviewStage(session, result.currentStage), {
     archivedAt: result.archivedAt,
+    currentArtifactId: result.currentArtifactId ?? null,
     currentArtifactVersion: result.artifactVersion,
     currentStageId: result.currentStageId,
     phaseStatus: result.phaseStatus,
@@ -274,9 +275,15 @@ function SessionDetailContent({
   }, [session.artifacts]);
 
   const activeArtifacts = artifactsByStage.get(selectedStageSlug) ?? [];
-  const latestArtifact = activeArtifacts[0] ?? null;
+  const latestArtifact =
+    selectedStageSlug === session.currentStageSlug
+      ? (activeArtifacts.find((artifact) => artifact.id === session.currentArtifactId) ?? null)
+      : (activeArtifacts[0] ?? null);
   const reviewArtifact: SessionReviewArtifact | null =
-    displayedArtifact?.id && selectedStage && displayedArtifact.stageSlug === selectedStage.slug
+    displayedArtifact?.id &&
+    displayedArtifact.id === session.currentArtifactId &&
+    selectedStage &&
+    displayedArtifact.stageSlug === selectedStage.slug
       ? {
           artifactId: displayedArtifact.id,
           stageId: selectedStage.id,
@@ -301,6 +308,8 @@ function SessionDetailContent({
   // Keep the reviewable pending surface so Stop/dialog cannot race the action.
   // Historical version selections disable approve/reject — those actions always
   // target session.currentArtifactVersion, not the on-screen older body.
+  const reviewIdentityUnavailable =
+    session.phaseStatus === "awaiting_review" && !session.currentArtifactId;
   const pendingKeepsReviewable = phaseActionPending !== null;
   const stickyReviewMode =
     viewingHistoricalArtifact && (reviewMode.kind === "reviewable" || pendingKeepsReviewable)
@@ -311,7 +320,13 @@ function SessionDetailContent({
         } as const)
       : pendingKeepsReviewable
         ? ({ canApprove, kind: "reviewable" } as const)
-        : reviewMode;
+        : reviewMode.kind === "reviewable" && reviewIdentityUnavailable
+          ? ({
+              kind: "unavailable",
+              reason:
+                "The current artifact cannot be identified safely. Use Retry Run to generate a new reviewable artifact.",
+            } as const)
+          : reviewMode;
 
   const runIsFocus =
     selectedStageIsCurrent &&
@@ -743,12 +758,14 @@ function SessionDetailContent({
     startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
     const reviewStillCurrent =
+      artifact.artifactId === session.currentArtifactId &&
       artifact.stageId === session.currentStageId &&
       artifact.version === session.currentArtifactVersion &&
       (!latestArtifact?.id || latestArtifact.id === artifact.artifactId);
     const previousStageSlug = session.currentStageSlug;
     const previousPatch: SessionMutationPatch = {
       archivedAt: session.archivedAt,
+      currentArtifactId: session.currentArtifactId ?? null,
       currentArtifactVersion: session.currentArtifactVersion,
       currentStageId: session.currentStageId,
       phaseStatus: session.phaseStatus,
@@ -778,6 +795,7 @@ function SessionDetailContent({
         ? { phaseStatus: "rejected", rejectionCount: (session.rejectionCount ?? 0) + 1 }
         : nextStage
           ? {
+              currentArtifactId: null,
               currentArtifactVersion: 0,
               currentStageId: nextStage.id,
               phaseCompletions: optimisticPhaseCompletions,
@@ -1099,6 +1117,7 @@ function SessionDetailContent({
 
   const artifactViewer = artifactAvailable ? (
     <ArtifactPanel
+      currentArtifactId={selectedStageIsCurrent ? (session.currentArtifactId ?? null) : undefined}
       emptyText="No artifact recorded for this stage."
       initialFormattedArtifact={initialFormattedArtifact}
       initialFormattedArtifactKey={initialFormattedArtifactKey}
@@ -1196,6 +1215,7 @@ function SessionDetailContent({
                       ?.name ?? "Current stage",
                   phaseStatus: session.phaseStatus,
                 },
+                reviewIdentityUnavailable,
                 stopControl,
               }}
             >

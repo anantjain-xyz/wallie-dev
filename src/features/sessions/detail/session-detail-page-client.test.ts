@@ -76,6 +76,7 @@ function makeSessionDetailData(): SessionReviewData {
       artifacts: [],
       attachments: [],
       createdAt: "2026-06-07T10:00:00.000Z",
+      currentArtifactId: "artifact-1",
       currentArtifactVersion: 1,
       currentStageId: "stage-1",
       currentStageSlug: "product",
@@ -246,7 +247,7 @@ describe("SessionDetailPageClient", () => {
         activity: null,
         initialData: data,
         initialFormattedArtifact: createElement("p", null, "Reviewed output"),
-        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+        initialFormattedArtifactKey: `${data.session.id}:product:id:artifact-1`,
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
@@ -271,33 +272,99 @@ describe("SessionDetailPageClient", () => {
     );
   });
 
-  it("requires a hydrated artifact identity before sending a review action", () => {
+  it("blocks ambiguous review and exposes recovery when current identity is unavailable", () => {
     const data = makeSessionDetailData();
+    data.session.currentArtifactId = null;
     data.session.artifacts = [
       {
+        id: "legacy-artifact",
         stageSlug: "product",
         version: 1,
         payload: "Old cached output",
         createdAt: data.session.updatedAt,
       },
     ];
+    function RecoveryProbe() {
+      const presentation = useSessionActivityPresentation();
+      return createElement(
+        "p",
+        null,
+        presentation?.reviewIdentityUnavailable ? "Retry recovery enabled" : "No recovery",
+      );
+    }
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: createElement(RecoveryProbe),
+        initialData: data,
+        initialFormattedArtifact: createElement("p", null, "Old cached output"),
+        initialFormattedArtifactKey: `${data.session.id}:product:id:legacy-artifact`,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+    expect(screen.queryByText("Old cached output")).toBeNull();
+    expect(screen.getByText(/current artifact cannot be identified safely/i)).toBeTruthy();
+    expect(screen.getByText("Retry recovery enabled")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not allow review of a different artifact with the same version", async () => {
+    const data = makeSessionDetailData();
+    data.session.currentArtifactId = "current-artifact";
+    data.session.artifacts = [
+      {
+        id: "historical-artifact",
+        stageSlug: "product",
+        version: 1,
+        payload: "Historical body",
+        createdAt: data.session.updatedAt,
+      },
+      {
+        id: "current-artifact",
+        stageSlug: "product",
+        version: 1,
+        payload: "Current body",
+        createdAt: data.session.updatedAt,
+      },
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).includes("artifactId=historical-artifact")
+        ? Response.json({
+            artifact: {
+              ...data.session.artifacts[0],
+              sanitizedHtml: "<p>Historical formatted</p>",
+            },
+          })
+        : Response.json({
+            artifacts: data.session.artifacts.map((artifact) => ({
+              ...artifact,
+              authorLabel:
+                artifact.id === "current-artifact" ? "Current author" : "Historical author",
+              attempt: 1,
+              changesRequested: false,
+            })),
+          }),
+    );
     render(
       createElement(SessionDetailPageClient, {
         activity: null,
         initialData: data,
-        initialFormattedArtifact: createElement("p", null, "Old cached output"),
-        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+        initialFormattedArtifact: createElement("p", null, "Current formatted"),
+        initialFormattedArtifactKey: `${data.session.id}:product:id:current-artifact`,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(mocked.pushToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Review unavailable.",
-        description: expect.stringContaining("Refresh this session"),
-      }),
-    );
+    expect(screen.getByText("Current formatted")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1.*Historical author/i }));
+    expect(await screen.findByText("Historical formatted")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1.*Current author/i }));
+    expect(screen.getByText("Current formatted")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
   });
 
   it("preserves the feedback dialog and draft when an optimistic rerun fails", async () => {
@@ -324,7 +391,7 @@ describe("SessionDetailPageClient", () => {
         activity: null,
         initialData: data,
         initialFormattedArtifact: createElement("p", null, "Review this"),
-        initialFormattedArtifactKey: `${data.session.id}:product:1`,
+        initialFormattedArtifactKey: `${data.session.id}:product:id:artifact-1`,
       }),
       { wrapper: OverlayProvider },
     );
@@ -676,6 +743,7 @@ describe("SessionDetailPageClient", () => {
     data.session.artifacts = [
       {
         createdAt: "2026-06-07T10:30:00.000Z",
+        id: "artifact-1",
         payload: "# Rendered artifact",
         stageSlug: "product",
         version: 1,
@@ -685,7 +753,7 @@ describe("SessionDetailPageClient", () => {
       activity: createElement("div", null, "Run activity is temporarily unavailable"),
       data,
       initialFormattedArtifact: createElement("article", null, "Rendered artifact"),
-      initialFormattedArtifactKey: "11111111-1111-4111-8111-111111111111:product:1",
+      initialFormattedArtifactKey: "11111111-1111-4111-8111-111111111111:product:id:artifact-1",
     });
 
     expect(html).toContain("Editable Session");
@@ -814,6 +882,7 @@ it("discovers an artifact completed during a subscription outage without a route
   initial.session.currentArtifactVersion = 0;
   const incoming = makeSessionDetailData();
   const artifact = {
+    id: "artifact-1",
     createdAt: "2026-06-07T12:00:00.000Z",
     stageSlug: "product",
     version: 1,

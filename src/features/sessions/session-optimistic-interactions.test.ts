@@ -75,6 +75,7 @@ vi.mock("@/features/wallie/session-wallie-panel", () => ({
 const session: SessionSummary = {
   archivedAt: null,
   createdAt: "2026-07-17T10:00:00.000Z",
+  currentArtifactId: "artifact-plan",
   currentArtifactVersion: 1,
   currentStageId: "stage-plan",
   currentStageName: "Plan",
@@ -104,6 +105,7 @@ function makeDetailData(): SessionReviewData {
       artifacts: [],
       attachments: [],
       createdAt: session.createdAt,
+      currentArtifactId: session.currentArtifactId,
       currentArtifactVersion: session.currentArtifactVersion,
       currentStageId: session.currentStageId,
       currentStageSlug: session.currentStageSlug,
@@ -283,6 +285,7 @@ describe("optimistic session interactions", () => {
       ...data.session,
       currentStageId: "stage-build",
       currentStageSlug: "build",
+      currentArtifactId: "artifact-build",
       artifacts: [
         {
           id: "artifact-build",

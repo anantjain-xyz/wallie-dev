@@ -33,6 +33,7 @@ export type SessionMutationStage = {
 
 export type SessionPhaseMutationResult = {
   archivedAt: string | null;
+  currentArtifactId?: string | null;
   artifactVersion: number;
   currentStageId: string;
   currentStage: SessionMutationStage;
