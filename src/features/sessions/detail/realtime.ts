@@ -15,6 +15,7 @@ type SessionRealtimeRow = Pick<
   Tables<"sessions">,
   | "archived_at"
   | "created_at"
+  | "current_artifact_id"
   | "current_artifact_version"
   | "current_stage_id"
   | "id"
@@ -49,6 +50,7 @@ export function mergeSessionRealtimeRow(
   const currentStage = session.pipeline.stages.find((stage) => stage.id === row.current_stage_id);
   const patchedSession = reconcileSessionMutationPatch(session, {
     archivedAt: row.archived_at,
+    currentArtifactId: row.current_artifact_id ?? null,
     currentArtifactVersion: row.current_artifact_version,
     currentStageId: row.current_stage_id,
     phaseStatus: row.phase_status as SessionPhaseStatus,
@@ -85,18 +87,14 @@ export function mergeArtifactRealtimeRow(
     stageSlug: row.stage_slug,
     version: row.version,
   };
-  const existingArtifact = session.artifacts.find(
-    (current) => current.stageSlug === artifact.stageSlug && current.version === artifact.version,
-  );
+  const existingArtifact = session.artifacts.find((current) => current.id === artifact.id);
   if (
     existingArtifact &&
     compareSessionTimestamps(existingArtifact.createdAt, artifact.createdAt) >= 0
   ) {
     return session;
   }
-  const artifacts = session.artifacts.filter(
-    (current) => current.stageSlug !== artifact.stageSlug || current.version !== artifact.version,
-  );
+  const artifacts = session.artifacts.filter((current) => current.id !== artifact.id);
 
   artifacts.push(artifact);
 

@@ -4,6 +4,7 @@ import { createContext, type ReactNode, useContext } from "react";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 
 export type SessionActivityPresentation = {
+  reviewIdentityUnavailable?: boolean;
   currentStage: { id: string; name: string; phaseStatus: SessionPhaseStatus };
   /** Undefined uses run-level cancellation; null deliberately hides it. */
   stopControl: ReactNode;

@@ -26,7 +26,7 @@ export async function GET(_request: Request, { params }: Params) {
   const { data, error } = await supabase
     .from("sessions")
     .select(
-      "id, archived_at, phase_status, current_stage_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
+      "id, archived_at, phase_status, current_stage_id, current_artifact_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
     )
     .eq("id", sessionId)
     .maybeSingle();
@@ -52,6 +52,7 @@ export async function GET(_request: Request, { params }: Params) {
 
   return NextResponse.json<SessionPhaseMutationResult>({
     archivedAt: data.archived_at,
+    currentArtifactId: data.current_artifact_id ?? null,
     artifactVersion: data.current_artifact_version,
     currentStage: data.currentStage,
     currentStageId: data.current_stage_id,

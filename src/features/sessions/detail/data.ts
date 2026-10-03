@@ -58,6 +58,7 @@ export type SessionReviewSession = {
   artifacts: SessionArtifactSummary[];
   attachments: SessionPromptAttachment[];
   createdAt: string;
+  currentArtifactId?: string | null;
   currentArtifactVersion: number | null;
   currentStageId: string;
   currentStageSlug: string;

@@ -16,6 +16,7 @@ import { GET } from "./route";
 
 const result = {
   archived_at: null,
+  current_artifact_id: "artifact-current",
   current_artifact_version: 0,
   currentStage: {
     description: "Newly inserted stage",
@@ -56,6 +57,7 @@ describe("GET /api/sessions/[sessionId]/state", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       archivedAt: null,
+      currentArtifactId: "artifact-current",
       artifactVersion: 0,
       currentStage: result.currentStage,
       currentStageId: "stage-new",

@@ -46,7 +46,12 @@ select session_id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,stage.id,stage.sl
 from linear_session cross join public.pipeline_stages stage where stage.pipeline_id=(select id from linear_pipeline);
 update public.sessions set current_stage_id=(select id from public.pipeline_stages where pipeline_id=(select id from linear_pipeline) and slug='build'),phase_status='awaiting_review',current_artifact_version=1
 where id=(select session_id from linear_session);
+update public.sessions session set current_artifact_id=artifact.id from public.session_artifacts artifact
+where session.id=(select session_id from linear_session) and artifact.session_id=session.id
+  and artifact.stage_id=session.current_stage_id and artifact.version=session.current_artifact_version;
 create temp table first_route as select * from pg_temp.route(1,'Rework');
+select is((select current_artifact_id from public.sessions where id=(select session_id from linear_session)),null::uuid,
+  'same-stage Linear reroute clears the exact review identity');
 select is((select outcome from first_route),'routed','new Rework span atomically routes');
 select is((select job_ids from first_route),array[(select job_id from linear_session)],'receipt identifies exact retired job');
 select is((select run_ids from first_route),array[(select run_id from linear_session)],'receipt identifies exact retired run');
@@ -74,7 +79,12 @@ select is((select outcome from pg_temp.route(5,'Rework')),'routed','same transit
 update public.workspace_linear_routing set updated_at=now() where workspace_id='b1b2c3d4-0001-4000-8000-000000000001';
 select is((select outcome from pg_temp.route(5,'Rework')),'duplicate','config touch alone does not replay work');
 update public.workspace_linear_routing set rework_stage_slug='release' where workspace_id='b1b2c3d4-0001-4000-8000-000000000001';
+update public.sessions session set current_artifact_id=artifact.id from public.session_artifacts artifact
+where session.id=(select session_id from linear_session) and artifact.session_id=session.id
+  and artifact.stage_id=session.current_stage_id and artifact.version=session.current_artifact_version;
 select is((select outcome from pg_temp.route(5,'Rework')),'routed','changed routing meaning re-arms current span once');
+select is((select current_artifact_id from public.sessions where id=(select session_id from linear_session)),null::uuid,
+  'different-stage Linear reroute clears the prior review identity');
 select is((select current_stage_id from public.sessions where id=(select session_id from linear_session)),(select id from public.pipeline_stages where pipeline_id=(select id from linear_pipeline) and slug='release'),'new configured selected target is used');
 select is((select current_artifact_version from public.sessions where id=(select session_id from linear_session)),1,'target retains historical version counter');
 update public.sessions set current_stage_id=(select id from public.pipeline_stages where pipeline_id=(select id from linear_pipeline) and slug='build'),current_artifact_version=0 where id=(select session_id from linear_session);

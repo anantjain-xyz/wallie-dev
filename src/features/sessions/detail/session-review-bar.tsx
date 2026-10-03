@@ -66,6 +66,7 @@ export function SessionReviewBar({
     mode.kind === "canceled" ||
     mode.kind === "unauthorized" ||
     mode.kind === "failed" ||
+    mode.kind === "unavailable" ||
     mode.kind === "historical_version"
   ) {
     return (

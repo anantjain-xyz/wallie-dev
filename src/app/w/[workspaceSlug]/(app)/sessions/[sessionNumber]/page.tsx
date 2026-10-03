@@ -20,9 +20,12 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
   const { sessionNumber, workspaceSlug } = await params;
   const data = await loadSessionDetailPageData(workspaceSlug, sessionNumber);
   const initialNow = new Date().toISOString();
-  const latestArtifact = data.review.session.artifacts[0] ?? null;
+  const latestArtifact =
+    data.review.session.artifacts.find(
+      (artifact) => artifact.id === data.review.session.currentArtifactId,
+    ) ?? null;
   const initialFormattedArtifactKey = latestArtifact
-    ? `${data.review.session.id}:${latestArtifact.stageSlug}:${latestArtifact.version}`
+    ? `${data.review.session.id}:${latestArtifact.stageSlug}:${latestArtifact.id ? `id:${latestArtifact.id}` : latestArtifact.version}`
     : null;
   const initialFormattedArtifact =
     latestArtifact && typeof latestArtifact.payload === "string" ? (

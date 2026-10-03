@@ -94,6 +94,7 @@ export type SessionArtifactBody = SessionArtifactSummary & {
 export type SessionSummary = {
   archivedAt: string | null;
   createdAt: string;
+  currentArtifactId?: string | null;
   currentArtifactVersion: number | null;
   currentStageId: string;
   currentStageName: string;

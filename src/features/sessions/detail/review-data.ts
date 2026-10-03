@@ -43,6 +43,7 @@ export function serializeSessionReviewData(
         sizeBytes: attachment.size_bytes,
       })),
       createdAt: payload.session.createdAt,
+      currentArtifactId: payload.session.currentArtifactId ?? null,
       currentArtifactVersion: payload.session.currentArtifactVersion,
       currentStageId: payload.session.currentStageId,
       currentStageSlug: payload.session.currentStageSlug,

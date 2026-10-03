@@ -2,6 +2,7 @@ import type { SessionPhaseCompletion, SessionPhaseStatus } from "@/features/sess
 
 type OptimisticSession = {
   archivedAt: string | null;
+  currentArtifactId?: string | null;
   currentArtifactVersion: number | null;
   currentStageId: string;
   currentStageSlug: string;
@@ -22,6 +23,7 @@ type OptimisticSession = {
 
 export type SessionMutationPatch = {
   archivedAt?: string | null;
+  currentArtifactId?: string | null;
   currentArtifactVersion?: number | null;
   currentStageId?: string;
   phaseCompletion?: SessionPhaseCompletion;
@@ -84,6 +86,9 @@ export function applySessionMutationPatch<Session extends OptimisticSession>(
   return {
     ...session,
     ...(patch.archivedAt !== undefined ? { archivedAt: patch.archivedAt } : {}),
+    ...(patch.currentArtifactId !== undefined
+      ? { currentArtifactId: patch.currentArtifactId }
+      : {}),
     ...(patch.currentArtifactVersion !== undefined
       ? { currentArtifactVersion: patch.currentArtifactVersion }
       : {}),

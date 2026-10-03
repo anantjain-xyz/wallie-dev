@@ -54,6 +54,7 @@ describe("session detail realtime helpers", () => {
     const next = mergeSessionRealtimeRow(baseSession, {
       archived_at: null,
       created_at: baseSession.createdAt,
+      current_artifact_id: "artifact-current",
       current_artifact_version: 1,
       current_stage_id: "stage-design",
       id: "sess-1",
@@ -70,6 +71,7 @@ describe("session detail realtime helpers", () => {
     expect(next.currentStageId).toBe("stage-design");
     expect(next.currentStageSlug).toBe("design");
     expect(next.currentArtifactVersion).toBe(1);
+    expect(next.currentArtifactId).toBe("artifact-current");
     expect(next.phaseStatus).toBe("awaiting_review");
     expect(next.title).toBe("Realtime updates v2");
   });
@@ -78,6 +80,7 @@ describe("session detail realtime helpers", () => {
     const row = {
       archived_at: null,
       created_at: baseSession.createdAt,
+      current_artifact_id: null,
       current_artifact_version: 0,
       current_stage_id: "stage-product",
       id: "sess-1",
@@ -121,6 +124,31 @@ describe("session detail realtime helpers", () => {
         version: 1,
       },
     ]);
+  });
+
+  it("preserves distinct artifact IDs with the same stage and version", () => {
+    const row = {
+      artifact_json: "First body",
+      created_at: "2026-05-21T13:06:00.000Z",
+      id: "artifact-first",
+      session_id: baseSession.id,
+      stage_slug: "product",
+      version: 1,
+    };
+    const first = mergeArtifactRealtimeRow(baseSession, row);
+    const second = mergeArtifactRealtimeRow(first, {
+      ...row,
+      id: "artifact-second",
+      artifact_json: "Second body",
+    });
+    expect(second.artifacts.map(({ id, payload }) => ({ id, payload }))).toEqual([
+      { id: "artifact-first", payload: "First body" },
+      { id: "artifact-second", payload: "Second body" },
+    ]);
+    expect(mergeArtifactRealtimeRow(second, row)).toBe(second);
+    expect(
+      removeArtifactRealtimeRow(second, { id: "artifact-first" }).artifacts.map(({ id }) => id),
+    ).toEqual(["artifact-second"]);
   });
 
   it("upserts phase completion rows into the stage rail inputs", () => {

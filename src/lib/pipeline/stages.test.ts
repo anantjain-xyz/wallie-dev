@@ -5,6 +5,12 @@ function fixture(input: {
   completedStageIds: Array<string | null>;
   completionError?: Error;
   stageError?: Error;
+  additionalArtifacts?: Array<{
+    stage_id: string | null;
+    stage_slug: string;
+    version: number;
+    artifact_json: string;
+  }>;
   stageRows?: Array<{ id: string; slug: string }>;
 }) {
   const artifacts = [
@@ -36,6 +42,7 @@ function fixture(input: {
       artifact_json: "deleted stage output must not replace plan",
     },
   ];
+  artifacts.push(...(input.additionalArtifacts ?? []));
   const stageRows = input.stageRows ?? [
     { id: "plan-id", slug: "plan" },
     { id: "build-id", slug: "build" },
@@ -155,5 +162,44 @@ describe("loadCompletedStageArtifacts", () => {
     await expect(loadCompletedStageArtifacts(admin as never, "session")).rejects.toThrow(
       "stage lookup failed",
     );
+  });
+  it("fails closed when the highest retained version is duplicated for a completed stable stage", async () => {
+    const { admin } = fixture({
+      completedStageIds: ["plan-id"],
+      additionalArtifacts: [
+        {
+          stage_id: "plan-id",
+          stage_slug: "old-plan",
+          version: 2,
+          artifact_json: "different legacy output",
+        },
+      ],
+    });
+    await expect(loadCompletedStageArtifacts(admin as never, "session")).rejects.toThrow(
+      'Completed stage "plan" has multiple artifacts at version 2',
+    );
+  });
+  it("allows a unique latest version above ambiguous older history", async () => {
+    const { admin } = fixture({
+      completedStageIds: ["plan-id"],
+      additionalArtifacts: [
+        {
+          stage_id: "plan-id",
+          stage_slug: "old-plan",
+          version: 1,
+          artifact_json: "different old output",
+        },
+      ],
+    });
+    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
+      plan: "approved plan",
+    });
+  });
+  it("does not treat equal numeric versions from distinct stable stages as a tie", async () => {
+    const { admin } = fixture({ completedStageIds: ["plan-id", "build-id"] });
+    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
+      plan: "approved plan",
+      build: "new approved build",
+    });
   });
 });

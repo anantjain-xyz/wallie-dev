@@ -142,7 +142,8 @@ create temp table rejection_legacy_session as select * from public.create_sessio
 insert into public.session_artifacts(workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
 select s.workspace_id, s.id, s.current_stage_id, 'plan', 1, to_jsonb('Review me'::text)
 from public.sessions s where s.id = (select session_id from rejection_legacy_session);
-update public.sessions set phase_status = 'awaiting_review', current_artifact_version = 1
+update public.sessions set phase_status = 'awaiting_review', current_artifact_version = 1,
+  current_artifact_id=(select id from public.session_artifacts where session_id=(select session_id from rejection_legacy_session) and version=1)
 where id = (select session_id from rejection_legacy_session);
 update public.agent_jobs set dedupe_key = 'pipeline:legacy-rejection:active'
 where id = (select job_id from rejection_legacy_session);

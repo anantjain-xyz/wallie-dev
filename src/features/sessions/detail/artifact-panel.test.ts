@@ -42,6 +42,7 @@ const latestArtifact: SessionArtifactSummary = {
 
 function metadataRow(
   overrides: Partial<{
+    id: string;
     attempt: number;
     authorLabel: string;
     changesRequested: boolean;
@@ -52,6 +53,7 @@ function metadataRow(
 ) {
   const version = overrides.version ?? 1;
   return {
+    id: overrides.id,
     attempt: overrides.attempt ?? version,
     authorLabel: overrides.authorLabel ?? "Claude Code",
     changesRequested: overrides.changesRequested ?? false,
@@ -138,36 +140,141 @@ describe("ArtifactPanel", () => {
     );
   });
 
-  it("reports the identity of the displayed cached body after a same-version replacement", async () => {
+  it("does not reuse an SSR body for a different artifact with the same version", async () => {
     const onDisplayedArtifactChange = vi.fn();
     const original = { ...latestArtifact, id: "original-artifact" };
-    const view = renderPanel({ latestArtifact: original, onDisplayedArtifactChange });
-    await waitFor(() =>
-      expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
-        id: "original-artifact",
-        stageSlug: "build",
-        version: 2,
+    const originalProps = {
+      emptyText: "No artifact recorded for this stage.",
+      initialFormattedArtifact: createElement("div", null, "Original formatted"),
+      initialFormattedArtifactKey: `${SESSION_ID}:build:id:original-artifact`,
+      currentArtifactId: original.id,
+      isDrafting: false,
+      latestArtifact: original,
+      loadLatest: true,
+      sessionId: SESSION_ID,
+      stageSlug: "build",
+      onDisplayedArtifactChange,
+    };
+    const view = renderPanel(originalProps);
+    expect(screen.getByText("Original formatted")).toBeTruthy();
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifact: {
+          ...original,
+          id: "replacement-artifact",
+          payload: "Replacement output",
+          sanitizedHtml: "<p>Replacement formatted</p>",
+        },
       }),
     );
     view.rerender(
       createElement(ArtifactPanel, {
-        emptyText: "No artifact recorded for this stage.",
-        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
-        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
-        isDrafting: false,
+        ...originalProps,
+        currentArtifactId: "replacement-artifact",
         latestArtifact: { ...original, id: "replacement-artifact", payload: "Replacement output" },
-        loadLatest: true,
-        sessionId: SESSION_ID,
-        stageSlug: "build",
-        onDisplayedArtifactChange,
       }),
     );
-    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    expect(screen.queryByText("Original formatted")).toBeNull();
+    expect(await screen.findByText("Replacement formatted")).toBeTruthy();
+    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain(
+      "artifactId=replacement-artifact",
+    );
     expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
-      id: "original-artifact",
+      id: "replacement-artifact",
       stageSlug: "build",
       version: 2,
     });
+  });
+
+  it("keeps duplicate version bodies, history selection, and Latest keyed by artifact ID", async () => {
+    const current = { ...latestArtifact, id: "current-artifact", version: 1 };
+    const onDisplayedArtifactChange = vi.fn();
+    const onViewingHistoricalChange = vi.fn();
+    vi.mocked(fetch).mockImplementation((input) =>
+      String(input).includes("artifactId=historical-artifact")
+        ? response({
+            artifact: {
+              ...current,
+              id: "historical-artifact",
+              payload: "Historical body",
+              sanitizedHtml: "<p>Historical formatted</p>",
+            },
+          })
+        : response({
+            artifacts: [
+              metadataRow({
+                id: "historical-artifact",
+                version: 1,
+                authorLabel: "Historical author",
+              }),
+              metadataRow({ id: current.id, version: 1, authorLabel: "Current author" }),
+            ],
+          }),
+    );
+    renderPanel({
+      latestArtifact: current,
+      currentArtifactId: current.id,
+      initialFormattedArtifactKey: `${SESSION_ID}:build:id:${current.id}`,
+      onDisplayedArtifactChange,
+      onViewingHistoricalChange,
+    });
+    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    const historical = await screen.findByRole("button", { name: /Version 1.*Historical author/i });
+    expect(screen.getAllByRole("button", { name: /Version 1/i })).toHaveLength(2);
+    expect(screen.getAllByText(/· Latest/)).toHaveLength(1);
+    fireEvent.click(historical);
+    expect(await screen.findByText("Historical formatted")).toBeTruthy();
+    expect(screen.queryByText("Latest formatted")).toBeNull();
+    expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+      id: "historical-artifact",
+      stageSlug: "build",
+      version: 1,
+    });
+    expect(onViewingHistoricalChange).toHaveBeenLastCalledWith(true);
+    expect(new URLSearchParams(window.location.search).get("artifactId")).toBe(
+      "historical-artifact",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1.*Current author/i }));
+    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+      id: current.id,
+      stageSlug: "build",
+      version: 1,
+    });
+    expect(onViewingHistoricalChange).toHaveBeenLastCalledWith(false);
+    expect(new URLSearchParams(window.location.search).has("artifactId")).toBe(false);
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("artifactId=")),
+    ).toHaveLength(1);
+  });
+
+  it("clears cached current output when current artifact authority becomes unavailable", async () => {
+    const current = { ...latestArtifact, id: "current-artifact" };
+    const props = {
+      latestArtifact: current,
+      currentArtifactId: current.id,
+      initialFormattedArtifactKey: `${SESSION_ID}:build:id:${current.id}`,
+    };
+    const view = renderPanel(props);
+    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    view.rerender(
+      createElement(ArtifactPanel, {
+        ...props,
+        currentArtifactId: null,
+        latestArtifact: null,
+        emptyText: "No artifact",
+        initialFormattedArtifact: createElement("p", null, "Latest formatted"),
+        isDrafting: false,
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+    expect(screen.queryByText("Latest formatted")).toBeNull();
+    expect(await screen.findByText(/current artifact is unavailable/i)).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("loads metadata once on demand and does not mount Markdown trees in Versions", async () => {

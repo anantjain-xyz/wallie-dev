@@ -501,6 +501,76 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByText("Session two only run")).not.toBeNull();
   });
 
+  it("can regenerate an ambiguous legacy review through the current successful run", async () => {
+    const fake = fakeSupabase();
+    const freshRun = run(0, {
+      id: "run-fresh-review",
+      stageId: "build",
+      status: "queued",
+      isActive: true,
+      isTerminal: false,
+      finishedAt: null,
+    });
+    const fetchMock = vi.fn(async () =>
+      Response.json({ created: true, processScheduled: true, run: freshRun }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <SessionWalliePanel
+        initialData={data([run(1, { stageId: "build" })])}
+        presentation={{
+          currentStage: { id: "build", name: "Build", phaseStatus: "awaiting_review" },
+          stopControl: null,
+        }}
+        reviewIdentityUnavailable
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry Run" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/agent-runs/run-1/retry",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ workspaceId: "workspace-1" }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry Run" })).toBeNull());
+  });
+
+  it.each([
+    { unavailable: false, archivedAt: null, active: false, stageId: "build" },
+    { unavailable: true, archivedAt: "2026-07-18T14:00:00.000Z", active: false, stageId: "build" },
+    { unavailable: true, archivedAt: null, active: true, stageId: "build" },
+    { unavailable: true, archivedAt: null, active: false, stageId: "plan" },
+  ])("does not offer legacy recovery outside an eligible current review (%j)", (input) => {
+    const fake = fakeSupabase();
+    render(
+      <SessionWalliePanel
+        initialData={data([
+          run(1, {
+            stageId: input.stageId,
+            isActive: input.active,
+            status: input.active ? "queued" : "success",
+            isTerminal: !input.active,
+          }),
+        ])}
+        presentation={{
+          currentStage: { id: "build", name: "Build", phaseStatus: "awaiting_review" },
+          stopControl: null,
+        }}
+        reviewIdentityUnavailable={input.unavailable}
+        session={{ archivedAt: input.archivedAt, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Retry Run" })).toBeNull();
+  });
+
   it("retries the selected paginated row and inserts the returned run without refresh", async () => {
     const initialRun = run(1);
     const olderRun = run(21, { canRetry: true, status: "error" });

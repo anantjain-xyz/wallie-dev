@@ -1,3 +1,25 @@
+-- The numeric version remains an allocation base; this ID is the exact
+-- publication a review decision may authorize. Legacy ambiguity is preserved.
+alter table "public"."sessions" add column "current_artifact_id" uuid;
+
+CREATE INDEX sessions_current_artifact_id_idx ON public.sessions USING btree (current_artifact_id);
+
+alter table "public"."sessions" add constraint "sessions_current_artifact_id_fkey" FOREIGN KEY (current_artifact_id) REFERENCES public.session_artifacts(id) ON DELETE SET NULL not valid;
+
+alter table "public"."sessions" validate constraint "sessions_current_artifact_id_fkey";
+
+-- A historical live label or timestamp cannot prove which tied version was
+-- reviewed. Bind only a single scoped candidate and leave every other row null.
+with unambiguous_review as (
+  select session.id as session_id,(array_agg(artifact.id))[1] as artifact_id
+  from public.sessions session join public.session_artifacts artifact
+    on artifact.session_id=session.id and artifact.workspace_id=session.workspace_id
+    and artifact.stage_id=session.current_stage_id and artifact.version=session.current_artifact_version
+  group by session.id having count(*)=1
+)
+update public.sessions session set current_artifact_id=review.artifact_id
+from unambiguous_review review where review.session_id=session.id;
+
 -- Stage IDs identify artifacts and completed prompt inputs across live renames.
 -- Keep stored publication labels unchanged and skip occupied historical versions.
 -- Completion labels are historical snapshots, not decision identities. Drop
@@ -36,6 +58,11 @@ begin
      or reviewed_session.current_artifact_version is distinct from expected_version then
     return;
   end if;
+
+  if reviewed_session.current_artifact_id is null then
+    raise exception 'Review artifact identity is unavailable. Run this stage again before reviewing.' using errcode = '55000';
+  end if;
+  if reviewed_session.current_artifact_id is distinct from expected_artifact_id then return; end if;
 
   select stage.* into reviewed_stage from public.pipeline_stages stage
   where stage.id = expected_stage_id and stage.workspace_id = expected_workspace_id
@@ -119,7 +146,7 @@ begin
       ) then approved_at_now else s.archived_at end
     where s.id = reviewed_session.id;
   else
-    update public.sessions s set current_stage_id = next_stage.id, phase_status = 'in_progress',
+    update public.sessions s set current_stage_id = next_stage.id, current_artifact_id = null, phase_status = 'in_progress',
       current_artifact_version = coalesce((
         select max(artifact.version) from public.session_artifacts artifact
         where artifact.session_id = reviewed_session.id and artifact.stage_id = next_stage.id
@@ -158,6 +185,47 @@ begin
     queued_job_id, queued_run_id, queued_job_created
   from public.sessions s join public.pipeline_stages stage on stage.id = s.current_stage_id
   where s.id = reviewed_session.id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.reject_session_stage(p_session_id uuid, p_workspace_id uuid, p_artifact_version integer, p_feedback_text text, p_agent_model_provider text, p_agent_model_name text, p_expected_stage_id uuid, p_expected_artifact_id uuid, p_run_type text DEFAULT 'project'::text, p_requested_by_member_id uuid DEFAULT NULL::uuid)
+ RETURNS TABLE(session_id uuid, workspace_id uuid, current_stage_id uuid, current_artifact_version integer, phase_status public.pipeline_phase_status, rejection_count integer, archived_at timestamp with time zone, job_id uuid, run_id uuid, job_created boolean)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+declare reviewed_session public.sessions%rowtype;
+begin
+  select s.* into reviewed_session from public.sessions s
+  where s.id = p_session_id and s.workspace_id = p_workspace_id for no key update;
+  if not found then raise exception 'Session not found.' using errcode = 'P0002'; end if;
+  if reviewed_session.archived_at is not null then
+    raise exception 'Session is archived.' using errcode = '55000';
+  end if;
+  if reviewed_session.phase_status <> 'awaiting_review' then
+    raise exception 'Session is not awaiting review.' using errcode = '55000';
+  end if;
+  if reviewed_session.current_artifact_version is distinct from p_artifact_version then
+    raise exception 'Version mismatch: a newer version exists.' using errcode = '55000';
+  end if;
+  if reviewed_session.current_artifact_id is null then
+    raise exception 'Review artifact identity is unavailable. Run this stage again before reviewing.' using errcode = '55000';
+  end if;
+  if reviewed_session.current_artifact_id is distinct from p_expected_artifact_id
+     or reviewed_session.current_stage_id is distinct from p_expected_stage_id
+     or not exists (
+       select 1 from public.session_artifacts artifact
+       where artifact.id = p_expected_artifact_id and artifact.session_id = p_session_id
+         and artifact.workspace_id = p_workspace_id and artifact.stage_id = p_expected_stage_id
+         and artifact.version = p_artifact_version
+     ) then
+    raise exception 'Review artifact changed. Refresh and try again.' using errcode = '55000';
+  end if;
+  return query select * from internal.reject_session_stage(
+    p_session_id, p_workspace_id, p_artifact_version, p_feedback_text,
+    p_agent_model_provider, p_agent_model_name, p_run_type, p_requested_by_member_id
+  );
 end;
 $function$
 ;
@@ -294,7 +362,8 @@ begin
     where sa.session_id = v_session.id
       and sa.workspace_id = v_workspace_id
       and sa.stage_id = v_current_stage.id
-      and sa.version = v_session.current_artifact_version;
+      and sa.version = v_session.current_artifact_version
+      and sa.id = v_session.current_artifact_id;
   end if;
 
   select coalesce(
@@ -382,6 +451,7 @@ begin
       'archivedAt', v_session.archived_at,
       'artifacts', v_artifacts,
       'createdAt', v_session.created_at,
+      'currentArtifactId', v_session.current_artifact_id,
       'currentArtifactVersion', v_session.current_artifact_version,
       'currentStageId', v_session.current_stage_id,
       'currentStageSlug', coalesce(v_current_stage.slug, 'unknown'),
@@ -411,6 +481,7 @@ CREATE OR REPLACE FUNCTION internal.preserve_session_artifact_version_history()
 AS $function$
 begin
   if new.current_stage_id is distinct from old.current_stage_id then
+    new.current_artifact_id := null;
     perform 1 from public.pipeline_stages
     where id = new.current_stage_id and workspace_id = new.workspace_id and pipeline_id = new.pipeline_id;
     if not found then raise exception 'Session stage is outside its workspace pipeline' using errcode = '23514'; end if;
@@ -538,7 +609,7 @@ begin
     delete from public.session_phase_completions completion using public.pipeline_stages stage
     where completion.session_id = s.id and completion.stage_id = stage.id
       and stage.pipeline_id = s.pipeline_id and stage.position >= target.position;
-    update public.sessions set current_stage_id = target.id,
+    update public.sessions set current_stage_id = target.id, current_artifact_id = null,
       current_artifact_version = coalesce((select max(version) from public.session_artifacts
         where session_id = s.id and stage_id = target.id), 0),
       phase_status = 'rejected', rejection_count = 0 where id = s.id;
@@ -568,7 +639,7 @@ CREATE OR REPLACE FUNCTION public.publish_session_job_attempt(p_job_id uuid, p_a
  LANGUAGE plpgsql
  SET search_path TO ''
 AS $function$
-declare s public.sessions%rowtype; j public.agent_jobs%rowtype; r public.agent_runs%rowtype; next_version integer;
+declare s public.sessions%rowtype; j public.agent_jobs%rowtype; r public.agent_runs%rowtype; next_version integer; published_artifact_id uuid;
 begin
   if nullif(btrim(p_artifact_json), '') is null then
     raise exception 'Artifact markdown must not be blank' using errcode = '23514';
@@ -595,8 +666,10 @@ begin
   into next_version from public.session_artifacts artifact
   where artifact.session_id = s.id and (artifact.stage_id = j.stage_id or artifact.stage_slug = j.stage_slug);
   insert into public.session_artifacts(workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
-  values(s.workspace_id, s.id, j.stage_id, j.stage_slug, next_version, to_jsonb(p_artifact_json));
-  update public.sessions set phase_status = 'awaiting_review', current_artifact_version = next_version
+  values(s.workspace_id, s.id, j.stage_id, j.stage_slug, next_version, to_jsonb(p_artifact_json))
+  returning session_artifacts.id into published_artifact_id;
+  update public.sessions set phase_status = 'awaiting_review', current_artifact_version = next_version,
+    current_artifact_id = published_artifact_id
   where id = s.id;
   update public.agent_runs set status = 'success', finished_at = now(), last_activity_at = now()
   where id = r.id;
@@ -614,3 +687,6 @@ grant execute on function public.publish_session_job_attempt(uuid,integer,uuid,i
 revoke all on function internal.preserve_session_artifact_version_history() from public,anon,authenticated;
 revoke all on function public.get_session_detail_page(text,integer) from public;
 grant execute on function public.get_session_detail_page(text,integer) to authenticated;
+
+revoke all on function public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid) from public,anon,authenticated;
+grant execute on function public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid) to service_role;

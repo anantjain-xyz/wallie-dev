@@ -44,6 +44,7 @@ function buildSupabaseMock({
     id: string;
     stage_slug: string;
     stage_id?: string;
+    session_id?: string;
     version: number;
   }>;
   feedbackError?: { message: string } | null;
@@ -58,15 +59,34 @@ function buildSupabaseMock({
     model_provider: string;
     status: string;
   }>;
-  sessionRow?: { id: string; pipeline_id: string; workspace_id: string } | null;
+  sessionRow?: {
+    id: string;
+    pipeline_id: string;
+    workspace_id: string;
+    current_stage_id?: string;
+    current_artifact_id?: string | null;
+    current_artifact_version?: number;
+  } | null;
   stageError?: { message: string } | null;
   stageRow?: { id: string; pipeline_id: string; slug: string } | null;
 } = {}) {
   const selects: string[] = [];
   const filters: Array<[string, unknown]> = [];
   const tableFilters: Array<[string, string, unknown]> = [];
+  const currentArtifact = artifactRows
+    .filter((row) => !row.stage_id || row.stage_id === STAGE_ID)
+    .sort((left, right) => right.version - left.version)[0];
   const rowsByTable: Record<string, Record<string, unknown>[]> = {
-    sessions: sessionRow ? [sessionRow] : [],
+    sessions: sessionRow
+      ? [
+          {
+            current_stage_id: STAGE_ID,
+            current_artifact_id: currentArtifact?.id ?? null,
+            current_artifact_version: currentArtifact?.version ?? 0,
+            ...sessionRow,
+          },
+        ]
+      : [],
     session_selected_stages: stageRow
       ? [{ session_id: SESSION_ID, workspace_id: WORKSPACE_ID, stage: stageRow }]
       : [],
@@ -518,6 +538,190 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
 
     expect(missingStage.status).toBe(400);
     expect(conflicting.status).toBe(400);
+    expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  const LEGACY_ARTIFACT_ID = "aaaaaaaa-1111-4111-8111-111111111111";
+  const CURRENT_ARTIFACT_ID = "bbbbbbbb-2222-4222-8222-222222222222";
+  const legacyDuplicateArtifacts = [
+    {
+      id: LEGACY_ARTIFACT_ID,
+      stage_id: STAGE_ID,
+      stage_slug: "old-build",
+      version: 1,
+      created_at: "2026-06-01T00:00:00Z",
+      artifact_json: "Legacy output",
+    },
+    {
+      id: CURRENT_ARTIFACT_ID,
+      stage_id: STAGE_ID,
+      stage_slug: "build",
+      version: 1,
+      created_at: "2026-06-02T00:00:00Z",
+      artifact_json: "Actual review output",
+    },
+  ];
+
+  it("uses the exact current pointer even when legacy stage/version is duplicated", async () => {
+    const supabase = buildSupabaseMock({
+      artifactRows: legacyDuplicateArtifacts,
+      sessionRow: {
+        id: SESSION_ID,
+        pipeline_id: PIPELINE_ID,
+        workspace_id: WORKSPACE_ID,
+        current_stage_id: STAGE_ID,
+        current_artifact_version: 1,
+        current_artifact_id: CURRENT_ARTIFACT_ID,
+      },
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    const result = await GET(request("stage=build&latest=true"), routeContext());
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toMatchObject({
+      artifact: { id: CURRENT_ARTIFACT_ID, payload: "Actual review output" },
+    });
+    expect(supabase.tableFilters).toContainEqual(["session_artifacts", "id", CURRENT_ARTIFACT_ID]);
+  });
+
+  it("does not fall back to a current version when the authoritative pointer is null", async () => {
+    const supabase = buildSupabaseMock({
+      artifactRows: legacyDuplicateArtifacts,
+      sessionRow: {
+        id: SESSION_ID,
+        pipeline_id: PIPELINE_ID,
+        workspace_id: WORKSPACE_ID,
+        current_stage_id: STAGE_ID,
+        current_artifact_version: 1,
+        current_artifact_id: null,
+      },
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    const result = await GET(request("stage=build&latest=true"), routeContext());
+    expect(result.status).toBe(409);
+    await expect(result.json()).resolves.toMatchObject({ code: "review_artifact_unavailable" });
+    expect(supabase.tableFilters.some(([table]) => table === "session_artifacts")).toBe(false);
+  });
+
+  it.each([
+    { current_artifact_id: "cccccccc-3333-4333-8333-333333333333", current_artifact_version: 1 },
+    { current_artifact_id: CURRENT_ARTIFACT_ID, current_artifact_version: 2 },
+  ])(
+    "fails closed when the current pointer cannot identify its declared current tuple %#",
+    async (pointer) => {
+      const supabase = buildSupabaseMock({
+        artifactRows: legacyDuplicateArtifacts,
+        sessionRow: {
+          id: SESSION_ID,
+          pipeline_id: PIPELINE_ID,
+          workspace_id: WORKSPACE_ID,
+          ...pointer,
+        },
+      });
+      mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+      const result = await GET(request("stage=build&latest=true"), routeContext());
+      expect(result.status).toBe(409);
+      await expect(result.json()).resolves.toMatchObject({ code: "review_artifact_unavailable" });
+    },
+  );
+
+  it.each(legacyDuplicateArtifacts)(
+    "loads the historical body deterministically by artifact ID $id",
+    async (artifact) => {
+      const supabase = buildSupabaseMock({ artifactRows: legacyDuplicateArtifacts });
+      mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+      const result = await GET(request(`stage=build&artifactId=${artifact.id}`), routeContext());
+      expect(result.status).toBe(200);
+      await expect(result.json()).resolves.toMatchObject({
+        artifact: { id: artifact.id, payload: artifact.artifact_json },
+      });
+      expect(supabase.tableFilters).toContainEqual(["session_artifacts", "stage_id", STAGE_ID]);
+      expect(supabase.tableFilters).toContainEqual(["session_artifacts", "session_id", SESSION_ID]);
+    },
+  );
+
+  it.each([{ stage_id: "another-stage" }, { session_id: "another-session" }])(
+    "does not use a supplied artifact ID outside the selected session/stage %#",
+    async (scope) => {
+      const supabase = buildSupabaseMock({
+        artifactRows: [{ ...legacyDuplicateArtifacts[0]!, ...scope }],
+      });
+      mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+      const result = await GET(
+        request(`stage=build&artifactId=${LEGACY_ARTIFACT_ID}`),
+        routeContext(),
+      );
+      expect(result.status).toBe(404);
+    },
+  );
+
+  it("rejects an explicit version that identifies multiple retained artifacts", async () => {
+    const supabase = buildSupabaseMock({ artifactRows: legacyDuplicateArtifacts });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    const result = await GET(request("stage=build&version=1"), routeContext());
+    expect(result.status).toBe(409);
+    await expect(result.json()).resolves.toMatchObject({ code: "artifact_version_ambiguous" });
+  });
+
+  it("rejects a noncurrent stage's latest body when its maximum version is tied", async () => {
+    const supabase = buildSupabaseMock({
+      artifactRows: legacyDuplicateArtifacts,
+      sessionRow: {
+        id: SESSION_ID,
+        pipeline_id: PIPELINE_ID,
+        workspace_id: WORKSPACE_ID,
+        current_stage_id: "other-stage",
+      },
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    const result = await GET(request("stage=build&latest=true"), routeContext());
+    expect(result.status).toBe(409);
+    await expect(result.json()).resolves.toMatchObject({ code: "artifact_version_ambiguous" });
+  });
+
+  it("can load a unique latest historical artifact above duplicated older versions", async () => {
+    const artifact = {
+      ...legacyDuplicateArtifacts[0]!,
+      id: "cccccccc-3333-4333-8333-333333333333",
+      version: 2,
+    };
+    const supabase = buildSupabaseMock({
+      artifactRows: [...legacyDuplicateArtifacts, artifact],
+      sessionRow: {
+        id: SESSION_ID,
+        pipeline_id: PIPELINE_ID,
+        workspace_id: WORKSPACE_ID,
+        current_stage_id: "other-stage",
+      },
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    const result = await GET(request("stage=build&latest=true"), routeContext());
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toMatchObject({
+      artifact: { id: artifact.id, version: 2 },
+    });
+  });
+
+  it("keeps both legacy artifact IDs available in history metadata", async () => {
+    const supabase = buildSupabaseMock({ artifactRows: legacyDuplicateArtifacts });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    const result = await GET(request("stage=build"), routeContext());
+    expect(result.status).toBe(200);
+    const body = await result.json();
+    expect(body.artifacts).toHaveLength(2);
+    expect(body.artifacts).toEqual(
+      expect.arrayContaining(
+        legacyDuplicateArtifacts.map(({ id, version }) => expect.objectContaining({ id, version })),
+      ),
+    );
+  });
+
+  it.each([
+    "artifactId=invalid",
+    `artifactId=${CURRENT_ARTIFACT_ID}&latest=true`,
+    `artifactId=${CURRENT_ARTIFACT_ID}&version=1`,
+  ])("rejects malformed or competing artifact ID selectors %s", async (selector) => {
+    const result = await GET(request(`stage=build&${selector}`), routeContext());
+    expect(result.status).toBe(400);
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
   });
 });

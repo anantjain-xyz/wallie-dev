@@ -75,6 +75,8 @@ select is((select status::text from public.agent_jobs where id=(select job_id fr
 select is((select count(*) from public.session_phase_completions where session_id=(select session_id from reviewed)),0::bigint,'rejected decisions record no approval');
 create temp table approved as select receipt.* from reviewed fixture cross join lateral pg_temp.approve_review(fixture.session_id,fixture.stage_id,fixture.artifact_id) receipt;
 select is((select current_stage_slug from approved),'review-build','approval advances to the next selected stage');
+select is((select current_artifact_id from public.sessions where id=(select session_id from reviewed)),null::uuid,
+  'stage advancement clears the old review identity while retaining numeric allocation history');
 select is((select status::text from public.agent_jobs where id=(select job_id from reviewed)),'success','approval retires the exact published predecessor');
 select is((select status::text from public.agent_runs where id=(select run_id from reviewed)),'success','approval preserves successful predecessor run');
 select is((select sandbox_id from public.agent_runs where id=(select run_id from reviewed)),'still-delivering-pr','approval retains the predecessor sandbox for worker cleanup');
@@ -96,6 +98,8 @@ drop trigger review_run_failure on public.agent_runs;
 select is((select phase_status::text from public.sessions where id=(select session_id from rollback_fixture)),'awaiting_review','queue failure restores review phase');
 select is((select current_stage_id from public.sessions where id=(select session_id from rollback_fixture)),(select stage_id from rollback_fixture),'queue failure restores stage pointer');
 select is((select current_artifact_version from public.sessions where id=(select session_id from rollback_fixture)),1,'queue failure restores artifact version');
+select is((select current_artifact_id from public.sessions where id=(select session_id from rollback_fixture)),
+  (select artifact_id from rollback_fixture),'queue failure restores the exact reviewed artifact pointer');
 select is((select status::text from public.agent_jobs where id=(select job_id from rollback_fixture)),'running','queue failure rolls back predecessor retirement');
 select is((select count(*) from public.session_phase_completions where session_id=(select session_id from rollback_fixture)),0::bigint,'queue failure rolls back approval history');
 select is((select count(*) from public.agent_jobs where session_id=(select session_id from rollback_fixture)),1::bigint,'queue failure leaves no successor job');
@@ -118,6 +122,8 @@ create temp table token_fixture as select * from pg_temp.review_fixture('Reused 
 delete from public.session_artifacts where id=(select artifact_id from token_fixture);
 insert into public.session_artifacts(workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
 select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid,f.session_id,f.stage_id,'review-plan',1,to_jsonb('Different markdown'::text) from token_fixture f;
+update public.sessions session set current_artifact_id=artifact.id from public.session_artifacts artifact
+where session.id=(select session_id from token_fixture) and artifact.session_id=session.id and artifact.version=1;
 select is((select count(*) from token_fixture f cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a),0::bigint,'old artifact identity cannot approve replacement markdown at the same stage and version');
 select throws_ok($$select * from token_fixture f cross join lateral public.reject_session_stage(f.session_id,'b1b2c3d4-0001-4000-8000-000000000001',1,'Old feedback','codex','gpt-5.5',f.stage_id,f.artifact_id,'project','c1b2c3d4-0001-4000-8000-000000000001') r$$,'55000','Review artifact changed. Refresh and try again.','old artifact identity cannot reject replacement markdown');
 select is((select rejection_count from public.sessions where id=(select session_id from token_fixture)),0,'stale rejection does not bump rejection count');
@@ -339,6 +345,9 @@ select is((select to_jsonb(completion) from public.session_phase_completions com
 update public.sessions set archived_at=null,current_stage_id=(select id from completion_identity_stages where position=1),
   current_artifact_version=1,phase_status='awaiting_review'
 where id=(select session_id from completion_identity_session);
+update public.sessions session set current_artifact_id=artifact.id from public.session_artifacts artifact
+where session.id=(select session_id from completion_identity_session) and artifact.session_id=session.id
+  and artifact.stage_id=session.current_stage_id and artifact.version=session.current_artifact_version;
 create temp table completion_reapproved as select a.* from public.session_artifacts artifact
 cross join lateral pg_temp.approve_review(artifact.session_id,artifact.stage_id,artifact.id,
   'c1b2c3d4-0001-4000-8000-000000000001',artifact.version) a

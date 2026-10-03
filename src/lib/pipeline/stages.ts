@@ -182,15 +182,30 @@ export async function loadCompletedStageArtifacts(
   if (stageError) throw stageError;
 
   const currentSlugs = new Map((stages ?? []).map((stage) => [stage.id, stage.slug]));
-  const result: Record<string, string> = {};
+  const latestByStage = new Map<
+    string,
+    { artifact: NonNullable<typeof artifacts>[number]; count: number }
+  >();
   for (const row of artifacts ?? []) {
-    const slug = row.stage_id ? currentSlugs.get(row.stage_id) : undefined;
     // Orphaned historical labels cannot authorize prompt input for another stage.
-    if (!slug) continue;
-    const value = row.artifact_json;
-    const text = typeof value === "string" ? value : JSON.stringify(value);
-    // Later versions win — natural with the ascending sort above.
-    result[slug] = text;
+    if (!row.stage_id || !currentSlugs.has(row.stage_id)) continue;
+    const latest = latestByStage.get(row.stage_id);
+    if (!latest || row.version > latest.artifact.version) {
+      latestByStage.set(row.stage_id, { artifact: row, count: 1 });
+    } else if (row.version === latest.artifact.version) {
+      latest.count++;
+    }
+  }
+  const result: Record<string, string> = {};
+  for (const [stageId, { artifact, count }] of latestByStage) {
+    const slug = currentSlugs.get(stageId)!;
+    if (count > 1) {
+      throw new Error(
+        `Completed stage "${slug}" has multiple artifacts at version ${artifact.version}. Reconcile or regenerate its history before continuing.`,
+      );
+    }
+    const value = artifact.artifact_json;
+    result[slug] = typeof value === "string" ? value : JSON.stringify(value);
   }
   return result;
 }

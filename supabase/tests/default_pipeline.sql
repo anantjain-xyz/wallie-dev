@@ -27,6 +27,10 @@ begin
   select s.workspace_id,s.id,s.current_stage_id,stage.slug,s.current_artifact_version,to_jsonb('Reviewed fixture'::text)
   from public.sessions s join public.pipeline_stages stage on stage.id=s.current_stage_id where s.id=target
   on conflict(session_id,stage_slug,version) do nothing;
+  update public.sessions session set current_artifact_id=artifact.id
+  from public.session_artifacts artifact
+  where session.id=target and artifact.session_id=session.id and artifact.stage_id=session.current_stage_id
+    and artifact.version=session.current_artifact_version;
 end;
 $$;
 

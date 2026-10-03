@@ -59,7 +59,7 @@ export async function POST(_request: Request, { params }: Params) {
   const { data: result, error: resultError } = await admin
     .from("sessions")
     .select(
-      "id, archived_at, phase_status, current_stage_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
+      "id, archived_at, phase_status, current_stage_id, current_artifact_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
     )
     .eq("id", sessionRow.id)
     .single();
@@ -73,6 +73,7 @@ export async function POST(_request: Request, { params }: Params) {
 
   return NextResponse.json<SessionPhaseMutationResult>({
     archivedAt: result.archived_at,
+    currentArtifactId: result.current_artifact_id ?? null,
     artifactVersion: result.current_artifact_version,
     currentStage: result.currentStage,
     currentStageId: result.current_stage_id,

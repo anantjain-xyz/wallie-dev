@@ -46,6 +46,7 @@ function buildAdminClient(resultPhaseStatus: string) {
           single: async () => ({
             data: {
               archived_at: null,
+              current_artifact_id: "artifact-current",
               current_artifact_version: 2,
               currentStage: {
                 description: "Build work",
@@ -93,6 +94,7 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
     });
     await expect(response.json()).resolves.toEqual({
       archivedAt: null,
+      currentArtifactId: "artifact-current",
       artifactVersion: 2,
       currentStage: {
         description: "Build work",
