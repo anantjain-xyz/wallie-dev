@@ -1,7 +1,4 @@
-import type {
-  WorkspaceMember,
-  WorkspaceMemberRow,
-} from "@/features/workspace-members/types";
+import type { WorkspaceMember, WorkspaceMemberRow } from "@/features/workspace-members/types";
 
 export function mapWorkspaceMemberRow(row: WorkspaceMemberRow): WorkspaceMember {
   return {
