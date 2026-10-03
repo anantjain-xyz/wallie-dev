@@ -3,9 +3,10 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Precision Console layout vocabulary. Canvas comes from the page, Sheet is
- * the sole routine content surface, and floating overlay primitives live in
- * their dedicated modules. Rules and spacing subdivide a Sheet; never nest it.
+ * Precision Console layout vocabulary. Canvas comes from the page, `ui-sheet`
+ * is the sole routine content surface class, and floating overlay primitives
+ * live in their dedicated modules. Rules and spacing subdivide a sheet; never
+ * nest `ui-sheet` surfaces.
  */
 
 type PageContainerProps = {
@@ -121,19 +122,6 @@ export function CommandBar({ children, className, ...props }: CommandBarProps) {
     <div className={cn("ui-command-bar", className)} {...props}>
       {children}
     </div>
-  );
-}
-
-type SheetProps = HTMLAttributes<HTMLElement> & {
-  children: ReactNode;
-};
-
-/** Primary content surface. Do not nest Sheet inside Sheet. */
-export function Sheet({ children, className, ...props }: SheetProps) {
-  return (
-    <section className={cn("ui-sheet", className)} {...props}>
-      {children}
-    </section>
   );
 }
 
