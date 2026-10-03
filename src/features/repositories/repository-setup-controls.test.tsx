@@ -71,7 +71,7 @@ function cardMarkup(
           ? [
               {
                 message: "Differs",
-                path: ".agents/skills/push/SKILL.md",
+                path: ".agents/skills/symphony-push/SKILL.md",
                 reason: "existing_skill_differs",
               },
             ]

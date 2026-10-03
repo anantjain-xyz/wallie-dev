@@ -63,7 +63,7 @@ describe("startRepositoryOnboarding", () => {
   it("reuses an in-flight setup PR instead of opening duplicates", async () => {
     const { admin, upserts } = buildAdmin({
       onboardingRow: {
-        conflict_report: [{ path: ".agents/skills/push/SKILL.md" }],
+        conflict_report: [{ path: ".agents/skills/symphony-push/SKILL.md" }],
         github_repository_id: "repo-1",
         installed_skill_hash: null,
         installed_skill_version: null,

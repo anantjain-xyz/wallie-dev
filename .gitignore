@@ -25,6 +25,10 @@ next-env.d.ts
 .DS_Store
 *.pem
 
+# Machine-local Claude Code launch (hardcoded developer paths)
+.claude/dev.sh
+.claude/launch.json
+
 # debug
 npm-debug.log*
 yarn-debug.log*
