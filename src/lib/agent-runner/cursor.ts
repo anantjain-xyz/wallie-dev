@@ -1,6 +1,6 @@
 import type { CursorCredential } from "@/lib/cursor/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
-import { redactSecrets } from "@/lib/sandbox/command";
+import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CURSOR_MODEL } from "./types";
@@ -291,8 +291,4 @@ function isCursorAuthenticationError(stderr: string): boolean {
   return /(?:401|unauthori[sz]ed|invalid api key|authentication failed|expired api key)/i.test(
     stderr,
   );
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }

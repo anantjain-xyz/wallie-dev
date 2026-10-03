@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { FakeSandbox } from "@/lib/sandbox/fake";
 import type { CodexCredential } from "@/lib/codex/contracts";
+import { shellQuote } from "@/lib/sandbox/command";
+import { FakeSandbox } from "@/lib/sandbox/fake";
 
 import {
   CODEX_EXTERNAL_SANDBOX_FLAG,
@@ -670,7 +671,3 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine("   ")).toBeNull();
   });
 });
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}

@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseCodexChatGptAuthJson } from "@/lib/codex/auth-json";
 import type { CodexAuthJsonMetadata } from "@/lib/codex/contracts";
 import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
+import { shellQuote } from "@/lib/sandbox/command";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import { encryptSecretValue, decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -1417,8 +1418,4 @@ function commandFailureMessage(output: string, exitCode: number): string {
 
 function isPaymentRequiredError(message: string): boolean {
   return /\b402\b/.test(message) && /(?:payment\s+required|status\s+code|not\s+ok)/i.test(message);
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }

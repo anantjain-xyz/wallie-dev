@@ -3,6 +3,7 @@ import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
+import { shellQuote } from "@/lib/sandbox/command";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 
@@ -199,6 +200,3 @@ export function parseStreamJsonLine(line: string): AgentEvent | null {
   }
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}

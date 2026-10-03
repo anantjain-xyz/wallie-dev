@@ -5,6 +5,7 @@ import {
   CODEX_SANDBOX_MODE,
   codexExecArgs,
 } from "@/lib/agent-runner/codex";
+import { shellQuote } from "@/lib/sandbox/command";
 import type { AgentProvider, SandboxHandle, SandboxProvider } from "@/lib/sandbox/types";
 import { getSandboxProviderContract, providerLabel } from "@/lib/sandbox/provider-contract";
 import type {
@@ -242,10 +243,6 @@ function codexExternalSandboxResult(
     detail: `Codex command is missing external sandbox configuration: ${CODEX_EXTERNAL_SANDBOX_FLAG}, --sandbox ${CODEX_SANDBOX_MODE}, or --cd ${sandboxRepoPath}.`,
     ok: false,
   };
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function normalizeChromiumInstallSuccess(output: string): string | null {

@@ -1,7 +1,7 @@
 import { OPENCODE_ZEN_PROVIDER_ID, parseOpenCodeModelId } from "@/lib/agent-config/contracts";
 import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
-import { redactSecrets } from "@/lib/sandbox/command";
+import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 
@@ -367,8 +367,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function safePathToken(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 120) || "run";
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

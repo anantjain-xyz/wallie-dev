@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
-import { redactSecrets, SandboxLogBuffer, shellEnvPrefix, shellJoin } from "./command";
+import { redactSecrets, SandboxLogBuffer, shellEnvPrefix, shellJoin, shellQuote } from "./command";
 
 describe("sandbox command utilities", () => {
   it("preserves every argument when providers require one POSIX command string", () => {
@@ -8,6 +10,17 @@ describe("sandbox command utilities", () => {
       `'node' '-e' 'console.log('"'"'a b'"'"')' '$(touch /tmp/nope)' ''`,
     );
     expect(shellEnvPrefix({ EMPTY: "", TOKEN: "a b'c" })).toBe(`env EMPTY='' TOKEN='a b'"'"'c' `);
+  });
+
+  it("quotes apostrophes with shell-equivalent encoding shared by former local copies", () => {
+    const samples = ["", "plain", "foo'bar", "a'b'c", "'", "hello world", "$HOME", "$(echo hi)"];
+    for (const sample of samples) {
+      const quoted = shellQuote(sample);
+      const decoded = execFileSync("bash", ["-c", `printf %s ${quoted}`], {
+        encoding: "utf8",
+      });
+      expect(decoded).toBe(sample);
+    }
   });
 
   it("rejects unsafe environment variable names", () => {
