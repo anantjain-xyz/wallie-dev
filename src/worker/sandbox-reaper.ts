@@ -4,6 +4,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import { loadAllConnectedSandboxConnections } from "@/lib/sandbox-connections/server";
+import { loadSandboxProtectedJobAttempts } from "@/lib/sandbox-connections/run-cleanup-ownership";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 
@@ -169,14 +170,14 @@ async function loadKnownConnectionSandboxState(input: {
     }
   }
 
-  const activeJobAttempts = await loadActiveAgentJobAttempts(
+  const protectedJobAttempts = await loadProtectedJobAttempts(
     input.admin,
     runRows
       .map((row) => row.agent_job_id)
       .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
   );
 
-  if (!activeJobAttempts) {
+  if (!protectedJobAttempts) {
     return null;
   }
 
@@ -186,7 +187,7 @@ async function loadKnownConnectionSandboxState(input: {
       row.sandbox_id &&
       row.agent_job_id &&
       row.attempt_count !== null &&
-      activeJobAttempts.get(row.agent_job_id) === row.attempt_count
+      protectedJobAttempts.get(row.agent_job_id) === row.attempt_count
     ) {
       active.add(row.sandbox_id);
     }
@@ -195,26 +196,16 @@ async function loadKnownConnectionSandboxState(input: {
   return { active, known };
 }
 
-async function loadActiveAgentJobAttempts(
+async function loadProtectedJobAttempts(
   admin: AdminClient,
   jobIds: string[],
 ): Promise<Map<string, number> | null> {
-  if (jobIds.length === 0) {
-    return new Map();
-  }
-
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select("id, attempt_count")
-    .in("id", [...new Set(jobIds)])
-    .in("status", ["queued", "started", "running"]);
-
-  if (error) {
-    console.error("[sandbox-reaper] failed to load active jobs", { error: error.message });
+  try {
+    return await loadSandboxProtectedJobAttempts(admin, jobIds);
+  } catch (error) {
+    console.error("[sandbox-reaper] failed to load protected job attempts", { error });
     return null;
   }
-
-  return new Map((data ?? []).map((row) => [row.id, row.attempt_count]));
 }
 
 function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {

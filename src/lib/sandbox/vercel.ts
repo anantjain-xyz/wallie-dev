@@ -1,4 +1,4 @@
-import { Sandbox } from "@vercel/sandbox";
+import { APIError, Sandbox } from "@vercel/sandbox";
 
 import { redactSecrets } from "./command";
 import { finalizeSandboxAcquisition } from "./lifecycle";
@@ -138,9 +138,8 @@ export async function createVercelSessionSandbox(
  * Best-effort stop of a sandbox by ID. Used by the stall sweep and the
  * sandbox reaper to terminate orphans whose owning run is no longer active.
  *
- * Errors are swallowed: the sandbox may already be stopped, the ID may be
- * stale, or the network may be flaky. Stop is supposed to be idempotent;
- * losing one cleanup is far better than crashing the sweep timer.
+ * A sandbox that the provider confirms is gone is already cleaned up.
+ * Other errors are logged by default and propagated in strict cleanup mode.
  */
 export async function stopVercelSandboxById(
   sandboxId: string,
@@ -158,6 +157,8 @@ export async function stopVercelSandboxById(
     });
     await sandbox.stop();
   } catch (error) {
+    if (error instanceof APIError && error.response.status === 404) return;
+
     const message = redactSecrets(error instanceof Error ? error.message : String(error), [
       credentials.token,
     ]);

@@ -47,8 +47,8 @@ export interface WorkspaceSandboxTeardownResult {
  *      live sandbox). They normally tear down in-process via their own `finally`;
  *      this snapshot is the safety net for one whose process died first.
  *
- * Best-effort: a provider or query failure is logged, never thrown, so a cleanup
- * hiccup can't turn a successful workspace delete into an error.
+ * A lookup or provider failure aborts deletion. The caller keeps ownership
+ * records and credentials intact so a later request can finish cleanup.
  */
 export async function stopWorkspaceProviderSandboxes(
   admin: AdminClient,
@@ -68,17 +68,7 @@ export async function stopWorkspaceProviderSandboxes(
   for (const provider of ["vercel", "e2b", "daytona"] as const) {
     // Use the unguarded loader — a connection flagged `error` may still hold
     // usable credentials, and there is nothing to lose by attempting cleanup.
-    let record: Awaited<ReturnType<typeof loadWorkspaceSandboxConnection>>;
-    try {
-      record = await loadWorkspaceSandboxConnection(admin, workspaceId, provider);
-    } catch (error) {
-      console.error("[workspace-teardown] failed to load sandbox connection", {
-        error: error instanceof Error ? error.message : String(error),
-        provider,
-        workspaceId,
-      });
-      continue;
-    }
+    const record = await loadWorkspaceSandboxConnection(admin, workspaceId, provider);
     if (!record) continue;
 
     const [checkSandboxIds, authSandboxIds] = await Promise.all([
@@ -87,7 +77,7 @@ export async function stopWorkspaceProviderSandboxes(
     ]);
     for (const sandboxId of new Set([...checkSandboxIds, ...authSandboxIds])) {
       if (alreadyStopped.has(sandboxId)) continue;
-      await stopSandboxById(sandboxId, { connection: record.connection });
+      await stopSandboxById(sandboxId, { connection: record.connection, throwOnError: true });
       alreadyStopped.add(sandboxId);
       result.stoppedSandboxIds.push(sandboxId);
       console.log("[workspace-teardown] stopped sandbox before workspace delete", {
@@ -115,13 +105,7 @@ async function loadActiveDeviceAuthSandboxIds(
     .in("status", ["starting", "prompted"])
     .not("sandbox_id", "is", null);
 
-  if (error) {
-    console.error("[workspace-teardown] failed to load active Codex device-auth flows", {
-      error: error.message,
-      workspaceId,
-    });
-    return [];
-  }
+  if (error) throw error;
 
   const ids = new Set<string>();
   for (const row of data ?? []) {
@@ -160,13 +144,7 @@ async function loadActiveCapabilityCheckSandboxIds(
     .gte("checked_at", staleCutoff)
     .not("sandbox_id", "is", null);
 
-  if (error) {
-    console.error("[workspace-teardown] failed to load active capability checks", {
-      error: error.message,
-      workspaceId,
-    });
-    return [];
-  }
+  if (error) throw error;
 
   const ids = new Set<string>();
   for (const row of data ?? []) {

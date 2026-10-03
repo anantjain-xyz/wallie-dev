@@ -147,7 +147,7 @@ function buildAdmin(
   return { admin, inserts, reads, rows };
 }
 
-beforeEach(() => mocked.stopRunSandbox.mockReset().mockResolvedValue(undefined));
+beforeEach(() => mocked.stopRunSandbox.mockReset().mockResolvedValue(true));
 
 describe("sweepStalledRuns ownership recovery", () => {
   it("leaves recent activity alone", async () => {
@@ -167,6 +167,7 @@ describe("sweepStalledRuns ownership recovery", () => {
         p_retry: true,
         p_max_retries: 3,
       });
+      return true;
     });
     const result = await sweepStalledRuns(admin as never, TIMEOUT);
     expect(result).toEqual({
@@ -188,6 +189,18 @@ describe("sweepStalledRuns ownership recovery", () => {
       expect.objectContaining({ id: "run-1", sandbox_id: "sandbox-1" }),
       expect.any(Map),
     );
+  });
+
+  it("does not report a stopped sandbox when cleanup is skipped", async () => {
+    const { admin } = buildAdmin();
+    mocked.stopRunSandbox.mockResolvedValueOnce(false);
+
+    const result = await sweepStalledRuns(admin as never, TIMEOUT);
+
+    expect(result.stalledRunIds).toEqual(["run-1"]);
+    expect(result.retriedJobIds).toEqual(["job-1"]);
+    expect(result.stoppedSandboxIds).toEqual([]);
+    expect(mocked.stopRunSandbox).toHaveBeenCalledOnce();
   });
 
   it("passes persisted provider connection identity to sandbox cleanup", async () => {
@@ -272,12 +285,32 @@ describe("sweepStalledRuns ownership recovery", () => {
     expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
   });
 
-  it("preserves a publication that wins the race against failure", async () => {
-    const { admin, inserts } = buildAdmin({ failOutcome: "success" });
+  it("leaves PR sandbox work alone when publication wins after the active-run snapshot", async () => {
+    const publishingRun = run();
+    const { admin, inserts } = buildAdmin({
+      runs: [publishingRun],
+      failOutcome: "success",
+      beforeRpc: () => {
+        publishingRun.status = "success";
+      },
+    });
     const result = await sweepStalledRuns(admin as never, TIMEOUT);
-    expect(result.stalledRunIds).toEqual([]);
-    expect(result.retriedJobIds).toEqual([]);
-    expect(result.stoppedSandboxIds).toEqual(["sandbox-1"]);
+    expect(admin.rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_run_id: "run-1",
+      }),
+    );
+    expect(publishingRun.status).toBe("success");
+    expect(result).toEqual({
+      stalledRunIds: [],
+      stalledJobIds: [],
+      retriedJobIds: [],
+      stoppedSandboxIds: [],
+    });
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
     expect(inserts).toEqual([]);
   });
 
@@ -421,6 +454,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     mocked.stopRunSandbox.mockImplementationOnce(async () => {
       stopStarted.resolve();
       await finishStop.promise;
+      return true;
     });
     const sweep = sweepStalledRuns(admin as never, TIMEOUT);
     await stopStarted.promise;
@@ -452,6 +486,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     mocked.stopRunSandbox.mockImplementationOnce(async () => {
       stopStarted.resolve();
       await finishStop.promise;
+      return true;
     });
     const sweep = sweepStalledRuns(admin as never, TIMEOUT);
     await stopStarted.promise;

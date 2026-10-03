@@ -203,10 +203,19 @@ an unrecorded resource after a crash still relies on its provider TTL.
 
 Archive uses `archive_session_job_attempts` to set the archive marker and cancel
 work atomically. It preserves an existing review, rejection, or approved phase;
-Linear completion explicitly marks the session approved. Cleanup never writes
-session state after a provider await. Workspace cancellation commits every
-session's cancellation before beginning provider cleanup. Unarchive compares the
-expected archive marker when supplied and does not enqueue work.
+Linear completion explicitly marks the session approved, including when a
+concurrent user archive won first, and retains the original archive timestamp.
+Cleanup never writes session state after a provider await. A failed metadata read is retried three
+times; cancellation/archive still report the committed result if cleanup must
+be deferred to the reaper.
+
+Workspace deletion commits every session's cancellation before provider cleanup.
+Retries also recover recorded terminal runs, including legacy runs without a
+parent job. A metadata, credential lookup, or provider failure returns `503`
+before the workspace cascade removes those references and credentials. Definite
+provider not-found responses are successful cleanup; a verified absent
+connection is logged and skipped because no credentials remain to preserve.
+Unarchive compares the expected archive marker when supplied and does not enqueue work.
 
 ## Worker scheduling and recovery
 
@@ -216,7 +225,8 @@ expected archive marker when supplied and does not enqueue work.
 - A fresh heartbeat protects an active job from the stall detector.
 - A claimed job whose run is already `success` for the same captured attempt
   is completed through the ownership RPC. Historical successful runs do not
-  complete a newer retry or protect its older sandbox.
+  complete a newer retry or protect its older sandbox. Recovery skips provider
+  cleanup if publication wins its failure RPC race.
 - A run with no activity beyond its workspace timeout and no fresh owning
   heartbeat is failed through the captured job/attempt/run guard before its
   sandbox is stopped. Its job is rescheduled with backoff or terminally errored.
@@ -237,7 +247,11 @@ expected archive marker when supplied and does not enqueue work.
   check is no longer active. It skips unknown provider sandboxes, including one
   created before a crash that prevented ownership from being recorded; those
   rely on provider TTLs or operator cleanup. Credential rotation/disconnection
-  uses the same matching-attempt rule for terminal run protection.
+  uses the same matching-attempt rule for terminal run protection. A completed
+  successful job stays protected while a fresh worker heartbeat still reports
+  that job and the run matches its current attempt; canceled/error jobs never gain
+  that protection. Rotation/disconnection waits for protected work in the owning
+  workspace so credentials stay available through PR delivery.
 - Graceful worker shutdown stops new claims, keeps heartbeats and maintenance
   timers active while already-claimed jobs finish, then waits for timer
   callbacks already in progress before deregistering. Hard termination still

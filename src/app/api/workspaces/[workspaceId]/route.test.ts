@@ -233,6 +233,28 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     );
   });
 
+  it("keeps workspace records and credentials when cleanup fails, then permits a successful retry", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
+    const calls = mockDeleteResult({});
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocked.stopWorkspaceProviderSandboxes.mockRejectedValueOnce(
+      new Error("metadata lookup failed"),
+    );
+    const failed = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+    expect(failed.status).toBe(503);
+    await expect(failed.json()).resolves.toEqual({
+      error: "Sandbox cleanup is incomplete. Please retry deleting the workspace.",
+    });
+    expect(calls.del).not.toHaveBeenCalled();
+    expect(calls.remove).not.toHaveBeenCalled();
+    expect(mocked.removeWorkspaceSessionAttachments).not.toHaveBeenCalled();
+    const retry = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+    expect(retry.status).toBe(200);
+    expect(calls.del).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
   it("removes orphaned avatar objects from storage after deleting", async () => {
     grantAccess();
     mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");

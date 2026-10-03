@@ -130,7 +130,9 @@ export async function sweepStalledRuns(
       });
       continue;
     }
-    if (outcome !== "queued" && outcome !== "error" && outcome !== "success") continue;
+    // Publication may have won since our active-run snapshot. Its worker can
+    // still be using the sandbox for PR delivery; success is not a cleanup receipt.
+    if (outcome !== "queued" && outcome !== "error") continue;
     if (outcome === "queued") result.retriedJobIds.push(job.id);
     if (outcome === "error") result.stalledJobIds.push(job.id);
 
@@ -140,13 +142,12 @@ export async function sweepStalledRuns(
       ? [ownedRun]
       : jobRuns.filter((run) => run.attempt_count === null && isActiveRun(run));
     for (const run of resolvedRuns) {
-      if (outcome !== "success") {
-        result.stalledRunIds.push(run.id);
-        await insertRunErrorMessage(admin, run, reason);
-      }
+      result.stalledRunIds.push(run.id);
+      await insertRunErrorMessage(admin, run, reason);
       if (run.sandbox_id) {
-        await stopRunSandbox(admin, run, sandboxConnectionCache);
-        result.stoppedSandboxIds.push(run.sandbox_id);
+        if (await stopRunSandbox(admin, run, sandboxConnectionCache)) {
+          result.stoppedSandboxIds.push(run.sandbox_id);
+        }
       }
     }
   }

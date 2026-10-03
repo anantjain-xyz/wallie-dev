@@ -37,6 +37,8 @@ import {
   validateVercelSandboxCredentials as validateVercelSandboxCredentialsUnbounded,
 } from "@/lib/vercel-sandbox/server";
 
+import { loadSandboxProtectedJobAttempts } from "./run-cleanup-ownership";
+
 type AdminClient = SupabaseClient<Database>;
 type E2BRow = Tables<"workspace_e2b_sandbox_connections">;
 type DaytonaRow = Tables<"workspace_daytona_sandbox_connections">;
@@ -499,7 +501,7 @@ export async function stopWorkspaceOwnedSandboxes(input: {
   const [runs, checks] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id")
+      .select("sandbox_id, status, agent_job_id, attempt_count")
       .eq("workspace_id", input.workspaceId)
       .eq("sandbox_provider", input.connection.provider)
       .eq("sandbox_connection_revision", input.connection.revision)
@@ -514,6 +516,28 @@ export async function stopWorkspaceOwnedSandboxes(input: {
   ]);
   if (runs.error) throw runs.error;
   if (checks.error) throw checks.error;
+  const protectedAttempts = await loadSandboxProtectedJobAttempts(
+    input.admin,
+    (runs.data ?? [])
+      .map((run) => run.agent_job_id)
+      .filter((jobId): jobId is string => jobId !== null),
+  );
+  // Recovery can close a published job before its live worker finishes PR
+  // delivery. Keep both its sandbox and its credentials until that work ends.
+  if (
+    (runs.data ?? []).some(
+      (run) =>
+        run.status === "queued" ||
+        run.status === "started" ||
+        run.status === "running" ||
+        (run.status === "success" &&
+          run.agent_job_id !== null &&
+          run.attempt_count !== null &&
+          protectedAttempts.get(run.agent_job_id) === run.attempt_count),
+    )
+  ) {
+    throw new SandboxConnectionActiveWorkError();
+  }
   const owned = new Set(
     [...(runs.data ?? []), ...(checks.data ?? [])]
       .map((row) => row.sandbox_id)

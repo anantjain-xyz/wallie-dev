@@ -111,14 +111,21 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   const admin = createSupabaseAdminClient();
   const attachmentPaths = await loadWorkspaceAttachmentPaths(admin, access.context.workspace.id);
 
-  // Stop any provider sandbox an active run or capability check still owns
-  // BEFORE the delete. The cascade below drops the run records AND the Vercel
-  // connection credentials together, so once the workspace is gone the reaper
-  // has neither the sandbox IDs nor the token it needs to reach the provider —
-  // a sandbox still running when the processor's `finally` never fired would be
-  // orphaned. Best-effort by design: it never throws, so cleanup trouble can't
-  // block a delete the owner explicitly confirmed.
-  await stopWorkspaceProviderSandboxes(admin, access.context.workspace.id);
+  // Keep ownership records and provider credentials until every recorded
+  // sandbox has been inspected and cleanup succeeds. Retrying can recover
+  // terminal runs even when an earlier request already canceled their work.
+  try {
+    await stopWorkspaceProviderSandboxes(admin, access.context.workspace.id);
+  } catch (error) {
+    console.error("[workspace-delete] sandbox cleanup incomplete", {
+      error: error instanceof Error ? error.message : String(error),
+      workspaceId: access.context.workspace.id,
+    });
+    return NextResponse.json(
+      { error: "Sandbox cleanup is incomplete. Please retry deleting the workspace." },
+      { status: 503 },
+    );
+  }
 
   // Hard delete: every workspace-scoped table references workspaces with
   // ON DELETE CASCADE, so removing this row revokes all access and tears down

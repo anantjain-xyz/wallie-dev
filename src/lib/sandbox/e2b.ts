@@ -185,8 +185,9 @@ export async function stopE2BSandboxById(
   sandboxId: string,
   connection: E2BConnection,
 ): Promise<void> {
-  const sandbox = await Sandbox.connect(sandboxId, { apiKey: connection.credentials.apiKey });
-  await sandbox.kill();
+  // The direct destroy API returns false for an already-gone sandbox and
+  // propagates other errors; connecting first would unnecessarily resume it.
+  await Sandbox.kill(sandboxId, { apiKey: connection.credentials.apiKey });
 }
 
 export const e2bSandboxDriver: SandboxProviderDriver<E2BConnection> = {
