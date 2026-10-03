@@ -289,9 +289,8 @@ corruption:
 - A retry collides with an existing active dedupe key.
 
 Handled losing-race paths are designed to close or preserve their own job, run,
-artifact, and sandbox state without resurrecting work. Multi-step Linear
-reroutes and unrecorded provider resources documented above remain for their
-separate follow-up work.
+artifact, and sandbox state without resurrecting work. Unrecorded provider
+resources remain outside recovery as described above.
 
 ## Change checklist
 
