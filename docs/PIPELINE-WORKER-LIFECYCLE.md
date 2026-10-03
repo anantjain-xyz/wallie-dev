@@ -236,7 +236,8 @@ expected archive marker when supplied and does not enqueue work.
   recorded for the exact connection revision and whose run, matching job attempt, or capability
   check is no longer active. It skips unknown provider sandboxes, including one
   created before a crash that prevented ownership from being recorded; those
-  rely on provider TTLs or operator cleanup.
+  rely on provider TTLs or operator cleanup. Credential rotation/disconnection
+  uses the same matching-attempt rule for terminal run protection.
 - Graceful worker shutdown stops new claims, keeps heartbeats and maintenance
   timers active while already-claimed jobs finish, then waits for timer
   callbacks already in progress before deregistering. Hard termination still

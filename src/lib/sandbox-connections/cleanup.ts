@@ -9,7 +9,7 @@ type AdminClient = SupabaseClient<Database>;
 type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
 type AgentRunSandboxRow = Pick<
   Tables<"agent_runs">,
-  "agent_job_id" | "sandbox_id" | "status" | "workspace_id"
+  "agent_job_id" | "attempt_count" | "sandbox_id" | "status" | "workspace_id"
 >;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
@@ -43,7 +43,7 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id, status, workspace_id, agent_job_id")
+      .select("sandbox_id, status, workspace_id, agent_job_id, attempt_count")
       .eq("sandbox_provider", "vercel")
       .eq("sandbox_vercel_team_id", credentials.teamId)
       .eq("sandbox_vercel_project_id", credentials.projectId)
@@ -61,7 +61,7 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
 
   const rows = (runResult.data ?? []) as AgentRunSandboxRow[];
   const checkRows = (checkResult.data ?? []) as CapabilityCheckSandboxRow[];
-  const activeJobIds = await loadActiveAgentJobIds(
+  const activeJobAttempts = await loadActiveAgentJobAttempts(
     input.admin,
     rows
       .map((row) => row.agent_job_id)
@@ -79,7 +79,10 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
     if (
       row.sandbox_id &&
       (activeRunStatuses.includes(row.status as (typeof activeRunStatuses)[number]) ||
-        (row.agent_job_id ? activeJobIds.has(row.agent_job_id) : false))
+        (row.status === "success" &&
+          row.agent_job_id &&
+          row.attempt_count !== null &&
+          activeJobAttempts.get(row.agent_job_id) === row.attempt_count))
     ) {
       activeAnywhere.add(row.sandbox_id);
     }
@@ -106,13 +109,13 @@ function isActiveCapabilityCheck(row: CapabilityCheckSandboxRow, now = Date.now(
   return now - checkedAt <= STALE_SANDBOX_CAPABILITY_CHECK_MS;
 }
 
-async function loadActiveAgentJobIds(admin: AdminClient, jobIds: string[]) {
-  if (jobIds.length === 0) return new Set<string>();
+async function loadActiveAgentJobAttempts(admin: AdminClient, jobIds: string[]) {
+  if (jobIds.length === 0) return new Map<string, number>();
   const { data, error } = await admin
     .from("agent_jobs")
-    .select("id")
+    .select("id, attempt_count")
     .in("id", [...new Set(jobIds)])
     .in("status", [...activeJobStatuses]);
   if (error) throw error;
-  return new Set((data ?? []).map((row) => row.id));
+  return new Map((data ?? []).map((row) => [row.id, row.attempt_count]));
 }
