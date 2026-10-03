@@ -10,7 +10,6 @@ import { Status, type StatusValue } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
-import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 export interface CodexConnectionStatus {
   accountEmail?: string | null;
@@ -48,10 +47,6 @@ interface CodexConnectionPanelProps {
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
-  /** @deprecated Use sandboxConnectionHref. */
-  vercelConnectionHref?: string;
-  /** @deprecated Use sandboxConnectionReady. */
-  vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId?: string;
 }
 
@@ -97,7 +92,6 @@ export function ChatGptSubscriptionControls({
   pendingAction = null,
   sandboxConnectionHref,
   sandboxConnectionLabel = "a sandbox provider",
-  vercelConnectionHref = "#vercel",
 }: {
   blocked: boolean;
   deviceFlow: CodexDeviceFlow | null;
@@ -108,7 +102,6 @@ export function ChatGptSubscriptionControls({
   pendingAction?: "cancel" | "disconnect" | "save" | "start" | null;
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
-  vercelConnectionHref?: string;
 }) {
   return (
     <div className="space-y-3">
@@ -117,7 +110,7 @@ export function ChatGptSubscriptionControls({
           Connect{" "}
           <a
             className="underline underline-offset-2"
-            href={sandboxConnectionHref ?? vercelConnectionHref}
+            href={sandboxConnectionHref}
             onClick={(event) => {
               if (!onSandboxConnectionSelect) return;
               event.preventDefault();
@@ -195,8 +188,6 @@ export function CodexConnectionPanel({
   sandboxConnectionHref,
   sandboxConnectionLabel,
   sandboxConnectionReady,
-  vercelConnectionHref = "#vercel",
-  vercelSandboxConnection,
   workspaceId,
 }: CodexConnectionPanelProps) {
   const initialStatusRef = useRef(initialStatus);
@@ -457,8 +448,7 @@ export function CodexConnectionPanel({
     ? codexCredentialTypeLabel(status.credentialType)
     : null;
   const saveDisabled = isBusy || credential.trim().length === 0;
-  const chatGptBlocked =
-    !workspaceId || !(sandboxConnectionReady ?? vercelSandboxConnection?.status === "connected");
+  const chatGptBlocked = !workspaceId || !sandboxConnectionReady;
 
   const connectionValue: StatusValue | null = status
     ? status.reconnectRequired
@@ -550,7 +540,6 @@ export function CodexConnectionPanel({
               pendingAction={pendingAction}
               sandboxConnectionHref={sandboxConnectionHref}
               sandboxConnectionLabel={sandboxConnectionLabel}
-              vercelConnectionHref={vercelConnectionHref}
             />
           ) : (
             <form className="space-y-3" onSubmit={handleSave}>

@@ -7,7 +7,6 @@ import type { CodexConnectionStatus } from "@/features/settings/codex-connection
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
-import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type ProviderAccessPanelProps = {
   connectFlash?: string | null;
@@ -26,8 +25,6 @@ type ProviderAccessPanelProps = {
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
   variant?: "card" | "embedded";
-  vercelConnectionHref?: string;
-  vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId?: string;
 };
 
@@ -81,8 +78,6 @@ export function ProviderAccessPanel({
   sandboxConnectionLabel,
   sandboxConnectionReady,
   variant = "card",
-  vercelConnectionHref,
-  vercelSandboxConnection,
   workspaceId,
 }: ProviderAccessPanelProps) {
   const className =
@@ -109,8 +104,6 @@ export function ProviderAccessPanel({
             sandboxConnectionHref={sandboxConnectionHref}
             sandboxConnectionLabel={sandboxConnectionLabel}
             sandboxConnectionReady={sandboxConnectionReady}
-            vercelConnectionHref={vercelConnectionHref}
-            vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
           />
         </div>

@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
+import { shellQuote } from "@/lib/sandbox/command";
 import type { SandboxHandle } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -331,8 +332,4 @@ function pullRequestState(pr: GitHubPullRequestResponse): string {
 async function defaultAppFactory(): Promise<GitHubAppLike> {
   const { App } = await import("@octokit/app");
   return new App(resolveGitHubAppConfig()) as unknown as GitHubAppLike;
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }

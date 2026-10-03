@@ -8,6 +8,7 @@ import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
+import { shellQuote } from "@/lib/sandbox/command";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 const CODEX_HOME_DIR = ".codex";
@@ -503,8 +504,4 @@ function codexExitErrorMessage(code: number, stderr: string): string {
 
 function isCodexInnerSandboxFailure(stderr: string): boolean {
   return /(?:^|\n)\s*bwrap:\s*No permissions to create a new namespace\b/i.test(stderr);
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
