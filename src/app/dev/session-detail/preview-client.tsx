@@ -321,6 +321,7 @@ export function SessionDetailPreview({
                     : { kind: "reviewable", canApprove: true }
                   : { kind: "running" }
               }
+              reviewArtifact={null}
               onApprove={() => setMode("Approved")}
               onReject={async () => {
                 setMode("Revising");

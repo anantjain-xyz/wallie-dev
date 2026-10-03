@@ -48,7 +48,11 @@ import { SessionDetailHeader } from "./session-detail-header";
 import { SessionStageWorkspace } from "./session-stage-workspace";
 import { SessionActivityPresentationProvider } from "./session-activity-presentation";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
-import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
+import {
+  SessionReviewBar,
+  type SessionReviewArtifact,
+} from "@/features/sessions/detail/session-review-bar";
+import type { DisplayedArtifactIdentity } from "./artifact-panel";
 import { buildStageTimeline, StageTimeline } from "@/features/sessions/detail/stage-timeline";
 import type {
   SessionMutationStage,
@@ -192,6 +196,9 @@ function SessionDetailContent({
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [viewingHistoricalArtifact, setViewingHistoricalArtifact] = useState(false);
+  const [displayedArtifact, setDisplayedArtifact] = useState<DisplayedArtifactIdentity | null>(
+    null,
+  );
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
   const capabilitiesEffectSkipRef = useRef(true);
@@ -268,6 +275,14 @@ function SessionDetailContent({
 
   const activeArtifacts = artifactsByStage.get(selectedStageSlug) ?? [];
   const latestArtifact = activeArtifacts[0] ?? null;
+  const reviewArtifact: SessionReviewArtifact | null =
+    displayedArtifact?.id && selectedStage && displayedArtifact.stageSlug === selectedStage.slug
+      ? {
+          artifactId: displayedArtifact.id,
+          stageId: selectedStage.id,
+          version: displayedArtifact.version,
+        }
+      : null;
   const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
   const selectedStagePosition = stageIndex(session.pipeline, selectedStageSlug);
   const currentStagePosition = stageIndex(session.pipeline, session.currentStageSlug);
@@ -703,10 +718,20 @@ function SessionDetailContent({
 
   async function handlePhaseAction(
     action: "approve" | "reject",
+    artifact: SessionReviewArtifact | null,
     feedbackText?: string,
   ): Promise<boolean> {
     if (phaseActionPending !== null) return false;
     if (viewingHistoricalArtifact) return false;
+    if (!artifact) {
+      pushToast({
+        title: "Review unavailable.",
+        description: "Refresh this session to load the artifact before reviewing it.",
+        priority: "assertive",
+        tone: "danger",
+      });
+      return false;
+    }
 
     if (action === "reject") {
       if (!feedbackText?.trim()) {
@@ -717,6 +742,10 @@ function SessionDetailContent({
     setPhaseActionPending(action);
     startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
+    const reviewStillCurrent =
+      artifact.stageId === session.currentStageId &&
+      artifact.version === session.currentArtifactVersion &&
+      (!latestArtifact?.id || latestArtifact.id === artifact.artifactId);
     const previousStageSlug = session.currentStageSlug;
     const previousPatch: SessionMutationPatch = {
       archivedAt: session.archivedAt,
@@ -764,7 +793,8 @@ function SessionDetailContent({
     try {
       await runOptimisticMutation({
         optimistic: () => {
-          setSession((current) => applySessionMutationPatch(current, optimisticPatch));
+          if (reviewStillCurrent)
+            setSession((current) => applySessionMutationPatch(current, optimisticPatch));
           // Keep the reviewed artifact and pending controls visible until the action settles.
           // A successful commit selects the next stage below.
         },
@@ -772,8 +802,10 @@ function SessionDetailContent({
           const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
             body: JSON.stringify({
               action,
+              artifactId: artifact.artifactId,
               feedbackText: action === "reject" ? feedbackText?.trim() : undefined,
-              version: session.currentArtifactVersion ?? 1,
+              stageId: artifact.stageId,
+              version: artifact.version,
             }),
             headers: { "Content-Type": "application/json" },
             method: "POST",
@@ -795,6 +827,7 @@ function SessionDetailContent({
           );
         },
         rollback: () => {
+          if (!reviewStillCurrent) return;
           setSession((current) =>
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           );
@@ -1075,6 +1108,7 @@ function SessionDetailContent({
       latestArtifact={latestArtifact}
       loadLatest={shouldLoadLatestArtifact}
       onViewingHistoricalChange={setViewingHistoricalArtifact}
+      onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
       sessionId={session.id}
@@ -1143,8 +1177,9 @@ function SessionDetailContent({
               phaseActionPending ? undefined : "Final-stage approval may also archive the session."
             }
             mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
-            onApprove={() => void handlePhaseAction("approve")}
-            onReject={(feedback) => handlePhaseAction("reject", feedback)}
+            onApprove={(artifact) => void handlePhaseAction("approve", artifact)}
+            onReject={(feedback, artifact) => handlePhaseAction("reject", artifact, feedback)}
+            reviewArtifact={reviewArtifact}
             phaseActionPending={phaseActionPending}
           />
         }

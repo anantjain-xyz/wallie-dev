@@ -8,6 +8,32 @@ begin;
 
 select plan(29);
 set local "request.jwt.claim.role" = 'service_role';
+-- Resolve the fixture's current review token; stale-token cases live in atomic_approval_handoff.sql.
+create function pg_temp.approve_current_review(target uuid, workspace uuid, version integer, reviewer uuid)
+returns table (id uuid, pipeline_id uuid, current_stage_id uuid, current_stage_slug text,
+  phase_status public.pipeline_phase_status, workspace_id uuid, linear_issue_url text,
+  archived_at timestamptz, current_artifact_version integer, rejection_count integer,
+  job_id uuid, run_id uuid, job_created boolean) language sql as $$
+  select result.* from public.sessions session
+  cross join lateral public.approve_session_stage(target, workspace, session.current_stage_id,
+    (select artifact.id from public.session_artifacts artifact where artifact.session_id = target
+      and artifact.stage_id = session.current_stage_id and artifact.version = version),
+    version, reviewer, 'codex', 'gpt-5.5', 'project') result
+  where session.id = target;
+$$;
+
+-- These selection fixtures model an already-finished legacy publisher.
+create function pg_temp.prepare_review_fixture(target uuid) returns void language plpgsql as $$
+begin
+  update public.agent_jobs set status = 'success' where session_id = target and status in ('queued','started','running');
+  update public.agent_runs set status = 'success' where session_id = target and status in ('queued','started','running');
+  insert into public.session_artifacts(workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
+  select s.workspace_id,s.id,s.current_stage_id,stage.slug,s.current_artifact_version,to_jsonb('Reviewed fixture'::text)
+  from public.sessions s join public.pipeline_stages stage on stage.id=s.current_stage_id where s.id=target
+  on conflict(session_id,stage_slug,version) do nothing;
+end;
+$$;
+
 
 -- Hold the same pipeline-row lock used by Settings after archiving Review,
 -- then start session creation on another connection. The create must wait for
@@ -349,10 +375,12 @@ set
 from existing_review_session selected
 where session.id = selected.id;
 
+select pg_temp.prepare_review_fixture((select id from existing_review_session));
+
 create temp table archived_approval_result as
 select approved.*
 from existing_review_session selected
-cross join lateral public.approve_session_stage(
+cross join lateral pg_temp.approve_current_review(
   selected.id,
   'b1b2c3d4-0001-4000-8000-000000000001',
   1,

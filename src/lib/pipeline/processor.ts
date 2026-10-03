@@ -21,7 +21,7 @@ import {
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
-import { enqueueSessionJobWithRun, resolveQueuedRunConfig } from "@/lib/wallie/service";
+import { resolveQueuedRunConfig } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
 import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
@@ -561,88 +561,55 @@ function isSandboxConnectionSetupError(error: unknown): boolean {
 export async function handleApproval(input: {
   admin?: AdminClient;
   approverMemberId: string | null;
+  expectedArtifactId: string;
+  expectedStageId: string;
   expectedWorkspaceId: string;
   sessionId: string;
   version: number;
 }): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
-
-  // The RPC enforces the approver gate (per-stage approver list, with
-  // owner/admin fallback), records the completion, and advances to the next
-  // stage by `position` in one transaction.
+  if (!input.approverMemberId) {
+    return { error: "You are not authorized to approve this stage.", success: false };
+  }
+  // Resolve execution configuration before changing review state. The RPC
+  // records approval and commits the next job/run together, or changes nothing.
+  let runConfig: Awaited<ReturnType<typeof resolveQueuedRunConfig>>;
+  try {
+    runConfig = await resolveQueuedRunConfig(admin, {
+      id: input.sessionId,
+      workspace_id: input.expectedWorkspaceId,
+    });
+  } catch (error) {
+    return { error: getErrorMessage(error, "Failed to prepare the next stage."), success: false };
+  }
   const { data, error } = await admin.rpc("approve_session_stage", {
-    approver_member_id: input.approverMemberId ?? undefined,
+    approver_member_id: input.approverMemberId,
+    expected_artifact_id: input.expectedArtifactId,
+    expected_stage_id: input.expectedStageId,
     expected_version: input.version,
     expected_workspace_id: input.expectedWorkspaceId,
+    p_agent_model_provider: runConfig.modelProvider,
+    p_agent_model_name: runConfig.modelName,
+    p_run_type: runConfig.runType,
     target_session_id: input.sessionId,
   });
-
-  if (error) {
-    return { error: error.message, success: false };
-  }
-
+  if (error) return { error: error.message, success: false };
   const row = Array.isArray(data) ? data[0] : null;
-
   if (!row) {
     return {
       error:
-        "Approval failed: version is stale, stage already reviewed, or you are not authorized to approve this stage.",
+        "Approval failed: review is stale, stage already reviewed, or you are not authorized to approve this stage.",
       success: false,
     };
   }
-
-  if (!row.archived_at && row.phase_status === "in_progress") {
-    try {
-      const queued = await enqueueSessionJobWithRun({
-        admin,
-        requestedByMemberId: input.approverMemberId,
-        session: {
-          current_stage_id: row.current_stage_id,
-          id: input.sessionId,
-          workspace_id: input.expectedWorkspaceId,
-        },
-        triggerType: "assignment",
-      });
-
-      return {
-        jobId: queued.jobId,
-        session: {
-          archivedAt: row.archived_at,
-          currentArtifactVersion: 0,
-          currentStageId: row.current_stage_id,
-          phaseStatus: row.phase_status,
-          rejectionCount: 0,
-        },
-        success: true,
-      };
-    } catch (error) {
-      console.error("Approved stage but failed to queue Wallie", {
-        error: getErrorMessage(error, "Approved stage but failed to queue Wallie."),
-        sessionId: input.sessionId,
-        workspaceId: input.expectedWorkspaceId,
-      });
-      return {
-        jobId: null,
-        session: {
-          archivedAt: row.archived_at,
-          currentArtifactVersion: 0,
-          currentStageId: row.current_stage_id,
-          phaseStatus: row.phase_status,
-          rejectionCount: 0,
-        },
-        success: true,
-      };
-    }
-  }
-
   return {
-    jobId: null,
+    jobId: row.job_id,
     session: {
       archivedAt: row.archived_at,
-      currentArtifactVersion: row.phase_status === "approved" ? input.version : 0,
+      currentArtifactVersion: row.current_artifact_version,
       currentStageId: row.current_stage_id,
       phaseStatus: row.phase_status,
-      rejectionCount: 0,
+      rejectionCount: row.rejection_count,
     },
     success: true,
   };
@@ -650,6 +617,8 @@ export async function handleApproval(input: {
 
 export async function handleRejection(input: {
   admin?: AdminClient;
+  expectedArtifactId: string;
+  expectedStageId: string;
   expectedWorkspaceId: string;
   feedbackText: string;
   requestedByMemberId: string | null;
@@ -686,6 +655,8 @@ export async function handleRejection(input: {
     p_agent_model_name: runConfig.modelName,
     p_agent_model_provider: runConfig.modelProvider,
     p_artifact_version: input.version,
+    p_expected_artifact_id: input.expectedArtifactId,
+    p_expected_stage_id: input.expectedStageId,
     p_feedback_text: input.feedbackText,
     p_requested_by_member_id: input.requestedByMemberId ?? undefined,
     p_run_type: runConfig.runType,

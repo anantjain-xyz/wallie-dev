@@ -30,6 +30,7 @@ export function serializeSessionReviewData(
       archivedAt: payload.session.archivedAt,
       artifacts: payload.session.artifacts.map((artifact) => ({
         createdAt: artifact.createdAt,
+        id: artifact.id,
         payload: artifact.payload,
         stageSlug: artifact.stageSlug,
         version: artifact.version,

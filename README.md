@@ -25,7 +25,7 @@ A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/proce
 4. Capture the agent's text output as a markdown artifact, version it as `(session_id, stage_slug, version)`, and best-effort push commits/open or refresh a pull request when the stage changed code.
 5. Flip the session to `awaiting_review` without making pull-request plumbing a prerequisite for artifact review.
 
-Humans approve or reject artifacts from the in-app dashboard. Approval advances to the next selected stage by `position` via the `approve_session_stage` RPC. Rejection records feedback against the reviewed artifact version and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt.
+Humans approve or reject artifacts from the in-app dashboard. Approval validates the displayed stage, immutable artifact ID, and version, then advances to the next selected stage by `position` and queues its job/run in the same `approve_session_stage` transaction. Rejection validates the same review identity, records feedback against the reviewed artifact version and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt.
 
 ### Pipeline Flow
 
@@ -39,8 +39,8 @@ create_session_with_first_job RPC
      streams run activity, atomically publishes the artifact + awaiting_review + run success,
      best-effort syncs its attempt PR, then completes the owned job
   -> in the dashboard, the reviewer clicks Approve or Request Changes
-  -> approve  -> approve_session_stage RPC advances to next stage by position;
-                 TypeScript enqueues the next job after the transaction
+  -> approve  -> approve_session_stage RPC records approval, advances by position,
+                 and enqueues the next job/run atomically
   -> reject   -> feedback recorded for the artifact version;
                  new job re-runs the same stage
   -> repeat until the terminal stage is approved -> session archived
@@ -120,8 +120,8 @@ Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
       v
 [POST /api/sessions/[sessionId]/phase-action]  (from the dashboard)
       |- Approve -> approve_session_stage RPC: records completion,
-      |             advances to next stage by position; TypeScript then
-      |             enqueues the next job
+      |             advances to next stage by position and enqueues
+      |             the next job/run in the same transaction
       `- Reject  -> feedback recorded for the artifact version;
                     new job re-runs the same stage
 ```
@@ -543,7 +543,7 @@ Tenant-owned data rows are scoped to a `workspace_id`, and Supabase RLS policies
 
 ### Concurrency
 
-Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection uses `reject_session_stage`: it locks the session row and applies feedback, enqueue, and `rejected` in one transaction, so a concurrent approval serializes on that lock and re-validates phase.
+Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the unarchived session is in `awaiting_review` at the displayed stage, artifact ID, and version. Approval recording, published predecessor completion, stage advancement, and next-job/run enqueue commit together. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection uses `reject_session_stage`: it locks the session row and applies feedback, enqueue, and `rejected` in one transaction, so a concurrent approval serializes on that lock and re-validates phase.
 
 ### Deduplication
 

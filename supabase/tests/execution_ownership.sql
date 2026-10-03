@@ -2,6 +2,20 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 set local "request.jwt.claim.role" = 'service_role';
+-- Resolve the fixture's current review token; stale-token cases live in atomic_approval_handoff.sql.
+create function pg_temp.approve_current_review(target uuid, workspace uuid, version integer, reviewer uuid)
+returns table (id uuid, pipeline_id uuid, current_stage_id uuid, current_stage_slug text,
+  phase_status public.pipeline_phase_status, workspace_id uuid, linear_issue_url text,
+  archived_at timestamptz, current_artifact_version integer, rejection_count integer,
+  job_id uuid, run_id uuid, job_created boolean) language sql as $$
+  select result.* from public.sessions session
+  cross join lateral public.approve_session_stage(target, workspace, session.current_stage_id,
+    (select artifact.id from public.session_artifacts artifact where artifact.session_id = target
+      and artifact.stage_id = session.current_stage_id and artifact.version = version),
+    version, reviewer, 'codex', 'gpt-5.5', 'project') result
+  where session.id = target;
+$$;
+
 
 -- Earlier suites may commit explicitly numbered sessions without advancing the
 -- allocator. Align this transaction's fixtures above both existing rows and the
@@ -241,7 +255,7 @@ create temp table advancing as select * from pg_temp.ownership_fixture('Post-app
 update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from advancing);
 select pg_temp.start_owned((select job_id from advancing), 1);
 select public.publish_session_job_attempt((select job_id from advancing), 1, (select run_id from advancing), 0, 'approved plan');
-create temp table advanced as select * from public.approve_session_stage(
+create temp table advanced as select * from pg_temp.approve_current_review(
   (select session_id from advancing), 'b1b2c3d4-0001-4000-8000-000000000001', 1, 'c1b2c3d4-0001-4000-8000-000000000001');
 select is((select current_stage_slug from advanced), 'build', 'approval advances to the next selected stage');
 select ok(public.complete_session_job_attempt((select job_id from advancing), 1, (select run_id from advancing)), 'exact published job can complete after stage advancement');
@@ -264,7 +278,7 @@ create temp table advanced_failure as select * from pg_temp.ownership_fixture('P
 update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from advanced_failure);
 select pg_temp.start_owned((select job_id from advanced_failure), 1);
 select public.publish_session_job_attempt((select job_id from advanced_failure), 1, (select run_id from advanced_failure), 0, 'approved before failure');
-select * from public.approve_session_stage((select session_id from advanced_failure), 'b1b2c3d4-0001-4000-8000-000000000001', 1, 'c1b2c3d4-0001-4000-8000-000000000001');
+select * from pg_temp.approve_current_review((select session_id from advanced_failure), 'b1b2c3d4-0001-4000-8000-000000000001', 1, 'c1b2c3d4-0001-4000-8000-000000000001');
 select is(public.fail_session_job_attempt((select job_id from advanced_failure), 1, 'shutdown failed', true, 3, (select run_id from advanced_failure)), 'success', 'published run failure closes its job even after approval');
 select is((select phase_status::text from public.sessions where id = (select session_id from advanced_failure)), 'in_progress', 'postapproval failure preserves the next stage phase');
 select is((select current_artifact_version from public.sessions where id = (select session_id from advanced_failure)), 0, 'postapproval failure preserves the next stage version');

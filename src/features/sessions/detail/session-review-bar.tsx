@@ -13,13 +13,16 @@ import { cn } from "@/lib/utils";
 
 const FEEDBACK_MAX = 4_000;
 
+export type SessionReviewArtifact = { artifactId: string; stageId: string; version: number };
+
 type SessionReviewBarProps = {
   attached?: boolean;
   approveLabel: string;
   approveDescription?: string;
   mode: ReviewMode;
-  onApprove: () => void;
-  onReject: (feedback: string) => Promise<boolean>;
+  onApprove: (artifact: SessionReviewArtifact | null) => void;
+  onReject: (feedback: string, artifact: SessionReviewArtifact | null) => Promise<boolean>;
+  reviewArtifact: SessionReviewArtifact | null;
   phaseActionPending: "approve" | "reject" | null;
 };
 
@@ -30,6 +33,7 @@ export function SessionReviewBar({
   mode,
   onApprove,
   onReject,
+  reviewArtifact,
   phaseActionPending,
 }: SessionReviewBarProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -41,6 +45,7 @@ export function SessionReviewBar({
   const feedbackCountId = useId();
   const feedbackRef = useRef<HTMLTextAreaElement | null>(null);
   const rejectInFlightRef = useRef(false);
+  const rejectionArtifactRef = useRef<SessionReviewArtifact | null>(null);
   const requestChangesTriggerRef = useRef<HTMLButtonElement | null>(null);
   const phaseActionBusy = phaseActionPending !== null;
 
@@ -93,7 +98,7 @@ export function SessionReviewBar({
     setFeedbackError(null);
     rejectInFlightRef.current = true;
     try {
-      const succeeded = await onReject(trimmed);
+      const succeeded = await onReject(trimmed, rejectionArtifactRef.current);
       if (succeeded) {
         setFeedbackDraft("");
         setDialogOpen(false);
@@ -126,6 +131,7 @@ export function SessionReviewBar({
             disabled={phaseActionBusy}
             onClick={() => {
               setFeedbackError(null);
+              rejectionArtifactRef.current = reviewArtifact ? { ...reviewArtifact } : null;
               setDialogOpen(true);
             }}
           >
@@ -139,7 +145,7 @@ export function SessionReviewBar({
               disabled={phaseActionBusy}
               onClick={() => {
                 if (phaseActionBusy) return;
-                onApprove();
+                onApprove(reviewArtifact);
               }}
             >
               <ActionButtonLabel
