@@ -160,5 +160,126 @@ select is((select status::text from public.agent_jobs where id=(select job_id fr
 select is((select count(*) from public.session_phase_completions where session_id=(select session_id from collision_fixture)),0::bigint,'foreign-key collision records no completion');
 select is((select status::text from public.agent_jobs where id=(select job_id from foreign_fixture)),'running','foreign job remains untouched');
 
+-- Displayed artifacts retain the publication slug when a live stage is renamed.
+-- Review authority follows immutable stage/artifact identity, not that old label.
+create temp table renamed_fixture as select * from pg_temp.review_fixture('Rename during artifact review');
+update public.pipeline_stages set slug='review-plan-renamed',name='Renamed plan'
+where id=(select stage_id from renamed_fixture);
+select is((select stage_slug from public.session_artifacts where id=(select artifact_id from renamed_fixture)),
+  'review-plan','stage rename leaves the displayed artifact publication metadata intact');
+select is((select count(*) from pg_temp.approve_review((select session_id from renamed_fixture),
+  (select stage_id from renamed_fixture),(select artifact_id from foreign_fixture))),0::bigint,
+  'renamed stage still rejects another artifact ID at the same stage and version');
+select is((select count(*) from pg_temp.approve_review((select session_id from renamed_fixture),
+  (select stage_id from renamed_fixture),(select artifact_id from renamed_fixture),
+  'c1b2c3d4-0001-4000-8000-000000000001',2)),0::bigint,
+  'renamed stage still rejects an incorrect reviewed version');
+select set_config('request.jwt.claim.sub',
+  (select user_id::text from public.workspace_members where id='c1b2c3d4-0001-4000-8000-000000000001'),true);
+create temp table renamed_detail as select public.get_session_detail_page(workspace.slug,session.number) as payload
+from public.sessions session join public.workspaces workspace on workspace.id=session.workspace_id
+where session.id=(select session_id from renamed_fixture);
+select is((select payload #>> '{session,artifacts,0,id}' from renamed_detail),
+  (select artifact_id::text from renamed_fixture),'refreshed detail includes the exact displayed artifact after stage rename');
+select is((select payload #>> '{session,artifacts,0,stageSlug}' from renamed_detail),'review-plan-renamed',
+  'detail groups the historical artifact under its current stage label');
+select is((select payload #> '{session,artifacts,0,payload}' from renamed_detail),to_jsonb('Reviewed markdown'::text),
+  'refreshed detail retains the original reviewed markdown after stage rename');
+create temp table renamed_approval as select a.* from renamed_fixture f
+cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a;
+select is((select current_stage_slug from renamed_approval),'review-build',
+  'exact displayed artifact remains approvable after its live stage slug changes');
+select is((select status::text from public.agent_jobs where id=(select job_id from renamed_fixture)),'success',
+  'renamed-stage approval completes the exact published predecessor');
+select ok(exists(select 1 from renamed_approval a join public.agent_runs r on r.id=a.run_id and r.agent_job_id=a.job_id
+  where r.stage_slug='review-build' and r.status='queued'),
+  'renamed-stage approval commits the next queued execution');
+select is((select stage_slug from public.session_artifacts where id=(select artifact_id from renamed_fixture)),
+  'review-plan','successful approval does not rewrite historical artifact metadata');
+
+-- Downstream history belongs to the stable stage even if its label changes
+-- between cycles. Approval and publication must append above that history.
+create temp table renamed_history_fixture as select * from pg_temp.review_fixture('Renamed downstream stage history');
+insert into public.session_artifacts(workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
+select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid,f.session_id,stage.id,stage.slug,4,to_jsonb('Build before rename'::text)
+from renamed_history_fixture f cross join public.pipeline_stages stage
+where stage.pipeline_id=(select id from review_pipeline) and stage.slug='review-build';
+update public.pipeline_stages set slug='review-build-renamed',name='Renamed build'
+where pipeline_id=(select id from review_pipeline) and slug='review-build';
+create temp table renamed_history_approval as select a.* from renamed_history_fixture f
+cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a;
+select is((select current_artifact_version from renamed_history_approval),4,
+  'approval carries retained history across a downstream stage slug rename');
+update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from renamed_history_approval);
+select is(public.start_session_job_attempt((select job_id from renamed_history_approval),1,
+  (select current_stage_id from renamed_history_approval),4,'codex','gpt-5.5','project'),
+  (select run_id from renamed_history_approval),'renamed downstream execution starts above the stable stage history');
+select ok(public.publish_session_job_attempt((select job_id from renamed_history_approval),1,
+  (select run_id from renamed_history_approval),4,'Build after rename'),
+  'renamed downstream stage appends its next publication');
+select is((select current_artifact_version from public.sessions where id=(select session_id from renamed_history_fixture)),5,
+  'renamed downstream publication advances to version five');
+select is((select stage_slug from public.session_artifacts where session_id=(select session_id from renamed_history_fixture)
+  and stage_id=(select current_stage_id from renamed_history_approval) and version=4),'review-build',
+  'downstream handoff preserves the historical publication slug');
+select results_eq($q$select version,stage_slug from public.session_artifacts
+  where session_id=(select session_id from renamed_history_fixture) and stage_id=(select current_stage_id from renamed_history_approval)
+  order by version$q$,$q$values (4,'review-build'::text),(5,'review-build-renamed'::text)$q$,
+  'one stable downstream stage retains distinct ordered versions across both labels');
+
+-- Physical artifact uniqueness still includes the publication slug. A different
+-- stage may have used that label in the past; allocation must skip its occupied
+-- key without changing the reviewed expected-base ownership check.
+create temp table reused_slug_fixture as select * from pg_temp.review_fixture('Downstream reuses a historical slug');
+insert into public.session_artifacts(workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
+select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid,f.session_id,stage.id,stage.slug,4,to_jsonb('Owned stage version four'::text)
+from reused_slug_fixture f cross join public.pipeline_stages stage
+where stage.pipeline_id=(select id from review_pipeline) and stage.slug='review-build-renamed';
+create temp table former_slug_owner as with inserted as (
+  insert into public.pipeline_stages(pipeline_id,workspace_id,position,slug,name,prompt_template_md)
+  select id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,3,'former-label-owner','Former label owner','Historical stage'
+  from review_pipeline returning id
+) select id from inserted;
+insert into public.session_artifacts(workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
+select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid,f.session_id,former.id,'review-build-reused',5,to_jsonb('Other stage version five'::text)
+from reused_slug_fixture f cross join former_slug_owner former;
+create temp table reused_slug_history as select artifact.id,to_jsonb(artifact) as original_row
+from public.session_artifacts artifact where artifact.session_id=(select session_id from reused_slug_fixture);
+update public.pipeline_stages set slug='review-build-reused',name='Build with reused label'
+where pipeline_id=(select id from review_pipeline) and slug='review-build-renamed';
+create temp table reused_slug_approval as select a.* from reused_slug_fixture f
+cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a;
+select is((select current_artifact_version from reused_slug_approval),4,
+  'approval carries its stable stage version independently of another stage historical slug');
+update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from reused_slug_approval);
+select is(public.start_session_job_attempt((select job_id from reused_slug_approval),1,
+  (select current_stage_id from reused_slug_approval),4,'codex','gpt-5.5','project'),
+  (select run_id from reused_slug_approval),'reused-slug execution starts from the approved base version');
+select ok(not public.publish_session_job_attempt((select job_id from reused_slug_approval),1,
+  (select run_id from reused_slug_approval),5,'Wrong expected base'),
+  'occupied physical version does not authorize a mismatched expected publication base');
+select ok(public.publish_session_job_attempt((select job_id from reused_slug_approval),1,
+  (select run_id from reused_slug_approval),4,'New output after slug reuse'),
+  'publication skips the physical artifact key occupied by another historical stage');
+select is((select current_artifact_version from public.sessions where id=(select session_id from reused_slug_fixture)),6,
+  'publication allocates version six above stable stage and reused slug history');
+select ok(exists(select 1 from public.session_artifacts artifact
+  where artifact.session_id=(select session_id from reused_slug_fixture)
+    and artifact.stage_id=(select current_stage_id from reused_slug_approval)
+    and artifact.stage_slug='review-build-reused' and artifact.version=6
+    and artifact.artifact_json=to_jsonb('New output after slug reuse'::text)),
+  'allocated output belongs to the current stable stage with the current publication label');
+select ok(not public.publish_session_job_attempt((select job_id from reused_slug_approval),1,
+  (select run_id from reused_slug_approval),4,'Late duplicate publication'),
+  'stale expected base cannot republish after allocation advances the review pointer');
+select results_eq($q$select to_jsonb(artifact) from public.session_artifacts artifact
+  join reused_slug_history history on history.id=artifact.id order by artifact.id$q$,
+  $q$select original_row from reused_slug_history order by id$q$,
+  'publication preserves every original artifact row across both historical stage identities');
+select results_eq($q$select version from public.session_artifacts
+  where session_id=(select session_id from reused_slug_fixture) and stage_id=(select current_stage_id from reused_slug_approval)
+  order by version$q$,$q$values (4),(6)$q$,
+  'reused label introduces neither a logical duplicate version nor an overwritten row');
+
 select * from finish();
 rollback;

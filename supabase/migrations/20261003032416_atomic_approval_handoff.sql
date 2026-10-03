@@ -47,13 +47,13 @@ begin
   ) then return; end if;
   -- Stage/version values can recur after an external reroute. The immutable
   -- artifact identity binds the decision to the markdown the reviewer saw.
+  -- Slugs are editable labels; stored artifact slugs remain publication history.
   if not exists (
     select 1 from public.session_artifacts artifact
     where artifact.id = expected_artifact_id
       and artifact.session_id = reviewed_session.id
       and artifact.workspace_id = reviewed_session.workspace_id
       and artifact.stage_id = reviewed_stage.id
-      and artifact.stage_slug = reviewed_stage.slug
       and artifact.version = expected_version
   ) then return; end if;
 
@@ -115,7 +115,7 @@ begin
     update public.sessions s set current_stage_id = next_stage.id, phase_status = 'in_progress',
       current_artifact_version = coalesce((
         select max(artifact.version) from public.session_artifacts artifact
-        where artifact.session_id = reviewed_session.id and artifact.stage_slug = next_stage.slug
+        where artifact.session_id = reviewed_session.id and artifact.stage_id = next_stage.id
       ), 0), rejection_count = 0
     where s.id = reviewed_session.id;
 
@@ -312,7 +312,7 @@ begin
           'id', sa.id,
           'createdAt', sa.created_at,
           'payload', sa.artifact_json,
-          'stageSlug', sa.stage_slug,
+          'stageSlug', v_current_stage.slug,
           'version', sa.version
         )
         order by sa.version desc
@@ -323,7 +323,7 @@ begin
     from public.session_artifacts sa
     where sa.session_id = v_session.id
       and sa.workspace_id = v_workspace_id
-      and sa.stage_slug = v_current_stage.slug
+      and sa.stage_id = v_current_stage.id
       and sa.version = v_session.current_artifact_version;
   end if;
 
@@ -447,3 +447,50 @@ revoke all on function public.reject_session_stage(uuid,uuid,integer,text,text,t
 grant execute on function public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid) to service_role;
 revoke all on function public.get_session_detail_page(text,integer) from public;
 grant execute on function public.get_session_detail_page(text,integer) to authenticated;
+
+
+-- Keep publication compatible when either final migration is applied first.
+CREATE OR REPLACE FUNCTION public.publish_session_job_attempt(p_job_id uuid, p_attempt_count integer, p_run_id uuid, p_expected_artifact_version integer, p_artifact_json text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SET search_path TO ''
+AS $function$
+declare s public.sessions%rowtype; j public.agent_jobs%rowtype; r public.agent_runs%rowtype; next_version integer;
+begin
+  if nullif(btrim(p_artifact_json), '') is null then
+    raise exception 'Artifact markdown must not be blank' using errcode = '23514';
+  end if;
+  select owner.* into s from public.sessions owner
+  join public.agent_jobs candidate on candidate.session_id = owner.id
+  where candidate.id = p_job_id for no key update of owner;
+  if not found then return false; end if;
+  select * into j from public.agent_jobs where id = p_job_id for update;
+  if not found or p_attempt_count is null or j.attempt_count <> p_attempt_count
+     or j.status not in ('started', 'running') or j.session_id <> s.id or j.workspace_id <> s.workspace_id
+     or s.archived_at is not null or s.current_stage_id is distinct from j.stage_id
+     or s.phase_status <> 'in_progress' or p_expected_artifact_version is null
+     or s.current_artifact_version <> p_expected_artifact_version then return false; end if;
+  select * into r from public.agent_runs where id = p_run_id for update;
+  if not found or r.agent_job_id is distinct from j.id or r.attempt_count is distinct from p_attempt_count
+     or r.workspace_id <> s.workspace_id or r.session_id <> s.id
+     or r.stage_id is distinct from j.stage_id or r.status <> 'running' then return false; end if;
+  -- Stage names are mutable snapshots and the retained uniqueness constraint
+  -- still reserves (session, slug, version). Allocate above both the durable
+  -- stage's history and the publishing job's captured label, without rewriting
+  -- either. The session lock serializes allocation with other publishers.
+  select greatest(p_expected_artifact_version, coalesce(max(artifact.version), 0)) + 1
+  into next_version from public.session_artifacts artifact
+  where artifact.session_id = s.id and (artifact.stage_id = j.stage_id or artifact.stage_slug = j.stage_slug);
+  insert into public.session_artifacts(workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
+  values(s.workspace_id, s.id, j.stage_id, j.stage_slug, next_version, to_jsonb(p_artifact_json));
+  update public.sessions set phase_status = 'awaiting_review', current_artifact_version = next_version
+  where id = s.id;
+  update public.agent_runs set status = 'success', finished_at = now(), last_activity_at = now()
+  where id = r.id;
+  return true;
+end;
+$function$
+;
+
+revoke all on function public.publish_session_job_attempt(uuid,integer,uuid,integer,text) from public,anon,authenticated;
+grant execute on function public.publish_session_job_attempt(uuid,integer,uuid,integer,text) to service_role;
