@@ -15,5 +15,3 @@ export function createSupabaseAdminClient(input: Record<string, string | undefin
     },
   });
 }
-
-export const createAdminSupabaseClient = createSupabaseAdminClient;

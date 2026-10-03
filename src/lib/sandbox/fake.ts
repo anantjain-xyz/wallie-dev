@@ -24,23 +24,6 @@ interface FakeRegistryEntry {
 
 const fakeRegistry = new Map<string, FakeRegistryEntry>();
 
-/** Register a fake sandbox as if the provider had created it. Test-only. */
-export function registerFakeSandbox(
-  id: string,
-  opts: { status?: "pending" | "running"; createdAt?: number } = {},
-): void {
-  fakeRegistry.set(id, {
-    id,
-    status: opts.status ?? "running",
-    createdAt: opts.createdAt ?? Date.now(),
-  });
-}
-
-/** Reset the in-memory fake registry. Test-only. */
-export function resetFakeSandboxes(): void {
-  fakeRegistry.clear();
-}
-
 /** Mirrors stopVercelSandboxById; flips the registry entry to `stopped`. */
 export async function stopFakeSandboxById(sandboxId: string): Promise<void> {
   const entry = fakeRegistry.get(sandboxId);

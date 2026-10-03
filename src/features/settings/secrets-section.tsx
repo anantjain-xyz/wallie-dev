@@ -7,7 +7,6 @@ import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type {
   DeleteWorkspaceSecretResponse,
@@ -196,17 +195,5 @@ export function WorkspaceSecretsPanel({
     <p className="text-[13px] leading-6 text-muted">
       Workspace admins can manage encrypted secret previews from this surface.
     </p>
-  );
-}
-
-export function SecretsSection(props: SecretsSectionProps) {
-  return (
-    <Section
-      anchorId="secrets"
-      tagline="Secret values never come back to the client. Wallie shows preview-only rows and writes encrypted values through route handlers."
-      title="Secrets"
-    >
-      <WorkspaceSecretsPanel {...props} />
-    </Section>
   );
 }

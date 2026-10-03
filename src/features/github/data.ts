@@ -106,21 +106,6 @@ function mapRepository(row: RepositoryRow): GitHubRepositorySummary {
   };
 }
 
-export function defaultRepositoryOnboarding(repositoryId: string): RepositoryOnboardingState {
-  return {
-    conflictReport: [],
-    githubRepositoryId: repositoryId,
-    installedSkillHash: null,
-    installedSkillVersion: null,
-    lastError: null,
-    setupBranchName: null,
-    setupPrNumber: null,
-    setupPrUrl: null,
-    status: "not_set_up",
-    updatedAt: null,
-  };
-}
-
 function mapRepositoryOnboardingState(
   row: OnboardingRow | undefined,
   repositoryId: string,

@@ -141,15 +141,6 @@ export type SessionListQueryState = {
   stageSlug: string | null;
 };
 
-export function stageIndex(pipeline: SessionPipeline, stageSlug: string): number {
-  return pipeline.stages.findIndex((s) => s.slug === stageSlug);
-}
-
-export function isTerminalStage(pipeline: SessionPipeline, stageSlug: string): boolean {
-  if (pipeline.stages.length === 0) return false;
-  return pipeline.stages[pipeline.stages.length - 1]!.slug === stageSlug;
-}
-
 export function deriveSessionTitleFromPrompt(prompt: string): string {
   const firstLine = prompt
     .split(/\r?\n/)
