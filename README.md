@@ -530,27 +530,27 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 
 ## Scripts
 
-| Command                                  | Description                                                   |
-| ---------------------------------------- | ------------------------------------------------------------- |
-| `pnpm dev`                               | Start Next.js dev server                                      |
-| `pnpm build`                             | Production build                                              |
-| `pnpm start`                             | Start production server                                       |
-| `pnpm worker`                            | Start the bounded-concurrency background worker               |
-| `pnpm test`                              | Run unit/integration tests (Vitest)                           |
-| `pnpm test:watch`                        | Run Vitest in watch mode                                      |
-| `pnpm test:e2e:onboarding`               | Build and run onboarding mutation-request Playwright coverage |
-| `pnpm test:e2e:responsive`               | Build and run responsive/touch Playwright coverage            |
-| `pnpm test:e2e:session-prefetch`         | Build and verify session-detail prefetch behavior             |
-| `pnpm test:benchmark:interaction`        | Build and run the interaction RUM benchmark                   |
-| `pnpm test:benchmark:content-visibility` | Build and run the content-visibility benchmark                |
-| `pnpm lint`                              | Lint with ESLint (zero warnings)                              |
-| `pnpm lint:fix`                          | Auto-fix lint issues                                          |
-| `pnpm format`                            | Format with Prettier                                          |
-| `pnpm format:check`                      | Check formatting                                              |
-| `pnpm typecheck`                         | TypeScript type check                                         |
-| `pnpm db:types`                          | Regenerate local Supabase database types                      |
-| `pnpm analyze:authenticated-bundle`      | Analyze authenticated-route client bundles                    |
-| `pnpm check:route-budgets`               | Check built route bundles against committed byte budgets      |
+| Command                                  | Description                                                                                     |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `pnpm dev`                               | Start Next.js dev server                                                                        |
+| `pnpm build`                             | Production build                                                                                |
+| `pnpm start`                             | Start production server                                                                         |
+| `pnpm worker`                            | Start the bounded-concurrency background worker                                                 |
+| `pnpm test`                              | Run unit/integration tests (Vitest)                                                             |
+| `pnpm test:watch`                        | Run Vitest in watch mode                                                                        |
+| `pnpm test:e2e:onboarding`               | Build and run onboarding mutation-request Playwright coverage                                   |
+| `pnpm test:e2e:responsive`               | Build and run responsive/touch Playwright coverage                                              |
+| `pnpm test:e2e:session-prefetch`         | Build and verify session-detail prefetch behavior                                               |
+| `pnpm test:benchmark:interaction`        | Build and run the interaction RUM benchmark                                                     |
+| `pnpm test:benchmark:content-visibility` | Build and run the content-visibility benchmark                                                  |
+| `pnpm lint`                              | Lint with ESLint (zero warnings)                                                                |
+| `pnpm lint:fix`                          | Auto-fix lint issues                                                                            |
+| `pnpm format`                            | Format with Prettier                                                                            |
+| `pnpm format:check`                      | Check formatting                                                                                |
+| `pnpm typecheck`                         | TypeScript type check                                                                           |
+| `pnpm db:types`                          | Regenerate local Supabase database types                                                        |
+| `pnpm analyze:authenticated-bundle`      | Analyze authenticated-route client bundles                                                      |
+| `pnpm check:route-budgets`               | Check built route bundles against committed byte budgets                                        |
 | `pnpm check`                             | Full pre-PR gate: `check:fast` (validation, format, lint, typecheck, privileged imports) + test |
 
 ## Architecture Notes
