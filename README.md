@@ -13,6 +13,22 @@ AI-powered product development automation. Wallie turns a work prompt -- optiona
 
 ## How It Works
 
+```mermaid
+flowchart LR
+  member["Workspace member"] --> app["Next.js app and API routes"]
+  app --> db["Supabase Auth, Postgres, RLS, Realtime, Storage"]
+  app --> reviewRpcs["approve_session_stage / reject_session_stage"]
+  reviewRpcs --> db
+  worker["Always-on worker"] --> db
+  worker --> pipeline["processPipelineJob / runStage"]
+  pipeline --> sandbox["Sandbox provider"]
+  pipeline --> agent["Codex, Claude Code, Cursor, or OpenCode"]
+  sandbox --> github["GitHub repo and pull request"]
+  worker --> github
+  worker --> linear["Linear API"]
+  db -. "Realtime" .-> member
+```
+
 Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. Users can exclude stages when starting a session; the selected membership is captured with the session while each selected stage's live configuration and position continue to come from the workspace pipeline. Session creation, selected stages, the first queued job, and its queued run are written atomically. An always-on worker drains the job queue, runs the session's current stage, and flips it to `awaiting_review` for a human to approve or reject from the in-app dashboard.
 
 Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `plan → build` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, description, prompt template, and approver list. The stock Build stage validates and publishes a PR, then stops for external review and manual merge. Pipelines also carry workspace-editable operating rules that are prepended to every stage prompt. Nothing in the runner distinguishes one stage from another.
@@ -63,7 +79,7 @@ wallie-dev/
 |   `-- worker/        -> Background daemon (polls jobs)
 |-- supabase/
 |   `-- migrations/    -> Baseline schema + forward migrations
-|-- docs/              -> Self-hosting, telemetry, accessibility, and UI guidance
+|-- docs/              -> Architecture, lifecycle, self-hosting, telemetry, accessibility, and UI guidance
 |-- e2e/               -> Playwright flows and performance benchmarks
 |-- middleware.ts      -> Auth gate (Supabase session refresh)
 `-- AGENTS.md          -> Repository guidelines
@@ -154,7 +170,7 @@ The whole module is stage-agnostic. There are no per-phase files; one generic ru
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages`, pipeline operating rules, and the prior-stage artifact map used by the prompt template.
 - [pull-request.ts](src/lib/pipeline/pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- remote PR synchronization and terminal session controls.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
-- [types.ts](src/lib/pipeline/types.ts) -- shared pipeline status and job constants. Active-job dedupe keys (`session:<session_id>:active`) are built in the enqueue SQL RPCs.
+- [types.ts](src/lib/pipeline/types.ts) -- shared pipeline phase and agent job/run status types. Active-job dedupe keys (`session:<session_id>:active`) are built in the enqueue SQL RPCs.
 
 The default `plan → build` seed lives in the `internal.default_pipeline_stages()` SQL function in the migration -- workspaces can edit, add, remove, or reorder stages from settings, and `renderStagePrompt` (in `src/lib/prompt-templates/`) handles the `{{session.title}}` / `{{session.prompt}}` / `{{artifact.previousStages.<slug>}}` / `{{attempt.feedback}}` placeholders.
 
@@ -180,6 +196,8 @@ sessions/[sessionId]/review-capabilities/                       <- current revie
 agent-config/                                                   <- workspace_agent_config mutations (POST/PATCH; RSC reads)
 codex/connection/                                               <- Codex device-auth flow + token verify
 claude-code/connection/                                         <- Anthropic API key verify
+cursor/connection/ + cursor/models/                             <- Cursor sign-in + model discovery
+opencode/connection/ + opencode/providers/                      <- OpenCode Zen key + per-provider keys
 github/install/ + github/callback/                              <- GitHub App install redirect + signed state
 github/webhooks/                                                <- PR + install events
 github/refresh-repositories/                                    <- re-sync the installation's repo list
@@ -229,7 +247,7 @@ workspaces/[workspaceId]/maintenance/tick/                      <- privileged ma
 - **repo-onboarding/** -- planner + server state for the per-repo onboarding flow.
 - **onboarding/** -- shared contracts and migration helpers for the workspace onboarding pipeline.
 - **prompt-templates/** -- renders stage prompts; resolves `{{session.*}}`, `{{artifact.previousStages.*}}`, `{{attempt.feedback}}` placeholders.
-- **wallie/** -- job enqueue + run tracking ([service.ts](src/lib/wallie/service.ts)), HTTP helper, shared constants.
+- **wallie/** -- job enqueue + run tracking ([service.ts](src/lib/wallie/service.ts)) and HTTP helper.
 - **maintenance/** -- privileged workspace maintenance operations used by Settings and its API route.
 - **performance/** and **telemetry/** -- route budgets, server timing, and privacy-safe interaction RUM.
 - **vercel-sandbox/** -- Vercel-specific connection compatibility and workspace teardown.
@@ -299,7 +317,7 @@ src/
       agent-runs/               # Retry and cancel pipeline jobs
       sessions/                 # Atomic create + session review/activity routes
       agent-config/             # workspace_agent_config CRUD
-      codex/, claude-code/      # Provider connection / token flows
+      codex/, claude-code/, cursor/, opencode/  # Provider connection / token flows
       github/                   # GitHub App install, webhooks, repo refresh
       linear/                   # Linear API key verification
       secrets/                  # Encrypted credential CRUD
@@ -323,7 +341,7 @@ src/
     agent-runner/               # Provider dispatch + coding-agent runners
     agent-config/               # Provider + model parsing for workspace_agent_config
     agent-credentials/          # Picks the user credential for a session run
-    codex/, claude-code/        # Provider token validation + auth flows
+    codex/, claude-code/, cursor/, opencode/  # Provider token validation + auth flows
     sandbox/                    # Vercel/E2B/Daytona registry (+ fake for tests)
     sandbox-connections/        # Active provider + encrypted connection service
     sandbox-capabilities/       # Probe sandboxes for required tools
@@ -331,7 +349,7 @@ src/
     repo-onboarding/            # Per-repo onboarding planner + state
     onboarding/                 # Workspace onboarding contracts + helpers
     prompt-templates/           # Stage prompt rendering
-    wallie/                     # Job service, HTTP helper, constants
+    wallie/                     # Job service + HTTP helper
     workspaces/                 # Access control (role-based)
     storage/                    # Supabase Storage helpers
     maintenance/                # Workspace maintenance operations
@@ -533,9 +551,11 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 | `pnpm db:types`                          | Regenerate local Supabase database types                      |
 | `pnpm analyze:authenticated-bundle`      | Analyze authenticated-route client bundles                    |
 | `pnpm check:route-budgets`               | Check built route bundles against committed byte budgets      |
-| `pnpm check`                             | Run all checks (format:check, lint, typecheck, test)          |
+| `pnpm check`                             | Full pre-PR gate: `check:fast` (validation, format, lint, typecheck, privileged imports) + test |
 
 ## Architecture Notes
+
+For ownership boundaries and dependency direction, see [Architecture](docs/ARCHITECTURE.md). For session/job transition detail, see [Pipeline and worker lifecycle](docs/PIPELINE-WORKER-LIFECYCLE.md).
 
 ### Multi-tenancy
 
