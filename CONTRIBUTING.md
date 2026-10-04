@@ -80,7 +80,7 @@ Write clear, imperative-mood subject lines (e.g. "Fix webhook signature check").
 
 ## A note on the agent tooling in this repo
 
-Wallie is itself built with coding agents, so you'll find agent configuration committed at the repo root — `AGENTS.md`, `CLAUDE.md`, and the `.agents/`, `.claude/`, and `.codex/` directories. These are intentional and used by the maintainers' agent workflows. You don't need any of it to contribute; treat the README and this guide as the source of truth for human contributors.
+Wallie is itself built with coding agents, so you'll find agent configuration committed at the repo root — `AGENTS.md`, `CLAUDE.md`, and the `.agents/` and `.codex/` directories. These are intentional and used by the maintainers' agent workflows. You don't need any of it to contribute; treat the README and this guide as the source of truth for human contributors.
 
 ## License
 
