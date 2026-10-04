@@ -22,7 +22,7 @@ You are working on issue **{{issue.identifier}}: {{issue.title}}**.
 
 ## Skills (progressive disclosure)
 
-Repeatable mechanics live under `.agents/skills/symphony-<name>/SKILL.md` in the target repo (the canonical, runner-agnostic location; `.claude/skills/symphony-<name>` are symlinks Claude Code uses for auto-discovery). Reach for them by name — your runner will surface the right one on demand:
+Repeatable mechanics live under `.agents/skills/symphony-<name>/SKILL.md` in the target repo (the canonical path Claude Code and other runners discover). Reach for them by name — your runner will surface the right one on demand:
 
 | Skill                  | Use when                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------------------- |
