@@ -150,6 +150,7 @@ test("recovers an existing off-page session moving to another lane", async ({ pa
 
 test("does not resurrect an archived off-page session from a delayed page", async ({ page }) => {
   const fixture = await createSessions();
+  const seed = await seedSession();
   const changed = observeSessionChanges(page);
   try {
     const initial = nextSnapshot(page);
@@ -176,18 +177,27 @@ test("does not resurrect an archived off-page session from a delayed page", asyn
       fixture.sessions.some((session) => session.id === card.id),
     )!;
     expect(target).toBeTruthy();
+    const catchup = nextSnapshot(page);
     const liveChange = changed(target.id);
     await database(`sessions?id=eq.${target.id}`, "PATCH", {
       archived_at: new Date().toISOString(),
     });
     await liveChange;
-    const catchup = nextSnapshot(page);
+    // A websocket frame can reach the test before the board handles it. A
+    // later visible update on this same feed proves the archive was processed
+    // while the stale page was still held.
+    const markerTitle = `Pagination barrier ${randomUUID()}`;
+    await database(`sessions?id=eq.${seed.id}`, "PATCH", { title: markerTitle });
+    await expect(page.getByRole("link", { name: `Open session ${markerTitle}` })).toBeVisible();
     release();
     await catchup;
     await expect(page.getByText(target.title, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Load more Plan sessions" })).toBeEnabled();
   } finally {
-    await fixture.cleanup();
+    await Promise.all([
+      fixture.cleanup(),
+      database(`sessions?id=eq.${seed.id}`, "PATCH", { title: seed.title }),
+    ]);
   }
 });
 
