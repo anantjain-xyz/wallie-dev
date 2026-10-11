@@ -14,6 +14,12 @@ import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authent
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
+export class PipelineWorkspaceUnavailableError extends Error {
+  constructor() {
+    super("Workspace not found.");
+  }
+}
+
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 type PipelineDashboardCursor = {
@@ -126,6 +132,7 @@ export async function loadPipelineDashboardLanePage({
   });
 
   if (error) throw error;
+  if (data === null) throw new PipelineWorkspaceUnavailableError();
 
   const lane = normalizePipelineDashboardRpcPayload(data).lanes[0];
   if (!lane) return null;
@@ -146,8 +153,13 @@ export async function loadPipelineDashboardSnapshot({
 }: {
   supabase: SupabaseServerClient;
   workspaceId: string;
-}): Promise<Pick<PipelineDashboardData, "lanes" | "hasAnySession">> {
-  const [dashboard, archivedStages, anySessionResult] = await Promise.all([
+}): Promise<Pick<PipelineDashboardData, "lanes" | "hasAnySession" | "onboarding">> {
+  const [onboardingResult, dashboard, archivedStages, anySessionResult] = await Promise.all([
+    supabase
+      .from("workspace_onboarding")
+      .select("current_step, status")
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
     queryPipelineDashboard(supabase, {
       page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
       target_workspace_id: workspaceId,
@@ -156,10 +168,13 @@ export async function loadPipelineDashboardSnapshot({
     supabase.from("sessions").select("id").eq("workspace_id", workspaceId).limit(1),
   ]);
   if (dashboard.error) throw dashboard.error;
+  if (dashboard.data === null) throw new PipelineWorkspaceUnavailableError();
+  if (onboardingResult.error) throw onboardingResult.error;
   if (archivedStages.error) throw archivedStages.error;
   if (anySessionResult.error) throw anySessionResult.error;
   return {
     hasAnySession: (anySessionResult.data?.length ?? 0) > 0,
+    onboarding: mapOnboardingResumeState(onboardingResult.data),
     lanes: filterArchivedPipelineDashboardLanes(
       normalizePipelineDashboardRpcPayload(dashboard.data).lanes,
       new Set(
@@ -184,35 +199,17 @@ export async function loadPipelineDashboardData(
         (context) => ({ rows: 1, workspaceId: context.workspace.id }),
       );
 
-      const [onboardingResult, snapshot] = await Promise.all([
-        timing.segment(
-          "pipeline.onboarding",
-          () =>
-            supabase
-              .from("workspace_onboarding")
-              .select("current_step, status")
-              .eq("workspace_id", workspace.id)
-              .maybeSingle(),
-          (result) => ({
-            payloadBytes: approximatePayloadSizeBytes(result.data),
-            rows: result.data ? 1 : 0,
-          }),
-        ),
-        timing.segment(
-          "pipeline.snapshot",
-          () => loadPipelineDashboardSnapshot({ supabase, workspaceId: workspace.id }),
-          (snapshot) => ({
-            payloadBytes: approximatePayloadSizeBytes(snapshot),
-            rows: snapshot.lanes.reduce((count, lane) => count + lane.cards.length, 0),
-          }),
-        ),
-      ]);
-
-      if (onboardingResult.error) throw onboardingResult.error;
+      const snapshot = await timing.segment(
+        "pipeline.snapshot",
+        () => loadPipelineDashboardSnapshot({ supabase, workspaceId: workspace.id }),
+        (snapshot) => ({
+          payloadBytes: approximatePayloadSizeBytes(snapshot),
+          rows: snapshot.lanes.reduce((count, lane) => count + lane.cards.length, 0),
+        }),
+      );
 
       const result: PipelineDashboardData = {
         ...snapshot,
-        onboarding: mapOnboardingResumeState(onboardingResult.data),
         workspace: {
           id: workspace.id,
           name: workspace.name,

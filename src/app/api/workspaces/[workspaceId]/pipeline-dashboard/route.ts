@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
+  PipelineWorkspaceUnavailableError,
   decodePipelineDashboardCursor,
   loadPipelineDashboardLanePage,
   loadPipelineDashboardSnapshot,
@@ -34,7 +35,8 @@ export async function GET(_request: Request, context: RouteContext) {
       workspaceId,
     });
     return NextResponse.json(snapshot, { headers: { "Cache-Control": "private, no-store" } });
-  } catch {
+  } catch (error) {
+    if (error instanceof PipelineWorkspaceUnavailableError) return workspaceUnavailable();
     return NextResponse.json({ error: "Failed to load pipeline snapshot." }, { status: 500 });
   }
 }
@@ -81,9 +83,17 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ lane }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
+    if (error instanceof PipelineWorkspaceUnavailableError) return workspaceUnavailable();
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to load pipeline lane." },
       { status: 500 },
     );
   }
+}
+
+function workspaceUnavailable() {
+  return NextResponse.json(
+    { code: "workspace_unavailable", error: "Workspace not found." },
+    { status: 404 },
+  );
 }

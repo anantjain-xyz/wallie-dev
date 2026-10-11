@@ -208,6 +208,14 @@ function PipelinePageContent({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [hasObservedSession, setHasObservedSession] = useState(false);
+  const [recoveredOnboarding, setRecoveredOnboarding] = useState<{
+    initial: PipelineDashboardData["onboarding"];
+    value: PipelineDashboardData["onboarding"];
+  } | null>(null);
+  const onboarding =
+    recoveredOnboarding?.initial === initialData.onboarding
+      ? recoveredOnboarding.value
+      : initialData.onboarding;
   const boardRef = useRef<PipelineBoardState>(board);
   const initialLanesRef = useRef(initialData.lanes);
   const invalidatedCardIds = useRef(new Set<string>());
@@ -263,14 +271,14 @@ function PipelinePageContent({
           },
         );
         if (signal.aborted || generation !== refreshGeneration.current) return;
-        if ([401, 403, 404].includes(response.status)) {
+        if ([401, 403, 404, 409].includes(response.status)) {
           leaveUnavailableWorkspace(response.status);
           return;
         }
         if (!response.ok) throw new Error("Failed to refresh pipeline.");
         const snapshot = (await response.json()) as Pick<
           PipelineDashboardData,
-          "lanes" | "hasAnySession"
+          "lanes" | "hasAnySession" | "onboarding"
         >;
         if (signal.aborted || generation !== refreshGeneration.current || accessLostRef.current)
           return;
@@ -280,6 +288,8 @@ function PipelinePageContent({
           dispatch({ lanes: snapshot.lanes, changes, type: "recover" });
         });
         if (snapshot.hasAnySession) setHasObservedSession(true);
+        if ("onboarding" in snapshot)
+          setRecoveredOnboarding({ initial: initialData.onboarding, value: snapshot.onboarding });
         invalidatedCardIds.current.clear();
         if (pipelineRecoveryNeedsFollowup(snapshot.lanes, changes)) recovery.invalidate();
       } finally {
@@ -290,7 +300,13 @@ function PipelinePageContent({
         }
       }
     },
-    [initialData.workspace.id, leaveUnavailableWorkspace, recovery, startRefresh],
+    [
+      initialData.workspace.id,
+      initialData.onboarding,
+      leaveUnavailableWorkspace,
+      recovery,
+      startRefresh,
+    ],
   );
 
   useEffect(() => {
@@ -609,7 +625,7 @@ function PipelinePageContent({
         };
 
         if (controller.signal.aborted) return;
-        if (response.status === 404 && payload.code === "workspace_unavailable") {
+        if (!response.ok && payload.code === "workspace_unavailable") {
           leaveUnavailableWorkspace(response.status);
           return;
         }
@@ -702,7 +718,7 @@ function PipelinePageContent({
       {!hasActiveSessions ? (
         <div>
           <SessionsZeroState
-            onboarding={initialData.onboarding}
+            onboarding={onboarding}
             variant={hasEverHadSession ? "archived" : "first-run"}
             workspaceSlug={initialData.workspace.slug}
             newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}

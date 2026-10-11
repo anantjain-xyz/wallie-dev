@@ -7,7 +7,8 @@ const mocked = vi.hoisted(() => ({
   requireWorkspaceAccessById: vi.fn(),
 }));
 
-vi.mock("@/features/pipeline/data", () => ({
+vi.mock("@/features/pipeline/data", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/pipeline/data")>()),
   decodePipelineDashboardCursor: mocked.decodePipelineDashboardCursor,
   loadPipelineDashboardLanePage: mocked.loadPipelineDashboardLanePage,
   loadPipelineDashboardSnapshot: mocked.loadPipelineDashboardSnapshot,
@@ -16,6 +17,8 @@ vi.mock("@/features/pipeline/data", () => ({
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
+
+import { PipelineWorkspaceUnavailableError } from "@/features/pipeline/data";
 
 import { GET, POST } from "./route";
 
@@ -162,3 +165,21 @@ describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
     expect(response.status).toBe(500);
   });
 });
+
+it.each(["GET", "POST"])(
+  "returns workspace_unavailable when %s RPC loses membership after authorization",
+  async (method) => {
+    grantAccess();
+    mocked.decodePipelineDashboardCursor.mockReturnValue({
+      pipelineId: PIPELINE_ID,
+      stageId: STAGE_ID,
+    });
+    mocked.loadPipelineDashboardSnapshot.mockRejectedValue(new PipelineWorkspaceUnavailableError());
+    mocked.loadPipelineDashboardLanePage.mockRejectedValue(new PipelineWorkspaceUnavailableError());
+    const response = await (method === "GET"
+      ? GET(request(), routeContext())
+      : POST(request(), routeContext()));
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ code: "workspace_unavailable" });
+  },
+);

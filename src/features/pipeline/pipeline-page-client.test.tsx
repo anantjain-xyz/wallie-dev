@@ -71,8 +71,16 @@ vi.mock("@/features/sessions/components/session-detail-link", () => ({
 }));
 
 vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
-  SessionsZeroState: ({ variant }: { variant?: string }) => (
-    <p data-zero-state-variant={variant}>No sessions</p>
+  SessionsZeroState: ({
+    variant,
+    onboarding,
+  }: {
+    variant?: string;
+    onboarding?: { status: string } | null;
+  }) => (
+    <p data-zero-state-variant={variant} data-onboarding-status={onboarding?.status}>
+      No sessions
+    </p>
   ),
 }));
 
@@ -230,9 +238,16 @@ function installSupabaseMock() {
 }
 
 function snapshotResponse(data: PipelineDashboardData) {
-  return new Response(JSON.stringify({ lanes: data.lanes, hasAnySession: data.hasAnySession }), {
-    status: 200,
-  });
+  return new Response(
+    JSON.stringify({
+      lanes: data.lanes,
+      hasAnySession: data.hasAnySession,
+      onboarding: data.onboarding,
+    }),
+    {
+      status: 200,
+    },
+  );
 }
 
 function deferredResponse() {
@@ -361,7 +376,35 @@ describe("PipelinePageClient", () => {
     );
   });
 
-  it.each([401, 403, 404])(
+  it("refreshes the onboarding action state after reconnecting an empty board", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const empty = initialData([], []);
+    empty.lanes = [];
+    empty.onboarding = { currentStep: "github", status: "in_progress" };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          snapshotResponse({
+            ...empty,
+            onboarding: { currentStep: "verify", status: "completed" },
+          }),
+        ),
+    );
+    render(<PipelinePageClient initialData={empty} />);
+    expect(screen.getByText("No sessions").getAttribute("data-onboarding-status")).toBe(
+      "in_progress",
+    );
+    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(screen.getByText("No sessions").getAttribute("data-onboarding-status")).toBe(
+      "completed",
+    );
+  });
+
+  it.each([401, 403, 404, 409])(
     "leaves an unavailable workspace on recovery HTTP %s",
     async (status) => {
       vi.useFakeTimers();
@@ -413,7 +456,7 @@ describe("PipelinePageClient", () => {
     },
   );
 
-  it.each([401, 403, 404])(
+  it.each([401, 403, 404, 409])(
     "leaves the workspace when pagination loses membership with HTTP %s",
     async (status) => {
       installSupabaseMock();
