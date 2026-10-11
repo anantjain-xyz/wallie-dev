@@ -11,18 +11,18 @@ select ('ae000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
   stage.workspace_id, 99002030 + n, 'Execution contention ' || n, 'Exercise execution ownership locks',
   'c1b2c3d4-0001-4000-8000-000000000001', stage.pipeline_id, stage.id
 from public.pipeline_stages stage join public.pipelines pipeline on pipeline.id = stage.pipeline_id
-cross join generate_series(1, 4) n
+cross join generate_series(1, 6) n
 where stage.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' and pipeline.is_default and stage.slug = 'plan';
 insert into public.agent_jobs(id, workspace_id, session_id, stage_id, stage_slug, stage_name, trigger_type, status, attempt_count)
 select ('ae000000-0000-4000-8000-' || lpad((100 + n)::text, 12, '0'))::uuid,
   session.workspace_id, session.id, stage.id, stage.slug, stage.name, 'assignment', 'running', 1
-from generate_series(1, 4) n
+from generate_series(1, 6) n
 join public.sessions session on session.id = ('ae000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
 join public.pipeline_stages stage on stage.id = session.current_stage_id;
 insert into public.agent_runs(id, workspace_id, session_id, agent_job_id, stage_id, stage_slug, stage_name, model_provider, model_name, run_type)
 select ('ae000000-0000-4000-8000-' || lpad((200 + n)::text, 12, '0'))::uuid,
   job.workspace_id, job.session_id, job.id, job.stage_id, job.stage_slug, job.stage_name, 'codex', 'gpt-5.5', 'project'
-from generate_series(1, 4) n
+from generate_series(1, 6) n
 join public.agent_jobs job on job.id = ('ae000000-0000-4000-8000-' || lpad((100 + n)::text, 12, '0'))::uuid;
 
 create function public.test_start_ownership_fixture(fixture integer) returns uuid
@@ -33,6 +33,8 @@ language sql set search_path = '' as $$
   where job.id = ('ae000000-0000-4000-8000-' || lpad((100 + fixture)::text, 12, '0'))::uuid;
 $$;
 select public.test_start_ownership_fixture(4);
+select public.test_start_ownership_fixture(5);
+select public.test_start_ownership_fixture(6);
 
 create function public.test_execution_ownership_gate() returns trigger
 language plpgsql set search_path = '' as $$
@@ -50,6 +52,8 @@ begin
   elsif tg_table_name = 'session_artifacts' then
     if new.session_id = 'ae000000-0000-4000-8000-000000000004'::uuid then
       perform pg_catalog.pg_advisory_xact_lock(99002034);
+    elsif new.session_id = 'ae000000-0000-4000-8000-000000000005'::uuid then
+      perform pg_catalog.pg_advisory_xact_lock(99002035);
     end if;
   end if;
   return new;
@@ -61,6 +65,17 @@ create trigger execution_ownership_cancel_gate before update on public.agent_job
 for each row execute function public.test_execution_ownership_gate();
 create trigger execution_ownership_publish_gate before insert on public.session_artifacts
 for each row execute function public.test_execution_ownership_gate();
+create function public.test_publish_deadline_fixture(fixture integer) returns text
+language plpgsql set search_path = '' as $$
+begin
+  perform public.publish_session_job_attempt(
+    ('ae000000-0000-4000-8000-' || lpad((100+fixture)::text,12,'0'))::uuid,1,
+    ('ae000000-0000-4000-8000-' || lpad((200+fixture)::text,12,'0'))::uuid,0,
+    'must never be exposed',clock_timestamp()+interval '200 milliseconds');
+  return 'published';
+exception when sqlstate '57014' then return 'expired';
+end;
+$$;
 commit;
 begin;
 
@@ -165,6 +180,41 @@ select is((select artifact_json from public.session_artifacts where session_id =
 select is((select status::text from public.agent_jobs where id = 'ae000000-0000-4000-8000-000000000104'), 'success', 'racing failure completes the publishing job without requeue');
 select is((select status::text from public.agent_runs where id = 'ae000000-0000-4000-8000-000000000204'), 'success', 'racing failure preserves successful run history');
 
+-- Drain the previous successful publication's command completion.
+select count(*) from extensions.dblink_get_result('ownership_owner') as result(published boolean);
+select count(*) from extensions.dblink_get_result('ownership_contender') as result(outcome text);
+
+-- A request can pass its first deadline check and then wait inside a write.
+select extensions.dblink_exec('ownership_gate', 'do $$ begin perform pg_advisory_lock(99002035); end $$');
+select extensions.dblink_send_query('ownership_owner','select public.test_publish_deadline_fixture(5)');
+select pg_temp.wait_ownership_lock('execution_ownership_owner','advisory');
+select pg_sleep(0.25);
+select extensions.dblink_exec('ownership_gate', 'do $$ begin perform pg_advisory_unlock(99002035); end $$');
+select is((select outcome from extensions.dblink_get_result('ownership_owner') as result(outcome text)),
+  'expired','publication expiring during an artifact write aborts atomically');
+select count(*) from extensions.dblink_get_result('ownership_owner') as result(outcome text);
+
+-- A request sent before expiry can wait on the session ownership lock past it.
+select extensions.dblink_exec('ownership_gate','begin');
+select count(*) from extensions.dblink('ownership_gate',
+  'select id from public.sessions where id=''ae000000-0000-4000-8000-000000000006'' for update') as locked(id uuid);
+select extensions.dblink_send_query('ownership_owner','select public.test_publish_deadline_fixture(6)');
+select pg_temp.wait_ownership_lock('execution_ownership_owner');
+select pg_sleep(0.25);
+select extensions.dblink_exec('ownership_gate','commit');
+select is((select outcome from extensions.dblink_get_result('ownership_owner') as result(outcome text)),
+  'expired','publication rechecks wall time after acquiring ownership locks');
+select count(*) from extensions.dblink_get_result('ownership_owner') as result(outcome text);
+select is((select count(*) from public.session_artifacts where session_id in (
+  'ae000000-0000-4000-8000-000000000005','ae000000-0000-4000-8000-000000000006')),0::bigint,
+  'both expired RPCs leave no artifact');
+select is((select count(*) from public.sessions where id in (
+  'ae000000-0000-4000-8000-000000000005','ae000000-0000-4000-8000-000000000006') and phase_status='in_progress' and current_artifact_version=0),2::bigint,
+  'both expired RPCs preserve generation state and artifact pointers');
+select is((select count(*) from public.agent_runs where id in (
+  'ae000000-0000-4000-8000-000000000205','ae000000-0000-4000-8000-000000000206') and status='running'),2::bigint,
+  'neither expired RPC marks its run successful');
+
 select extensions.dblink_disconnect('ownership_gate');
 select extensions.dblink_disconnect('ownership_owner');
 select extensions.dblink_disconnect('ownership_contender');
@@ -177,7 +227,9 @@ drop trigger execution_ownership_cancel_gate on public.agent_jobs;
 drop trigger execution_ownership_publish_gate on public.session_artifacts;
 drop function public.test_execution_ownership_gate();
 drop function public.test_start_ownership_fixture(integer);
+drop function public.test_publish_deadline_fixture(integer);
 delete from public.sessions where id in (
   'ae000000-0000-4000-8000-000000000001', 'ae000000-0000-4000-8000-000000000002',
-  'ae000000-0000-4000-8000-000000000003', 'ae000000-0000-4000-8000-000000000004');
+  'ae000000-0000-4000-8000-000000000003', 'ae000000-0000-4000-8000-000000000004',
+  'ae000000-0000-4000-8000-000000000005', 'ae000000-0000-4000-8000-000000000006');
 commit;

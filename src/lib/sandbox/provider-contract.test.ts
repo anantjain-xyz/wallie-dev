@@ -100,6 +100,58 @@ describe("sandbox provider contract verifier", () => {
 });
 
 describe("sandbox provider lifecycle contract", () => {
+  it("rejects caller cancellation immediately and stops a provider's late acquisition", async () => {
+    const controller = new AbortController();
+    let finish!: (handle: SandboxHandle) => void;
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const started = vi.fn();
+    const pending = runBoundedSandboxProviderOperation({
+      provider: "e2b",
+      operation: "acquire",
+      signal: controller.signal,
+      run: () => {
+        started();
+        return new Promise<SandboxHandle>((resolve) => {
+          finish = resolve;
+        });
+      },
+      onLateSuccess: (handle) => handle.stop(),
+    });
+    await Promise.resolve();
+    expect(started).toHaveBeenCalledOnce();
+    const error = new Error("attempt expired");
+    const rejected = expect(pending).rejects.toBe(error);
+    controller.abort(error);
+    await rejected;
+    finish({ stop } as unknown as SandboxHandle);
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+
+  it("does not begin setup or publish an already canceled acquisition", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("expired before acquisition"));
+    const onSandboxCreated = vi.fn();
+    const stop = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      finalizeSandboxAcquisition({
+        handle: { stop } as unknown as SandboxHandle,
+        provider: "e2b",
+        repoAlreadyCloned: false,
+        request: {
+          agentProvider: "codex",
+          baseBranch: "main",
+          branch: "work",
+          installationToken: "gh",
+          repoFullName: "acme/app",
+          sessionId: "s",
+          signal: controller.signal,
+          onSandboxCreated,
+        },
+      }),
+    ).rejects.toThrow("expired before acquisition");
+    expect(onSandboxCreated).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledOnce();
+  });
   it.each(SANDBOX_PROVIDER_IDS)(
     "cleans up an acquired %s sandbox when publication fails",
     async (provider) => {
@@ -183,5 +235,42 @@ describe("sandbox provider lifecycle contract", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stops an acquired sandbox while its setup ignores cancellation", async () => {
+    let finish!: () => void;
+    let started!: () => void;
+    const preparing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    mockedPrepareSessionSandbox.mockImplementationOnce(() => {
+      started();
+      return new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const controller = new AbortController();
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const pending = finalizeSandboxAcquisition({
+      handle: { stop } as unknown as SandboxHandle,
+      provider: "e2b",
+      repoAlreadyCloned: false,
+      request: {
+        agentProvider: "codex",
+        baseBranch: "main",
+        branch: "work",
+        installationToken: "gh",
+        repoFullName: "acme/app",
+        sessionId: "s",
+        signal: controller.signal,
+      },
+    });
+    await preparing;
+    const rejected = expect(pending).rejects.toThrow("attempt expired");
+    controller.abort(new Error("attempt expired"));
+    expect(stop).toHaveBeenCalledOnce();
+    finish();
+    await rejected;
+    expect(stop).toHaveBeenCalledOnce();
   });
 });

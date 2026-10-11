@@ -504,3 +504,14 @@ describe("parseOpenCodeProviderId", () => {
     });
   });
 });
+
+describe("Claude max_turns configuration", () => {
+  it("accepts the supported turn budget and publishes its default", () => {
+    expect(isAgentConfigKey("max_turns")).toBe(true);
+    expect(parseAgentConfigValue("max_turns", 17)).toEqual({ ok: true, value: 17 });
+    expect(getRecommendedAgentConfigDefault("max_turns")).toBe(5);
+  });
+  it.each([0, 101, 1.5, "5", null])("rejects unsupported budget %j", (value) => {
+    expect(parseAgentConfigValue("max_turns", value).ok).toBe(false);
+  });
+});

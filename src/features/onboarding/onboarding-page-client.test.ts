@@ -1685,6 +1685,7 @@ describe("OnboardingPageClient", () => {
       agent_provider: "codex",
       concurrency_limit: "1",
       max_retries: "3",
+      max_turns: "5",
       stall_timeout_ms: "300000",
     };
 

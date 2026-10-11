@@ -50,7 +50,7 @@ export class CodexRunner implements AgentRunner {
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const safety = new AgentOutputSafety(input.secrets);
-    return safety.events(this.startUnsafe(input, safety));
+    return safety.events(this.startUnsafe(input, safety), input.signal);
   }
 
   private async *startUnsafe(
@@ -69,17 +69,20 @@ export class CodexRunner implements AgentRunner {
     const codexHome = `${directory}/codex`;
 
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
+    input.signal?.throwIfAborted();
     if (this.options.loadCredential || this.options.credential?.type !== "codex_access_token") {
       await ensureCodexHome(sandbox, codexHome, safety);
     }
 
     // All nonsecret remote setup precedes the current authorization read.
     // The next remote operation sends this credential, without another setup await.
+    input.signal?.throwIfAborted();
     const credential = this.options.loadCredential
       ? await this.options.loadCredential()
       : this.options.credential;
     if (!credential?.secret) throw new Error("CodexRunner requires a Codex credential.");
     safety.addSecret(credential.secret);
+    input.signal?.throwIfAborted();
     if (credential.type === "chatgpt_auth_json") {
       const store = this.options.chatGptAuthStore;
       if (!store) {
@@ -91,6 +94,7 @@ export class CodexRunner implements AgentRunner {
         ? credential
         : await store.loadChatGptAuth({ userId: credential.userId });
       safety.addSecret(currentCredential.secret);
+      input.signal?.throwIfAborted();
       yield* this.runWithChatGptAuth(
         input,
         currentCredential,
@@ -175,6 +179,7 @@ export class CodexRunner implements AgentRunner {
     const { codexHome, promptFile } = paths;
     const codexAuthFile = `${codexHome}/auth.json`;
     await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
+    input.signal?.throwIfAborted();
 
     const proc = await sandbox.exec(
       "bash",

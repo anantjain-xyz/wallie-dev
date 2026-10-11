@@ -1,6 +1,8 @@
 import { workerControlEnvSchema } from "@/env/worker";
 
 export type WorkerConfig = {
+  /** Hard wall-clock limit for an attempt, including setup and cleanup. */
+  jobTimeoutMs: number;
   /** Optional local operator socket; disabled when unset. */
   controlSocketPath?: string;
   /** How often the worker polls for queued jobs (milliseconds). */
@@ -33,6 +35,7 @@ const DEFAULT_MAX_CONCURRENT_JOBS = 10;
 export function parseWorkerConfig(): WorkerConfig {
   const controlEnv = workerControlEnvSchema.parse(process.env);
   return {
+    jobTimeoutMs: controlEnv.WORKER_JOB_TIMEOUT_MS,
     controlSocketPath: controlEnv.WORKER_CONTROL_SOCKET,
     pollIntervalMs: 2_000,
     heartbeatIntervalMs: 10_000,
