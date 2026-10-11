@@ -275,6 +275,50 @@ describe("startRepositoryOnboarding", () => {
     expect(f.upserts).toHaveLength(1);
   });
 
+  it("surfaces a failed setup request without persisting a generic error", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    await expect(
+      start(
+        f,
+        setupGitHub({
+          afterMutation: () => {
+            throw new Error("GitHub unavailable");
+          },
+        }),
+      ),
+    ).rejects.toThrow("GitHub unavailable");
+    expect(f.state.onboardingRow).toBeNull();
+    expect(f.upserts).toEqual([]);
+  });
+
+  it("preserves a concurrent setup identity when this request fails", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    await expect(
+      start(
+        f,
+        setupGitHub({
+          afterMutation: () => {
+            f.state.onboardingRow = {
+              setup_branch_name: "wallie/setup-concurrent",
+              setup_pr_number: 24,
+              setup_pr_state: "merged",
+              status: "ready",
+            };
+            throw new Error("GitHub unavailable");
+          },
+        }),
+      ),
+    ).rejects.toThrow("GitHub unavailable");
+    expect(f.state.onboardingRow).toEqual({
+      setup_branch_name: "wallie/setup-concurrent",
+      setup_pr_number: 24,
+      setup_pr_state: "merged",
+      status: "ready",
+    });
+    expect(f.upserts).toEqual([]);
+    expect(f.admin.rpc).not.toHaveBeenCalled();
+  });
+
   it("refuses malformed provider state without erasing its saved PR identity", async () => {
     const f = buildAdmin({ onboardingRow: null });
     await expect(
