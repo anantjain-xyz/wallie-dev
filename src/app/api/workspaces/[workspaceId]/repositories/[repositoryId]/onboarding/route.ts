@@ -37,6 +37,9 @@ async function authorize(context: RouteContext) {
 }
 
 function manualReadyErrorResponse(error: unknown) {
+  if (error instanceof WorkspaceDeletingError) {
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
   const message = error instanceof Error ? error.message : null;
   if (message === "Repository not found.") {
     return NextResponse.json({ error: message }, { status: 404 });
