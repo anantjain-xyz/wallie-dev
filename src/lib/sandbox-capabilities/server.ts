@@ -2,10 +2,9 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { resolveGitHubAppConfig } from "@/features/github/config";
+import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { getClaudeCodeCredentialForUser } from "@/lib/claude-code/tokens";
 import { getCodexCredentialForUser } from "@/lib/codex/tokens";
@@ -116,12 +115,11 @@ async function mintInstallationToken(
   if (error) throw error;
   if (!installation) throw new Error("GitHub installation not found for repository.");
 
-  const app = new App(resolveGitHubAppConfig());
-  const { data } = await app.octokit.request(
-    "POST /app/installations/{installation_id}/access_tokens",
-    { installation_id: installation.installation_id },
-  );
-  return data.token;
+  return mintSandboxRepositoryToken({
+    installationId: installation.installation_id,
+    repositoryFullName: repository.full_name,
+    purpose: "capability-check",
+  });
 }
 
 async function insertRunningCheck(input: {

@@ -549,6 +549,7 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 | `pnpm format:check`                      | Check formatting                                                                                |
 | `pnpm typecheck`                         | TypeScript type check                                                                           |
 | `pnpm db:types`                          | Regenerate local Supabase database types                                                        |
+| `pnpm db:types:check`                    | Compare generated local schema types with the committed file without rewriting it               |
 | `pnpm analyze:authenticated-bundle`      | Analyze authenticated-route client bundles                                                      |
 | `pnpm check:route-budgets`               | Check built route bundles against committed byte budgets                                        |
 | `pnpm check`                             | Full pre-PR gate: `check:fast` (validation, format, lint, typecheck, privileged imports) + test |

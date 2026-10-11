@@ -5,14 +5,12 @@ import {
   type CodexCredential,
 } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
 
-const PROMPT_FILE_NAME = ".wallie-prompt.txt";
-const CODEX_HOME_DIR = ".codex";
-const CODEX_AUTH_FILE_NAME = "auth.json";
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
 
@@ -50,7 +48,15 @@ export class CodexRunner implements AgentRunner {
     }
   }
 
-  async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+  start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+    const safety = new AgentOutputSafety(input.secrets);
+    return safety.events(this.startUnsafe(input, safety));
+  }
+
+  private async *startUnsafe(
+    input: AgentRunnerStartInput,
+    safety: AgentOutputSafety,
+  ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
       throw new Error("CodexRunner requires a sandbox.");
@@ -58,12 +64,13 @@ export class CodexRunner implements AgentRunner {
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
-    const promptFile = promptFileFor(sandbox);
-    const codexHome = codexHomeFor(sandbox);
+    const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
+    const promptFile = `${directory}/prompt.txt`;
+    const codexHome = `${directory}/codex`;
 
-    await sandbox.writeFile(promptFile, input.prompt);
+    await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
     if (this.options.loadCredential || this.options.credential?.type !== "codex_access_token") {
-      await ensureCodexHome(sandbox, codexHome);
+      await ensureCodexHome(sandbox, codexHome, safety);
     }
 
     // All nonsecret remote setup precedes the current authorization read.
@@ -72,6 +79,7 @@ export class CodexRunner implements AgentRunner {
       ? await this.options.loadCredential()
       : this.options.credential;
     if (!credential?.secret) throw new Error("CodexRunner requires a Codex credential.");
+    safety.addSecret(credential.secret);
     if (credential.type === "chatgpt_auth_json") {
       const store = this.options.chatGptAuthStore;
       if (!store) {
@@ -82,7 +90,14 @@ export class CodexRunner implements AgentRunner {
       const currentCredential = this.options.loadCredential
         ? credential
         : await store.loadChatGptAuth({ userId: credential.userId });
-      yield* this.runWithChatGptAuth(input, currentCredential, store);
+      safety.addSecret(currentCredential.secret);
+      yield* this.runWithChatGptAuth(
+        input,
+        currentCredential,
+        store,
+        { codexHome, promptFile },
+        safety,
+      );
       return;
     }
 
@@ -134,7 +149,7 @@ export class CodexRunner implements AgentRunner {
     if (code !== 0) {
       yield {
         type: "error",
-        message: codexExitErrorMessage(code, stderrBuf),
+        message: codexExitErrorMessage(code, safety.redact(stderrBuf)),
       };
     }
 
@@ -149,15 +164,16 @@ export class CodexRunner implements AgentRunner {
     input: AgentRunnerStartInput,
     credential: ChatGptCodexCredential,
     store: CodexChatGptAuthStore,
+    paths: { codexHome: string; promptFile: string },
+    safety: AgentOutputSafety,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) return;
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
-    const promptFile = promptFileFor(sandbox);
-    const codexHome = codexHomeFor(sandbox);
-    const codexAuthFile = codexAuthFileFor(sandbox);
+    const { codexHome, promptFile } = paths;
+    const codexAuthFile = `${codexHome}/auth.json`;
     await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
 
     const proc = await sandbox.exec(
@@ -195,7 +211,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     const code = await proc.exitCode;
-    const errorMessage = code === 0 ? null : codexExitErrorMessage(code, stderrBuf);
+    const errorMessage = code === 0 ? null : codexExitErrorMessage(code, safety.redact(stderrBuf));
     if (errorMessage && isAuthFailure(errorMessage)) {
       await store.markChatGptAuthReconnectRequired({
         previousCredentialGeneration: credential.credentialGeneration,
@@ -208,6 +224,8 @@ export class CodexRunner implements AgentRunner {
         credential,
         sandbox,
         store,
+        authFile: codexAuthFile,
+        safety,
       });
     }
 
@@ -371,18 +389,6 @@ function codexCredentialEnv(credential: CodexCredential): Record<string, string>
   }
 }
 
-function promptFileFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>): string {
-  return `${sandbox.repoPath}/${PROMPT_FILE_NAME}`;
-}
-
-function codexHomeFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>): string {
-  return `${sandbox.repoPath}/${CODEX_HOME_DIR}`;
-}
-
-function codexAuthFileFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>): string {
-  return `${codexHomeFor(sandbox)}/${CODEX_AUTH_FILE_NAME}`;
-}
-
 function codexCommandForCredential(
   model: string,
   effort: AgentEffort,
@@ -406,12 +412,15 @@ function codexCommandForCredential(
 
 async function persistRefreshedChatGptAuthJson(input: {
   credential: ChatGptCodexCredential;
+  authFile: string;
+  safety: AgentOutputSafety;
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>;
   store: CodexChatGptAuthStore;
 }) {
-  const refreshedAuthJson = await input.sandbox.readFile(codexAuthFileFor(input.sandbox));
+  const refreshedAuthJson = await input.sandbox.readFile(input.authFile);
   if (!refreshedAuthJson || refreshedAuthJson === input.credential.secret) return;
 
+  input.safety.addSecret(refreshedAuthJson);
   const metadata = parseCodexChatGptAuthJson(refreshedAuthJson);
   await input.store.persistChatGptAuthJson({
     authJson: refreshedAuthJson,
@@ -462,6 +471,7 @@ function codexExecCommand(
 async function ensureCodexHome(
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>,
   codexHome: string,
+  safety: AgentOutputSafety,
 ) {
   const proc = await sandbox.exec("bash", ["-lc", `mkdir -p ${shellQuote(codexHome)}`], {
     cwd: sandbox.repoPath,
@@ -474,7 +484,9 @@ async function ensureCodexHome(
 
   const code = await proc.exitCode;
   if (code !== 0) {
-    throw new Error(`Failed to create Codex auth directory: ${stderr.slice(0, 500)}`);
+    throw new Error(
+      `Failed to create Codex auth directory: ${safety.redact(stderr).slice(0, 500)}`,
+    );
   }
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import { harnessPath, runnerCalls } from "./test-helpers";
 
 import { OpenCodeRunner, parseOpenCodeLine } from "./opencode";
 
@@ -68,15 +69,15 @@ describe("OpenCodeRunner", () => {
 
       await promptWriteStarted;
       expect(loadAuth).not.toHaveBeenCalled();
-      expect(sandbox.calls).toHaveLength(0);
+      expect(runnerCalls(sandbox)).toHaveLength(0);
       activeMember = false;
       finishPromptWrite();
 
       await expect(running).rejects.toThrow("Session creator is no longer an active member");
       expect(loadAuth).toHaveBeenCalledOnce();
       expect(write).toHaveBeenCalledTimes(1);
-      expect(sandbox.files.has("/tmp/wallie-opencode-revoked/data/opencode/auth.json")).toBe(false);
-      expect(sandbox.calls).toHaveLength(0);
+      expect(sandbox.files.has(harnessPath(sandbox, "data/opencode/auth.json"))).toBe(false);
+      expect(runnerCalls(sandbox)).toHaveLength(0);
     },
   );
 
@@ -99,8 +100,8 @@ describe("OpenCodeRunner", () => {
         })(),
       ).rejects.toThrow(/requires an .*API key/);
 
-      expect(sandbox.files.has("/tmp/wallie-opencode-missing/data/opencode/auth.json")).toBe(false);
-      expect(sandbox.calls).toHaveLength(0);
+      expect(sandbox.files.has(harnessPath(sandbox, "data/opencode/auth.json"))).toBe(false);
+      expect(runnerCalls(sandbox)).toHaveLength(0);
     },
   );
 
@@ -139,7 +140,7 @@ describe("OpenCodeRunner", () => {
       events.push(event);
     }
 
-    const authPath = "/tmp/wallie-opencode-refreshed/data/opencode/auth.json";
+    const authPath = harnessPath(sandbox, "data/opencode/auth.json");
     expect(await sandbox.readFile(authPath)).toBe(
       `${JSON.stringify({
         opencode: { type: "api", key: freshZenSecret },
@@ -148,9 +149,9 @@ describe("OpenCodeRunner", () => {
     );
     expect(sandbox.files.get(authPath)?.mode).toBe(0o600);
     expect(loadAuth).toHaveBeenCalledOnce();
-    expect(sandbox.calls).toHaveLength(1);
-    expect(JSON.stringify(sandbox.calls)).not.toContain(freshZenSecret);
-    expect(JSON.stringify(sandbox.calls)).not.toContain(freshProviderSecret);
+    expect(runnerCalls(sandbox)).toHaveLength(1);
+    expect(JSON.stringify(runnerCalls(sandbox))).not.toContain(freshZenSecret);
+    expect(JSON.stringify(runnerCalls(sandbox))).not.toContain(freshProviderSecret);
     expect(events).toContainEqual({ type: "text", text: "[REDACTED] [REDACTED]" });
     expect(JSON.stringify(events)).not.toContain(freshZenSecret);
     expect(JSON.stringify(events)).not.toContain(freshProviderSecret);
@@ -200,8 +201,8 @@ describe("OpenCodeRunner", () => {
       },
     ]);
 
-    const authPath = "/tmp/wallie-opencode-run-1/data/opencode/auth.json";
-    const promptPath = "/tmp/wallie-opencode-run-1/prompt.txt";
+    const authPath = harnessPath(sandbox, "data/opencode/auth.json");
+    const promptPath = harnessPath(sandbox, "prompt.txt");
     expect(await sandbox.readFile(authPath)).toBe(
       `${JSON.stringify({ opencode: { type: "api", key: credential.secret } })}\n`,
     );
@@ -209,7 +210,7 @@ describe("OpenCodeRunner", () => {
     expect(await sandbox.readFile(promptPath)).toBe("Implement it");
     expect(sandbox.files.get(promptPath)?.mode).toBe(0o600);
 
-    const [call] = sandbox.calls;
+    const [call] = runnerCalls(sandbox);
     expect(call.cmd).toBe("bash");
     expect(call.args[1]).toContain(
       "opencode 'run' '--format' 'json' '--model' 'opencode/gpt-5.6-sol'",
@@ -220,7 +221,7 @@ describe("OpenCodeRunner", () => {
     expect(call.args.join(" ")).not.toContain(credential.secret);
     expect(call.opts.env).toMatchObject({
       CI: "1",
-      XDG_DATA_HOME: "/tmp/wallie-opencode-run-1/data",
+      XDG_DATA_HOME: harnessPath(sandbox, "data"),
     });
     expect(JSON.stringify(call.opts)).not.toContain(credential.secret);
   });
@@ -252,12 +253,12 @@ describe("OpenCodeRunner", () => {
     expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
     expect(JSON.stringify(events)).not.toContain(providerSecret);
 
-    const authPath = "/tmp/wallie-opencode-run-go/data/opencode/auth.json";
+    const authPath = harnessPath(sandbox, "data/opencode/auth.json");
     expect(await sandbox.readFile(authPath)).toBe(
       `${JSON.stringify({ "opencode-go": { type: "api", key: providerSecret } })}\n`,
     );
-    expect(sandbox.calls[0].args[1]).toContain("'--model' 'opencode-go/glm-5.3'");
-    expect(JSON.stringify(sandbox.calls[0].opts)).not.toContain(providerSecret);
+    expect(runnerCalls(sandbox)[0].args[1]).toContain("'--model' 'opencode-go/glm-5.3'");
+    expect(JSON.stringify(runnerCalls(sandbox)[0].opts)).not.toContain(providerSecret);
   });
 
   it("keeps the Zen entry when a custom provider model also has a Zen key", async () => {
@@ -281,7 +282,7 @@ describe("OpenCodeRunner", () => {
       void event;
     }
 
-    expect(await sandbox.readFile("/tmp/wallie-opencode-run-both/data/opencode/auth.json")).toBe(
+    expect(await sandbox.readFile(harnessPath(sandbox, "data/opencode/auth.json"))).toBe(
       `${JSON.stringify({
         opencode: { type: "api", key: credential.secret },
         "opencode-go": { type: "api", key: providerSecret },

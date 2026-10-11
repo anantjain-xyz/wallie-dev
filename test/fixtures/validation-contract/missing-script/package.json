@@ -15,6 +15,7 @@
     "test:e2e:onboarding": "fixture",
     "test:e2e:responsive": "fixture",
     "test:e2e:session-prefetch": "fixture",
-    "verify:validation": "tsx scripts/verify-validation-contract.ts"
+    "verify:validation": "tsx scripts/verify-validation-contract.ts",
+    "db:types:check": "tsx scripts/check-db-types-drift.ts"
   }
 }

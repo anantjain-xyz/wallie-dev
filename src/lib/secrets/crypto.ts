@@ -56,7 +56,7 @@ export function buildSecretPreview(value: string) {
     return null;
   }
 
-  return trimmed.length > 6 ? `...${trimmed.slice(-6)}` : trimmed;
+  return trimmed.length > 6 ? `...${trimmed.slice(-6)}` : "••••";
 }
 
 export function encryptSecretValue(

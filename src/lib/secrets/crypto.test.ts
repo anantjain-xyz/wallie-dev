@@ -67,8 +67,18 @@ describe("secret previews", () => {
     expect(buildSecretPreview("provider-secret-value")).toBe("...-value");
   });
 
-  it("returns the whole value for short secrets and null for empty input", () => {
-    expect(buildSecretPreview("abcd")).toBe("abcd");
+  it.each(["a", "abcd", "123456", "...abc", " 123456 "])(
+    "masks the entire short secret %j",
+    (secret) => {
+      expect(buildSecretPreview(secret)).toBe("••••");
+    },
+  );
+
+  it("keeps a suffix only when at least one secret character remains hidden", () => {
+    expect(buildSecretPreview("1234567")).toBe("...234567");
+  });
+
+  it("has no preview for empty input", () => {
     expect(buildSecretPreview("   ")).toBeNull();
   });
 });

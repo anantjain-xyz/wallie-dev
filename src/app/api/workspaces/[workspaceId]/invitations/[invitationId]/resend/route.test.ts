@@ -95,6 +95,8 @@ function mutationQuery(result: unknown) {
     eq: vi.fn(() => query),
     select: vi.fn(() => query),
     single: vi.fn(() => Promise.resolve(result)),
+    maybeSingle: vi.fn(() => Promise.resolve(result)),
+    then: (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve),
     update: vi.fn(() => query),
   };
   return query;
@@ -145,6 +147,23 @@ describe("POST /api/workspaces/[workspaceId]/invitations/[invitationId]/resend",
         email: "new@example.com",
       }),
     );
+  });
+
+  it("returns a conflict without sending email when the pending version changed", async () => {
+    setupDefaults();
+    wireFrom(
+      selectMaybeQuery({ data: pendingInvitation, error: null }),
+      mutationQuery({ data: null, error: null }),
+    );
+    const response = await POST(
+      new Request(
+        `http://localhost/api/workspaces/${WORKSPACE_ID}/invitations/${INVITATION_ID}/resend`,
+        { method: "POST" },
+      ),
+      routeContext(),
+    );
+    expect(response.status).toBe(409);
+    expect(mocked.sendWorkspaceInvitationEmail).not.toHaveBeenCalled();
   });
 
   it("restores the previous token fields when email delivery fails", async () => {

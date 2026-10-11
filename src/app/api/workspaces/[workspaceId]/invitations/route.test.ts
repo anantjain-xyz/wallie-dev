@@ -108,6 +108,8 @@ function mutationQuery(result: unknown) {
     insert: vi.fn(() => query),
     select: vi.fn(() => query),
     single: vi.fn(() => Promise.resolve(result)),
+    maybeSingle: vi.fn(() => Promise.resolve(result)),
+    then: (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve),
     update: vi.fn(() => query),
   };
   return query;
@@ -201,6 +203,24 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
       }),
     );
   });
+
+  it.each([false, true])(
+    "returns conflict without email after a concurrent mutation (create: %s)",
+    async (create) => {
+      setupDefaults();
+      wireFrom(
+        selectMaybeQuery({ data: null, error: null }),
+        selectMaybeQuery({ data: create ? null : savedInvitation, error: null }),
+        mutationQuery({ data: null, error: create ? { code: "23505" } : null }),
+      );
+      const response = await POST(
+        requestWith({ email: "new@example.com", fullName: "New Person" }),
+        routeContext(),
+      );
+      expect(response.status).toBe(409);
+      expect(mocked.sendWorkspaceInvitationEmail).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects inviting an already active member", async () => {
     setupDefaults();

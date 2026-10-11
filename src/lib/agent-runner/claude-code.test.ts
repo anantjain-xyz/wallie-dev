@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import { harnessPath, runnerCalls } from "./test-helpers";
 
 import { ClaudeCodeRunner, parseStreamJsonLine } from "./claude-code";
 
@@ -69,9 +70,9 @@ describe("ClaudeCodeRunner", () => {
       { type: "completion", taskComplete: true, summary: "Claude Code session: sess-42" },
     ]);
 
-    expect(await sandbox.readFile("/vercel/sandbox/.wallie-prompt.txt")).toBe("Make it so");
+    expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Make it so");
 
-    const [call] = sandbox.calls;
+    const [call] = runnerCalls(sandbox);
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
     expect(call.args[1]).toContain("'--model' 'claude-opus-4-8[1m]'");
@@ -84,7 +85,7 @@ describe("ClaudeCodeRunner", () => {
     expect(call.args[1]).toContain("'--permission-mode' 'bypassPermissions'");
     expect(call.args[1]).toContain("'--resume' 'prev-session'");
     expect(call.args[1]).not.toContain("'--stdin'");
-    expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
+    expect(call.args[1]).toContain(`< '${harnessPath(sandbox, "prompt.txt")}'`);
     expect(call.opts.env).toMatchObject({
       ANTHROPIC_API_KEY: "sk-ant-test",
       CI: "1",
@@ -134,7 +135,7 @@ describe("ClaudeCodeRunner", () => {
     await started;
     expect(loadCredential).not.toHaveBeenCalled();
     expect(readOriginalSecret).not.toHaveBeenCalled();
-    expect(sandbox.calls).toHaveLength(0);
+    expect(runnerCalls(sandbox)).toHaveLength(0);
 
     activeMember = false;
     const rejected = expect(run).rejects.toThrow(/no longer active/);
@@ -143,7 +144,7 @@ describe("ClaudeCodeRunner", () => {
 
     expect(loadCredential).toHaveBeenCalledOnce();
     expect(readOriginalSecret).not.toHaveBeenCalled();
-    expect(sandbox.calls).toHaveLength(0);
+    expect(runnerCalls(sandbox)).toHaveLength(0);
     expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual(["p"]);
   });
 
@@ -151,7 +152,7 @@ describe("ClaudeCodeRunner", () => {
     const sandbox = new FakeSandbox();
     let secret = "fresh-anthropic-key";
     const loadCredential = vi.fn(async () => {
-      expect(sandbox.files.has("/vercel/sandbox/.wallie-prompt.txt")).toBe(true);
+      expect(sandbox.files.has(harnessPath(sandbox, "prompt.txt"))).toBe(true);
       return { secret };
     });
     const runner = new ClaudeCodeRunner({ loadCredential });
@@ -165,9 +166,13 @@ describe("ClaudeCodeRunner", () => {
     }
 
     expect(loadCredential).toHaveBeenCalledTimes(2);
-    expect(sandbox.calls).toHaveLength(2);
-    expect(sandbox.calls[0]?.opts.env).toMatchObject({ ANTHROPIC_API_KEY: "fresh-anthropic-key" });
-    expect(sandbox.calls[1]?.opts.env).toMatchObject({ ANTHROPIC_API_KEY: "newer-anthropic-key" });
+    expect(runnerCalls(sandbox)).toHaveLength(2);
+    expect(runnerCalls(sandbox)[0]?.opts.env).toMatchObject({
+      ANTHROPIC_API_KEY: "fresh-anthropic-key",
+    });
+    expect(runnerCalls(sandbox)[1]?.opts.env).toMatchObject({
+      ANTHROPIC_API_KEY: "newer-anthropic-key",
+    });
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {

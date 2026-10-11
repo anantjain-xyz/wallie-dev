@@ -3,9 +3,8 @@ import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CURSOR_MODEL } from "./types";
-
-const PROMPT_FILE_NAME = ".wallie-cursor-prompt.txt";
 
 export interface CursorRunnerOptions {
   /** Pre-resolved credentials; session callers use loadCredential. */
@@ -26,10 +25,19 @@ export class CursorRunner implements AgentRunner {
     }
   }
 
-  async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+  start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+    const safety = new AgentOutputSafety(input.secrets);
+    return safety.events(this.startUnsafe(input, safety));
+  }
+
+  private async *startUnsafe(
+    input: AgentRunnerStartInput,
+    safety: AgentOutputSafety,
+  ): AsyncIterable<AgentEvent> {
     if (!input.sandbox) throw new Error("CursorRunner requires a sandbox.");
     const sandbox = input.sandbox;
-    const promptFile = `${sandbox.repoPath}/${PROMPT_FILE_NAME}`;
+    const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
+    const promptFile = `${directory}/prompt.txt`;
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
 
     const args = [
@@ -54,6 +62,7 @@ export class CursorRunner implements AgentRunner {
       ? await this.options.loadCredential()
       : this.options.credential;
     if (!credential?.secret) throw new Error("CursorRunner requires a Cursor API key.");
+    safety.addSecret(credential.secret);
 
     const proc = await sandbox.exec("bash", ["-lc", command], {
       cwd: sandbox.repoPath,

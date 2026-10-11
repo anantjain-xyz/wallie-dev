@@ -272,8 +272,14 @@ describe("Codex subscription auth reload", () => {
     });
     expect(from).not.toHaveBeenCalled();
     expect(mocked.decryptSecretValue).not.toHaveBeenCalled();
-    expect([...sandbox.files.keys()]).toEqual([`${sandbox.repoPath}/.wallie-prompt.txt`]);
+    expect([...sandbox.files.keys()]).toEqual([
+      expect.stringMatching(/^\/tmp\/wallie-codex-[^/]+\/prompt\.txt$/),
+    ]);
     expect(sandbox.calls).toEqual([
+      expect.objectContaining({
+        cmd: "mkdir",
+        args: ["-m", "700", expect.stringMatching(/^\/tmp\/wallie-codex-/)],
+      }),
       expect.objectContaining({ args: ["-lc", expect.stringMatching(/^mkdir -p /)] }),
     ]);
   });

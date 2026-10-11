@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import { harnessPath, runnerCalls } from "./test-helpers";
 
 import { CursorRunner, parseCursorStreamJsonLine } from "./cursor";
 
@@ -39,12 +40,10 @@ describe("CursorRunner", () => {
       { text: "working", type: "text" },
       { summary: "done", finalOutput: "done", taskComplete: true, type: "completion" },
     ]);
-    expect(await sandbox.readFile("/vercel/sandbox/.wallie-cursor-prompt.txt")).toBe(
-      "Implement this",
-    );
-    expect(sandbox.calls[0]?.args[1]).toContain("'--model' 'composer-2'");
-    expect(sandbox.calls[0]?.args[1]).toContain("'--resume' 'previous'");
-    expect(sandbox.calls[0]?.opts.env).toMatchObject({
+    expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Implement this");
+    expect(runnerCalls(sandbox)[0]?.args[1]).toContain("'--model' 'composer-2'");
+    expect(runnerCalls(sandbox)[0]?.args[1]).toContain("'--resume' 'previous'");
+    expect(runnerCalls(sandbox)[0]?.opts.env).toMatchObject({
       CI: "1",
       CURSOR_API_KEY: "cursor-key",
     });
@@ -97,7 +96,7 @@ describe("CursorRunner", () => {
     await started;
     expect(loadCredential).not.toHaveBeenCalled();
     expect(readOriginalSecret).not.toHaveBeenCalled();
-    expect(sandbox.calls).toHaveLength(0);
+    expect(runnerCalls(sandbox)).toHaveLength(0);
 
     activeMember = false;
     const rejected = expect(run).rejects.toThrow(/no longer active/);
@@ -106,7 +105,7 @@ describe("CursorRunner", () => {
 
     expect(loadCredential).toHaveBeenCalledOnce();
     expect(readOriginalSecret).not.toHaveBeenCalled();
-    expect(sandbox.calls).toHaveLength(0);
+    expect(runnerCalls(sandbox)).toHaveLength(0);
     expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual(["p"]);
   });
 
@@ -123,8 +122,8 @@ describe("CursorRunner", () => {
       { exitCode: 1 },
     );
     const loadCredential = vi.fn(async () => {
-      expect(sandbox.files.has("/vercel/sandbox/.wallie-cursor-prompt.txt")).toBe(true);
-      expect(sandbox.calls).toHaveLength(0);
+      expect(sandbox.files.has(harnessPath(sandbox, "prompt.txt"))).toBe(true);
+      expect(runnerCalls(sandbox)).toHaveLength(0);
       return currentCredential;
     });
     const onAuthenticationFailure = vi.fn();
@@ -136,9 +135,9 @@ describe("CursorRunner", () => {
     }
 
     expect(loadCredential).toHaveBeenCalledOnce();
-    expect(sandbox.calls).toHaveLength(1);
-    expect(sandbox.calls[0]?.opts.env).toMatchObject({ CURSOR_API_KEY: "fresh-cursor-key" });
-    expect(sandbox.calls[0]?.opts.env?.CURSOR_API_KEY).not.toBe(credential.secret);
+    expect(runnerCalls(sandbox)).toHaveLength(1);
+    expect(runnerCalls(sandbox)[0]?.opts.env).toMatchObject({ CURSOR_API_KEY: "fresh-cursor-key" });
+    expect(runnerCalls(sandbox)[0]?.opts.env?.CURSOR_API_KEY).not.toBe(credential.secret);
     expect(onAuthenticationFailure).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("401 invalid api key [REDACTED]"),
       currentCredential,
@@ -163,7 +162,7 @@ describe("CursorRunner", () => {
     await expect(consume()).rejects.toThrow(/no longer active/);
 
     expect(loadCredential).toHaveBeenCalledTimes(2);
-    expect(sandbox.calls).toHaveLength(1);
+    expect(runnerCalls(sandbox)).toHaveLength(1);
   });
 
   it("marks the connection for reconnect after an authentication failure", async () => {
