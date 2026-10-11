@@ -20,6 +20,7 @@ vi.mock("@/lib/repo-onboarding/server", () => ({
   startRepositoryOnboarding: mocked.startRepositoryOnboarding,
 }));
 
+import { WorkspaceDeletingError } from "@/lib/workspaces/resource-operations";
 import * as repositoryOnboardingRoute from "./route";
 import { PATCH, POST } from "./route";
 
@@ -84,6 +85,40 @@ describe("repository onboarding route", () => {
       repositoryId: REPOSITORY_ID,
       workspaceId: WORKSPACE_ID,
     });
+  });
+
+  it("returns a conflict when deletion starts after authorization succeeds", async () => {
+    grantAccess();
+    const admin = {};
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.startRepositoryOnboarding.mockRejectedValueOnce(new WorkspaceDeletingError());
+
+    const response = await POST(
+      new Request("http://localhost", { method: "POST" }),
+      routeContext(),
+    );
+
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith(WORKSPACE_ID, {
+      requireManager: true,
+    });
+    expect(mocked.startRepositoryOnboarding).toHaveBeenCalledWith({
+      admin,
+      repositoryId: REPOSITORY_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Workspace deletion is in progress." });
+  });
+
+  it("does not classify unexpected onboarding failures as deletion conflicts", async () => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValue({});
+    const failure = new Error("GitHub unavailable");
+    mocked.startRepositoryOnboarding.mockRejectedValueOnce(failure);
+
+    await expect(
+      POST(new Request("http://localhost", { method: "POST" }), routeContext()),
+    ).rejects.toBe(failure);
   });
 
   it("marks repository onboarding ready manually", async () => {
