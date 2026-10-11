@@ -334,7 +334,7 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: `Unknown approver member IDs: ${UNKNOWN_MEMBER_ID}`,
+      error: `Approvers must be active human workspace members: ${UNKNOWN_MEMBER_ID}`,
       invalidApproverMemberIds: [UNKNOWN_MEMBER_ID],
     });
   });
