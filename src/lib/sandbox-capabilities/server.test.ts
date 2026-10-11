@@ -293,6 +293,14 @@ describe("completeSandboxCapabilityCheck", () => {
       workspaceId: "workspace-1",
     });
 
+    expect(mocked.octokitRequest).toHaveBeenCalledWith(
+      "POST /app/installations/{installation_id}/access_tokens",
+      {
+        installation_id: 123,
+        repositories: ["app"],
+        permissions: { contents: "read" },
+      },
+    );
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
         connection: { credentials, provider: "vercel", revision: "revision-1" },

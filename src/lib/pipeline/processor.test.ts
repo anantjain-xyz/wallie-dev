@@ -755,6 +755,14 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     const result = await processPipelineJob({ admin, job });
 
+    expect(mocked.octokitRequest).toHaveBeenCalledWith(
+      "POST /app/installations/{installation_id}/access_tokens",
+      {
+        installation_id: 123,
+        repositories: ["app"],
+        permissions: { contents: "write", pull_requests: "write" },
+      },
+    );
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
     expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1533,7 +1541,14 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual([
       "rendered prompt",
     ]);
-    expect(sandbox.calls.every((call) => call.args[1]?.startsWith("mkdir -p "))).toBe(true);
+    expect(
+      sandbox.calls.every(
+        (call) =>
+          (call.cmd === "mkdir" && call.args[0] === "-m" && call.args[1] === "700") ||
+          (call.cmd === "bash" && call.args[1]?.startsWith("mkdir -p ")),
+      ),
+    ).toBe(true);
+    expect([...sandbox.files.keys()].every((path) => path.startsWith("/tmp/wallie-"))).toBe(true);
     expect(sandbox.stop).toHaveBeenCalledOnce();
     expect(insertedArtifacts).toHaveLength(0);
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });

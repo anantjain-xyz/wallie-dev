@@ -9,7 +9,7 @@ import {
 } from "@/features/sessions/effective-repository";
 import { inferWallieRunMode } from "@/features/wallie/utils";
 import type { PipelineStage } from "@/features/sessions/types";
-import { resolveGitHubAppConfig } from "@/features/github/config";
+import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   createAgentRunner,
@@ -232,7 +232,11 @@ async function runStage(input: {
         workspaceId: session.workspace_id,
       });
     }
-    installationToken = await mintInstallationToken(github.installationId);
+    installationToken = await mintSandboxRepositoryToken({
+      installationId: github.installationId,
+      repositoryFullName: github.repo.full_name,
+      purpose: "execution",
+    });
     throwIfAborted(signal);
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
@@ -806,16 +810,6 @@ async function loadGitHubContext(
       id: repository.id,
     },
   };
-}
-
-async function mintInstallationToken(installationId: number): Promise<string> {
-  const { App } = await import("@octokit/app");
-  const app = new App(resolveGitHubAppConfig());
-  const { data } = await app.octokit.request(
-    "POST /app/installations/{installation_id}/access_tokens",
-    { installation_id: installationId },
-  );
-  return data.token;
 }
 
 async function updateRunSandbox(

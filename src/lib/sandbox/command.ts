@@ -21,15 +21,14 @@ export function shellEnvPrefix(env: Record<string, string> | undefined): string 
 }
 
 export function redactSecrets(message: string, secrets: Array<string | undefined>): string {
-  return secrets
+  const variants = secrets
     .filter((secret): secret is string => Boolean(secret && secret.length >= 4))
-    .reduce(
-      (redacted, secret) =>
-        redacted
-          .replaceAll(secret, "[REDACTED]")
-          .replaceAll(encodeURIComponent(secret), "[REDACTED]"),
-      message,
-    );
+    .flatMap((secret) => [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]);
+  // Longest first prevents overlapping credentials from leaving the suffix of
+  // a longer secret visible after a shorter prefix has already been replaced.
+  return [...new Set(variants)]
+    .sort((left, right) => right.length - left.length)
+    .reduce((redacted, secret) => redacted.replaceAll(secret, "[REDACTED]"), message);
 }
 
 /** Small replaying async queue used to bridge callback-based provider logs. */

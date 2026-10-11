@@ -1,11 +1,10 @@
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
-
-const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 
 export interface ClaudeCodeRunnerOptions {
   /** Pre-resolved credentials; session callers use loadCredential. */
@@ -36,7 +35,15 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
   }
 
-  async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+  start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+    const safety = new AgentOutputSafety(input.secrets);
+    return safety.events(this.startUnsafe(input, safety));
+  }
+
+  private async *startUnsafe(
+    input: AgentRunnerStartInput,
+    safety: AgentOutputSafety,
+  ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
       throw new Error("ClaudeCodeRunner requires a sandbox.");
@@ -44,8 +51,9 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     // Vercel Sandbox's runCommand has no stdin support; materialise the prompt
     // as a file and pipe it via bash redirection.
-    const promptFile = `${sandbox.repoPath}/${PROMPT_FILE_NAME}`;
-    await sandbox.writeFile(promptFile, input.prompt);
+    const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
+    const promptFile = `${directory}/prompt.txt`;
+    await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
 
     const model = this.options.model ?? DEFAULT_CLAUDE_CODE_MODEL;
     const effort = this.options.effort ?? DEFAULT_CLAUDE_CODE_EFFORT;
@@ -80,6 +88,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       ? await this.options.loadCredential()
       : this.options.credential;
     if (!credential?.secret) throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
+    safety.addSecret(credential.secret);
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
@@ -139,7 +148,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     if (code !== 0) {
       yield {
         type: "error",
-        message: `claude CLI exited with code ${code}: ${stderrBuf.slice(0, 500)}`,
+        message: `claude CLI exited with code ${code}: ${safety.redact(stderrBuf).slice(0, 500)}`,
       };
     }
 

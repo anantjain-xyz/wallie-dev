@@ -46,4 +46,14 @@ describe("sandbox command utilities", () => {
       "token=[REDACTED] and token=[REDACTED]",
     );
   });
+
+  it("redacts JSON escaping and overlapping credentials without exposing suffixes", () => {
+    const secret = 'secret-"value\\suffix';
+    expect(redactSecrets(JSON.stringify({ key: secret }), ["secret-", secret])).toBe(
+      '{"key":"[REDACTED]"}',
+    );
+    expect(
+      redactSecrets("prefix-and-private-suffix", ["prefix", "prefix-and-private-suffix"]),
+    ).toBe("[REDACTED]");
+  });
 });
