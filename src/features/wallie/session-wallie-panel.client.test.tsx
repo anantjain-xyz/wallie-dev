@@ -14,6 +14,17 @@ import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+vi.mock("@/lib/supabase/realtime-subscription", () => ({
+  subscribeAuthenticatedChannel: (
+    client: { removeChannel: (channel: unknown) => void },
+    channel: { subscribe: (onStatus: unknown) => void },
+    onStatus: unknown,
+  ) => {
+    channel.subscribe(onStatus);
+    return () => client.removeChannel(channel);
+  },
+}));
+
 const offlineMember: WorkspaceMember = {
   avatarUrl: null,
   fullName: "Riley Offline",

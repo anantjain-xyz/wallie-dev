@@ -36,6 +36,7 @@ type RepositoryRow = {
   id: string;
   is_archived: boolean;
   name: string;
+  repo_id: number;
   workspace_id: string;
 };
 
@@ -70,6 +71,7 @@ type PullRequestResponse = {
 };
 
 const setupPullRequestSnapshotSchema = z.object({
+  base: z.object({ repo: z.object({ id: z.number().int().positive().safe() }) }),
   draft: z.boolean(),
   html_url: z.string().url(),
   merged: z.boolean(),
@@ -77,6 +79,16 @@ const setupPullRequestSnapshotSchema = z.object({
   state: z.enum(["open", "closed"]),
   updated_at: z.string().datetime({ offset: true }),
 });
+
+const setupPullRequestCleanupSchema = setupPullRequestSnapshotSchema.extend({
+  head: z.object({ ref: z.string().min(1), sha: z.string().min(1) }),
+});
+
+type CreatedSetupResources = {
+  branchName: string;
+  commitSha: string;
+  prNumber?: number;
+};
 
 type GitHubFileContent = {
   content?: string;
@@ -146,7 +158,7 @@ async function loadRepository(
   const { data: repository, error } = await admin
     .from("github_repositories")
     .select(
-      "id, workspace_id, github_installation_id, name, full_name, default_branch, is_archived",
+      "id, workspace_id, github_installation_id, name, full_name, repo_id, default_branch, is_archived",
     )
     .eq("id", input.repositoryId)
     .eq("workspace_id", input.workspaceId)
@@ -279,6 +291,7 @@ async function assertWorkspaceAllowsSetup(admin: AdminClient, workspaceId: strin
 async function refreshSetupPullRequest(input: {
   admin: AdminClient;
   branchName: string;
+  githubRepoId: number;
   octokit: InstallationOctokit;
   owner: string;
   prNumber: number;
@@ -286,16 +299,19 @@ async function refreshSetupPullRequest(input: {
   repositoryId: string;
   workspaceId: string;
 }): Promise<StartRepositoryOnboardingResult> {
-  const { data } = await input.octokit.request<unknown>(
-    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
-    {
-      owner: input.owner,
-      repo: input.repo,
-      pull_number: input.prNumber,
-    },
-  );
-  const snapshot = setupPullRequestSnapshotSchema.parse(data);
-  if (snapshot.number !== input.prNumber) throw new Error("GitHub returned a different setup PR.");
+  const readSnapshot = async () => {
+    const { data } = await input.octokit.request<unknown>(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      { owner: input.owner, repo: input.repo, pull_number: input.prNumber },
+    );
+    const snapshot = setupPullRequestSnapshotSchema.parse(data);
+    if (snapshot.number !== input.prNumber)
+      throw new Error("GitHub returned a different setup PR.");
+    if (snapshot.base.repo.id !== input.githubRepoId)
+      throw new Error("GitHub returned a different setup repository.");
+    return snapshot;
+  };
+  const snapshot = await readSnapshot();
   await assertWorkspaceAllowsSetup(input.admin, input.workspaceId);
   const { error } = await input.admin.rpc("apply_github_pull_request_event", {
     target_workspace_id: input.workspaceId,
@@ -308,7 +324,102 @@ async function refreshSetupPullRequest(input: {
     source_updated_at: snapshot.updated_at,
   });
   if (error) throw error;
+
+  const { data: token, error: observationError } = await input.admin.rpc(
+    "begin_github_pull_request_observation",
+    {
+      target_workspace_id: input.workspaceId,
+      target_repository_id: input.repositoryId,
+      target_branch_name: input.branchName,
+      source_pull_request_number: snapshot.number,
+      source_pull_request_state: snapshot.merged ? "merged" : snapshot.state,
+      source_is_draft: snapshot.draft,
+      source_updated_at: snapshot.updated_at,
+    },
+  );
+  if (observationError) throw observationError;
+  if (token) {
+    // The first GET discovered the tie. Only a read begun after the database
+    // reservation can receive authority to resolve it.
+    const observed = await readSnapshot();
+    await assertWorkspaceAllowsSetup(input.admin, input.workspaceId);
+    const { error: finishError } = await input.admin.rpc("finish_github_pull_request_observation", {
+      target_workspace_id: input.workspaceId,
+      target_repository_id: input.repositoryId,
+      target_branch_name: input.branchName,
+      source_pull_request_number: observed.number,
+      source_pull_request_url: observed.html_url,
+      source_pull_request_state: observed.merged ? "merged" : observed.state,
+      source_is_draft: observed.draft,
+      source_updated_at: observed.updated_at,
+      observation_token: token,
+    });
+    if (finishError) throw finishError;
+  }
   return { onboarding: mapOnboardingRow(await loadOnboardingRow(input), input.repositoryId) };
+}
+
+async function cleanupCreatedSetupResources(input: {
+  githubRepoId: number;
+  octokit: InstallationOctokit;
+  owner: string;
+  repo: string;
+  created: CreatedSetupResources;
+}) {
+  const request = { signal: AbortSignal.timeout(10_000) };
+  const ref = `heads/${input.created.branchName}`;
+  const assertOwnedRef = async () => {
+    const { data } = await input.octokit.request<GitRefResponse>(
+      "GET /repos/{owner}/{repo}/git/ref/{ref}",
+      { owner: input.owner, repo: input.repo, ref, request },
+    );
+    if (data.object.sha !== input.created.commitSha)
+      throw new Error("Setup ref ownership changed.");
+  };
+  try {
+    await assertOwnedRef();
+    if (input.created.prNumber !== undefined) {
+      const { data } = await input.octokit.request<unknown>(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+        { owner: input.owner, repo: input.repo, pull_number: input.created.prNumber, request },
+      );
+      const pr = setupPullRequestCleanupSchema.parse(data);
+      if (
+        pr.number !== input.created.prNumber ||
+        pr.base.repo.id !== input.githubRepoId ||
+        pr.head.ref !== input.created.branchName ||
+        pr.head.sha !== input.created.commitSha ||
+        pr.merged
+      )
+        throw new Error("Setup PR ownership changed.");
+      if (pr.state === "open") {
+        await input.octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+          owner: input.owner,
+          repo: input.repo,
+          pull_number: pr.number,
+          state: "closed",
+          request,
+        });
+      }
+      await assertOwnedRef();
+    }
+    await input.octokit.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+      owner: input.owner,
+      repo: input.repo,
+      ref,
+      request,
+    });
+  } catch (error) {
+    if (readGitHubStatus(error) !== 404 || input.created.prNumber !== undefined) {
+      console.error("Setup branch cleanup failed; the branch may require manual removal.", {
+        repository: `${input.owner}/${input.repo}`,
+        branch: input.created.branchName,
+        ...(input.created.prNumber !== undefined
+          ? { pullRequestNumber: input.created.prNumber }
+          : {}),
+      });
+    }
+  }
 }
 
 async function readExistingFile(input: {
@@ -356,11 +467,12 @@ async function createSetupPullRequest(input: {
   assertWorkspaceActive: () => Promise<void>;
   baseBranch: string;
   files: readonly { content: string; path: string }[];
+  githubRepoId: number;
   octokit: InstallationOctokit;
   owner: string;
   repo: string;
   repositoryName: string;
-}): Promise<{ branchName: string; prNumber: number; prUrl: string }> {
+}): Promise<CreatedSetupResources & { prNumber: number; prUrl: string }> {
   const branchName = `wallie/setup-${safeBranchSegment(input.repositoryName)}-${Date.now().toString(36)}`;
 
   const { data: baseRef } = await input.octokit.request<GitRefResponse>(
@@ -420,27 +532,10 @@ async function createSetupPullRequest(input: {
   try {
     await input.assertWorkspaceActive();
   } catch (error) {
-    // Only a successful create above establishes ownership. Never remove a
-    // pre-existing ref or one that another actor has since moved.
-    try {
-      const { data: currentRef } = await input.octokit.request<GitRefResponse>(
-        "GET /repos/{owner}/{repo}/git/ref/{ref}",
-        { owner: input.owner, repo: input.repo, ref: `heads/${branchName}` },
-      );
-      if (currentRef.object.sha !== commit.sha) throw new Error("Setup ref ownership changed.");
-      await input.octokit.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
-        owner: input.owner,
-        repo: input.repo,
-        ref: `heads/${branchName}`,
-      });
-    } catch (cleanupError) {
-      if (readGitHubStatus(cleanupError) !== 404) {
-        console.error("Setup branch cleanup failed; the branch may require manual removal.", {
-          repository: `${input.owner}/${input.repo}`,
-          branch: branchName,
-        });
-      }
-    }
+    await cleanupCreatedSetupResources({
+      ...input,
+      created: { branchName, commitSha: commit.sha },
+    });
     throw error;
   }
   const { data: pr } = await input.octokit.request<PullRequestResponse>(
@@ -459,7 +554,7 @@ async function createSetupPullRequest(input: {
     },
   );
 
-  return { branchName, prNumber: pr.number, prUrl: pr.html_url };
+  return { branchName, commitSha: commit.sha, prNumber: pr.number, prUrl: pr.html_url };
 }
 
 export async function startRepositoryOnboarding(input: {
@@ -494,6 +589,7 @@ export async function startRepositoryOnboarding(input: {
       owner,
       repo,
       branchName: existingOnboarding!.setup_branch_name!,
+      githubRepoId: repository.repo_id,
       prNumber: existingOnboarding!.setup_pr_number!,
     });
   }
@@ -530,30 +626,45 @@ export async function startRepositoryOnboarding(input: {
     assertWorkspaceActive: () => assertWorkspaceAllowsSetup(input.admin, input.workspaceId),
     baseBranch,
     files: plan.filesToCreate,
+    githubRepoId: repository.repo_id,
     octokit,
     owner,
     repo,
     repositoryName: repository.name,
   });
 
-  await upsertOnboardingState({
-    admin: input.admin,
-    conflictReport: plan.conflicts,
-    installedSkillHash: plan.conflicts.length === 0 ? plan.manifestHash : null,
-    installedSkillVersion: plan.conflicts.length === 0 ? plan.skillVersion : null,
-    repositoryId: input.repositoryId,
-    setupBranchName: pr.branchName,
-    setupPrNumber: pr.prNumber,
-    setupPrUrl: pr.prUrl,
-    status: plan.conflicts.length > 0 ? "conflict" : "pr_open",
-    workspaceId: input.workspaceId,
-  });
+  try {
+    await upsertOnboardingState({
+      admin: input.admin,
+      conflictReport: plan.conflicts,
+      installedSkillHash: plan.conflicts.length === 0 ? plan.manifestHash : null,
+      installedSkillVersion: plan.conflicts.length === 0 ? plan.skillVersion : null,
+      repositoryId: input.repositoryId,
+      setupBranchName: pr.branchName,
+      setupPrNumber: pr.prNumber,
+      setupPrUrl: pr.prUrl,
+      status: plan.conflicts.length > 0 ? "conflict" : "pr_open",
+      workspaceId: input.workspaceId,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceDeletingError) {
+      await cleanupCreatedSetupResources({
+        githubRepoId: repository.repo_id,
+        octokit,
+        owner,
+        repo,
+        created: pr,
+      });
+    }
+    throw error;
+  }
   return refreshSetupPullRequest({
     ...input,
     octokit,
     owner,
     repo,
     branchName: pr.branchName,
+    githubRepoId: repository.repo_id,
     prNumber: pr.prNumber,
   });
 }
