@@ -1,7 +1,11 @@
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
-import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
+import {
+  DEFAULT_AGENT_RUNNER_CONFIG,
+  DEFAULT_CLAUDE_CODE_EFFORT,
+  DEFAULT_CLAUDE_CODE_MODEL,
+} from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
@@ -15,6 +19,8 @@ export interface ClaudeCodeRunnerOptions {
   model?: string;
   /** Reasoning effort passed to Claude Code. */
   effort?: AgentEffort;
+  /** Agentic turns allowed within this invocation (including tool round trips). */
+  maxTurns?: number;
 }
 
 /**
@@ -33,11 +39,17 @@ export class ClaudeCodeRunner implements AgentRunner {
     if (!options.loadCredential && !options.credential?.secret) {
       throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
     }
+    if (
+      options.maxTurns !== undefined &&
+      (!Number.isSafeInteger(options.maxTurns) || options.maxTurns < 1)
+    ) {
+      throw new Error("Claude Code maxTurns must be a positive integer.");
+    }
   }
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const safety = new AgentOutputSafety(input.secrets);
-    return safety.events(this.startUnsafe(input, safety));
+    return safety.events(this.startUnsafe(input, safety), input.signal);
   }
 
   private async *startUnsafe(
@@ -75,7 +87,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       "--output-format",
       "stream-json",
       "--max-turns",
-      "1", // Single turn per invocation; multi-turn is handled by the orchestrator.
+      String(this.options.maxTurns ?? DEFAULT_AGENT_RUNNER_CONFIG.maxTurns),
       "--verbose",
     ];
     if (input.continueSessionId) {
@@ -84,11 +96,13 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     const shellCmd = `claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 
+    input.signal?.throwIfAborted();
     const credential = this.options.loadCredential
       ? await this.options.loadCredential()
       : this.options.credential;
     if (!credential?.secret) throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
     safety.addSecret(credential.secret);
+    input.signal?.throwIfAborted();
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
@@ -102,9 +116,21 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     let stdoutBuf = "";
     let stderrBuf = "";
-    let lastSessionId: string | undefined;
+    let completion: Extract<AgentEvent, { type: "completion" }> | undefined;
+    let hadError = false;
+    function* eventsForLine(line: string): Iterable<AgentEvent> {
+      for (const event of parseStreamJsonLine(line)) {
+        // Success is provisional until the process also exits successfully.
+        if (event.type === "completion") completion = event;
+        else {
+          if (event.type === "error") hadError = true;
+          yield event;
+        }
+      }
+    }
 
     for await (const log of proc.logs()) {
+      input.signal?.throwIfAborted();
       if (log.stream === "stderr") {
         stderrBuf += log.data;
         continue;
@@ -118,93 +144,93 @@ export class ClaudeCodeRunner implements AgentRunner {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
-        const event = parseStreamJsonLine(trimmed);
-        if (event) yield event;
-
-        // Extract session ID from the stream for continuation across turns.
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (parsed.session_id) lastSessionId = parsed.session_id;
-        } catch {
-          // Not JSON — ignore.
-        }
+        yield* eventsForLine(trimmed);
       }
     }
 
     // Flush the final partial line.
     if (stdoutBuf.trim()) {
       const trimmed = stdoutBuf.trim();
-      const event = parseStreamJsonLine(trimmed);
-      if (event) yield event;
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed.session_id) lastSessionId = parsed.session_id;
-      } catch {
-        // Not JSON — ignore.
-      }
+      yield* eventsForLine(trimmed);
     }
 
     const code = await proc.exitCode;
+    input.signal?.throwIfAborted();
     if (code !== 0) {
       yield {
         type: "error",
         message: `claude CLI exited with code ${code}: ${safety.redact(stderrBuf).slice(0, 500)}`,
       };
+      return;
     }
-
-    yield {
-      type: "completion",
-      taskComplete: true,
-      summary: lastSessionId
-        ? `Claude Code session: ${lastSessionId}`
-        : "Claude Code session completed",
-    };
+    if (hadError) return;
+    if (completion) yield completion;
+    else yield { type: "error", message: "Claude Code ended without a successful result." };
   }
 }
 
 /**
  * Parse a single JSON line from Claude Code's stream-json output format.
- * Returns an AgentEvent or null if the line is not actionable.
+ * Preserve every content block in order. A result is successful only when the
+ * CLI's terminal subtype says so; text alone is not a completed task.
  */
-export function parseStreamJsonLine(line: string): AgentEvent | null {
+export function parseStreamJsonLine(line: string): AgentEvent[] {
   try {
     const obj = JSON.parse(line);
 
     if (obj.type === "assistant" && obj.message?.content) {
       const content = obj.message.content;
       if (Array.isArray(content)) {
+        const events: AgentEvent[] = [];
         for (const block of content) {
-          if (block.type === "text" && block.text) {
-            return { type: "text", text: block.text };
+          if (block.type === "text" && typeof block.text === "string" && block.text) {
+            events.push({ type: "text", text: block.text });
           }
           if (block.type === "tool_use") {
-            return {
+            events.push({
               type: "tool_use",
               tool: block.name ?? "unknown",
-              input: typeof block.input === "string" ? block.input : JSON.stringify(block.input),
-            };
+              input:
+                typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}),
+            });
           }
         }
+        return events;
       }
     }
 
     if (obj.type === "result") {
-      return {
-        type: "completion",
-        taskComplete: true,
-        summary: obj.result ?? obj.summary ?? "Agent completed",
-      };
+      if (obj.is_error === true || obj.subtype !== "success") {
+        const details = Array.isArray(obj.errors)
+          ? obj.errors.filter((error: unknown) => typeof error === "string").join("; ")
+          : "";
+        return [
+          {
+            type: "error",
+            message: `Claude Code ${typeof obj.subtype === "string" ? obj.subtype : "unsuccessful result"}: ${details || (typeof obj.result === "string" ? obj.result : "task did not complete")}`,
+          },
+        ];
+      }
+      const finalOutput = typeof obj.result === "string" ? obj.result : undefined;
+      return [
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: finalOutput ?? "Claude Code session completed",
+          finalOutput,
+        },
+      ];
     }
 
-    if (obj.type === "content_block_delta" && obj.delta?.text) {
-      return { type: "text", text: obj.delta.text };
+    if (obj.type === "content_block_delta" && typeof obj.delta?.text === "string") {
+      return [{ type: "text", text: obj.delta.text }];
     }
 
-    return null;
+    return [];
   } catch {
     if (line.length > 0) {
-      return { type: "text", text: line };
+      return [{ type: "text", text: line }];
     }
-    return null;
+    return [];
   }
 }

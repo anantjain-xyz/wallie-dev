@@ -335,3 +335,28 @@ describe("AgentConfigSection missing provider fallback", () => {
     });
   });
 });
+
+it("saves the Claude turn budget from Settings", async () => {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ entries: [{ key: "max_turns", value: 17 }] }),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderSection(vi.fn(), false, {
+    ...initialAgentConfig,
+    agent_provider: "claude-code",
+    agent_model: "claude-opus-4-8[1m]",
+    max_turns: 5,
+  });
+  const user = userEvent.setup();
+  const input = screen.getByLabelText("Max turns");
+  await user.clear(input);
+  await user.type(input, "17");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  const request = fetchMock.mock.calls.find(([url]) => url === "/api/agent-config");
+  expect(JSON.parse(request?.[1].body)).toEqual({
+    config: { max_turns: 17 },
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+  });
+});

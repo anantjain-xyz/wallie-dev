@@ -5,7 +5,7 @@ import { DEFAULT_AGENT_RUNNER_CONFIG, DEFAULT_CLAUDE_CODE_MODEL } from "@/lib/ag
 
 type ConfigRow = { key: string; value_json: unknown };
 
-function buildAdmin(rows: ConfigRow[]) {
+function buildAdmin(rows: ConfigRow[], error: { message: string } | null = null) {
   return {
     from: (table: string) => {
       if (table !== "workspace_agent_config") {
@@ -14,7 +14,7 @@ function buildAdmin(rows: ConfigRow[]) {
       return {
         select: () => ({
           eq: () => ({
-            in: async () => ({ data: rows, error: null }),
+            in: async () => ({ data: rows, error }),
           }),
         }),
       };
@@ -23,6 +23,17 @@ function buildAdmin(rows: ConfigRow[]) {
 }
 
 describe("loadWorkspaceAgentConfig", () => {
+  it("fails closed on a database error instead of switching to default credentials", async () => {
+    await expect(
+      loadWorkspaceAgentConfig(buildAdmin([], { message: "database unavailable" }), "ws-1"),
+    ).rejects.toThrow("Failed to load workspace agent configuration");
+  });
+
+  it.each([0, -1, 1.5, "5", null])("rejects invalid max_turns %j", async (value) => {
+    await expect(
+      loadWorkspaceAgentConfig(buildAdmin([{ key: "max_turns", value_json: value }]), "ws-1"),
+    ).rejects.toThrow("positive integer");
+  });
   it("returns the workspace's configured model and provider", async () => {
     const admin = buildAdmin([
       { key: "agent_effort", value_json: "max" },

@@ -42,6 +42,7 @@ The code is authoritative for defaults:
 | Linear reconciliation interval | 60 seconds      | `src/worker/config.ts`       |
 | Sandbox reaper interval        | 60 seconds      | `src/worker/config.ts`       |
 | Default stall timeout          | 15 minutes      | `src/worker/config.ts`       |
+| Hard attempt deadline          | 30 minutes      | `WORKER_JOB_TIMEOUT_MS`      |
 | Default workspace concurrency  | 2               | Claim RPC/config fallback    |
 | Process concurrency            | 10              | `WORKER_MAX_CONCURRENT_JOBS` |
 
@@ -64,6 +65,19 @@ After claim, the scheduler advertises the job immediately in its heartbeat and
 starts processing it. A claim error backs off to twice the normal poll interval.
 At capacity, the scheduler wakes when a job finishes or the poll interval
 expires.
+
+Each attempt has a wall-clock deadline covering configuration reads, sandbox
+setup, agent execution, publication, and cleanup. `WORKER_JOB_TIMEOUT_MS` accepts
+a positive integer up to 30 minutes; unset means 30 minutes. This portable limit
+fits every supported sandbox driver. Longer attempts need a provider lifetime
+contract before this limit can be raised. Heartbeats cannot extend
+this deadline. On expiry, the worker aborts execution, starts sandbox cleanup,
+and uses `fail_session_job_attempt` to retire only the captured job and attempt.
+If a start races a runless failure, recovery re-reads the same attempt once.
+Recovery itself is limited to 10 seconds, after which the scheduler releases its
+slot and stops advertising the job; the stall sweeper handles a database outage.
+Late setup and iterator results check cancellation before starting or publishing
+work, while the database ownership guards protect replacement attempts.
 
 Do not manually set a queued job to running. That bypasses row locks, workspace
 capacity, mutation locks, attempt accounting, and heartbeat ownership.
@@ -315,3 +329,5 @@ A healthy deployment should provide:
 
 Keep these visible during deployment work; do not silently describe the desired
 future state as current behavior.
+
+The worker passes its absolute attempt deadline into the publication RPC. PostgreSQL checks wall-clock time after ownership locks and after writes, rolling back the artifact and success transition if a lock wait crosses the deadline. Aborting the HTTP request alone is insufficient. Timed-out runs retain the controlled deadline reason in their visible run history. Deploy the forward deadline migration before updated workers; the optional RPC argument permits older workers during rollout.

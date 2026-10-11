@@ -55,7 +55,7 @@ select is((select attempt_count from public.agent_runs where id = (select run_id
 select ok(has_function_privilege('service_role', signature, 'EXECUTE'), signature || ' permits service role')
 from (values
   ('public.start_session_job_attempt(uuid,integer,uuid,integer,text,text,text,text)'),
-  ('public.publish_session_job_attempt(uuid,integer,uuid,integer,text)'),
+  ('public.publish_session_job_attempt(uuid,integer,uuid,integer,text,timestamptz)'),
   ('public.complete_session_job_attempt(uuid,integer,uuid)'),
   ('public.fail_session_job_attempt(uuid,integer,text,boolean,integer,uuid)'),
   ('public.cancel_session_job_attempts(uuid,uuid,text,uuid,boolean)'),
@@ -65,7 +65,7 @@ select ok(not has_function_privilege(role_name, signature, 'EXECUTE'), role_name
 from (values ('anon'), ('authenticated')) roles(role_name)
 cross join (values
   ('public.start_session_job_attempt(uuid,integer,uuid,integer,text,text,text,text)'),
-  ('public.publish_session_job_attempt(uuid,integer,uuid,integer,text)'),
+  ('public.publish_session_job_attempt(uuid,integer,uuid,integer,text,timestamptz)'),
   ('public.complete_session_job_attempt(uuid,integer,uuid)'),
   ('public.fail_session_job_attempt(uuid,integer,text,boolean,integer,uuid)'),
   ('public.cancel_session_job_attempts(uuid,uuid,text,uuid,boolean)'),
@@ -76,7 +76,7 @@ select ok(not procedure.prosecdef and procedure.proconfig @> array['search_path=
 from pg_catalog.pg_proc procedure
 where procedure.oid in (
   'public.start_session_job_attempt(uuid,integer,uuid,integer,text,text,text,text)'::regprocedure,
-  'public.publish_session_job_attempt(uuid,integer,uuid,integer,text)'::regprocedure,
+  'public.publish_session_job_attempt(uuid,integer,uuid,integer,text,timestamptz)'::regprocedure,
   'public.complete_session_job_attempt(uuid,integer,uuid)'::regprocedure,
   'public.fail_session_job_attempt(uuid,integer,text,boolean,integer,uuid)'::regprocedure,
   'public.cancel_session_job_attempts(uuid,uuid,text,uuid,boolean)'::regprocedure,

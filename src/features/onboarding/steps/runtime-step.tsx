@@ -161,6 +161,10 @@ function buildAgentConfigDrafts(agentConfig: AgentConfigMap): AgentConfigDrafts 
       "stall_timeout_ms",
       resolveAgentConfigValue("stall_timeout_ms", agentConfig),
     ),
+    max_turns: agentConfigValueToDraft(
+      "max_turns",
+      resolveAgentConfigValue("max_turns", agentConfig),
+    ),
     max_retries: agentConfigValueToDraft(
       "max_retries",
       resolveAgentConfigValue("max_retries", agentConfig),
