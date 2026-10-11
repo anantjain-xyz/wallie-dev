@@ -3,6 +3,7 @@
 import {
   act,
   cleanup,
+  fireEvent,
   render as testingRender,
   screen,
   waitFor,
@@ -20,7 +21,7 @@ const mocked = vi.hoisted(() => {
     suspendedRenders: 0,
     createSupabaseBrowserClient: vi.fn(),
     refresh,
-    router: { refresh },
+    router: { refresh, replace: vi.fn() },
   };
 });
 
@@ -85,6 +86,8 @@ import { formatUtcTimestamp } from "@/components/shared/time-display";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/types";
 import { SupabasePublicConfigProvider } from "@/lib/supabase/public-config-provider";
+
+import { RealtimeRecoveryProvider } from "@/features/wallie/realtime-recovery-context";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 
@@ -227,7 +230,9 @@ function installSupabaseMock() {
 }
 
 function snapshotResponse(data: PipelineDashboardData) {
-  return new Response(JSON.stringify({ lanes: data.lanes }), { status: 200 });
+  return new Response(JSON.stringify({ lanes: data.lanes, hasAnySession: data.hasAnySession }), {
+    status: 200,
+  });
 }
 
 function deferredResponse() {
@@ -334,6 +339,112 @@ describe("PipelinePageClient", () => {
     ).toContain("Failed");
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers session history when the first session was archived while disconnected", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const empty = initialData([], []);
+    empty.lanes = empty.lanes.map((lane) => ({ ...lane, totalCount: 0, cursor: null }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(snapshotResponse({ ...empty, hasAnySession: true })),
+    );
+    render(<PipelinePageClient initialData={empty} />);
+    expect(screen.getByText("No sessions").getAttribute("data-zero-state-variant")).toBe(
+      "first-run",
+    );
+    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(screen.getByText("No sessions").getAttribute("data-zero-state-variant")).toBe(
+      "archived",
+    );
+  });
+
+  it.each([401, 403, 404])(
+    "leaves an unavailable workspace on recovery HTTP %s",
+    async (status) => {
+      vi.useFakeTimers();
+      const supabase = installSupabaseMock();
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<PipelinePageClient initialData={initialData()} />);
+      act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+      await act(async () => vi.advanceTimersByTimeAsync(200));
+      expect(mocked.router.replace).toHaveBeenCalledWith(
+        status === 401 ? "/login?next=%2Fw%2Fwallie" : "/",
+      );
+      expect(screen.queryByText("Session 1")).toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(60_000));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([200, 403])(
+    "ignores a previous workspace recovery HTTP %s after navigation",
+    async (status) => {
+      vi.useFakeTimers();
+      const supabase = installSupabaseMock();
+      const pending = deferredResponse();
+      vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending.promise));
+      const page = (data: PipelineDashboardData) => (
+        <RealtimeRecoveryProvider>
+          <PipelinePageClient initialData={data} />
+        </RealtimeRecoveryProvider>
+      );
+      const view = render(page(initialData()));
+      act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+      await act(async () => vi.advanceTimersByTimeAsync(200));
+      const next = initialData([card(8, PLAN_STAGE_ID, { title: "Workspace B session" })], []);
+      next.workspace = { id: "workspace-b", slug: "workspace-b", name: "Workspace B" };
+      view.rerender(page(next));
+      await act(async () =>
+        pending.resolve(
+          status === 200
+            ? snapshotResponse(
+                initialData([card(9, PLAN_STAGE_ID, { title: "Late workspace A" })], []),
+              )
+            : new Response(null, { status }),
+        ),
+      );
+      expect(screen.getByText("Workspace B session")).toBeTruthy();
+      expect(screen.queryByText("Late workspace A")).toBeNull();
+      expect(mocked.router.replace).not.toHaveBeenCalled();
+    },
+  );
+
+  it("aborts and ignores pagination from the previous workspace", async () => {
+    installSupabaseMock();
+    const pending = deferredResponse();
+    const fetchMock = vi.fn().mockReturnValue(pending.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const page = (data: PipelineDashboardData) => (
+      <RealtimeRecoveryProvider>
+        <PipelinePageClient initialData={data} />
+      </RealtimeRecoveryProvider>
+    );
+    const view = render(page(initialData()));
+    fireEvent.click(screen.getByRole("button", { name: /Load more Plan sessions/ }));
+    const signal = fetchMock.mock.calls[0]![1].signal as AbortSignal;
+    const next = initialData([card(8, PLAN_STAGE_ID, { title: "Workspace B session" })], []);
+    next.workspace = { id: "workspace-b", slug: "workspace-b", name: "Workspace B" };
+    view.rerender(page(next));
+    expect(signal.aborted).toBe(true);
+    await act(async () =>
+      pending.resolve(
+        new Response(
+          JSON.stringify({
+            lane: initialData([card(9, PLAN_STAGE_ID, { title: "Late workspace A" })]).lanes[0],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    expect(screen.getByText("Workspace B session")).toBeTruthy();
+    expect(screen.queryByText("Late workspace A")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Load more Plan sessions/ }).hasAttribute("disabled"),
+    ).toBe(false);
   });
 
   it("keeps fetching authoritative snapshots during a persistent subscription outage", async () => {
