@@ -21,6 +21,7 @@ vi.mock("./heartbeat", () => ({
 import { createScheduler } from "./scheduler";
 
 const config: WorkerConfig = {
+  jobTimeoutMs: 3_600_000,
   defaultConcurrencyLimit: 2,
   defaultStallTimeoutMs: 900_000,
   heartbeatIntervalMs: 10_000,
@@ -260,6 +261,7 @@ describe("createScheduler", () => {
     expect(mocked.runClaimedJob).toHaveBeenCalledWith(
       admin,
       expect.objectContaining({ id: "late-claim" }),
+      { timeoutMs: config.jobTimeoutMs },
     );
     expect(scheduler.getActiveJobIds()).toEqual(["late-claim"]);
     let idle = false;

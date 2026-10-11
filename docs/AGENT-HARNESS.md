@@ -60,17 +60,17 @@ Wallie session does not own a persistent filesystem across attempts.
 
 The renderer currently exposes:
 
-| Variable                         | Source                                                        | Classification                           |
-| -------------------------------- | ------------------------------------------------------------- | ---------------------------------------- |
-| `session.title`                  | `sessions.title`                                              | Member-controlled data                   |
-| `session.prompt`                 | `sessions.prompt_md`                                          | Member-controlled data                   |
-| `session.stageSlug`              | Current `pipeline_stages` row                                 | Manager-controlled configuration         |
-| `attempt.number`                 | `rejection_count + 1`                                         | Derived value                            |
-| `attempt.feedback`               | Latest feedback for the current immutable stage ID            | Reviewer-controlled data                 |
-| `artifact.previousStages.<slug>` | Latest artifact per slug, including the current slug on retry | Agent-generated data                     |
-| `repo.name`                      | Declared by the renderer                                      | Currently empty in pipeline execution    |
-| `repo.fullName`                  | Declared by the renderer                                      | Currently empty in pipeline execution    |
-| `repo.defaultBranch`             | Renderer fallback                                             | Currently `"main"` in pipeline execution |
+| Variable                         | Source                                                        | Classification                   |
+| -------------------------------- | ------------------------------------------------------------- | -------------------------------- |
+| `session.title`                  | `sessions.title`                                              | Member-controlled data           |
+| `session.prompt`                 | `sessions.prompt_md`                                          | Member-controlled data           |
+| `session.stageSlug`              | Current `pipeline_stages` row                                 | Manager-controlled configuration |
+| `attempt.number`                 | `rejection_count + 1`                                         | Derived value                    |
+| `attempt.feedback`               | Latest feedback for the current immutable stage ID            | Reviewer-controlled data         |
+| `artifact.previousStages.<slug>` | Latest artifact per slug, including the current slug on retry | Agent-generated data             |
+| `repo.name`                      | Resolved session repository name                              | Repository data                  |
+| `repo.fullName`                  | Resolved session repository full name                         | Repository data                  |
+| `repo.defaultBranch`             | Resolved default branch, falling back to `main` if absent     | Repository data                  |
 
 Pipeline `operating_rules_md` is trimmed and prepended to
 `pipeline_stages.prompt_template_md`. Both are manager-controlled instruction
@@ -112,6 +112,14 @@ does not cover repository-local instructions the CLI discovers after clone.
 Treat interpolated untrusted values as capable of containing instructions,
 delimiters, or unexpectedly large content — they are labeled and delimited, not
 stripped.
+
+Configuration query failures stop the attempt; only absent configuration keys
+use defaults. Claude Code receives the workspace `max_turns` budget (default 5)
+within one CLI invocation, including its tool round trips. All assistant content
+blocks are preserved. A successful Claude result and zero process exit are both
+required before emitting completion; error results, turn-limit exhaustion, and
+missing results cannot publish partial work. The pipeline requires a successful
+completion event from every runner before it publishes reviewable output.
 
 ## Runner and credential contract
 

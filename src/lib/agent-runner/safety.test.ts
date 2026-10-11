@@ -61,6 +61,39 @@ async function* emit(...events: AgentEvent[]): AsyncIterable<AgentEvent> {
 }
 
 describe("runner credential boundary", () => {
+  it.each(providers)(
+    "never launches %s after a canceled prompt write eventually finishes",
+    async (provider) => {
+      const sandbox = new FakeSandbox();
+      let finish!: () => void;
+      let started!: () => void;
+      const writing = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const write = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      vi.spyOn(sandbox, "writeFile").mockImplementationOnce(async () => {
+        started();
+        await write;
+      });
+      const controller = new AbortController();
+      const run = collect(
+        runnerFor(provider).start({
+          sandbox,
+          prompt: "task",
+          sessionId: "session",
+          signal: controller.signal,
+        }),
+      );
+      await writing;
+      const rejected = expect(run).rejects.toThrow("attempt expired");
+      controller.abort(new Error("attempt expired"));
+      finish();
+      await rejected;
+      expect(sandbox.calls.filter((call) => call.cmd !== "mkdir")).toEqual([]);
+    },
+  );
   it.each(providers)("redacts %s output split at every transport boundary", async (provider) => {
     const sandbox = new FakeSandbox();
     const raw = `${textLine(provider, `${providerSecret} ${githubSecret}`)}\n`;

@@ -233,6 +233,7 @@ const productStage = {
 interface MockOptions {
   session: Tables<"sessions"> | null;
   agentConfig?: Array<{ key: string; value_json: unknown }>;
+  agentConfigError?: { message: string };
   claimSucceeds?: boolean;
   currentAttempt?: number;
   replacementJobId?: string;
@@ -360,7 +361,7 @@ function buildAdminMock(opts: MockOptions) {
   const agentConfigTable = {
     select: () => ({
       eq: () => ({
-        in: async () => ({ data: opts.agentConfig ?? [], error: null }),
+        in: async () => ({ data: opts.agentConfig ?? [], error: opts.agentConfigError ?? null }),
         eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
       }),
     }),
@@ -847,6 +848,160 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("success");
   });
 
+  it("passes the configured Claude turn budget and resolved non-main repository prompt fields", async () => {
+    const { admin } = buildAdminMock({
+      session: baseSession({ github_repository_id: "repo-1" }),
+      agentConfig: [
+        { key: "agent_provider", value_json: "claude-code" },
+        { key: "max_turns", value_json: 17 },
+      ],
+      githubRepositories: [{ id: "repo-1", full_name: "acme/widget", default_branch: "develop" }],
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
+      claudeCode: expect.objectContaining({ maxTurns: 17 }),
+    });
+    expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        repoName: expect.objectContaining({
+          trust: "untrusted",
+          source: "repo.name",
+          value: "widget",
+        }),
+        repoFullName: expect.objectContaining({
+          trust: "untrusted",
+          source: "repo.fullName",
+          value: "acme/widget",
+        }),
+        repoDefaultBranch: expect.objectContaining({
+          trust: "untrusted",
+          source: "repo.defaultBranch",
+          value: "develop",
+        }),
+      }),
+    );
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ baseBranch: "develop" }),
+    );
+  });
+
+  it.each(["missing", "incomplete"])(
+    "does not publish partial text when completion is %s",
+    async (outcome) => {
+      const events: AgentEvent[] = [{ type: "text", text: "Partial changes" }];
+      if (outcome === "incomplete")
+        events.push({ type: "completion", taskComplete: false, summary: "Turn limit" });
+      mocked.createAgentRunner.mockReturnValue(makeRunner(events));
+      const { admin, insertedArtifacts, rpc } = buildAdminMock({ session: baseSession() });
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+      expect(insertedArtifacts).toEqual([]);
+      expect(rpc).not.toHaveBeenCalledWith("publish_session_job_attempt", expect.anything());
+    },
+  );
+
+  it("fails a configuration database error before starting a default provider", async () => {
+    const { loadWorkspaceAgentConfig } = await import("@/lib/agent-runner/workspace-config");
+    const { admin, rpc } = buildAdminMock({
+      session: baseSession(),
+      agentConfigError: { message: "unavailable" },
+    });
+    mocked.loadWorkspaceAgentConfig.mockImplementationOnce(loadWorkspaceAgentConfig);
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalledWith("start_session_job_attempt", expect.anything());
+  });
+
+  it("does not start an attempt after a canceled configuration read resolves", async () => {
+    const { admin, rpc } = buildAdminMock({ session: baseSession() });
+    let finish!: (config: { provider: string; model: string; effort: string }) => void;
+    let started!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    mocked.loadWorkspaceAgentConfig.mockImplementationOnce(() => {
+      started();
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const controller = new AbortController();
+    const pending = processPipelineJob({ admin, job: baseJob(), signal: controller.signal });
+    await reading;
+    controller.abort(new Error("deadline"));
+    finish({ provider: "codex", model: "gpt-5.5", effort: "xhigh" });
+    expect((await pending).result).toBe("idle");
+    expect(rpc).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+  });
+
+  it("stops a hung iterator on abort and fences output after a replacement takes over", async () => {
+    const opts: MockOptions = { session: baseSession() };
+    const { admin, rpc, runRows, insertedArtifacts, insertedMessages } = buildAdminMock(opts);
+    let finish!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const hung = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    mocked.createAgentRunner.mockReturnValue({
+      ...makeRunner([]),
+      start: vi.fn(async function* () {
+        yield { type: "text", text: "Partial" } as AgentEvent;
+        started();
+        await hung;
+        yield {
+          type: "completion",
+          taskComplete: true,
+          summary: "Late",
+          finalOutput: "Obsolete",
+        } as AgentEvent;
+      }),
+    });
+    const controller = new AbortController();
+    const pending = processPipelineJob({ admin, job: baseJob(), signal: controller.signal });
+    await waiting;
+    const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+    controller.abort(new Error("deadline"));
+    expect(sandbox.stop).toHaveBeenCalledOnce();
+    opts.currentAttempt = 2;
+    runRows[0].status = "error";
+    const replacement = { id: "run-2", attempt_count: 2, status: "running" };
+    runRows.push(replacement);
+    const messageCount = insertedMessages.length;
+    finish();
+    expect((await pending).result).toBe("idle");
+    expect(insertedArtifacts).toEqual([]);
+    expect(insertedMessages).toHaveLength(messageCount);
+    expect(replacement.status).toBe("running");
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(sandbox.stop).toHaveBeenCalledOnce();
+  });
+
+  it("refuses publication when an aborted iterator ends without another event", async () => {
+    const { admin, insertedArtifacts } = buildAdminMock({ session: baseSession() });
+    const controller = new AbortController();
+    mocked.createAgentRunner.mockReturnValue({
+      ...makeRunner([]),
+      start: vi.fn(async function* () {
+        yield {
+          type: "completion",
+          taskComplete: true,
+          summary: "Ready",
+          finalOutput: "Deliverable",
+        } as AgentEvent;
+        controller.abort(new Error("deadline"));
+      }),
+    });
+    expect(
+      (await processPipelineJob({ admin, job: baseJob(), signal: controller.signal })).result,
+    ).toBe("idle");
+    expect(insertedArtifacts).toEqual([]);
+  });
+
   it("publishes only through the captured owner RPC before opening its attempt PR", async () => {
     const { admin, rpc, legacyMutationCalls } = buildAdminMock({ session: baseSession() });
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 4 }) });
@@ -1060,7 +1215,12 @@ describe("processPipelineJob (generic stage runner)", () => {
   it.each(["Preparing sandbox and repository…", "Starting agent…"])(
     "continues execution when the startup hint cannot be recorded: %s",
     async (message) => {
-      mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Deliverable" }]));
+      mocked.createAgentRunner.mockReturnValue(
+        makeRunner([
+          { type: "text", text: "Deliverable" },
+          { type: "completion", taskComplete: true, summary: "Done" },
+        ]),
+      );
       const { admin, insertedArtifacts } = buildAdminMock({
         session: baseSession(),
         agentConfig: [],

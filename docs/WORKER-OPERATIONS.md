@@ -42,6 +42,7 @@ The code is authoritative for defaults:
 | Linear reconciliation interval | 60 seconds      | `src/worker/config.ts`       |
 | Sandbox reaper interval        | 60 seconds      | `src/worker/config.ts`       |
 | Default stall timeout          | 15 minutes      | `src/worker/config.ts`       |
+| Hard attempt deadline          | 60 minutes      | `WORKER_JOB_TIMEOUT_MS`      |
 | Default workspace concurrency  | 2               | Claim RPC/config fallback    |
 | Process concurrency            | 10              | `WORKER_MAX_CONCURRENT_JOBS` |
 
@@ -64,6 +65,17 @@ After claim, the scheduler advertises the job immediately in its heartbeat and
 starts processing it. A claim error backs off to twice the normal poll interval.
 At capacity, the scheduler wakes when a job finishes or the poll interval
 expires.
+
+Each attempt has a wall-clock deadline covering configuration reads, sandbox
+setup, agent execution, publication, and cleanup. `WORKER_JOB_TIMEOUT_MS` accepts
+a positive integer up to 24 hours; unset means one hour. Heartbeats cannot extend
+this deadline. On expiry, the worker aborts execution, starts sandbox cleanup,
+and uses `fail_session_job_attempt` to retire only the captured job and attempt.
+If a start races a runless failure, recovery re-reads the same attempt once.
+Recovery itself is limited to 10 seconds, after which the scheduler releases its
+slot and stops advertising the job; the stall sweeper handles a database outage.
+Late setup and iterator results check cancellation before starting or publishing
+work, while the database ownership guards protect replacement attempts.
 
 Do not manually set a queued job to running. That bypasses row locks, workspace
 capacity, mutation locks, attempt accounting, and heartbeat ownership.

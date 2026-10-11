@@ -445,6 +445,7 @@ Fill in the required values. Integration variables can be left blank until you c
 | `WALLIE_DAYTONA_API_URL_ALLOWLIST`     | No       | Exact HTTPS Daytona self-hosted API base URLs; Daytona Cloud is always allowed.                                                                            |
 | `WALLIE_TIMING_LOGS`                   | No       | Set to `1` in a canary to emit server-loader timing logs.                                                                                                  |
 | `WORKER_MAX_CONCURRENT_JOBS`           | No       | Maximum jobs one worker process runs concurrently (default `10`); per-workspace limits still apply.                                                        |
+| `WORKER_JOB_TIMEOUT_MS`                | No       | Hard deadline per claimed attempt, including setup and cleanup (default `3600000`; positive integer up to 24 hours).                                       |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 

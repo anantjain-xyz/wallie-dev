@@ -6,11 +6,13 @@ describe("worker/config", () => {
   afterEach(() => {
     delete process.env.WORKER_MAX_CONCURRENT_JOBS;
     delete process.env.WORKER_CONTROL_SOCKET;
+    delete process.env.WORKER_JOB_TIMEOUT_MS;
   });
 
   it("returns sensible defaults and a generated worker id", () => {
     const config = parseWorkerConfig();
     expect(config.pollIntervalMs).toBe(2_000);
+    expect(config.jobTimeoutMs).toBe(3_600_000);
     expect(config.heartbeatIntervalMs).toBe(10_000);
     expect(config.stallSweepIntervalMs).toBe(30_000);
     expect(config.reconcileIntervalMs).toBe(60_000);
@@ -20,6 +22,15 @@ describe("worker/config", () => {
     expect(config.maxConcurrentJobs).toBe(10);
     expect(config.workerId).toMatch(/^worker-/);
     expect(config.controlSocketPath).toBeUndefined();
+  });
+
+  it("validates an explicit attempt deadline", () => {
+    process.env.WORKER_JOB_TIMEOUT_MS = "120000";
+    expect(parseWorkerConfig().jobTimeoutMs).toBe(120000);
+    for (const value of ["0", "-1", "1.5", "abc", "86400001"]) {
+      process.env.WORKER_JOB_TIMEOUT_MS = value;
+      expect(() => parseWorkerConfig()).toThrow();
+    }
   });
 
   it("enables local control only with a valid explicit socket path", () => {

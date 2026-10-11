@@ -41,34 +41,51 @@ export async function claimNextJob(
   return { job: row, outcome: "claimed" };
 }
 
-/** Process one captured queue claim. Recovery can only retire that attempt. */
-export async function runClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {
+/**
+ * Bound one captured queue claim independently of worker liveness. A provider
+ * may ignore cancellation, so waiting for its promise is never the deadline.
+ * Recovery retires only this attempt before releasing local scheduler capacity.
+ */
+export async function runClaimedJob(
+  admin: AdminClient,
+  job: AgentJobRow,
+  options: { timeoutMs?: number; recoveryTimeoutMs?: number } = {},
+): Promise<void> {
   const jobId = job.id;
   const attemptCount = job.attempt_count;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(
+        `Worker attempt exceeded its ${options.timeoutMs ?? 3_600_000}ms deadline.`,
+      );
+      controller.abort(error);
+      reject(error);
+    }, options.timeoutMs ?? 3_600_000);
+  });
   try {
-    await processPipelineJob({ admin, job });
+    await Promise.race([processPipelineJob({ admin, job, signal: controller.signal }), deadline]);
   } catch (error) {
+    controller.abort(error);
     const message = error instanceof Error ? error.message : "Worker job processing failed";
     console.error("[worker] job processing error", { error: message, jobId: job.id });
+    const recovery = new AbortController();
+    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      // The processor may have failed after binding or publishing its run. Look
-      // up only this captured attempt; never borrow a replacement's run identity.
-      const { data: run, error: lookupError } = await admin
-        .from("agent_runs")
-        .select("id")
-        .eq("agent_job_id", jobId)
-        .eq("attempt_count", attemptCount)
-        .maybeSingle();
-      if (lookupError) throw lookupError;
-      const { error: recoveryError } = await admin.rpc("fail_session_job_attempt", {
-        p_job_id: jobId,
-        p_attempt_count: attemptCount,
-        p_run_id: run?.id,
-        p_error: message,
-        p_retry: false,
-        p_max_retries: 0,
+      const recoveryDeadline = new Promise<never>((_, reject) => {
+        recoveryTimer = setTimeout(() => {
+          const error = new Error(
+            "Attempt recovery exceeded its deadline; stall recovery will retry.",
+          );
+          recovery.abort(error);
+          reject(error);
+        }, options.recoveryTimeoutMs ?? 10_000);
       });
-      if (recoveryError) throw recoveryError;
+      await Promise.race([
+        retireAttempt(admin, { jobId, attemptCount, message, signal: recovery.signal }),
+        recoveryDeadline,
+      ]);
     } catch (recoveryError) {
       // A database failure is not permission to bypass the ownership guard.
       console.error("[worker] failed to record processing error", {
@@ -76,6 +93,43 @@ export async function runClaimedJob(admin: AdminClient, job: AgentJobRow): Promi
         jobId: job.id,
         attemptCount,
       });
+    } finally {
+      clearTimeout(recoveryTimer);
     }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function retireAttempt(
+  admin: AdminClient,
+  input: { jobId: string; attemptCount: number; message: string; signal: AbortSignal },
+): Promise<void> {
+  // A start RPC already in flight may bind a run after the first lookup. A
+  // runless failure cannot steal that run; re-read the same attempt once. If
+  // failure wins first, start's job-state guard rejects the late start instead.
+  for (let lookup = 0; lookup < 2; lookup += 1) {
+    input.signal.throwIfAborted();
+    const { data: run, error: lookupError } = await admin
+      .from("agent_runs")
+      .select("id")
+      .eq("agent_job_id", input.jobId)
+      .eq("attempt_count", input.attemptCount)
+      .abortSignal(input.signal)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    input.signal.throwIfAborted();
+    const { data: result, error } = await admin
+      .rpc("fail_session_job_attempt", {
+        p_job_id: input.jobId,
+        p_attempt_count: input.attemptCount,
+        p_run_id: run?.id,
+        p_error: input.message,
+        p_retry: false,
+        p_max_retries: 0,
+      })
+      .abortSignal(input.signal);
+    if (error) throw error;
+    if (run || result !== "stale") return;
   }
 }
