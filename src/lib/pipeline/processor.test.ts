@@ -1030,6 +1030,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       p_expected_artifact_version: 0,
       p_artifact_json: "Drafted spec body",
     });
+    const sandboxInput = mocked.createSessionSandbox.mock.calls[0][0];
+    expect(sandboxInput.timeoutMs).toBeGreaterThan(0);
+    expect(sandboxInput.timeoutMs).toBeLessThanOrEqual(60_000);
+    expect(mocked.openSessionPullRequest).toHaveBeenCalledWith(expect.objectContaining({ signal }));
     const publicationIndex = rpc.mock.calls.findIndex(
       ([name]) => name === "publish_session_job_attempt",
     );

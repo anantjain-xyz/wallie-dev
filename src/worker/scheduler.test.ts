@@ -21,7 +21,7 @@ vi.mock("./heartbeat", () => ({
 import { createScheduler } from "./scheduler";
 
 const config: WorkerConfig = {
-  jobTimeoutMs: 3_600_000,
+  jobTimeoutMs: 1_800_000,
   defaultConcurrencyLimit: 2,
   defaultStallTimeoutMs: 900_000,
   heartbeatIntervalMs: 10_000,

@@ -54,18 +54,18 @@ export async function runClaimedJob(
   const jobId = job.id;
   const attemptCount = job.attempt_count;
   const controller = new AbortController();
-  const deadlineAt = new Date(Date.now() + (options.timeoutMs ?? 3_600_000)).toISOString();
+  const deadlineAt = new Date(Date.now() + (options.timeoutMs ?? 1_800_000)).toISOString();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeoutMessage: string | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       const error = new Error(
-        `Worker attempt exceeded its ${options.timeoutMs ?? 3_600_000}ms deadline.`,
+        `Worker attempt exceeded its ${options.timeoutMs ?? 1_800_000}ms deadline.`,
       );
       timeoutMessage = error.message;
       controller.abort(error);
       reject(error);
-    }, options.timeoutMs ?? 3_600_000);
+    }, options.timeoutMs ?? 1_800_000);
   });
   try {
     await Promise.race([
