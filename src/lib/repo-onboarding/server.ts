@@ -273,8 +273,18 @@ async function upsertOnboardingState(input: {
     )
     .single();
 
-  if (error) throw error;
+  throwOnboardingWriteError(error);
   return mapOnboardingRow(data as OnboardingRow, input.repositoryId);
+}
+
+function throwOnboardingWriteError(error: { code?: string; message?: string } | null): void {
+  if (!error) return;
+  if (
+    error.code === "P0010" ||
+    (error.code === "23503" && error.message === "Workspace not found.")
+  )
+    throw new WorkspaceDeletingError();
+  throw error;
 }
 
 async function assertWorkspaceAllowsSetup(admin: AdminClient, workspaceId: string) {
@@ -323,7 +333,7 @@ async function refreshSetupPullRequest(input: {
     source_is_draft: snapshot.draft,
     source_updated_at: snapshot.updated_at,
   });
-  if (error) throw error;
+  throwOnboardingWriteError(error);
 
   const { data: token, error: observationError } = await input.admin.rpc(
     "begin_github_pull_request_observation",
@@ -337,7 +347,7 @@ async function refreshSetupPullRequest(input: {
       source_updated_at: snapshot.updated_at,
     },
   );
-  if (observationError) throw observationError;
+  throwOnboardingWriteError(observationError);
   if (token) {
     // The first GET discovered the tie. Only a read begun after the database
     // reservation can receive authority to resolve it.
@@ -354,7 +364,7 @@ async function refreshSetupPullRequest(input: {
       source_updated_at: observed.updated_at,
       observation_token: token,
     });
-    if (finishError) throw finishError;
+    throwOnboardingWriteError(finishError);
   }
   return { onboarding: mapOnboardingRow(await loadOnboardingRow(input), input.repositoryId) };
 }

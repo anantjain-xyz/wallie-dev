@@ -152,6 +152,33 @@ describe("repository onboarding route", () => {
     });
   });
 
+  it("returns a conflict when deletion starts before manual ready completes", async () => {
+    grantAccess();
+    const admin = {};
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.markRepositoryOnboardingReady.mockRejectedValueOnce(new WorkspaceDeletingError());
+
+    const response = await PATCH(
+      new Request("http://localhost", {
+        body: JSON.stringify({ action: "mark_ready" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+      routeContext(),
+    );
+
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith(WORKSPACE_ID, {
+      requireManager: true,
+    });
+    expect(mocked.markRepositoryOnboardingReady).toHaveBeenCalledWith({
+      admin,
+      repositoryId: REPOSITORY_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Workspace deletion is in progress." });
+  });
+
   it.each([
     ["Repository not found.", 404],
     ["Wallie setup is unavailable for archived repositories.", 400],
