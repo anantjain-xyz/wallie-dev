@@ -20,6 +20,7 @@ export default defineConfig({
   testMatch: [
     "responsive-polish.spec.ts",
     "route-recovery.spec.ts",
+    "pipeline-recovery.spec.ts",
     "auth-session.spec.ts",
     "invitation-recovery.spec.ts",
   ],

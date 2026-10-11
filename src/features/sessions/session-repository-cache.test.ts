@@ -129,6 +129,85 @@ describe("session repository cache", () => {
     expect(getSessionRepositorySnapshot(key).isStale).toBe(true);
   });
 
+  it.each(["initial", "refresh"])(
+    "revalidates an invalidated %s read before publishing it",
+    async (mode) => {
+      let resolveOld!: (value: typeof result) => void;
+      let resolveFresh!: (value: typeof result) => void;
+      const updated = { ...result, defaultGithubRepositoryId: "repo-2" };
+      if (mode === "refresh") await loadSessionRepositories(key, { load: async () => result });
+      const load = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<typeof result>((resolve) => {
+              resolveOld = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<typeof result>((resolve) => {
+              resolveFresh = resolve;
+            }),
+        );
+      const pending = loadSessionRepositories(key, { load, force: true });
+      invalidateSessionRepositoryCache(key.workspaceId);
+      invalidateSessionRepositoryCache(key.workspaceId);
+      resolveOld(result);
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+      expect(getSessionRepositorySnapshot(key)).toMatchObject({
+        data: mode === "initial" ? null : result,
+        isStale: mode === "refresh",
+      });
+      const duplicate = loadSessionRepositories(key, { load });
+      resolveFresh(updated);
+      await expect(Promise.all([pending, duplicate])).resolves.toEqual([updated, updated]);
+      expect(getSessionRepositorySnapshot(key)).toMatchObject({ data: updated, isStale: false });
+      expect(load).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("invalidates a pending first read when its pipeline is not known yet", async () => {
+    let resolveOld!: (value: typeof result) => void;
+    const updated = { ...result, pipelineId: "pipeline-2" };
+    const load = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<typeof result>((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(updated);
+    const pending = loadSessionRepositories(key, { load });
+    window.dispatchEvent(
+      new CustomEvent(SETTINGS_PIPELINE_CHANGED, { detail: { id: "pipeline-1" } }),
+    );
+    resolveOld(result);
+    await expect(pending).resolves.toEqual(updated);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not restore an old user's invalidated read after switching users", async () => {
+    let resolveOld!: (value: typeof result) => void;
+    const load = vi.fn(
+      () =>
+        new Promise<typeof result>((resolve) => {
+          resolveOld = resolve;
+        }),
+    );
+    const pending = loadSessionRepositories(key, { load });
+    invalidateSessionRepositoryCache(key.workspaceId);
+    const nextKey = { ...key, userId: "user-2" };
+    const updated = { ...result, defaultGithubRepositoryId: "other-user-repo" };
+    await loadSessionRepositories(nextKey, { load: async () => updated });
+    resolveOld(result);
+    await pending;
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(getSessionRepositorySnapshot(nextKey).data).toEqual(updated);
+    expect(getSessionRepositorySnapshot(key).data).toBeNull();
+  });
+
   it("keeps stale options available when revalidation fails", async () => {
     const load = vi.fn().mockResolvedValueOnce(result).mockRejectedValueOnce(new Error("Offline"));
     await loadSessionRepositories(key, { load, now: 100 });

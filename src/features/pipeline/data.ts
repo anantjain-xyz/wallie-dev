@@ -14,6 +14,12 @@ import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authent
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
+export class PipelineWorkspaceUnavailableError extends Error {
+  constructor() {
+    super("Workspace not found.");
+  }
+}
+
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 type PipelineDashboardCursor = {
@@ -126,6 +132,7 @@ export async function loadPipelineDashboardLanePage({
   });
 
   if (error) throw error;
+  if (data === null) throw new PipelineWorkspaceUnavailableError();
 
   const lane = normalizePipelineDashboardRpcPayload(data).lanes[0];
   if (!lane) return null;
@@ -136,6 +143,46 @@ export async function loadPipelineDashboardLanePage({
     id: lane.id,
     pipeline: lane.pipeline,
     totalCount: lane.totalCount,
+  };
+}
+
+/** The bounded authoritative board snapshot used by initial render and recovery. */
+export async function loadPipelineDashboardSnapshot({
+  supabase,
+  workspaceId,
+}: {
+  supabase: SupabaseServerClient;
+  workspaceId: string;
+}): Promise<Pick<PipelineDashboardData, "lanes" | "hasAnySession" | "onboarding">> {
+  const [onboardingResult, dashboard, archivedStages, anySessionResult] = await Promise.all([
+    supabase
+      .from("workspace_onboarding")
+      .select("current_step, status")
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
+    queryPipelineDashboard(supabase, {
+      page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
+      target_workspace_id: workspaceId,
+    }),
+    supabase.from("pipeline_stages").select("id, archived_at").eq("workspace_id", workspaceId),
+    supabase.from("sessions").select("id").eq("workspace_id", workspaceId).limit(1),
+  ]);
+  if (dashboard.error) throw dashboard.error;
+  if (dashboard.data === null) throw new PipelineWorkspaceUnavailableError();
+  if (onboardingResult.error) throw onboardingResult.error;
+  if (archivedStages.error) throw archivedStages.error;
+  if (anySessionResult.error) throw anySessionResult.error;
+  return {
+    hasAnySession: (anySessionResult.data?.length ?? 0) > 0,
+    onboarding: mapOnboardingResumeState(onboardingResult.data),
+    lanes: filterArchivedPipelineDashboardLanes(
+      normalizePipelineDashboardRpcPayload(dashboard.data).lanes,
+      new Set(
+        (archivedStages.data ?? [])
+          .filter((stage) => stage.archived_at !== null)
+          .map((stage) => stage.id),
+      ),
+    ),
   };
 }
 
@@ -152,73 +199,17 @@ export async function loadPipelineDashboardData(
         (context) => ({ rows: 1, workspaceId: context.workspace.id }),
       );
 
-      const [onboardingResult, dashboardResult, anySessionResult, archivedStageResult] =
-        await Promise.all([
-          timing.segment(
-            "pipeline.onboarding",
-            () =>
-              supabase
-                .from("workspace_onboarding")
-                .select("current_step, status")
-                .eq("workspace_id", workspace.id)
-                .maybeSingle(),
-            (result) => ({
-              payloadBytes: approximatePayloadSizeBytes(result.data),
-              rows: result.data ? 1 : 0,
-            }),
-          ),
-          timing.segment(
-            "pipeline.page-rpc",
-            () =>
-              queryPipelineDashboard(supabase, {
-                page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
-                target_workspace_id: workspace.id,
-              }),
-            (result) => ({
-              payloadBytes: approximatePayloadSizeBytes(result.data),
-              rows: normalizePipelineDashboardRpcPayload(result.data).lanes.reduce(
-                (count, lane) => count + lane.cards.length,
-                0,
-              ),
-            }),
-          ),
-          timing.segment(
-            "pipeline.any-session",
-            () => supabase.from("sessions").select("id").eq("workspace_id", workspace.id).limit(1),
-            (result) => ({
-              payloadBytes: approximatePayloadSizeBytes(result.data),
-              rows: result.data?.length ?? 0,
-            }),
-          ),
-          timing.segment(
-            "pipeline.archived-stages",
-            () =>
-              supabase
-                .from("pipeline_stages")
-                .select("id, archived_at")
-                .eq("workspace_id", workspace.id),
-            (result) => ({
-              payloadBytes: approximatePayloadSizeBytes(result.data),
-              rows: result.data?.length ?? 0,
-            }),
-          ),
-        ]);
-
-      if (onboardingResult.error) throw onboardingResult.error;
-      if (dashboardResult.error) throw dashboardResult.error;
-      if (anySessionResult.error) throw anySessionResult.error;
-      if (archivedStageResult.error) throw archivedStageResult.error;
-
-      const dashboard = normalizePipelineDashboardRpcPayload(dashboardResult.data);
-      const archivedStageIds = new Set(
-        (archivedStageResult.data ?? [])
-          .filter((stage) => stage.archived_at !== null)
-          .map((stage) => stage.id),
+      const snapshot = await timing.segment(
+        "pipeline.snapshot",
+        () => loadPipelineDashboardSnapshot({ supabase, workspaceId: workspace.id }),
+        (snapshot) => ({
+          payloadBytes: approximatePayloadSizeBytes(snapshot),
+          rows: snapshot.lanes.reduce((count, lane) => count + lane.cards.length, 0),
+        }),
       );
+
       const result: PipelineDashboardData = {
-        hasAnySession: (anySessionResult.data?.length ?? 0) > 0,
-        lanes: filterArchivedPipelineDashboardLanes(dashboard.lanes, archivedStageIds),
-        onboarding: mapOnboardingResumeState(onboardingResult.data),
+        ...snapshot,
         workspace: {
           id: workspace.id,
           name: workspace.name,

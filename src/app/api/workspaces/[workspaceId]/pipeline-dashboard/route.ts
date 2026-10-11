@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
+  PipelineWorkspaceUnavailableError,
   decodePipelineDashboardCursor,
   loadPipelineDashboardLanePage,
+  loadPipelineDashboardSnapshot,
 } from "@/features/pipeline/data";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -18,12 +20,36 @@ const requestSchema = z.object({
   stageId: z.string().uuid(),
 });
 
+export async function GET(_request: Request, context: RouteContext) {
+  const { workspaceId } = await context.params;
+  const access = await requireWorkspaceAccessById(workspaceId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { code: "workspace_unavailable", error: access.error },
+      { status: access.status },
+    );
+  }
+  try {
+    const snapshot = await loadPipelineDashboardSnapshot({
+      supabase: access.context.supabase,
+      workspaceId,
+    });
+    return NextResponse.json(snapshot, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) {
+    if (error instanceof PipelineWorkspaceUnavailableError) return workspaceUnavailable();
+    return NextResponse.json({ error: "Failed to load pipeline snapshot." }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
   const access = await requireWorkspaceAccessById(workspaceId);
 
   if (!access.ok) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
+    return NextResponse.json(
+      { code: "workspace_unavailable", error: access.error },
+      { status: access.status },
+    );
   }
 
   const body = await request.json().catch(() => null);
@@ -57,9 +83,17 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ lane }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
+    if (error instanceof PipelineWorkspaceUnavailableError) return workspaceUnavailable();
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to load pipeline lane." },
       { status: 500 },
     );
   }
+}
+
+function workspaceUnavailable() {
+  return NextResponse.json(
+    { code: "workspace_unavailable", error: "Workspace not found." },
+    { status: 404 },
+  );
 }
