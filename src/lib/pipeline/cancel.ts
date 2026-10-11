@@ -5,6 +5,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
+import { hasSandboxCleanupReceipt } from "@/lib/sandbox-connections/cleanup-receipts";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -80,13 +81,30 @@ export async function stopRunSandbox(
     return true;
   }
 
+  if (
+    options.throwOnError &&
+    (await hasSandboxCleanupReceipt(admin, {
+      connectionRevision: run.sandbox_connection_revision ?? null,
+      provider: run.sandbox_provider,
+      sandboxId: run.sandbox_id,
+      workspaceId: run.workspace_id,
+    }))
+  )
+    return true;
+
   const connection = await resolveRunSandboxConnection(admin, run, cache);
+  if (
+    options.throwOnError &&
+    connection &&
+    connection.revision !== run.sandbox_connection_revision
+  ) {
+    throw new Error("Workspace sandbox cleanup connection changed.");
+  }
   if (!connection) {
     if (options.throwOnError)
       throw new Error("Workspace sandbox cleanup credentials are unavailable.");
-    // A successful lookup found no credentials. Historical references can
-    // outlive an intentionally removed connection; there is nothing left for
-    // the workspace cascade to preserve. Lookup failures still propagate.
+    // Best-effort cancellation retains the historical reference for recovery.
+    // Strict workspace cleanup above requires credentials or an exact receipt.
     console.warn("[cancel] sandbox cleanup skipped because its connection is absent", {
       runId: run.id,
       sandboxId: run.sandbox_id,
