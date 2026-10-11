@@ -384,14 +384,12 @@ describe("PipelinePageClient", () => {
     empty.onboarding = { currentStep: "github", status: "in_progress" };
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          snapshotResponse({
-            ...empty,
-            onboarding: { currentStep: "verify", status: "completed" },
-          }),
-        ),
+      vi.fn().mockResolvedValue(
+        snapshotResponse({
+          ...empty,
+          onboarding: { currentStep: "verify", status: "completed" },
+        }),
+      ),
     );
     render(<PipelinePageClient initialData={empty} />);
     expect(screen.getByText("No sessions").getAttribute("data-onboarding-status")).toBe(
