@@ -251,6 +251,7 @@ interface MockOptions {
   artifactInsertError?: { message: string } | null;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
+  beforeMessageInsert?: (row: Record<string, unknown>) => Promise<void>;
   pointerUpdateError?: { message: string } | null;
   pointerCasMiss?: boolean;
   feedbackInsertError?: { message: string } | null;
@@ -258,6 +259,7 @@ interface MockOptions {
   runSandboxUpdateError?: { message: string } | null;
   usageUpdateError?: { message: string } | null;
   retentionUpdateError?: { message: string } | null;
+  beforeRetentionUpdate?: () => Promise<void>;
   runSandboxUpdateMissed?: boolean;
   runRows?: Array<Record<string, unknown>>;
   githubInstallation?: { id: string; installation_id: number } | null;
@@ -404,13 +406,15 @@ function buildAdminMock(opts: MockOptions) {
           return chain;
         },
         select: () => chain,
-        then: (
+        abortSignal: () => chain,
+        then: async (
           resolve: (value: {
             data: Record<string, unknown>[];
             error: { message: string } | null;
           }) => void,
         ) => {
           runUpdateFilters.push(filters);
+          if (patch.source_recovery_required === true) await opts.beforeRetentionUpdate?.();
           const missed = "sandbox_id" in patch && opts.runSandboxUpdateMissed;
           const rows = missed ? [] : runRows.filter((row) => matches.every((match) => match(row)));
           const retentionError =
@@ -437,6 +441,7 @@ function buildAdminMock(opts: MockOptions) {
 
   const agentRunMessagesTable = {
     insert: async (row: Record<string, unknown>) => {
+      await opts.beforeMessageInsert?.(row);
       if (
         opts.messageInsertError &&
         (!opts.messageInsertErrorOnMessage || row.message_md === opts.messageInsertErrorOnMessage)
@@ -2056,27 +2061,105 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
   });
 
-  it("retains LFS source and reports the unsupported payload before publication", async () => {
-    const { UnsupportedLfsCheckpointError } = await import("./source-checkpoint");
-    mocked.captureSourceCheckpoint.mockRejectedValueOnce(new UnsupportedLfsCheckpointError());
-    const { admin, insertedArtifacts, insertedMessages, runRows, rpc } = buildAdminMock({
+  it("protects completed source before completion-history persistence fails", async () => {
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
       session: baseSession(),
+      messageInsertError: { message: "history unavailable" },
+      messageInsertErrorOnMessage: "Done",
+      beforeMessageInsert: async (row) => {
+        if (row.message_md === "Done") expect(runRows[0].source_recovery_required).toBe(true);
+      },
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
     expect(insertedArtifacts).toEqual([]);
-    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     expect(runRows[0].source_recovery_required).toBe(true);
     expect(rpc).toHaveBeenCalledWith(
       "fail_session_job_attempt",
       expect.objectContaining({ p_retry: false }),
     );
-    expect(
-      insertedMessages.some((message) =>
-        String(message.message_md).includes("Changed Git LFS files"),
-      ),
-    ).toBe(true);
     expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
   });
+
+  it("protects completed source synchronously while its retention write waits past abort", async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { admin, insertedArtifacts } = buildAdminMock({
+      session: baseSession(),
+      beforeRetentionUpdate: async () => {
+        entered();
+        await blocked;
+      },
+    });
+    const controller = new AbortController();
+    const pending = processPipelineJob({ admin, job: baseJob(), signal: controller.signal });
+    await waiting;
+    const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+    controller.abort(new Error("deadline"));
+    expect(sandbox.stop).not.toHaveBeenCalled();
+    release();
+    expect((await pending).result).toBe("idle");
+    expect(insertedArtifacts).toEqual([]);
+    expect(sandbox.stop).not.toHaveBeenCalled();
+  });
+
+  it("attempts retention for completion received after abort without undoing earlier cleanup", async () => {
+    const { admin, insertedArtifacts, runRows } = buildAdminMock({ session: baseSession() });
+    const controller = new AbortController();
+    mocked.createAgentRunner.mockReturnValue({
+      ...makeRunner([]),
+      start: vi.fn(async function* () {
+        controller.abort(new Error("deadline"));
+        yield {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Late source",
+        } as AgentEvent;
+      }),
+    });
+    expect(
+      (await processPipelineJob({ admin, job: baseJob(), signal: controller.signal })).result,
+    ).toBe("idle");
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(insertedArtifacts).toEqual([]);
+    // Abort already acted before this event became visible; the guard prevents
+    // additional teardown but cannot restore an expired sandbox.
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+  });
+
+  it.each(["Git LFS files", "Git submodules"])(
+    "retains %s and reports the unsupported payload before publication",
+    async (kind) => {
+      const { UnsupportedLfsCheckpointError, UnsupportedSubmoduleCheckpointError } =
+        await import("./source-checkpoint");
+      mocked.captureSourceCheckpoint.mockRejectedValueOnce(
+        kind === "Git LFS files"
+          ? new UnsupportedLfsCheckpointError()
+          : new UnsupportedSubmoduleCheckpointError(),
+      );
+      const { admin, insertedArtifacts, insertedMessages, runRows, rpc } = buildAdminMock({
+        session: baseSession(),
+      });
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+      expect(insertedArtifacts).toEqual([]);
+      expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+      expect(runRows[0].source_recovery_required).toBe(true);
+      expect(rpc).toHaveBeenCalledWith(
+        "fail_session_job_attempt",
+        expect.objectContaining({ p_retry: false }),
+      );
+      expect(
+        insertedMessages.some((message) => String(message.message_md).includes(`Changed ${kind}`)),
+      ).toBe(true);
+      expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not persist the stage completion message when artifact persistence fails", async () => {
     const session = baseSession();

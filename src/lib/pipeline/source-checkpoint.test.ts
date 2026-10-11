@@ -160,3 +160,74 @@ it("allows unchanged LFS pointers already present in the original base", async (
     await sandbox.stop();
   }
 });
+
+it.each(["new", "advanced", "intermediate", "unchanged", "ignored dirty"])(
+  "checks %s submodule source independently of the superproject bundle",
+  async (kind) => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    const submodule = new FakeSandbox(undefined, { passthroughExec: true });
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    const commit = (cwd: string) => {
+      git(cwd, "add", "--all");
+      git(
+        cwd,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-qm",
+        "Fixture change",
+      );
+    };
+    try {
+      let baseSha = await readSourceBase(sandbox);
+      git(
+        sandbox.repoPath,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        submodule.repoPath,
+        "payload",
+      );
+      if (kind === "ignored dirty")
+        git(sandbox.repoPath, "config", "-f", ".gitmodules", "submodule.payload.ignore", "all");
+      if (kind !== "new") {
+        commit(sandbox.repoPath);
+        baseSha = await readSourceBase(sandbox);
+      }
+      const modulePath = join(sandbox.repoPath, "payload");
+      const originalModuleHead = git(modulePath, "rev-parse", "HEAD");
+      if (kind === "advanced" || kind === "intermediate") {
+        writeFileSync(join(modulePath, "new-payload.txt"), "local-only submodule source");
+        commit(modulePath);
+        if (kind === "intermediate") {
+          commit(sandbox.repoPath);
+          git(modulePath, "checkout", originalModuleHead);
+          commit(sandbox.repoPath);
+        }
+      } else if (kind === "unchanged") {
+        await sandbox.writeFile(`${sandbox.repoPath}/ordinary.txt`, "superproject edit");
+      } else if (kind === "ignored dirty") {
+        writeFileSync(join(modulePath, "new-payload.txt"), "hidden untracked submodule source");
+        expect(git(sandbox.repoPath, "status", "--porcelain")).toBe("");
+      }
+      if (kind === "unchanged") {
+        expect((await captureSourceCheckpoint({ sandbox, baseSha })).kind).toBe("bundle");
+      } else {
+        await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toThrow(
+          kind === "ignored dirty" ? "Could not preserve" : "Changed Git submodules",
+        );
+      }
+    } finally {
+      await sandbox.stop();
+      await submodule.stop();
+    }
+  },
+);

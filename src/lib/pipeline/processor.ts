@@ -47,6 +47,7 @@ import {
   captureSourceCheckpoint,
   readSourceBase,
   UnsupportedLfsCheckpointError,
+  UnsupportedSubmoduleCheckpointError,
 } from "./source-checkpoint";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
@@ -417,6 +418,25 @@ async function runStage(input: {
       signal,
       sessionId: session.id,
     })) {
+      if (event.type === "completion" && event.taskComplete && !retainSource) {
+        // Protect the only source copy synchronously, before any completion
+        // bookkeeping can fail or wait past the worker deadline.
+        retainSource = true;
+        const { data: retained, error: retentionError } = await admin
+          .from("agent_runs")
+          .update({ source_recovery_required: true })
+          .eq("id", runId)
+          .eq("attempt_count", job.attempt_count)
+          .eq("status", "running")
+          .select("id")
+          .abortSignal(AbortSignal.timeout(5_000));
+        // A DB outage must still permit capture into available private Storage.
+        // The running-only guard serializes retention with terminal cleanup.
+        if (!retentionError && !retained?.length) {
+          retainSource = false;
+          throw new ExecutionOwnershipLostError();
+        }
+      }
       throwIfAborted(signal);
       if (runId) {
         if (!(await persistEvent(admin, runId, job.attempt_count, session.workspace_id, event))) {
@@ -461,18 +481,7 @@ async function runStage(input: {
     // Once the agent has produced reviewable work, deletion is safe only after
     // the source is durable. A dual-store outage leaves the provider TTL as the
     // recovery window, and the reaper honors this explicit retention marker.
-    retainSource = true;
     try {
-      const { data: retained, error: retentionError } = await admin
-        .from("agent_runs")
-        .update({ source_recovery_required: true })
-        .eq("id", runId)
-        .eq("attempt_count", job.attempt_count)
-        .eq("status", "running")
-        .select("id");
-      // A database outage must not prevent using available private Storage.
-      // If both stores fail, the local retention flag still prevents teardown.
-      if (!retentionError && !retained?.length) throw new ExecutionOwnershipLostError();
       const checkpoint = await captureSourceCheckpoint({ sandbox, baseSha: sourceBase, signal });
       const prepared = await prepareSourceDelivery({
         admin,
@@ -495,7 +504,11 @@ async function runStage(input: {
       if (error instanceof ExecutionOwnershipLostError || signal?.aborted) throw error;
       throw new SourcePreservationError(
         !retainSource,
-        error instanceof UnsupportedLfsCheckpointError ? "lfs" : undefined,
+        error instanceof UnsupportedLfsCheckpointError
+          ? "lfs"
+          : error instanceof UnsupportedSubmoduleCheckpointError
+            ? "gitlink"
+            : undefined,
       );
     }
     throwIfAborted(signal);
@@ -529,6 +542,7 @@ async function runStage(input: {
       {
         runId,
         retry:
+          !retainSource &&
           !(error instanceof MissingReviewableOutputError) &&
           !(error instanceof SourcePreservationError) &&
           !isSandboxConnectionSetupError(error),

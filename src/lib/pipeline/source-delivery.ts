@@ -15,11 +15,13 @@ export type SourceDelivery = Tables<"session_source_deliveries">;
 
 /** No raw source or transport error is safe to include in logs or run history. */
 export class SourcePreservationError extends Error {
-  constructor(durable = false, reason?: "lfs") {
+  constructor(durable = false, reason?: "lfs" | "gitlink") {
     super(
       (reason === "lfs"
         ? "Changed Git LFS files require external payload storage and cannot be checkpointed. "
-        : "Source checkpoint could not be recorded. ") +
+        : reason === "gitlink"
+          ? "Changed Git submodules require separate object storage and cannot be checkpointed. "
+          : "Source checkpoint could not be recorded. ") +
         "No artifact was published. " +
         (durable
           ? "The durable checkpoint is retained for recovery."

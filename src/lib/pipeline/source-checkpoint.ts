@@ -18,6 +18,13 @@ export class UnsupportedLfsCheckpointError extends Error {
   }
 }
 
+export class UnsupportedSubmoduleCheckpointError extends Error {
+  constructor() {
+    super("Changed Git submodules cannot be preserved by source checkpoints.");
+    this.name = "UnsupportedSubmoduleCheckpointError";
+  }
+}
+
 export type SourceCheckpoint =
   | { kind: "unchanged"; baseSha: string; headSha: string }
   | { kind: "bundle"; baseSha: string; headSha: string; bytes: Buffer; sha256: string };
@@ -55,9 +62,14 @@ export async function captureSourceCheckpoint(input: {
     "git add --all",
     "if ! git diff --cached --quiet; then git -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -qm 'Preserve Wallie stage source'; fi",
     // A superproject bundle cannot preserve dirty submodule worktrees.
-    "if [ -n \"$(git status --porcelain --untracked-files=normal)\" ]; then echo 'Source checkout still contains uncommitted changes' >&2; exit 41; fi",
+    "if [ -n \"$(git status --porcelain --untracked-files=normal --ignore-submodules=none)\" ]; then echo 'Source checkout still contains uncommitted changes' >&2; exit 41; fi",
     "head=$(git rev-parse --verify 'HEAD^{commit}')",
     `if [ "$head" = ${shellQuote(input.baseSha)} ]; then printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
+    // A clean gitlink can still point to a commit available only in a local
+    // submodule. Check each new commit, including reverted intermediate edits.
+    `git rev-list "$head" ${shellQuote(`^${input.baseSha}`)} | while read -r commit; do`,
+    `  if git diff-tree --root --raw --no-commit-id --no-renames -r -m "$commit" | awk '$1 == ":160000" || $2 == "160000" { gitlink = 1 } END { exit !gitlink }'; then exit 44; fi`,
+    "done",
     // Bundles contain LFS pointers, not their external payloads. Inspect every
     // new blob, including intermediate commits, without depending on git-lfs.
     `git rev-list --objects --no-object-names "$head" ${shellQuote(`^${input.baseSha}`)} | git cat-file --batch-check='%(objectname) %(objecttype)' | while read -r object type; do`,
@@ -81,6 +93,7 @@ export async function captureSourceCheckpoint(input: {
   input.signal?.throwIfAborted();
   if (code !== 0) {
     if (code === 43) throw new UnsupportedLfsCheckpointError();
+    if (code === 44) throw new UnsupportedSubmoduleCheckpointError();
     throw new Error(
       code === 42
         ? "Source checkpoint exceeds 4 MiB."

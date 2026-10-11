@@ -157,10 +157,13 @@ the target repository remains their runtime semantic owner.
   explicit successful completion and reviewable text; partial output is not success.
 - Before publication, Wallie commits remaining nonignored working-tree changes
   with repository hooks disabled, then captures an incremental Git bundle from
-  the original base to the final head. Dirty submodules cannot be checkpointed.
+  the original base to the final head. Dirty submodules and changed gitlinks
+  (including intermediate commits) cannot be checkpointed because bundles omit
+  submodule objects; unchanged baseline gitlinks are allowed.
   New or modified Git LFS pointers, including intermediate commits, are rejected
   before publication because a Git bundle omits their external payloads. Source
-  remains in its sandbox for recovery; unchanged pointers in the base are allowed.
+  is retained only in its original sandbox until provider expiry, without a
+  durable payload guarantee; unchanged pointers in the base are allowed.
 - Bundles are limited to 4 MiB and stored privately under
   `session-source-checkpoints/<workspace>/<run>.bundle`. If Storage is unavailable,
   a service-only outbox row can hold a bounded base64 fallback.
