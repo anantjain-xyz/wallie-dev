@@ -43,7 +43,8 @@ for each row execute function internal.reset_setup_pull_request_source_state();
 create function public.apply_github_pull_request_event(
   target_workspace_id uuid, target_repository_id uuid, target_branch_name text,
   source_pull_request_number integer, source_pull_request_url text,
-  source_pull_request_state text, source_is_draft boolean, source_updated_at timestamptz
+  source_pull_request_state text, source_is_draft boolean, source_updated_at timestamptz,
+  source_head_repository_matches boolean default false
 ) returns boolean language plpgsql security definer set search_path = '' as $$
 declare
   onboarding public.repository_onboarding_status%rowtype;
@@ -109,7 +110,8 @@ begin
           and session.workspace_id = target_workspace_id
           and session.github_repository_id = target_repository_id)))
     and (link.pull_request_number = source_pull_request_number
-      or (link.pull_request_number is null and link.branch_name = target_branch_name))
+      or (link.pull_request_number is null and source_head_repository_matches
+        and link.branch_name = target_branch_name))
     and internal.github_pull_request_is_fresh(link.pull_request_state,
       link.github_updated_at, source_pull_request_state, source_updated_at);
   get diagnostics affected = row_count;
@@ -185,7 +187,7 @@ begin
 end;
 $$;
 
-revoke all on function public.apply_github_pull_request_event(uuid, uuid, text, integer, text, text, boolean, timestamptz) from public, anon, authenticated;
+revoke all on function public.apply_github_pull_request_event(uuid, uuid, text, integer, text, text, boolean, timestamptz, boolean) from public, anon, authenticated;
 revoke all on function public.record_session_pull_request(uuid, uuid, uuid, text, integer, text, text, boolean, timestamptz) from public, anon, authenticated;
-grant execute on function public.apply_github_pull_request_event(uuid, uuid, text, integer, text, text, boolean, timestamptz) to service_role;
+grant execute on function public.apply_github_pull_request_event(uuid, uuid, text, integer, text, text, boolean, timestamptz, boolean) to service_role;
 grant execute on function public.record_session_pull_request(uuid, uuid, uuid, text, integer, text, text, boolean, timestamptz) to service_role;

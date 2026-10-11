@@ -2246,6 +2246,7 @@ export type Database = {
       }
       apply_github_pull_request_event: {
         Args: {
+          source_head_repository_matches?: boolean
           source_is_draft: boolean
           source_pull_request_number: number
           source_pull_request_state: string

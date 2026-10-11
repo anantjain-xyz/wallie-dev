@@ -139,6 +139,7 @@ export async function handleGitHubPullRequestEvent(
     source_pull_request_state: payload.pull_request.merged ? "merged" : payload.pull_request.state,
     source_is_draft: payload.pull_request.draft,
     source_updated_at: payload.pull_request.updated_at,
+    source_head_repository_matches: payload.pull_request.head.repo?.id === payload.repository.id,
   });
   if (error) throw error;
 }
