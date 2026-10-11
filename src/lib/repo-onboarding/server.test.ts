@@ -102,13 +102,25 @@ function setupGitHub(
     snapshot?: () => unknown;
     afterMutation?: (route: string) => void;
     afterBaseRead?: () => void;
+    createdRefSha?: string;
+    cleanupError?: Error;
   } = {},
 ) {
   return {
-    request: vi.fn(async (route: string) => {
+    request: vi.fn(async (route: string, params?: Record<string, unknown>) => {
       if (route === "GET /repos/{owner}/{repo}/contents/{path}") throw { status: 404 };
       if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}")
-        return { data: { object: { sha: "base" } } };
+        return {
+          data: {
+            object: {
+              sha: params?.ref === "heads/main" ? "base" : (input.createdRefSha ?? "created"),
+            },
+          },
+        };
+      if (route === "DELETE /repos/{owner}/{repo}/git/refs/{ref}") {
+        if (input.cleanupError) throw input.cleanupError;
+        return { data: null };
+      }
       if (route === "GET /repos/{owner}/{repo}/git/commits/{commit_sha}") {
         input.afterBaseRead?.();
         return { data: { tree: { sha: "base-tree" } } };
@@ -355,6 +367,82 @@ describe("startRepositoryOnboarding", () => {
         .map(([route]) => route),
     ).toEqual(["POST /repos/{owner}/{repo}/git/trees"]);
     expect(f.upserts).toEqual([]);
+  });
+
+  it("removes its exact created ref when deletion starts before PR creation", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const octokit = setupGitHub({
+      afterMutation: (route) => {
+        if (route.endsWith("/git/refs")) f.state.deleting = true;
+      },
+    });
+    await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
+    const created = octokit.request.mock.calls.find(([route]) => route.endsWith("/git/refs"))![1]!;
+    expect(octokit.request).toHaveBeenCalledWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+      owner: "acme",
+      repo: "app",
+      ref: String(created.ref).replace(/^refs\//, ""),
+    });
+    expect(octokit.request).not.toHaveBeenCalledWith(
+      "POST /repos/{owner}/{repo}/pulls",
+      expect.anything(),
+    );
+    expect(f.upserts).toEqual([]);
+  });
+
+  it("never deletes a ref when creation failed because it already existed", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const failure = Object.assign(new Error("Reference already exists"), { status: 422 });
+    const octokit = setupGitHub({
+      afterMutation: (route) => {
+        if (route.endsWith("/git/refs")) throw failure;
+      },
+    });
+    await expect(start(f, octokit)).rejects.toBe(failure);
+    expect(octokit.request.mock.calls.some(([route]) => route.startsWith("DELETE "))).toBe(false);
+  });
+
+  it("preserves a moved ref and reports that cleanup requires attention", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const octokit = setupGitHub({
+        createdRefSha: "someone-elses-commit",
+        afterMutation: (route) => {
+          if (route.endsWith("/git/refs")) f.state.deleting = true;
+        },
+      });
+      await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
+      expect(octokit.request.mock.calls.some(([route]) => route.startsWith("DELETE "))).toBe(false);
+      expect(log).toHaveBeenCalledWith(
+        "Setup branch cleanup failed; the branch may require manual removal.",
+        expect.objectContaining({
+          repository: "acme/app",
+          branch: expect.stringMatching(/^wallie\/setup-app-/),
+        }),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("preserves the admission error and reports failed cleanup without provider diagnostics", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const octokit = setupGitHub({
+        cleanupError: new Error("sensitive provider diagnostic"),
+        afterMutation: (route) => {
+          if (route.endsWith("/git/refs")) f.state.deleting = true;
+        },
+      });
+      await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
+      expect(log).toHaveBeenCalledOnce();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("sensitive provider diagnostic");
+      expect(f.upserts).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("does not save a late setup response after workspace deletion starts", async () => {

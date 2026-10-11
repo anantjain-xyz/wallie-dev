@@ -417,7 +417,32 @@ async function createSetupPullRequest(input: {
     sha: commit.sha,
   });
 
-  await input.assertWorkspaceActive();
+  try {
+    await input.assertWorkspaceActive();
+  } catch (error) {
+    // Only a successful create above establishes ownership. Never remove a
+    // pre-existing ref or one that another actor has since moved.
+    try {
+      const { data: currentRef } = await input.octokit.request<GitRefResponse>(
+        "GET /repos/{owner}/{repo}/git/ref/{ref}",
+        { owner: input.owner, repo: input.repo, ref: `heads/${branchName}` },
+      );
+      if (currentRef.object.sha !== commit.sha) throw new Error("Setup ref ownership changed.");
+      await input.octokit.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+        owner: input.owner,
+        repo: input.repo,
+        ref: `heads/${branchName}`,
+      });
+    } catch (cleanupError) {
+      if (readGitHubStatus(cleanupError) !== 404) {
+        console.error("Setup branch cleanup failed; the branch may require manual removal.", {
+          repository: `${input.owner}/${input.repo}`,
+          branch: branchName,
+        });
+      }
+    }
+    throw error;
+  }
   const { data: pr } = await input.octokit.request<PullRequestResponse>(
     "POST /repos/{owner}/{repo}/pulls",
     {

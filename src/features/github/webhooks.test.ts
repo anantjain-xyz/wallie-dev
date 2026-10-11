@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   syncGitHubRepositoriesForWorkspace: vi.fn(),
+  getInstallationOctokit: vi.fn(),
+  request: vi.fn(),
+}));
+
+vi.mock("@octokit/app", () => ({
+  App: class {
+    getInstallationOctokit = mocked.getInstallationOctokit;
+  },
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -23,9 +31,11 @@ const env = {
   GITHUB_WEBHOOK_SECRET: "x",
   GITHUB_APP_ID: "1",
   GITHUB_APP_PRIVATE_KEY: "k",
+  NEXT_PUBLIC_APP_URL: "https://wallie.example",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "service",
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
+  SUPABASE_SECRET_KEY: "service",
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "anon",
+  WALLIE_ENCRYPTION_KEY: "a".repeat(64),
 };
 function payload(action = "opened") {
   return {
@@ -45,12 +55,15 @@ function payload(action = "opened") {
 }
 function buildPrAdmin({
   installation = { id: "ghi-1", workspace_id: "ws-1" },
-  repository = { id: "repo-1" },
+  repository = { id: "repo-1", full_name: "acme/app" },
 }: {
   installation?: { id: string; workspace_id: string } | null;
-  repository?: { id: string } | null;
+  repository?: { id: string; full_name: string } | null;
 } = {}) {
-  const rpc = vi.fn().mockResolvedValue({ data: true, error: null });
+  const rpc = vi.fn(async (name: string) => ({
+    data: name === "begin_github_pull_request_observation" ? null : true,
+    error: null as Error | null,
+  }));
   const filters: Array<[string, string, unknown]> = [];
   const admin = {
     rpc,
@@ -74,7 +87,10 @@ function buildPrAdmin({
 }
 
 describe("handleGitHubPullRequestEvent", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.getInstallationOctokit.mockResolvedValue({ request: mocked.request });
+  });
   it("resolves installation and repository identity before applying the provider snapshot atomically", async () => {
     const { rpc, filters } = buildPrAdmin();
     await handleGitHubPullRequestEvent(payload(), env);
@@ -94,7 +110,102 @@ describe("handleGitHubPullRequestEvent", () => {
       source_updated_at: "2026-10-11T00:00:00Z",
       source_head_repository_matches: true,
     });
+    expect(mocked.request).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { label: "reopened", state: "open", draft: false },
+    { label: "ready for review", state: "open", draft: false },
+    { label: "closed", state: "closed", draft: true },
+  ] as const)(
+    "reconciles an ambiguous $label tie using a fenced authoritative read",
+    async (next) => {
+      const { rpc } = buildPrAdmin();
+      const operations: string[] = [];
+      rpc.mockImplementation(async (name: string) => {
+        operations.push(name);
+        return {
+          data: name === "begin_github_pull_request_observation" ? "token-1" : true,
+          error: null,
+        } as never;
+      });
+      mocked.request.mockImplementation(async () => {
+        operations.push("GitHub GET");
+        return {
+          data: {
+            ...payload().pull_request,
+            base: { repo: { id: 555 } },
+            state: next.state,
+            draft: next.draft,
+          },
+        };
+      });
+      await handleGitHubPullRequestEvent(payload("reopened"), env);
+      expect(operations).toEqual([
+        "apply_github_pull_request_event",
+        "begin_github_pull_request_observation",
+        "GitHub GET",
+        "finish_github_pull_request_observation",
+      ]);
+      expect(mocked.getInstallationOctokit).toHaveBeenCalledWith(999);
+      expect(mocked.request).toHaveBeenCalledWith("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+        owner: "acme",
+        repo: "app",
+        pull_number: 42,
+      });
+      expect(rpc).toHaveBeenCalledWith("finish_github_pull_request_observation", {
+        target_workspace_id: "ws-1",
+        target_repository_id: "repo-1",
+        target_branch_name: "wallie/product-sess-1",
+        source_pull_request_number: 42,
+        source_pull_request_url: "https://github.com/acme/app/pull/42",
+        source_pull_request_state: next.state,
+        source_is_draft: next.draft,
+        source_updated_at: "2026-10-11T00:00:00Z",
+        observation_token: "token-1",
+      });
+    },
+  );
+
+  it.each(["fetch failure", "invalid snapshot", "different PR", "different repository"])(
+    "does not finish an observation after %s and propagates the failure for retry",
+    async (failure) => {
+      const { rpc } = buildPrAdmin();
+      rpc.mockImplementation(
+        async (name: string) =>
+          ({
+            data: name === "begin_github_pull_request_observation" ? "token-1" : true,
+            error: null,
+          }) as never,
+      );
+      mocked.request.mockImplementation(async () => {
+        if (failure === "fetch failure") throw new Error("GitHub unavailable");
+        return {
+          data: {
+            ...payload().pull_request,
+            base: { repo: { id: failure === "different repository" ? 556 : 555 } },
+            ...(failure === "different PR" ? { number: 43 } : {}),
+            ...(failure === "invalid snapshot" ? { updated_at: null } : {}),
+          },
+        };
+      });
+      const expectedError =
+        failure === "fetch failure"
+          ? "GitHub unavailable"
+          : failure === "different PR"
+            ? "GitHub returned a different pull request."
+            : failure === "different repository"
+              ? "GitHub returned a different repository."
+              : "updated_at";
+      await expect(handleGitHubPullRequestEvent(payload("reopened"), env)).rejects.toThrow(
+        expectedError,
+      );
+      expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+        "apply_github_pull_request_event",
+        "begin_github_pull_request_observation",
+      ]);
+    },
+  );
   it.each(["wallie/product-sess-1", "wallie/setup-app-abc"])(
     "preserves merged state for %s",
     async (branch) => {
