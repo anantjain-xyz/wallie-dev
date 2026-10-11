@@ -5,10 +5,12 @@ import {
   startRepositoryOnboarding,
 } from "@/lib/repo-onboarding/server";
 import { WALLIE_SKILL_VERSION, wallieSkillManifestHash } from "@/lib/repo-onboarding/skills";
+import { WorkspaceDeletingError } from "@/lib/workspaces/resource-operations";
 
 function buildAdmin(input: {
   onboardingRow: Record<string, unknown> | null;
   repository?: Record<string, unknown>;
+  writeError?: { code: string; message: string };
 }) {
   const upserts: unknown[] = [];
   const state = { onboardingRow: input.onboardingRow, deleting: false };
@@ -92,10 +94,10 @@ function buildAdmin(input: {
         },
         upsert(values: Record<string, unknown>) {
           upserts.push(values);
-          state.onboardingRow = { ...values };
+          if (!input.writeError) state.onboardingRow = { ...values };
           return {
             select: () => ({
-              single: async () => ({ data: values, error: null }),
+              single: async () => ({ data: values, error: input.writeError ?? null }),
             }),
           };
         },
@@ -598,6 +600,37 @@ describe("startRepositoryOnboarding", () => {
     });
   });
 
+  it.each([
+    { code: "P0010", message: "Workspace deletion is in progress." },
+    { code: "23503", message: "Workspace not found." },
+  ])(
+    "cleans its new PR when database admission rejects the later write with $code",
+    async (writeError) => {
+      const f = buildAdmin({ onboardingRow: null, writeError });
+      const octokit = setupGitHub();
+      await expect(start(f, octokit)).rejects.toBeInstanceOf(WorkspaceDeletingError);
+      expect(f.state.onboardingRow).toBeNull();
+      expect(octokit.request).toHaveBeenCalledWith(
+        "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+        expect.objectContaining({
+          pull_number: 12,
+          state: "closed",
+        }),
+      );
+      expect(octokit.request.mock.calls.some(([route]) => route.startsWith("DELETE "))).toBe(true);
+    },
+  );
+
+  it("maps a reconciliation admission failure to the typed deletion error", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    f.admin.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { code: "P0010", message: "Workspace deletion is in progress." },
+    } as never);
+    await expect(start(f, setupGitHub())).rejects.toBeInstanceOf(WorkspaceDeletingError);
+    expect(f.state.onboardingRow).toMatchObject({ setup_pr_number: 12 });
+  });
+
   it("preserves a moved ref and its PR after a late response", async () => {
     const f = buildAdmin({ onboardingRow: null });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -673,6 +706,36 @@ describe("startRepositoryOnboarding", () => {
 });
 
 describe("markRepositoryOnboardingReady", () => {
+  it.each([
+    { code: "P0010", message: "Workspace deletion is in progress." },
+    { code: "23503", message: "Workspace not found." },
+  ])(
+    "maps a deletion race after the initial workspace read to a typed conflict: $code",
+    async (writeError) => {
+      const { admin, state } = buildAdmin({ onboardingRow: null, writeError });
+      await expect(
+        markRepositoryOnboardingReady({
+          admin: admin as never,
+          repositoryId: "repo-1",
+          workspaceId: "ws-1",
+        }),
+      ).rejects.toBeInstanceOf(WorkspaceDeletingError);
+      expect(state.onboardingRow).toBeNull();
+    },
+  );
+
+  it("preserves unrelated foreign key errors", async () => {
+    const writeError = { code: "23503", message: "Repository foreign key constraint violated." };
+    const { admin } = buildAdmin({ onboardingRow: null, writeError });
+    await expect(
+      markRepositoryOnboardingReady({
+        admin: admin as never,
+        repositoryId: "repo-1",
+        workspaceId: "ws-1",
+      }),
+    ).rejects.toBe(writeError);
+  });
+
   it("records a manual ready state for a valid repository", async () => {
     const { admin, upserts } = buildAdmin({
       onboardingRow: null,
