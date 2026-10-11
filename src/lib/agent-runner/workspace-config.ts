@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   AGENT_PROVIDERS,
+  parseAgentConfigValue,
   isAgentEffort,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
@@ -67,9 +68,9 @@ export async function loadWorkspaceAgentConfig(
   const maxTurns = lookup.max_turns;
   if (
     maxTurns !== undefined &&
-    (typeof maxTurns !== "number" || !Number.isSafeInteger(maxTurns) || maxTurns < 1)
+    (typeof maxTurns !== "number" || !parseAgentConfigValue("max_turns", maxTurns).ok)
   ) {
-    throw new Error("Workspace max_turns must be a positive integer.");
+    throw new Error("Workspace max_turns must be a positive integer between 1 and 100.");
   }
 
   return {

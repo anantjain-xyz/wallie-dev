@@ -296,3 +296,5 @@ A healthy deployment should provide:
 
 Keep these visible during deployment work; do not silently describe the desired
 future state as current behavior.
+
+The worker passes its absolute attempt deadline into the publication RPC. PostgreSQL checks wall-clock time after ownership locks and after writes, rolling back the artifact and success transition if a lock wait crosses the deadline. Aborting the HTTP request alone is insufficient. Timed-out runs retain the controlled deadline reason in their visible run history. Deploy the forward deadline migration before updated workers; the optional RPC argument permits older workers during rollout.

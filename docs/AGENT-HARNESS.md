@@ -114,7 +114,7 @@ delimiters, or unexpectedly large content — they are labeled and delimited, no
 stripped.
 
 Configuration query failures stop the attempt; only absent configuration keys
-use defaults. Claude Code receives the workspace `max_turns` budget (default 5)
+use defaults. Claude Code receives the workspace `max_turns` budget (1–100, default 5), editable in Coding agent Settings or through `/api/agent-config`
 within one CLI invocation, including its tool round trips. All assistant content
 blocks are preserved. A successful Claude result and zero process exit are both
 required before emitting completion; error results, turn-limit exhaustion, and

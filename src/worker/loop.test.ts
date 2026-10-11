@@ -99,6 +99,7 @@ describe("runClaimedJob", () => {
   function recoveryAdmin(runId: string | null = "run-attempt-1") {
     const query = {
       select: vi.fn(() => query),
+      insert: vi.fn(() => query),
       eq: vi.fn(() => query),
       abortSignal: vi.fn(() => query),
       maybeSingle: vi.fn(async () => ({
@@ -128,6 +129,7 @@ describe("runClaimedJob", () => {
       admin,
       job: baseJob,
       signal: expect.any(AbortSignal),
+      deadlineAt: expect.any(String),
     });
     expect(admin.from).not.toHaveBeenCalled();
     expect(admin.rpc).not.toHaveBeenCalled();
@@ -180,10 +182,19 @@ describe("runClaimedJob", () => {
     reject(new Error("old processor failed"));
     await processing;
     expect(admin.query.eq).toHaveBeenCalledWith("attempt_count", 1);
+    expect(admin.query.insert).not.toHaveBeenCalled();
     expect(admin.rpc).toHaveBeenCalledWith(
       "fail_session_job_attempt",
       expect.objectContaining({ p_attempt_count: 1 }),
     );
+  });
+
+  it("does not append a timeout error to an already published successful run", async () => {
+    mocked.processPipelineJob.mockRejectedValue(new Error("response delayed"));
+    const admin = recoveryAdmin();
+    admin.rpcResult.mockResolvedValueOnce({ data: "success", error: null });
+    await runClaimedJob(admin as never, baseJob as never);
+    expect(admin.query.insert).not.toHaveBeenCalled();
   });
 
   it("does not bypass an unavailable ownership RPC and never rejects the scheduler", async () => {
@@ -224,6 +235,12 @@ describe("runClaimedJob", () => {
     await vi.advanceTimersByTimeAsync(50);
     await processing;
     expect(signal.aborted).toBe(true);
+    expect(admin.query.insert).toHaveBeenCalledWith({
+      agent_run_id: "run-attempt-1",
+      workspace_id: "workspace-1",
+      kind: "error",
+      message_md: "Worker attempt exceeded its 50ms deadline.",
+    });
     expect(admin.rpc).toHaveBeenCalledWith(
       "fail_session_job_attempt",
       expect.objectContaining({

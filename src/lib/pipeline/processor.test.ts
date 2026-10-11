@@ -572,7 +572,7 @@ function buildAdminMock(opts: MockOptions) {
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
-  const rpc = vi.fn(async (fn: string, args?: unknown) => {
+  const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
     const attempt = payload.p_attempt_count as number;
     const stale =
@@ -665,6 +665,10 @@ function buildAdminMock(opts: MockOptions) {
       return { data: retrying ? "queued" : "error", error: null };
     }
     throw new Error(`Unexpected RPC ${fn}`);
+  };
+  const rpc = vi.fn((fn: string, args?: unknown) => {
+    const pending = invokeRpc(fn, args);
+    return Object.assign(pending, { abortSignal: vi.fn(() => pending) });
   });
 
   return {
@@ -1004,15 +1008,27 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("publishes only through the captured owner RPC before opening its attempt PR", async () => {
     const { admin, rpc, legacyMutationCalls } = buildAdminMock({ session: baseSession() });
-    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 4 }) });
+    const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+    const signal = new AbortController().signal;
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({ attempt_count: 4 }),
+      deadlineAt,
+      signal,
+    });
     expect(result.result).toBe("success");
     expect(rpc).toHaveBeenCalledWith("publish_session_job_attempt", {
       p_job_id: "job-1",
       p_attempt_count: 4,
+      p_deadline_at: deadlineAt,
       p_run_id: "run-1",
       p_expected_artifact_version: 0,
       p_artifact_json: "Drafted spec body",
     });
+    const publicationIndex = rpc.mock.calls.findIndex(
+      ([name]) => name === "publish_session_job_attempt",
+    );
+    expect(rpc.mock.results[publicationIndex].value.abortSignal).toHaveBeenCalledWith(signal);
     expect(legacyMutationCalls).toEqual([]);
     expect(mocked.openSessionPullRequest).toHaveBeenCalledOnce();
   });
