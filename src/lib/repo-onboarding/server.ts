@@ -499,61 +499,36 @@ export async function startRepositoryOnboarding(input: {
     return { onboarding };
   }
 
-  let identitySaved = false;
-  try {
-    const pr = await createSetupPullRequest({
-      assertWorkspaceActive: () => assertWorkspaceAllowsSetup(input.admin, input.workspaceId),
-      baseBranch,
-      files: plan.filesToCreate,
-      octokit,
-      owner,
-      repo,
-      repositoryName: repository.name,
-    });
+  // Request failures must not overwrite a setup identity saved by this or a
+  // concurrent request. Surface them to the caller and leave saved state intact.
+  const pr = await createSetupPullRequest({
+    assertWorkspaceActive: () => assertWorkspaceAllowsSetup(input.admin, input.workspaceId),
+    baseBranch,
+    files: plan.filesToCreate,
+    octokit,
+    owner,
+    repo,
+    repositoryName: repository.name,
+  });
 
-    await upsertOnboardingState({
-      admin: input.admin,
-      conflictReport: plan.conflicts,
-      installedSkillHash: plan.conflicts.length === 0 ? plan.manifestHash : null,
-      installedSkillVersion: plan.conflicts.length === 0 ? plan.skillVersion : null,
-      repositoryId: input.repositoryId,
-      setupBranchName: pr.branchName,
-      setupPrNumber: pr.prNumber,
-      setupPrUrl: pr.prUrl,
-      status: plan.conflicts.length > 0 ? "conflict" : "pr_open",
-      workspaceId: input.workspaceId,
-    });
-    identitySaved = true;
-    return await refreshSetupPullRequest({
-      ...input,
-      octokit,
-      owner,
-      repo,
-      branchName: pr.branchName,
-      prNumber: pr.prNumber,
-    });
-  } catch (error) {
-    // A failed refresh must retain the PR identity for webhook delivery and a
-    // later retry. A generic error upsert would erase that durable evidence.
-    if (identitySaved || error instanceof WorkspaceDeletingError) throw error;
-    const current = await loadOnboardingRow(input);
-    if (current?.setup_pr_number && current.setup_branch_name)
-      return refreshSetupPullRequest({
-        ...input,
-        octokit,
-        owner,
-        repo,
-        branchName: current.setup_branch_name,
-        prNumber: current.setup_pr_number,
-      });
-    const onboarding = await upsertOnboardingState({
-      admin: input.admin,
-      conflictReport: plan.conflicts,
-      lastError: error instanceof Error ? error.message : String(error),
-      repositoryId: input.repositoryId,
-      status: "error",
-      workspaceId: input.workspaceId,
-    });
-    return { onboarding };
-  }
+  await upsertOnboardingState({
+    admin: input.admin,
+    conflictReport: plan.conflicts,
+    installedSkillHash: plan.conflicts.length === 0 ? plan.manifestHash : null,
+    installedSkillVersion: plan.conflicts.length === 0 ? plan.skillVersion : null,
+    repositoryId: input.repositoryId,
+    setupBranchName: pr.branchName,
+    setupPrNumber: pr.prNumber,
+    setupPrUrl: pr.prUrl,
+    status: plan.conflicts.length > 0 ? "conflict" : "pr_open",
+    workspaceId: input.workspaceId,
+  });
+  return refreshSetupPullRequest({
+    ...input,
+    octokit,
+    owner,
+    repo,
+    branchName: pr.branchName,
+    prNumber: pr.prNumber,
+  });
 }
