@@ -19,18 +19,36 @@ function buildAdmin(input: {
     id: "repo-1",
     is_archived: false,
     name: "app",
+    repo_id: 555,
     workspace_id: "ws-1",
   };
 
   const admin = {
-    rpc: vi.fn(async (_name: string, snapshot: Record<string, unknown>) => {
+    rpc: vi.fn(async (name: string, snapshot: Record<string, unknown>) => {
       const row = state.onboardingRow;
       if (!row || row.setup_pr_number !== snapshot.source_pull_request_number)
         return { data: false, error: null };
+      if (name === "begin_github_pull_request_observation") {
+        if (
+          row.setup_pr_state !== "merged" &&
+          row.setup_pr_updated_at === snapshot.source_updated_at &&
+          (row.setup_pr_state !== snapshot.source_pull_request_state ||
+            row.setup_pr_observation_token)
+        ) {
+          row.setup_pr_observation_token = "setup-observation";
+          return { data: "setup-observation", error: null };
+        }
+        return { data: null, error: null };
+      }
+      const observed = name === "finish_github_pull_request_observation";
+      if (observed && row.setup_pr_observation_token !== snapshot.observation_token)
+        return { data: false, error: null };
       if (
         !row.setup_pr_updated_at ||
-        String(snapshot.source_updated_at) > String(row.setup_pr_updated_at)
+        String(snapshot.source_updated_at) > String(row.setup_pr_updated_at) ||
+        (observed && snapshot.source_updated_at === row.setup_pr_updated_at)
       ) {
+        row.setup_pr_observation_token = null;
         row.setup_pr_state = snapshot.source_pull_request_state;
         row.setup_pr_updated_at = snapshot.source_updated_at;
         row.status =
@@ -89,6 +107,7 @@ function buildAdmin(input: {
 }
 
 const openSnapshot = {
+  base: { repo: { id: 555 } },
   draft: false,
   html_url: "https://github.com/acme/app/pull/12",
   merged: false,
@@ -104,8 +123,10 @@ function setupGitHub(
     afterBaseRead?: () => void;
     createdRefSha?: string;
     cleanupError?: Error;
+    afterCleanupMutation?: (route: string) => void;
   } = {},
 ) {
+  let createdBranch = "";
   return {
     request: vi.fn(async (route: string, params?: Record<string, unknown>) => {
       if (route === "GET /repos/{owner}/{repo}/contents/{path}") throw { status: 404 };
@@ -119,6 +140,12 @@ function setupGitHub(
         };
       if (route === "DELETE /repos/{owner}/{repo}/git/refs/{ref}") {
         if (input.cleanupError) throw input.cleanupError;
+        input.afterCleanupMutation?.(route);
+        return { data: null };
+      }
+      if (route === "PATCH /repos/{owner}/{repo}/pulls/{pull_number}") {
+        if (input.cleanupError) throw input.cleanupError;
+        input.afterCleanupMutation?.(route);
         return { data: null };
       }
       if (route === "GET /repos/{owner}/{repo}/git/commits/{commit_sha}") {
@@ -126,8 +153,15 @@ function setupGitHub(
         return { data: { tree: { sha: "base-tree" } } };
       }
       if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}")
-        return { data: input.snapshot?.() ?? openSnapshot };
+        return {
+          data: input.snapshot?.() ?? {
+            ...openSnapshot,
+            head: { ref: createdBranch, sha: "created" },
+          },
+        };
       if (route.startsWith("POST ")) {
+        if (route.endsWith("/git/refs"))
+          createdBranch = String(params?.ref).replace(/^refs\/heads\//, "");
         input.afterMutation?.(route);
         return { data: route.endsWith("/pulls") ? openSnapshot : { sha: "created" } };
       }
@@ -260,6 +294,95 @@ describe("startRepositoryOnboarding", () => {
     );
   });
 
+  it("reserves before re-reading a same-second setup reopen", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const operations: string[] = [];
+    let reads = 0;
+    const originalRpc = f.admin.rpc.getMockImplementation()!;
+    f.admin.rpc.mockImplementation(async (name, snapshot) => {
+      operations.push(name);
+      return originalRpc(name, snapshot);
+    });
+    const octokit = setupGitHub({
+      snapshot: () => {
+        operations.push("GET PR");
+        if (++reads === 1)
+          Object.assign(f.state.onboardingRow!, {
+            status: "error",
+            setup_pr_state: "closed",
+            setup_pr_updated_at: openSnapshot.updated_at,
+          });
+        return openSnapshot;
+      },
+    });
+    expect((await start(f, octokit)).onboarding.status).toBe("pr_open");
+    expect(operations).toEqual([
+      "GET PR",
+      "apply_github_pull_request_event",
+      "begin_github_pull_request_observation",
+      "GET PR",
+      "finish_github_pull_request_observation",
+    ]);
+    expect(f.admin.rpc).toHaveBeenCalledWith(
+      "finish_github_pull_request_observation",
+      expect.objectContaining({
+        observation_token: "setup-observation",
+        source_pull_request_state: "open",
+        source_updated_at: openSnapshot.updated_at,
+      }),
+    );
+  });
+
+  it("preserves a newer webhook while the setup observation is in flight", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    let reads = 0;
+    const octokit = setupGitHub({
+      snapshot: () => {
+        Object.assign(
+          f.state.onboardingRow!,
+          ++reads === 1
+            ? {
+                status: "error",
+                setup_pr_state: "closed",
+                setup_pr_updated_at: openSnapshot.updated_at,
+              }
+            : {
+                status: "ready",
+                setup_pr_state: "merged",
+                setup_pr_updated_at: "2026-10-11T00:00:02Z",
+                setup_pr_observation_token: null,
+              },
+        );
+        return openSnapshot;
+      },
+    });
+    expect((await start(f, octokit)).onboarding.status).toBe("ready");
+    expect(reads).toBe(2);
+  });
+
+  it.each([1, 2])("validates numeric repository identity on setup read %s", async (invalidRead) => {
+    const f = buildAdmin({ onboardingRow: null });
+    let reads = 0;
+    const octokit = setupGitHub({
+      snapshot: () => {
+        Object.assign(f.state.onboardingRow!, {
+          status: "error",
+          setup_pr_state: "closed",
+          setup_pr_updated_at: openSnapshot.updated_at,
+        });
+        return { ...openSnapshot, base: { repo: { id: ++reads === invalidRead ? 556 : 555 } } };
+      },
+    });
+    await expect(start(f, octokit)).rejects.toThrow(
+      "GitHub returned a different setup repository.",
+    );
+    expect(
+      f.admin.rpc.mock.calls.some(([name]) => name === "finish_github_pull_request_observation"),
+    ).toBe(false);
+    if (invalidRead === 1) expect(f.admin.rpc).not.toHaveBeenCalled();
+    expect(f.state.onboardingRow!.setup_pr_number).toBe(12);
+  });
+
   it("retains a saved identity when refresh fails and reconciles it on retry", async () => {
     const f = buildAdmin({ onboardingRow: null });
     await expect(
@@ -382,6 +505,7 @@ describe("startRepositoryOnboarding", () => {
       owner: "acme",
       repo: "app",
       ref: String(created.ref).replace(/^refs\//, ""),
+      request: { signal: expect.any(AbortSignal) },
     });
     expect(octokit.request).not.toHaveBeenCalledWith(
       "POST /repos/{owner}/{repo}/pulls",
@@ -455,6 +579,96 @@ describe("startRepositoryOnboarding", () => {
     await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
     expect(f.upserts).toEqual([]);
     expect(f.admin.rpc).not.toHaveBeenCalled();
+    expect(octokit.request).toHaveBeenCalledWith(
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner: "acme",
+        repo: "app",
+        pull_number: 12,
+        state: "closed",
+        request: { signal: expect.any(AbortSignal) },
+      },
+    );
+    const created = octokit.request.mock.calls.find(([route]) => route.endsWith("/git/refs"))![1]!;
+    expect(octokit.request).toHaveBeenCalledWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+      owner: "acme",
+      repo: "app",
+      ref: String(created.ref).replace(/^refs\//, ""),
+      request: { signal: expect.any(AbortSignal) },
+    });
+  });
+
+  it("preserves a moved ref and its PR after a late response", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const octokit = setupGitHub({
+        createdRefSha: "someone-elses-commit",
+        afterMutation: (route) => {
+          if (route.endsWith("/pulls")) f.state.deleting = true;
+        },
+      });
+      await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
+      expect(octokit.request.mock.calls.some(([route]) => /^(PATCH|DELETE) /.test(route))).toBe(
+        false,
+      );
+      expect(log).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ repository: "acme/app", pullRequestNumber: 12 }),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("refuses to close a different PR identity during late cleanup", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const octokit = setupGitHub({
+        snapshot: () => ({
+          ...openSnapshot,
+          base: { repo: { id: 556 } },
+          head: { ref: "wallie/setup-other", sha: "created" },
+        }),
+        afterMutation: (route) => {
+          if (route.endsWith("/pulls")) f.state.deleting = true;
+        },
+      });
+      await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
+      expect(octokit.request.mock.calls.some(([route]) => /^(PATCH|DELETE) /.test(route))).toBe(
+        false,
+      );
+      expect(log).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("keeps the deletion error and records exact recovery identities if PR cleanup fails", async () => {
+    const f = buildAdmin({ onboardingRow: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const octokit = setupGitHub({
+        cleanupError: new Error("sensitive diagnostic"),
+        afterMutation: (route) => {
+          if (route.endsWith("/pulls")) f.state.deleting = true;
+        },
+      });
+      await expect(start(f, octokit)).rejects.toThrow("Workspace deletion is in progress.");
+      expect(log).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          repository: "acme/app",
+          branch: expect.stringMatching(/^wallie\/setup-app-/),
+          pullRequestNumber: 12,
+        }),
+      );
+      expect(JSON.stringify(log.mock.calls)).not.toContain("sensitive diagnostic");
+      expect(octokit.request.mock.calls.some(([route]) => route.startsWith("DELETE "))).toBe(false);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 
