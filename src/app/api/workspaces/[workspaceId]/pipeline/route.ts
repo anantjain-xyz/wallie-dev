@@ -106,7 +106,7 @@ export async function PUT(request: Request, context: RouteContext) {
         const invalidIds = result.invalid_approver_member_ids ?? [];
         return NextResponse.json(
           {
-            error: `Unknown approver member IDs: ${invalidIds.join(", ")}`,
+            error: `Approvers must be active human workspace members: ${invalidIds.join(", ")}`,
             invalidApproverMemberIds: invalidIds,
           },
           { status: 400 },
