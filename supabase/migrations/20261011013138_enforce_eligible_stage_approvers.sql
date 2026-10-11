@@ -346,6 +346,7 @@ begin
     routing.rework_stage_slug
   )
   where routing.workspace_id = target_workspace_id
+    and routing.rework_stage_slug is not null
     and not exists (
       select 1
       from public.pipeline_stages active
@@ -373,6 +374,7 @@ begin
     routing.land_stage_slug
   )
   where routing.workspace_id = target_workspace_id
+    and routing.land_stage_slug is not null
     and not exists (
       select 1
       from public.pipeline_stages active
