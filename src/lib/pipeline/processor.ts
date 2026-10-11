@@ -43,7 +43,11 @@ import {
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { captureSourceCheckpoint, readSourceBase } from "./source-checkpoint";
+import {
+  captureSourceCheckpoint,
+  readSourceBase,
+  UnsupportedLfsCheckpointError,
+} from "./source-checkpoint";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
 
@@ -489,7 +493,10 @@ async function runStage(input: {
       // that records the durable source, before any publication or cleanup.
     } catch (error) {
       if (error instanceof ExecutionOwnershipLostError || signal?.aborted) throw error;
-      throw new SourcePreservationError(!retainSource);
+      throw new SourcePreservationError(
+        !retainSource,
+        error instanceof UnsupportedLfsCheckpointError ? "lfs" : undefined,
+      );
     }
     throwIfAborted(signal);
 

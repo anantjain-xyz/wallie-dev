@@ -23,7 +23,7 @@ const pr = {
   state: "open",
   merged_at: null,
   updated_at: "2026-10-01T00:00:00Z",
-  head: { ref: "wallie/attempt", repo: { full_name: "acme/app" } },
+  head: { ref: "wallie/attempt", sha: delivery.head_sha, repo: { full_name: "acme/app" } },
 };
 function setup(responses: Array<unknown>) {
   const fetch = vi.fn<typeof globalThis.fetch>(async () => {
@@ -84,6 +84,57 @@ it("reuses an already recorded closed or merged PR after a delivery retry", asyn
     "record_session_pull_request",
     expect.objectContaining({ source_pull_request_state: "merged" }),
   );
+});
+
+it.each(["closed", "merged"])(
+  "opens a fresh PR when the previous %s PR has an older head",
+  async (state) => {
+    const old = {
+      ...pr,
+      state: "closed",
+      merged_at: state === "merged" ? "2026-10-02T00:00:00Z" : null,
+      head: { ...pr.head, sha: "b".repeat(40) },
+    };
+    const { input, fetch, rpc } = setup([[old], { status: "behind" }, { ...pr, number: 43 }]);
+    await ensureSourcePullRequest(input);
+    expect(fetch.mock.calls[1][0]).toContain(`/compare/${delivery.head_sha}...${old.head.sha}`);
+    expect(fetch.mock.calls[2][1]?.method).toBe("POST");
+    expect(rpc).toHaveBeenCalledWith(
+      "record_session_pull_request",
+      expect.objectContaining({ source_pull_request_number: 43 }),
+    );
+  },
+);
+
+it("reuses a closed PR only when its head is proven to contain the delivered commit", async () => {
+  const old = { ...pr, state: "closed", head: { ...pr.head, sha: "b".repeat(40) } };
+  const { input, fetch, rpc } = setup([[old], { status: "ahead" }]);
+  await ensureSourcePullRequest(input);
+  expect(fetch.mock.calls.every(([, options]) => options?.method === "GET")).toBe(true);
+  expect(rpc).toHaveBeenCalledWith(
+    "record_session_pull_request",
+    expect.objectContaining({ source_pull_request_number: 42 }),
+  );
+});
+
+it("accepts an older merged PR only through a separate base containment proof", async () => {
+  const old = {
+    ...pr,
+    state: "closed",
+    merged_at: "2026-10-02T00:00:00Z",
+    head: { ...pr.head, sha: "b".repeat(40) },
+  };
+  const { input, fetch, rpc } = setup([
+    [old],
+    { status: "behind" },
+    new Error("No commits"),
+    [old],
+    { status: "behind" },
+    { status: "identical" },
+  ]);
+  await ensureSourcePullRequest(input);
+  expect(fetch.mock.calls.at(-1)?.[0]).toContain(`/compare/trunk...${delivery.head_sha}`);
+  expect(rpc).not.toHaveBeenCalled();
 });
 
 it("completes without a PR when the base already contains the delayed source", async () => {

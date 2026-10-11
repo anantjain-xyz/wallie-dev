@@ -11,6 +11,13 @@ export const MAX_SOURCE_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const COMMIT_SHA = /^[a-f0-9]{40}$/;
 export const SOURCE_CHECKPOINT_REF = "refs/heads/wallie-source-checkpoint";
 
+export class UnsupportedLfsCheckpointError extends Error {
+  constructor() {
+    super("Changed Git LFS files cannot be preserved by source checkpoints.");
+    this.name = "UnsupportedLfsCheckpointError";
+  }
+}
+
 export type SourceCheckpoint =
   | { kind: "unchanged"; baseSha: string; headSha: string }
   | { kind: "bundle"; baseSha: string; headSha: string; bytes: Buffer; sha256: string };
@@ -51,6 +58,11 @@ export async function captureSourceCheckpoint(input: {
     "if [ -n \"$(git status --porcelain --untracked-files=normal)\" ]; then echo 'Source checkout still contains uncommitted changes' >&2; exit 41; fi",
     "head=$(git rev-parse --verify 'HEAD^{commit}')",
     `if [ "$head" = ${shellQuote(input.baseSha)} ]; then printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
+    // Bundles contain LFS pointers, not their external payloads. Inspect every
+    // new blob, including intermediate commits, without depending on git-lfs.
+    `git rev-list --objects --no-object-names "$head" ${shellQuote(`^${input.baseSha}`)} | git cat-file --batch-check='%(objectname) %(objecttype)' | while read -r object type; do`,
+    `  if [ "$type" = blob ] && git cat-file blob "$object" | awk 'NR == 1 && ($0 == "version https://git-lfs.github.com/spec/v1" || $0 == "version https://hawser.github.com/spec/v1") { pointer = 1 } END { exit !pointer }'; then exit 43; fi`,
+    "done",
     `mkdir -m 700 ${shellQuote(directory)}`,
     `trap ${shellQuote(`rm -rf ${shellQuote(directory)}`)} EXIT`,
     `git update-ref ${shellQuote(SOURCE_CHECKPOINT_REF)} "$head"`,
@@ -68,6 +80,7 @@ export async function captureSourceCheckpoint(input: {
   const [output, code] = await Promise.all([proc.output(), proc.exitCode]);
   input.signal?.throwIfAborted();
   if (code !== 0) {
+    if (code === 43) throw new UnsupportedLfsCheckpointError();
     throw new Error(
       code === 42
         ? "Source checkpoint exceeds 4 MiB."

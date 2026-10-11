@@ -89,12 +89,29 @@ function makeAdmin(
     () => input.download ?? Promise.resolve({ data: new Blob([bytes]), error: null }),
   );
   const single = vi.fn(() => query({ data: { ...row }, error: null }));
+  const repository = {
+    full_name: "acme/app",
+    github_installation_id: "installation",
+    repo_id: 777,
+    is_archived: false,
+  };
+  const installation = { installation_id: 12 };
   const admin = {
     rpc,
-    from: vi.fn(() => ({ select: () => ({ eq: () => ({ abortSignal: () => ({ single }) }) }) })),
+    from: vi.fn((table: string) => {
+      const chain = {
+        select: () => chain,
+        eq: vi.fn(() => chain),
+        abortSignal: () => chain,
+        single,
+        maybeSingle: () =>
+          query({ data: table === "github_repositories" ? repository : installation, error: null }),
+      };
+      return chain;
+    }),
     storage: { from: vi.fn(() => ({ download })) },
   } as unknown as SupabaseClient<Database>;
-  return { admin, rpc, row, download };
+  return { admin, rpc, row, download, repository, installation };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -102,8 +119,15 @@ beforeEach(() => {
   mocked.push.mockResolvedValue(undefined);
   mocked.pr.mockResolvedValue(undefined);
   mocked.token.mockResolvedValue("scoped-token");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(async () => Response.json({ id: 777, full_name: "acme/app" })),
+  );
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 it("records Storage durability before the outbox and uses a deterministic tenant key", async () => {
   const { admin, rpc } = makeAdmin();
@@ -238,4 +262,45 @@ it("bounds a hung download and fences its late continuation before GitHub writes
   await new Promise((r) => setTimeout(r, 0));
   expect(mocked.token).not.toHaveBeenCalled();
   expect(mocked.push).not.toHaveBeenCalled();
+});
+
+it("reloads renamed repository and replacement installation identity on every retry", async () => {
+  const { admin, row, repository, installation } = makeAdmin();
+  mocked.push.mockRejectedValueOnce(new Error("temporary failure"));
+  expect(await drainSourceDeliveries(admin, { limit: 1 })).toEqual({ delivered: 0, failed: 1 });
+  repository.full_name = "new-owner/renamed";
+  repository.github_installation_id = "new-installation";
+  installation.installation_id = 99;
+  vi.mocked(fetch).mockResolvedValueOnce(
+    Response.json({ id: 777, full_name: "new-owner/renamed" }),
+  );
+  expect(await drainSourceDeliveries(admin, { limit: 1 })).toEqual({ delivered: 1, failed: 0 });
+  expect(mocked.token).toHaveBeenLastCalledWith({
+    installationId: 99,
+    repositoryFullName: "new-owner/renamed",
+    repositoryId: 777,
+    purpose: "execution",
+  });
+  expect(mocked.push).toHaveBeenLastCalledWith(
+    expect.objectContaining({ remoteUrl: "https://github.com/new-owner/renamed.git" }),
+  );
+  expect(mocked.pr).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      delivery: expect.objectContaining({
+        repository_full_name: "new-owner/renamed",
+        installation_id: 99,
+      }),
+    }),
+  );
+  expect(row.repository_full_name).toBe("acme/app");
+});
+
+it("refuses a reused repository name whose GitHub numeric identity has changed", async () => {
+  const { admin, row } = makeAdmin({ fallback: true });
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json({ id: 888, full_name: "acme/app" }));
+  expect(await drainSourceDeliveries(admin, { limit: 1 })).toEqual({ delivered: 0, failed: 1 });
+  expect(mocked.push).not.toHaveBeenCalled();
+  expect(mocked.pr).not.toHaveBeenCalled();
+  expect(row.bundle_base64).toBe(bytes.toString("base64"));
+  expect(row.status).toBe("pending");
 });

@@ -158,6 +158,9 @@ the target repository remains their runtime semantic owner.
 - Before publication, Wallie commits remaining nonignored working-tree changes
   with repository hooks disabled, then captures an incremental Git bundle from
   the original base to the final head. Dirty submodules cannot be checkpointed.
+  New or modified Git LFS pointers, including intermediate commits, are rejected
+  before publication because a Git bundle omits their external payloads. Source
+  remains in its sandbox for recovery; unchanged pointers in the base are allowed.
 - Bundles are limited to 4 MiB and stored privately under
   `session-source-checkpoints/<workspace>/<run>.bundle`. If Storage is unavailable,
   a service-only outbox row can hold a bounded base64 fallback.
@@ -170,6 +173,9 @@ the target repository remains their runtime semantic owner.
   its digest and prerequisite commits, pushes the distinct attempt branch without
   force, and idempotently creates or reuses its PR. Source code is never executed
   by the recovery worker.
+- Every delivery resolves the current repository and installation, verifies
+  GitHub's numeric repository identity, and scopes its token to that numeric ID.
+  Reusing a PR requires proof that its head contains the delivered commit.
 - PR metadata uses GitHub's update timestamp and exact repository/PR identity.
   Token usage or completion-history failures cannot discard the delivery record.
 

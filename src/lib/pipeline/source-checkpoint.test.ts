@@ -102,3 +102,61 @@ it("rejects malformed transport output rather than persisting a truncated checkp
     "invalid bundle",
   );
 });
+
+const lfsPointer = (oid: string) =>
+  `version https://git-lfs.github.com/spec/v1\noid sha256:${oid.repeat(64)}\nsize 12345\n`;
+
+it.each(["new", "modified", "intermediate", "legacy"])(
+  "rejects a %s LFS pointer whose payload cannot be restored from the Git bundle",
+  async (kind) => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    const commit = async () => {
+      expect(await (await sandbox.exec("git", ["add", "--all"])).exitCode).toBe(0);
+      expect(await (await sandbox.exec("git", ["commit", "-qm", "Pointer change"])).exitCode).toBe(
+        0,
+      );
+    };
+    try {
+      if (kind === "modified") {
+        await sandbox.writeFile(`${sandbox.repoPath}/asset.bin`, lfsPointer("a"));
+        await commit();
+      }
+      const baseSha = await readSourceBase(sandbox);
+      const pointer =
+        kind === "legacy"
+          ? lfsPointer("b").replace("git-lfs.github.com", "hawser.github.com")
+          : lfsPointer("b");
+      await sandbox.writeFile(`${sandbox.repoPath}/asset.bin`, pointer);
+      if (kind === "intermediate") {
+        await commit();
+        await sandbox.writeFile(`${sandbox.repoPath}/asset.bin`, "ordinary replacement");
+      }
+      await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toThrow(
+        "Changed Git LFS files",
+      );
+      expect(await sandbox.readFile(`${sandbox.repoPath}/asset.bin`)).toBe(
+        kind === "intermediate" ? "ordinary replacement" : pointer,
+      );
+    } finally {
+      await sandbox.stop();
+    }
+  },
+);
+
+it("allows unchanged LFS pointers already present in the original base", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    await sandbox.writeFile(`${sandbox.repoPath}/asset.bin`, lfsPointer("a"));
+    await (
+      await sandbox.exec("git", ["add", "--all"])
+    ).exitCode;
+    await (
+      await sandbox.exec("git", ["commit", "-qm", "Original pointer"])
+    ).exitCode;
+    const baseSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/ordinary.txt`, "source");
+    expect((await captureSourceCheckpoint({ sandbox, baseSha })).kind).toBe("bundle");
+  } finally {
+    await sandbox.stop();
+  }
+});

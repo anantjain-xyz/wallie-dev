@@ -68,7 +68,8 @@ vi.mock("./stages", () => ({
   loadPipelineOperatingRules: mocked.loadPipelineOperatingRules,
 }));
 
-vi.mock("./source-checkpoint", () => ({
+vi.mock("./source-checkpoint", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./source-checkpoint")>()),
   readSourceBase: mocked.readSourceBase,
   captureSourceCheckpoint: mocked.captureSourceCheckpoint,
 }));
@@ -2052,6 +2053,28 @@ describe("processPipelineJob (generic stage runner)", () => {
       "fail_session_job_attempt",
       expect.objectContaining({ p_retry: false }),
     );
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
+  });
+
+  it("retains LFS source and reports the unsupported payload before publication", async () => {
+    const { UnsupportedLfsCheckpointError } = await import("./source-checkpoint");
+    mocked.captureSourceCheckpoint.mockRejectedValueOnce(new UnsupportedLfsCheckpointError());
+    const { admin, insertedArtifacts, insertedMessages, runRows, rpc } = buildAdminMock({
+      session: baseSession(),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(insertedArtifacts).toEqual([]);
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_retry: false }),
+    );
+    expect(
+      insertedMessages.some((message) =>
+        String(message.message_md).includes("Changed Git LFS files"),
+      ),
+    ).toBe(true);
     expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
   });
 

@@ -12,7 +12,7 @@ type PullRequest = {
   state: string;
   merged_at: string | null;
   updated_at: string;
-  head: { ref: string; repo: { full_name: string } | null };
+  head: { ref: string; sha: string; repo: { full_name: string } | null };
 };
 
 /** Read-before-create plus a recovery read makes ambiguous GitHub writes retryable. */
@@ -47,13 +47,26 @@ export async function ensureSourcePullRequest(input: {
   const matchesHead = (pr: PullRequest) =>
     pr.head?.ref === delivery.branch_name &&
     pr.head.repo?.full_name.toLowerCase() === delivery.repository_full_name.toLowerCase();
+  const containsDeliveredHead = async (pr: PullRequest) => {
+    if (pr.head.sha === delivery.head_sha) return true;
+    if (!/^[a-f0-9]{40}$/.test(pr.head.sha ?? "")) return false;
+    const comparison = await request<{ status: string }>(
+      `compare/${delivery.head_sha}...${pr.head.sha}`,
+    );
+    return comparison.status === "ahead" || comparison.status === "identical";
+  };
   const find = async () => {
     signal.throwIfAborted();
     const data = await request<PullRequest[]>(
       `pulls?${new URLSearchParams({ head: `${owner}:${delivery.branch_name}`, state: "all" })}`,
     );
-    const matching = data.filter(matchesHead);
-    return matching.find((pr) => pr.state === "open") ?? matching[0];
+    const matching = data
+      .filter(matchesHead)
+      .sort((a, b) => Number(b.state === "open") - Number(a.state === "open"));
+    for (const pr of matching) {
+      if (await containsDeliveredHead(pr)) return pr;
+    }
+    return undefined;
   };
   let pr = await find();
   if (!pr) {
@@ -66,7 +79,8 @@ export async function ensureSourcePullRequest(input: {
         title: delivery.title,
         body: delivery.body,
       });
-      if (!matchesHead(pr)) throw new Error("Pull request source repository does not match.");
+      if (!matchesHead(pr) || !(await containsDeliveredHead(pr)))
+        throw new Error("Pull request source does not contain the delivered commit.");
     } catch {
       pr = await find();
       if (!pr) {

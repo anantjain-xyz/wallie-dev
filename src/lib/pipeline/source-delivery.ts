@@ -15,9 +15,12 @@ export type SourceDelivery = Tables<"session_source_deliveries">;
 
 /** No raw source or transport error is safe to include in logs or run history. */
 export class SourcePreservationError extends Error {
-  constructor(durable = false) {
+  constructor(durable = false, reason?: "lfs") {
     super(
-      "Source checkpoint could not be recorded. No artifact was published. " +
+      (reason === "lfs"
+        ? "Changed Git LFS files require external payload storage and cannot be checkpointed. "
+        : "Source checkpoint could not be recorded. ") +
+        "No artifact was published. " +
         (durable
           ? "The durable checkpoint is retained for recovery."
           : "The sandbox is retained until its provider expiry for recovery."),
@@ -95,6 +98,73 @@ async function assertClaim(admin: AdminClient, delivery: SourceDelivery, signal:
   if (error || data !== true) throw new Error("Delivery claim expired.");
 }
 
+async function resolveDeliveryRepository(
+  admin: AdminClient,
+  delivery: SourceDelivery,
+  signal: AbortSignal,
+) {
+  if (!delivery.repository_id) throw new Error("Source repository connection is unavailable.");
+  const { data: repository, error: repositoryError } = await admin
+    .from("github_repositories")
+    .select("full_name, github_installation_id, repo_id, is_archived")
+    .eq("id", delivery.repository_id)
+    .eq("workspace_id", delivery.workspace_id)
+    .abortSignal(signal)
+    .maybeSingle();
+  signal.throwIfAborted();
+  if (
+    repositoryError ||
+    !repository ||
+    repository.is_archived ||
+    !Number.isSafeInteger(repository.repo_id) ||
+    repository.repo_id <= 0 ||
+    !/^[\w.-]+\/[\w.-]+$/.test(repository.full_name)
+  )
+    throw new Error("Source repository connection is unavailable.");
+  const { data: installation, error: installationError } = await admin
+    .from("github_installations")
+    .select("installation_id")
+    .eq("id", repository.github_installation_id)
+    .eq("workspace_id", delivery.workspace_id)
+    .eq("suspended", false)
+    .abortSignal(signal)
+    .maybeSingle();
+  signal.throwIfAborted();
+  if (installationError || !installation) throw new Error("Source installation is unavailable.");
+  const token = await mintSandboxRepositoryToken({
+    installationId: installation.installation_id,
+    repositoryFullName: repository.full_name,
+    repositoryId: repository.repo_id,
+    purpose: "execution",
+  });
+  signal.throwIfAborted();
+  const response = await fetch(`https://api.github.com/repos/${repository.full_name}`, {
+    signal,
+    redirect: "error",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) throw new Error("Source repository identity could not be verified.");
+  const current = (await response.json()) as { id?: number; full_name?: string };
+  signal.throwIfAborted();
+  if (
+    current.id !== repository.repo_id ||
+    current.full_name?.toLowerCase() !== repository.full_name.toLowerCase()
+  )
+    throw new Error("Source repository identity changed.");
+  return {
+    token,
+    delivery: {
+      ...delivery,
+      installation_id: installation.installation_id,
+      repository_full_name: repository.full_name,
+    },
+  };
+}
+
 export async function deliverSourceCheckpoint(
   admin: AdminClient,
   delivery: SourceDelivery,
@@ -114,11 +184,8 @@ export async function deliverSourceCheckpoint(
     if (error || !data) throw new Error("Source checkpoint is unavailable.");
     bytes = Buffer.from(await data.arrayBuffer());
   }
-  const token = await mintSandboxRepositoryToken({
-    installationId: delivery.installation_id,
-    repositoryFullName: delivery.repository_full_name,
-    purpose: "execution",
-  });
+  const current = await resolveDeliveryRepository(admin, delivery, signal);
+  const { token } = current;
   await assertClaim(admin, delivery, signal);
   await restoreAndPushSource({
     baseSha: delivery.base_sha,
@@ -126,7 +193,7 @@ export async function deliverSourceCheckpoint(
     branch: delivery.branch_name,
     bytes,
     sha256: delivery.bundle_sha256 ?? "",
-    remoteUrl: `https://github.com/${delivery.repository_full_name}.git`,
+    remoteUrl: `https://github.com/${current.delivery.repository_full_name}.git`,
     token,
     signal,
     beforePush: () => assertClaim(admin, delivery, signal),
@@ -134,7 +201,7 @@ export async function deliverSourceCheckpoint(
   await assertClaim(admin, delivery, signal);
   await ensureSourcePullRequest({
     admin,
-    delivery,
+    delivery: current.delivery,
     token,
     signal,
     verifyOwnership: () => assertClaim(admin, delivery, signal),
