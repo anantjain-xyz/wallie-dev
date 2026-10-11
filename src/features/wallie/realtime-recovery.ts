@@ -339,6 +339,10 @@ export function createRealtimeRecovery(
         schedule();
       };
     },
+    /** Coalesce projection invalidations, including changes during an active read. */
+    invalidate() {
+      requestRefresh(1_000);
+    },
     retry() {
       if (!available() || flight || refreshTimer !== undefined) return;
       for (const entry of entries.values()) if (!entry.subscribed) connect(entry);

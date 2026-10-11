@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+
 import {
   memo,
   startTransition,
@@ -51,10 +52,12 @@ import {
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
-import { createSessionRecoveryRefresh } from "@/features/sessions/detail/recovery-refresh";
+import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
+import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { type SessionPhaseStatus } from "@/features/sessions/types";
-import { workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
+import { loginPath, workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { subscribeAuthenticatedChannel } from "@/lib/supabase/realtime-subscription";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import type { Tables } from "@/lib/supabase/database.types";
 import { cn } from "@/lib/utils";
@@ -174,6 +177,7 @@ export function PipelinePageClient({
   return (
     <SessionDetailLinkPrefetchBoundary>
       <PipelinePageContent
+        key={initialData.workspace.id}
         enableRealtime={enableRealtime}
         initialData={initialData}
         initialNow={initialNow}
@@ -187,6 +191,9 @@ function PipelinePageContent({
   initialData,
   initialNow,
 }: PipelinePageClientProps) {
+  const router = useRouter();
+  const [accessLost, setAccessLost] = useState(false);
+  const accessLostRef = useRef(false);
   const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const [board, dispatch] = useReducer(
     pipelineBoardReducer,
@@ -201,69 +208,128 @@ function PipelinePageContent({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [hasObservedSession, setHasObservedSession] = useState(false);
+  const [recoveredOnboarding, setRecoveredOnboarding] = useState<{
+    initial: PipelineDashboardData["onboarding"];
+    value: PipelineDashboardData["onboarding"];
+  } | null>(null);
+  const onboarding =
+    recoveredOnboarding?.initial === initialData.onboarding
+      ? recoveredOnboarding.value
+      : initialData.onboarding;
   const boardRef = useRef<PipelineBoardState>(board);
   const initialLanesRef = useRef(initialData.lanes);
   const invalidatedCardIds = useRef(new Set<string>());
   const loadingLaneKeyRef = useRef<string | null>(null);
   const pendingCardFocus = useRef<PendingCardFocus | null>(null);
-  const router = useRouter();
+  const { recovery } = useRealtimeRecovery();
+  const eventRevision = useRef(0);
+  const pageController = useRef<AbortController | null>(null);
   const supabaseConfig = useSupabasePublicConfig();
   const supabase = useMemo(
     () => (enableRealtime ? createSupabaseBrowserClient(supabaseConfig) : null),
     [enableRealtime, supabaseConfig],
   );
   boardRef.current = board;
-  const [refreshPending, startRefresh] = useTransition();
+  const [refreshRequestPending, setRefreshPending] = useState(false);
+  const [refreshRenderPending, startRefresh] = useTransition();
+  const refreshPending = refreshRequestPending || refreshRenderPending;
   const refreshInFlight = useRef(false);
   const refreshGeneration = useRef(0);
   const recoveryChanges = useRef<PipelineRecoveryChanges | null>(null);
-  const recoveryRef = useRef<ReturnType<typeof createSessionRecoveryRefresh> | null>(null);
-  const refreshBoard = useCallback(() => {
-    if (refreshInFlight.current || loadingLaneKeyRef.current) return;
-    refreshInFlight.current = true;
-    refreshGeneration.current += 1;
-    recoveryChanges.current = {
-      sessions: new Map(),
-      insertedSessionIds: new Set(),
-      runs: new Map(),
-      pullRequests: new Map(),
-    };
-    startRefresh(() => router.refresh());
-  }, [router]);
-
-  useEffect(() => {
-    if (!refreshPending) refreshInFlight.current = false;
-  }, [refreshPending]);
+  const leaveUnavailableWorkspace = useCallback(
+    (status: number) => {
+      if (accessLostRef.current) return;
+      accessLostRef.current = true;
+      pageController.current?.abort();
+      setAccessLost(true);
+      router.replace(
+        status === 401 ? loginPath(workspaceBasePath(initialData.workspace.slug)) : "/",
+      );
+    },
+    [initialData.workspace.slug, router],
+  );
+  const refreshBoard = useCallback(
+    async (signal: AbortSignal) => {
+      if (accessLostRef.current) return;
+      if (refreshInFlight.current || loadingLaneKeyRef.current) throw new RecoveryDeferredError();
+      refreshInFlight.current = true;
+      setRefreshPending(true);
+      const generation = ++refreshGeneration.current;
+      const changes: PipelineRecoveryChanges = {
+        sessions: new Map(),
+        insertedSessionIds: new Set(),
+        runs: new Map(),
+        pullRequests: new Map(),
+      };
+      recoveryChanges.current = changes;
+      try {
+        const response = await fetch(
+          `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
+          {
+            cache: "no-store",
+            signal,
+          },
+        );
+        if (signal.aborted || generation !== refreshGeneration.current) return;
+        if ([401, 403, 404, 409].includes(response.status)) {
+          leaveUnavailableWorkspace(response.status);
+          return;
+        }
+        if (!response.ok) throw new Error("Failed to refresh pipeline.");
+        const snapshot = (await response.json()) as Pick<
+          PipelineDashboardData,
+          "lanes" | "hasAnySession" | "onboarding"
+        >;
+        if (signal.aborted || generation !== refreshGeneration.current || accessLostRef.current)
+          return;
+        const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
+        startRefresh(() => {
+          if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
+          dispatch({ lanes: snapshot.lanes, changes, type: "recover" });
+        });
+        if (snapshot.hasAnySession) setHasObservedSession(true);
+        if ("onboarding" in snapshot)
+          setRecoveredOnboarding({ initial: initialData.onboarding, value: snapshot.onboarding });
+        invalidatedCardIds.current.clear();
+        if (pipelineRecoveryNeedsFollowup(snapshot.lanes, changes)) recovery.invalidate();
+      } finally {
+        if (recoveryChanges.current === changes && generation === refreshGeneration.current) {
+          recoveryChanges.current = null;
+          refreshInFlight.current = false;
+          setRefreshPending(false);
+        }
+      }
+    },
+    [
+      initialData.workspace.id,
+      initialData.onboarding,
+      leaveUnavailableWorkspace,
+      recovery,
+      startRefresh,
+    ],
+  );
 
   useEffect(() => {
     if (initialLanesRef.current === initialData.lanes) return;
     initialLanesRef.current = initialData.lanes;
-    if (recoveryChanges.current) {
-      const changes = recoveryChanges.current;
-      recoveryChanges.current = null;
-      // Rebuild bounded first pages: retained pages may contain missed archives/deletes.
-      const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
-      // Later live dispatches share this reducer queue and replay after recovery
-      // if React rebases the transition; they need no detached-accumulator entry.
-      startTransition(() => {
-        if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
-        dispatch({ lanes: initialData.lanes, changes, type: "recover" });
-      });
-      invalidatedCardIds.current.clear();
-      // Apply this snapshot even during continuous traffic. Only unresolved
-      // off-page/structural changes request a coalesced, cooldown-limited follow-up.
-      if (pipelineRecoveryNeedsFollowup(initialData.lanes, changes)) recoveryRef.current?.request();
-      return;
-    }
     const invalidated = new Set(invalidatedCardIds.current);
-    const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
-
     startTransition(() => {
-      if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
       dispatch({ invalidatedCardIds: invalidated, lanes: initialData.lanes, type: "reconcile" });
     });
     invalidatedCardIds.current.clear();
   }, [initialData.lanes]);
+
+  useEffect(
+    () => () => {
+      // The controller's batch signal can outlive this registration. Fence every
+      // response when this workspace instance unmounts, including StrictMode.
+      refreshGeneration.current += 1;
+      refreshInFlight.current = false;
+      recoveryChanges.current = null;
+      pageController.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (board.lanes.some((lane) => pipelineLaneKey(lane) === activeLaneKey)) return;
@@ -301,22 +367,10 @@ function PipelinePageContent({
   }, [board]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || accessLost) return;
     let disposed = false;
     const prRequests = new Map<string, number>();
-    const recovery = createSessionRecoveryRefresh({
-      refresh: refreshBoard,
-      isAvailable: () => document.visibilityState === "visible" && navigator.onLine,
-      isBusy: () => refreshInFlight.current || loadingLaneKeyRef.current !== null,
-    });
-    recoveryRef.current = recovery;
-    const onVisible = () => {
-      if (document.visibilityState === "visible") recovery.request();
-    };
-    window.addEventListener("online", recovery.request);
-    document.addEventListener("visibilitychange", onVisible);
-
-    async function refreshSessionPullRequests(sessionId: string) {
+    async function refreshSessionPullRequests(sessionId: string, isCurrent: () => boolean) {
       const requestId = (prRequests.get(sessionId) ?? 0) + 1;
       prRequests.set(sessionId, requestId);
       const startedAtGeneration = refreshGeneration.current;
@@ -330,12 +384,13 @@ function PipelinePageContent({
 
       if (
         disposed ||
+        !isCurrent() ||
         prRequests.get(sessionId) !== requestId ||
         startedAtGeneration !== refreshGeneration.current
       )
         return;
       if (error) {
-        recovery.request();
+        recovery.invalidate();
         return;
       }
 
@@ -349,155 +404,196 @@ function PipelinePageContent({
       dispatch({ pullRequests, sessionId, type: "update-pull-requests" });
     }
 
-    const channel = supabase
-      .channel(`sessions:${initialData.workspace.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          filter: `workspace_id=eq.${initialData.workspace.id}`,
-          schema: "public",
-          table: "sessions",
-        },
-        (payload) => {
-          if (payload.eventType === "DELETE") {
-            const oldId = (payload.old as { id?: string } | null)?.id;
-            if (oldId) {
-              recoveryChanges.current?.sessions.set(oldId, null);
-              dispatch({ cardId: oldId, type: "remove" });
-            }
-            return;
-          }
+    return recovery.register({
+      key: `pipeline:${initialData.workspace.id}`,
+      role: "page",
+      required: true,
+      refresh: refreshBoard,
+      subscribe: (onStatus, isCurrent) => {
+        disposed = false;
+        const channel = supabase
+          .channel(`sessions:${initialData.workspace.id}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              filter: `workspace_id=eq.${initialData.workspace.id}`,
+              schema: "public",
+              table: "sessions",
+            },
+            (payload) => {
+              if (!isCurrent()) return;
+              eventRevision.current += 1;
+              if (payload.eventType === "DELETE") {
+                const oldId = (payload.old as { id?: string } | null)?.id;
+                if (oldId) {
+                  if (
+                    !boardRef.current.cardsById[oldId] &&
+                    !boardRef.current.offPageCardLaneKeys[oldId]
+                  )
+                    recovery.invalidate();
+                  recoveryChanges.current?.sessions.set(oldId, null);
+                  dispatch({ cardId: oldId, type: "remove" });
+                }
+                return;
+              }
 
-          setHasObservedSession(true);
-          const row = payload.new as Tables<"sessions">;
-          if (row.archived_at) {
-            recoveryChanges.current?.sessions.set(row.id, null);
-            dispatch({ cardId: row.id, type: "remove" });
-            return;
-          }
+              setHasObservedSession(true);
+              const row = payload.new as Tables<"sessions">;
+              if (row.archived_at) {
+                if (
+                  !boardRef.current.cardsById[row.id] &&
+                  !boardRef.current.offPageCardLaneKeys[row.id]
+                )
+                  recovery.invalidate();
+                recoveryChanges.current?.sessions.set(row.id, null);
+                dispatch({ cardId: row.id, type: "remove" });
+                return;
+              }
 
-          const currentBoard = boardRef.current;
-          const existing = currentBoard.cardsById[row.id];
-          const next: PipelineDashboardCard = {
-            createdAt: row.created_at,
-            currentStageId: row.current_stage_id,
-            id: row.id,
-            latestRunId: existing?.latestRunId ?? null,
-            latestRunStatus: existing?.latestRunStatus ?? null,
-            linearIssueId: row.linear_issue_id,
-            linearIssueUrl: row.linear_issue_url,
-            number: row.number,
-            phaseStatus: row.phase_status as SessionPhaseStatus,
-            pipelineId: row.pipeline_id,
-            rejectionCount: row.rejection_count,
-            pullRequests: existing?.pullRequests ?? [],
-            title: row.title,
-            updatedAt: row.updated_at,
-            workspaceId: row.workspace_id,
-          };
-          recoveryChanges.current?.sessions.set(next.id, next);
-          if (payload.eventType === "INSERT")
-            recoveryChanges.current?.insertedSessionIds.add(next.id);
-          const hasTargetLane = currentBoard.lanes.some(
-            (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
-          );
-          const targetLaneKey = `${next.pipelineId}:${next.currentStageId}`;
-          const focus = captureCardFocus(next.id, targetLaneKey);
-          if (focus) pendingCardFocus.current = focus;
+              const currentBoard = boardRef.current;
+              const existing = currentBoard.cardsById[row.id];
+              const next: PipelineDashboardCard = {
+                createdAt: row.created_at,
+                currentStageId: row.current_stage_id,
+                id: row.id,
+                latestRunId: existing?.latestRunId ?? null,
+                latestRunStatus: existing?.latestRunStatus ?? null,
+                linearIssueId: row.linear_issue_id,
+                linearIssueUrl: row.linear_issue_url,
+                number: row.number,
+                phaseStatus: row.phase_status as SessionPhaseStatus,
+                pipelineId: row.pipeline_id,
+                rejectionCount: row.rejection_count,
+                pullRequests: existing?.pullRequests ?? [],
+                title: row.title,
+                updatedAt: row.updated_at,
+                workspaceId: row.workspace_id,
+              };
+              recoveryChanges.current?.sessions.set(next.id, next);
+              if (payload.eventType === "INSERT")
+                recoveryChanges.current?.insertedSessionIds.add(next.id);
+              const hasTargetLane = currentBoard.lanes.some(
+                (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
+              );
+              const targetLaneKey = `${next.pipelineId}:${next.currentStageId}`;
+              const focus = captureCardFocus(next.id, targetLaneKey);
+              if (focus) pendingCardFocus.current = focus;
 
-          if (!hasTargetLane) {
-            invalidatedCardIds.current.add(next.id);
-            recovery.request();
-            return;
-          }
+              if (
+                !existing &&
+                !currentBoard.offPageCardLaneKeys[next.id] &&
+                payload.eventType !== "INSERT"
+              ) {
+                recovery.invalidate();
+              }
+              if (!hasTargetLane) {
+                invalidatedCardIds.current.add(next.id);
+                recovery.invalidate();
+                return;
+              }
 
-          const moved =
-            !!existing &&
-            (existing.pipelineId !== next.pipelineId ||
-              existing.currentStageId !== next.currentStageId);
-          if (moved) {
-            startTransition(() => {
-              if (focus) setActiveLaneKey(focus.targetLaneKey);
+              const moved =
+                !!existing &&
+                (existing.pipelineId !== next.pipelineId ||
+                  existing.currentStageId !== next.currentStageId);
+              if (moved) {
+                startTransition(() => {
+                  if (focus) setActiveLaneKey(focus.targetLaneKey);
+                  dispatch({
+                    card: next,
+                    isInsert: payload.eventType === "INSERT",
+                    type: "upsert",
+                  });
+                });
+                return;
+              }
+
               dispatch({ card: next, isInsert: payload.eventType === "INSERT", type: "upsert" });
-            });
-            return;
-          }
+            },
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              filter: `workspace_id=eq.${initialData.workspace.id}`,
+              schema: "public",
+              table: "agent_runs",
+            },
+            (payload) => {
+              if (!isCurrent()) return;
+              eventRevision.current += 1;
+              if (payload.eventType === "DELETE") {
+                const deletedRun = payload.old as { id?: string; session_id?: string } | null;
+                const card = deletedRun?.session_id
+                  ? boardRef.current.cardsById[deletedRun.session_id]
+                  : null;
+                if (card?.latestRunId === deletedRun?.id) recovery.invalidate();
+                return;
+              }
 
-          dispatch({ card: next, isInsert: payload.eventType === "INSERT", type: "upsert" });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          filter: `workspace_id=eq.${initialData.workspace.id}`,
-          schema: "public",
-          table: "agent_runs",
-        },
-        (payload) => {
-          if (payload.eventType === "DELETE") {
-            const deletedRun = payload.old as { id?: string; session_id?: string } | null;
-            const card = deletedRun?.session_id
-              ? boardRef.current.cardsById[deletedRun.session_id]
-              : null;
-            if (card?.latestRunId === deletedRun?.id) recovery.request();
-            return;
-          }
-
-          const run = payload.new as Pick<Tables<"agent_runs">, "id" | "session_id" | "status">;
-          const priorRun = recoveryChanges.current?.runs.get(run.session_id);
-          recoveryChanges.current?.runs.set(run.session_id, {
-            runId: run.id,
-            runStatus: run.status,
-            isInsert:
-              payload.eventType === "INSERT" || (priorRun?.runId === run.id && priorRun.isInsert),
-          });
-          dispatch({
-            isInsert: payload.eventType === "INSERT",
-            runId: run.id,
-            runStatus: run.status,
-            sessionId: run.session_id,
-            type: "update-run",
-          });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          filter: `workspace_id=eq.${initialData.workspace.id}`,
-          schema: "public",
-          table: "session_pull_requests",
-        },
-        (payload) => {
-          const row =
-            payload.eventType === "DELETE"
-              ? (payload.old as { session_id?: string } | null)
-              : (payload.new as { session_id?: string } | null);
-          if (row?.session_id) void refreshSessionPullRequests(row.session_id);
-        },
-      )
-      .subscribe(recovery.onStatus);
-
-    return () => {
-      disposed = true;
-      recovery.dispose();
-      recoveryRef.current = null;
-      window.removeEventListener("online", recovery.request);
-      document.removeEventListener("visibilitychange", onVisible);
-      void supabase.removeChannel(channel);
-    };
-  }, [initialData.workspace.id, refreshBoard, supabase]);
+              const run = payload.new as Pick<Tables<"agent_runs">, "id" | "session_id" | "status">;
+              const priorRun = recoveryChanges.current?.runs.get(run.session_id);
+              recoveryChanges.current?.runs.set(run.session_id, {
+                runId: run.id,
+                runStatus: run.status,
+                isInsert:
+                  payload.eventType === "INSERT" ||
+                  (priorRun?.runId === run.id && priorRun.isInsert),
+              });
+              dispatch({
+                isInsert: payload.eventType === "INSERT",
+                runId: run.id,
+                runStatus: run.status,
+                sessionId: run.session_id,
+                type: "update-run",
+              });
+            },
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              filter: `workspace_id=eq.${initialData.workspace.id}`,
+              schema: "public",
+              table: "session_pull_requests",
+            },
+            (payload) => {
+              if (!isCurrent()) return;
+              eventRevision.current += 1;
+              const row =
+                payload.eventType === "DELETE"
+                  ? (payload.old as { session_id?: string } | null)
+                  : (payload.new as { session_id?: string } | null);
+              if (row?.session_id) void refreshSessionPullRequests(row.session_id, isCurrent);
+            },
+          );
+        const unsubscribe = subscribeAuthenticatedChannel(supabase, channel, onStatus);
+        return () => {
+          disposed = true;
+          unsubscribe();
+        };
+      },
+    });
+  }, [accessLost, initialData.workspace.id, recovery, refreshBoard, supabase]);
 
   const loadMore = useCallback(
     async (requestedLaneKey: string) => {
-      if (loadingLaneKeyRef.current || refreshInFlight.current) return;
+      if (
+        accessLostRef.current ||
+        loadingLaneKeyRef.current ||
+        refreshInFlight.current ||
+        refreshPending
+      )
+        return;
       const lane = boardRef.current.lanes.find(
         (candidate) => pipelineLaneKey(candidate) === requestedLaneKey,
       );
       if (!lane?.cursor) return;
 
+      const controller = new AbortController();
+      pageController.current = controller;
+      const revision = eventRevision.current;
       loadingLaneKeyRef.current = requestedLaneKey;
       setLoadingLaneKey(requestedLaneKey);
       setLaneErrors((current) => ({ ...current, [requestedLaneKey]: "" }));
@@ -514,30 +610,54 @@ function PipelinePageContent({
             }),
             headers: { "content-type": "application/json" },
             method: "POST",
+            signal: controller.signal,
           },
         );
+        if (controller.signal.aborted) return;
+        if ([401, 403].includes(response.status)) {
+          leaveUnavailableWorkspace(response.status);
+          return;
+        }
         const payload = (await response.json()) as {
+          code?: string;
           error?: string;
           lane?: PipelineDashboardLanePage;
         };
+
+        if (controller.signal.aborted) return;
+        if (!response.ok && payload.code === "workspace_unavailable") {
+          leaveUnavailableWorkspace(response.status);
+          return;
+        }
 
         if (!response.ok || !payload.lane) {
           throw new Error(payload.error ?? "Failed to load more sessions.");
         }
 
+        if (controller.signal.aborted) return;
+        // A bounded page cannot reconstruct counts/ownership changed mid-read.
+        // Reject that snapshot instead of resurrecting deleted or moved cards.
+        if (eventRevision.current !== revision) {
+          recovery.invalidate();
+          return;
+        }
         dispatch({ page: payload.lane, type: "append-page" });
       } catch (error) {
+        if (controller.signal.aborted) return;
         setLaneErrors((current) => ({
           ...current,
           [requestedLaneKey]:
             error instanceof Error ? error.message : "Failed to load more sessions.",
         }));
       } finally {
-        loadingLaneKeyRef.current = null;
-        setLoadingLaneKey(null);
+        if (pageController.current === controller) {
+          pageController.current = null;
+          loadingLaneKeyRef.current = null;
+          if (!controller.signal.aborted) setLoadingLaneKey(null);
+        }
       }
     },
-    [initialData.workspace.id],
+    [initialData.workspace.id, leaveUnavailableWorkspace, recovery, refreshPending],
   );
 
   const hasActiveSessions = board.lanes.some((lane) => lane.totalCount > 0);
@@ -573,6 +693,8 @@ function PipelinePageContent({
       ?.focus({ preventScroll: true });
   }
 
+  if (accessLost) return null;
+
   return (
     <div className={hasActiveSessions ? pipelineLayout.page : pipelineLayout.emptyPage}>
       <div className={hasActiveSessions ? pipelineLayout.controlsArea : undefined}>
@@ -596,7 +718,7 @@ function PipelinePageContent({
       {!hasActiveSessions ? (
         <div>
           <SessionsZeroState
-            onboarding={initialData.onboarding}
+            onboarding={onboarding}
             variant={hasEverHadSession ? "archived" : "first-run"}
             workspaceSlug={initialData.workspace.slug}
             newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}

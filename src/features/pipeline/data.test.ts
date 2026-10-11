@@ -26,6 +26,9 @@ import {
   decodePipelineDashboardCursor,
   filterArchivedPipelineDashboardLanes,
   loadPipelineDashboardData,
+  loadPipelineDashboardSnapshot,
+  loadPipelineDashboardLanePage,
+  PipelineWorkspaceUnavailableError,
   normalizePipelineDashboardRpcPayload,
 } from "@/features/pipeline/data";
 
@@ -224,7 +227,39 @@ describe("Pipeline dashboard data", () => {
 
     await expect(resultPromise).resolves.toMatchObject({
       hasAnySession: true,
+      onboarding: { currentStep: "verify", status: "completed" },
       lanes: [{ cards: [], id: PLAN_STAGE_ID }],
+    });
+  });
+
+  it("distinguishes RLS-null access loss from an empty board and lane", async () => {
+    const query: Record<string, unknown> = {};
+    for (const name of ["select", "eq", "limit", "maybeSingle"]) query[name] = () => query;
+    query.then = (resolve: (value: unknown) => unknown) =>
+      Promise.resolve(resolve({ data: null, error: null }));
+    const supabase = {
+      from: () => query,
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+    await expect(
+      loadPipelineDashboardSnapshot({ supabase: supabase as never, workspaceId: WORKSPACE_ID }),
+    ).rejects.toBeInstanceOf(PipelineWorkspaceUnavailableError);
+    await expect(
+      loadPipelineDashboardLanePage({
+        supabase: supabase as never,
+        workspaceId: WORKSPACE_ID,
+        pipelineId: DEFAULT_PIPELINE_ID,
+        stageId: PLAN_STAGE_ID,
+        seenIds: [],
+      }),
+    ).rejects.toBeInstanceOf(PipelineWorkspaceUnavailableError);
+    supabase.rpc.mockResolvedValue({ data: { lanes: [] }, error: null });
+    await expect(
+      loadPipelineDashboardSnapshot({ supabase: supabase as never, workspaceId: WORKSPACE_ID }),
+    ).resolves.toMatchObject({
+      lanes: [],
+      hasAnySession: false,
+      onboarding: { currentStep: "github", status: "not_started" },
     });
   });
 

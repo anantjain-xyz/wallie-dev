@@ -141,6 +141,31 @@ describe("page realtime recovery", () => {
     expect(recovery.getSnapshot().connection).toBe("recovered");
   });
 
+  it("coalesces invalidations and follows up when one arrives during a read", async () => {
+    const { recovery, source } = setup();
+    const run = source("run");
+    run.status("SUBSCRIBED");
+    await vi.advanceTimersByTimeAsync(200);
+    let resolve!: () => void;
+    run.refresh.mockImplementationOnce(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done;
+        }),
+    );
+    recovery.invalidate();
+    recovery.invalidate();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run.refresh).toHaveBeenCalledTimes(2);
+    recovery.invalidate();
+    recovery.invalidate();
+    resolve();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(run.refresh).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run.refresh).toHaveBeenCalledTimes(3);
+  });
+
   it("recreates only unexpectedly closed sources using capped backoff", async () => {
     const { source } = setup();
     const run = source("run");

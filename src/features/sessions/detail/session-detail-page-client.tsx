@@ -79,6 +79,7 @@ import {
 import type { SessionArtifactSummary } from "@/features/sessions/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { subscribeAuthenticatedChannel } from "@/lib/supabase/realtime-subscription";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
@@ -721,11 +722,8 @@ function SessionDetailContent({
                   return { ...current, pullRequests };
                 });
               },
-            )
-            .subscribe(onStatus);
-          return () => {
-            void supabase.removeChannel(channel);
-          };
+            );
+          return subscribeAuthenticatedChannel(supabase, channel, onStatus);
         },
       }),
     [initialData.workspaceSlug, recovery, session.id, supabase],

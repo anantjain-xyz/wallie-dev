@@ -34,6 +34,7 @@ import {
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { subscribeAuthenticatedChannel } from "@/lib/supabase/realtime-subscription";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
@@ -407,26 +408,21 @@ function SessionWalliePanelContent({
       required: true,
       refresh: (signal) => reconcileLatestRuns(signal),
       subscribe: (onStatus, isCurrent) => {
-        const channel = supabase
-          .channel(`wallie-runs:${session.id}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              filter: `session_id=eq.${session.id}`,
-              schema: "public",
-              table: "agent_runs",
-            },
-            (payload) => {
-              if (!isCurrent()) return;
-              if (payload.eventType !== "DELETE")
-                handleRunRealtimeUpdate(payload.new as Tables<"agent_runs">);
-            },
-          )
-          .subscribe(onStatus);
-        return () => {
-          void supabase.removeChannel(channel);
-        };
+        const channel = supabase.channel(`wallie-runs:${session.id}`).on(
+          "postgres_changes",
+          {
+            event: "*",
+            filter: `session_id=eq.${session.id}`,
+            schema: "public",
+            table: "agent_runs",
+          },
+          (payload) => {
+            if (!isCurrent()) return;
+            if (payload.eventType !== "DELETE")
+              handleRunRealtimeUpdate(payload.new as Tables<"agent_runs">);
+          },
+        );
+        return subscribeAuthenticatedChannel(supabase, channel, onStatus);
       },
     });
   }, [realtimeReady, recovery, session.id, supabase]);
@@ -454,26 +450,21 @@ function SessionWalliePanelContent({
       required: true,
       refresh: (signal) => loadRunMessages(runId, signal),
       subscribe: (onStatus, isCurrent) => {
-        const channel = supabase
-          .channel(`wallie-summary-messages:${runId}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              filter: `agent_run_id=eq.${runId}`,
-              schema: "public",
-              table: "agent_run_messages",
-            },
-            (payload) => {
-              if (!isCurrent()) return;
-              if (payload.eventType !== "DELETE")
-                handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
-            },
-          )
-          .subscribe(onStatus);
-        return () => {
-          void supabase.removeChannel(channel);
-        };
+        const channel = supabase.channel(`wallie-summary-messages:${runId}`).on(
+          "postgres_changes",
+          {
+            event: "*",
+            filter: `agent_run_id=eq.${runId}`,
+            schema: "public",
+            table: "agent_run_messages",
+          },
+          (payload) => {
+            if (!isCurrent()) return;
+            if (payload.eventType !== "DELETE")
+              handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+          },
+        );
+        return subscribeAuthenticatedChannel(supabase, channel, onStatus);
       },
     });
   }, [loadRunMessages, realtimeReady, recovery, summaryRunId, supabase]);
@@ -488,26 +479,21 @@ function SessionWalliePanelContent({
       required: false,
       refresh: (signal) => loadRunMessages(runId, signal),
       subscribe: (onStatus, isCurrent) => {
-        const channel = supabase
-          .channel(`wallie-run-messages:${runId}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              filter: `agent_run_id=eq.${runId}`,
-              schema: "public",
-              table: "agent_run_messages",
-            },
-            (payload) => {
-              if (!isCurrent()) return;
-              if (payload.eventType !== "DELETE")
-                handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
-            },
-          )
-          .subscribe(onStatus);
-        return () => {
-          void supabase.removeChannel(channel);
-        };
+        const channel = supabase.channel(`wallie-run-messages:${runId}`).on(
+          "postgres_changes",
+          {
+            event: "*",
+            filter: `agent_run_id=eq.${runId}`,
+            schema: "public",
+            table: "agent_run_messages",
+          },
+          (payload) => {
+            if (!isCurrent()) return;
+            if (payload.eventType !== "DELETE")
+              handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+          },
+        );
+        return subscribeAuthenticatedChannel(supabase, channel, onStatus);
       },
     });
   }, [historyRunId, loadRunMessages, realtimeReady, recovery, supabase]);

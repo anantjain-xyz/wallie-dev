@@ -20,6 +20,17 @@ import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
+vi.mock("@/lib/supabase/realtime-subscription", () => ({
+  subscribeAuthenticatedChannel: (
+    client: { removeChannel: (channel: unknown) => void },
+    channel: { subscribe: (onStatus: unknown) => void },
+    onStatus: unknown,
+  ) => {
+    channel.subscribe(onStatus);
+    return () => client.removeChannel(channel);
+  },
+}));
+
 const mocked = vi.hoisted(() => {
   const refresh = vi.fn();
   return {

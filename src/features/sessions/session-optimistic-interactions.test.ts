@@ -12,6 +12,17 @@ import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import type { SessionSummary, SessionArtifactSummary } from "@/features/sessions/types";
 
+vi.mock("@/lib/supabase/realtime-subscription", () => ({
+  subscribeAuthenticatedChannel: (
+    client: { removeChannel: (channel: unknown) => void },
+    channel: { subscribe: (onStatus: unknown) => void },
+    onStatus: unknown,
+  ) => {
+    channel.subscribe(onStatus);
+    return () => client.removeChannel(channel);
+  },
+}));
+
 const mocked = vi.hoisted(() => {
   const channel = {
     on: vi.fn(),
