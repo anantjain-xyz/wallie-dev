@@ -3,6 +3,7 @@ import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 
 export type OpenCodeRunnerAuth = {
@@ -58,14 +59,21 @@ export class OpenCodeRunner implements AgentRunner {
     }
   }
 
-  async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+  start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+    const safety = new AgentOutputSafety(input.secrets);
+    return safety.events(this.startUnsafe(input, safety));
+  }
+
+  private async *startUnsafe(
+    input: AgentRunnerStartInput,
+    safety: AgentOutputSafety,
+  ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
       throw new Error("OpenCodeRunner requires a sandbox.");
     }
 
-    const token = safePathToken(input.runId ?? input.sessionId);
-    const root = `/tmp/wallie-opencode-${token}`;
+    const root = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const dataHome = `${root}/data`;
     const authFile = `${dataHome}/opencode/auth.json`;
     const promptFile = `${root}/prompt.txt`;
@@ -75,6 +83,10 @@ export class OpenCodeRunner implements AgentRunner {
     const auth = this.options.loadAuth ? await this.options.loadAuth() : this.options;
     if (!secretForProvider(auth, this.modelProviderId)) {
       throw missingProviderCredentialError(this.modelProviderId);
+    }
+    safety.addSecret(auth.credential?.secret);
+    for (const credential of Object.values(auth.providerCredentials ?? {})) {
+      safety.addSecret(credential.secret);
     }
     const authEntries = buildOpenCodeAuthEntries(auth, this.modelProviderId);
     await sandbox.writeFile(authFile, `${JSON.stringify(authEntries)}\n`, { mode: 0o600 });
@@ -165,7 +177,7 @@ export class OpenCodeRunner implements AgentRunner {
       yield {
         type: "error",
         message: redactSecrets(
-          `opencode CLI exited with code ${code}: ${stderrBuf.trim().slice(0, 500) || "(no stderr)"}`,
+          `opencode CLI exited with code ${code}: ${safety.redact(stderrBuf).trim().slice(0, 500) || "(no stderr)"}`,
           secrets,
         ),
       };
@@ -363,8 +375,4 @@ function truncateToolText(value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function safePathToken(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 120) || "run";
 }

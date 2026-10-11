@@ -37,15 +37,17 @@ resource ownership and cleanup, see
 4. It prepends operating rules to the stage template and performs template
    substitution.
 5. It resolves the credential belonging to the human who created the session.
-6. It resolves the pinned repository, mints a GitHub installation token,
+6. It resolves the pinned repository, mints a GitHub installation token scoped to that repository with only
+   contents and pull-request write permissions,
    derives the stage branch, and loads the selected sandbox connection.
 7. The provider creates a sandbox and reports its identity before setup. The
    processor persists provider, connection revision, and sandbox ownership on
    the active run.
 8. Common setup checks out the branch, configures Git, installs the selected
    agent CLI, and installs Playwright/Chromium support.
-9. The runner writes the prompt to `.wallie-prompt.txt`, starts the CLI, and
-   streams normalized events.
+9. The runner creates a private per-invocation directory outside the checkout,
+   writes the prompt and provider auth there with owner-only permissions, starts
+   the CLI, and streams normalized, sanitized events.
 10. The processor persists events, concatenates text events into the artifact,
     optionally opens or refreshes the stage PR, and CAS-publishes the artifact
     for review.
@@ -121,8 +123,8 @@ stripped.
 | OpenCode    | Per-user OpenCode Zen API key, plus optional per-provider keys keyed by the model’s provider id | Runs OpenCode CLI with isolated XDG auth (`auth.json` entries by provider id) and streams normalized events |
 
 Credentials belong to the session creator, not the current reviewer. ChatGPT
-subscription credentials are written to `.codex/auth.json` with owner-only
-permissions. Refreshed auth caches are persisted after the run with optimistic
+subscription credentials are written to an isolated Codex home under a private
+`/tmp/wallie-codex-*` directory with owner-only permissions. Refreshed auth caches are persisted after the run with optimistic
 credential-version and generation guards. Runs may use the same saved
 credential concurrently; stale refresh and reconnect writes do not replace
 newer state, including after a disconnect and reconnect. Within one credential
@@ -130,7 +132,9 @@ generation, the provider's latest `last_refresh` wins when concurrent runs
 rotate auth tokens.
 
 The GitHub installation token is placed in the isolated sandbox's credential
-store for clone and push. Arbitrary `workspace_secrets` are not injected into
+store for clone and push. Execution tokens grant contents and pull-request write
+access to only the selected repository. Capability checks receive contents read
+access to that repository. Arbitrary `workspace_secrets` are not injected into
 the coding-agent process.
 
 Repository-local `AGENTS.md` files and installed skills are interpreted by the
@@ -139,6 +143,9 @@ the target repository remains their runtime semantic owner.
 
 ## Event and artifact contract
 
+- A common runner output boundary redacts the active provider credentials and
+  supplied GitHub token before events reach logs, artifacts, or PR descriptions.
+  It also sanitizes errors thrown by setup and provider SDKs.
 - Normalized runner events are appended to `agent_run_messages`.
 - Text, tool input, completion, and error events remain distinguishable.
 - Only text events are concatenated into the markdown artifact.
@@ -188,11 +195,6 @@ These are current limitations, not desired contracts:
   remain verbatim in rendered prompts.
 - Workspace `maxTurns` is loaded but not used by the generic processor;
   continuation IDs and `maxTokens` are also not supplied.
-- `.wallie-prompt.txt` and repository-local `.codex/auth.json` are sensitive
-  temporary files inside the checkout and are not mechanically protected from
-  an accidental Git add by the target repository.
-- Persisted text, tool, artifact, and PR output is not uniformly passed through
-  one diagnostic-redaction boundary.
 - GitHub App construction and installation-client initialization are outside
   the recoverable PR-synchronization boundary.
 
