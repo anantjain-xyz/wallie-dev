@@ -37,7 +37,7 @@ export async function restoreAndPushSource(
     beforePush?: () => Promise<void>;
   },
   dependencies: { execGit?: GitExecutor } = {},
-): Promise<void> {
+): Promise<string> {
   if (
     !SHA.test(input.baseSha) ||
     !SHA.test(input.headSha) ||
@@ -83,6 +83,49 @@ export async function restoreAndPushSource(
     (async (args, options) => exec("git", args, { ...options, encoding: "utf8" }));
   const git = (args: string[]) =>
     execGit(args, { cwd: root, env, signal, maxBuffer: 1024 * 1024, timeout: 30_000 });
+  // Keep recovery names bounded even when the attempt branch is very long.
+  // Including the attempt identity avoids linking two sessions to one PR.
+  const recoveryBranch = `wallie/recovery/${createHash("sha256")
+    .update(`${input.branch}\0${input.headSha}`)
+    .digest("hex")}`;
+  const remoteHead = async (branch: string) => {
+    const ref = `refs/heads/${branch}`;
+    const { stdout } = await git(["ls-remote", "--heads", input.remoteUrl, ref]);
+    const sha = stdout
+      .trim()
+      .split("\n")
+      .map((line) => line.split(/\s+/))
+      .find(([, name]) => name === ref)?.[0];
+    if (sha && !SHA.test(sha)) throw new Error("Invalid remote source commit.");
+    return sha;
+  };
+  const containsCheckpoint = async (sha: string) => {
+    if (sha === input.headSha) return true;
+    await git(["fetch", "--no-tags", input.remoteUrl, sha]);
+    try {
+      await git(["merge-base", "--is-ancestor", input.headSha, sha]);
+      return true;
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 1) return false;
+      throw error;
+    }
+  };
+  const pushOrContains = async (branch: string, existing: string | undefined) => {
+    if (existing && (await containsCheckpoint(existing))) return true;
+    await input.beforePush?.();
+    signal.throwIfAborted();
+    try {
+      // Never force a ref: the server atomically rejects a conflicting update.
+      await git(["push", input.remoteUrl, `${input.headSha}:refs/heads/${branch}`]);
+      return true;
+    } catch {
+      signal.throwIfAborted();
+      // A concurrent writer or ambiguous response may already have delivered
+      // the checkpoint. Only ancestry proof can turn that failure into success.
+      const current = await remoteHead(branch);
+      return !!current && containsCheckpoint(current);
+    }
+  };
   try {
     await git(["check-ref-format", `refs/heads/${input.branch}`]);
     await git(["init", "--bare", "--quiet"]);
@@ -97,11 +140,19 @@ export async function restoreAndPushSource(
     if (!refs.includes(`${input.headSha} ${SOURCE_CHECKPOINT_REF}`)) {
       throw new Error("Checkpoint does not contain its recorded source commit.");
     }
-    // Attempts have distinct branch names. A retry can fast-forward or observe
-    // the same SHA, but cannot overwrite unrelated remote work with --force.
-    await input.beforePush?.();
-    signal.throwIfAborted();
-    await git(["push", input.remoteUrl, `${input.headSha}:refs/heads/${input.branch}`]);
+    // Once recovery was used, retries keep its identity even if the attempt
+    // branch is later deleted or rewritten. Human updates are never replaced.
+    const recovered = await remoteHead(recoveryBranch);
+    if (recovered) {
+      if (await pushOrContains(recoveryBranch, recovered)) return recoveryBranch;
+      throw new Error("Recovery branch has unrelated source changes.");
+    }
+    if (await pushOrContains(input.branch, await remoteHead(input.branch))) return input.branch;
+    // The agent may have pushed and then amended/rebased locally. Preserve
+    // that remote history and publish this checkpoint under its stable ref.
+    if (await pushOrContains(recoveryBranch, await remoteHead(recoveryBranch)))
+      return recoveryBranch;
+    throw new Error("Recovery branch could not receive the source checkpoint.");
   } catch {
     // Git transport errors can repeat authorization headers or credential URLs.
     // Keep both raw tokens and base64 basic-auth values out of durable errors.

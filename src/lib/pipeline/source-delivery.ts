@@ -189,7 +189,7 @@ export async function deliverSourceCheckpoint(
   const current = await resolveDeliveryRepository(admin, delivery, signal);
   const { token } = current;
   await assertClaim(admin, delivery, signal);
-  await restoreAndPushSource({
+  const branch = await restoreAndPushSource({
     baseSha: delivery.base_sha,
     headSha: delivery.head_sha,
     branch: delivery.branch_name,
@@ -203,7 +203,7 @@ export async function deliverSourceCheckpoint(
   await assertClaim(admin, delivery, signal);
   await ensureSourcePullRequest({
     admin,
-    delivery: current.delivery,
+    delivery: { ...current.delivery, branch_name: branch },
     token,
     signal,
     verifyOwnership: () => assertClaim(admin, delivery, signal),

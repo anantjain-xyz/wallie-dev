@@ -83,6 +83,7 @@ function makeAdmin(
       row.claim_id = null;
       return query({ data: true, error: null });
     }
+    if (name === "record_session_pull_request") return query({ data: null, error: null });
     throw new Error(`Unexpected RPC ${name}`);
   });
   const download = vi.fn(
@@ -116,7 +117,7 @@ function makeAdmin(
 beforeEach(() => {
   vi.clearAllMocks();
   mocked.upload.mockResolvedValue({ error: null });
-  mocked.push.mockResolvedValue(undefined);
+  mocked.push.mockResolvedValue("wallie/attempt1");
   mocked.pr.mockResolvedValue(undefined);
   mocked.token.mockResolvedValue("scoped-token");
   vi.stubGlobal(
@@ -191,6 +192,40 @@ it("uses the bounded private DB fallback during a Storage outage and restores it
   );
   expect(row.bundle_base64).toBeNull();
   expect(row.status).toBe("delivered");
+});
+
+it("uses the recovered Git branch for both the pull request and its recorded identity", async () => {
+  const branch = `wallie/recovery/${"c".repeat(64)}`;
+  const { admin, rpc } = makeAdmin({ fallback: true });
+  const { ensureSourcePullRequest } =
+    await vi.importActual<typeof import("./source-pull-request")>("./source-pull-request");
+  mocked.push.mockResolvedValue(branch);
+  mocked.pr.mockImplementation(ensureSourcePullRequest);
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ id: 777, full_name: "acme/app" }))
+    .mockResolvedValueOnce(Response.json([]))
+    .mockResolvedValueOnce(
+      Response.json({
+        number: 42,
+        html_url: "https://github.com/acme/app/pull/42",
+        draft: false,
+        state: "open",
+        merged_at: null,
+        updated_at: "2026-10-01T00:00:00Z",
+        head: { ref: branch, sha: checkpoint.headSha, repo: { full_name: "acme/app" } },
+      }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  expect(await drainSourceDeliveries(admin, { limit: 1 })).toEqual({ delivered: 1, failed: 0 });
+  expect(mocked.pr).toHaveBeenCalledWith(
+    expect.objectContaining({ delivery: expect.objectContaining({ branch_name: branch }) }),
+  );
+  expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({ head: branch });
+  expect(rpc).toHaveBeenCalledWith(
+    "record_session_pull_request",
+    expect.objectContaining({ target_branch_name: branch, source_pull_request_number: 42 }),
+  );
 });
 
 it("does not report durability when both storage and database writes fail or expose source in its error", async () => {

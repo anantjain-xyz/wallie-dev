@@ -93,7 +93,7 @@ flowchart LR
   Publish --> Stop[Stop original sandbox]
   Publish --> Claim[Claim delivery lease]
   Claim --> Restore[Restore and verify in temporary bare Git repo]
-  Restore --> Push[Push attempt branch without force]
+  Restore --> Push[Push attempt or deterministic recovery branch without force]
   Push --> PR[Create or reuse PR and record provider timestamp]
 ```
 
@@ -112,6 +112,11 @@ recovery requires Git in the worker image. Apply the deletion, publication-deadl
 PR-freshness, and source-delivery migrations before deploying updated workers.
 Inspect `session_source_deliveries.status`, `next_attempt_at`, and `last_error_code`
 for pending delivery; never put bundle bytes or installation tokens into logs.
+
+If the attempt branch already contains the checkpoint, delivery preserves its
+newer commits. If the histories diverge, delivery uses a bounded recovery branch
+derived from the attempt branch and checkpoint commit. Retries keep that recovery
+identity for the PR and its metadata. Neither path force-pushes over remote work.
 
 ## Heartbeats and activity
 
@@ -195,6 +200,12 @@ tick. Worker drain stops new maintenance ticks and waits for callbacks already r
 ### Workspace deletion
 
 Deletion retains the workspace and provider credentials until cleanup finishes.
+
+Workspace deletion drains Wallie-owned sandboxes, private Storage, and database
+state. GitHub repositories, commits, branches, and PRs remain repository artifacts.
+A live setup request attempts bounded cleanup of the exact ref and PR it created
+when admission fails. Process death can leave a visible setup ref or PR for the
+repository owner to remove; cleanup does not guarantee rollback across services.
 
 ```mermaid
 flowchart LR
