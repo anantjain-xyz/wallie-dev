@@ -119,6 +119,23 @@ export async function validateSandboxConnection(connection: SandboxConnection) {
   }
 }
 
+/** Never resume or stop a sandbox while deciding whether recovery still owns it. */
+export async function hasRecoverableSandboxSource(
+  sandboxId: string,
+  connection: SandboxConnection,
+): Promise<boolean> {
+  try {
+    return await runBoundedSandboxProviderOperation({
+      operation: "hasRecoverableSource",
+      provider: connection.provider,
+      run: async () =>
+        (await loadProviderDriver(connection)).hasRecoverableSource(sandboxId, connection),
+    });
+  } catch (error) {
+    throw sanitizedSandboxError(error, connection, []);
+  }
+}
+
 export async function stopSandboxById(
   sandboxId: string,
   options: {

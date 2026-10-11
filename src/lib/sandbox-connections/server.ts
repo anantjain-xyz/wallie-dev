@@ -37,7 +37,7 @@ import {
   validateVercelSandboxCredentials as validateVercelSandboxCredentialsUnbounded,
 } from "@/lib/vercel-sandbox/server";
 
-import { loadSandboxProtectedJobAttempts } from "./run-cleanup-ownership";
+import { hasRetainedSandboxSource, loadSandboxProtectedJobAttempts } from "./run-cleanup-ownership";
 
 type AdminClient = SupabaseClient<Database>;
 type E2BRow = Tables<"workspace_e2b_sandbox_connections">;
@@ -491,6 +491,9 @@ export async function stopWorkspaceOwnedSandboxes(input: {
   connection: SandboxConnection;
   workspaceId: string;
 }): Promise<void> {
+  if (await hasRetainedSandboxSource(input.admin, input)) {
+    throw new SandboxConnectionActiveWorkError();
+  }
   const sandboxes = await listRunningSandboxes({
     connection: input.connection,
     throwOnError: true,

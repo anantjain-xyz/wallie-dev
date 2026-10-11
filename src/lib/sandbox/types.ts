@@ -174,6 +174,8 @@ export interface SandboxProviderDriver<Connection extends SandboxConnection = Sa
     connection: Connection,
     options?: { workspaceId?: string },
   ): Promise<RunningSandboxSummary[]>;
+  /** Read only: false proves the sandbox no longer retains its source filesystem. */
+  hasRecoverableSource(sandboxId: string, connection: Connection): Promise<boolean>;
   stopById(sandboxId: string, connection: Connection): Promise<void>;
   validate(connection: Connection): Promise<{ error?: string; ok: boolean }>;
 }

@@ -4,9 +4,14 @@ import type { SandboxConnection } from "@/lib/sandbox/types";
 const mocked = vi.hoisted(() => ({
   loadWorkspaceSandboxConnection: vi.fn(),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
+  hasRecoverableSandboxSource: vi.fn().mockResolvedValue(true),
 }));
-vi.mock("@/lib/sandbox", () => ({ stopSandboxById: mocked.stopSandboxById }));
-vi.mock("@/lib/sandbox-connections/server", () => ({
+vi.mock("@/lib/sandbox", () => ({
+  stopSandboxById: mocked.stopSandboxById,
+  hasRecoverableSandboxSource: mocked.hasRecoverableSandboxSource,
+}));
+vi.mock("@/lib/sandbox-connections/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sandbox-connections/server")>()),
   loadWorkspaceSandboxConnection: mocked.loadWorkspaceSandboxConnection,
   providerLabel: (provider: string) => provider,
 }));
@@ -105,6 +110,33 @@ function fixture() {
 describe("verified sandbox cleanup receipts", () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("refuses disconnect receipts while failed source owns the sandbox", async () => {
+    const f = fixture();
+    f.tables.agent_runs![0]!.source_recovery_required = true;
+    f.tables.agent_runs![0]!.status = "error";
+    await expect(
+      confirmConnectionSandboxCleanup({ admin: f.admin, connection, workspaceId }),
+    ).rejects.toThrow("Cannot change this sandbox connection while related Wallie work is active.");
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    expect(f.tables.workspace_sandbox_cleanup_receipts).toEqual([]);
+  });
+
+  it("still honors explicit workspace deletion for retained source", async () => {
+    const f = fixture();
+    f.tables.agent_runs![0]!.source_recovery_required = true;
+    f.tables.agent_runs![0]!.status = "error";
+    mocked.loadWorkspaceSandboxConnection.mockImplementation(
+      async (_admin, _workspaceId, provider) => (provider === "e2b" ? { connection } : null),
+    );
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect(mocked.stopSandboxById.mock.calls).toEqual([
+      ["run-sandbox", { connection, throwOnError: true }],
+      ["check-sandbox", { connection, throwOnError: true }],
+      ["auth-sandbox", { connection, throwOnError: true }],
+    ]);
+    expect(f.tables.workspaces).toEqual([]);
   });
 
   it("deletes after a clean disconnect while retaining historical run, probe, and auth IDs", async () => {

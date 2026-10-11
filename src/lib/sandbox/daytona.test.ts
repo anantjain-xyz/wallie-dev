@@ -18,6 +18,7 @@ vi.mock("./setup", () => ({ prepareSessionSandbox: mocked.prepare }));
 
 import {
   createDaytonaSessionSandbox,
+  hasRecoverableDaytonaSandboxSource,
   listRunningDaytonaSandboxes,
   stopDaytonaSandboxById,
   validateDaytonaConnection,
@@ -236,5 +237,28 @@ describe("Daytona sandbox driver", () => {
     );
     expect(sandbox.delete).toHaveBeenCalledWith(60, true);
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Daytona retained source inspection", () => {
+  it.each(["started", "starting", "stopped", "paused", "archived", "error", "unknown"])(
+    "retains %s source without changing its lifecycle",
+    async (state) => {
+      const f = fixture();
+      f.sandbox.state = state;
+      expect(await hasRecoverableDaytonaSandboxSource("sandbox-1", connection)).toBe(true);
+      expect(f.client.delete).not.toHaveBeenCalled();
+      expect(f.dispose).toHaveBeenCalledOnce();
+    },
+  );
+  it("releases only provider-confirmed absence and disposes after errors", async () => {
+    const f = fixture();
+    f.client.get.mockRejectedValue(new mocked.DaytonaNotFoundError());
+    expect(await hasRecoverableDaytonaSandboxSource("sandbox-1", connection)).toBe(false);
+    f.client.get.mockRejectedValue(new Error("Unauthorized"));
+    await expect(hasRecoverableDaytonaSandboxSource("sandbox-1", connection)).rejects.toThrow(
+      "Unauthorized",
+    );
+    expect(f.dispose).toHaveBeenCalledTimes(2);
   });
 });

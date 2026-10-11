@@ -1,4 +1,4 @@
-import { CommandExitError, FileNotFoundError, Sandbox } from "e2b";
+import { CommandExitError, FileNotFoundError, Sandbox, SandboxNotFoundError } from "e2b";
 
 import { SandboxLogBuffer, shellJoin, shellQuote } from "./command";
 import { finalizeSandboxAcquisition } from "./lifecycle";
@@ -190,9 +190,24 @@ export async function stopE2BSandboxById(
   await Sandbox.kill(sandboxId, { apiKey: connection.credentials.apiKey });
 }
 
+export async function hasRecoverableE2BSandboxSource(
+  sandboxId: string,
+  connection: E2BConnection,
+): Promise<boolean> {
+  try {
+    // getInfo observes paused sandboxes without resuming them.
+    await Sandbox.getInfo(sandboxId, { apiKey: connection.credentials.apiKey });
+    return true;
+  } catch (error) {
+    if (error instanceof SandboxNotFoundError) return false;
+    throw error;
+  }
+}
+
 export const e2bSandboxDriver: SandboxProviderDriver<E2BConnection> = {
   create: createE2BSessionSandbox,
   listRunning: listRunningE2BSandboxes,
+  hasRecoverableSource: hasRecoverableE2BSandboxSource,
   stopById: stopE2BSandboxById,
   validate: validateE2BConnection,
 };

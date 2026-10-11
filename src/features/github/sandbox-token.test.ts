@@ -50,6 +50,38 @@ describe("sandbox repository tokens", () => {
     );
   });
 
+  it("pins delivery access to the numeric repository identity across renames", async () => {
+    await mintSandboxRepositoryToken({
+      installationId: 123,
+      repositoryFullName: "acme/renamed",
+      repositoryId: 777,
+      purpose: "execution",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "POST /app/installations/{installation_id}/access_tokens",
+      {
+        installation_id: 123,
+        repository_ids: [777],
+        permissions: { contents: "write", pull_requests: "write" },
+      },
+    );
+  });
+
+  it.each([0, -1, NaN, Infinity, 1.5])(
+    "rejects numeric repository identity %j without issuing a token",
+    async (repositoryId) => {
+      await expect(
+        mintSandboxRepositoryToken({
+          installationId: 123,
+          repositoryFullName: "acme/app",
+          repositoryId,
+          purpose: "execution",
+        }),
+      ).rejects.toThrow("numeric repository identity");
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["", "acme", "acme/", "/repo", "acme/repo/other", "acme/re po"])(
     "rejects invalid repository identity %j without minting a broader token",
     async (repositoryFullName) => {

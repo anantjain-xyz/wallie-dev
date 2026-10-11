@@ -184,7 +184,7 @@ describe("sandbox provider lifecycle contract", () => {
     },
   );
 
-  it.each(["acquire", "validate", "listRunning", "stopById"] as const)(
+  it.each(["acquire", "validate", "listRunning", "hasRecoverableSource", "stopById"] as const)(
     "bounds the %s remote operation with its declared deadline",
     async (operation) => {
       vi.useFakeTimers();

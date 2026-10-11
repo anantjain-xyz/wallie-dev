@@ -245,8 +245,34 @@ export async function validateVercelConnectionDriver(connection: VercelConnectio
   }
 }
 
+export async function hasRecoverableVercelSandboxSource(
+  sandboxId: string,
+  connection: VercelConnection,
+): Promise<boolean> {
+  let until: number | null = null;
+  do {
+    const result = await Sandbox.list({
+      ...connection.credentials,
+      limit: 100,
+      ...(until === null ? {} : { until }),
+    });
+    const sandbox = result.json.sandboxes.find((candidate) => candidate.id === sandboxId);
+    if (sandbox) {
+      // This driver uses SDK 1.x's ephemeral /v1 sandboxes, not v2 persistent
+      // sandboxes. Preserve explicit snapshots and unknown/transitional states.
+      return (
+        sandbox.snapshottedAt !== undefined ||
+        !["stopped", "failed", "aborted"].includes(sandbox.status)
+      );
+    }
+    until = result.json.pagination.next;
+  } while (until !== null);
+  return false;
+}
+
 export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {
   create: createVercelSessionSandbox,
+  hasRecoverableSource: hasRecoverableVercelSandboxSource,
   listRunning: (connection, options) =>
     listRunningVercelSandboxes(connection, { throwOnError: true, ...options }),
   stopById: (sandboxId, connection) =>

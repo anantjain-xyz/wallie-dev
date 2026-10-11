@@ -4,14 +4,19 @@ import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import { loadSandboxProtectedJobAttempts } from "./run-cleanup-ownership";
+import { hasRetainedSandboxSource, loadSandboxProtectedJobAttempts } from "./run-cleanup-ownership";
 import { SandboxConnectionActiveWorkError } from "./server";
 
 type AdminClient = SupabaseClient<Database>;
 type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
 type AgentRunSandboxRow = Pick<
   Tables<"agent_runs">,
-  "agent_job_id" | "attempt_count" | "sandbox_id" | "status" | "workspace_id"
+  | "agent_job_id"
+  | "attempt_count"
+  | "sandbox_id"
+  | "status"
+  | "workspace_id"
+  | "source_recovery_required"
 >;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
@@ -34,6 +39,9 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
   workspaceId: string;
   requireAllOwned?: boolean;
 }): Promise<void> {
+  if (await hasRetainedSandboxSource(input.admin, input)) {
+    throw new SandboxConnectionActiveWorkError();
+  }
   const sandboxes = await listRunningSandboxes({
     connection: input.connection,
     throwOnError: true,
@@ -45,7 +53,9 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id, status, workspace_id, agent_job_id, attempt_count")
+      .select(
+        "sandbox_id, status, workspace_id, agent_job_id, attempt_count, source_recovery_required",
+      )
       .eq("sandbox_provider", "vercel")
       .eq("sandbox_vercel_team_id", credentials.teamId)
       .eq("sandbox_vercel_project_id", credentials.projectId)
@@ -91,6 +101,7 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
     if (
       row.sandbox_id &&
       (activeRunStatuses.includes(row.status as (typeof activeRunStatuses)[number]) ||
+        row.source_recovery_required ||
         protectedPublishedRun)
     ) {
       activeAnywhere.add(row.sandbox_id);

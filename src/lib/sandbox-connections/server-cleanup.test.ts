@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 const mocked = vi.hoisted(() => ({
+  hasRecoverableSandboxSource: vi.fn(),
   listRunningSandboxes: vi.fn(),
   stopSandboxById: vi.fn(),
 }));
 vi.mock("@/lib/sandbox", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sandbox")>()),
+  hasRecoverableSandboxSource: mocked.hasRecoverableSandboxSource,
   listRunningSandboxes: mocked.listRunningSandboxes,
   stopSandboxById: mocked.stopSandboxById,
 }));
@@ -71,6 +73,7 @@ function heartbeat(ageMs = 0): Row {
 }
 
 beforeEach(() => {
+  mocked.hasRecoverableSandboxSource.mockReset().mockResolvedValue(true);
   mocked.listRunningSandboxes
     .mockReset()
     .mockResolvedValue([{ id: "sandbox-1", status: "running", createdAt: Date.now() - 600_000 }]);
@@ -89,6 +92,20 @@ describe.each(["e2b", "daytona"] as const)("%s credential cleanup ownership", (p
       connection,
       workspaceId: "workspace-1",
     });
+
+  it("keeps failed checkpoint source until recovery clears the retained owner", async () => {
+    const retained = run(provider, { status: "error", source_recovery_required: true });
+    const admin = adminFor({ run: retained });
+    await expect(cleanup(admin)).rejects.toBeInstanceOf(SandboxConnectionActiveWorkError);
+    expect(mocked.listRunningSandboxes).not.toHaveBeenCalled();
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    retained.source_recovery_required = false;
+    await cleanup(admin);
+    expect(mocked.stopSandboxById).toHaveBeenCalledExactlyOnceWith("sandbox-1", {
+      connection,
+      throwOnError: true,
+    });
+  });
 
   it("blocks credential mutation when the current published attempt has a fresh job heartbeat", async () => {
     const heartbeats = [heartbeat()];

@@ -18,6 +18,7 @@ type RecoveryRun = Pick<
   | "created_at"
   | "id"
   | "last_activity_at"
+  | "source_recovery_required"
   | "sandbox_id"
   | "sandbox_connection_revision"
   | "sandbox_provider"
@@ -144,7 +145,7 @@ export async function sweepStalledRuns(
     for (const run of resolvedRuns) {
       result.stalledRunIds.push(run.id);
       await insertRunErrorMessage(admin, run, reason);
-      if (run.sandbox_id) {
+      if (run.sandbox_id && (await mayStopRetiredRun(admin, run))) {
         if (await stopRunSandbox(admin, run, sandboxConnectionCache)) {
           result.stoppedSandboxIds.push(run.sandbox_id);
         }
@@ -152,6 +153,33 @@ export async function sweepStalledRuns(
     }
   }
   return result;
+}
+
+async function mayStopRetiredRun(admin: AdminClient, run: RecoveryRun): Promise<boolean> {
+  // fail_session_job_attempt locked this run and made it terminal. The sole
+  // true-marker writer requires status=running, so it cannot acquire retention
+  // after this read. Never authorize cleanup from the earlier sweep snapshot.
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select(
+      "source_recovery_required, status, attempt_count, agent_job_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    )
+    .eq("id", run.id)
+    .eq("workspace_id", run.workspace_id)
+    .maybeSingle();
+  return (
+    !error &&
+    data !== null &&
+    data.status === "error" &&
+    !data.source_recovery_required &&
+    data.attempt_count === run.attempt_count &&
+    data.agent_job_id === run.agent_job_id &&
+    data.sandbox_id === run.sandbox_id &&
+    data.sandbox_provider === run.sandbox_provider &&
+    data.sandbox_connection_revision === run.sandbox_connection_revision &&
+    data.sandbox_vercel_team_id === run.sandbox_vercel_team_id &&
+    data.sandbox_vercel_project_id === run.sandbox_vercel_project_id
+  );
 }
 
 function isActiveRun(run: RecoveryRun) {
@@ -188,7 +216,7 @@ async function loadRuns(admin: AdminClient, jobIds: string[]): Promise<RecoveryR
       const { data, error } = await admin
         .from("agent_runs")
         .select(
-          "id, workspace_id, agent_job_id, attempt_count, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
+          "id, source_recovery_required, workspace_id, agent_job_id, attempt_count, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
         )
         .in("agent_job_id", jobIds.slice(batch, batch + PAGE_SIZE))
         .order("id", { ascending: true })

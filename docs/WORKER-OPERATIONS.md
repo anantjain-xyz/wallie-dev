@@ -82,6 +82,42 @@ work, while the database ownership guards protect replacement attempts.
 Do not manually set a queued job to running. That bypasses row locks, workspace
 capacity, mutation locks, attempt accounting, and heartbeat ownership.
 
+## Source durability and delivery
+
+```mermaid
+flowchart LR
+  Agent[Agent completes] --> Capture[Commit working tree and capture bounded bundle]
+  Capture --> Store[Private Storage or database fallback]
+  Store --> Outbox[Prepare exact-run delivery record]
+  Outbox --> Publish[Atomically publish artifact and run success]
+  Publish --> Stop[Stop original sandbox]
+  Publish --> Claim[Claim delivery lease]
+  Claim --> Restore[Restore and verify in temporary bare Git repo]
+  Restore --> Push[Push attempt or deterministic recovery branch without force]
+  Push --> PR[Create or reuse PR and record provider timestamp]
+```
+
+| Condition                        | Behavior                                                                                                                                                                                                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Normal checkpoint                | Incremental bundle, maximum 4 MiB; deterministic workspace/run key in the private `session-source-checkpoints` bucket.                                                                                          |
+| Storage outage                   | Bounded service-only DB fallback (up to about 5.6 MiB base64), cleared only after GitHub delivery succeeds.                                                                                                     |
+| Checkpoint or outbox write fails | No artifact publication. An uploaded deterministic checkpoint survives an outbox failure. If neither store is durable, preserve the sandbox until provider expiry; inspect `source_recovery_required` promptly. |
+| Push, PR, or PR metadata fails   | Keep the outbox record; retry with exponential backoff up to one hour. Token usage/history errors do not block delivery.                                                                                        |
+| Worker crashes                   | An unpublished record remains private recovery data. Published work can be reclaimed after its two-minute lease expires. Stale lease IDs cannot acknowledge replacement claims.                                 |
+| Maintenance hangs                | One-minute delivery deadline and 30-second Git subprocess limits; the lease expires for another worker.                                                                                                         |
+| Workspace deletion               | Fence claims/uploads; wait for active delivery leases, remove checkpoint objects, and cascade private fallback rows.                                                                                            |
+
+The reconciliation timer drains up to three ready deliveries per sweep. Source
+recovery requires Git in the worker image. Apply the deletion, publication-deadline,
+PR-freshness, and source-delivery migrations before deploying updated workers.
+Inspect `session_source_deliveries.status`, `next_attempt_at`, and `last_error_code`
+for pending delivery; never put bundle bytes or installation tokens into logs.
+
+If the attempt branch already contains the checkpoint, delivery preserves its
+newer commits. If the histories diverge, delivery uses a bounded recovery branch
+derived from the attempt branch and checkpoint commit. Retries keep that recovery
+identity for the PR and its metadata. Neither path force-pushes over remote work.
+
 ## Heartbeats and activity
 
 - Registration upserts worker start time, heartbeat time, and an empty active
@@ -164,6 +200,12 @@ tick. Worker drain stops new maintenance ticks and waits for callbacks already r
 ### Workspace deletion
 
 Deletion retains the workspace and provider credentials until cleanup finishes.
+
+Workspace deletion drains Wallie-owned sandboxes, private Storage, and database
+state. GitHub repositories, commits, branches, and PRs remain repository artifacts.
+A live setup request attempts bounded cleanup of the exact ref and PR it created
+when admission fails. Process death can leave a visible setup ref or PR for the
+repository owner to remove; cleanup does not guarantee rollback across services.
 
 ```mermaid
 flowchart LR

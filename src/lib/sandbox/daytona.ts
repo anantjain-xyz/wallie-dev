@@ -248,9 +248,27 @@ export async function stopDaytonaSandboxById(
   }
 }
 
+export async function hasRecoverableDaytonaSandboxSource(
+  sandboxId: string,
+  connection: DaytonaConnection,
+): Promise<boolean> {
+  const client = createClient(connection);
+  try {
+    // Stopped and archived sandboxes retain their files. Only absence releases ownership.
+    await client.get(sandboxId);
+    return true;
+  } catch (error) {
+    if (error instanceof DaytonaNotFoundError) return false;
+    throw error;
+  } finally {
+    await client[Symbol.asyncDispose]();
+  }
+}
+
 export const daytonaSandboxDriver: SandboxProviderDriver<DaytonaConnection> = {
   create: createDaytonaSessionSandbox,
   listRunning: listRunningDaytonaSandboxes,
+  hasRecoverableSource: hasRecoverableDaytonaSandboxSource,
   stopById: stopDaytonaSandboxById,
   validate: validateDaytonaConnection,
 };

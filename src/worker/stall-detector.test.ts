@@ -31,6 +31,7 @@ function run(overrides: Record<string, unknown> = {}) {
     created_at: oldTime(),
     last_activity_at: oldTime() as string | null,
     status: "running",
+    source_recovery_required: false,
     sandbox_id: "sandbox-1" as string | null,
     sandbox_provider: "fake",
     sandbox_connection_revision: null as string | null,
@@ -65,6 +66,7 @@ function buildAdmin(
     configs?: Array<{ workspace_id: string; key: string; value_json: unknown }>;
     heartbeatJobIds?: string[];
     failRead?: string;
+    failCleanupRead?: boolean;
     beforeRead?: (table: string) => Promise<void>;
     rpcError?: string;
     failOutcome?: string;
@@ -94,7 +96,10 @@ function buildAdmin(
         const read = async () => {
           await input.beforeRead?.(table);
           reads.push({ table, filters: Object.fromEntries(filters) });
-          if (input.failRead === table)
+          if (
+            input.failRead === table ||
+            (table === "agent_runs" && filters.has("id") && input.failCleanupRead)
+          )
             return { data: null, error: { message: "read unavailable" } };
           const selected = (rows[table] ?? []).filter((row) =>
             [...filters].every(([key, value]) =>
@@ -123,6 +128,10 @@ function buildAdmin(
             range = [from, to];
             return query;
           },
+          maybeSingle: async () => {
+            const result = await read();
+            return { data: result.data?.[0] ?? null, error: result.error };
+          },
           then: (resolve: (value: Awaited<ReturnType<typeof read>>) => void) =>
             read().then(resolve),
         };
@@ -141,7 +150,17 @@ function buildAdmin(
             currentRun?.agent_job_id === args.p_job_id));
       if (name === "complete_session_job_attempt") return { data: owned, error: null };
       if (name !== "fail_session_job_attempt") throw new Error(`Unexpected RPC ${name}`);
-      return { data: owned ? (input.failOutcome ?? "queued") : "stale", error: null };
+      const outcome = owned ? (input.failOutcome ?? "queued") : "stale";
+      if (outcome === "queued" || outcome === "error") {
+        for (const row of rows.agent_runs) {
+          if (
+            row.agent_job_id === args.p_job_id &&
+            (args.p_run_id ? row.id === args.p_run_id : row.attempt_count === null)
+          )
+            row.status = "error";
+        }
+      }
+      return { data: outcome, error: null };
     }),
   };
   return { admin, inserts, reads, rows };
@@ -218,6 +237,39 @@ describe("sweepStalledRuns ownership recovery", () => {
       }),
       expect.any(Map),
     );
+  });
+
+  it("preserves a recovery marker acquired after the sweep snapshot but before retirement", async () => {
+    const ownedRun = run();
+    const { admin } = buildAdmin({
+      runs: [ownedRun],
+      beforeRpc: () => {
+        ownedRun.source_recovery_required = true;
+      },
+    });
+    expect((await sweepStalledRuns(admin as never, TIMEOUT)).stoppedSandboxIds).toEqual([]);
+    expect(ownedRun.status).toBe("error");
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
+  });
+
+  it("refuses cleanup if sandbox ownership changed after the captured retirement", async () => {
+    const ownedRun = run();
+    const { admin } = buildAdmin({
+      runs: [ownedRun],
+      beforeRead: async (table) => {
+        if (table === "agent_runs" && ownedRun.status === "error") {
+          ownedRun.sandbox_connection_revision = "replacement";
+        }
+      },
+    });
+    expect((await sweepStalledRuns(admin as never, TIMEOUT)).stoppedSandboxIds).toEqual([]);
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the post-retirement cleanup ownership read fails", async () => {
+    const { admin } = buildAdmin({ failCleanupRead: true });
+    expect((await sweepStalledRuns(admin as never, TIMEOUT)).stoppedSandboxIds).toEqual([]);
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
   });
 
   it("records terminal exhaustion only when the RPC confirms it", async () => {
