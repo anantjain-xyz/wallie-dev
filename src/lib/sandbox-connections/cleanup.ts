@@ -32,6 +32,7 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
   admin: AdminClient;
   connection: VercelConnection;
   workspaceId: string;
+  requireAllOwned?: boolean;
 }): Promise<void> {
   const sandboxes = await listRunningSandboxes({
     connection: input.connection,
@@ -99,6 +100,12 @@ export async function stopVercelWorkspaceOwnedSandboxes(input: {
     if (row.sandbox_id && isActiveCapabilityCheck(row)) {
       activeAnywhere.add(row.sandbox_id);
     }
+  }
+
+  // Disconnect must retain credentials if another live owner prevents us from
+  // retiring one of this workspace's recorded sandbox obligations.
+  if (input.requireAllOwned && [...ownedByWorkspace].some((id) => activeAnywhere.has(id))) {
+    throw new SandboxConnectionActiveWorkError();
   }
 
   for (const sandbox of sandboxes) {

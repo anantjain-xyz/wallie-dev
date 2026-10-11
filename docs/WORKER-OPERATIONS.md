@@ -181,11 +181,13 @@ flowchart LR
 | `workspaces.deletion_requested_at` is set          | New session creation, generation starts/retries, probes, device authentication, and uploads are fenced in the database. Settings mutations return `409`.                                                                  |
 | `workspace_resource_operations` contains a sandbox | Allocation was reserved before calling the provider. Its connection revision is fixed; credential rotation waits until ownership transfers or cleanup succeeds.                                                           |
 | A recorded sandbox ID cannot be stopped            | Keep its ownership and credentials. Provider errors, missing credentials, or revision mismatches prevent hard deletion, even after the recovery deadline.                                                                 |
+| An exact sandbox cleanup receipt exists            | Rotation/disconnect verified the stop before discarding credentials. Deletion accepts only the receipt for the same workspace, provider, credential revision, and sandbox ID; audit IDs remain intact.                    |
 | An acquisition has no recorded ID                  | Wait through the provider acquisition deadline, requested sandbox lifetime, and a ten-minute allowance. Recovery relies on provider-enforced expiry for this crash window; it cannot discover an arbitrary unreturned ID. |
 | An upload has an ambiguous outcome                 | Retain its exact bucket/path for five minutes before retry cleanup. Storage metadata writes also honor the deletion fence.                                                                                                |
 
 - Both avatar and attachment prefixes are drained in pages, including nested paths, before the database cascade. A failed list/remove keeps deletion pending.
 - Inspect `[workspace-delete] cleanup will retry` and `resource recovery will retry` logs together with the reservation rows. Restore provider access when cleanup cannot proceed; do not delete reservations or credential rows to force completion.
+- Legacy sandbox IDs without matching credentials or receipts remain pending. An operator must verify the original provider account and restore its matching encrypted credentials and recorded revision under controlled database maintenance before retrying cleanup. The deletion fence intentionally prevents ordinary settings edits; never fabricate receipts or erase ownership to bypass it.
 - During rollout, apply the migration and deploy compatible web/worker versions, then drain older processes before requesting deletion. Older in-flight acquisitions have no reservation record.
 
 ## Cancellation and shutdown

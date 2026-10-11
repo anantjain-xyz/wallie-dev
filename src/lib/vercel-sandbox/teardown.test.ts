@@ -13,6 +13,9 @@ vi.mock("@/lib/pipeline/cancel", () => ({
 vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
+vi.mock("@/lib/sandbox-connections/cleanup-receipts", () => ({
+  hasSandboxCleanupReceipt: vi.fn().mockResolvedValue(false),
+}));
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadWorkspaceSandboxConnection: (admin: unknown, workspaceId: string, provider: string) =>
@@ -48,6 +51,7 @@ function buildAdminMock(tables: {
     const preset = tables[name as keyof typeof tables] ?? { data: [] };
     const rows = (preset.data ?? []).map((row, index) => ({
       id: String(index).padStart(6, "0"),
+      sandbox_connection_revision: "revision-1",
       ...row,
     }));
     let afterId = "";
@@ -188,7 +192,7 @@ describe("stopWorkspaceProviderSandboxes", () => {
     expect(inCalls).toEqual([]);
   });
 
-  it("does not stop a capability-check sandbox already stopped by the cancel step", async () => {
+  it("verifies independent ownership even when cancellation returned the same bare sandbox ID", async () => {
     mocked.cancelWorkspaceWork.mockResolvedValue(
       cancelResult({ stoppedSandboxIds: ["sbx_shared"] }),
     );
@@ -200,7 +204,10 @@ describe("stopWorkspaceProviderSandboxes", () => {
     const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
 
     expect(result.stoppedSandboxIds).toEqual(["sbx_shared"]);
-    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    expect(mocked.stopSandboxById).toHaveBeenCalledExactlyOnceWith("sbx_shared", {
+      connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+      throwOnError: true,
+    });
   });
 
   it("still cancels work but stops no sandboxes when the workspace has no connection", async () => {

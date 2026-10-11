@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cancelWorkspaceWork } from "@/lib/pipeline/cancel";
 import { stopSandboxById } from "@/lib/sandbox";
 import { loadWorkspaceSandboxConnection, providerLabel } from "@/lib/sandbox-connections/server";
+import { hasSandboxCleanupReceipt } from "@/lib/sandbox-connections/cleanup-receipts";
 import type { SandboxProvider } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -65,7 +66,10 @@ export async function stopWorkspaceProviderSandboxes(
     stoppedSandboxIds: [...canceled.stoppedSandboxIds],
   };
 
-  const alreadyStopped = new Set(result.stoppedSandboxIds);
+  // A bare sandbox ID returned by run cancellation is not proof for another
+  // provider/revision. Repeating an idempotent stop is safer than dropping an
+  // independently recorded ownership obligation.
+  const alreadyStopped = new Set<string>();
   for (const provider of ["vercel", "e2b", "daytona"] as const) {
     // Use the unguarded loader — a connection flagged `error` may still hold
     // usable credentials, and there is nothing to lose by attempting cleanup.
@@ -75,12 +79,26 @@ export async function stopWorkspaceProviderSandboxes(
       loadOwnedSandboxIds(admin, workspaceId, provider, "sandbox_capability_checks"),
       loadOwnedSandboxIds(admin, workspaceId, provider, "codex_device_auth_flows"),
     ]);
-    for (const sandboxId of new Set([...checkSandboxIds, ...authSandboxIds])) {
-      if (alreadyStopped.has(sandboxId)) continue;
+    for (const owner of [...checkSandboxIds, ...authSandboxIds]) {
+      const sandboxId = owner.sandbox_id;
+      if (!sandboxId) continue;
+      const ownershipKey = `${provider}:${owner.sandbox_connection_revision}:${sandboxId}`;
+      if (alreadyStopped.has(ownershipKey)) continue;
+      if (
+        await hasSandboxCleanupReceipt(admin, {
+          connectionRevision: owner.sandbox_connection_revision,
+          provider,
+          sandboxId,
+          workspaceId,
+        })
+      )
+        continue;
       if (!record) throw new Error("Workspace sandbox cleanup credentials are unavailable.");
+      if (owner.sandbox_connection_revision !== record.connection.revision)
+        throw new Error("Workspace sandbox cleanup connection changed.");
       await stopSandboxById(sandboxId, { connection: record.connection, throwOnError: true });
-      alreadyStopped.add(sandboxId);
-      result.stoppedSandboxIds.push(sandboxId);
+      alreadyStopped.add(ownershipKey);
+      if (!result.stoppedSandboxIds.includes(sandboxId)) result.stoppedSandboxIds.push(sandboxId);
       console.log("[workspace-teardown] stopped sandbox before workspace delete", {
         provider: providerLabel(provider),
         sandboxId,
@@ -97,15 +115,16 @@ async function loadOwnedSandboxIds(
   workspaceId: string,
   provider: SandboxProvider,
   table: "sandbox_capability_checks" | "codex_device_auth_flows",
-): Promise<string[]> {
-  const ids = new Set<string>();
+) {
+  const owners: Array<{ sandbox_id: string | null; sandbox_connection_revision: string | null }> =
+    [];
   let afterId: string | null = null;
   // Terminal rows still own cleanup if the process died before finally. Read
   // every page, regardless of status or age, while credentials are retained.
   while (true) {
     let query = admin
       .from(table)
-      .select("id, sandbox_id")
+      .select("id, sandbox_id, sandbox_connection_revision")
       .eq("workspace_id", workspaceId)
       .eq("sandbox_provider", provider)
       .not("sandbox_id", "is", null)
@@ -116,10 +135,10 @@ async function loadOwnedSandboxIds(
     if (error) throw error;
     if (!data?.length) break;
     for (const row of data) {
-      if (row.sandbox_id && !row.sandbox_id.startsWith("provisioning:")) ids.add(row.sandbox_id);
+      if (row.sandbox_id && !row.sandbox_id.startsWith("provisioning:")) owners.push(row);
     }
     afterId = data[data.length - 1]!.id;
     if (data.length < 100) break;
   }
-  return [...ids];
+  return owners;
 }

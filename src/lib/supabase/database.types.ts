@@ -1970,6 +1970,38 @@ export type Database = {
           },
         ]
       }
+      workspace_sandbox_cleanup_receipts: {
+        Row: {
+          confirmed_at: string
+          connection_revision: string
+          provider: string
+          sandbox_id: string
+          workspace_id: string
+        }
+        Insert: {
+          confirmed_at?: string
+          connection_revision: string
+          provider: string
+          sandbox_id: string
+          workspace_id: string
+        }
+        Update: {
+          confirmed_at?: string
+          connection_revision?: string
+          provider?: string
+          sandbox_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_sandbox_cleanup_receipts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_sandbox_connection_mutations: {
         Row: {
           created_at: string
