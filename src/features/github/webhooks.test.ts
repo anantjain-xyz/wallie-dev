@@ -34,7 +34,7 @@ function payload(action = "opened") {
     repository: { id: 555 },
     pull_request: {
       draft: false,
-      head: { ref: "wallie/product-sess-1" },
+      head: { ref: "wallie/product-sess-1", repo: { id: 555 } },
       html_url: "https://github.com/acme/app/pull/42",
       merged: false,
       number: 42,
@@ -92,6 +92,7 @@ describe("handleGitHubPullRequestEvent", () => {
       source_pull_request_state: "open",
       source_is_draft: false,
       source_updated_at: "2026-10-11T00:00:00Z",
+      source_head_repository_matches: true,
     });
   });
   it.each(["wallie/product-sess-1", "wallie/setup-app-abc"])(
@@ -103,7 +104,7 @@ describe("handleGitHubPullRequestEvent", () => {
         ...event.pull_request,
         merged: true,
         state: "closed",
-        head: { ref: branch },
+        head: { ...event.pull_request.head, ref: branch },
       };
       await handleGitHubPullRequestEvent(event, env);
       expect(rpc).toHaveBeenCalledWith(
@@ -115,6 +116,32 @@ describe("handleGitHubPullRequestEvent", () => {
       );
     },
   );
+  it.each([undefined, null, { id: 777 }])(
+    "disables branch fallback when the head repository is not positively the base repository: %j",
+    async (headRepository) => {
+      const { rpc } = buildPrAdmin();
+      const event = payload();
+      await handleGitHubPullRequestEvent(
+        {
+          ...event,
+          pull_request: {
+            ...event.pull_request,
+            head: { ...event.pull_request.head, repo: headRepository },
+          },
+        },
+        env,
+      );
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_github_pull_request_event",
+        expect.objectContaining({
+          source_head_repository_matches: false,
+          source_pull_request_number: 42,
+          target_repository_id: "repo-1",
+        }),
+      );
+    },
+  );
+
   it.each([{ installation: null }, { repository: null }])(
     "never guesses a repository from the branch when identity is missing: %j",
     async (missing) => {

@@ -22,7 +22,7 @@ const payload = {
   pull_request: {
     number: 42,
     html_url: "https://github.com/acme/app/pull/42",
-    head: { ref: "wallie/build-1" },
+    head: { ref: "wallie/build-1", repo: { id: 456 } },
     state: "open",
     merged: false,
     draft: false,
@@ -64,6 +64,18 @@ describe("GitHub webhook boundary", () => {
     expect((await POST(request(body))).status).toBe(400);
     expect(mocked.pullRequest).not.toHaveBeenCalled();
   });
+  it.each([undefined, null, { id: 987 }])(
+    "preserves optional head repository evidence for known PR updates: %j",
+    async (repo) => {
+      const event = {
+        ...payload,
+        pull_request: { ...payload.pull_request, head: { ...payload.pull_request.head, repo } },
+      };
+      expect((await POST(request(event))).status).toBe(200);
+      expect(mocked.pullRequest).toHaveBeenCalledWith(event);
+    },
+  );
+
   it("verifies the original bytes before parsing untrusted JSON", async () => {
     mocked.verify.mockResolvedValue(false);
     expect((await POST(request("not JSON"))).status).toBe(401);

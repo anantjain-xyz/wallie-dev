@@ -12,7 +12,12 @@ export const pullRequestEventSchema = z.object({
   installation: z.object({ id: githubId }).optional(),
   pull_request: z.object({
     draft: z.boolean(),
-    head: z.object({ ref: z.string().min(1) }),
+    head: z.object({
+      ref: z.string().min(1),
+      // GitHub may omit or null a deleted head repository. Known PR identities
+      // still reconcile, but branch fallback requires positive same-repo proof.
+      repo: z.object({ id: githubId }).nullable().optional(),
+    }),
     html_url: z
       .string()
       .url()

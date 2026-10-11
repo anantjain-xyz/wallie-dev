@@ -21,10 +21,10 @@ insert into public.sessions(id,workspace_id,number,title,pipeline_id,current_sta
  ('af100000-0000-4000-8000-000000000032','af100000-0000-4000-8000-000000000001',2,'Session B','af100000-0000-4000-8000-000000000020','af100000-0000-4000-8000-000000000021','af100000-0000-4000-8000-000000000012');
 
 create function pg_temp.deliver(number integer, state text, source_time timestamptz,
- repository uuid default 'af100000-0000-4000-8000-000000000011', branch text default 'wallie/build-shared', draft boolean default false)
+ repository uuid default 'af100000-0000-4000-8000-000000000011', branch text default 'wallie/build-shared', draft boolean default false, head_matches boolean default true)
 returns boolean language sql as $$
  select public.apply_github_pull_request_event('af100000-0000-4000-8000-000000000001',repository,branch,number,
-  'https://github.com/freshness/pr/'||number,state,draft,source_time);
+  'https://github.com/freshness/pr/'||number,state,draft,source_time,head_matches);
 $$;
 create function pg_temp.record(number integer, state text, source_time timestamptz,
  repository uuid default 'af100000-0000-4000-8000-000000000011', session uuid default 'af100000-0000-4000-8000-000000000031')
@@ -69,7 +69,9 @@ update public.sessions set github_repository_id='af100000-0000-4000-8000-0000000
 insert into public.session_pull_requests(session_id,workspace_id,branch_name) values
  ('af100000-0000-4000-8000-000000000031','af100000-0000-4000-8000-000000000001','wallie/legacy');
 select ok(not pg_temp.deliver(71,'open','2026-10-10 00:00:01Z','af100000-0000-4000-8000-000000000012','wallie/legacy'),'legacy null repository link cannot be claimed by the wrong session repository');
+select ok(not pg_temp.deliver(71,'open','2026-10-10 00:00:01Z',branch=>'wallie/legacy',head_matches=>false),'fork head with identical Wallie branch cannot bind a null-number link');
 select ok(pg_temp.deliver(71,'open','2026-10-10 00:00:01Z',branch=>'wallie/legacy'),'legacy link resolves using its session repository');
+select ok(pg_temp.deliver(71,'closed','2026-10-10 00:00:02Z',branch=>'wallie/legacy',head_matches=>false),'known repository and PR number reconcile even when head repository is unavailable');
 select ok(not pg_temp.deliver(72,'open','2026-10-10 00:00:02Z',branch=>'wallie/legacy'),'once resolved a legacy link cannot be rebound by branch alone');
 
 insert into public.session_pull_requests(session_id,workspace_id,branch_name,pull_request_number,pull_request_state,github_updated_at) values
@@ -103,8 +105,8 @@ select ok(pg_temp.deliver(83,'open','2026-10-10 00:00:01Z',branch=>'wallie/setup
 select is((select status from public.repository_onboarding_status where github_repository_id='af100000-0000-4000-8000-000000000011'),'ready','pre-watermark merged setup state remains ready');
 
 reset role;
-select ok(not has_function_privilege('anon','public.apply_github_pull_request_event(uuid,uuid,text,integer,text,text,boolean,timestamptz)','execute'),'anonymous callers cannot reconcile webhooks');
-select ok(not has_function_privilege('authenticated','public.apply_github_pull_request_event(uuid,uuid,text,integer,text,text,boolean,timestamptz)','execute'),'authenticated callers cannot spoof webhooks');
+select ok(not has_function_privilege('anon','public.apply_github_pull_request_event(uuid,uuid,text,integer,text,text,boolean,timestamptz,boolean)','execute'),'anonymous callers cannot reconcile webhooks');
+select ok(not has_function_privilege('authenticated','public.apply_github_pull_request_event(uuid,uuid,text,integer,text,text,boolean,timestamptz,boolean)','execute'),'authenticated callers cannot spoof webhooks');
 select ok(not has_function_privilege('authenticated','public.record_session_pull_request(uuid,uuid,uuid,text,integer,text,text,boolean,timestamptz)','execute'),'authenticated callers cannot write worker PR metadata');
 select ok(not has_function_privilege('anon','public.record_session_pull_request(uuid,uuid,uuid,text,integer,text,text,boolean,timestamptz)','execute'),'anonymous callers cannot write worker PR metadata');
 select * from finish();
