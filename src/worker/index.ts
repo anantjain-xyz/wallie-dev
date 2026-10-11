@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { startCursorAuthProcessor } from "@/lib/cursor/auth-processor";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
+import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 
 import { parseWorkerConfig } from "./config";
 import { startWorkerControlServer } from "./control";
@@ -112,18 +113,21 @@ async function main() {
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("reconciliation", async () => {
-          const [result, attachmentCleanup] = await Promise.all([
+          const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([
             reconcileLinearState(admin),
             cleanupExpiredSessionAttachments(admin),
+            resumePendingWorkspaceDeletions(admin),
           ]);
           if (
             result.canceled > 0 ||
             result.rateLimited ||
             attachmentCleanup.deleted > 0 ||
-            attachmentCleanup.failed > 0
+            attachmentCleanup.failed > 0 ||
+            workspaceDeletion.deleted > 0
           ) {
             console.log("[worker] reconciliation results", {
               attachmentCleanup,
+              workspaceDeletion,
               canceled: result.canceled,
               checked: result.checked,
               rateLimited: result.rateLimited,

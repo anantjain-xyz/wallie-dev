@@ -524,15 +524,14 @@ describe("cancelWorkspaceWork", () => {
     ).rejects.toEqual({ message: "cannot list runs" });
   });
 
-  it("skips a confirmed absent connection without falsely reporting the sandbox stopped", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("retains deletion ownership when a known sandbox has no cleanup credentials", async () => {
     const { admin } = buildAdmin({ runs: [vercelRun()] });
-    const result = await cancelWorkspaceWork(admin as never, {
-      reason: "Workspace deleted.",
-      workspaceId: "w1",
-    });
-    expect(result.canceledRunIds).toEqual(["run-1"]);
-    expect(result.stoppedSandboxIds).toEqual([]);
+    await expect(
+      cancelWorkspaceWork(admin as never, {
+        reason: "Workspace deleted.",
+        workspaceId: "w1",
+      }),
+    ).rejects.toThrow("Workspace sandbox cleanup credentials are unavailable.");
     expect(sandboxMocks.stopSandboxById).not.toHaveBeenCalled();
   });
 

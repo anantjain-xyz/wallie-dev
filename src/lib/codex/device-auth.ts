@@ -18,6 +18,12 @@ import { shellQuote } from "@/lib/sandbox/command";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import { encryptSecretValue, decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  recordWorkspaceSandbox,
+  reserveWorkspaceSandbox,
+  settleWorkspaceResource,
+  WorkspaceDeletingError,
+} from "@/lib/workspaces/resource-operations";
 import type { Database } from "@/lib/supabase/database.types";
 import type { VercelSandboxCredentials } from "@/lib/vercel-sandbox/contracts";
 
@@ -150,6 +156,8 @@ export async function startCodexDeviceAuthFlow(input: {
   const expiresAt = new Date(Date.now() + FLOW_TTL_MS).toISOString();
   let flowRow: FlowRow | null = null;
   let sandbox: AuthSandbox | null = null;
+  let resourceOperationId: string | null = null;
+  let resourceRecorded = false;
 
   try {
     flowRow = await reserveCodexDeviceAuthFlow(admin, {
@@ -159,12 +167,25 @@ export async function startCodexDeviceAuthFlow(input: {
       userId: input.userId,
       workspaceId: input.workspaceId,
     });
+    if (connection && input.workspaceId) {
+      resourceOperationId = await reserveWorkspaceSandbox(admin, {
+        connection,
+        provider: connection.provider,
+        timeoutMs: FLOW_TTL_MS + 60_000,
+        workspaceId: input.workspaceId,
+      });
+    }
     const session = await createAuthSandbox(connection, {
       flowId,
       userId: input.userId,
       workspaceId: input.workspaceId,
     });
     sandbox = session.sandbox;
+    if (resourceOperationId) {
+      const accepted = await recordWorkspaceSandbox(admin, resourceOperationId, sandbox.sandboxId);
+      resourceRecorded = true;
+      if (!accepted) throw new WorkspaceDeletingError();
+    }
     const command = await sandbox.runCommand({
       args: ["-lc", codexDeviceLoginCommand(session)],
       cmd: "bash",
@@ -185,6 +206,7 @@ export async function startCodexDeviceAuthFlow(input: {
       throw new Error("Codex sign-in reservation was lost during provisioning.");
     }
     flowRow = provisionedRow;
+    if (resourceOperationId) await settleWorkspaceResource(admin, resourceOperationId, true);
     await sandbox.close?.();
 
     return (
@@ -194,6 +216,9 @@ export async function startCodexDeviceAuthFlow(input: {
       })) ?? snapshotFromRow(flowRow)
     );
   } catch (error) {
+    if (resourceOperationId && resourceRecorded) {
+      await settleWorkspaceResource(admin, resourceOperationId, false).catch(() => undefined);
+    }
     const message = startAuthErrorMessage(error);
     if (sandbox) {
       await stopSandboxQuietly(sandbox.sandboxId, connection);
