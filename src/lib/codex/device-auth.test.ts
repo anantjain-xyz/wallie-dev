@@ -177,6 +177,10 @@ function buildAdminMock(rows: FlowRow[]) {
           target_workspace_id: string;
         },
       ) => {
+        if (name === "begin_workspace_resource_operation")
+          return { data: "resource-op", error: null };
+        if (name === "record_workspace_resource_operation") return { data: true, error: null };
+        if (name === "settle_workspace_resource_operation") return { data: null, error: null };
         if (name !== "begin_codex_device_auth_flow") {
           throw new Error(`unexpected RPC: ${name}`);
         }

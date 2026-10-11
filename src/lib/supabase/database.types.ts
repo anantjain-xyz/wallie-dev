@@ -1923,6 +1923,85 @@ export type Database = {
           },
         ]
       }
+      workspace_resource_operations: {
+        Row: {
+          connection_revision: string | null
+          created_at: string
+          id: string
+          kind: string
+          provider: string | null
+          recovery_after: string
+          resource_id: string | null
+          settled_at: string | null
+          storage_bucket: string | null
+          workspace_id: string
+        }
+        Insert: {
+          connection_revision?: string | null
+          created_at?: string
+          id?: string
+          kind: string
+          provider?: string | null
+          recovery_after: string
+          resource_id?: string | null
+          settled_at?: string | null
+          storage_bucket?: string | null
+          workspace_id: string
+        }
+        Update: {
+          connection_revision?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          provider?: string | null
+          recovery_after?: string
+          resource_id?: string | null
+          settled_at?: string | null
+          storage_bucket?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_resource_operations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_sandbox_cleanup_receipts: {
+        Row: {
+          confirmed_at: string
+          connection_revision: string
+          provider: string
+          sandbox_id: string
+          workspace_id: string
+        }
+        Insert: {
+          confirmed_at?: string
+          connection_revision: string
+          provider: string
+          sandbox_id: string
+          workspace_id: string
+        }
+        Update: {
+          confirmed_at?: string
+          connection_revision?: string
+          provider?: string
+          sandbox_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_sandbox_cleanup_receipts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_sandbox_connection_mutations: {
         Row: {
           created_at: string
@@ -2113,6 +2192,7 @@ export type Database = {
           avatar_path: string | null
           created_at: string
           created_by: string | null
+          deletion_requested_at: string | null
           id: string
           name: string
           slug: string
@@ -2122,6 +2202,7 @@ export type Database = {
           avatar_path?: string | null
           created_at?: string
           created_by?: string | null
+          deletion_requested_at?: string | null
           id?: string
           name: string
           slug: string
@@ -2131,6 +2212,7 @@ export type Database = {
           avatar_path?: string | null
           created_at?: string
           created_by?: string | null
+          deletion_requested_at?: string | null
           id?: string
           name?: string
           slug?: string
@@ -2230,6 +2312,26 @@ export type Database = {
       }
       begin_sandbox_connection_mutation: {
         Args: { target_provider: string; target_workspace_id: string }
+        Returns: string
+      }
+      begin_workspace_deletion: {
+        Args: {
+          p_confirmation: string
+          p_owner_member_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
+      begin_workspace_resource_operation: {
+        Args: {
+          p_connection_revision?: string
+          p_kind: string
+          p_provider: string
+          p_recovery_after: string
+          p_resource_id: string
+          p_storage_bucket: string
+          p_workspace_id: string
+        }
         Returns: string
       }
       cancel_session_job_attempts: {
@@ -2379,6 +2481,7 @@ export type Database = {
           avatar_path: string | null
           created_at: string
           created_by: string | null
+          deletion_requested_at: string | null
           id: string
           name: string
           slug: string
@@ -2456,6 +2559,10 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      finish_workspace_deletion: {
+        Args: { p_workspace_id: string }
+        Returns: boolean
       }
       get_pipeline_dashboard_page: {
         Args: {
@@ -2621,6 +2728,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      record_workspace_resource_operation: {
+        Args: { p_operation_id: string; p_resource_id: string }
+        Returns: boolean
+      }
       reject_session_stage: {
         Args: {
           p_agent_model_name: string
@@ -2722,6 +2833,10 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: string
+      }
+      settle_workspace_resource_operation: {
+        Args: { p_operation_id: string; p_transferred: boolean }
+        Returns: undefined
       }
       start_sandbox_capability_check: {
         Args: {

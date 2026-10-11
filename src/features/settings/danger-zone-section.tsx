@@ -8,7 +8,8 @@ import { readResponseJson } from "@/features/settings/use-api-action";
 
 type DeleteWorkspaceResponse = {
   deleted: boolean;
-  redirectTo: string;
+  redirectTo?: string;
+  message?: string;
 };
 
 type LeaveWorkspaceResponse = {
@@ -42,6 +43,14 @@ export function DangerZoneSection({
         method: "DELETE",
       });
       const payload = await readResponseJson<DeleteWorkspaceResponse>(response);
+      if (!payload.deleted || !payload.redirectTo) {
+        setDialogError(
+          payload.message ??
+            "Deletion is in progress. Cleanup will continue automatically; you can retry to check its status.",
+        );
+        setBusy(false);
+        return;
+      }
 
       // Full navigation: the current route belongs to a workspace that no longer
       // exists, so a hard load drops any stale client state cleanly.
