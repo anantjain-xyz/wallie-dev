@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 const mocked = vi.hoisted(() => ({
+  hasRecoverableSandboxSource: vi.fn(),
   listRunningSandboxes: vi.fn(),
   stopSandboxById: vi.fn(),
 }));
 vi.mock("@/lib/sandbox", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sandbox")>()),
+  hasRecoverableSandboxSource: mocked.hasRecoverableSandboxSource,
   listRunningSandboxes: mocked.listRunningSandboxes,
   stopSandboxById: mocked.stopSandboxById,
 }));
@@ -71,6 +73,7 @@ function heartbeat(ageMs = 0): Row {
 }
 
 beforeEach(() => {
+  mocked.hasRecoverableSandboxSource.mockReset().mockResolvedValue(true);
   mocked.listRunningSandboxes
     .mockReset()
     .mockResolvedValue([{ id: "sandbox-1", status: "running", createdAt: Date.now() - 600_000 }]);

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => {
   class FileNotFoundError extends Error {}
+  class SandboxNotFoundError extends Error {}
   class CommandExitError extends Error {
     exitCode = 1;
     stderr = "failed";
@@ -10,6 +11,8 @@ const mocked = vi.hoisted(() => {
   return {
     CommandExitError,
     FileNotFoundError,
+    SandboxNotFoundError,
+    getInfo: vi.fn(),
     connect: vi.fn(),
     kill: vi.fn(),
     create: vi.fn(),
@@ -21,7 +24,9 @@ const mocked = vi.hoisted(() => {
 vi.mock("e2b", () => ({
   CommandExitError: mocked.CommandExitError,
   FileNotFoundError: mocked.FileNotFoundError,
+  SandboxNotFoundError: mocked.SandboxNotFoundError,
   Sandbox: {
+    getInfo: mocked.getInfo,
     connect: mocked.connect,
     kill: mocked.kill,
     create: mocked.create,
@@ -33,6 +38,7 @@ vi.mock("./setup", () => ({ prepareSessionSandbox: mocked.prepare }));
 
 import {
   createE2BSessionSandbox,
+  hasRecoverableE2BSandboxSource,
   listRunningE2BSandboxes,
   stopE2BSandboxById,
   validateE2BConnection,
@@ -220,4 +226,24 @@ describe("E2B sandbox driver", () => {
       expect(mocked.connect).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("E2B retained source inspection", () => {
+  it.each(["running", "paused", "unknown"])(
+    "retains %s source without resuming it",
+    async (state) => {
+      mocked.getInfo.mockResolvedValue({ state });
+      expect(await hasRecoverableE2BSandboxSource("sandbox-1", connection)).toBe(true);
+      expect(mocked.connect).not.toHaveBeenCalled();
+      expect(mocked.kill).not.toHaveBeenCalled();
+    },
+  );
+  it("releases only provider-confirmed absence", async () => {
+    mocked.getInfo.mockRejectedValue(new mocked.SandboxNotFoundError());
+    expect(await hasRecoverableE2BSandboxSource("sandbox-1", connection)).toBe(false);
+    mocked.getInfo.mockRejectedValue(new Error("Unauthorized"));
+    await expect(hasRecoverableE2BSandboxSource("sandbox-1", connection)).rejects.toThrow(
+      "Unauthorized",
+    );
+  });
 });

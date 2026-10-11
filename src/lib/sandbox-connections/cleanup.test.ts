@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 const mocked = vi.hoisted(() => ({
+  hasRecoverableSandboxSource: vi.fn(),
   listRunningSandboxes: vi.fn(),
   stopSandboxById: vi.fn(),
 }));
@@ -101,6 +102,7 @@ async function cleanup(admin: ReturnType<typeof buildAdmin>) {
 }
 
 beforeEach(() => {
+  mocked.hasRecoverableSandboxSource.mockReset().mockResolvedValue(true);
   mocked.listRunningSandboxes
     .mockReset()
     .mockResolvedValue([{ id: "sandbox-1", status: "running", createdAt: Date.now() - 600_000 }]);

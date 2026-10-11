@@ -4,8 +4,12 @@ import type { SandboxConnection } from "@/lib/sandbox/types";
 const mocked = vi.hoisted(() => ({
   loadWorkspaceSandboxConnection: vi.fn(),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
+  hasRecoverableSandboxSource: vi.fn().mockResolvedValue(true),
 }));
-vi.mock("@/lib/sandbox", () => ({ stopSandboxById: mocked.stopSandboxById }));
+vi.mock("@/lib/sandbox", () => ({
+  stopSandboxById: mocked.stopSandboxById,
+  hasRecoverableSandboxSource: mocked.hasRecoverableSandboxSource,
+}));
 vi.mock("@/lib/sandbox-connections/server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sandbox-connections/server")>()),
   loadWorkspaceSandboxConnection: mocked.loadWorkspaceSandboxConnection,

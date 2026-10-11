@@ -19,7 +19,12 @@ export type ExplicitCapability<T> =
   | { state: "supported"; value: T }
   | { reason: string; state: "unsupported" };
 
-export type SandboxProviderOperation = "acquire" | "listRunning" | "stopById" | "validate";
+export type SandboxProviderOperation =
+  | "acquire"
+  | "listRunning"
+  | "hasRecoverableSource"
+  | "stopById"
+  | "validate";
 
 type ProviderDriverLoader = () => Promise<SandboxProviderDriver>;
 
@@ -88,6 +93,7 @@ const REQUIRED_AGENT_CAPABILITY_PROBES = {
 const DEFAULT_DEADLINES = {
   acquire: 30 * 60_000,
   listRunning: 30_000,
+  hasRecoverableSource: 30_000,
   stopById: 30_000,
   validate: 15_000,
 } as const satisfies Record<SandboxProviderOperation, number>;

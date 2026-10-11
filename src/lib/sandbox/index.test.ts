@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createSessionSandbox, validateSandboxConnection } from "./index";
+import {
+  createSessionSandbox,
+  hasRecoverableSandboxSource,
+  validateSandboxConnection,
+} from "./index";
 import { getSandboxProviderContract } from "./provider-contract";
 import type { SandboxProviderDriver } from "./types";
 
@@ -46,6 +50,38 @@ describe("sandbox provider registry", () => {
           "E2B validate exceeded its 15000ms provider-contract deadline (semantic owner: bounded provider remote operations).",
         ok: false,
       });
+    } finally {
+      contract.driver.load = originalLoad;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("retained source inspection boundary", () => {
+  it("bounds provider reads and redacts connection secrets", async () => {
+    const contract = getSandboxProviderContract("e2b");
+    const originalLoad = contract.driver.load;
+    const inspect = vi.fn().mockRejectedValue(new Error("Rejected e2b-secret"));
+    contract.driver.load = async () =>
+      ({ hasRecoverableSource: inspect }) as unknown as SandboxProviderDriver;
+    const connection = {
+      provider: "e2b" as const,
+      revision: "revision-1",
+      credentials: { apiKey: "e2b-secret" },
+    };
+    try {
+      await expect(hasRecoverableSandboxSource("sandbox-1", connection)).rejects.toThrow(
+        "Rejected [REDACTED]",
+      );
+      vi.useFakeTimers();
+      inspect.mockImplementation(() => new Promise<never>(() => undefined));
+      const outcome = hasRecoverableSandboxSource("sandbox-1", connection).catch(
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(contract.deadlines.hasRecoverableSource);
+      expect(await outcome).toEqual(
+        expect.objectContaining({ name: "SandboxProviderDeadlineError" }),
+      );
     } finally {
       contract.driver.load = originalLoad;
       vi.useRealTimers();
