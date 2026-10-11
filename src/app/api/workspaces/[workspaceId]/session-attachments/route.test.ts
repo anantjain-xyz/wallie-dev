@@ -57,7 +57,8 @@ function mockAdmin(
   const insert = vi.fn().mockResolvedValue({ error: options.insertError ?? null });
   const from = vi.fn().mockReturnValue({ insert });
   const storageFrom = vi.fn().mockReturnValue({ remove, upload });
-  mocked.createSupabaseAdminClient.mockReturnValue({ from, storage: { from: storageFrom } });
+  const rpc = vi.fn().mockResolvedValue({ data: "resource-op", error: null });
+  mocked.createSupabaseAdminClient.mockReturnValue({ from, rpc, storage: { from: storageFrom } });
   return { from, insert, remove, storageFrom, upload };
 }
 

@@ -21,6 +21,8 @@ import {
   validateVercelSandboxCredentials,
 } from "@/lib/sandbox-connections/server";
 import { stopVercelWorkspaceOwnedSandboxes } from "@/lib/sandbox-connections/cleanup";
+import { confirmConnectionSandboxCleanup } from "@/lib/sandbox-connections/cleanup-receipts";
+import type { SandboxConnection } from "@/lib/sandbox/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { upsertVercelSandboxConnectionSchema } from "@/lib/vercel-sandbox/contracts";
 import { saveVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
@@ -58,11 +60,7 @@ export async function PUT(request: Request, context: RouteContext) {
       const validation = await validateE2BSandboxCredentials(parsed.data);
       if (!validation.ok) return invalid(validation.error);
       if (existing)
-        await stopWorkspaceOwnedSandboxes({
-          admin,
-          connection: existing.connection,
-          workspaceId: access.context.workspace.id,
-        });
+        await cleanupExistingConnection(admin, existing.connection, access.context.workspace.id);
       const connection = await saveE2BSandboxConnection({
         admin,
         apiKey: parsed.data.apiKey,
@@ -83,11 +81,7 @@ export async function PUT(request: Request, context: RouteContext) {
       }
       if (!validation.ok) return invalid(validation.error);
       if (existing)
-        await stopWorkspaceOwnedSandboxes({
-          admin,
-          connection: existing.connection,
-          workspaceId: access.context.workspace.id,
-        });
+        await cleanupExistingConnection(admin, existing.connection, access.context.workspace.id);
       const connection = await saveDaytonaSandboxConnection({
         admin,
         apiKey: validation.credentials.apiKey,
@@ -103,21 +97,8 @@ export async function PUT(request: Request, context: RouteContext) {
     if (!parsed.success) return invalid(parsed.error.issues[0]?.message);
     const validation = await validateVercelSandboxCredentials(parsed.data);
     if (!validation.ok) return invalid(validation.error);
-    if (existing) {
-      if (existing.connection.provider === "vercel") {
-        await stopVercelWorkspaceOwnedSandboxes({
-          admin,
-          connection: existing.connection,
-          workspaceId: access.context.workspace.id,
-        });
-      } else {
-        await stopWorkspaceOwnedSandboxes({
-          admin,
-          connection: existing.connection,
-          workspaceId: access.context.workspace.id,
-        });
-      }
-    }
+    if (existing)
+      await cleanupExistingConnection(admin, existing.connection, access.context.workspace.id);
     const connection = await saveVercelSandboxConnection({
       admin,
       credentials: parsed.data,
@@ -166,21 +147,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
       access.context.workspace.id,
       params.provider,
     );
-    if (existing) {
-      if (existing.connection.provider === "vercel") {
-        await stopVercelWorkspaceOwnedSandboxes({
-          admin,
-          connection: existing.connection,
-          workspaceId: access.context.workspace.id,
-        });
-      } else {
-        await stopWorkspaceOwnedSandboxes({
-          admin,
-          connection: existing.connection,
-          workspaceId: access.context.workspace.id,
-        });
-      }
-    }
+    if (existing)
+      await cleanupExistingConnection(admin, existing.connection, access.context.workspace.id);
     const table =
       params.provider === "vercel"
         ? "workspace_vercel_sandbox_connections"
@@ -251,4 +219,20 @@ async function parseContext(
     };
   }
   return { provider: parsed.data, workspaceId };
+}
+
+async function cleanupExistingConnection(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  connection: SandboxConnection,
+  workspaceId: string,
+) {
+  if (connection.provider === "vercel")
+    await stopVercelWorkspaceOwnedSandboxes({
+      admin,
+      connection,
+      workspaceId,
+      requireAllOwned: true,
+    });
+  else await stopWorkspaceOwnedSandboxes({ admin, connection, workspaceId });
+  await confirmConnectionSandboxCleanup({ admin, connection, workspaceId });
 }

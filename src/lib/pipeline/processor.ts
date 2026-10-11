@@ -27,7 +27,8 @@ import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
 import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
 import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
 import { getOpenCodeAuthForSession } from "@/lib/opencode/tokens";
-import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
+import { resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
+import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
@@ -279,7 +280,7 @@ async function runStage(input: {
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
     throwIfAborted(signal);
-    sandbox = await createSessionSandbox({
+    sandbox = await createWorkspaceSessionSandbox(admin, {
       agentProvider: provider,
       baseBranch: github.repo.default_branch ?? "main",
       branch,

@@ -9,6 +9,7 @@ import {
 } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
+import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 
 type WorkspaceAvatarRouteContext = {
   params: Promise<{
@@ -69,12 +70,13 @@ export async function POST(request: Request, context: WorkspaceAvatarRouteContex
 
   const admin = createSupabaseAdminClient();
   const nextAvatarPath = buildWorkspaceAvatarPath(access.context.workspace.id, file);
-  const uploadResult = await admin.storage
-    .from(workspaceAvatarBucket)
-    .upload(nextAvatarPath, Buffer.from(await file.arrayBuffer()), {
-      contentType: file.type,
-      upsert: false,
-    });
+  const uploadResult = await uploadWorkspaceObject(admin, {
+    bucket: workspaceAvatarBucket,
+    bytes: Buffer.from(await file.arrayBuffer()),
+    contentType: file.type,
+    path: nextAvatarPath,
+    workspaceId: access.context.workspace.id,
+  });
 
   if (uploadResult.error) {
     throw uploadResult.error;

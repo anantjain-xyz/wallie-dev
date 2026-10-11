@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthenticatedHomePath } from "@/lib/auth";
-import { workspaceAvatarBucket } from "@/lib/storage/workspace-avatar";
-import { removeWorkspaceSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { stopWorkspaceProviderSandboxes } from "@/lib/vercel-sandbox/teardown";
+import { resumeWorkspaceDeletion } from "@/lib/workspaces/deletion";
 import {
   deleteWorkspacePayloadSchema,
   updateWorkspaceNamePayloadSchema,
@@ -91,6 +89,7 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   }
 
   const access = await requireWorkspaceAccessById(parsedParams.data.workspaceId, {
+    allowDeleting: true,
     requireOwner: true,
   });
 
@@ -109,52 +108,38 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  const attachmentPaths = await loadWorkspaceAttachmentPaths(admin, access.context.workspace.id);
-
-  // Keep ownership records and provider credentials until every recorded
-  // sandbox has been inspected and cleanup succeeds. Retrying can recover
-  // terminal runs even when an earlier request already canceled their work.
+  const { error: beginError } = await admin.rpc("begin_workspace_deletion", {
+    p_confirmation: parsedPayload.data.confirmation,
+    p_owner_member_id: access.context.currentMember.id,
+    p_workspace_id: access.context.workspace.id,
+  });
+  if (beginError) {
+    return NextResponse.json(
+      { error: "Failed to request workspace deletion." },
+      { status: beginError.code === "42501" ? 403 : beginError.code === "22023" ? 400 : 500 },
+    );
+  }
+  // The durable fence is already committed. Any failure keeps credentials and
+  // cleanup ownership for the worker or another owner request to retry.
+  let deleted = false;
   try {
-    await stopWorkspaceProviderSandboxes(admin, access.context.workspace.id);
+    deleted = await resumeWorkspaceDeletion(admin, access.context.workspace.id);
   } catch (error) {
-    console.error("[workspace-delete] sandbox cleanup incomplete", {
+    console.error("[workspace-delete] cleanup will retry", {
       error: error instanceof Error ? error.message : String(error),
       workspaceId: access.context.workspace.id,
     });
+  }
+  if (!deleted) {
     return NextResponse.json(
-      { error: "Sandbox cleanup is incomplete. Please retry deleting the workspace." },
-      { status: 503 },
+      {
+        deleted: false,
+        message:
+          "Workspace deletion is in progress. Cleanup will retry automatically; you can also retry here.",
+      },
+      { status: 202 },
     );
   }
-
-  // Hard delete: every workspace-scoped table references workspaces with
-  // ON DELETE CASCADE, so removing this row revokes all access and tears down
-  // members, pipelines, sessions, artifacts, secrets, and integrations in one
-  // shot. Service role bypasses RLS for the write.
-  const { error: deleteError } = await admin
-    .from("workspaces")
-    .delete()
-    .eq("id", access.context.workspace.id);
-
-  if (deleteError) {
-    // Teardown parks each canceled generation in its cancellation transaction.
-    // Do not touch phases after provider cleanup: a new attempt may be live.
-    return NextResponse.json({ error: "Failed to delete workspace." }, { status: 500 });
-  }
-
-  // The FK cascade drops the `workspaces` row and its children, but avatar
-  // uploads live in the public `workspace-avatars` storage bucket and only their
-  // object path is referenced from the row — so the cascade can't reach them.
-  // Best-effort delete every object under this workspace's prefix (re-uploads
-  // leave older objects behind, so list rather than relying on avatar_path) so a
-  // deleted workspace's avatar isn't left publicly fetchable. Storage failures
-  // must not surface as a delete error: the workspace is already gone.
-  await Promise.all([
-    removeWorkspaceAvatars(admin, access.context.workspace.id),
-    removeWorkspaceSessionAttachments(admin, access.context.workspace.id, attachmentPaths).catch(
-      () => undefined,
-    ),
-  ]);
 
   // Resolve where the now-workspaceless (or fewer-workspace) user should land.
   // The RLS-scoped server client no longer sees the deleted workspace, so this
@@ -162,36 +147,4 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   const redirectTo = await resolveAuthenticatedHomePath(access.context.supabase);
 
   return NextResponse.json({ deleted: true, redirectTo }, { status: 200 });
-}
-
-async function loadWorkspaceAttachmentPaths(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  workspaceId: string,
-) {
-  try {
-    const { data } = await admin
-      .from("session_attachments")
-      .select("storage_path")
-      .eq("workspace_id", workspaceId);
-    return data?.map((attachment) => attachment.storage_path) ?? [];
-  } catch {
-    return [];
-  }
-}
-
-async function removeWorkspaceAvatars(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  workspaceId: string,
-) {
-  try {
-    const bucket = admin.storage.from(workspaceAvatarBucket);
-    const { data: objects } = await bucket.list(workspaceId);
-
-    if (objects && objects.length > 0) {
-      await bucket.remove(objects.map((object) => `${workspaceId}/${object.name}`));
-    }
-  } catch {
-    // Best-effort cleanup: the workspace row is already deleted, so a storage
-    // failure here should not turn a successful delete into an error response.
-  }
 }

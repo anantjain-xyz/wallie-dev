@@ -15,6 +15,7 @@ import {
 } from "@/lib/storage/session-attachment";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
+import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
@@ -64,13 +65,13 @@ export async function POST(request: Request, context: RouteContext) {
   const admin = createSupabaseAdminClient();
   const identity = createSessionAttachmentIdentity(access.context.workspace.id, file.type);
   const fileName = normalizeSessionAttachmentFileName(file.name, file.type);
-  const { error: uploadError } = await admin.storage
-    .from(sessionAttachmentBucket)
-    .upload(identity.storagePath, bytes, {
-      cacheControl: "3600",
-      contentType: file.type,
-      upsert: false,
-    });
+  const { error: uploadError } = await uploadWorkspaceObject(admin, {
+    bucket: sessionAttachmentBucket,
+    bytes,
+    contentType: file.type,
+    path: identity.storagePath,
+    workspaceId: access.context.workspace.id,
+  });
 
   if (uploadError) {
     return NextResponse.json({ error: "Wallie could not store that image." }, { status: 500 });
