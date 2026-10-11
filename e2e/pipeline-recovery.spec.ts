@@ -150,54 +150,93 @@ test("recovers an existing off-page session moving to another lane", async ({ pa
 
 test("does not resurrect an archived off-page session from a delayed page", async ({ page }) => {
   const fixture = await createSessions();
-  const seed = await seedSession();
-  const changed = observeSessionChanges(page);
+  let releasePage = () => {};
+  let releaseRecovery = () => {};
   try {
+    // Observe completion of the browser's message-dispatch task. The Supabase
+    // text-frame handler runs synchronously; this timer records the same frame
+    // after that handler without another database event advancing its revision.
+    await page.addInitScript(() => {
+      const processed: string[] = [];
+      Object.assign(window, { processedPipelineFrames: processed });
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = class extends NativeWebSocket {
+        constructor(url: string | URL, protocols?: string | string[]) {
+          super(url, protocols);
+          this.addEventListener("message", (event) => {
+            if (typeof event.data !== "string") return;
+            const frame = event.data;
+            setTimeout(() => processed.push(frame), 0);
+          });
+        }
+      };
+    });
     const initial = nextSnapshot(page);
     await signIn(page, "/w/acme-corp");
     await initial;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
+    const pageGate = new Promise<void>((resolve) => {
+      releasePage = resolve;
+    });
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
     });
     let loadedPage!: (lane: PipelineDashboardLane) => void;
     const pageLoaded = new Promise<PipelineDashboardLane>((resolve) => {
       loadedPage = resolve;
     });
     await page.route("**/api/workspaces/*/pipeline-dashboard", async (route) => {
-      if (route.request().method() !== "POST") return route.continue();
+      if (route.request().method() === "GET") {
+        // A later authoritative snapshot must not hide a stale page append.
+        await recoveryGate;
+        return route.continue();
+      }
       const response = await route.fetch();
       loadedPage((await response.json()).lane);
-      await gate;
+      await pageGate;
       await route.fulfill({ response });
     });
-    await page.getByRole("button", { name: "Load more Plan sessions" }).click();
+    const loadMore = page.getByRole("button", { name: "Load more Plan sessions" });
+    await loadMore.click();
     const delayedLane = await pageLoaded;
     const target = delayedLane.cards.find((card) =>
       fixture.sessions.some((session) => session.id === card.id),
     )!;
     expect(target).toBeTruthy();
-    const catchup = nextSnapshot(page);
-    const liveChange = changed(target.id);
     await database(`sessions?id=eq.${target.id}`, "PATCH", {
       archived_at: new Date().toISOString(),
     });
-    await liveChange;
-    // A websocket frame can reach the test before the board handles it. A
-    // later visible update on this same feed proves the archive was processed
-    // while the stale page was still held.
-    const markerTitle = `Pagination barrier ${randomUUID()}`;
-    await database(`sessions?id=eq.${seed.id}`, "PATCH", { title: markerTitle });
-    await expect(page.getByRole("link", { name: `Open session ${markerTitle}` })).toBeVisible();
-    release();
+    await page.waitForFunction(
+      ({ id, workspaceId }) => {
+        const frames = (window as unknown as { processedPipelineFrames: string[] })
+          .processedPipelineFrames;
+        return frames.some((frame) => {
+          const [, , topic, event, payload] = JSON.parse(frame);
+          return (
+            topic === `realtime:sessions:${workspaceId}` &&
+            event === "postgres_changes" &&
+            payload.data?.record?.id === id &&
+            Boolean(payload.data.record.archived_at)
+          );
+        });
+      },
+      { id: target.id, workspaceId: fixture.sessions[0].workspace_id },
+    );
+    const deliveredPage = page.waitForResponse(
+      (response) => dashboardUrl.test(response.url()) && response.request().method() === "POST",
+    );
+    releasePage();
+    await deliveredPage;
+    await expect(loadMore.filter({ hasText: "Loading…" })).toHaveCount(0);
+    await expect(page.getByText(target.title, { exact: true })).toHaveCount(0);
+    const catchup = nextSnapshot(page);
+    releaseRecovery();
     await catchup;
     await expect(page.getByText(target.title, { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Load more Plan sessions" })).toBeEnabled();
+    await expect(loadMore).toBeEnabled();
   } finally {
-    await Promise.all([
-      fixture.cleanup(),
-      database(`sessions?id=eq.${seed.id}`, "PATCH", { title: seed.title }),
-    ]);
+    releasePage();
+    releaseRecovery();
+    await fixture.cleanup();
   }
 });
 
