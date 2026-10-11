@@ -2,6 +2,7 @@ import "server-only";
 
 import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
@@ -16,6 +17,7 @@ import {
   wallieSkillManifestHash,
 } from "@/lib/repo-onboarding/skills";
 import type { Database, Json } from "@/lib/supabase/database.types";
+import { WorkspaceDeletingError } from "@/lib/workspaces/resource-operations";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -66,6 +68,15 @@ type PullRequestResponse = {
   html_url: string;
   number: number;
 };
+
+const setupPullRequestSnapshotSchema = z.object({
+  draft: z.boolean(),
+  html_url: z.string().url(),
+  merged: z.boolean(),
+  number: z.number().int().positive().max(2_147_483_647),
+  state: z.enum(["open", "closed"]),
+  updated_at: z.string().datetime({ offset: true }),
+});
 
 type GitHubFileContent = {
   content?: string;
@@ -227,6 +238,7 @@ async function upsertOnboardingState(input: {
   status: RepositoryOnboardingState["status"];
   workspaceId: string;
 }): Promise<RepositoryOnboardingState> {
+  await assertWorkspaceAllowsSetup(input.admin, input.workspaceId);
   const { data, error } = await input.admin
     .from("repository_onboarding_status")
     .upsert(
@@ -251,6 +263,52 @@ async function upsertOnboardingState(input: {
 
   if (error) throw error;
   return mapOnboardingRow(data as OnboardingRow, input.repositoryId);
+}
+
+async function assertWorkspaceAllowsSetup(admin: AdminClient, workspaceId: string) {
+  const { data, error } = await admin
+    .from("workspaces")
+    .select("deletion_requested_at")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data || data.deletion_requested_at) throw new WorkspaceDeletingError();
+}
+
+/** Saving the identity first makes webhooks authoritative during this read. */
+async function refreshSetupPullRequest(input: {
+  admin: AdminClient;
+  branchName: string;
+  octokit: InstallationOctokit;
+  owner: string;
+  prNumber: number;
+  repo: string;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<StartRepositoryOnboardingResult> {
+  const { data } = await input.octokit.request<unknown>(
+    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+    {
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+    },
+  );
+  const snapshot = setupPullRequestSnapshotSchema.parse(data);
+  if (snapshot.number !== input.prNumber) throw new Error("GitHub returned a different setup PR.");
+  await assertWorkspaceAllowsSetup(input.admin, input.workspaceId);
+  const { error } = await input.admin.rpc("apply_github_pull_request_event", {
+    target_workspace_id: input.workspaceId,
+    target_repository_id: input.repositoryId,
+    target_branch_name: input.branchName,
+    source_pull_request_number: snapshot.number,
+    source_pull_request_url: snapshot.html_url,
+    source_pull_request_state: snapshot.merged ? "merged" : snapshot.state,
+    source_is_draft: snapshot.draft,
+    source_updated_at: snapshot.updated_at,
+  });
+  if (error) throw error;
+  return { onboarding: mapOnboardingRow(await loadOnboardingRow(input), input.repositoryId) };
 }
 
 async function readExistingFile(input: {
@@ -295,6 +353,7 @@ async function readExistingFile(input: {
 }
 
 async function createSetupPullRequest(input: {
+  assertWorkspaceActive: () => Promise<void>;
   baseBranch: string;
   files: readonly { content: string; path: string }[];
   octokit: InstallationOctokit;
@@ -322,6 +381,7 @@ async function createSetupPullRequest(input: {
     },
   );
 
+  await input.assertWorkspaceActive();
   const { data: tree } = await input.octokit.request<{ sha: string }>(
     "POST /repos/{owner}/{repo}/git/trees",
     {
@@ -337,6 +397,7 @@ async function createSetupPullRequest(input: {
     },
   );
 
+  await input.assertWorkspaceActive();
   const { data: commit } = await input.octokit.request<{ sha: string }>(
     "POST /repos/{owner}/{repo}/git/commits",
     {
@@ -348,6 +409,7 @@ async function createSetupPullRequest(input: {
     },
   );
 
+  await input.assertWorkspaceActive();
   await input.octokit.request("POST /repos/{owner}/{repo}/git/refs", {
     owner: input.owner,
     ref: `refs/heads/${branchName}`,
@@ -355,6 +417,7 @@ async function createSetupPullRequest(input: {
     sha: commit.sha,
   });
 
+  await input.assertWorkspaceActive();
   const { data: pr } = await input.octokit.request<PullRequestResponse>(
     "POST /repos/{owner}/{repo}/pulls",
     {
@@ -400,9 +463,14 @@ export async function startRepositoryOnboarding(input: {
   const existingOnboarding = await loadOnboardingRow(input);
 
   if (plan.filesToCreate.length > 0 && hasInFlightSetupPullRequest(existingOnboarding)) {
-    return {
-      onboarding: mapOnboardingRow(existingOnboarding, input.repositoryId),
-    };
+    return refreshSetupPullRequest({
+      ...input,
+      octokit,
+      owner,
+      repo,
+      branchName: existingOnboarding!.setup_branch_name!,
+      prNumber: existingOnboarding!.setup_pr_number!,
+    });
   }
 
   if (plan.conflicts.length > 0 && plan.filesToCreate.length === 0) {
@@ -431,8 +499,10 @@ export async function startRepositoryOnboarding(input: {
     return { onboarding };
   }
 
+  let identitySaved = false;
   try {
     const pr = await createSetupPullRequest({
+      assertWorkspaceActive: () => assertWorkspaceAllowsSetup(input.admin, input.workspaceId),
       baseBranch,
       files: plan.filesToCreate,
       octokit,
@@ -441,7 +511,7 @@ export async function startRepositoryOnboarding(input: {
       repositoryName: repository.name,
     });
 
-    const onboarding = await upsertOnboardingState({
+    await upsertOnboardingState({
       admin: input.admin,
       conflictReport: plan.conflicts,
       installedSkillHash: plan.conflicts.length === 0 ? plan.manifestHash : null,
@@ -453,8 +523,29 @@ export async function startRepositoryOnboarding(input: {
       status: plan.conflicts.length > 0 ? "conflict" : "pr_open",
       workspaceId: input.workspaceId,
     });
-    return { onboarding };
+    identitySaved = true;
+    return await refreshSetupPullRequest({
+      ...input,
+      octokit,
+      owner,
+      repo,
+      branchName: pr.branchName,
+      prNumber: pr.prNumber,
+    });
   } catch (error) {
+    // A failed refresh must retain the PR identity for webhook delivery and a
+    // later retry. A generic error upsert would erase that durable evidence.
+    if (identitySaved || error instanceof WorkspaceDeletingError) throw error;
+    const current = await loadOnboardingRow(input);
+    if (current?.setup_pr_number && current.setup_branch_name)
+      return refreshSetupPullRequest({
+        ...input,
+        octokit,
+        owner,
+        repo,
+        branchName: current.setup_branch_name,
+        prNumber: current.setup_pr_number,
+      });
     const onboarding = await upsertOnboardingState({
       admin: input.admin,
       conflictReport: plan.conflicts,
