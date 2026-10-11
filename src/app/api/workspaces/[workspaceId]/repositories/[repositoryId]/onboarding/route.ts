@@ -10,6 +10,7 @@ import {
 } from "@/lib/repo-onboarding/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
+import { WorkspaceDeletingError } from "@/lib/workspaces/resource-operations";
 
 type RouteContext = {
   params: Promise<{ repositoryId: string; workspaceId: string }>;
@@ -36,6 +37,9 @@ async function authorize(context: RouteContext) {
 }
 
 function manualReadyErrorResponse(error: unknown) {
+  if (error instanceof WorkspaceDeletingError) {
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
   const message = error instanceof Error ? error.message : null;
   if (message === "Repository not found.") {
     return NextResponse.json({ error: message }, { status: 404 });
@@ -57,13 +61,19 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  const result = await startRepositoryOnboarding({
-    admin,
-    repositoryId: authorized.parsed.repositoryId,
-    workspaceId: authorized.parsed.workspaceId,
-  });
-
-  return NextResponse.json(result, { status: 200 });
+  try {
+    const result = await startRepositoryOnboarding({
+      admin,
+      repositoryId: authorized.parsed.repositoryId,
+      workspaceId: authorized.parsed.workspaceId,
+    });
+    return NextResponse.json(result, { status: 200 });
+  } catch (error) {
+    if (error instanceof WorkspaceDeletingError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    throw error;
+  }
 }
 
 export async function PATCH(request: Request, context: RouteContext) {

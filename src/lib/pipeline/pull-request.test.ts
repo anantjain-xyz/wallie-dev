@@ -4,30 +4,28 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 
 import { openSessionPullRequest } from "./pull-request";
 
-interface UpsertCall {
-  row: Record<string, unknown>;
-  options: Record<string, unknown> | undefined;
-}
-
-function buildAdminMock(opts: { upsertError?: { message: string } } = {}) {
-  const upserts: UpsertCall[] = [];
+function buildAdminMock(opts: { recordError?: { message: string }; retainedState?: string } = {}) {
+  const writes: Array<{ row: Record<string, unknown> }> = [];
   return {
     admin: {
-      from: (name: string) => {
-        if (name !== "session_pull_requests") {
-          throw new Error(`Unexpected table: ${name}`);
-        }
-        return {
-          upsert: (row: Record<string, unknown>, options: Record<string, unknown> | undefined) => {
-            upserts.push({ row, options });
-            return Object.assign(Promise.resolve({ error: opts.upsertError ?? null }), {
-              abortSignal: vi.fn().mockResolvedValue({ error: opts.upsertError ?? null }),
-            });
+      rpc: (name: string, row: Record<string, unknown>) => {
+        expect(name).toBe("record_session_pull_request");
+        writes.push({ row });
+        const result = {
+          error: opts.recordError ?? null,
+          data: {
+            is_draft: row.source_is_draft,
+            pull_request_number: row.source_pull_request_number,
+            pull_request_state: opts.retainedState ?? row.source_pull_request_state,
+            pull_request_url: row.source_pull_request_url,
           },
         };
+        return Object.assign(Promise.resolve(result), {
+          abortSignal: vi.fn().mockResolvedValue(result),
+        });
       },
     },
-    upserts,
+    writes,
   };
 }
 
@@ -82,6 +80,7 @@ function scriptCreatePr(sandbox: FakeSandbox, error?: string, forwardOnlyLogs = 
 }
 
 const openPr = {
+  updated_at: "2026-10-11T00:00:00Z",
   draft: false,
   html_url: "https://github.com/acme/app/pull/42",
   merged_at: null,
@@ -126,7 +125,7 @@ describe("openSessionPullRequest", () => {
         if (phase === "lookup") controller.abort(new Error("deadline"));
         return { data: [] };
       });
-      const { admin, upserts } = buildAdminMock();
+      const { admin, writes } = buildAdminMock();
       await expect(
         openSessionPullRequest({
           ...baseInput,
@@ -136,7 +135,7 @@ describe("openSessionPullRequest", () => {
           signal: controller.signal,
         }),
       ).rejects.toThrow("deadline");
-      expect(upserts).toEqual([]);
+      expect(writes).toEqual([]);
       expect(request).toHaveBeenCalledTimes(1);
       if (phase === "lookup") expect(sandbox.calls).toHaveLength(1);
       if (phase === "push") expect(sandbox.calls.some((call) => call.cmd === "gh")).toBe(false);
@@ -148,8 +147,18 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
-    const persistence = { abortSignal: vi.fn().mockResolvedValue({ error: null }) };
-    const admin = { from: () => ({ upsert: () => persistence }) };
+    const persistence = {
+      abortSignal: vi.fn().mockResolvedValue({
+        error: null,
+        data: {
+          is_draft: false,
+          pull_request_number: 42,
+          pull_request_state: "open",
+          pull_request_url: openPr.html_url,
+        },
+      }),
+    };
+    const admin = { rpc: () => persistence };
     const octokit = makeOctokitWithSequence([[openPr]]);
     expect(
       (
@@ -166,6 +175,38 @@ describe("openSessionPullRequest", () => {
     expect(sandbox.calls.every((call) => call.opts.signal === signal)).toBe(true);
   });
 
+  it("does not report success if the RPC completes after cancellation", async () => {
+    const controller = new AbortController();
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    const admin = {
+      rpc: () => ({
+        abortSignal: async () => {
+          controller.abort(new Error("deadline during persistence"));
+          return {
+            error: null,
+            data: {
+              is_draft: false,
+              pull_request_number: 42,
+              pull_request_state: "open",
+              pull_request_url: openPr.html_url,
+            },
+          };
+        },
+      }),
+    };
+    await expect(
+      openSessionPullRequest({
+        ...baseInput,
+        admin: admin as never,
+        sandbox,
+        signal: controller.signal,
+        githubAppFactory: makeAppFactory(octokit),
+      }),
+    ).rejects.toThrow("deadline during persistence");
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -176,7 +217,7 @@ describe("openSessionPullRequest", () => {
     scriptPush(sandbox);
     // pulls.list (find existing) returns the agent's PR.
     const octokit = makeOctokitWithSequence([[openPr]]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -202,18 +243,32 @@ describe("openSessionPullRequest", () => {
       state: "all",
     });
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
-    expect(upserts).toHaveLength(1);
-    expect(upserts[0]!.row).toEqual({
-      branch_name: "wallie/product-sess-1",
-      github_repository_id: "repo-1",
-      is_draft: false,
-      pull_request_number: 42,
-      pull_request_state: "open",
-      pull_request_url: "https://github.com/acme/app/pull/42",
-      session_id: "sess-1",
-      workspace_id: "ws-1",
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.row).toEqual({
+      target_branch_name: "wallie/product-sess-1",
+      target_repository_id: "repo-1",
+      source_is_draft: false,
+      source_pull_request_number: 42,
+      source_pull_request_state: "open",
+      source_pull_request_url: "https://github.com/acme/app/pull/42",
+      target_session_id: "sess-1",
+      target_workspace_id: "ws-1",
+      source_updated_at: "2026-10-11T00:00:00Z",
     });
-    expect(upserts[0]!.options).toEqual({ onConflict: "workspace_id,branch_name" });
+  });
+
+  it("returns the newer state retained by the atomic writer", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    const { admin } = buildAdminMock({ retainedState: "merged" });
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+    expect(outcome).toMatchObject({ kind: "success", prState: "merged" });
   });
 
   it("does not push when reusing a PR but the branch is not ahead of base", async () => {
@@ -221,7 +276,7 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "NONE");
     const octokit = makeOctokitWithSequence([[openPr]]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -232,7 +287,7 @@ describe("openSessionPullRequest", () => {
 
     expect(outcome.kind).toBe("success");
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push"))).toBe(false);
-    expect(upserts[0]!.row.pull_request_number).toBe(42);
+    expect(writes[0]!.row.source_pull_request_number).toBe(42);
   });
 
   it("prefers an open PR over a stale closed one for the same branch", async () => {
@@ -241,7 +296,7 @@ describe("openSessionPullRequest", () => {
     scriptPush(sandbox);
     const closed = { ...openPr, number: 40, state: "closed" as const, merged_at: null };
     const octokit = makeOctokitWithSequence([[closed, openPr]]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     await openSessionPullRequest({
       ...baseInput,
@@ -250,8 +305,8 @@ describe("openSessionPullRequest", () => {
       sandbox,
     });
 
-    expect(upserts[0]!.row.pull_request_number).toBe(42);
-    expect(upserts[0]!.row.pull_request_state).toBe("open");
+    expect(writes[0]!.row.source_pull_request_number).toBe(42);
+    expect(writes[0]!.row.source_pull_request_state).toBe("open");
   });
 
   it("opens a fresh PR instead of reusing a closed, unmerged one for new work", async () => {
@@ -265,7 +320,7 @@ describe("openSessionPullRequest", () => {
       [closed], // only PR for the branch is closed + unmerged
       [closed, reopened], // authoritative lookup after `gh pr create`
     ]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -282,8 +337,8 @@ describe("openSessionPullRequest", () => {
     ]);
     expect(sandbox.calls.some((c) => c.cmd === "gh")).toBe(true);
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
-    expect(upserts[0]!.row.pull_request_number).toBe(43);
-    expect(upserts[0]!.row.pull_request_state).toBe("open");
+    expect(writes[0]!.row.source_pull_request_number).toBe(43);
+    expect(writes[0]!.row.source_pull_request_state).toBe("open");
   });
 
   it("pushes and opens a PR when none exists and the branch is ahead of base", async () => {
@@ -295,7 +350,7 @@ describe("openSessionPullRequest", () => {
       [], // no existing PR
       [openPr], // authoritative lookup after `gh pr create`
     ]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -322,14 +377,14 @@ describe("openSessionPullRequest", () => {
       "spec body",
     ]);
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
-    expect(upserts[0]!.row.pull_request_number).toBe(42);
+    expect(writes[0]!.row.source_pull_request_number).toBe(42);
   });
 
   it("returns no_commits without pushing when no PR exists and the branch is not ahead", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "NONE");
     const octokit = makeOctokitWithSequence([[]]); // no existing PR
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -343,7 +398,7 @@ describe("openSessionPullRequest", () => {
     expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
     // No branch was pushed, so nothing to clean up.
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push"))).toBe(false);
-    expect(upserts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 
   it("recovers via pulls.list when gh create races with another publisher", async () => {
@@ -355,7 +410,7 @@ describe("openSessionPullRequest", () => {
       [], // initial lookup: none
       [{ ...openPr, number: 41, draft: true }], // recovery lookup
     ]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -369,8 +424,8 @@ describe("openSessionPullRequest", () => {
       "GET /repos/{owner}/{repo}/pulls",
       "GET /repos/{owner}/{repo}/pulls",
     ]);
-    expect(upserts[0]!.row.pull_request_number).toBe(41);
-    expect(upserts[0]!.row.is_draft).toBe(true);
+    expect(writes[0]!.row.source_pull_request_number).toBe(41);
+    expect(writes[0]!.row.source_is_draft).toBe(true);
   });
 
   it("returns no_commits and deletes the pushed branch when GitHub reports no commits between", async () => {
@@ -381,7 +436,7 @@ describe("openSessionPullRequest", () => {
     scriptCreatePr(sandbox, "GraphQL: No commits between main and wallie/product-sess-1", true);
     scriptBranchDelete(sandbox);
     const octokit = makeOctokitWithSequence([[]]); // no existing PR
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -392,7 +447,7 @@ describe("openSessionPullRequest", () => {
 
     expect(outcome).toEqual({ kind: "no_commits" });
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("--delete"))).toBe(true);
-    expect(upserts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 
   it("returns pr_failed when gh cannot create or discover a pull request", async () => {
@@ -401,7 +456,7 @@ describe("openSessionPullRequest", () => {
     scriptPush(sandbox);
     scriptCreatePr(sandbox, "HTTP 403: Resource not accessible by integration");
     const octokit = makeOctokitWithSequence([[], []]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -414,7 +469,7 @@ describe("openSessionPullRequest", () => {
       kind: "pr_failed",
       reason: "HTTP 403: Resource not accessible by integration",
     });
-    expect(upserts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 
   it("returns push_failed without calling create when the push fails", async () => {
@@ -422,7 +477,7 @@ describe("openSessionPullRequest", () => {
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox, { fail: true });
     const octokit = makeOctokitWithSequence([[]]); // no existing PR
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -434,7 +489,7 @@ describe("openSessionPullRequest", () => {
     expect(outcome.kind).toBe("push_failed");
     // Only the lookup hit GitHub; we never attempted to create the PR.
     expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
-    expect(upserts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 
   it("marks the PR state as merged when GitHub reports a merged_at timestamp", async () => {
@@ -451,7 +506,7 @@ describe("openSessionPullRequest", () => {
         },
       ],
     ]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     await openSessionPullRequest({
       ...baseInput,
@@ -460,15 +515,15 @@ describe("openSessionPullRequest", () => {
       sandbox,
     });
 
-    expect(upserts[0]!.row.pull_request_state).toBe("merged");
+    expect(writes[0]!.row.source_pull_request_state).toBe("merged");
   });
 
-  it("returns pr_failed when the upsert fails", async () => {
+  it("returns pr_failed when the recording fails", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
     const octokit = makeOctokitWithSequence([[openPr]]);
-    const { admin, upserts } = buildAdminMock({ upsertError: { message: "db down" } });
+    const { admin, writes } = buildAdminMock({ recordError: { message: "db down" } });
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -478,13 +533,13 @@ describe("openSessionPullRequest", () => {
     });
 
     expect(outcome).toEqual({ kind: "pr_failed", reason: "db down" });
-    expect(upserts).toHaveLength(1);
+    expect(writes).toHaveLength(1);
   });
 
   it("returns pr_failed for an invalid repo full_name", async () => {
     const sandbox = new FakeSandbox();
     const octokit = makeOctokitWithSequence([]);
-    const { admin, upserts } = buildAdminMock();
+    const { admin, writes } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
       ...baseInput,
@@ -496,6 +551,6 @@ describe("openSessionPullRequest", () => {
 
     expect(outcome.kind).toBe("pr_failed");
     expect(octokit.calls).toHaveLength(0);
-    expect(upserts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 });
