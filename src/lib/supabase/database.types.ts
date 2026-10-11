@@ -710,6 +710,8 @@ export type Database = {
           last_error: string | null
           setup_branch_name: string | null
           setup_pr_number: number | null
+          setup_pr_state: string | null
+          setup_pr_updated_at: string | null
           setup_pr_url: string | null
           status: string
           updated_at: string
@@ -725,6 +727,8 @@ export type Database = {
           last_error?: string | null
           setup_branch_name?: string | null
           setup_pr_number?: number | null
+          setup_pr_state?: string | null
+          setup_pr_updated_at?: string | null
           setup_pr_url?: string | null
           status?: string
           updated_at?: string
@@ -740,6 +744,8 @@ export type Database = {
           last_error?: string | null
           setup_branch_name?: string | null
           setup_pr_number?: number | null
+          setup_pr_state?: string | null
+          setup_pr_updated_at?: string | null
           setup_pr_url?: string | null
           status?: string
           updated_at?: string
@@ -1081,6 +1087,7 @@ export type Database = {
           branch_name: string
           created_at: string
           github_repository_id: string | null
+          github_updated_at: string | null
           id: string
           is_draft: boolean | null
           pull_request_number: number | null
@@ -1094,6 +1101,7 @@ export type Database = {
           branch_name: string
           created_at?: string
           github_repository_id?: string | null
+          github_updated_at?: string | null
           id?: string
           is_draft?: boolean | null
           pull_request_number?: number | null
@@ -1107,6 +1115,7 @@ export type Database = {
           branch_name?: string
           created_at?: string
           github_repository_id?: string | null
+          github_updated_at?: string | null
           id?: string
           is_draft?: boolean | null
           pull_request_number?: number | null
@@ -2235,6 +2244,19 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_github_pull_request_event: {
+        Args: {
+          source_is_draft: boolean
+          source_pull_request_number: number
+          source_pull_request_state: string
+          source_pull_request_url: string
+          source_updated_at: string
+          target_branch_name: string
+          target_repository_id: string
+          target_workspace_id: string
+        }
+        Returns: boolean
+      }
       apply_linear_session_transition: {
         Args: {
           p_agent_model_name?: string
@@ -2728,6 +2750,39 @@ export type Database = {
           p_run_id: string
         }
         Returns: boolean
+      }
+      record_session_pull_request: {
+        Args: {
+          source_is_draft: boolean
+          source_pull_request_number: number
+          source_pull_request_state: string
+          source_pull_request_url: string
+          source_updated_at: string
+          target_branch_name: string
+          target_repository_id: string
+          target_session_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          branch_name: string
+          created_at: string
+          github_repository_id: string | null
+          github_updated_at: string | null
+          id: string
+          is_draft: boolean | null
+          pull_request_number: number | null
+          pull_request_state: string | null
+          pull_request_url: string | null
+          session_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_pull_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       record_workspace_resource_operation: {
         Args: { p_operation_id: string; p_resource_id: string }

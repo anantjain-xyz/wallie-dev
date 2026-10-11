@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  installationEventSchema,
+  pullRequestEventSchema,
+} from "@/features/github/webhook-payloads";
+
 import { getGitHubConfigStatus } from "@/features/github/config";
 import {
   handleGitHubInstallationEvent,
@@ -46,18 +51,32 @@ export async function POST(request: Request) {
     );
   }
 
-  const payload = JSON.parse(rawBody);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return invalidPayload();
+  }
 
   switch (eventName) {
-    case "installation":
-      await handleGitHubInstallationEvent(payload);
+    case "installation": {
+      const parsed = installationEventSchema.safeParse(payload);
+      if (!parsed.success) return invalidPayload();
+      await handleGitHubInstallationEvent(parsed.data);
       break;
-    case "installation_repositories":
-      await handleGitHubInstallationRepositoriesEvent(payload);
+    }
+    case "installation_repositories": {
+      const parsed = installationEventSchema.safeParse(payload);
+      if (!parsed.success) return invalidPayload();
+      await handleGitHubInstallationRepositoriesEvent(parsed.data);
       break;
-    case "pull_request":
-      await handleGitHubPullRequestEvent(payload);
+    }
+    case "pull_request": {
+      const parsed = pullRequestEventSchema.safeParse(payload);
+      if (!parsed.success) return invalidPayload();
+      await handleGitHubPullRequestEvent(parsed.data);
       break;
+    }
     default:
       break;
   }
@@ -68,4 +87,8 @@ export async function POST(request: Request) {
     },
     { status: 200 },
   );
+}
+
+function invalidPayload() {
+  return NextResponse.json({ error: "Invalid GitHub webhook payload." }, { status: 400 });
 }

@@ -19,107 +19,6 @@ import {
   handleGitHubPullRequestEvent,
 } from "./webhooks";
 
-interface UpdateCall {
-  table: string;
-  patch: Record<string, unknown>;
-  filters: Array<{ column: string; value: unknown }>;
-  affectedRows: Array<{ id: string }>;
-}
-
-interface AdminMockOptions {
-  installation: { id: string; workspace_id: string } | null;
-  repository?: { id: string } | null;
-  matchingRowsByPr?: Array<{ id: string }>;
-  matchingRowsByBranch?: Array<{ id: string }>;
-  onboardingRow?: {
-    conflict_report: unknown;
-    id: string;
-    status: "not_set_up" | "pr_open" | "ready" | "conflict" | "error";
-  } | null;
-}
-
-function buildAdminMock(opts: AdminMockOptions) {
-  const updates: UpdateCall[] = [];
-
-  function makeUpdate(
-    table: string,
-    affectedFn: (filters: UpdateCall["filters"]) => Array<{ id: string }>,
-  ) {
-    return (patch: Record<string, unknown>) => {
-      const filters: UpdateCall["filters"] = [];
-      const chain = {
-        eq(column: string, value: unknown) {
-          filters.push({ column, value });
-          return chain;
-        },
-        select() {
-          const affected = affectedFn(filters);
-          updates.push({ table, patch, filters: [...filters], affectedRows: affected });
-          return Promise.resolve({ data: affected, error: null });
-        },
-        then(resolve: (v: { data: null; error: null }) => void) {
-          const affected = affectedFn(filters);
-          updates.push({ table, patch, filters: [...filters], affectedRows: affected });
-          resolve({ data: null, error: null });
-        },
-      };
-      return chain;
-    };
-  }
-
-  const tables: Record<string, unknown> = {
-    github_installations: {
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: opts.installation, error: null }),
-        }),
-      }),
-    },
-    github_repositories: {
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({ data: opts.repository ?? null, error: null }),
-          }),
-        }),
-      }),
-    },
-    session_pull_requests: {
-      update: makeUpdate("session_pull_requests", (filters) => {
-        const isPrMatch = filters.some((f) => f.column === "pull_request_number");
-        if (isPrMatch) return opts.matchingRowsByPr ?? [];
-        return opts.matchingRowsByBranch ?? [];
-      }),
-    },
-    repository_onboarding_status: {
-      select: () => {
-        const filters: UpdateCall["filters"] = [];
-        const chain = {
-          eq(column: string, value: unknown) {
-            filters.push({ column, value });
-            return chain;
-          },
-          maybeSingle: async () => ({ data: opts.onboardingRow ?? null, error: null }),
-        };
-        return chain;
-      },
-      update: makeUpdate("repository_onboarding_status", (filters) => {
-        const id = filters.find((f) => f.column === "id")?.value;
-        return opts.onboardingRow && id === opts.onboardingRow.id
-          ? [{ id: opts.onboardingRow.id }]
-          : [];
-      }),
-    },
-  };
-
-  return {
-    admin: {
-      from: (name: string) => tables[name] ?? {},
-    } as unknown,
-    updates,
-  };
-}
-
 const env = {
   GITHUB_WEBHOOK_SECRET: "x",
   GITHUB_APP_ID: "1",
@@ -128,255 +27,122 @@ const env = {
   SUPABASE_SERVICE_ROLE_KEY: "service",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
 };
-
-function payload(
-  action: string,
-  overrides: Partial<{
-    ref: string;
-    merged: boolean;
-    state: "open" | "closed";
-    draft: boolean;
-  }> = {},
-) {
+function payload(action = "opened") {
   return {
     action,
     installation: { id: 999 },
-    pull_request: {
-      draft: overrides.draft ?? false,
-      head: { ref: overrides.ref ?? "wallie/product-sess-1" },
-      html_url: "https://github.com/acme/app/pull/42",
-      merged: overrides.merged ?? false,
-      number: 42,
-      state: overrides.state ?? "open",
-    },
     repository: { id: 555 },
+    pull_request: {
+      draft: false,
+      head: { ref: "wallie/product-sess-1" },
+      html_url: "https://github.com/acme/app/pull/42",
+      merged: false,
+      number: 42,
+      state: "open" as "open" | "closed",
+      updated_at: "2026-10-11T00:00:00Z",
+    },
   };
+}
+function buildPrAdmin({
+  installation = { id: "ghi-1", workspace_id: "ws-1" },
+  repository = { id: "repo-1" },
+}: {
+  installation?: { id: string; workspace_id: string } | null;
+  repository?: { id: string } | null;
+} = {}) {
+  const rpc = vi.fn().mockResolvedValue({ data: true, error: null });
+  const filters: Array<[string, string, unknown]> = [];
+  const admin = {
+    rpc,
+    from(table: string) {
+      const query = {
+        select: () => query,
+        eq: (column: string, value: unknown) => {
+          filters.push([table, column, value]);
+          return query;
+        },
+        maybeSingle: async () => ({
+          data: table === "github_installations" ? installation : repository,
+          error: null,
+        }),
+      };
+      return query;
+    },
+  };
+  mocked.createSupabaseAdminClient.mockReturnValue(admin);
+  return { rpc, filters };
 }
 
 describe("handleGitHubPullRequestEvent", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("ignores events for branches that aren't Wallie-managed", async () => {
-    const { admin, updates } = buildAdminMock({ installation: null });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("opened", { ref: "feature/foo" }), env);
-
-    expect(updates).toHaveLength(0);
-  });
-
-  it("ignores events whose action isn't tracked", async () => {
-    const { admin, updates } = buildAdminMock({ installation: null });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("labeled"), env);
-
-    expect(updates).toHaveLength(0);
-  });
-
-  it("updates session_pull_requests by (github_repository_id, pull_request_number) on opened", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      repository: { id: "repo-1" },
-      matchingRowsByPr: [{ id: "spr-1" }],
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("opened"), env);
-
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.table).toBe("session_pull_requests");
-    expect(updates[0]!.patch).toEqual({
-      github_repository_id: "repo-1",
-      is_draft: false,
-      pull_request_number: 42,
-      pull_request_state: "open",
-      pull_request_url: "https://github.com/acme/app/pull/42",
-    });
-    const filterMap = Object.fromEntries(updates[0]!.filters.map((f) => [f.column, f.value]));
-    expect(filterMap).toEqual({
-      workspace_id: "ws-1",
-      github_repository_id: "repo-1",
-      pull_request_number: 42,
-    });
-  });
-
-  it("falls back to (workspace_id, branch_name) when no row matches by PR number yet", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      repository: { id: "repo-1" },
-      matchingRowsByPr: [],
-      matchingRowsByBranch: [{ id: "spr-1" }],
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("synchronize"), env);
-
-    expect(updates).toHaveLength(2);
-    const branchUpdate = updates[1]!;
-    const filterMap = Object.fromEntries(branchUpdate.filters.map((f) => [f.column, f.value]));
-    expect(filterMap).toEqual({
-      workspace_id: "ws-1",
-      branch_name: "wallie/product-sess-1",
-    });
-  });
-
-  it("marks the PR as merged when the close event sets merged=true", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      repository: { id: "repo-1" },
-      matchingRowsByPr: [{ id: "spr-1" }],
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("closed", { merged: true, state: "closed" }), env);
-
-    expect(updates[0]!.patch.pull_request_state).toBe("merged");
-  });
-
-  it("falls back to branch lookup when the repo row is missing entirely", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      repository: null,
-      matchingRowsByBranch: [{ id: "spr-1" }],
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("reopened"), env);
-
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.patch.github_repository_id).toBeNull();
-    const filterMap = Object.fromEntries(updates[0]!.filters.map((f) => [f.column, f.value]));
-    expect(filterMap).toEqual({
-      workspace_id: "ws-1",
-      branch_name: "wallie/product-sess-1",
-    });
-  });
-
-  it("marks Wallie setup PR onboarding ready when the setup PR merges", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      onboardingRow: { conflict_report: [], id: "onboarding-1", status: "pr_open" },
-      repository: { id: "repo-1" },
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(
-      payload("closed", { merged: true, ref: "wallie/setup-app-abc", state: "closed" }),
-      env,
-    );
-
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.table).toBe("repository_onboarding_status");
-    expect(updates[0]!.patch).toEqual({
-      conflict_report: [],
-      last_error: null,
-      setup_pr_number: 42,
-      setup_pr_url: "https://github.com/acme/app/pull/42",
-      status: "ready",
-    });
-    const filterMap = Object.fromEntries(updates[0]!.filters.map((f) => [f.column, f.value]));
-    expect(filterMap).toEqual({
-      id: "onboarding-1",
-      workspace_id: "ws-1",
-      github_repository_id: "repo-1",
-      setup_branch_name: "wallie/setup-app-abc",
-    });
-  });
-
-  it("marks Wallie setup PR onboarding errored when the setup PR closes unmerged", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      onboardingRow: { conflict_report: [], id: "onboarding-1", status: "pr_open" },
-      repository: { id: "repo-1" },
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(
-      payload("closed", { merged: false, ref: "wallie/setup-app-abc", state: "closed" }),
-      env,
-    );
-
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.table).toBe("repository_onboarding_status");
-    expect(updates[0]!.patch).toEqual({
-      last_error: "Setup PR was closed without merging.",
-      setup_pr_number: 42,
-      setup_pr_url: "https://github.com/acme/app/pull/42",
-      status: "error",
-    });
-  });
-
-  it("keeps setup onboarding in conflict when a conflicted setup PR merges", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      onboardingRow: {
-        conflict_report: [{ path: ".agents/skills/symphony-push/SKILL.md" }],
-        id: "onboarding-1",
-        status: "conflict",
-      },
-      repository: { id: "repo-1" },
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(
-      payload("closed", { merged: true, ref: "wallie/setup-app-abc", state: "closed" }),
-      env,
-    );
-
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.patch).toEqual({
-      last_error: null,
-      setup_pr_number: 42,
-      setup_pr_url: "https://github.com/acme/app/pull/42",
-      status: "conflict",
-    });
-  });
-
-  it("keeps setup onboarding in conflict on open setup PR events", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      onboardingRow: {
-        conflict_report: [{ path: ".agents/skills/symphony-push/SKILL.md" }],
-        id: "onboarding-1",
-        status: "conflict",
-      },
-      repository: { id: "repo-1" },
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(
-      payload("synchronize", { ref: "wallie/setup-app-abc", state: "open" }),
-      env,
-    );
-
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.patch.status).toBe("conflict");
-    expect(updates[0]!.patch).not.toHaveProperty("conflict_report");
-  });
-
-  it("falls through to session PR handling when no setup onboarding row matches", async () => {
-    const { admin, updates } = buildAdminMock({
-      installation: { id: "ghi-1", workspace_id: "ws-1" },
-      matchingRowsByBranch: [{ id: "spr-1" }],
-      onboardingRow: null,
-      matchingRowsByPr: [],
-      repository: { id: "repo-1" },
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-
-    await handleGitHubPullRequestEvent(payload("opened", { ref: "wallie/setup-sess-1" }), env);
-
-    expect(updates.map((update) => update.table)).toEqual([
-      "session_pull_requests",
-      "session_pull_requests",
+  beforeEach(() => vi.clearAllMocks());
+  it("resolves installation and repository identity before applying the provider snapshot atomically", async () => {
+    const { rpc, filters } = buildPrAdmin();
+    await handleGitHubPullRequestEvent(payload(), env);
+    expect(filters).toEqual([
+      ["github_installations", "installation_id", 999],
+      ["github_repositories", "github_installation_id", "ghi-1"],
+      ["github_repositories", "repo_id", 555],
     ]);
-    expect(updates[1]!.filters).toEqual([
-      { column: "workspace_id", value: "ws-1" },
-      { column: "branch_name", value: "wallie/setup-sess-1" },
-    ]);
+    expect(rpc).toHaveBeenCalledWith("apply_github_pull_request_event", {
+      target_workspace_id: "ws-1",
+      target_repository_id: "repo-1",
+      target_branch_name: "wallie/product-sess-1",
+      source_pull_request_number: 42,
+      source_pull_request_url: "https://github.com/acme/app/pull/42",
+      source_pull_request_state: "open",
+      source_is_draft: false,
+      source_updated_at: "2026-10-11T00:00:00Z",
+    });
+  });
+  it.each(["wallie/product-sess-1", "wallie/setup-app-abc"])(
+    "preserves merged state for %s",
+    async (branch) => {
+      const { rpc } = buildPrAdmin();
+      const event = payload("closed");
+      event.pull_request = {
+        ...event.pull_request,
+        merged: true,
+        state: "closed",
+        head: { ref: branch },
+      };
+      await handleGitHubPullRequestEvent(event, env);
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_github_pull_request_event",
+        expect.objectContaining({
+          source_pull_request_state: "merged",
+          target_branch_name: branch,
+        }),
+      );
+    },
+  );
+  it.each([{ installation: null }, { repository: null }])(
+    "never guesses a repository from the branch when identity is missing: %j",
+    async (missing) => {
+      const { rpc } = buildPrAdmin(missing);
+      await handleGitHubPullRequestEvent(payload(), env);
+      expect(rpc).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["untracked action", "unmanaged branch", "missing installation"])(
+    "ignores %s",
+    async (reason) => {
+      const { rpc } = buildPrAdmin();
+      const event = {
+        ...payload(),
+        installation: reason === "missing installation" ? undefined : { id: 999 },
+      };
+      if (reason === "untracked action") event.action = "labeled";
+      if (reason === "unmanaged branch") event.pull_request.head.ref = "feature/example";
+      await handleGitHubPullRequestEvent(event, env);
+      expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+      expect(rpc).not.toHaveBeenCalled();
+    },
+  );
+  it("propagates reconciliation failure so GitHub can retry the delivery", async () => {
+    const { rpc } = buildPrAdmin();
+    const error = new Error("database unavailable");
+    rpc.mockResolvedValue({ data: null, error });
+    await expect(handleGitHubPullRequestEvent(payload(), env)).rejects.toBe(error);
   });
 });
 
