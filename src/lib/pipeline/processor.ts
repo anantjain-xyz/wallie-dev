@@ -286,6 +286,9 @@ async function runStage(input: {
       implementation: sandboxSelection?.provider ?? "fake",
       connection: sandboxSelection?.connection,
       installationToken,
+      timeoutMs: input.deadlineAt
+        ? Math.max(1, Math.min(1_800_000, Date.parse(input.deadlineAt) - Date.now()))
+        : 1_800_000,
       ownerId: runId ?? undefined,
       repoFullName: github.repo.full_name,
       signal,
@@ -564,6 +567,7 @@ async function publishArtifact(input: {
       repoFullName: github.repo.full_name,
       repoId: github.repo.id,
       sandbox,
+      signal: input.signal,
       sessionId: session.id,
       title: `${stage.name}: ${session.title}`,
       workspaceId: session.workspace_id,

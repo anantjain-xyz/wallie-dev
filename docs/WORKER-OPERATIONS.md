@@ -42,7 +42,7 @@ The code is authoritative for defaults:
 | Linear reconciliation interval | 60 seconds      | `src/worker/config.ts`       |
 | Sandbox reaper interval        | 60 seconds      | `src/worker/config.ts`       |
 | Default stall timeout          | 15 minutes      | `src/worker/config.ts`       |
-| Hard attempt deadline          | 60 minutes      | `WORKER_JOB_TIMEOUT_MS`      |
+| Hard attempt deadline          | 30 minutes      | `WORKER_JOB_TIMEOUT_MS`      |
 | Default workspace concurrency  | 2               | Claim RPC/config fallback    |
 | Process concurrency            | 10              | `WORKER_MAX_CONCURRENT_JOBS` |
 
@@ -68,7 +68,9 @@ expires.
 
 Each attempt has a wall-clock deadline covering configuration reads, sandbox
 setup, agent execution, publication, and cleanup. `WORKER_JOB_TIMEOUT_MS` accepts
-a positive integer up to 24 hours; unset means one hour. Heartbeats cannot extend
+a positive integer up to 30 minutes; unset means 30 minutes. This portable limit
+fits every supported sandbox driver. Longer attempts need a provider lifetime
+contract before this limit can be raised. Heartbeats cannot extend
 this deadline. On expiry, the worker aborts execution, starts sandbox cleanup,
 and uses `fail_session_job_attempt` to retire only the captured job and attempt.
 If a start races a runless failure, recovery re-reads the same attempt once.

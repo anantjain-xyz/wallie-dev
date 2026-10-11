@@ -18,12 +18,11 @@ function buildAdminMock(opts: { upsertError?: { message: string } } = {}) {
           throw new Error(`Unexpected table: ${name}`);
         }
         return {
-          upsert: async (
-            row: Record<string, unknown>,
-            options: Record<string, unknown> | undefined,
-          ) => {
+          upsert: (row: Record<string, unknown>, options: Record<string, unknown> | undefined) => {
             upserts.push({ row, options });
-            return { error: opts.upsertError ?? null };
+            return Object.assign(Promise.resolve({ error: opts.upsertError ?? null }), {
+              abortSignal: vi.fn().mockResolvedValue({ error: opts.upsertError ?? null }),
+            });
           },
         };
       },
@@ -103,6 +102,70 @@ const baseInput = {
 } as const;
 
 describe("openSessionPullRequest", () => {
+  it.each(["lookup", "push", "create"])(
+    "stops delivery after cancellation during %s",
+    async (phase) => {
+      const controller = new AbortController();
+      const sandbox = new FakeSandbox();
+      scriptCommitsAhead(sandbox, "AHEAD");
+      sandbox.scriptExec(
+        (call) => call.args.join(" ").includes("push --force"),
+        (call) => {
+          expect(call.opts.signal).toBe(controller.signal);
+          if (phase === "push") controller.abort(new Error("deadline"));
+          return [];
+        },
+      );
+      sandbox.scriptExec("gh", (call) => {
+        expect(call.opts.signal).toBe(controller.signal);
+        if (phase === "create") controller.abort(new Error("deadline"));
+        return [];
+      });
+      const request = vi.fn(async (_route, params) => {
+        expect(params.request.signal).toBe(controller.signal);
+        if (phase === "lookup") controller.abort(new Error("deadline"));
+        return { data: [] };
+      });
+      const { admin, upserts } = buildAdminMock();
+      await expect(
+        openSessionPullRequest({
+          ...baseInput,
+          admin: admin as never,
+          sandbox,
+          githubAppFactory: makeAppFactory({ request }),
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow("deadline");
+      expect(upserts).toEqual([]);
+      expect(request).toHaveBeenCalledTimes(1);
+      if (phase === "lookup") expect(sandbox.calls).toHaveLength(1);
+      if (phase === "push") expect(sandbox.calls.some((call) => call.cmd === "gh")).toBe(false);
+    },
+  );
+
+  it("passes cancellation into persistence and every remote command", async () => {
+    const signal = new AbortController().signal;
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const persistence = { abortSignal: vi.fn().mockResolvedValue({ error: null }) };
+    const admin = { from: () => ({ upsert: () => persistence }) };
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    expect(
+      (
+        await openSessionPullRequest({
+          ...baseInput,
+          admin: admin as never,
+          sandbox,
+          signal,
+          githubAppFactory: makeAppFactory(octokit),
+        })
+      ).kind,
+    ).toBe("success");
+    expect(persistence.abortSignal).toHaveBeenCalledWith(signal);
+    expect(sandbox.calls.every((call) => call.opts.signal === signal)).toBe(true);
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });

@@ -13,7 +13,7 @@ vi.mock("@/lib/pipeline/processor", () => ({
 import { claimNextJob, runClaimedJob } from "./loop";
 
 const config: WorkerConfig = {
-  jobTimeoutMs: 3_600_000,
+  jobTimeoutMs: 1_800_000,
   defaultConcurrencyLimit: 2,
   defaultStallTimeoutMs: 900_000,
   heartbeatIntervalMs: 10_000,

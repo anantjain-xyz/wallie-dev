@@ -12,7 +12,7 @@ describe("worker/config", () => {
   it("returns sensible defaults and a generated worker id", () => {
     const config = parseWorkerConfig();
     expect(config.pollIntervalMs).toBe(2_000);
-    expect(config.jobTimeoutMs).toBe(3_600_000);
+    expect(config.jobTimeoutMs).toBe(1_800_000);
     expect(config.heartbeatIntervalMs).toBe(10_000);
     expect(config.stallSweepIntervalMs).toBe(30_000);
     expect(config.reconcileIntervalMs).toBe(60_000);
@@ -27,7 +27,7 @@ describe("worker/config", () => {
   it("validates an explicit attempt deadline", () => {
     process.env.WORKER_JOB_TIMEOUT_MS = "120000";
     expect(parseWorkerConfig().jobTimeoutMs).toBe(120000);
-    for (const value of ["0", "-1", "1.5", "abc", "86400001"]) {
+    for (const value of ["0", "-1", "1.5", "abc", "1800001"]) {
       process.env.WORKER_JOB_TIMEOUT_MS = value;
       expect(() => parseWorkerConfig()).toThrow();
     }
