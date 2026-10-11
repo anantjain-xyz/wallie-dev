@@ -43,7 +43,8 @@ import {
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { openSessionPullRequest } from "./pull-request";
+import { captureSourceCheckpoint, readSourceBase } from "./source-checkpoint";
+import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
 
 type AdminClient = SupabaseClient<Database>;
@@ -155,8 +156,9 @@ async function runStage(input: {
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
   let sandboxStop: Promise<void> | undefined;
+  let retainSource = false;
   const stopSandbox = () => {
-    if (!sandbox) return;
+    if (!sandbox || retainSource) return;
     const handle = sandbox;
     sandboxStop ??= (async () => {
       try {
@@ -328,6 +330,7 @@ async function runStage(input: {
     });
     throwIfAborted(signal);
 
+    const sourceBase = await readSourceBase(sandbox, signal);
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
     const materializedAttachments = await materializeSessionAttachments(
@@ -451,14 +454,50 @@ async function runStage(input: {
       throw new MissingReviewableOutputError(message);
     }
 
+    // Once the agent has produced reviewable work, deletion is safe only after
+    // the source is durable. A dual-store outage leaves the provider TTL as the
+    // recovery window, and the reaper honors this explicit retention marker.
+    retainSource = true;
+    try {
+      const { data: retained, error: retentionError } = await admin
+        .from("agent_runs")
+        .update({ source_recovery_required: true })
+        .eq("id", runId)
+        .eq("attempt_count", job.attempt_count)
+        .eq("status", "running")
+        .select("id");
+      // A database outage must not prevent using available private Storage.
+      // If both stores fail, the local retention flag still prevents teardown.
+      if (!retentionError && !retained?.length) throw new ExecutionOwnershipLostError();
+      const checkpoint = await captureSourceCheckpoint({ sandbox, baseSha: sourceBase, signal });
+      const prepared = await prepareSourceDelivery({
+        admin,
+        baseBranch: github.repo.default_branch ?? "main",
+        body: artifactMarkdown,
+        checkpoint,
+        onDurable: () => {
+          retainSource = false;
+        },
+        repositoryId: github.repo.id,
+        runId,
+        signal,
+        title: `${stage.name}: ${session.title}`,
+        workspaceId: session.workspace_id,
+      });
+      if (!prepared) return { jobId: job.id, processed: true, result: "idle", runId };
+      // Preparation clears the recovery marker in the same database transaction
+      // that records the durable source, before any publication or cleanup.
+    } catch (error) {
+      if (error instanceof ExecutionOwnershipLostError || signal?.aborted) throw error;
+      throw new SourcePreservationError(!retainSource);
+    }
+    throwIfAborted(signal);
+
     const published = await publishArtifact({
       admin,
       artifactMarkdown,
-      branch,
-      github,
       job,
       runId,
-      sandbox,
       session,
       deadlineAt: input.deadlineAt,
       signal,
@@ -483,7 +522,9 @@ async function runStage(input: {
       {
         runId,
         retry:
-          !(error instanceof MissingReviewableOutputError) && !isSandboxConnectionSetupError(error),
+          !(error instanceof MissingReviewableOutputError) &&
+          !(error instanceof SourcePreservationError) &&
+          !isSandboxConnectionSetupError(error),
       },
     );
     if (runId && !runFailureMessageRecorded) {
@@ -512,24 +553,18 @@ async function runStage(input: {
 async function publishArtifact(input: {
   admin: AdminClient;
   artifactMarkdown: string;
-  branch: string | null;
-  github: {
-    installationId: number;
-    repo: { default_branch: string | null; full_name: string; id: string };
-  } | null;
   job: Tables<"agent_jobs">;
   runId: string;
-  sandbox: SandboxHandle | null;
   session: SessionRow;
   deadlineAt?: string;
   signal?: AbortSignal;
   stage: PipelineStage;
   usage: { inputTokens: number; outputTokens: number } | undefined;
 }): Promise<"idle" | "published"> {
-  const { admin, artifactMarkdown, branch, github, job, runId, sandbox, session, stage } = input;
+  const { admin, artifactMarkdown, job, runId, session, stage } = input;
 
   throwIfAborted(input.signal);
-  const publication = admin.rpc("publish_session_job_attempt", {
+  const publication = admin.rpc("publish_session_job_with_source", {
     p_job_id: job.id,
     p_attempt_count: job.attempt_count,
     p_run_id: runId,
@@ -540,6 +575,7 @@ async function publishArtifact(input: {
   const { data: published, error: publishError } = await (input.signal
     ? publication.abortSignal(input.signal)
     : publication);
+
   if (publishError) throw publishError;
   if (published !== true) return "idle";
   throwIfAborted(input.signal);
@@ -555,42 +591,6 @@ async function publishArtifact(input: {
       .eq("attempt_count", job.attempt_count)
       .eq("status", "success");
     if (error) throw error;
-  }
-
-  if (sandbox && github && branch) {
-    throwIfAborted(input.signal);
-    const prOutcome = await openSessionPullRequest({
-      admin,
-      baseBranch: github.repo.default_branch ?? "main",
-      body: artifactMarkdown.slice(0, 60000),
-      branch,
-      installationId: github.installationId,
-      repoFullName: github.repo.full_name,
-      repoId: github.repo.id,
-      sandbox,
-      signal: input.signal,
-      sessionId: session.id,
-      title: `${stage.name}: ${session.title}`,
-      workspaceId: session.workspace_id,
-    });
-
-    // PR plumbing is recoverable — the artifact is durable and the reviewer
-    // can approve the artifact directly — so we never block the stage. But we
-    // always surface the outcome: `no_commits` used to be fully silent, which
-    // is exactly how empty `session_pull_requests` went unnoticed.
-    if (prOutcome.kind === "no_commits") {
-      console.info("Stage produced no pull request (no commits ahead of base)", {
-        sessionId: session.id,
-        stageSlug: stage.slug,
-      });
-    } else if (prOutcome.kind !== "success") {
-      console.error("Failed to open session pull request", {
-        kind: prOutcome.kind,
-        reason: prOutcome.reason,
-        sessionId: session.id,
-        stageSlug: stage.slug,
-      });
-    }
   }
 
   // Publication already made this run successful. Append its final history

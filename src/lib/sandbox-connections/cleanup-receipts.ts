@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
+import { hasRetainedSandboxSource } from "./run-cleanup-ownership";
+import { SandboxConnectionActiveWorkError } from "./server";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -39,6 +41,9 @@ export async function confirmConnectionSandboxCleanup(input: {
   connection: SandboxConnection;
   workspaceId: string;
 }) {
+  if (await hasRetainedSandboxSource(input.admin, input)) {
+    throw new SandboxConnectionActiveWorkError();
+  }
   for (const table of [
     "agent_runs",
     "sandbox_capability_checks",

@@ -28,6 +28,7 @@ function run(overrides: Record<string, unknown> = {}) {
     sandbox_id: "sandbox-1",
     agent_job_id: "job-1",
     attempt_count: 2,
+    sandbox_connection_revision: "revision-1",
     status: "success",
     ...overrides,
   };
@@ -107,6 +108,40 @@ beforeEach(() => {
 });
 
 describe("Vercel connection cleanup execution ownership", () => {
+  it("retains failed source before provider listing or credential cleanup", async () => {
+    const retained: Record<string, unknown> = run({
+      status: "error",
+      source_recovery_required: true,
+    });
+    const admin = buildAdmin({ runs: [retained], jobs: [] });
+    await expect(cleanup(admin)).rejects.toBeInstanceOf(SandboxConnectionActiveWorkError);
+    expect(mocked.listRunningSandboxes).not.toHaveBeenCalled();
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    retained.source_recovery_required = false;
+    await cleanup(admin);
+    expect(mocked.stopSandboxById).toHaveBeenCalledExactlyOnceWith("sandbox-1", {
+      connection,
+      throwOnError: true,
+    });
+  });
+
+  it("preserves retained source owned by another workspace in the shared project", async () => {
+    await expect(
+      stopVercelWorkspaceOwnedSandboxes({
+        admin: buildAdmin({
+          runs: [
+            run({ status: "error" }),
+            run({ workspace_id: "workspace-2", status: "error", source_recovery_required: true }),
+          ],
+          jobs: [],
+        }) as never,
+        connection,
+        workspaceId: "workspace-1",
+        requireAllOwned: true,
+      }),
+    ).rejects.toBeInstanceOf(SandboxConnectionActiveWorkError);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
   it.each(["queued", "started", "running"])(
     "defers credential changes while a successful run's exact job attempt is %s",
     async (status) => {

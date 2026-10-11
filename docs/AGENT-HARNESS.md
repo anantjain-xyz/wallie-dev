@@ -149,45 +149,48 @@ Repository-local `AGENTS.md` files and installed skills are interpreted by the
 selected CLI. Wallie prepares those assets during repository onboarding, but
 the target repository remains their runtime semantic owner.
 
-## Event and artifact contract
+## Event, source, and artifact contract
 
-- A common runner output boundary redacts the active provider credentials and
-  supplied GitHub token before events reach logs, artifacts, or PR descriptions.
-  It also sanitizes errors thrown by setup and provider SDKs.
-- Normalized runner events are appended to `agent_run_messages`.
-- Text, tool input, completion, and error events remain distinguishable.
-- Only text events are concatenated into the markdown artifact.
-- An execution that produces no text is a stage error and creates no artifact.
-- Artifact versions are per session and stage slug.
-- Publishing the artifact requires the session to remain unarchived and
-  `in_progress`.
-- After the GitHub App and installation client initialize, PR synchronization
-  failures are returned and logged without preventing artifact review.
-- GitHub App construction or installation-client initialization happens outside
-  that recoverable boundary; either failure currently fails the stage after the
-  artifact insert, removes the unpublished artifact, and enters job retry/error
-  handling.
-- The artifact prefix is used as fallback PR prose; the artifact in Supabase is
-  the review source of truth.
-
-If cancellation wins after artifact insertion but before the guarded publish
-transaction, the processor deletes the unpublished artifact so the version
-remains reusable. A later retry regenerates in a new sandbox, then
-`publish_session_stage_artifact` writes canonical markdown and claims
-`awaiting_review` in one step before force-pushing.
+- Runner output redacts active credentials before events reach logs, artifacts,
+  or PR prose. Setup and SDK errors pass through the same boundary.
+- Text, tool, completion, and error events remain distinct. Publication requires
+  explicit successful completion and reviewable text; partial output is not success.
+- Before publication, Wallie commits remaining nonignored working-tree changes
+  with repository hooks disabled, then captures an incremental Git bundle from
+  the original base to the final head. Dirty submodules cannot be checkpointed.
+- Bundles are limited to 4 MiB and stored privately under
+  `session-source-checkpoints/<workspace>/<run>.bundle`. If Storage is unavailable,
+  a service-only outbox row can hold a bounded base64 fallback.
+- `publish_session_job_with_source` requires a prepared checkpoint and delegates
+  exact job/attempt/run, stage, artifact-version, and deadline checks to the
+  atomic publication transaction. The artifact and run become successful together.
+- Only published runs enter GitHub delivery. A two-minute lease and captured lease
+  ID fence worker retries; a one-minute delivery deadline bounds network work.
+- Delivery restores the bundle into a temporary bare Git repository, verifies
+  its digest and prerequisite commits, pushes the distinct attempt branch without
+  force, and idempotently creates or reuses its PR. Source code is never executed
+  by the recovery worker.
+- PR metadata uses GitHub's update timestamp and exact repository/PR identity.
+  Token usage or completion-history failures cannot discard the delivery record.
 
 ## Failure, retry, and teardown
 
-- Runner, setup, and artifact failures mark the run as error and park the
-  session in `rejected`.
-- Retry scheduling belongs to the job lifecycle and may reuse the stage branch,
-  but never the sandbox.
-- Cancellation first makes the job and run terminal, then attempts sandbox
-  cleanup. Late processor writes preserve `canceled`.
-- Setup failure after sandbox creation must stop the resource before the create
-  call returns an error.
-- Normal teardown is best effort; the stall detector, provider TTL, and sandbox
-  reaper are recovery layers, not permission to omit `finally` cleanup.
+- Setup and execution failures retire only their captured attempt. Each new
+  attempt receives a distinct branch and sandbox.
+- A saved checkpoint survives sandbox teardown and worker crashes. Delivery
+  failures preserve it and retry with exponential backoff, capped at one hour.
+- A Storage outage uses the private database fallback. Successful GitHub delivery
+  clears fallback bytes; Storage checkpoints remain until workspace deletion.
+- If both durability stores fail, no artifact is published and no automatic new
+  attempt is queued. The sandbox and `source_recovery_required` marker are kept
+  for operator recovery until the provider's existing expiry. This is a finite
+  recovery window, not a guarantee of durability during a dual-store outage.
+- A failed retention-marker write still permits capture and Storage upload. If
+  the marker and both stores are unavailable, retention exists only in the live
+  worker; a process loss cannot guarantee that the reaper will preserve it.
+- Cancellation and workspace deletion retain their authority to stop sandboxes.
+  Deletion blocks new delivery claims/uploads and drains checkpoint storage before
+  removing tenant rows and credentials.
 
 ## Known implementation gaps
 
@@ -197,14 +200,9 @@ These are current limitations, not desired contracts:
 - Session prompt and reviewer feedback sizes are not bounded by the prompt
   renderer; route limits on templates and operating rules do not bound the
   combined prompt.
-- Repository variables are declared but not supplied by the processor because
-  prompt rendering occurs before GitHub context is loaded.
 - Artifact variables for valid hyphenated stage slugs are not recognized and
   remain verbatim in rendered prompts.
-- Workspace `maxTurns` is loaded but not used by the generic processor;
-  continuation IDs and `maxTokens` are also not supplied.
-- GitHub App construction and installation-client initialization are outside
-  the recoverable PR-synchronization boundary.
+- Continuation IDs and `maxTokens` are not supplied by the generic processor.
 
 Remove a limitation from this section only in the pull request that establishes
 and proves the replacement contract.

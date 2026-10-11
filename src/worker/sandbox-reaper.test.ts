@@ -27,6 +27,7 @@ interface ClaimedRow {
   sandbox_vercel_project_id?: string;
   sandbox_vercel_team_id?: string;
   status?: string;
+  source_recovery_required?: boolean;
   workspace_id?: string;
 }
 
@@ -239,6 +240,17 @@ describe("reapOrphanSandboxes", () => {
       "claimed",
       expect.objectContaining({ connection: expect.anything() }),
     );
+  });
+
+  it("retains the only source copy after preservation failure until provider expiry", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "source-recovery", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([
+      { sandbox_id: "source-recovery", status: "error", source_recovery_required: true },
+    ]);
+    expect((await reapOrphanSandboxes(admin as never)).reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
   it("leaves a sandbox claimed by another workspace in the same Vercel project", async () => {

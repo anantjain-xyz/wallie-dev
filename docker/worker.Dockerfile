@@ -4,7 +4,7 @@ FROM public.ecr.aws/amazonlinux/amazonlinux:2023.12.20260918.0-minimal@sha256:68
 # Pin the OS snapshot and Node RPM; keep the RPM database for vulnerability scans.
 RUN dnf install -y --releasever=2023.12.20260918 --setopt=install_weak_deps=0 \
       nodejs22-22.23.2-1.amzn2023.0.2 nodejs22-full-i18n-22.23.2-1.amzn2023.0.2 \
-      nodejs22-npm-10.9.8-1.22.23.2.1.amzn2023.0.2 shadow-utils \
+      nodejs22-npm-10.9.8-1.22.23.2.1.amzn2023.0.2 shadow-utils git \
     && dnf clean all \
     && groupadd --gid 1000 node \
     && useradd --uid 1000 --gid node --create-home --shell /bin/bash node

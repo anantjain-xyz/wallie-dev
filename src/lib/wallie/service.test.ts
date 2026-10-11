@@ -190,6 +190,7 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     model_provider: "claude-code",
     output_tokens: null,
     run_type: "project",
+    source_recovery_required: false,
     sandbox_id: null,
     sandbox_provider: null,
     sandbox_connection_revision: null,

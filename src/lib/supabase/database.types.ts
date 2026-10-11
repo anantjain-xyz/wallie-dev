@@ -160,6 +160,7 @@ export type Database = {
           sandbox_vercel_project_id: string | null
           sandbox_vercel_team_id: string | null
           session_id: string
+          source_recovery_required: boolean
           stage_id: string | null
           stage_name: string | null
           stage_slug: string | null
@@ -189,6 +190,7 @@ export type Database = {
           sandbox_vercel_project_id?: string | null
           sandbox_vercel_team_id?: string | null
           session_id: string
+          source_recovery_required?: boolean
           stage_id?: string | null
           stage_name?: string | null
           stage_slug?: string | null
@@ -218,6 +220,7 @@ export type Database = {
           sandbox_vercel_project_id?: string | null
           sandbox_vercel_team_id?: string | null
           session_id?: string
+          source_recovery_required?: boolean
           stage_id?: string | null
           stage_name?: string | null
           stage_slug?: string | null
@@ -1185,6 +1188,126 @@ export type Database = {
           },
           {
             foreignKeyName: "session_selected_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_source_deliveries: {
+        Row: {
+          attempt_count: number
+          base_branch: string
+          base_sha: string
+          body: string
+          branch_name: string
+          bundle_base64: string | null
+          bundle_sha256: string | null
+          checkpoint_path: string | null
+          claim_id: string | null
+          created_at: string
+          delivered_at: string | null
+          delivery_attempt_count: number
+          head_sha: string
+          installation_id: number
+          job_id: string
+          last_error_code: string | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          repository_full_name: string
+          repository_id: string | null
+          run_id: string
+          session_id: string
+          status: string
+          title: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count: number
+          base_branch: string
+          base_sha: string
+          body: string
+          branch_name: string
+          bundle_base64?: string | null
+          bundle_sha256?: string | null
+          checkpoint_path?: string | null
+          claim_id?: string | null
+          created_at?: string
+          delivered_at?: string | null
+          delivery_attempt_count?: number
+          head_sha: string
+          installation_id: number
+          job_id: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          repository_full_name: string
+          repository_id?: string | null
+          run_id: string
+          session_id: string
+          status?: string
+          title: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          base_branch?: string
+          base_sha?: string
+          body?: string
+          branch_name?: string
+          bundle_base64?: string | null
+          bundle_sha256?: string | null
+          checkpoint_path?: string | null
+          claim_id?: string | null
+          created_at?: string
+          delivered_at?: string | null
+          delivery_attempt_count?: number
+          head_sha?: string
+          installation_id?: number
+          job_id?: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          repository_full_name?: string
+          repository_id?: string | null
+          run_id?: string
+          session_id?: string
+          status?: string
+          title?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_source_deliveries_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_source_deliveries_repository_id_fkey"
+            columns: ["repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_source_deliveries_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_source_deliveries_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_source_deliveries_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -2321,6 +2444,10 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      assert_session_source_delivery_claim: {
+        Args: { p_claim_id: string; p_run_id: string }
+        Returns: boolean
+      }
       begin_codex_device_auth_flow: {
         Args: {
           flow_id: string
@@ -2405,6 +2532,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_session_source_delivery: { Args: never; Returns: string }
       complete_cursor_auth_flow: {
         Args: {
           p_account_email?: string
@@ -2582,6 +2710,10 @@ export type Database = {
           workspace_slug: string
         }[]
       }
+      finish_session_source_delivery: {
+        Args: { p_claim_id: string; p_delivered: boolean; p_run_id: string }
+        Returns: boolean
+      }
       finish_workspace_deletion: {
         Args: { p_workspace_id: string }
         Returns: boolean
@@ -2740,7 +2872,33 @@ export type Database = {
           credential_version: number
         }[]
       }
+      prepare_session_source_delivery: {
+        Args: {
+          p_base_branch: string
+          p_base_sha: string
+          p_body: string
+          p_bundle_base64: string
+          p_bundle_sha256: string
+          p_checkpoint_path: string
+          p_head_sha: string
+          p_repository_id: string
+          p_run_id: string
+          p_title: string
+        }
+        Returns: boolean
+      }
       publish_session_job_attempt: {
+        Args: {
+          p_artifact_json: string
+          p_attempt_count: number
+          p_deadline_at?: string
+          p_expected_artifact_version: number
+          p_job_id: string
+          p_run_id: string
+        }
+        Returns: boolean
+      }
+      publish_session_job_with_source: {
         Args: {
           p_artifact_json: string
           p_attempt_count: number

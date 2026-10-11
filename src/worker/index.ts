@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { startCursorAuthProcessor } from "@/lib/cursor/auth-processor";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
+import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 
 import { parseWorkerConfig } from "./config";
@@ -113,6 +114,7 @@ async function main() {
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("reconciliation", async () => {
+          await drainSourceDeliveries(admin);
           const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([
             reconcileLinearState(admin),
             cleanupExpiredSessionAttachments(admin),

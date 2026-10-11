@@ -38,7 +38,7 @@ A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/proce
 1. Render the pipeline operating rules and stage prompt template against the session context (title, prompt, prior stage artifacts, attempt number, and last reviewer feedback).
 2. Spin up a sandbox cloned from the workspace's connected GitHub repo on a per-stage branch.
 3. Run the workspace's configured agent (Codex, Claude Code, Cursor, or OpenCode) inside the sandbox.
-4. Capture the agent's text output as a markdown artifact, version it as `(session_id, stage_slug, version)`, and best-effort push commits/open or refresh a pull request when the stage changed code.
+4. Checkpoint committed and nonignored working-tree source in private durable storage, prepare a delivery outbox record, then publish the versioned markdown artifact. The worker retries GitHub push and PR delivery independently after publication.
 5. Flip the session to `awaiting_review` without making pull-request plumbing a prerequisite for artifact review.
 
 Humans approve or reject artifacts from the in-app dashboard. Approval validates the displayed stage, immutable artifact ID, and version, then advances to the next selected stage by `position` and queues its job/run in the same `approve_session_stage` transaction. Rejection validates the same review identity, records feedback against the reviewed artifact version and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt.
@@ -130,7 +130,7 @@ Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
            |    * mint GitHub installation token, spin up sandbox
            |    * run the configured agent runner
            |    * stream events into agent_run_messages
-           |    * publish_session_job_attempt commits markdown + review + run success
+           |    * publish_session_job_with_source requires checkpoint, commits artifact + review + success
            |    * best-effort push/open its attempt PR
            `- complete_session_job_attempt closes the exact published job
       v

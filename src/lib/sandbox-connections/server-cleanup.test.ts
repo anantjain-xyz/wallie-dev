@@ -90,6 +90,20 @@ describe.each(["e2b", "daytona"] as const)("%s credential cleanup ownership", (p
       workspaceId: "workspace-1",
     });
 
+  it("keeps failed checkpoint source until recovery clears the retained owner", async () => {
+    const retained = run(provider, { status: "error", source_recovery_required: true });
+    const admin = adminFor({ run: retained });
+    await expect(cleanup(admin)).rejects.toBeInstanceOf(SandboxConnectionActiveWorkError);
+    expect(mocked.listRunningSandboxes).not.toHaveBeenCalled();
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    retained.source_recovery_required = false;
+    await cleanup(admin);
+    expect(mocked.stopSandboxById).toHaveBeenCalledExactlyOnceWith("sandbox-1", {
+      connection,
+      throwOnError: true,
+    });
+  });
+
   it("blocks credential mutation when the current published attempt has a fresh job heartbeat", async () => {
     const heartbeats = [heartbeat()];
     const admin = adminFor({ run: run(provider), heartbeats });

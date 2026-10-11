@@ -1,8 +1,25 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
+import type { SandboxConnection } from "@/lib/sandbox/types";
 
 const FRESH_WORKER_HEARTBEAT_MS = 60_000;
+
+/** A failed source checkpoint still owns its original sandbox and credentials. */
+export async function hasRetainedSandboxSource(
+  admin: SupabaseClient<Database>,
+  input: { connection: SandboxConnection; workspaceId: string },
+) {
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("sandbox_provider", input.connection.provider)
+    .eq("sandbox_connection_revision", input.connection.revision)
+    .eq("source_recovery_required", true);
+  if (error) throw error;
+  return !!data?.length;
+}
 
 /** Successful runs can still need their sandbox for PR delivery after publication. */
 export async function loadSandboxProtectedJobAttempts(

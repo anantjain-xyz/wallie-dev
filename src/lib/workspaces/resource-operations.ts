@@ -116,7 +116,7 @@ export async function createWorkspaceSessionSandbox(
 export async function uploadWorkspaceObject(
   admin: AdminClient,
   input: {
-    bucket: "workspace-avatars" | "session-attachments";
+    bucket: "workspace-avatars" | "session-attachments" | "session-source-checkpoints";
     bytes: Buffer;
     contentType: string;
     path: string;

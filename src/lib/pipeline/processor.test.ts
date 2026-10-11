@@ -51,13 +51,11 @@ const mocked = vi.hoisted(() => ({
   resolveSandboxImplementation: vi.fn(() => "vercel"),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
-  openSessionPullRequest: vi.fn().mockResolvedValue({
-    kind: "success",
-    isDraft: false,
-    prNumber: 42,
-    prState: "open",
-    prUrl: "https://github.com/acme/app/pull/42",
-  }),
+  readSourceBase: vi.fn().mockResolvedValue("a".repeat(40)),
+  captureSourceCheckpoint: vi
+    .fn()
+    .mockResolvedValue({ kind: "unchanged", baseSha: "a".repeat(40), headSha: "a".repeat(40) }),
+  prepareSourceDelivery: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -70,8 +68,13 @@ vi.mock("./stages", () => ({
   loadPipelineOperatingRules: mocked.loadPipelineOperatingRules,
 }));
 
-vi.mock("./pull-request", () => ({
-  openSessionPullRequest: mocked.openSessionPullRequest,
+vi.mock("./source-checkpoint", () => ({
+  readSourceBase: mocked.readSourceBase,
+  captureSourceCheckpoint: mocked.captureSourceCheckpoint,
+}));
+vi.mock("./source-delivery", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./source-delivery")>()),
+  prepareSourceDelivery: mocked.prepareSourceDelivery,
 }));
 
 vi.mock("@/lib/prompt-templates", () => ({
@@ -252,6 +255,8 @@ interface MockOptions {
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
   runSandboxUpdateError?: { message: string } | null;
+  usageUpdateError?: { message: string } | null;
+  retentionUpdateError?: { message: string } | null;
   runSandboxUpdateMissed?: boolean;
   runRows?: Array<Record<string, unknown>>;
   githubInstallation?: { id: string; installation_id: number } | null;
@@ -407,13 +412,21 @@ function buildAdminMock(opts: MockOptions) {
           runUpdateFilters.push(filters);
           const missed = "sandbox_id" in patch && opts.runSandboxUpdateMissed;
           const rows = missed ? [] : runRows.filter((row) => matches.every((match) => match(row)));
-          if (rows.length) {
+          const retentionError =
+            patch.source_recovery_required === true ? (opts.retentionUpdateError ?? null) : null;
+          if (rows.length && !retentionError) {
             updatedRuns.push(patch);
             for (const row of rows) Object.assign(row, patch);
           }
           resolve({
             data: rows,
-            error: "sandbox_id" in patch ? (opts.runSandboxUpdateError ?? null) : null,
+            error:
+              retentionError ??
+              ("sandbox_id" in patch
+                ? (opts.runSandboxUpdateError ?? null)
+                : "input_tokens" in patch
+                  ? (opts.usageUpdateError ?? null)
+                  : null),
           });
         },
       };
@@ -628,7 +641,7 @@ function buildAdminMock(opts: MockOptions) {
       return { data: run.id, error: null };
     }
     const run = runRows.find((row) => row.id === payload.p_run_id && row.attempt_count === attempt);
-    if (fn === "publish_session_job_attempt") {
+    if (fn === "publish_session_job_with_source") {
       if (opts.pointerUpdateError || opts.artifactInsertError)
         return { data: null, error: opts.pointerUpdateError ?? opts.artifactInsertError };
       if (opts.pointerCasMiss || stale || run?.status !== "running")
@@ -721,6 +734,10 @@ function makeRunner(
 describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.prepareSourceDelivery.mockImplementation(async (input) => {
+      input.onDurable();
+      return true;
+    });
     mocked.resolveSandboxImplementation.mockReturnValue("vercel");
     mocked.createSessionSandbox.mockImplementation(async (input) => {
       await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
@@ -905,7 +922,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       const { admin, insertedArtifacts, rpc } = buildAdminMock({ session: baseSession() });
       expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
       expect(insertedArtifacts).toEqual([]);
-      expect(rpc).not.toHaveBeenCalledWith("publish_session_job_attempt", expect.anything());
+      expect(rpc).not.toHaveBeenCalledWith("publish_session_job_with_source", expect.anything());
     },
   );
 
@@ -1011,7 +1028,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toEqual([]);
   });
 
-  it("publishes only through the captured owner RPC before opening its attempt PR", async () => {
+  it("prepares source before publishing through the captured owner RPC", async () => {
     const { admin, rpc, legacyMutationCalls } = buildAdminMock({ session: baseSession() });
     const deadlineAt = new Date(Date.now() + 60_000).toISOString();
     const signal = new AbortController().signal;
@@ -1022,7 +1039,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       signal,
     });
     expect(result.result).toBe("success");
-    expect(rpc).toHaveBeenCalledWith("publish_session_job_attempt", {
+    expect(rpc).toHaveBeenCalledWith("publish_session_job_with_source", {
       p_job_id: "job-1",
       p_attempt_count: 4,
       p_deadline_at: deadlineAt,
@@ -1033,13 +1050,13 @@ describe("processPipelineJob (generic stage runner)", () => {
     const sandboxInput = mocked.createSessionSandbox.mock.calls[0][0];
     expect(sandboxInput.timeoutMs).toBeGreaterThan(0);
     expect(sandboxInput.timeoutMs).toBeLessThanOrEqual(60_000);
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(expect.objectContaining({ signal }));
     const publicationIndex = rpc.mock.calls.findIndex(
-      ([name]) => name === "publish_session_job_attempt",
+      ([name]) => name === "publish_session_job_with_source",
     );
     expect(rpc.mock.results[publicationIndex].value.abortSignal).toHaveBeenCalledWith(signal);
     expect(legacyMutationCalls).toEqual([]);
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledOnce();
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
   });
 
   it("appends completion history after publication without refreshing an active run", async () => {
@@ -1049,23 +1066,23 @@ describe("processPipelineJob (generic stage runner)", () => {
       },
     );
     let updatesBeforePullRequest = 0;
-    mocked.openSessionPullRequest.mockImplementationOnce(async () => {
-      // The real publication transaction terminalizes the run before PR work.
-      expect(runRows[0].status).toBe("success");
+    mocked.prepareSourceDelivery.mockImplementationOnce(async (input) => {
+      expect(runRows[0].status).toBe("running");
       expect(insertedMessages).not.toContainEqual(
         expect.objectContaining({
           message_md: "Product run completed",
         }),
       );
       updatesBeforePullRequest = runUpdateFilters.length;
-      return { kind: "success", prNumber: 42 };
+      input.onDurable();
+      return true;
     });
 
     expect(await processPipelineJob({ admin, job: baseJob({ attempt_count: 2 }) })).toMatchObject({
       result: "success",
       runId: "run-1",
     });
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledOnce();
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
     expect(runUpdateFilters).toHaveLength(updatesBeforePullRequest);
     expect(insertedMessages).toContainEqual(
       expect.objectContaining({
@@ -1109,7 +1126,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
     expect(insertedArtifacts).toEqual([]);
     expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
   });
@@ -1123,7 +1140,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("idle");
     expect(insertedArtifacts).toEqual([]);
     expect(legacyMutationCalls).toEqual([]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
     expect(rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
     const sandbox = await mocked.createSessionSandbox.mock.results[0]!.value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
@@ -1147,7 +1164,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect(insertedArtifacts).toEqual([]);
       expect(legacyMutationCalls).toEqual([]);
       expect(updatedJobs).toEqual([]);
-      expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+      expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     },
   );
 
@@ -1376,8 +1393,8 @@ describe("processPipelineJob (generic stage runner)", () => {
       ["run-1", runRows[0].branch_name],
       ["run-2", runRows[1].branch_name],
     ]);
-    expect(mocked.openSessionPullRequest.mock.calls.map(([input]) => input.branch)).toEqual([
-      runRows[1].branch_name,
+    expect(mocked.prepareSourceDelivery.mock.calls.map(([input]) => input.runId)).toEqual([
+      runRows[1].id,
     ]);
   });
 
@@ -1396,7 +1413,9 @@ describe("processPipelineJob (generic stage runner)", () => {
       runId: "run-1",
     });
     for (const [name, args] of rpc.mock.calls) {
-      expect(name).toMatch(/^(start|publish|complete)_session_job_attempt$/);
+      expect(name).toMatch(
+        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$/,
+      );
       expect(args).toMatchObject({ p_job_id: "job-1", p_attempt_count: 2 });
     }
     expect(runUpdateFilters.every((filters) => filters.attempt_count === 2)).toBe(true);
@@ -1444,7 +1463,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     releaseSetup();
     expect((await first).result).toBe("success");
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledTimes(1);
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledTimes(1);
   });
 
   it("stops its sandbox without launching the CLI after ownership is lost during attachments", async () => {
@@ -1514,15 +1533,13 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(sandbox.stop).toHaveBeenCalledOnce();
   });
 
-  it.each(["pull request", "sandbox shutdown"])(
+  it.each(["sandbox shutdown"])(
     "preserves successful publication when %s throws",
     async (failure) => {
       const { admin, insertedArtifacts, runRows, updatedJobs, updatedSessions } = buildAdminMock({
         session: baseSession(),
       });
-      if (failure === "pull request") {
-        mocked.openSessionPullRequest.mockRejectedValueOnce(new Error("GitHub unavailable"));
-      } else {
+      if (failure === "sandbox shutdown") {
         mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
           await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
           return { stop: vi.fn().mockRejectedValue(new Error("shutdown unavailable")) };
@@ -1905,24 +1922,20 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
   });
 
-  it("opens a session pull request after the artifact is persisted", async () => {
+  it("prepares the selected repository source before the artifact is persisted", async () => {
     const session = baseSession();
     const job = baseJob();
     const { admin } = buildAdminMock({ session });
 
     await processPipelineJob({ admin, job });
 
-    expect(mocked.openSessionPullRequest).toHaveBeenCalledTimes(1);
-    const call = mocked.openSessionPullRequest.mock.calls[0]![0] as Record<string, unknown>;
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledTimes(1);
+    const call = mocked.prepareSourceDelivery.mock.calls[0]![0] as Record<string, unknown>;
     expect(call.baseBranch).toBe("main");
-    expect(call.repoFullName).toBe("acme/app");
-    expect(call.repoId).toBe("repo-1");
-    expect(call.installationId).toBe(123);
-    expect(call.sessionId).toBe(session.id);
+    expect(call.repositoryId).toBe("repo-1");
+    expect(call.runId).toBe("run-1");
     expect(call.workspaceId).toBe(session.workspace_id);
-    expect(typeof call.branch).toBe("string");
-    expect((call.branch as string).startsWith("wallie/")).toBe(true);
-    expect(call.branch).toBe(`wallie/product-${session.id}-job-job-1-attempt-1`);
+
     expect(call.title).toBe(`${productStage.name}: ${session.title}`);
     expect(call.body).toContain("Drafted spec body");
   });
@@ -1953,10 +1966,9 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     await processPipelineJob({ admin, job });
 
-    const call = mocked.openSessionPullRequest.mock.calls[0]![0] as Record<string, unknown>;
+    const call = mocked.prepareSourceDelivery.mock.calls[0]![0] as Record<string, unknown>;
     expect(call.baseBranch).toBe("trunk");
-    expect(call.repoFullName).toBe("acme/zzz");
-    expect(call.repoId).toBe("repo-z");
+    expect(call.repositoryId).toBe("repo-z");
   });
 
   it("does not fall back to another repository when the selected saved repository is archived", async () => {
@@ -1993,28 +2005,54 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job });
 
     expect(result.result).toBe("error");
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
   });
 
-  it("does not abort the stage when opening the pull request fails", async () => {
-    mocked.openSessionPullRequest.mockResolvedValueOnce({
-      kind: "pr_failed",
-      reason: "boom",
+  it("preserves source delivery and successful publication when usage accounting fails", async () => {
+    const { admin, insertedArtifacts, runRows } = buildAdminMock({
+      session: baseSession(),
+      usageUpdateError: { message: "usage unavailable" },
     });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Durable output",
+          usage: { inputTokens: 10, outputTokens: 20 },
+        },
+      ]),
+    );
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
     expect(insertedArtifacts).toHaveLength(1);
-    expect(updatedSessions).toEqual([
-      { phase_status: "in_progress" },
-      { current_artifact_version: 1, phase_status: "awaiting_review" },
-    ]);
-    expect(result.result).toBe("success");
-    consoleError.mockRestore();
+    expect(runRows[0].status).toBe("success");
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+  });
+
+  it("still attempts durable capture when the recovery-marker write is unavailable", async () => {
+    const { admin, insertedArtifacts } = buildAdminMock({
+      session: baseSession(),
+      retentionUpdateError: { message: "database unavailable" },
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(mocked.captureSourceCheckpoint).toHaveBeenCalledOnce();
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
+    expect(insertedArtifacts).toHaveLength(1);
+  });
+
+  it("does not publish or stop the only source copy when preservation fails", async () => {
+    mocked.prepareSourceDelivery.mockRejectedValueOnce(new Error("both stores unavailable"));
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({ session: baseSession() });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(insertedArtifacts).toEqual([]);
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_retry: false }),
+    );
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
   });
 
   it("does not persist the stage completion message when artifact persistence fails", async () => {
@@ -2053,7 +2091,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
-  it("preserves publication when completion logging fails after stage advancement", async () => {
+  it("preserves publication and source durability when completion logging fails", async () => {
     const session = baseSession({ current_artifact_version: 2 });
     const {
       admin,
@@ -2068,12 +2106,6 @@ describe("processPipelineJob (generic stage runner)", () => {
       messageInsertError: { message: "completion insert failed" },
       messageInsertErrorOnMessage: "Product run completed",
     });
-    mocked.openSessionPullRequest.mockImplementationOnce(async () => {
-      session.current_stage_id = "stage-build";
-      session.current_artifact_version = 0;
-      session.phase_status = "in_progress";
-      return { kind: "success", prNumber: 42 };
-    });
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
     expect(result.result).toBe("success");
     expect(insertedArtifacts[0]).toMatchObject({ version: 3 });
@@ -2084,11 +2116,6 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "in_progress" },
       { current_artifact_version: 3, phase_status: "awaiting_review" },
     ]);
-    expect(session).toMatchObject({
-      current_stage_id: "stage-build",
-      current_artifact_version: 0,
-      phase_status: "in_progress",
-    });
     expect(rpc).toHaveBeenCalledWith(
       "fail_session_job_attempt",
       expect.objectContaining({ p_job_id: "job-1", p_attempt_count: 3, p_run_id: "run-1" }),
@@ -2131,7 +2158,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       }),
     ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
@@ -2247,7 +2274,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           "**Error:** vercel sandbox unavailable: https://[redacted]@example.com/run?token=[redacted]",
       }),
     ]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
       { phase_status: "rejected" },
@@ -2440,7 +2467,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         message_md: "**Error:** sandbox id write failed",
       }),
     ]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     expect(updatedRuns.find((patch) => "sandbox_id" in patch)).toEqual({
       sandbox_connection_revision: "revision-1",
       sandbox_id: "sandbox-1",
@@ -2507,7 +2534,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         message_md: "**Error:** rate limited",
       }),
     ]);
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
       { phase_status: "rejected" },

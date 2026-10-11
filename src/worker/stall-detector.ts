@@ -18,6 +18,7 @@ type RecoveryRun = Pick<
   | "created_at"
   | "id"
   | "last_activity_at"
+  | "source_recovery_required"
   | "sandbox_id"
   | "sandbox_connection_revision"
   | "sandbox_provider"
@@ -144,7 +145,7 @@ export async function sweepStalledRuns(
     for (const run of resolvedRuns) {
       result.stalledRunIds.push(run.id);
       await insertRunErrorMessage(admin, run, reason);
-      if (run.sandbox_id) {
+      if (run.sandbox_id && !run.source_recovery_required) {
         if (await stopRunSandbox(admin, run, sandboxConnectionCache)) {
           result.stoppedSandboxIds.push(run.sandbox_id);
         }
@@ -188,7 +189,7 @@ async function loadRuns(admin: AdminClient, jobIds: string[]): Promise<RecoveryR
       const { data, error } = await admin
         .from("agent_runs")
         .select(
-          "id, workspace_id, agent_job_id, attempt_count, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
+          "id, source_recovery_required, workspace_id, agent_job_id, attempt_count, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
         )
         .in("agent_job_id", jobIds.slice(batch, batch + PAGE_SIZE))
         .order("id", { ascending: true })

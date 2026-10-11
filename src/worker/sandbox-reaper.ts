@@ -11,7 +11,7 @@ import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 type AdminClient = SupabaseClient<Database>;
 type AgentRunSandboxRow = Pick<
   Tables<"agent_runs">,
-  "agent_job_id" | "attempt_count" | "sandbox_id" | "status"
+  "agent_job_id" | "attempt_count" | "sandbox_id" | "status" | "source_recovery_required"
 >;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
@@ -122,7 +122,7 @@ async function loadKnownConnectionSandboxState(input: {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
-      .select("sandbox_id, status, agent_job_id, attempt_count")
+      .select("sandbox_id, status, agent_job_id, attempt_count, source_recovery_required")
       .eq("workspace_id", input.workspaceId)
       .eq("sandbox_provider", input.connection.provider)
       .eq("sandbox_connection_revision", input.connection.revision)
@@ -157,7 +157,7 @@ async function loadKnownConnectionSandboxState(input: {
   for (const row of runRows) {
     if (!row.sandbox_id) continue;
     known.add(row.sandbox_id);
-    if (isActiveRunStatus(row.status)) {
+    if (isActiveRunStatus(row.status) || row.source_recovery_required) {
       active.add(row.sandbox_id);
     }
   }
