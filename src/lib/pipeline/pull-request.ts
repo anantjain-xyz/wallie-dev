@@ -31,6 +31,7 @@ interface OpenSessionPullRequestInput {
   /** github_repositories.id (DB UUID, not GitHub's numeric repo id). */
   repoId: string;
   sandbox: SandboxHandle;
+  signal?: AbortSignal;
   sessionId: string;
   title: string;
   workspaceId: string;
@@ -80,24 +81,33 @@ export type OpenSessionPullRequestOutcome =
 export async function openSessionPullRequest(
   input: OpenSessionPullRequestInput,
 ): Promise<OpenSessionPullRequestOutcome> {
+  input.signal?.throwIfAborted();
   const [owner, repo] = input.repoFullName.split("/");
   if (!owner || !repo) {
     return { kind: "pr_failed", reason: `Invalid repo full_name: ${input.repoFullName}` };
   }
 
   const app = await (input.githubAppFactory ?? defaultAppFactory)();
+  input.signal?.throwIfAborted();
   const octokit = await app.getInstallationOctokit(input.installationId);
+  input.signal?.throwIfAborted();
 
   let pr: GitHubPullRequestResponse;
   try {
     // Does this run's sandbox branch carry commits the base doesn't? "no"
     // avoids pushing junk for analysis-only stages (plan/review/land);
     // "unknown" falls through and lets GitHub adjudicate.
-    const ahead = await commitsAheadOfBase(input.sandbox, input.baseBranch);
+    const ahead = await commitsAheadOfBase(input.sandbox, input.baseBranch, input.signal);
 
     // The most recent PR for this branch, if any. Only an *open* one is
     // reusable: a closed/merged PR can't carry this run's commits for review.
-    const existing = await findPullRequestForHead({ head: input.branch, octokit, owner, repo });
+    const existing = await findPullRequestForHead({
+      head: input.branch,
+      octokit,
+      owner,
+      repo,
+      signal: input.signal,
+    });
     const reusable = existing && existing.state === "open" && !existing.merged_at;
 
     if (reusable) {
@@ -105,7 +115,7 @@ export async function openSessionPullRequest(
       // sandbox branch). Never push a not-ahead branch — that would force-reset
       // the remote (and the PR) back to base.
       if (ahead !== "no") {
-        const pushError = await pushSandboxBranch(input.sandbox, input.branch);
+        const pushError = await pushSandboxBranch(input.sandbox, input.branch, input.signal);
         if (pushError) {
           return { kind: "push_failed", reason: pushError };
         }
@@ -122,7 +132,7 @@ export async function openSessionPullRequest(
       // New work, but no open PR to land it in (none yet, or the prior one was
       // closed/merged). Push and open a fresh, reviewable PR. Let GitHub — which
       // sees the full history — be the final arbiter of "no commits".
-      const pushError = await pushSandboxBranch(input.sandbox, input.branch);
+      const pushError = await pushSandboxBranch(input.sandbox, input.branch, input.signal);
       if (pushError) {
         return { kind: "push_failed", reason: pushError };
       }
@@ -132,10 +142,11 @@ export async function openSessionPullRequest(
         head: input.branch,
         sandbox: input.sandbox,
         title: input.title,
+        signal: input.signal,
       });
       if (createError && /no commits between/i.test(createError)) {
         // Drop the branch we just pushed so we don't leave it behind.
-        await deleteRemoteBranch(input.sandbox, input.branch);
+        await deleteRemoteBranch(input.sandbox, input.branch, input.signal);
         return { kind: "no_commits" };
       }
 
@@ -146,6 +157,7 @@ export async function openSessionPullRequest(
         octokit,
         owner,
         repo,
+        signal: input.signal,
       });
       if (!created || created.state !== "open" || created.merged_at) {
         throw new Error(
@@ -156,13 +168,15 @@ export async function openSessionPullRequest(
       pr = created;
     }
   } catch (error) {
+    input.signal?.throwIfAborted();
     return {
       kind: "pr_failed",
       reason: error instanceof Error ? error.message : String(error),
     };
   }
 
-  const { data, error } = await input.admin.rpc("record_session_pull_request", {
+  input.signal?.throwIfAborted();
+  const persistence = input.admin.rpc("record_session_pull_request", {
     target_branch_name: input.branch,
     target_repository_id: input.repoId,
     source_is_draft: pr.draft,
@@ -174,6 +188,10 @@ export async function openSessionPullRequest(
     target_workspace_id: input.workspaceId,
   });
 
+  const { data, error } = await (input.signal
+    ? persistence.abortSignal(input.signal)
+    : persistence);
+  input.signal?.throwIfAborted();
   if (error) return { kind: "pr_failed", reason: error.message };
   if (
     !data?.pull_request_number ||
@@ -211,7 +229,9 @@ type CommitsAhead = "yes" | "no" | "unknown";
 async function commitsAheadOfBase(
   sandbox: SandboxHandle,
   baseBranch: string,
+  signal?: AbortSignal,
 ): Promise<CommitsAhead> {
+  signal?.throwIfAborted();
   const script = [
     `git fetch --no-tags origin ${shellQuote(baseBranch)} >/dev/null 2>&1 || true`,
     `if git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then`,
@@ -222,12 +242,13 @@ async function commitsAheadOfBase(
     `fi`,
   ].join("\n");
 
-  const proc = await sandbox.exec("bash", ["-lc", script]);
+  const proc = await sandbox.exec("bash", ["-lc", script], { signal });
   let stdout = "";
   for await (const log of proc.logs()) {
     if (log.stream === "stdout") stdout += log.data;
   }
   await proc.exitCode;
+  signal?.throwIfAborted();
 
   const verdict = stdout.trim().split("\n").pop()?.trim();
   if (verdict === "NONE") return "no";
@@ -235,32 +256,48 @@ async function commitsAheadOfBase(
   return "unknown";
 }
 
-async function pushSandboxBranch(sandbox: SandboxHandle, branch: string): Promise<string | null> {
+async function pushSandboxBranch(
+  sandbox: SandboxHandle,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  signal?.throwIfAborted();
   // Plain --force, not --force-with-lease: the sandbox is a fresh clone of the
   // base branch with no remote-tracking ref for `wallie/<stage>-<session>`, so
   // a lease without an explicit expected SHA fails as "stale info" on every
   // retry and blocks the PR refresh. The processor claims the session pointer
   // before this push, so a losing generation never reaches here.
-  const proc = await sandbox.exec("bash", ["-lc", `git push --force origin ${shellQuote(branch)}`]);
+  const proc = await sandbox.exec(
+    "bash",
+    ["-lc", `git push --force origin ${shellQuote(branch)}`],
+    { signal },
+  );
   const stderr: string[] = [];
   for await (const log of proc.logs()) {
     if (log.stream === "stderr") stderr.push(log.data);
   }
   const code = await proc.exitCode;
+  signal?.throwIfAborted();
   if (code === 0) return null;
   return stderr.join("").slice(0, 500) || `git push exited ${code}`;
 }
 
-async function deleteRemoteBranch(sandbox: SandboxHandle, branch: string): Promise<void> {
+async function deleteRemoteBranch(
+  sandbox: SandboxHandle,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   // Best-effort cleanup of a branch we pushed that turned out to have nothing to
   // propose. Uses the sandbox's git credentials and handles the slashes in the
   // ref path natively (vs. octokit, which percent-encodes them). A stray branch
   // is harmless, so failures are swallowed.
   try {
-    const proc = await sandbox.exec("bash", [
-      "-lc",
-      `git push origin --delete ${shellQuote(branch)}`,
-    ]);
+    const proc = await sandbox.exec(
+      "bash",
+      ["-lc", `git push origin --delete ${shellQuote(branch)}`],
+      { signal },
+    );
     await proc.exitCode;
   } catch {
     // ignore
@@ -287,7 +324,9 @@ async function findPullRequestForHead(input: {
   octokit: InstallationOctokit;
   owner: string;
   repo: string;
+  signal?: AbortSignal;
 }): Promise<GitHubPullRequestResponse | null> {
+  input.signal?.throwIfAborted();
   const { data } = await input.octokit.request<GitHubPullRequestResponse[]>(
     "GET /repos/{owner}/{repo}/pulls",
     {
@@ -295,8 +334,10 @@ async function findPullRequestForHead(input: {
       owner: input.owner,
       repo: input.repo,
       state: "all",
+      ...(input.signal ? { request: { signal: input.signal } } : {}),
     },
   );
+  input.signal?.throwIfAborted();
   if (data.length === 0) return null;
 
   const open = data.find((pr) => pr.state === "open" && !pr.merged_at);
@@ -312,20 +353,27 @@ async function createPullRequestWithGh(input: {
   head: string;
   sandbox: SandboxHandle;
   title: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
-  const proc = await input.sandbox.exec("gh", [
-    "pr",
-    "create",
-    "--base",
-    input.base,
-    "--head",
-    input.head,
-    "--title",
-    input.title,
-    "--body",
-    input.body,
-  ]);
+  input.signal?.throwIfAborted();
+  const proc = await input.sandbox.exec(
+    "gh",
+    [
+      "pr",
+      "create",
+      "--base",
+      input.base,
+      "--head",
+      input.head,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ],
+    { signal: input.signal },
+  );
   const [output, code] = await Promise.all([proc.output(), proc.exitCode]);
+  input.signal?.throwIfAborted();
   return code === 0 ? null : output.stderr.trim().slice(0, 500) || `gh pr create exited ${code}`;
 }
 

@@ -10,6 +10,7 @@ export async function prepareRunnerDirectory(
   sandbox: SandboxHandle,
   signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const directory = `/tmp/wallie-${provider}-${randomUUID()}`;
   const process = await sandbox.exec("mkdir", ["-m", "700", directory], {
     cwd: "/tmp",
@@ -18,6 +19,7 @@ export async function prepareRunnerDirectory(
   if ((await process.exitCode) !== 0) {
     throw new Error("Could not create a private agent directory.");
   }
+  signal?.throwIfAborted();
   return directory;
 }
 
@@ -48,10 +50,14 @@ export class AgentOutputSafety {
     );
   }
 
-  async *events(source: AsyncIterable<AgentEvent>): AsyncIterable<AgentEvent> {
+  async *events(
+    source: AsyncIterable<AgentEvent>,
+    signal?: AbortSignal,
+  ): AsyncIterable<AgentEvent> {
     let pending: AgentEvent[] = [];
     try {
       for await (const event of source) {
+        signal?.throwIfAborted();
         pending.push(this.sanitizeNonTextEvent(event));
         // NDJSON parsers assemble transport chunks. This boundary also protects
         // credentials split between semantic text deltas, including when tool
@@ -65,6 +71,7 @@ export class AgentOutputSafety {
         );
         for (const safe of pending.splice(0, retainFrom)) yield safe;
       }
+      signal?.throwIfAborted();
       yield* pending;
     } catch (error) {
       // SDK/setup failures can embed command environment or credential JSON.

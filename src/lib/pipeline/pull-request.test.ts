@@ -8,10 +8,10 @@ function buildAdminMock(opts: { recordError?: { message: string }; retainedState
   const writes: Array<{ row: Record<string, unknown> }> = [];
   return {
     admin: {
-      rpc: async (name: string, row: Record<string, unknown>) => {
+      rpc: (name: string, row: Record<string, unknown>) => {
         expect(name).toBe("record_session_pull_request");
         writes.push({ row });
-        return {
+        const result = {
           error: opts.recordError ?? null,
           data: {
             is_draft: row.source_is_draft,
@@ -20,6 +20,9 @@ function buildAdminMock(opts: { recordError?: { message: string }; retainedState
             pull_request_url: row.source_pull_request_url,
           },
         };
+        return Object.assign(Promise.resolve(result), {
+          abortSignal: vi.fn().mockResolvedValue(result),
+        });
       },
     },
     writes,
@@ -98,6 +101,112 @@ const baseInput = {
 } as const;
 
 describe("openSessionPullRequest", () => {
+  it.each(["lookup", "push", "create"])(
+    "stops delivery after cancellation during %s",
+    async (phase) => {
+      const controller = new AbortController();
+      const sandbox = new FakeSandbox();
+      scriptCommitsAhead(sandbox, "AHEAD");
+      sandbox.scriptExec(
+        (call) => call.args.join(" ").includes("push --force"),
+        (call) => {
+          expect(call.opts.signal).toBe(controller.signal);
+          if (phase === "push") controller.abort(new Error("deadline"));
+          return [];
+        },
+      );
+      sandbox.scriptExec("gh", (call) => {
+        expect(call.opts.signal).toBe(controller.signal);
+        if (phase === "create") controller.abort(new Error("deadline"));
+        return [];
+      });
+      const request = vi.fn(async (_route, params) => {
+        expect(params.request.signal).toBe(controller.signal);
+        if (phase === "lookup") controller.abort(new Error("deadline"));
+        return { data: [] };
+      });
+      const { admin, writes } = buildAdminMock();
+      await expect(
+        openSessionPullRequest({
+          ...baseInput,
+          admin: admin as never,
+          sandbox,
+          githubAppFactory: makeAppFactory({ request }),
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow("deadline");
+      expect(writes).toEqual([]);
+      expect(request).toHaveBeenCalledTimes(1);
+      if (phase === "lookup") expect(sandbox.calls).toHaveLength(1);
+      if (phase === "push") expect(sandbox.calls.some((call) => call.cmd === "gh")).toBe(false);
+    },
+  );
+
+  it("passes cancellation into persistence and every remote command", async () => {
+    const signal = new AbortController().signal;
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const persistence = {
+      abortSignal: vi.fn().mockResolvedValue({
+        error: null,
+        data: {
+          is_draft: false,
+          pull_request_number: 42,
+          pull_request_state: "open",
+          pull_request_url: openPr.html_url,
+        },
+      }),
+    };
+    const admin = { rpc: () => persistence };
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    expect(
+      (
+        await openSessionPullRequest({
+          ...baseInput,
+          admin: admin as never,
+          sandbox,
+          signal,
+          githubAppFactory: makeAppFactory(octokit),
+        })
+      ).kind,
+    ).toBe("success");
+    expect(persistence.abortSignal).toHaveBeenCalledWith(signal);
+    expect(sandbox.calls.every((call) => call.opts.signal === signal)).toBe(true);
+  });
+
+  it("does not report success if the RPC completes after cancellation", async () => {
+    const controller = new AbortController();
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    const admin = {
+      rpc: () => ({
+        abortSignal: async () => {
+          controller.abort(new Error("deadline during persistence"));
+          return {
+            error: null,
+            data: {
+              is_draft: false,
+              pull_request_number: 42,
+              pull_request_state: "open",
+              pull_request_url: openPr.html_url,
+            },
+          };
+        },
+      }),
+    };
+    await expect(
+      openSessionPullRequest({
+        ...baseInput,
+        admin: admin as never,
+        sandbox,
+        signal: controller.signal,
+        githubAppFactory: makeAppFactory(octokit),
+      }),
+    ).rejects.toThrow("deadline during persistence");
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });

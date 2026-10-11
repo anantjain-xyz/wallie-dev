@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   AGENT_PROVIDERS,
+  parseAgentConfigValue,
   isAgentEffort,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
@@ -41,11 +42,12 @@ export async function loadWorkspaceAgentConfig(
   admin: AdminClient,
   workspaceId: string,
 ): Promise<ResolvedWorkspaceAgentConfig> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from("workspace_agent_config")
     .select("key, value_json")
     .eq("workspace_id", workspaceId)
     .in("key", ["max_turns", "agent_provider", "agent_model", "agent_effort"]);
+  if (error) throw new Error("Failed to load workspace agent configuration.", { cause: error });
 
   const lookup: Record<string, unknown> = {};
   for (const row of data ?? []) {
@@ -63,10 +65,17 @@ export async function loadWorkspaceAgentConfig(
       `Unknown agent provider: "${rawProvider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
     );
   }
+  const maxTurns = lookup.max_turns;
+  if (
+    maxTurns !== undefined &&
+    (typeof maxTurns !== "number" || !parseAgentConfigValue("max_turns", maxTurns).ok)
+  ) {
+    throw new Error("Workspace max_turns must be a positive integer between 1 and 100.");
+  }
 
   return {
     effort: rawEffort ?? RECOMMENDED_AGENT_EFFORT,
-    maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
+    maxTurns,
     model: rawModel ?? getRecommendedAgentModel(provider),
     provider,
   };

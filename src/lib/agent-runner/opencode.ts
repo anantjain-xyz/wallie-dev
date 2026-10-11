@@ -61,7 +61,7 @@ export class OpenCodeRunner implements AgentRunner {
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const safety = new AgentOutputSafety(input.secrets);
-    return safety.events(this.startUnsafe(input, safety));
+    return safety.events(this.startUnsafe(input, safety), input.signal);
   }
 
   private async *startUnsafe(
@@ -80,7 +80,9 @@ export class OpenCodeRunner implements AgentRunner {
 
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
 
+    input.signal?.throwIfAborted();
     const auth = this.options.loadAuth ? await this.options.loadAuth() : this.options;
+    input.signal?.throwIfAborted();
     if (!secretForProvider(auth, this.modelProviderId)) {
       throw missingProviderCredentialError(this.modelProviderId);
     }
@@ -90,6 +92,7 @@ export class OpenCodeRunner implements AgentRunner {
     }
     const authEntries = buildOpenCodeAuthEntries(auth, this.modelProviderId);
     await sandbox.writeFile(authFile, `${JSON.stringify(authEntries)}\n`, { mode: 0o600 });
+    input.signal?.throwIfAborted();
 
     const cliArgs = ["run", "--format", "json", "--model", this.model];
     if (input.continueSessionId) {

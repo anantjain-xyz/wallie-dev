@@ -38,7 +38,7 @@ describe("ClaudeCodeRunner", () => {
     ).rejects.toThrow(/requires a sandbox/);
   });
 
-  it("streams parsed events and bakes the session id into the completion summary", async () => {
+  it("streams parsed events and emits one successful terminal deliverable", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [
       {
@@ -48,12 +48,16 @@ describe("ClaudeCodeRunner", () => {
         stream: "stdout",
       },
       {
-        data: `{"type":"result","session_id":"sess-42","result":"done"}\n`,
+        data: `{"type":"result","subtype":"success","session_id":"sess-42","result":"done"}\n`,
         stream: "stdout",
       },
     ]);
 
-    const runner = new ClaudeCodeRunner({ credential: anthropicCredential, effort: "max" });
+    const runner = new ClaudeCodeRunner({
+      credential: anthropicCredential,
+      effort: "max",
+      maxTurns: 12,
+    });
     const events = [];
     for await (const ev of runner.start({
       sessionId: "s1",
@@ -66,8 +70,7 @@ describe("ClaudeCodeRunner", () => {
 
     expect(events).toEqual([
       { type: "text", text: "working" },
-      { type: "completion", taskComplete: true, summary: "done" },
-      { type: "completion", taskComplete: true, summary: "Claude Code session: sess-42" },
+      { type: "completion", taskComplete: true, summary: "done", finalOutput: "done" },
     ]);
 
     expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Make it so");
@@ -77,6 +80,7 @@ describe("ClaudeCodeRunner", () => {
     expect(call.args[0]).toBe("-lc");
     expect(call.args[1]).toContain("'--model' 'claude-opus-4-8[1m]'");
     expect(call.args[1]).toContain("'--effort' 'max'");
+    expect(call.args[1]).toContain("'--max-turns' '12'");
     expect(call.args[1]).toContain("'--bare'");
     expect(call.args[1]).toContain("'--add-dir' '/vercel/sandbox'");
     expect(call.args[1]).toContain("'--no-chrome'");
@@ -196,7 +200,7 @@ describe("parseStreamJsonLine", () => {
       parseStreamJsonLine(
         `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
       ),
-    ).toEqual({ type: "text", text: "hi" });
+    ).toEqual([{ type: "text", text: "hi" }]);
   });
 
   it("parses an assistant tool_use block", () => {
@@ -204,24 +208,121 @@ describe("parseStreamJsonLine", () => {
       parseStreamJsonLine(
         `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"bash","input":{"cmd":"ls"}}]}}`,
       ),
-    ).toEqual({ type: "tool_use", tool: "bash", input: `{"cmd":"ls"}` });
+    ).toEqual([{ type: "tool_use", tool: "bash", input: `{"cmd":"ls"}` }]);
   });
 
   it("parses a result event", () => {
-    expect(parseStreamJsonLine(`{"type":"result","result":"summary here"}`)).toEqual({
-      type: "completion",
-      taskComplete: true,
-      summary: "summary here",
-    });
+    expect(
+      parseStreamJsonLine(`{"type":"result","subtype":"success","result":"summary here"}`),
+    ).toEqual([
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "summary here",
+        finalOutput: "summary here",
+      },
+    ]);
   });
 
   it("parses a content_block_delta", () => {
     expect(
       parseStreamJsonLine(`{"type":"content_block_delta","delta":{"text":"partial"}}`),
-    ).toEqual({ type: "text", text: "partial" });
+    ).toEqual([{ type: "text", text: "partial" }]);
   });
 
   it("falls back to raw text for non-JSON", () => {
-    expect(parseStreamJsonLine("plain output")).toEqual({ type: "text", text: "plain output" });
+    expect(parseStreamJsonLine("plain output")).toEqual([{ type: "text", text: "plain output" }]);
+  });
+
+  it("preserves interleaved text and parallel tool blocks in a response", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [
+              { type: "text", text: "Inspecting" },
+              { type: "tool_use", name: "Read", input: { file: "a.ts" } },
+              { type: "tool_use", name: "Read", input: { file: "b.ts" } },
+              { type: "text", text: "All done" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspecting" },
+      { type: "tool_use", tool: "Read", input: '{"file":"a.ts"}' },
+      { type: "tool_use", tool: "Read", input: '{"file":"b.ts"}' },
+      { type: "text", text: "All done" },
+    ]);
+  });
+});
+
+describe("Claude Code terminal outcomes", () => {
+  it.each([
+    { subtype: "error_max_turns", is_error: true, errors: ["Turn budget exhausted"] },
+    { subtype: "error_during_execution", is_error: true },
+    { subtype: "success", is_error: true },
+    { subtype: "unrecognized" },
+  ])("rejects unsuccessful result %j even with partial text and exit zero", async (result) => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: [
+          JSON.stringify({
+            type: "assistant",
+            message: { content: [{ type: "text", text: "Partial work" }] },
+          }),
+          JSON.stringify({ type: "result", result: "Partial output", ...result }),
+        ].join("\n"),
+      },
+    ]);
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "s",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events.some((event) => event.type === "error")).toBe(true);
+    expect(events.some((event) => event.type === "completion")).toBe(false);
+    expect(runnerCalls(sandbox)[0].args[1]).toContain("'--max-turns' '5'");
+  });
+
+  it.each([0, 1])("does not synthesize success without a result (exit %i)", async (exitCode) => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [{ stream: "stdout", data: "Partial text" }], { exitCode });
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "s",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events.some((event) => event.type === "completion")).toBe(false);
+    expect(events.some((event) => event.type === "error")).toBe(true);
+  });
+
+  it("does not emit success when a success result is followed by process failure", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [
+        {
+          stream: "stdout",
+          data: JSON.stringify({ type: "result", subtype: "success", result: "deliverable" }),
+        },
+      ],
+      { exitCode: 2 },
+    );
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "s",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events).toEqual([expect.objectContaining({ type: "error" })]);
   });
 });

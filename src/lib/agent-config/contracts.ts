@@ -6,6 +6,7 @@ export const ALLOWED_AGENT_CONFIG_KEYS = [
   "concurrency_limit",
   "stall_timeout_ms",
   "max_retries",
+  "max_turns",
   "agent_provider",
   "agent_model",
   "agent_effort",
@@ -56,6 +57,7 @@ export const AGENT_CONFIG_LIMITS = {
   concurrency_limit: { min: 1, max: 20 },
   stall_timeout_ms: { min: 30_000, max: 1_800_000 },
   max_retries: { min: 0, max: 10 },
+  max_turns: { min: 1, max: 100 },
 } as const;
 
 const MS_PER_MINUTE = 60_000;
@@ -90,6 +92,7 @@ export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
   agent_effort: RECOMMENDED_AGENT_EFFORT,
   concurrency_limit: 1,
   max_retries: 3,
+  max_turns: 5,
   stall_timeout_ms: 900_000,
 } as const satisfies Record<AgentConfigKey, string | number>;
 
@@ -313,6 +316,11 @@ export const agentConfigValueSchemas = {
   concurrency_limit: concurrencyLimitSchema,
   stall_timeout_ms: stallTimeoutSchema,
   max_retries: maxRetriesSchema,
+  max_turns: intInRange(
+    "Max turns",
+    AGENT_CONFIG_LIMITS.max_turns.min,
+    AGENT_CONFIG_LIMITS.max_turns.max,
+  ),
   agent_provider: agentProviderSchema,
   agent_model: agentModelSchema,
   agent_effort: agentEffortSchema,

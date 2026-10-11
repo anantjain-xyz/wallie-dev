@@ -27,7 +27,7 @@ export class CursorRunner implements AgentRunner {
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const safety = new AgentOutputSafety(input.secrets);
-    return safety.events(this.startUnsafe(input, safety));
+    return safety.events(this.startUnsafe(input, safety), input.signal);
   }
 
   private async *startUnsafe(
@@ -58,11 +58,13 @@ export class CursorRunner implements AgentRunner {
       `"$cursor_bin" ${args.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`,
     ].join("\n");
 
+    input.signal?.throwIfAborted();
     const credential = this.options.loadCredential
       ? await this.options.loadCredential()
       : this.options.credential;
     if (!credential?.secret) throw new Error("CursorRunner requires a Cursor API key.");
     safety.addSecret(credential.secret);
+    input.signal?.throwIfAborted();
 
     const proc = await sandbox.exec("bash", ["-lc", command], {
       cwd: sandbox.repoPath,

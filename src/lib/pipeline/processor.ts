@@ -92,9 +92,11 @@ export type PipelinePhaseActionResult = {
 export async function processPipelineJob(input: {
   admin?: AdminClient;
   job: Tables<"agent_jobs">;
+  deadlineAt?: string;
   signal?: AbortSignal;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
+  throwIfAborted(input.signal);
   // Carry the claim's identity through every await, including failure handling.
   const job = { ...input.job };
   let session: SessionRow | null;
@@ -104,9 +106,11 @@ export async function processPipelineJob(input: {
     session = loaded ? { ...loaded } : null;
     stage = session ? await loadStageById(admin, session.current_stage_id) : null;
   } catch (error) {
+    throwIfAborted(input.signal);
     const result = await failPipelineJob(admin, job, getErrorMessage(error, "Pipeline job failed"));
     return { jobId: job.id, processed: true, result, runId: null };
   }
+  throwIfAborted(input.signal);
   if (!session || !stage) {
     const message = session
       ? `Session ${session.id} references missing stage ${session.current_stage_id}.`
@@ -114,7 +118,14 @@ export async function processPipelineJob(input: {
     const result = await failPipelineJob(admin, job, message);
     return { jobId: job.id, processed: true, result, runId: null };
   }
-  return runStage({ admin, job, session, signal: input.signal, stage });
+  return runStage({
+    admin,
+    job,
+    session,
+    deadlineAt: input.deadlineAt,
+    signal: input.signal,
+    stage,
+  });
 }
 
 class ExecutionOwnershipLostError extends Error {
@@ -134,6 +145,7 @@ class ExecutionOwnershipLostError extends Error {
 async function runStage(input: {
   admin: AdminClient;
   job: Tables<"agent_jobs">;
+  deadlineAt?: string;
   signal?: AbortSignal;
   session: SessionRow;
   stage: PipelineStage;
@@ -142,6 +154,28 @@ async function runStage(input: {
 
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
+  let sandboxStop: Promise<void> | undefined;
+  const stopSandbox = () => {
+    if (!sandbox) return;
+    const handle = sandbox;
+    sandboxStop ??= (async () => {
+      try {
+        await handle.stop();
+      } catch (stopError) {
+        console.error("Failed to stop stage sandbox", {
+          error: stopError instanceof Error ? stopError.message : String(stopError),
+          sessionId: session.id,
+        });
+      }
+    })();
+    return sandboxStop;
+  };
+  // A hung log iterator may never reach finally. Cancellation initiates stop
+  // immediately; the supervisor releases capacity even if stop itself hangs.
+  const onAbort = () => {
+    void stopSandbox();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   let github: {
     installationId: number;
     repo: { default_branch: string | null; full_name: string; id: string };
@@ -153,6 +187,7 @@ async function runStage(input: {
   let installationToken: string | undefined;
   const collectedText: string[] = [];
   let finalOutput: string | undefined;
+  let taskComplete = false;
   let runFailureMessageRecorded = false;
   try {
     const [
@@ -177,6 +212,7 @@ async function runStage(input: {
         workspaceId: session.workspace_id,
       }),
     ]);
+    throwIfAborted(signal);
     const provider = normalizeAgentProviderName(config.provider);
     if (!provider) {
       throw new Error(
@@ -196,6 +232,7 @@ async function runStage(input: {
     });
     if (startError) throw startError;
     runId = startedRunId;
+    throwIfAborted(signal);
     if (!runId) {
       // No authority was acquired. Never guess an active run: another start
       // carrying the same claim may have won, or a newer attempt may exist.
@@ -214,6 +251,7 @@ async function runStage(input: {
       });
     }
     github = await loadGitHubContext(admin, session.workspace_id, repository.repository);
+    throwIfAborted(signal);
     if (!github) {
       throw new Error(
         "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
@@ -241,6 +279,7 @@ async function runStage(input: {
     throwIfAborted(signal);
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
+    throwIfAborted(signal);
     sandbox = await createWorkspaceSessionSandbox(admin, {
       agentProvider: provider,
       baseBranch: github.repo.default_branch ?? "main",
@@ -248,12 +287,16 @@ async function runStage(input: {
       implementation: sandboxSelection?.provider ?? "fake",
       connection: sandboxSelection?.connection,
       installationToken,
+      timeoutMs: input.deadlineAt
+        ? Math.max(1, Math.min(1_800_000, Date.parse(input.deadlineAt) - Date.now()))
+        : 1_800_000,
       ownerId: runId ?? undefined,
       repoFullName: github.repo.full_name,
       signal,
       sessionId: session.id,
       workspaceId: session.workspace_id,
       onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
+        throwIfAborted(signal);
         if (!runId) return;
         if (sandboxProvider === "fake") {
           const attached = await updateRunSandbox(admin, runId, job.attempt_count, sandboxId, {
@@ -283,6 +326,7 @@ async function runStage(input: {
         }
       },
     });
+    throwIfAborted(signal);
 
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
@@ -291,6 +335,7 @@ async function runStage(input: {
       sandbox,
       sessionAttachments,
     );
+    throwIfAborted(signal);
     const prompt = renderStagePrompt(
       {
         promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
@@ -302,6 +347,15 @@ async function runStage(input: {
             ? null
             : untrustedPromptValue("attempt.feedback", attemptFeedback),
         attemptNumber: session.rejection_count + 1,
+        repoName: untrustedPromptValue(
+          "repo.name",
+          github.repo.full_name.split("/").at(-1) ?? github.repo.full_name,
+        ),
+        repoFullName: untrustedPromptValue("repo.fullName", github.repo.full_name),
+        repoDefaultBranch: untrustedPromptValue(
+          "repo.defaultBranch",
+          github.repo.default_branch ?? "main",
+        ),
         operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
         previousStages: Object.fromEntries(
           Object.entries(previousStages).map(([slug, artifact]) => [
@@ -336,11 +390,13 @@ async function runStage(input: {
     }
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
+    throwIfAborted(signal);
     // Runners load credentials after their own nonsecret remote setup, directly
     // before delivering the secret. Construction never decrypts personal keys.
     const runner = createSessionAgentRunner({
       admin,
       effort: config.effort,
+      maxTurns: config.maxTurns,
       model: config.model,
       provider,
       session,
@@ -366,6 +422,8 @@ async function runStage(input: {
       if (event.type === "text") {
         collectedText.push(event.text);
       } else if (event.type === "completion") {
+        if (!event.taskComplete) throw new Error("Agent stopped before completing the task.");
+        taskComplete = true;
         if (event.usage) usage = event.usage;
         if (event.taskComplete && event.finalOutput?.trim()) {
           finalOutput = event.finalOutput.trim();
@@ -374,6 +432,9 @@ async function runStage(input: {
         throw new Error(event.message);
       }
     }
+
+    throwIfAborted(signal);
+    if (!taskComplete) throw new Error("Agent ended without a successful completion event.");
 
     const artifactMarkdown = finalOutput ?? collectedText.join("\n").trim();
     if (!artifactMarkdown) {
@@ -399,6 +460,8 @@ async function runStage(input: {
       runId,
       sandbox,
       session,
+      deadlineAt: input.deadlineAt,
+      signal,
       stage,
       usage,
     });
@@ -406,6 +469,9 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
   } catch (error) {
+    // The supervising worker owns timeout recovery. A late provider result must
+    // not enqueue retries or append output after its captured attempt expires.
+    if (signal?.aborted) return { jobId: job.id, processed: true, result: "idle", runId };
     // Sandbox providers sanitize acquisition errors while preserving their name.
     if (error instanceof Error && error.name === "ExecutionOwnershipLostError") {
       return { jobId: job.id, processed: true, result: "idle", runId };
@@ -425,16 +491,11 @@ async function runStage(input: {
     }
     return { jobId: job.id, processed: true, result, runId };
   } finally {
-    try {
-      await sandbox?.stop();
-    } catch (stopError) {
-      console.error("Failed to stop stage sandbox", {
-        error: stopError instanceof Error ? stopError.message : String(stopError),
-        sessionId: session.id,
-      });
-    }
+    signal?.removeEventListener("abort", onAbort);
+    await stopSandbox();
   }
 
+  throwIfAborted(signal);
   const { data: completed, error: completeError } = await admin.rpc(
     "complete_session_job_attempt",
     {
@@ -460,20 +521,28 @@ async function publishArtifact(input: {
   runId: string;
   sandbox: SandboxHandle | null;
   session: SessionRow;
+  deadlineAt?: string;
+  signal?: AbortSignal;
   stage: PipelineStage;
   usage: { inputTokens: number; outputTokens: number } | undefined;
 }): Promise<"idle" | "published"> {
   const { admin, artifactMarkdown, branch, github, job, runId, sandbox, session, stage } = input;
 
-  const { data: published, error: publishError } = await admin.rpc("publish_session_job_attempt", {
+  throwIfAborted(input.signal);
+  const publication = admin.rpc("publish_session_job_attempt", {
     p_job_id: job.id,
     p_attempt_count: job.attempt_count,
     p_run_id: runId,
     p_expected_artifact_version: session.current_artifact_version,
     p_artifact_json: artifactMarkdown,
+    ...(input.deadlineAt ? { p_deadline_at: input.deadlineAt } : {}),
   });
+  const { data: published, error: publishError } = await (input.signal
+    ? publication.abortSignal(input.signal)
+    : publication);
   if (publishError) throw publishError;
   if (published !== true) return "idle";
+  throwIfAborted(input.signal);
 
   if (input.usage) {
     const { error } = await admin
@@ -489,6 +558,7 @@ async function publishArtifact(input: {
   }
 
   if (sandbox && github && branch) {
+    throwIfAborted(input.signal);
     const prOutcome = await openSessionPullRequest({
       admin,
       baseBranch: github.repo.default_branch ?? "main",
@@ -498,6 +568,7 @@ async function publishArtifact(input: {
       repoFullName: github.repo.full_name,
       repoId: github.repo.id,
       sandbox,
+      signal: input.signal,
       sessionId: session.id,
       title: `${stage.name}: ${session.title}`,
       workspaceId: session.workspace_id,
@@ -524,6 +595,7 @@ async function publishArtifact(input: {
 
   // Publication already made this run successful. Append its final history
   // without requiring active execution or refreshing its activity timestamp.
+  throwIfAborted(input.signal);
   await persistRunMessage(admin, runId, session.workspace_id, {
     kind: "completion",
     messageMd: `${stage.name} run completed`,
@@ -725,6 +797,7 @@ async function loadLatestFeedback(
 function createSessionAgentRunner(input: {
   admin: AdminClient;
   effort: AgentEffort;
+  maxTurns?: number;
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
@@ -744,6 +817,7 @@ function createSessionAgentRunner(input: {
         claudeCode: {
           loadCredential: () => getClaudeCodeCredentialForSession(input.admin, input.session),
           effort: input.effort,
+          maxTurns: input.maxTurns,
           model: input.model,
         },
       });
