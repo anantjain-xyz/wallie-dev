@@ -12,6 +12,7 @@ import { getCodexCredentialForUser } from "@/lib/codex/tokens";
 import { getCursorCredentialForUser } from "@/lib/cursor/tokens";
 import { getOpenCodeAuthForUser } from "@/lib/opencode/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
+import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
 import type { AgentProvider, SandboxConnection } from "@/lib/sandbox/types";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import type { Database, Json } from "@/lib/supabase/database.types";
@@ -187,10 +188,10 @@ async function updateCheckSandbox(input: {
   connection: SandboxConnection;
   sandboxId: string;
 }): Promise<void> {
-  if (!input.checkId) return;
+  if (!input.checkId) throw new Error("Sandbox capability check reservation is required.");
 
   const vercel = input.connection.provider === "vercel" ? input.connection.credentials : null;
-  const { error } = await input.admin
+  const { data, error } = await input.admin
     .from("sandbox_capability_checks")
     .update({
       agent_model: input.agentModel,
@@ -201,9 +202,13 @@ async function updateCheckSandbox(input: {
       sandbox_vercel_project_id: vercel?.projectId ?? null,
       sandbox_vercel_team_id: vercel?.teamId ?? null,
     })
-    .eq("id", input.checkId);
+    .eq("id", input.checkId)
+    .eq("status", "running")
+    .select("id")
+    .single();
 
   if (error) throw error;
+  if (!data) throw new Error("Sandbox capability check reservation was lost.");
 }
 
 export async function startSandboxCapabilityCheck(input: {
@@ -251,6 +256,7 @@ export async function completeSandboxCapabilityCheck(input: {
   let sandbox = null as Awaited<ReturnType<typeof createSessionSandbox>> | null;
 
   try {
+    if (!input.checkId) throw new Error("Sandbox capability check reservation is required.");
     const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspaceId);
     const provider = agentConfig.provider as AgentProvider;
     const sandboxSelection = await loadRequiredWorkspaceSandboxConnection(
@@ -268,7 +274,7 @@ export async function completeSandboxCapabilityCheck(input: {
       await getClaudeCodeCredentialForUser(input.admin, input.userId);
     }
 
-    sandbox = await createSessionSandbox({
+    sandbox = await createWorkspaceSessionSandbox(input.admin, {
       agentProvider: provider,
       baseBranch: input.repository.default_branch ?? "main",
       branch: `wallie/capability-check-${randomUUID().slice(0, 8)}`,

@@ -82,6 +82,8 @@ export async function stopRunSandbox(
 
   const connection = await resolveRunSandboxConnection(admin, run, cache);
   if (!connection) {
+    if (options.throwOnError)
+      throw new Error("Workspace sandbox cleanup credentials are unavailable.");
     // A successful lookup found no credentials. Historical references can
     // outlive an intentionally removed connection; there is nothing left for
     // the workspace cascade to preserve. Lookup failures still propagate.
