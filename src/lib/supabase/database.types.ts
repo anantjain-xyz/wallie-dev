@@ -710,6 +710,7 @@ export type Database = {
           last_error: string | null
           setup_branch_name: string | null
           setup_pr_number: number | null
+          setup_pr_observation_token: string | null
           setup_pr_state: string | null
           setup_pr_updated_at: string | null
           setup_pr_url: string | null
@@ -727,6 +728,7 @@ export type Database = {
           last_error?: string | null
           setup_branch_name?: string | null
           setup_pr_number?: number | null
+          setup_pr_observation_token?: string | null
           setup_pr_state?: string | null
           setup_pr_updated_at?: string | null
           setup_pr_url?: string | null
@@ -744,6 +746,7 @@ export type Database = {
           last_error?: string | null
           setup_branch_name?: string | null
           setup_pr_number?: number | null
+          setup_pr_observation_token?: string | null
           setup_pr_state?: string | null
           setup_pr_updated_at?: string | null
           setup_pr_url?: string | null
@@ -1086,6 +1089,7 @@ export type Database = {
         Row: {
           branch_name: string
           created_at: string
+          github_observation_token: string | null
           github_repository_id: string | null
           github_updated_at: string | null
           id: string
@@ -1100,6 +1104,7 @@ export type Database = {
         Insert: {
           branch_name: string
           created_at?: string
+          github_observation_token?: string | null
           github_repository_id?: string | null
           github_updated_at?: string | null
           id?: string
@@ -1114,6 +1119,7 @@ export type Database = {
         Update: {
           branch_name?: string
           created_at?: string
+          github_observation_token?: string | null
           github_repository_id?: string | null
           github_updated_at?: string | null
           id?: string
@@ -2333,6 +2339,18 @@ export type Database = {
         }
         Returns: string
       }
+      begin_github_pull_request_observation: {
+        Args: {
+          source_is_draft: boolean
+          source_pull_request_number: number
+          source_pull_request_state: string
+          source_updated_at: string
+          target_branch_name: string
+          target_repository_id: string
+          target_workspace_id: string
+        }
+        Returns: string
+      }
       begin_sandbox_connection_mutation: {
         Args: { target_provider: string; target_workspace_id: string }
         Returns: string
@@ -2583,6 +2601,20 @@ export type Database = {
           workspace_slug: string
         }[]
       }
+      finish_github_pull_request_observation: {
+        Args: {
+          observation_token: string
+          source_is_draft: boolean
+          source_pull_request_number: number
+          source_pull_request_state: string
+          source_pull_request_url: string
+          source_updated_at: string
+          target_branch_name: string
+          target_repository_id: string
+          target_workspace_id: string
+        }
+        Returns: boolean
+      }
       finish_workspace_deletion: {
         Args: { p_workspace_id: string }
         Returns: boolean
@@ -2767,6 +2799,7 @@ export type Database = {
         Returns: {
           branch_name: string
           created_at: string
+          github_observation_token: string | null
           github_repository_id: string | null
           github_updated_at: string | null
           id: string
