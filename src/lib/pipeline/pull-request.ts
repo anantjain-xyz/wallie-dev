@@ -56,7 +56,7 @@ export type OpenSessionPullRequestOutcome =
  *   2. Push this run's commits to the remote, then reuse the PR only if it is
  *      still open; a closed/merged PR can't carry new work, so open a fresh one
  *      through the sandbox `gh` CLI and its injected installation token.
- *   3. Upsert a `session_pull_requests` row keyed on (workspace, branch).
+ *   3. Record a repository-scoped link without regressing newer provider state.
  *
  * Why GitHub-first: the sandbox is a shallow, single-revision clone, so a
  * *local* `<base>` ref frequently does not exist (only `origin/<base>` does
@@ -162,30 +162,33 @@ export async function openSessionPullRequest(
     };
   }
 
-  const { error } = await input.admin.from("session_pull_requests").upsert(
-    {
-      branch_name: input.branch,
-      github_repository_id: input.repoId,
-      is_draft: pr.draft,
-      pull_request_number: pr.number,
-      pull_request_state: pullRequestState(pr),
-      pull_request_url: pr.html_url,
-      session_id: input.sessionId,
-      workspace_id: input.workspaceId,
-    },
-    { onConflict: "workspace_id,branch_name" },
-  );
+  const { data, error } = await input.admin.rpc("record_session_pull_request", {
+    target_branch_name: input.branch,
+    target_repository_id: input.repoId,
+    source_is_draft: pr.draft,
+    source_pull_request_number: pr.number,
+    source_pull_request_state: pullRequestState(pr),
+    source_pull_request_url: pr.html_url,
+    source_updated_at: pr.updated_at,
+    target_session_id: input.sessionId,
+    target_workspace_id: input.workspaceId,
+  });
 
-  if (error) {
-    return { kind: "pr_failed", reason: error.message };
+  if (error) return { kind: "pr_failed", reason: error.message };
+  if (
+    !data?.pull_request_number ||
+    !data.pull_request_url ||
+    !data.pull_request_state ||
+    data.is_draft === null
+  ) {
+    return { kind: "pr_failed", reason: "GitHub pull request snapshot was not recorded." };
   }
-
   return {
     kind: "success",
-    isDraft: pr.draft,
-    prNumber: pr.number,
-    prState: pullRequestState(pr),
-    prUrl: pr.html_url,
+    isDraft: data.is_draft,
+    prNumber: data.pull_request_number,
+    prState: data.pull_request_state,
+    prUrl: data.pull_request_url,
   };
 }
 
@@ -265,6 +268,7 @@ async function deleteRemoteBranch(sandbox: SandboxHandle, branch: string): Promi
 }
 
 interface GitHubPullRequestResponse {
+  updated_at: string;
   draft: boolean;
   html_url: string;
   merged_at: string | null;

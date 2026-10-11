@@ -4,35 +4,9 @@ import { verify } from "@octokit/webhooks-methods";
 
 import { resolveGitHubWebhookSecret } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { TablesUpdate } from "@/lib/supabase/database.types";
 import { syncGitHubRepositoriesForWorkspace } from "@/features/github/service";
 
-type PullRequestEventPayload = {
-  action: string;
-  installation?: {
-    id: number;
-  };
-  pull_request: {
-    draft: boolean;
-    head: {
-      ref: string;
-    };
-    html_url: string;
-    merged: boolean;
-    number: number;
-    state: "closed" | "open";
-  };
-  repository: {
-    id: number;
-  };
-};
-
-type InstallationEventPayload = {
-  action: string;
-  installation: {
-    id: number;
-  };
-};
+import type { InstallationEventPayload, PullRequestEventPayload } from "./webhook-payloads";
 
 const TRACKED_PR_ACTIONS = new Set([
   "closed",
@@ -152,109 +126,19 @@ export async function handleGitHubPullRequestEvent(
 
   if (repositoryError) throw repositoryError;
 
-  if (repository && branchName.startsWith("wallie/setup-")) {
-    const handled = await updateRepositoryOnboardingFromSetupPr(admin, {
-      branchName,
-      merged: payload.pull_request.merged,
-      pullRequestNumber: payload.pull_request.number,
-      pullRequestState: payload.pull_request.state,
-      pullRequestUrl: payload.pull_request.html_url,
-      repositoryId: repository.id,
-      workspaceId: installation.workspace_id,
-    });
-    if (handled) return;
-  }
+  // A branch is not a repository identity. Unknown repositories must never
+  // claim a link from another repository, even within the same workspace.
+  if (!repository) return;
 
-  // Match by (github_repository_id, pull_request_number) when we know the
-  // repo — that's the durable pair on rows the pipeline already opened.
-  // Fall back to (workspace_id, branch_name) for the brief window between
-  // pipeline-side INSERT and the first webhook delivery (or if the row was
-  // inserted before the repo FK was resolvable).
-  const updates = {
-    github_repository_id: repository?.id ?? null,
-    is_draft: payload.pull_request.draft,
-    pull_request_number: payload.pull_request.number,
-    pull_request_state: payload.pull_request.merged ? "merged" : payload.pull_request.state,
-    pull_request_url: payload.pull_request.html_url,
-  };
-
-  if (repository) {
-    const { data: byPr, error: byPrError } = await admin
-      .from("session_pull_requests")
-      .update(updates)
-      .eq("workspace_id", installation.workspace_id)
-      .eq("github_repository_id", repository.id)
-      .eq("pull_request_number", payload.pull_request.number)
-      .select("id");
-
-    if (byPrError) throw byPrError;
-    if (byPr && byPr.length > 0) return;
-  }
-
-  const { error: byBranchError } = await admin
-    .from("session_pull_requests")
-    .update(updates)
-    .eq("workspace_id", installation.workspace_id)
-    .eq("branch_name", branchName);
-
-  if (byBranchError) throw byBranchError;
-}
-
-async function updateRepositoryOnboardingFromSetupPr(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  input: {
-    branchName: string;
-    merged: boolean;
-    pullRequestNumber: number;
-    pullRequestState: "closed" | "open";
-    pullRequestUrl: string;
-    repositoryId: string;
-    workspaceId: string;
-  },
-): Promise<boolean> {
-  const { data: row, error: rowError } = await admin
-    .from("repository_onboarding_status")
-    .select("id, status, conflict_report")
-    .eq("workspace_id", input.workspaceId)
-    .eq("github_repository_id", input.repositoryId)
-    .eq("setup_branch_name", input.branchName)
-    .maybeSingle();
-
-  if (rowError) throw rowError;
-  if (!row) return false;
-
-  const onboardingRow = row as {
-    conflict_report: unknown;
-    id: string;
-    status: "not_set_up" | "pr_open" | "ready" | "conflict" | "error";
-  };
-  const hasUnresolvedConflicts =
-    onboardingRow.status === "conflict" ||
-    (Array.isArray(onboardingRow.conflict_report) && onboardingRow.conflict_report.length > 0);
-  const status =
-    !input.merged && input.pullRequestState === "closed"
-      ? "error"
-      : hasUnresolvedConflicts
-        ? "conflict"
-        : input.merged
-          ? "ready"
-          : "pr_open";
-  const patch: TablesUpdate<"repository_onboarding_status"> = {
-    last_error: status === "error" ? "Setup PR was closed without merging." : null,
-    setup_pr_number: input.pullRequestNumber,
-    setup_pr_url: input.pullRequestUrl,
-    status,
-    ...(input.merged && !hasUnresolvedConflicts ? { conflict_report: [] } : {}),
-  };
-
-  const { error } = await admin
-    .from("repository_onboarding_status")
-    .update(patch)
-    .eq("id", onboardingRow.id)
-    .eq("workspace_id", input.workspaceId)
-    .eq("github_repository_id", input.repositoryId)
-    .eq("setup_branch_name", input.branchName);
-
+  const { error } = await admin.rpc("apply_github_pull_request_event", {
+    target_workspace_id: installation.workspace_id,
+    target_repository_id: repository.id,
+    target_branch_name: branchName,
+    source_pull_request_number: payload.pull_request.number,
+    source_pull_request_url: payload.pull_request.html_url,
+    source_pull_request_state: payload.pull_request.merged ? "merged" : payload.pull_request.state,
+    source_is_draft: payload.pull_request.draft,
+    source_updated_at: payload.pull_request.updated_at,
+  });
   if (error) throw error;
-  return true;
 }
