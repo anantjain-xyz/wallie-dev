@@ -17,50 +17,18 @@ import {
   type WorkspaceInvitationResponse,
 } from "@/lib/workspace-invitations/contracts";
 
+import {
+  invitationSelect,
+  saveInvitationForDelivery,
+  undoInvitationDelivery,
+} from "@/lib/workspace-invitations/persistence";
+
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
 
-const invitationSelect =
-  "id, workspace_id, email, full_name, role, status, token_hash, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at";
-
-type InvitationPersistenceRow = {
-  accepted_at: string | null;
-  accepted_by_member_id: string | null;
-  created_at: string;
-  email: string;
-  expires_at: string;
-  full_name: string | null;
-  id: string;
-  invited_by_member_id: string | null;
-  last_sent_at: string | null;
-  revoked_at: string | null;
-  role: "admin" | "member";
-  status: "accepted" | "pending" | "revoked";
-  token_hash: string;
-  updated_at: string;
-  workspace_id: string;
-};
-
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
-}
-
-async function restorePendingInvitation(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  invitation: InvitationPersistenceRow,
-) {
-  await admin
-    .from("workspace_invitations")
-    .update({
-      expires_at: invitation.expires_at,
-      full_name: invitation.full_name,
-      invited_by_member_id: invitation.invited_by_member_id,
-      last_sent_at: invitation.last_sent_at,
-      role: invitation.role,
-      token_hash: invitation.token_hash,
-    })
-    .eq("id", invitation.id);
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -149,26 +117,19 @@ export async function POST(request: Request, context: RouteContext) {
     token_hash: tokenHash,
   };
 
-  const { data: savedInvitation, error: saveError } = existingInvitation
-    ? await admin
-        .from("workspace_invitations")
-        .update(invitationMutation)
-        .eq("id", existingInvitation.id)
-        .select(invitationSelect)
-        .single()
-    : await admin
-        .from("workspace_invitations")
-        .insert({
-          ...invitationMutation,
-          email,
-          status: "pending",
-          workspace_id: access.context.workspace.id,
-        })
-        .select(invitationSelect)
-        .single();
+  const savedInvitation = await saveInvitationForDelivery({
+    admin,
+    email,
+    fields: invitationMutation,
+    previous: existingInvitation,
+    workspaceId: access.context.workspace.id,
+  });
 
-  if (saveError) {
-    throw saveError;
+  if (!savedInvitation) {
+    return NextResponse.json(
+      { error: "That invitation changed. Refresh and try again." },
+      { status: 409 },
+    );
   }
 
   try {
@@ -178,11 +139,7 @@ export async function POST(request: Request, context: RouteContext) {
       email,
     });
   } catch (error) {
-    if (existingInvitation) {
-      await restorePendingInvitation(admin, existingInvitation as InvitationPersistenceRow);
-    } else {
-      await admin.from("workspace_invitations").delete().eq("id", savedInvitation.id);
-    }
+    await undoInvitationDelivery({ admin, previous: existingInvitation, saved: savedInvitation });
 
     return NextResponse.json(
       { error: errorMessage(error, "Wallie could not send that invitation email.") },
