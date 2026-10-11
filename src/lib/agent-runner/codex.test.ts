@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CodexCredential } from "@/lib/codex/contracts";
 import { shellQuote } from "@/lib/sandbox/command";
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import { harnessPath, runnerCalls } from "./test-helpers";
 
 import {
   CODEX_EXTERNAL_SANDBOX_FLAG,
@@ -84,8 +85,8 @@ describe("CodexRunner", () => {
       releaseSetup();
       await expect(run).rejects.toThrow("membership revoked");
       expect(loadCredential).toHaveBeenCalledOnce();
-      expect([...sandbox.files.keys()]).toEqual([`${sandbox.repoPath}/.wallie-prompt.txt`]);
-      expect(sandbox.calls).toEqual([
+      expect([...sandbox.files.keys()]).toEqual([harnessPath(sandbox, "prompt.txt")]);
+      expect(runnerCalls(sandbox)).toEqual([
         expect.objectContaining({ args: ["-lc", expect.stringMatching(/^mkdir -p /)] }),
       ]);
     },
@@ -95,8 +96,8 @@ describe("CodexRunner", () => {
     const sandbox = new FakeSandbox();
     const fresh = { ...credential, secret: "fresh-authorized-secret" };
     const loadCredential = vi.fn(async () => {
-      expect(sandbox.files.has(`${sandbox.repoPath}/.wallie-prompt.txt`)).toBe(true);
-      expect(sandbox.calls.at(-1)?.args[1]).toMatch(/^mkdir -p /);
+      expect(sandbox.files.has(harnessPath(sandbox, "prompt.txt"))).toBe(true);
+      expect(runnerCalls(sandbox).at(-1)?.args[1]).toMatch(/^mkdir -p /);
       return fresh;
     });
     const store = {
@@ -111,9 +112,9 @@ describe("CodexRunner", () => {
     }
     expect(loadCredential).toHaveBeenCalledOnce();
     expect(store.loadChatGptAuth).not.toHaveBeenCalled();
-    const cli = sandbox.calls.at(-1)!;
+    const cli = runnerCalls(sandbox).at(-1)!;
     if (credential.type === "chatgpt_auth_json") {
-      expect(await sandbox.readFile(`${sandbox.repoPath}/.codex/auth.json`)).toBe(fresh.secret);
+      expect(await sandbox.readFile(harnessPath(sandbox, "codex/auth.json"))).toBe(fresh.secret);
     } else {
       expect(cli.opts.env).toMatchObject(
         credential.type === "platform_api_key"
@@ -121,7 +122,7 @@ describe("CodexRunner", () => {
           : { CODEX_ACCESS_TOKEN: fresh.secret },
       );
     }
-    expect(JSON.stringify(sandbox.calls)).not.toContain(credential.secret);
+    expect(JSON.stringify(runnerCalls(sandbox))).not.toContain(credential.secret);
   });
 
   it("has the correct provider name", () => {
@@ -241,15 +242,15 @@ describe("CodexRunner", () => {
       { type: "completion", taskComplete: true, summary: "Codex session completed" },
     ]);
 
-    expect(await sandbox.readFile("/vercel/sandbox/.codex/auth.json")).toBeNull();
-    expect(await sandbox.readFile("/vercel/sandbox/.wallie-prompt.txt")).toBe("Hello Codex");
+    expect(await sandbox.readFile(harnessPath(sandbox, "codex/auth.json"))).toBeNull();
+    expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Hello Codex");
 
     // CLI invocation uses bash -lc to log in, then redirect the prompt file as stdin.
-    expect(sandbox.calls).toHaveLength(1);
-    const [call] = sandbox.calls;
+    expect(runnerCalls(sandbox)).toHaveLength(1);
+    const [call] = runnerCalls(sandbox);
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
-    expect(call.args[1]).toContain("mkdir -p '/vercel/sandbox/.codex'");
+    expect(call.args[1]).toContain(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
     expect(call.args[1]).toContain(
       `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token -c 'cli_auth_credentials_store="file"' >/dev/stderr`,
     );
@@ -260,10 +261,10 @@ describe("CodexRunner", () => {
     expect(call.args[1]).toContain(`'-c' 'apps.github.enabled=false'`);
     expect(call.args[1]).not.toContain("'--disable' 'apps'");
     expectExternalSandboxMode(call.args[1]!);
-    expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
+    expect(call.args[1]).toContain(`< '${harnessPath(sandbox, "prompt.txt")}'`);
     expect(call.opts.env).toMatchObject({
       CODEX_ACCESS_TOKEN: "tok",
-      CODEX_HOME: "/vercel/sandbox/.codex",
+      CODEX_HOME: harnessPath(sandbox, "codex"),
       GIT_AUTHOR_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
       GIT_AUTHOR_NAME: "wallie-dev[bot]",
       GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
@@ -283,8 +284,8 @@ describe("CodexRunner", () => {
       void _;
     }
 
-    expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
-    const execCall = sandbox.calls[1]!;
+    expect(runnerCalls(sandbox)[0]?.args[1]).toBe(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
+    const execCall = runnerCalls(sandbox)[1]!;
     expectExternalSandboxMode(execCall.args[1]!);
     expect(execCall.opts.env).toMatchObject({
       CODEX_API_KEY: "sk-test",
@@ -319,17 +320,17 @@ describe("CodexRunner", () => {
     });
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
-      (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
+      (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
       [],
     );
     sandbox.scriptExec(
       (call) => call.args[1]?.includes("codex 'exec'") ?? false,
       (call) => {
-        expect(sandbox.files.get("/vercel/sandbox/.codex/auth.json")?.data.toString("utf8")).toBe(
-          currentAuthJson,
-        );
+        expect(
+          sandbox.files.get(harnessPath(sandbox, "codex/auth.json"))?.data.toString("utf8"),
+        ).toBe(currentAuthJson);
         void call;
-        sandbox.files.set("/vercel/sandbox/.codex/auth.json", {
+        sandbox.files.set(harnessPath(sandbox, "codex/auth.json"), {
           data: Buffer.from(refreshedAuthJson, "utf8"),
           mode: 0o600,
         });
@@ -390,11 +391,11 @@ describe("CodexRunner", () => {
       previousCredentialVersion: 8,
       userId: "user-1",
     });
-    expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
-    expectExternalSandboxMode(sandbox.calls[1]?.args[1] ?? "");
-    expect(sandbox.calls[1]?.opts.env).toMatchObject({
+    expect(runnerCalls(sandbox)[0]?.args[1]).toBe(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
+    expectExternalSandboxMode(runnerCalls(sandbox)[1]?.args[1] ?? "");
+    expect(runnerCalls(sandbox)[1]?.opts.env).toMatchObject({
       CI: "1",
-      CODEX_HOME: "/vercel/sandbox/.codex",
+      CODEX_HOME: harnessPath(sandbox, "codex"),
       GIT_AUTHOR_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
       GIT_AUTHOR_NAME: "wallie-dev[bot]",
       GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
@@ -412,7 +413,7 @@ describe("CodexRunner", () => {
     });
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
-      (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
+      (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
       [],
     );
     sandbox.scriptExec(
@@ -478,13 +479,13 @@ describe("CodexRunner", () => {
     });
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
-      (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
+      (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
       [],
     );
     sandbox.scriptExec(
       (call) => call.args[1]?.includes("codex 'exec'") ?? false,
       () => {
-        sandbox.files.set("/vercel/sandbox/.codex/auth.json", {
+        sandbox.files.set(harnessPath(sandbox, "codex/auth.json"), {
           data: Buffer.from(rewrittenAuthJson, "utf8"),
           mode: 0o600,
         });
