@@ -109,7 +109,22 @@ describe("POST /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
     const response = await POST(request(), routeContext());
 
     expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      code: "workspace_unavailable",
+      error: "Workspace not found.",
+    });
     expect(mocked.decodePipelineDashboardCursor).not.toHaveBeenCalled();
+  });
+  it("keeps a missing lane distinct from unavailable workspace access", async () => {
+    grantAccess();
+    mocked.decodePipelineDashboardCursor.mockReturnValue({
+      pipelineId: PIPELINE_ID,
+      stageId: STAGE_ID,
+    });
+    mocked.loadPipelineDashboardLanePage.mockResolvedValue(null);
+    const response = await POST(request(), routeContext());
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Pipeline lane not found." });
   });
 });
 

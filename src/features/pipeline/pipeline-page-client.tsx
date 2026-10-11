@@ -603,9 +603,16 @@ function PipelinePageContent({
           return;
         }
         const payload = (await response.json()) as {
+          code?: string;
           error?: string;
           lane?: PipelineDashboardLanePage;
         };
+
+        if (controller.signal.aborted) return;
+        if (response.status === 404 && payload.code === "workspace_unavailable") {
+          leaveUnavailableWorkspace(response.status);
+          return;
+        }
 
         if (!response.ok || !payload.lane) {
           throw new Error(payload.error ?? "Failed to load more sessions.");

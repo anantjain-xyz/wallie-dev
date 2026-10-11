@@ -23,7 +23,10 @@ export async function GET(_request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
   const access = await requireWorkspaceAccessById(workspaceId);
   if (!access.ok) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
+    return NextResponse.json(
+      { code: "workspace_unavailable", error: access.error },
+      { status: access.status },
+    );
   }
   try {
     const snapshot = await loadPipelineDashboardSnapshot({
@@ -41,7 +44,10 @@ export async function POST(request: Request, context: RouteContext) {
   const access = await requireWorkspaceAccessById(workspaceId);
 
   if (!access.ok) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
+    return NextResponse.json(
+      { code: "workspace_unavailable", error: access.error },
+      { status: access.status },
+    );
   }
 
   const body = await request.json().catch(() => null);

@@ -413,6 +413,77 @@ describe("PipelinePageClient", () => {
     },
   );
 
+  it.each([401, 403, 404])(
+    "leaves the workspace when pagination loses membership with HTTP %s",
+    async (status) => {
+      installSupabaseMock();
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response(
+              JSON.stringify({ code: "workspace_unavailable", error: "Workspace not found." }),
+              { status },
+            ),
+          ),
+      );
+      render(<PipelinePageClient initialData={initialData()} />);
+      fireEvent.click(screen.getByRole("button", { name: /Load more Plan sessions/ }));
+      await waitFor(() =>
+        expect(mocked.router.replace).toHaveBeenCalledWith(
+          status === 401 ? "/login?next=%2Fw%2Fwallie" : "/",
+        ),
+      );
+      expect(screen.queryByText("Session 1")).toBeNull();
+    },
+  );
+
+  it("ignores a previous workspace membership error whose body resolves after navigation", async () => {
+    installSupabaseMock();
+    const pending = deferredResponse();
+    const json = vi.fn(() => pending.promise.then((response) => response.json()));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 404, ok: false, json }));
+    const page = (data: PipelineDashboardData) => (
+      <RealtimeRecoveryProvider>
+        <PipelinePageClient initialData={data} />
+      </RealtimeRecoveryProvider>
+    );
+    const view = render(page(initialData()));
+    fireEvent.click(screen.getByRole("button", { name: /Load more Plan sessions/ }));
+    await waitFor(() => expect(json).toHaveBeenCalled());
+    const next = initialData([card(8, PLAN_STAGE_ID, { title: "Workspace B session" })], []);
+    next.workspace = { id: "workspace-b", slug: "workspace-b", name: "Workspace B" };
+    view.rerender(page(next));
+    await act(async () =>
+      pending.resolve(
+        new Response(
+          JSON.stringify({ code: "workspace_unavailable", error: "Workspace not found." }),
+          { status: 404 },
+        ),
+      ),
+    );
+    expect(screen.getByText("Workspace B session")).toBeTruthy();
+    expect(mocked.router.replace).not.toHaveBeenCalled();
+  });
+
+  it("retains board access and shows the lane error when only a paginated lane is missing", async () => {
+    installSupabaseMock();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "Pipeline lane not found." }), { status: 404 }),
+        ),
+    );
+    render(<PipelinePageClient initialData={initialData()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Load more Plan sessions/ }));
+    expect(await screen.findByText("Pipeline lane not found.")).toBeTruthy();
+    expect(screen.getByText("Session 1")).toBeTruthy();
+    expect(mocked.router.replace).not.toHaveBeenCalled();
+  });
+
   it("aborts and ignores pagination from the previous workspace", async () => {
     installSupabaseMock();
     const pending = deferredResponse();
