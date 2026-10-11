@@ -54,18 +54,24 @@ export async function runClaimedJob(
   const jobId = job.id;
   const attemptCount = job.attempt_count;
   const controller = new AbortController();
+  const deadlineAt = new Date(Date.now() + (options.timeoutMs ?? 3_600_000)).toISOString();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutMessage: string | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       const error = new Error(
         `Worker attempt exceeded its ${options.timeoutMs ?? 3_600_000}ms deadline.`,
       );
+      timeoutMessage = error.message;
       controller.abort(error);
       reject(error);
     }, options.timeoutMs ?? 3_600_000);
   });
   try {
-    await Promise.race([processPipelineJob({ admin, job, signal: controller.signal }), deadline]);
+    await Promise.race([
+      processPipelineJob({ admin, job, deadlineAt, signal: controller.signal }),
+      deadline,
+    ]);
   } catch (error) {
     controller.abort(error);
     const message = error instanceof Error ? error.message : "Worker job processing failed";
@@ -83,7 +89,14 @@ export async function runClaimedJob(
         }, options.recoveryTimeoutMs ?? 10_000);
       });
       await Promise.race([
-        retireAttempt(admin, { jobId, attemptCount, message, signal: recovery.signal }),
+        retireAttempt(admin, {
+          jobId,
+          attemptCount,
+          message,
+          workspaceId: job.workspace_id,
+          historyMessage: timeoutMessage ?? "Worker job processing failed.",
+          signal: recovery.signal,
+        }),
         recoveryDeadline,
       ]);
     } catch (recoveryError) {
@@ -103,7 +116,14 @@ export async function runClaimedJob(
 
 async function retireAttempt(
   admin: AdminClient,
-  input: { jobId: string; attemptCount: number; message: string; signal: AbortSignal },
+  input: {
+    jobId: string;
+    attemptCount: number;
+    message: string;
+    workspaceId: string;
+    historyMessage: string;
+    signal: AbortSignal;
+  },
 ): Promise<void> {
   // A start RPC already in flight may bind a run after the first lookup. A
   // runless failure cannot steal that run; re-read the same attempt once. If
@@ -130,6 +150,19 @@ async function retireAttempt(
       })
       .abortSignal(input.signal);
     if (error) throw error;
+    if (run && result === "error") {
+      input.signal.throwIfAborted();
+      const { error: historyError } = await admin
+        .from("agent_run_messages")
+        .insert({
+          agent_run_id: run.id,
+          workspace_id: input.workspaceId,
+          kind: "error",
+          message_md: input.historyMessage,
+        })
+        .abortSignal(input.signal);
+      if (historyError) throw historyError;
+    }
     if (run || result !== "stale") return;
   }
 }

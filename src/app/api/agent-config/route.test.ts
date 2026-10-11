@@ -80,6 +80,26 @@ describe("POST /api/agent-config — value validation", () => {
     expect(payload.fieldErrors.agent_model).toMatch(/must start with/);
   });
 
+  it.each([0, 101, 1.5, "5"])("rejects invalid max_turns %j", async (value) => {
+    const response = await POST(
+      postWith({ config: { max_turns: value }, workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).fieldErrors.max_turns).toBeTruthy();
+  });
+
+  it("persists a manager's max_turns through the supported API", async () => {
+    grantAccess();
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocked.createSupabaseAdminClient.mockReturnValue({ from: () => ({ upsert }) });
+    const response = await POST(postWith({ config: { max_turns: 17 }, workspaceId: WORKSPACE_ID }));
+    expect(response.status).toBe(200);
+    expect(upsert).toHaveBeenCalledWith(
+      [{ key: "max_turns", value_json: 17, workspace_id: WORKSPACE_ID }],
+      { onConflict: "workspace_id,key" },
+    );
+  });
+
   it("rejects max_retries above 10", async () => {
     const response = await POST(
       postWith({ config: { max_retries: 25 }, workspaceId: WORKSPACE_ID }),
@@ -306,6 +326,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
         { key: "concurrency_limit", value: 1 },
         { key: "stall_timeout_ms", value: 900000 },
         { key: "max_retries", value: 3 },
+        { key: "max_turns", value: 5 },
         { key: "agent_effort", value: "xhigh" },
       ],
       skippedKeys: [],
@@ -315,6 +336,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
         { key: "concurrency_limit", value_json: 1, workspace_id: WORKSPACE_ID },
         { key: "stall_timeout_ms", value_json: 900000, workspace_id: WORKSPACE_ID },
         { key: "max_retries", value_json: 3, workspace_id: WORKSPACE_ID },
+        { key: "max_turns", value_json: 5, workspace_id: WORKSPACE_ID },
         { key: "agent_effort", value_json: "xhigh", workspace_id: WORKSPACE_ID },
       ],
       { onConflict: "workspace_id,key" },
@@ -347,6 +369,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
       "concurrency_limit",
       "stall_timeout_ms",
       "max_retries",
+      "max_turns",
       "agent_provider",
       "agent_effort",
     ]);

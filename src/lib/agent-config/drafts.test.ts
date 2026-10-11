@@ -84,6 +84,7 @@ describe("applyAgentConfigDraftChange", () => {
       concurrency_limit: "1",
       stall_timeout_ms: "15",
       max_retries: "3",
+      max_turns: "5",
     };
     expect(applyAgentConfigDraftChange(drafts, "agent_provider", "claude-code")).toMatchObject({
       agent_provider: "claude-code",

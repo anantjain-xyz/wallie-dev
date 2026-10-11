@@ -23,6 +23,7 @@ const expectedScripts = {
   "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
   test: "vitest run",
   "check:db-tests": "SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local",
+  "db:types:check": "tsx scripts/check-db-types-drift.ts",
   "check:fast":
     "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
   check: "pnpm check:fast && pnpm test",
@@ -126,6 +127,7 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
               name: "Start isolated local Supabase",
               run: 'supabase start --exclude studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1',
             },
+            { name: "Verify generated database types", run: "pnpm db:types:check" },
             { name: "Run database regression tests", run: "pnpm check:db-tests" },
             {
               name: "Print database diagnostics on failure",

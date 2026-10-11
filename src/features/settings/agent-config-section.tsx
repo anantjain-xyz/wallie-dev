@@ -123,6 +123,7 @@ function AgentConfigField({
             {trailing}
           </div>
           <input
+            aria-label={label}
             autoComplete="off"
             className="ui-input"
             disabled={disabled}
@@ -181,6 +182,7 @@ export function AgentConfigSection({
       initialAgentConfig.stall_timeout_ms,
     ),
     max_retries: agentConfigValueToDraft("max_retries", initialAgentConfig.max_retries),
+    max_turns: agentConfigValueToDraft("max_turns", initialAgentConfig.max_turns),
   }));
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
@@ -250,6 +252,13 @@ export function AgentConfigSection({
         type: "number",
       },
       {
+        configKey: "max_turns",
+        description: "Maximum Claude Code turns per run (1–100). Defaults to 5.",
+        label: "Max turns",
+        placeholder: "5",
+        type: "number",
+      },
+      {
         configKey: "max_retries",
         description: `Maximum automatic retries for failed agent runs (${AGENT_CONFIG_LIMITS.max_retries.min}–${AGENT_CONFIG_LIMITS.max_retries.max}).`,
         label: "Max retries",
@@ -260,7 +269,9 @@ export function AgentConfigSection({
 
     return allFields.filter(
       (field) =>
-        field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedAgentProvider),
+        (field.configKey !== "agent_effort" ||
+          agentProviderSupportsEffort(selectedAgentProvider)) &&
+        (field.configKey !== "max_turns" || selectedAgentProvider === "claude-code"),
     );
   }, [cursorModels, selectedAgentProvider]);
 

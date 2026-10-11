@@ -35,6 +35,7 @@ it("retires a hung attempt and fills its scheduler slot without waiting for its 
   });
   const query = {
     select: () => query,
+    insert: () => query,
     eq: () => query,
     abortSignal: () => query,
     maybeSingle: async () => ({ data: { id: "hung-run" }, error: null }),

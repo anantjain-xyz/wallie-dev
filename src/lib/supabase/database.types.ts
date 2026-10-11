@@ -2690,6 +2690,7 @@ export type Database = {
         Args: {
           p_artifact_json: string
           p_attempt_count: number
+          p_deadline_at?: string
           p_expected_artifact_version: number
           p_job_id: string
           p_run_id: string

@@ -92,6 +92,7 @@ export type PipelinePhaseActionResult = {
 export async function processPipelineJob(input: {
   admin?: AdminClient;
   job: Tables<"agent_jobs">;
+  deadlineAt?: string;
   signal?: AbortSignal;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
@@ -117,7 +118,14 @@ export async function processPipelineJob(input: {
     const result = await failPipelineJob(admin, job, message);
     return { jobId: job.id, processed: true, result, runId: null };
   }
-  return runStage({ admin, job, session, signal: input.signal, stage });
+  return runStage({
+    admin,
+    job,
+    session,
+    deadlineAt: input.deadlineAt,
+    signal: input.signal,
+    stage,
+  });
 }
 
 class ExecutionOwnershipLostError extends Error {
@@ -137,6 +145,7 @@ class ExecutionOwnershipLostError extends Error {
 async function runStage(input: {
   admin: AdminClient;
   job: Tables<"agent_jobs">;
+  deadlineAt?: string;
   signal?: AbortSignal;
   session: SessionRow;
   stage: PipelineStage;
@@ -448,6 +457,7 @@ async function runStage(input: {
       runId,
       sandbox,
       session,
+      deadlineAt: input.deadlineAt,
       signal,
       stage,
       usage,
@@ -508,19 +518,25 @@ async function publishArtifact(input: {
   runId: string;
   sandbox: SandboxHandle | null;
   session: SessionRow;
+  deadlineAt?: string;
   signal?: AbortSignal;
   stage: PipelineStage;
   usage: { inputTokens: number; outputTokens: number } | undefined;
 }): Promise<"idle" | "published"> {
   const { admin, artifactMarkdown, branch, github, job, runId, sandbox, session, stage } = input;
 
-  const { data: published, error: publishError } = await admin.rpc("publish_session_job_attempt", {
+  throwIfAborted(input.signal);
+  const publication = admin.rpc("publish_session_job_attempt", {
     p_job_id: job.id,
     p_attempt_count: job.attempt_count,
     p_run_id: runId,
     p_expected_artifact_version: session.current_artifact_version,
     p_artifact_json: artifactMarkdown,
+    ...(input.deadlineAt ? { p_deadline_at: input.deadlineAt } : {}),
   });
+  const { data: published, error: publishError } = await (input.signal
+    ? publication.abortSignal(input.signal)
+    : publication);
   if (publishError) throw publishError;
   if (published !== true) return "idle";
   throwIfAborted(input.signal);
