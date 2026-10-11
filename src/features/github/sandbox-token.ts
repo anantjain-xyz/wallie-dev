@@ -1,7 +1,5 @@
 import "server-only";
 
-import { App } from "@octokit/app";
-
 import { resolveGitHubAppConfig } from "./config";
 
 export async function mintSandboxRepositoryToken(input: {
@@ -20,6 +18,8 @@ export async function mintSandboxRepositoryToken(input: {
   )
     throw new Error("A sandbox token requires a valid numeric repository identity.");
 
+  // The worker runs through tsx's CommonJS loader; Octokit only exports an ESM entry.
+  const { App } = await import("@octokit/app");
   const app = new App(resolveGitHubAppConfig());
   const { data } = await app.octokit.request(
     "POST /app/installations/{installation_id}/access_tokens",
