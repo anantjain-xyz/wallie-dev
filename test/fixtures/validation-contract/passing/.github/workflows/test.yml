@@ -96,6 +96,9 @@ jobs:
       - name: Start isolated local Supabase
         run: supabase start --exclude studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1
 
+      - name: Verify generated database types
+        run: pnpm db:types:check
+
       - name: Run database regression tests
         run: pnpm check:db-tests
 

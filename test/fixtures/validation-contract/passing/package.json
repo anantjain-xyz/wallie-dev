@@ -17,6 +17,7 @@
     "test:e2e:session-prefetch": "fixture",
     "typecheck": "tsc --noEmit",
     "verify:validation": "tsx scripts/verify-validation-contract.ts",
-    "check:db-tests": "SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local"
+    "check:db-tests": "SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local",
+    "db:types:check": "tsx scripts/check-db-types-drift.ts"
   }
 }
