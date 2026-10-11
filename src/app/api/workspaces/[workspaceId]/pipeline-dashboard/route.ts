@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   decodePipelineDashboardCursor,
   loadPipelineDashboardLanePage,
+  loadPipelineDashboardLanes,
 } from "@/features/pipeline/data";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -17,6 +18,23 @@ const requestSchema = z.object({
   seenIds: z.array(z.string().uuid()).max(5_000),
   stageId: z.string().uuid(),
 });
+
+export async function GET(_request: Request, context: RouteContext) {
+  const { workspaceId } = await context.params;
+  const access = await requireWorkspaceAccessById(workspaceId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
+  try {
+    const lanes = await loadPipelineDashboardLanes({
+      supabase: access.context.supabase,
+      workspaceId,
+    });
+    return NextResponse.json({ lanes }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch {
+    return NextResponse.json({ error: "Failed to load pipeline snapshot." }, { status: 500 });
+  }
+}
 
 export async function POST(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;

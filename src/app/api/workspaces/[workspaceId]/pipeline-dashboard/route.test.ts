@@ -3,19 +3,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   decodePipelineDashboardCursor: vi.fn(),
   loadPipelineDashboardLanePage: vi.fn(),
+  loadPipelineDashboardLanes: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
 
 vi.mock("@/features/pipeline/data", () => ({
   decodePipelineDashboardCursor: mocked.decodePipelineDashboardCursor,
   loadPipelineDashboardLanePage: mocked.loadPipelineDashboardLanePage,
+  loadPipelineDashboardLanes: mocked.loadPipelineDashboardLanes,
 }));
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
@@ -108,5 +110,40 @@ describe("POST /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
 
     expect(response.status).toBe(404);
     expect(mocked.decodePipelineDashboardCursor).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("loads an uncached snapshot through the authorized RLS client", async () => {
+    grantAccess();
+    mocked.loadPipelineDashboardLanes.mockResolvedValue([]);
+    const response = await GET(new Request("http://localhost/pipeline-dashboard"), routeContext());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ lanes: [] });
+    expect(mocked.loadPipelineDashboardLanes).toHaveBeenCalledWith({
+      supabase: expect.any(Object),
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
+  it("does not read a board without workspace access", async () => {
+    mocked.requireWorkspaceAccessById.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Forbidden",
+    });
+    const response = await GET(new Request("http://localhost/pipeline-dashboard"), routeContext());
+    expect(response.status).toBe(403);
+    expect(mocked.loadPipelineDashboardLanes).not.toHaveBeenCalled();
+  });
+
+  it("returns a failed recovery response when the snapshot query fails", async () => {
+    grantAccess();
+    mocked.loadPipelineDashboardLanes.mockRejectedValue(new Error("database unavailable"));
+    const response = await GET(new Request("http://localhost/pipeline-dashboard"), routeContext());
+    expect(response.status).toBe(500);
   });
 });

@@ -35,6 +35,7 @@ type SessionRepositoryLoader = (input: {
 }) => Promise<SessionRepositoryOptionsResult>;
 
 type CacheEntry = {
+  generation: number;
   key: SessionRepositoryCacheKey;
   listeners: Set<() => void>;
   promise: Promise<SessionRepositoryOptionsResult> | null;
@@ -65,11 +66,12 @@ function scopeCacheToUser(userId: string) {
 
 function createEntry(key: SessionRepositoryCacheKey): CacheEntry {
   return {
+    generation: 0,
     key,
     listeners: new Set(),
     promise: null,
     snapshot: EMPTY_SNAPSHOT,
-    updatedAt: 0,
+    updatedAt: -Infinity,
   };
 }
 
@@ -110,13 +112,14 @@ function handlePipelineChanged(event: Event) {
   if (!pipeline?.id) return;
 
   for (const entry of entries.values()) {
-    if (entry.snapshot.data?.pipelineId !== pipeline.id) continue;
+    if (entry.snapshot.data && entry.snapshot.data.pipelineId !== pipeline.id) continue;
     invalidateEntry(entry);
   }
 }
 
 function invalidateEntry(entry: CacheEntry) {
-  entry.updatedAt = 0;
+  entry.generation += 1;
+  entry.updatedAt = -Infinity;
   publish(entry, {
     ...entry.snapshot,
     error: null,
@@ -164,31 +167,41 @@ export function loadSessionRepositories(
   });
 
   const load = options.load ?? loadSessionRepositoryOptionsFromClient;
-  const promise = load({ workspaceId: key.workspaceId })
-    .then((data) => {
-      entry.updatedAt = options.now ?? Date.now();
-      publish(entry, {
-        data,
-        error: null,
-        isLoading: false,
-        isRefreshing: false,
-        isStale: false,
-      });
-      return data;
-    })
-    .catch((error: unknown) => {
-      publish(entry, {
-        data: entry.snapshot.data,
-        error: errorMessage(error),
-        isLoading: false,
-        isRefreshing: false,
-        isStale: entry.snapshot.data !== null,
-      });
-      throw error;
-    })
-    .finally(() => {
-      entry.promise = null;
-    });
+  const isCurrentEntry = () => entries.get(serializeKey(key)) === entry;
+  const promise = (async () => {
+    // Keep one flight, but repeat its read if a newer invalidation overtook it.
+    // Callers awaiting an invalidated prefetch receive the revalidated result.
+    while (true) {
+      const generation = entry.generation;
+      try {
+        const data = await load({ workspaceId: key.workspaceId });
+        if (!isCurrentEntry()) return data;
+        if (generation !== entry.generation) continue;
+        entry.updatedAt = options.now ?? Date.now();
+        publish(entry, {
+          data,
+          error: null,
+          isLoading: false,
+          isRefreshing: false,
+          isStale: false,
+        });
+        return data;
+      } catch (error) {
+        if (!isCurrentEntry()) throw error;
+        if (generation !== entry.generation) continue;
+        publish(entry, {
+          data: entry.snapshot.data,
+          error: errorMessage(error),
+          isLoading: false,
+          isRefreshing: false,
+          isStale: entry.snapshot.data !== null,
+        });
+        throw error;
+      }
+    }
+  })().finally(() => {
+    entry.promise = null;
+  });
 
   entry.promise = promise;
   return promise;
