@@ -51,6 +51,11 @@ vi.mock("@/lib/sandbox", () => ({
   createSessionSandbox: mocked.createSessionSandbox,
 }));
 
+vi.mock("@/lib/workspaces/resource-operations", () => ({
+  createWorkspaceSessionSandbox: (_admin: unknown, input: unknown) =>
+    mocked.createSessionSandbox(input),
+}));
+
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
 }));
@@ -148,6 +153,7 @@ function adminMock() {
             update: (patch: Record<string, unknown>) => ({
               eq: () => {
                 const builder = {
+                  eq: () => builder,
                   select: () => ({
                     single: async () => {
                       updates.push(patch);
@@ -215,6 +221,25 @@ beforeEach(() => {
 });
 
 describe("completeSandboxCapabilityCheck", () => {
+  it("refuses a probe without durable check ownership", async () => {
+    const { admin } = adminMock();
+    const result = await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: null,
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+    expect(result.status).toBe("error");
+    expect(result.errorText).toBe("Sandbox capability check reservation is required.");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+  });
   it("validates Cursor credentials for Cursor capability checks", async () => {
     mocked.loadWorkspaceAgentConfig.mockResolvedValueOnce({
       effort: "xhigh",

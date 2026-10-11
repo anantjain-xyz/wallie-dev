@@ -55,7 +55,7 @@ const onboardingSelect =
 type OnboardingAccessFailure = {
   error: string;
   ok: false;
-  status: 400 | 401 | 403 | 404;
+  status: 400 | 401 | 403 | 404 | 409;
 };
 
 export type WorkspaceOnboardingData = {

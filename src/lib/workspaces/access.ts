@@ -4,7 +4,8 @@ import { getSupabaseAuthIdentityOrNull, type SupabaseAuthIdentity } from "@/lib/
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Tables } from "@/lib/supabase/database.types";
 
-const workspaceSelect = "id, name, slug, avatar_path, created_at, updated_at";
+const workspaceSelect =
+  "id, name, slug, avatar_path, created_at, updated_at, deletion_requested_at";
 const memberSelect = "id, role, is_active, kind";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -18,7 +19,7 @@ export type WorkspaceAccessContext = {
 
 type WorkspaceAccessFailure = {
   error: string;
-  status: 400 | 401 | 403 | 404;
+  status: 400 | 401 | 403 | 404 | 409;
 };
 
 type WorkspaceAccessSuccess = {
@@ -39,6 +40,7 @@ async function loadCurrentUser(supabase: SupabaseServerClient) {
 export async function requireWorkspaceAccessById(
   workspaceId: string | null | undefined,
   options?: {
+    allowDeleting?: boolean;
     requireManager?: boolean;
     requireOwner?: boolean;
   },
@@ -95,6 +97,10 @@ export async function requireWorkspaceAccessById(
       ok: false,
       status: 403,
     };
+  }
+
+  if (workspace.deletion_requested_at && !options?.allowDeleting) {
+    return { error: "Workspace deletion is in progress.", ok: false, status: 409 };
   }
 
   if (options?.requireManager && currentMember.role !== "owner" && currentMember.role !== "admin") {

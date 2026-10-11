@@ -13,6 +13,9 @@ vi.mock("@/lib/pipeline/cancel", () => ({
 vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
+vi.mock("@/lib/sandbox-connections/cleanup-receipts", () => ({
+  hasSandboxCleanupReceipt: vi.fn().mockResolvedValue(false),
+}));
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadWorkspaceSandboxConnection: (admin: unknown, workspaceId: string, provider: string) =>
@@ -28,6 +31,7 @@ const WORKSPACE_ID = "workspace-1";
 const CREDENTIALS = { projectId: "prj_123", teamId: "team_123", token: "tok_secret" };
 
 interface SandboxRow {
+  id?: string;
   sandbox_id: string | null;
 }
 
@@ -45,22 +49,43 @@ function buildAdminMock(tables: {
   const inCalls: Array<[string, unknown]> = [];
   const from = vi.fn((name: string) => {
     const preset = tables[name as keyof typeof tables] ?? { data: [] };
-    const result = { data: preset.data ?? [], error: preset.error ?? null };
+    const rows = (preset.data ?? []).map((row, index) => ({
+      id: String(index).padStart(6, "0"),
+      sandbox_connection_revision: "revision-1",
+      ...row,
+    }));
+    let afterId = "";
+    let pageSize = 100;
+    let provider = "vercel";
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "gte", "not"]) {
+    for (const method of ["select", "not", "order"]) {
       chain[method] = vi.fn(() => chain);
     }
+    chain.gt = vi.fn((_column: string, value: string) => {
+      afterId = value;
+      return chain;
+    });
+    chain.limit = vi.fn((value: number) => {
+      pageSize = value;
+      return chain;
+    });
     chain.in = vi.fn((column: string, value: unknown) => {
       inCalls.push([column, value]);
       return chain;
     });
     chain.eq = vi.fn((column: string, value: unknown) => {
       eqCalls.push([column, value]);
+      if (column === "sandbox_provider") provider = String(value);
       return chain;
     });
     chain.then = (
       resolve: (value: { data: SandboxRow[]; error: { message: string } | null }) => unknown,
-    ) => resolve(result);
+    ) =>
+      resolve({
+        data:
+          provider === "vercel" ? rows.filter((row) => row.id > afterId).slice(0, pageSize) : [],
+        error: preset.error ?? null,
+      });
     return chain;
   });
 
@@ -91,6 +116,24 @@ function cancelResult(
 describe("stopWorkspaceProviderSandboxes", () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("stops every capability and auth owner across multiple database pages", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
+    mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
+    const { admin } = buildAdminMock({
+      sandbox_capability_checks: {
+        data: Array.from({ length: 205 }, (_, index) => ({ sandbox_id: `check-${index}` })),
+      },
+      codex_device_auth_flows: {
+        data: Array.from({ length: 205 }, (_, index) => ({ sandbox_id: `auth-${index}` })),
+      },
+    });
+    const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
+    expect(result.stoppedSandboxIds).toHaveLength(410);
+    expect(result.stoppedSandboxIds).toContain("check-204");
+    expect(result.stoppedSandboxIds).toContain("auth-204");
+    expect(new Set(mocked.stopSandboxById.mock.calls.map(([id]) => id)).size).toBe(410);
   });
 
   it("cancels the workspace's jobs and runs before snapshotting sandboxes", async () => {
@@ -146,10 +189,10 @@ describe("stopWorkspaceProviderSandboxes", () => {
       connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
       throwOnError: true,
     });
-    expect(inCalls).toContainEqual(["status", ["starting", "prompted"]]);
+    expect(inCalls).toEqual([]);
   });
 
-  it("does not stop a capability-check sandbox already stopped by the cancel step", async () => {
+  it("verifies independent ownership even when cancellation returned the same bare sandbox ID", async () => {
     mocked.cancelWorkspaceWork.mockResolvedValue(
       cancelResult({ stoppedSandboxIds: ["sbx_shared"] }),
     );
@@ -161,7 +204,10 @@ describe("stopWorkspaceProviderSandboxes", () => {
     const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
 
     expect(result.stoppedSandboxIds).toEqual(["sbx_shared"]);
-    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    expect(mocked.stopSandboxById).toHaveBeenCalledExactlyOnceWith("sbx_shared", {
+      connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+      throwOnError: true,
+    });
   });
 
   it("still cancels work but stops no sandboxes when the workspace has no connection", async () => {

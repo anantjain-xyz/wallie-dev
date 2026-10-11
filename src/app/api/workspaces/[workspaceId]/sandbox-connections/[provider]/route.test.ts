@@ -5,6 +5,7 @@ import type { Tables } from "@/lib/supabase/database.types";
 const mocked = vi.hoisted(() => ({
   acquireSandboxConnectionMutationLock: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
+  confirmConnectionSandboxCleanup: vi.fn().mockResolvedValue(undefined),
   listRunningSandboxes: vi.fn(),
   loadWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceSandboxOverview: vi.fn(),
@@ -25,6 +26,9 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+vi.mock("@/lib/sandbox-connections/cleanup-receipts", () => ({
+  confirmConnectionSandboxCleanup: mocked.confirmConnectionSandboxCleanup,
 }));
 
 vi.mock("@/lib/sandbox", async () => {
@@ -562,12 +566,17 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
     });
     expect(admin.deletedTables).toEqual(["workspace_vercel_sandbox_connections"]);
     expect(admin.deletedWorkspaceIds).toEqual([workspaceId]);
+    expect(mocked.confirmConnectionSandboxCleanup).toHaveBeenCalledWith({
+      admin,
+      connection,
+      workspaceId,
+    });
     expect(mocked.stopSandboxById.mock.invocationCallOrder[0]).toBeLessThan(
       admin.from.mock.invocationCallOrder.at(-1)!,
     );
   });
 
-  it("does not stop unknown or active shared-project sandboxes on disconnect", async () => {
+  it("retains credentials when a shared-project sandbox still has an active owner", async () => {
     const admin = adminMock({
       jobRows: [{ id: "job-post-run", attempt_count: 1, status: "running" }],
       sandboxCheckRows: [
@@ -634,20 +643,10 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
 
     const response = await DELETE(new Request("http://localhost"), context("vercel"));
 
-    expect(response.status).toBe(200);
-    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(3);
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("owned-terminal", {
-      connection,
-      throwOnError: true,
-    });
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-terminal", {
-      connection,
-      throwOnError: true,
-    });
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-stale", {
-      connection,
-      throwOnError: true,
-    });
+    expect(response.status).toBe(409);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    expect(mocked.confirmConnectionSandboxCleanup).not.toHaveBeenCalled();
+    expect(admin.deletedTables).toEqual([]);
   });
 
   it.each(["running", "success"] as const)(
@@ -696,6 +695,17 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
       "Vercel list failed",
     );
 
+    expect(admin.deletedTables).toEqual([]);
+    expect(releaseMutationLock).toHaveBeenCalledOnce();
+  });
+
+  it("retains credentials if verified cleanup cannot be recorded before disconnect", async () => {
+    const admin = adminMock();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
+    mocked.confirmConnectionSandboxCleanup.mockRejectedValueOnce(new Error("Receipt unavailable"));
+    await expect(DELETE(new Request("http://localhost"), context("vercel"))).rejects.toThrow(
+      "Receipt unavailable",
+    );
     expect(admin.deletedTables).toEqual([]);
     expect(releaseMutationLock).toHaveBeenCalledOnce();
   });

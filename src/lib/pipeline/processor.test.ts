@@ -102,6 +102,11 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
+vi.mock("@/lib/workspaces/resource-operations", () => ({
+  createWorkspaceSessionSandbox: (_admin: unknown, input: unknown) =>
+    mocked.createSessionSandbox(input),
+}));
+
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
 }));

@@ -4,9 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { cancelWorkspaceWork } from "@/lib/pipeline/cancel";
 import { stopSandboxById } from "@/lib/sandbox";
-import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import { loadWorkspaceSandboxConnection, providerLabel } from "@/lib/sandbox-connections/server";
-import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
+import { hasSandboxCleanupReceipt } from "@/lib/sandbox-connections/cleanup-receipts";
+import type { SandboxProvider } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -40,12 +40,14 @@ export interface WorkspaceSandboxTeardownResult {
  *      is refused by `updateRunSandbox` and stopped by the worker, while one that
  *      landed in the race window *just before* the flip is returned and stopped.
  *   2. Capability checks and Codex device-auth flows are not part of the
- *      job/run lifecycle; stop any recent check or active auth flow that still
- *      holds a sandbox id, whether or not a check is still `running`
+ *      job/run lifecycle; stop every check or auth flow that still
+ *      holds a sandbox id, regardless of its status or age
  *      (a check writes its terminal status before its `finally` stops the
  *      sandbox, so a process that dies in that gap leaves a finished row with a
  *      live sandbox). They normally tear down in-process via their own `finally`;
  *      this snapshot is the safety net for one whose process died first.
+ *      Acquisition reservations separately retain IDs that arrive after this
+ *      scan, until the workspace deletion coordinator cleans them up.
  *
  * A lookup or provider failure aborts deletion. The caller keeps ownership
  * records and credentials intact so a later request can finish cleanup.
@@ -64,22 +66,39 @@ export async function stopWorkspaceProviderSandboxes(
     stoppedSandboxIds: [...canceled.stoppedSandboxIds],
   };
 
-  const alreadyStopped = new Set(result.stoppedSandboxIds);
+  // A bare sandbox ID returned by run cancellation is not proof for another
+  // provider/revision. Repeating an idempotent stop is safer than dropping an
+  // independently recorded ownership obligation.
+  const alreadyStopped = new Set<string>();
   for (const provider of ["vercel", "e2b", "daytona"] as const) {
     // Use the unguarded loader — a connection flagged `error` may still hold
     // usable credentials, and there is nothing to lose by attempting cleanup.
     const record = await loadWorkspaceSandboxConnection(admin, workspaceId, provider);
-    if (!record) continue;
 
     const [checkSandboxIds, authSandboxIds] = await Promise.all([
-      loadActiveCapabilityCheckSandboxIds(admin, workspaceId, record.connection),
-      loadActiveDeviceAuthSandboxIds(admin, workspaceId, record.connection),
+      loadOwnedSandboxIds(admin, workspaceId, provider, "sandbox_capability_checks"),
+      loadOwnedSandboxIds(admin, workspaceId, provider, "codex_device_auth_flows"),
     ]);
-    for (const sandboxId of new Set([...checkSandboxIds, ...authSandboxIds])) {
-      if (alreadyStopped.has(sandboxId)) continue;
+    for (const owner of [...checkSandboxIds, ...authSandboxIds]) {
+      const sandboxId = owner.sandbox_id;
+      if (!sandboxId) continue;
+      const ownershipKey = `${provider}:${owner.sandbox_connection_revision}:${sandboxId}`;
+      if (alreadyStopped.has(ownershipKey)) continue;
+      if (
+        await hasSandboxCleanupReceipt(admin, {
+          connectionRevision: owner.sandbox_connection_revision,
+          provider,
+          sandboxId,
+          workspaceId,
+        })
+      )
+        continue;
+      if (!record) throw new Error("Workspace sandbox cleanup credentials are unavailable.");
+      if (owner.sandbox_connection_revision !== record.connection.revision)
+        throw new Error("Workspace sandbox cleanup connection changed.");
       await stopSandboxById(sandboxId, { connection: record.connection, throwOnError: true });
-      alreadyStopped.add(sandboxId);
-      result.stoppedSandboxIds.push(sandboxId);
+      alreadyStopped.add(ownershipKey);
+      if (!result.stoppedSandboxIds.includes(sandboxId)) result.stoppedSandboxIds.push(sandboxId);
       console.log("[workspace-teardown] stopped sandbox before workspace delete", {
         provider: providerLabel(provider),
         sandboxId,
@@ -91,64 +110,35 @@ export async function stopWorkspaceProviderSandboxes(
   return result;
 }
 
-async function loadActiveDeviceAuthSandboxIds(
+async function loadOwnedSandboxIds(
   admin: AdminClient,
   workspaceId: string,
-  connection: SandboxConnection,
-): Promise<string[]> {
-  const { data, error } = await admin
-    .from("codex_device_auth_flows")
-    .select("sandbox_id")
-    .eq("workspace_id", workspaceId)
-    .eq("sandbox_provider", connection.provider as SandboxProvider)
-    .eq("sandbox_connection_revision", connection.revision)
-    .in("status", ["starting", "prompted"])
-    .not("sandbox_id", "is", null);
-
-  if (error) throw error;
-
-  const ids = new Set<string>();
-  for (const row of data ?? []) {
-    if (row.sandbox_id && !row.sandbox_id.startsWith("provisioning:")) {
-      ids.add(row.sandbox_id);
+  provider: SandboxProvider,
+  table: "sandbox_capability_checks" | "codex_device_auth_flows",
+) {
+  const owners: Array<{ sandbox_id: string | null; sandbox_connection_revision: string | null }> =
+    [];
+  let afterId: string | null = null;
+  // Terminal rows still own cleanup if the process died before finally. Read
+  // every page, regardless of status or age, while credentials are retained.
+  while (true) {
+    let query = admin
+      .from(table)
+      .select("id, sandbox_id, sandbox_connection_revision")
+      .eq("workspace_id", workspaceId)
+      .eq("sandbox_provider", provider)
+      .not("sandbox_id", "is", null)
+      .order("id")
+      .limit(100);
+    if (afterId) query = query.gt("id", afterId);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data?.length) break;
+    for (const row of data) {
+      if (row.sandbox_id && !row.sandbox_id.startsWith("provisioning:")) owners.push(row);
     }
+    afterId = data[data.length - 1]!.id;
+    if (data.length < 100) break;
   }
-  return [...ids];
-}
-
-async function loadActiveCapabilityCheckSandboxIds(
-  admin: AdminClient,
-  workspaceId: string,
-  connection: SandboxConnection,
-): Promise<string[]> {
-  // Only sandboxes created by this connection revision are reachable here.
-  const staleCutoff = new Date(Date.now() - STALE_SANDBOX_CAPABILITY_CHECK_MS).toISOString();
-
-  // Match every recent check that still holds a sandbox id, NOT only `running`
-  // ones. A check writes its terminal `success`/`error` status before the
-  // `finally` that stops its sandbox runs, so a process that dies in that gap
-  // leaves a `success`/`error` row whose sandbox is still up; filtering on
-  // `running` would miss it, and once the cascade drops the row and the
-  // connection the reaper can't reach it either. Stopping an already-stopped
-  // sandbox is a best-effort no-op, so re-stopping a check that did finish its
-  // teardown is harmless. The residual a snapshot still can't cover is a check
-  // that died *before* persisting its sandbox id (no id in the DB to find) —
-  // bounded by the provider's auto-expiry and the check's own in-process
-  // `finally`, the same irreducible window a crashed run leaves behind.
-  const { data, error } = await admin
-    .from("sandbox_capability_checks")
-    .select("sandbox_id")
-    .eq("workspace_id", workspaceId)
-    .eq("sandbox_provider", connection.provider as SandboxProvider)
-    .eq("sandbox_connection_revision", connection.revision)
-    .gte("checked_at", staleCutoff)
-    .not("sandbox_id", "is", null);
-
-  if (error) throw error;
-
-  const ids = new Set<string>();
-  for (const row of data ?? []) {
-    if (row.sandbox_id) ids.add(row.sandbox_id);
-  }
-  return [...ids];
+  return owners;
 }

@@ -4,8 +4,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedHomePath: vi.fn(),
-  removeWorkspaceSessionAttachments: vi.fn().mockResolvedValue(undefined),
-  stopWorkspaceProviderSandboxes: vi.fn().mockResolvedValue({ stoppedSandboxIds: [] }),
+  resumeWorkspaceDeletion: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -20,12 +19,8 @@ vi.mock("@/lib/auth", () => ({
   resolveAuthenticatedHomePath: mocked.resolveAuthenticatedHomePath,
 }));
 
-vi.mock("@/lib/vercel-sandbox/teardown", () => ({
-  stopWorkspaceProviderSandboxes: mocked.stopWorkspaceProviderSandboxes,
-}));
-
-vi.mock("@/lib/storage/session-attachment-cleanup", () => ({
-  removeWorkspaceSessionAttachments: mocked.removeWorkspaceSessionAttachments,
+vi.mock("@/lib/workspaces/deletion", () => ({
+  resumeWorkspaceDeletion: mocked.resumeWorkspaceDeletion,
 }));
 
 import { DELETE, PATCH } from "./route";
@@ -164,30 +159,11 @@ function deleteRequestWith(body: unknown) {
   });
 }
 
-function mockDeleteResult(result: { error?: unknown; avatarObjects?: { name: string }[] }) {
-  const eq = vi.fn().mockResolvedValue({ error: result.error ?? null });
-  const del = vi.fn().mockReturnValue({ eq });
-  // Compensating park on a failed delete: from("sessions").update(...).eq(...).eq(...).
-  const sessionsEqWorkspace = vi.fn().mockReturnValue({
-    eq: vi.fn().mockResolvedValue({ error: null }),
-  });
-  const sessionsUpdate = vi.fn().mockReturnValue({ eq: sessionsEqWorkspace });
-  const from = vi.fn().mockImplementation((table: string) => {
-    if (table === "sessions") return { update: sessionsUpdate };
-    if (table === "session_attachments") {
-      return {
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }),
-      };
-    }
-    return { delete: del };
-  });
-  const list = vi.fn().mockResolvedValue({ data: result.avatarObjects ?? [], error: null });
-  const remove = vi.fn().mockResolvedValue({ data: [], error: null });
-  const storageFrom = vi.fn().mockReturnValue({ list, remove });
-  mocked.createSupabaseAdminClient.mockReturnValue({ from, storage: { from: storageFrom } });
-  return { del, eq, from, list, remove, sessionsUpdate, storageFrom };
+function mockDeleteResult(error: unknown = null) {
+  const rpc = vi.fn().mockResolvedValue({ data: "2026-10-10T00:00:00Z", error });
+  const admin = { rpc };
+  mocked.createSupabaseAdminClient.mockReturnValue(admin);
+  return admin;
 }
 
 describe("DELETE /api/workspaces/[workspaceId]", () => {
@@ -195,195 +171,104 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     vi.clearAllMocks();
   });
 
-  it("deletes the workspace for the owner with a matching confirmation", async () => {
+  it("fences the confirmed owner request before cleanup and redirects only after deletion", async () => {
     grantAccess();
     mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
-    const calls = mockDeleteResult({});
-
+    const admin = mockDeleteResult();
+    mocked.resumeWorkspaceDeletion.mockResolvedValue(true);
     const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      deleted: true,
-      redirectTo: "/onboarding/workspace",
-    });
+    expect(await response.json()).toEqual({ deleted: true, redirectTo: "/onboarding/workspace" });
     expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith(WORKSPACE_ID, {
+      allowDeleting: true,
       requireOwner: true,
     });
-    expect(calls.from).toHaveBeenCalledWith("workspaces");
-    expect(calls.eq).toHaveBeenCalledWith("id", WORKSPACE_ID);
-  });
-
-  it("stops active provider sandboxes before deleting the workspace row", async () => {
-    grantAccess();
-    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
-    const calls = mockDeleteResult({});
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
-    expect(response.status).toBe(200);
-    expect(mocked.stopWorkspaceProviderSandboxes).toHaveBeenCalledWith(
-      expect.anything(),
-      WORKSPACE_ID,
-    );
-    // Teardown must run while the run records and connection credentials still
-    // exist — i.e. before the cascade drops them.
-    expect(mocked.stopWorkspaceProviderSandboxes.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.del.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("keeps workspace records and credentials when cleanup fails, then permits a successful retry", async () => {
-    grantAccess();
-    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
-    const calls = mockDeleteResult({});
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocked.stopWorkspaceProviderSandboxes.mockRejectedValueOnce(
-      new Error("metadata lookup failed"),
-    );
-    const failed = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-    expect(failed.status).toBe(503);
-    await expect(failed.json()).resolves.toEqual({
-      error: "Sandbox cleanup is incomplete. Please retry deleting the workspace.",
+    expect(admin.rpc).toHaveBeenCalledWith("begin_workspace_deletion", {
+      p_confirmation: "Wallie",
+      p_owner_member_id: "member-1",
+      p_workspace_id: WORKSPACE_ID,
     });
-    expect(calls.del).not.toHaveBeenCalled();
-    expect(calls.remove).not.toHaveBeenCalled();
-    expect(mocked.removeWorkspaceSessionAttachments).not.toHaveBeenCalled();
+    expect(mocked.resumeWorkspaceDeletion).toHaveBeenCalledWith(admin, WORKSPACE_ID);
+    expect(admin.rpc.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.resumeWorkspaceDeletion.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("returns pending cleanup without a redirect and permits a successful retry", async () => {
+    grantAccess();
+    mockDeleteResult();
+    mocked.resumeWorkspaceDeletion.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/w/next");
+    const pending = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+    expect(pending.status).toBe(202);
+    expect(await pending.json()).toEqual({
+      deleted: false,
+      message:
+        "Workspace deletion is in progress. Cleanup will retry automatically; you can also retry here.",
+    });
+    expect(mocked.resolveAuthenticatedHomePath).not.toHaveBeenCalled();
     const retry = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
     expect(retry.status).toBe(200);
-    expect(calls.del).toHaveBeenCalledTimes(1);
+    expect(await retry.json()).toEqual({ deleted: true, redirectTo: "/w/next" });
+  });
+
+  it("keeps provider or storage errors pending for durable worker recovery", async () => {
+    grantAccess();
+    mockDeleteResult();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocked.resumeWorkspaceDeletion.mockRejectedValueOnce(new Error("storage unavailable"));
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ deleted: false });
+    expect(mocked.resolveAuthenticatedHomePath).not.toHaveBeenCalled();
     log.mockRestore();
   });
 
-  it("removes orphaned avatar objects from storage after deleting", async () => {
+  it.each([
+    { code: "42501", status: 403 },
+    { code: "22023", status: 400 },
+    { code: "XX000", status: 500 },
+  ])(
+    "does not clean up when the atomic owner/name guard fails with $code",
+    async ({ code, status }) => {
+      grantAccess();
+      mockDeleteResult({ code });
+      const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ error: "Failed to request workspace deletion." });
+      expect(mocked.resumeWorkspaceDeletion).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a mismatched name before committing the fence", async () => {
     grantAccess();
-    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
-    const calls = mockDeleteResult({ avatarObjects: [{ name: "a.png" }, { name: "b.png" }] });
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
-    expect(response.status).toBe(200);
-    expect(calls.storageFrom).toHaveBeenCalledWith("workspace-avatars");
-    expect(calls.list).toHaveBeenCalledWith(WORKSPACE_ID);
-    expect(calls.remove).toHaveBeenCalledWith([`${WORKSPACE_ID}/a.png`, `${WORKSPACE_ID}/b.png`]);
-  });
-
-  it("still succeeds when storage cleanup throws", async () => {
-    grantAccess();
-    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
-    mocked.createSupabaseAdminClient.mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
-      }),
-      storage: {
-        from: vi.fn().mockReturnValue({
-          list: vi.fn().mockRejectedValue(new Error("storage down")),
-          remove: vi.fn(),
-        }),
-      },
+    const admin = mockDeleteResult();
+    const response = await DELETE(deleteRequestWith({ confirmation: "wallie" }), routeContext());
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Type the workspace name exactly to confirm deletion.",
     });
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      deleted: true,
-      redirectTo: "/onboarding/workspace",
-    });
+    expect(admin.rpc).not.toHaveBeenCalled();
   });
 
-  it("trims the confirmation before comparing it to the workspace name", async () => {
-    grantAccess();
-    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/w/next");
-    mockDeleteResult({});
-
-    const response = await DELETE(
-      deleteRequestWith({ confirmation: "  Wallie  " }),
-      routeContext(),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ deleted: true, redirectTo: "/w/next" });
-  });
-
-  it("rejects an invalid workspace id without touching access or the database", async () => {
+  it("rejects invalid ids before authorization", async () => {
     const response = await DELETE(
       deleteRequestWith({ confirmation: "Wallie" }),
       routeContext("not-a-uuid"),
     );
-
-    expect(response.status).toBe(400);
-    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
-  });
-
-  it("rejects an empty confirmation with a 400 before checking access", async () => {
-    const response = await DELETE(deleteRequestWith({ confirmation: "" }), routeContext());
-
     expect(response.status).toBe(400);
     expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
   });
 
-  it("rejects a confirmation that does not match the workspace name", async () => {
-    grantAccess();
-    const calls = mockDeleteResult({});
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "wallie" }), routeContext());
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Type the workspace name exactly to confirm deletion.",
-    });
-    expect(calls.from).not.toHaveBeenCalled();
-  });
-
-  it("propagates the access failure status for non-owners", async () => {
+  it("preserves the authorization failure", async () => {
     mocked.requireWorkspaceAccessById.mockResolvedValue({
-      error: "Only the workspace owner can perform this action.",
       ok: false,
       status: 403,
+      error: "Owner required.",
     });
-
     const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({
-      error: "Only the workspace owner can perform this action.",
-    });
+    expect(await response.json()).toEqual({ error: "Owner required." });
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
-  });
-
-  it("returns 500 when the delete fails", async () => {
-    grantAccess();
-    mockDeleteResult({ error: new Error("db down") });
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
-    expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to delete workspace." });
-  });
-
-  it("does not park a successor after provider cleanup when the delete fails", async () => {
-    grantAccess();
-    const calls = mockDeleteResult({ error: new Error("db down") });
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
-    expect(response.status).toBe(500);
-    // The cancellation RPC already parked its generation. A replacement can
-    // start while provider cleanup is waiting, so the route must not park again.
-    expect(calls.from).not.toHaveBeenCalledWith("sessions");
-    expect(calls.sessionsUpdate).not.toHaveBeenCalled();
-  });
-
-  it("does not park sessions when the delete succeeds", async () => {
-    grantAccess();
-    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
-    const calls = mockDeleteResult({});
-
-    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
-
-    expect(response.status).toBe(200);
-    expect(calls.from).not.toHaveBeenCalledWith("sessions");
   });
 });
