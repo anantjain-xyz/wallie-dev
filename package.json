@@ -50,9 +50,15 @@
     "db:types:check": "tsx scripts/check-db-types-drift.ts",
     "verify:validation": "tsx scripts/verify-validation-contract.ts",
     "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
-    "check": "pnpm check:fast && pnpm test",
+    "check": "pnpm check:fast && pnpm test && pnpm check:cloudflare",
     "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts",
-    "test:e2e:release": "pnpm build && playwright test --config playwright.release.config.ts"
+    "test:e2e:release": "pnpm build && playwright test --config playwright.release.config.ts",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "build:worker": "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir .wallie/cloudflare-build",
+    "typecheck:cloudflare": "tsc --noEmit -p cloudflare/tsconfig.json",
+    "test:cloudflare": "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false WRANGLER_SEND_METRICS=false vitest run --config cloudflare/vitest.config.mts",
+    "check:cloudflare": "pnpm typecheck:cloudflare && pnpm test:cloudflare && pnpm build:worker"
   },
   "dependencies": {
     "@cursor/sdk": "1.0.30",
@@ -67,7 +73,7 @@
     "@supabase/ssr": "^0.10.0",
     "@supabase/supabase-js": "^2.101.0",
     "@vercel/analytics": "^2.0.1",
-    "@vercel/sandbox": "^1.10.0",
+    "@vercel/sandbox": "1.10.0",
     "@vercel/speed-insights": "^2.0.0",
     "clsx": "^2.1.1",
     "e2b": "2.35.0",
@@ -86,6 +92,8 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "@cloudflare/workers-types": "5.20261024.1",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
@@ -102,7 +110,8 @@
     "prettier": "^3.8.1",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.0.7",
+    "vitest": "4.1.8",
+    "wrangler": "4.152.0",
     "yaml": "^2.9.0"
   }
 }

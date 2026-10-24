@@ -463,6 +463,43 @@ describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
     );
   });
 
+  it("replaces a revoked token using validated same-project credentials for cleanup", async () => {
+    const nextCredentials = { ...connection.credentials, token: "replacement-token" };
+    mocked.listRunningSandboxes.mockImplementation(async ({ connection: cleanup }) => {
+      if (cleanup.credentials.token === connection.credentials.token) {
+        throw new Error("Old token is not authorized");
+      }
+      return [];
+    });
+
+    const response = await PUT(jsonRequest("vercel", "PUT", nextCredentials), context("vercel"));
+
+    expect(response.status).toBe(200);
+    expect(mocked.confirmConnectionSandboxCleanup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connection: { ...connection, credentials: nextCredentials },
+        workspaceId,
+      }),
+    );
+    expect(mocked.saveVercelSandboxConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ credentials: nextCredentials }),
+    );
+    expect(releaseMutationLock).toHaveBeenCalledOnce();
+  });
+
+  it.each(["projectId", "teamId"] as const)(
+    "keeps the previous cleanup credentials when %s changes",
+    async (field) => {
+      const nextCredentials = { ...connection.credentials, [field]: "different", token: "next" };
+      const response = await PUT(jsonRequest("vercel", "PUT", nextCredentials), context("vercel"));
+
+      expect(response.status).toBe(200);
+      expect(mocked.confirmConnectionSandboxCleanup).toHaveBeenCalledWith(
+        expect.objectContaining({ connection }),
+      );
+    },
+  );
+
   it("keeps the old Vercel connection when rotation cleanup fails", async () => {
     mocked.listRunningSandboxes.mockRejectedValueOnce(new Error("old Vercel list failed"));
 

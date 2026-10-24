@@ -10,6 +10,7 @@ import {
 } from "@/env/client";
 import { deployEnvSchema } from "@/env/deploy";
 import { workerControlEnvSchema } from "@/env/worker";
+import { workerWakeEnvSchema } from "@/env/cloudflare";
 
 const requiredEnvStringSchema = z.string().min(1);
 const optionalEnvStringSchema = z.preprocess(
@@ -38,6 +39,7 @@ export const titleGenerationEnvSchema = z.object({
 });
 
 export const serverEnvSchema = z.object({
+  ...workerWakeEnvSchema.shape,
   ...deployEnvSchema.shape,
   ...workerControlEnvSchema.shape,
   ...titleGenerationEnvSchema.shape,
@@ -86,6 +88,8 @@ export function parseSupabaseAdminEnv(input: EnvInput = process.env): SupabaseAd
 export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
   const clientEnv = parseClientEnv(input);
   const serverEnv = serverEnvSchema.parse({
+    WALLIE_WORKER_WAKE_URL: input.WALLIE_WORKER_WAKE_URL,
+    WALLIE_WORKER_WAKE_SECRET: input.WALLIE_WORKER_WAKE_SECRET,
     WALLIE_DEPLOY_ENV: input.WALLIE_DEPLOY_ENV,
     WORKER_CONTROL_SOCKET: input.WORKER_CONTROL_SOCKET,
     OPENROUTER_API_KEY: input.OPENROUTER_API_KEY,

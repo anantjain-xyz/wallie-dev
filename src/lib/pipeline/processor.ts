@@ -1,4 +1,5 @@
 import "server-only";
+import { wakeWorker } from "@/lib/worker/wake";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -700,6 +701,7 @@ export async function handleApproval(input: {
       success: false,
     };
   }
+  if (row.job_id) await wakeWorker();
   return {
     jobId: row.job_id,
     session: {
@@ -777,6 +779,7 @@ export async function handleRejection(input: {
     };
   }
 
+  if (row.job_id) await wakeWorker();
   return {
     jobId: row.job_id,
     session: {

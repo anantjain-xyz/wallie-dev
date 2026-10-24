@@ -9,6 +9,7 @@ import {
   type VercelSandboxCredentials,
 } from "@/lib/vercel-sandbox/contracts";
 import { redactSecrets } from "@/lib/sandbox/command";
+import { formatVercelSandboxError } from "@/lib/vercel-sandbox/errors";
 import { buildSecretPreview, decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
@@ -133,12 +134,7 @@ export async function validateVercelSandboxCredentials(
     });
   } catch (error) {
     return {
-      error: redactSecrets(
-        error instanceof Error
-          ? error.message
-          : "Vercel Sandbox validation failed for that project.",
-        [credentials.token],
-      ),
+      error: formatVercelSandboxError(error, [credentials.token]),
       ok: false,
     };
   }

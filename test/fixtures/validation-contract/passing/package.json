@@ -2,7 +2,7 @@
   "scripts": {
     "analyze:authenticated-bundle": "fixture",
     "build": "fixture",
-    "check": "pnpm check:fast && pnpm test",
+    "check": "pnpm check:fast && pnpm test && pnpm check:cloudflare",
     "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
     "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
     "check:route-budgets": "fixture",
@@ -18,6 +18,10 @@
     "typecheck": "tsc --noEmit",
     "verify:validation": "tsx scripts/verify-validation-contract.ts",
     "check:db-tests": "SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local",
-    "db:types:check": "tsx scripts/check-db-types-drift.ts"
+    "db:types:check": "tsx scripts/check-db-types-drift.ts",
+    "check:cloudflare": "pnpm typecheck:cloudflare && pnpm test:cloudflare && pnpm build:worker",
+    "typecheck:cloudflare": "tsc --noEmit -p cloudflare/tsconfig.json",
+    "test:cloudflare": "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false WRANGLER_SEND_METRICS=false vitest run --config cloudflare/vitest.config.mts",
+    "build:worker": "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir .wallie/cloudflare-build"
   }
 }

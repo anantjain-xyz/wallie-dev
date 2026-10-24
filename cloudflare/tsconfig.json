@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types", "node", "@cloudflare/vitest-plugin/types"],
+    "plugins": [],
+    "incremental": false
+  },
+  "include": ["./**/*.ts", "./**/*.mts"],
+  "exclude": []
+}

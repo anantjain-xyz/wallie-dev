@@ -2,21 +2,24 @@
 
 This guide walks through deploying your **own production Wallie instance** on the internet. To use the hosted instance at [**wallie.dev**](https://wallie.dev), you do not need to deploy these services. You still connect a GitHub repository, a sandbox provider, and your agent credentials before running a task. Linear is optional.
 
-If you only want to run Wallie **locally for development**, follow the [README → Local Setup](../README.md#local-setup-end-to-end) instead. This document assumes you want a real, always-on deployment.
+If you only want to run Wallie **locally for development**, follow the [README → Local Setup](../README.md#local-setup-end-to-end) instead. This document covers hosted deployment.
 
 ## Architecture: what you need to host
 
-Wallie has two long-lived processes plus managed backing services:
+Wallie deploys its web app and worker separately, with managed backing services:
 
-| Component                                | What it is                                                                            | Where it runs                                                                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Web app**                              | Next.js App Router (UI + API route handlers)                                          | Any Next.js host. Vercel is the smoothest path. Stateless.                                                  |
-| **Worker**                               | `pnpm worker` — a long-running daemon that drains the job queue and runs agent stages | A host that supports **always-on processes** (Railway, Fly, Render, a VM, etc.). **Not** Vercel serverless. |
-| **Database / Auth / Realtime / Storage** | Supabase                                                                              | Supabase Cloud (or your own Supabase).                                                                      |
-| **Sandboxes**                            | Ephemeral VMs that run the agent per stage                                            | Vercel Sandbox, E2B, or Daytona Cloud/approved self-hosted Daytona.                                         |
-| **Integrations**                         | GitHub App, Linear, model provider (Codex / Claude Code / Cursor / OpenCode)          | External; configured per-workspace in the app UI.                                                           |
+| Component                                | What it is                                                                   | Where it runs                                                                    |
+| ---------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Web app**                              | Next.js App Router (UI + API route handlers)                                 | Any Next.js host. Vercel is the smoothest path. Stateless.                       |
+| **Worker**                               | Dispatches jobs and runs agent stages in per-attempt Workflows               | Cloudflare Workers + Workflows; alternatively, an always-on Node/container host. |
+| **Database / Auth / Realtime / Storage** | Supabase                                                                     | Supabase Cloud (or your own Supabase).                                           |
+| **Sandboxes**                            | Ephemeral VMs that run the agent per stage                                   | Vercel Sandbox, E2B, or Daytona Cloud/approved self-hosted Daytona.              |
+| **Integrations**                         | GitHub App, Linear, model provider (Codex / Claude Code / Cursor / OpenCode) | External; configured per-workspace in the app UI.                                |
 
-> **Why the worker can't be serverless:** it heartbeats, polls `agent_jobs`, claims work via an atomic compare-and-swap, runs stages that can take minutes, and reaps orphaned sandboxes. It must run continuously. Deploy the web app and the worker as **two separate services from the same repo**, sharing the same environment variables.
+The native worker uses durable dispatch and Workflows for long-running stages.
+Deploy it separately from the web app, using the same Supabase project and current
+encryption key. `pnpm worker` retains the Node daemon for local development and
+container deployments.
 
 ## Prerequisites
 
@@ -49,7 +52,7 @@ See [Next.js runtime environment guidance](https://nextjs.org/docs/app/guides/se
 
 - A [Supabase](https://supabase.com) account and the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started).
 - A host for the web app (e.g. [Vercel](https://vercel.com)).
-- A host for the worker (e.g. [Railway](https://railway.com) — a `railway.json` is already included).
+- A Workers Paid account for native Cloudflare orchestration, or an always-on Node/container host.
 - A GitHub account/org where you can create a **GitHub App**.
 - A Vercel, E2B, or Daytona account for Sandbox execution.
 - Agent provider access (Codex, Claude Code, Cursor, and/or OpenCode) — entered per-workspace later, not at deploy time.
@@ -108,30 +111,25 @@ For the packaged Docker image and runtime configuration smoke check, see [Web co
 
 ## 4. Deploy the worker
 
-For the packaged Docker image and its lifecycle smoke check, see [Worker container](WORKER-CONTAINER.md).
-
-The worker runs continuously and needs the **same environment variables as the web app** (it talks to Supabase and reaches the web origin). Production starts Node directly so the worker receives `SIGTERM` and can finish active jobs during deployment:
+Use the [native Cloudflare worker guide](CLOUDFLARE-WORKER.md) for configuration,
+migrations, all twelve agent/sandbox combinations, live qualification, and rollback.
+The web app remains on Vercel; all durable state and encrypted credentials remain
+in Supabase. The checked-in `wrangler.jsonc` keeps dispatch disabled until qualification.
 
 ```bash
-node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts
+pnpm check:cloudflare
+pnpm worker:deploy
 ```
 
-The included `railway.json` uses this command with an always-restart policy, `overlapSeconds: 0`, and `drainingSeconds: 2700`. The outgoing worker receives `SIGTERM` as soon as the replacement is active, stops new claims, and has up to 45 minutes to finish existing jobs while continuing to heartbeat. This covers the current Vercel/E2B 30-minute and Daytona 40-minute sandbox lifetimes with at least five minutes for cleanup. Revisit the drain budget if those lifetimes increase. Keep these settings in `railway.json` rather than adding Railway variable overrides. `pnpm worker` remains available for local development.
+Supply the current Supabase/encryption/GitHub credentials through Cloudflare
+secrets and matching public connection variables. Configure the same wake secret
+on Vercel and Cloudflare and set Vercel's `WALLIE_WORKER_WAKE_URL` to the Worker's
+`/internal/wake` endpoint. Workspace sandbox connections remain in Settings.
 
-**Railway (uses the included config):**
-
-1. Create a new Railway service from the same repo.
-2. Add the same env vars as the web app.
-3. If you want the worker to create non-session/operator sandboxes off Vercel, give it operator credentials:
-   - `VERCEL_TOKEN` — a team-scoped token from <https://vercel.com/account/tokens>
-   - `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`
-4. Deploy. The worker registers a heartbeat and starts draining `agent_jobs`.
-
-> **First upgrade from `pnpm worker`: deploy while idle.** Pause new session submissions and retries, let queued, scheduled, and active jobs finish, and allow no new work before deployment. The outgoing worker still uses the old startup command and cannot benefit from the fix. Avoid another worker deployment while an earlier one is still draining. See [Worker operations](WORKER-OPERATIONS.md#first-deployment-of-direct-node-startup).
-
-> **Session sandboxes need a per-workspace connection, not provider API keys in env.** At job start the worker loads the workspace's selected Vercel, E2B, or Daytona connection and fails closed if it is missing, invalid, or has a stale capability check. `VERCEL_*` only covers legacy operator/helper sandboxes. Each workspace connects and tests its provider in **Settings** before sessions can run.
-
-**Any other always-on host (Fly, Render, a VM, Docker):** install dependencies with `pnpm install`, then use the direct Node command above with the same environment. Configure the host to deliver `SIGTERM` to Node and allow the same 45-minute drain before forcing termination. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `in_progress` and never progress.
+For local development, run `pnpm dev` and `pnpm worker`, or use `pnpm worker:dev`
+with local Supabase values in an ignored `.dev.vars` file. Generic Node/container
+hosting remains supported; follow [Worker container](WORKER-CONTAINER.md) for the
+image, direct Node startup, and pre-stop draining requirements.
 
 ## 5. Create the production GitHub App
 

@@ -1586,6 +1586,92 @@ export type Database = {
         }
         Relationships: []
       }
+      worker_auth_dispatches: {
+        Row: {
+          claim_token: string
+          created_at: string
+          dispatched_at: string | null
+          execution_started_at: string | null
+          expires_at: string
+          flow_id: string
+          workflow_id: string
+        }
+        Insert: {
+          claim_token: string
+          created_at?: string
+          dispatched_at?: string | null
+          execution_started_at?: string | null
+          expires_at: string
+          flow_id: string
+          workflow_id: string
+        }
+        Update: {
+          claim_token?: string
+          created_at?: string
+          dispatched_at?: string | null
+          execution_started_at?: string | null
+          expires_at?: string
+          flow_id?: string
+          workflow_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_auth_dispatches_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "cursor_auth_flows"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_dispatches: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          deadline_at: string
+          dispatched_at: string | null
+          execution_started_at: string | null
+          job_id: string
+          workflow_id: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count: number
+          created_at?: string
+          deadline_at: string
+          dispatched_at?: string | null
+          execution_started_at?: string | null
+          job_id: string
+          workflow_id: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          deadline_at?: string
+          dispatched_at?: string | null
+          execution_started_at?: string | null
+          job_id?: string
+          workflow_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_dispatches_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_dispatches_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       worker_heartbeats: {
         Row: {
           active_job_ids: string[]
@@ -2482,6 +2568,14 @@ export type Database = {
         Args: { target_provider: string; target_workspace_id: string }
         Returns: string
       }
+      begin_worker_dispatch: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_workflow_id: string
+        }
+        Returns: boolean
+      }
       begin_workspace_deletion: {
         Args: {
           p_confirmation: string
@@ -2547,6 +2641,47 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "agent_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_next_worker_auth_dispatch: {
+        Args: never
+        Returns: {
+          claim_token: string
+          created_at: string
+          dispatched_at: string | null
+          execution_started_at: string | null
+          expires_at: string
+          flow_id: string
+          workflow_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "worker_auth_dispatches"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_next_worker_dispatch: {
+        Args: {
+          p_default_workspace_limit?: number
+          p_max_concurrent?: number
+          p_timeout_ms?: number
+        }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          deadline_at: string
+          dispatched_at: string | null
+          execution_started_at: string | null
+          job_id: string
+          workflow_id: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "worker_dispatches"
           isOneToOne: false
           isSetofReturn: true
         }

@@ -13,6 +13,8 @@ Every production provider implements:
 
 - `create`: allocate, report ownership, prepare the repository, and return a
   command-capable handle.
+- `createUtility`: allocate a short-lived command-capable helper without installing
+  an agent; source delivery records its resource reservation and connection revision.
 - `listRunning`: discover live Wallie-owned resources within the provider's
   supported scope.
 - `stopById`: idempotently request cleanup of a known resource.
@@ -172,8 +174,8 @@ A provider change is incomplete until it covers:
   previous revision and can strand resources reachable only through the old
   endpoint.
 - Successful capability checks have no wall-clock freshness policy.
-- Railway worker watch patterns do not include every transitive
-  sandbox-connection, sandbox-capability, and teardown owner.
+- Native Cloudflare deployment bundles and tests the complete provider graph;
+  live qualification of all twelve combinations remains a release gate.
 
 These gaps motivate a future canonical provider registry. Until it exists, use
 the checklist above as the review contract and do not infer completeness from a

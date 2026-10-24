@@ -27,13 +27,16 @@ export async function reserveWorkspaceSandbox(
     connection?: SandboxConnection;
     provider: SandboxImplementation;
     timeoutMs?: number;
+    acquisitionTimeoutMs?: number;
     workspaceId: string;
   },
 ) {
-  const acquisitionMs =
+  const acquisitionMs = Math.min(
+    input.acquisitionTimeoutMs ?? Infinity,
     input.provider === "fake"
       ? 60_000
-      : getSandboxProviderContract(input.provider).deadlines.acquire;
+      : getSandboxProviderContract(input.provider).deadlines.acquire,
+  );
   // With no returned provider ID, retain credentials through acquisition plus
   // the sandbox's provider-enforced lifetime (including Daytona's 10m buffer).
   const recoveryMs = acquisitionMs + (input.timeoutMs ?? 30 * 60_000) + 10 * 60_000;

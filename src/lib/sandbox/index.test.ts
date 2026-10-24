@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createSessionSandbox,
+  createUtilitySandbox,
   hasRecoverableSandboxSource,
   validateSandboxConnection,
 } from "./index";
 import { getSandboxProviderContract } from "./provider-contract";
-import type { SandboxProviderDriver } from "./types";
+import { SANDBOX_PROVIDER_IDS, type SandboxHandle, type SandboxProviderDriver } from "./types";
 
 describe("sandbox provider registry", () => {
   it("fails closed when the requested implementation and connection disagree", async () => {
@@ -87,4 +88,52 @@ describe("retained source inspection boundary", () => {
       vi.useRealTimers();
     }
   });
+});
+
+describe("utility sandbox acquisition", () => {
+  it.each(SANDBOX_PROVIDER_IDS)(
+    "bounds %s acquisition and stops a late result",
+    async (provider) => {
+      vi.useFakeTimers();
+      const contract = getSandboxProviderContract(provider);
+      const originalLoad = contract.driver.load;
+      let complete: (handle: SandboxHandle) => void;
+      let signal: AbortSignal | undefined;
+      const handle = { stop: vi.fn().mockResolvedValue(undefined) } as unknown as SandboxHandle;
+      contract.driver.load = async () =>
+        ({
+          createUtility: (input: { signal?: AbortSignal }) => {
+            signal = input.signal;
+            return new Promise<SandboxHandle>((resolve) => {
+              complete = resolve;
+            });
+          },
+        }) as unknown as SandboxProviderDriver;
+      try {
+        const outcome = createUtilitySandbox(
+          {
+            workspaceId: "workspace",
+            ownerId: "run",
+            timeoutMs: 120_000,
+            onSandboxCreated: vi.fn(),
+          },
+          { provider, revision: "revision", credentials: {} } as never,
+        ).catch((error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(await outcome).toEqual(
+          expect.objectContaining({
+            name: "SandboxProviderDeadlineError",
+            message: expect.stringContaining("exceeded its 60000ms"),
+          }),
+        );
+        expect(signal?.aborted).toBe(true);
+        complete!(handle);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(handle.stop).toHaveBeenCalledOnce();
+      } finally {
+        contract.driver.load = originalLoad;
+        vi.useRealTimers();
+      }
+    },
+  );
 });

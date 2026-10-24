@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { Cursor, DEFAULT_LOGIN_API_KEY_TTL_MS } from "@cursor/sdk";
+import { loginCursor, DEFAULT_LOGIN_API_KEY_TTL_MS } from "./login-native";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { encryptSecretValue } from "@/lib/secrets/crypto";
@@ -101,21 +101,36 @@ export async function processNextCursorAuthFlow(
   if (claimError) throw claimError;
   if (!claimed) return false;
 
+  return processClaimedCursorAuthFlow(admin, claimed, claimToken, shutdownSignal);
+}
+
+export async function processClaimedCursorAuthFlow(
+  admin: AdminClient,
+  claimed: { id: string; expires_at: string },
+  claimToken: string,
+  shutdownSignal?: AbortSignal,
+): Promise<boolean> {
   const controller = new AbortController();
   const timeoutMs = Math.max(1, Date.parse(claimed.expires_at) - Date.now());
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const renewals = new Set<Promise<void>>();
   const claimHeartbeat = setInterval(() => {
-    void admin
-      .from("cursor_auth_flows")
-      .update({ claimed_at: new Date().toISOString() })
-      .eq("id", claimed.id)
-      .eq("claimed_by", claimToken)
-      .in("status", ["processing", "prompted"])
-      .select("id")
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (!error && !data) controller.abort();
-      });
+    const renewal = Promise.resolve(
+      admin
+        .from("cursor_auth_flows")
+        .update({ claimed_at: new Date().toISOString() })
+        .eq("id", claimed.id)
+        .eq("claimed_by", claimToken)
+        .in("status", ["processing", "prompted"])
+        .select("id")
+        .maybeSingle()
+        .then(({ data, error }) => {
+          if (error || !data) controller.abort();
+        }),
+    )
+      .catch(() => controller.abort())
+      .finally(() => renewals.delete(renewal));
+    renewals.add(renewal);
   }, POLL_INTERVAL_MS);
   let loginUrlPublicationError: unknown = null;
   const failLoginUrlPublication = (error: unknown) => {
@@ -131,11 +146,11 @@ export async function processNextCursorAuthFlow(
   else shutdownSignal?.addEventListener("abort", onShutdown, { once: true });
 
   try {
-    const result = await Cursor.auth.login({
+    const result = await loginCursor({
       apiKeyName: "Wallie",
       apiKeyTtlMs: DEFAULT_LOGIN_API_KEY_TTL_MS,
-      onLoginUrl: (loginUrl) => {
-        void publishCursorLoginUrl(admin, {
+      onLoginUrl: async (loginUrl) => {
+        await publishCursorLoginUrl(admin, {
           claimToken,
           flowId: claimed.id,
           loginUrl,
@@ -147,9 +162,7 @@ export async function processNextCursorAuthFlow(
           }
         }, failLoginUrlPublication);
       },
-      openBrowser: false,
       signal: controller.signal,
-      store: null,
     });
 
     const completedAt = new Date().toISOString();
@@ -166,6 +179,10 @@ export async function processNextCursorAuthFlow(
     const aborted = controller.signal.aborted;
     const effectiveError = loginUrlPublicationError ?? error;
     const shouldExpire = aborted && loginUrlPublicationError === null;
+    console.warn("[cursor-auth] sign-in did not complete", {
+      flowId: claimed.id,
+      outcome: shutdownSignal?.aborted ? "released" : shouldExpire ? "expired" : "error",
+    });
     if (shutdownSignal?.aborted) {
       await admin
         .from("cursor_auth_flows")
@@ -193,6 +210,7 @@ export async function processNextCursorAuthFlow(
   } finally {
     clearInterval(claimHeartbeat);
     clearTimeout(timeout);
+    await Promise.allSettled(renewals);
     shutdownSignal?.removeEventListener("abort", onShutdown);
   }
   return true;

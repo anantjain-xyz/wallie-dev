@@ -5,7 +5,12 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
 import { FakeSandbox } from "@/lib/sandbox/fake";
-import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
+import {
+  AGENT_PROVIDERS,
+  normalizeAgentProviderName,
+  type AgentProvider,
+} from "@/lib/agent-config/contracts";
+import { SANDBOX_PROVIDER_IDS } from "@/lib/sandbox/types";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
@@ -772,6 +777,57 @@ describe("processPipelineJob (generic stage runner)", () => {
       ]),
     );
   });
+
+  it.each(
+    AGENT_PROVIDERS.flatMap((agent) =>
+      SANDBOX_PROVIDER_IDS.map((provider) => ({ agent, provider })),
+    ),
+  )(
+    "publishes $agent artifacts with durable source and cleanup on $provider",
+    async ({ agent, provider }) => {
+      const connection =
+        provider === "vercel"
+          ? {
+              provider,
+              revision: "matrix-revision",
+              credentials: { projectId: "prj", teamId: "team", token: "synthetic" },
+            }
+          : { provider, revision: "matrix-revision", credentials: { apiKey: "synthetic" } };
+      mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValueOnce({ provider, connection });
+      const stop = vi.fn().mockResolvedValue(undefined);
+      mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+        await input.onSandboxCreated({ provider, sandboxId: "matrix-sandbox" });
+        return { id: "matrix-sandbox", repoPath: "/repo", stop };
+      });
+      mocked.createAgentRunner.mockReturnValueOnce(
+        makeRunner(
+          [
+            { type: "text", text: "Matrix reviewable artifact" },
+            { type: "completion", taskComplete: true, summary: "Complete" },
+          ],
+          { provider: agent },
+        ),
+      );
+      const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+        session: baseSession(),
+        agentConfig: [{ key: "agent_provider", value_json: agent }],
+      });
+      expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+        result: "success",
+      });
+      expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ implementation: provider, connection }),
+      );
+      expect(insertedArtifacts).toHaveLength(1);
+      expect(insertedArtifacts[0].artifact_json).toBe("Matrix reviewable artifact");
+      expect(insertedMessages.some((row) => row.kind === "text")).toBe(true);
+      expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
+      expect(stop).toHaveBeenCalledOnce();
+      expect(mocked.prepareSourceDelivery.mock.invocationCallOrder[0]).toBeLessThan(
+        stop.mock.invocationCallOrder[0],
+      );
+    },
+  );
 
   it("renders the stage prompt, runs the agent, writes the artifact, and flips status", async () => {
     const session = baseSession();

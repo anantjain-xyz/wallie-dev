@@ -26,6 +26,8 @@ type ResultOptions = {
   successDetail?: (output: string) => string | null;
 };
 
+const PLAYWRIGHT_TOOLS_PATH = "/tmp/wallie-capability-playwright";
+
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
 const { chromium } = require("playwright");
 const deadline = setTimeout(() => {
@@ -58,7 +60,11 @@ function agentCliCommand(provider: AgentProvider): string {
   }
 }
 
-async function run(sandbox: SandboxHandle, command: string): Promise<CommandResult> {
+async function run(
+  sandbox: SandboxHandle,
+  command: string,
+  env?: Record<string, string>,
+): Promise<CommandResult> {
   const captureId = randomUUID();
   const stdoutPath = `/tmp/wallie-capability-probe-${captureId}.stdout`;
   const stderrPath = `/tmp/wallie-capability-probe-${captureId}.stderr`;
@@ -70,7 +76,10 @@ async function run(sandbox: SandboxHandle, command: string): Promise<CommandResu
     ') > "$stdout_path" 2> "$stderr_path"',
   ].join("\n");
 
-  const proc = await sandbox.exec("bash", ["-lc", wrappedCommand], { cwd: sandbox.repoPath });
+  const proc = await sandbox.exec("bash", ["-lc", wrappedCommand], {
+    cwd: sandbox.repoPath,
+    ...(env ? { env } : {}),
+  });
   const code = await proc.exitCode;
   const [capturedStdout, capturedStderr] = await Promise.all([
     sandbox.readFile(stdoutPath),
@@ -165,11 +174,18 @@ export async function probeSandboxCapabilities(input: {
     "node -e \"require.resolve('playwright'); console.log(require('playwright/package.json').version)\"",
   );
   report.playwrightPackage = result(playwrightCheck, "playwright package not found");
+  let playwrightEnv: Record<string, string> | undefined;
+  let chromiumInstall = "npx playwright install chromium";
 
   if (!report.playwrightPackage.ok && input.bootstrapPlaywright !== false) {
+    // Browser capability is independent of the repository's package graph.
+    // Installing into a pnpm-managed checkout can crash npm's dependency resolver.
+    playwrightEnv = { NODE_PATH: `${PLAYWRIGHT_TOOLS_PATH}/node_modules` };
+    chromiumInstall = `${shellQuote(`${PLAYWRIGHT_TOOLS_PATH}/node_modules/.bin/playwright`)} install chromium`;
     const install = await run(
       sandbox,
-      "npm install --no-save playwright@^1.56.0 >/tmp/wallie-playwright-install.log 2>&1 && node -e \"require.resolve('playwright'); console.log(require('playwright/package.json').version)\"",
+      `npm install --prefix ${shellQuote(PLAYWRIGHT_TOOLS_PATH)} --no-package-lock --no-save playwright@^1.56.0 >/tmp/wallie-playwright-install.log 2>&1 && node -e "require.resolve('playwright'); console.log(require('playwright/package.json').version)"`,
+      playwrightEnv,
     );
     report.playwrightPackage = result(install, "playwright bootstrap failed");
   }
@@ -178,7 +194,7 @@ export async function probeSandboxCapabilities(input: {
     await record(
       report,
       "chromium",
-      run(sandbox, "npx playwright install chromium"),
+      run(sandbox, chromiumInstall, playwrightEnv),
       "chromium install failed",
       {
         allowEmptySuccess: true,
@@ -189,7 +205,7 @@ export async function probeSandboxCapabilities(input: {
     await record(
       report,
       "screenshotSmoke",
-      run(sandbox, `node <<'NODE'\n${PLAYWRIGHT_SMOKE_SCRIPT}\nNODE`),
+      run(sandbox, `node <<'NODE'\n${PLAYWRIGHT_SMOKE_SCRIPT}\nNODE`, playwrightEnv),
       "playwright screenshot smoke failed",
       {
         allowEmptySuccess: true,

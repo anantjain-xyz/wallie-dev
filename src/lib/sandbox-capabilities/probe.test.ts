@@ -307,7 +307,7 @@ describe("probeSandboxCapabilities", () => {
     expect(report.agentCli.ok).toBe(false);
   });
 
-  it("bootstraps Playwright when the package is initially missing", async () => {
+  it("bootstraps browser tooling independently of the repository's dependency graph", async () => {
     const sandbox = new FakeSandbox();
     scriptBaseSuccess(sandbox);
     sandbox.scriptExec(
@@ -316,11 +316,11 @@ describe("probeSandboxCapabilities", () => {
       { exitCode: 1 },
     );
     sandbox.scriptExec(
-      (call) => call.args.join(" ").includes("npm install --no-save playwright"),
+      (call) => call.args.join(" ").includes("npm install --prefix"),
       [{ data: "1.56.0\n", stream: "stdout" }],
     );
     sandbox.scriptExec(
-      (call) => call.args.join(" ").includes("npx playwright install chromium"),
+      (call) => call.args.join(" ").includes("/node_modules/.bin/playwright' install chromium"),
       [{ data: "chromium ready\n", stream: "stdout" }],
     );
     sandbox.scriptExec(
@@ -335,5 +335,15 @@ describe("probeSandboxCapabilities", () => {
 
     expect(report.playwrightPackage.ok).toBe(true);
     expect(report.screenshotSmoke.ok).toBe(true);
+    const install = sandbox.calls.find((call) => call.args.join(" ").includes("npm install"));
+    expect(install?.args.join(" ")).toContain(
+      "npm install --prefix '/tmp/wallie-capability-playwright' --no-package-lock --no-save",
+    );
+    const smoke = sandbox.calls.find((call) =>
+      call.args.join(" ").includes("Wallie screenshot smoke"),
+    );
+    expect(smoke?.opts.env).toEqual({
+      NODE_PATH: "/tmp/wallie-capability-playwright/node_modules",
+    });
   });
 });

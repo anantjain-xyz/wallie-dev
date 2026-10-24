@@ -1,55 +1,30 @@
 import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import ts from "typescript";
+import { expect, it } from "vitest";
 
-import { describe, expect, it } from "vitest";
-
-/** Follow local imports, including imports outside the current worker folders. */
-function workerFiles(root: string): Set<string> {
-  const config = ts.readConfigFile(resolve(root, "tsconfig.json"), ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-  const pending = [
-    "src/worker/index.ts",
-    "scripts/install-crash-handlers.mjs",
-    "scripts/register-server-only.mjs",
-  ];
-  const visited = new Set<string>();
-  while (pending.length) {
-    const path = pending.pop()!;
-    if (visited.has(path)) continue;
-    visited.add(path);
-    const absolute = resolve(root, path);
-    for (const dependency of ts.preProcessFile(readFileSync(absolute, "utf8"), true, true)
-      .importedFiles) {
-      const resolved = ts.resolveModuleName(
-        dependency.fileName,
-        absolute,
-        options,
-        ts.sys,
-      ).resolvedModule;
-      if (!resolved || resolved.isExternalLibraryImport) continue;
-      pending.push(relative(root, resolved.resolvedFileName));
-    }
+it("deploys native orchestration with dispatch disabled until live qualification", () => {
+  const path = resolve("wrangler.jsonc");
+  const { config, error } = ts.parseConfigFileTextToJson(path, readFileSync(path, "utf8"));
+  expect(error).toBeUndefined();
+  expect(config.main).toBe("cloudflare/index.ts");
+  expect(config.vars.WALLIE_WORKER_DISPATCH_ENABLED).toBe("false");
+  expect(config.vars.WALLIE_ENABLED_SANDBOX_PROVIDERS).toBe("vercel,e2b,daytona");
+  expect(config.triggers.crons).toEqual(["* * * * *"]);
+  expect(config.workflows.map((workflow: { class_name: string }) => workflow.class_name)).toEqual([
+    "SessionAttemptWorkflow",
+    "CursorAuthWorkflow",
+    "MaintenanceWorkflow",
+  ]);
+  expect(config.alias["server-only"]).toBe("./cloudflare/server-only.ts");
+  expect(config.alias["isomorphic-ws"]).toBe("./cloudflare/websocket.ts");
+  expect(config.alias.undici).toBe("./cloudflare/undici.ts");
+  for (const secret of [
+    "SUPABASE_SECRET_KEY",
+    "WALLIE_ENCRYPTION_KEY",
+    "GITHUB_APP_PRIVATE_KEY",
+    "WALLIE_WORKER_WAKE_SECRET",
+  ]) {
+    expect(config.vars).not.toHaveProperty(secret);
   }
-  return visited;
-}
-
-describe("Railway worker deployment", () => {
-  it("watches every reachable worker module and runtime configuration", () => {
-    const root = process.cwd();
-    const config = JSON.parse(readFileSync(resolve(root, "railway.json"), "utf8")) as {
-      build: { watchPatterns: string[] };
-    };
-    const files = workerFiles(root);
-    expect(files.size).toBeGreaterThan(50);
-    for (const path of ["package.json", "pnpm-lock.yaml", "railway.json", "tsconfig.json"])
-      files.add(path);
-    const uncovered = [...files].filter(
-      (path) =>
-        !config.build.watchPatterns.some((pattern) =>
-          pattern.endsWith("/**") ? path.startsWith(pattern.slice(0, -2)) : path === pattern,
-        ),
-    );
-    expect(uncovered).toEqual([]);
-  });
 });

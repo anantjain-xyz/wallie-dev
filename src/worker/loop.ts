@@ -49,25 +49,30 @@ export async function claimNextJob(
 export async function runClaimedJob(
   admin: AdminClient,
   job: AgentJobRow,
-  options: { timeoutMs?: number; recoveryTimeoutMs?: number } = {},
+  options: { timeoutMs?: number; recoveryTimeoutMs?: number; deadlineAt?: string } = {},
 ): Promise<void> {
   const jobId = job.id;
   const attemptCount = job.attempt_count;
   const controller = new AbortController();
-  const deadlineAt = new Date(Date.now() + (options.timeoutMs ?? 1_800_000)).toISOString();
+  const now = Date.now();
+  const deadlineMs = Math.min(
+    now + (options.timeoutMs ?? 1_800_000),
+    options.deadlineAt ? Date.parse(options.deadlineAt) : Infinity,
+  );
+  const deadlineAt = new Date(deadlineMs).toISOString();
+  const timeoutMs = Math.max(0, deadlineMs - now);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeoutMessage: string | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const error = new Error(
-        `Worker attempt exceeded its ${options.timeoutMs ?? 1_800_000}ms deadline.`,
-      );
-      timeoutMessage = error.message;
-      controller.abort(error);
-      reject(error);
-    }, options.timeoutMs ?? 1_800_000);
-  });
   try {
+    if (timeoutMs === 0) throw new Error("Worker attempt deadline expired before execution.");
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`Worker attempt exceeded its ${timeoutMs}ms deadline.`);
+        timeoutMessage = error.message;
+        controller.abort(error);
+        reject(error);
+      }, timeoutMs);
+    });
     await Promise.race([
       processPipelineJob({ admin, job, deadlineAt, signal: controller.signal }),
       deadline,

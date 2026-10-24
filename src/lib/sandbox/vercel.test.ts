@@ -94,6 +94,21 @@ beforeEach(() => {
 });
 
 describe("createVercelSessionSandbox", () => {
+  it("preserves the provider's creation rejection reason without exposing credentials", async () => {
+    mocked.sandboxCreate.mockRejectedValueOnce(
+      new APIError(new Response(null, { status: 403 }), {
+        message: "Status code 403 is not ok",
+        json: {
+          error: { code: "forbidden", message: "Access denied for vca_secret and ghs_token." },
+        },
+      }),
+    );
+
+    await expect(createVercelSessionSandbox(input(), vercelConnection)).rejects.toThrow(
+      "Vercel Sandbox request failed (403; forbidden): Access denied for [REDACTED] and [REDACTED].",
+    );
+  });
+
   it("requires explicit workspace credentials", async () => {
     await expect(
       createSessionSandbox(input({ connection: undefined, implementation: "vercel" })),

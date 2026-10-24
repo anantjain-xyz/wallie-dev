@@ -16,6 +16,12 @@ export const privilegedImportBoundaryConfig = {
   ownerRules: [
     {
       boundary: "worker-runtime",
+      description: "native Cloudflare worker (cloudflare/**)",
+      id: "cloudflare-worker",
+      pathPrefix: "cloudflare/",
+    },
+    {
+      boundary: "worker-runtime",
       description: "worker runtime (src/worker/**)",
       id: "worker",
       pathPrefix: "src/worker/",
@@ -35,23 +41,23 @@ export const privilegedImportBoundaryConfig = {
   ],
   privilegedModules: [
     {
-      approvedOwnerIds: ["worker", "privileged-route", "server-service"],
+      approvedOwnerIds: ["worker", "cloudflare-worker", "privileged-route", "server-service"],
       description: "service-role Supabase client",
       path: "src/lib/supabase/admin.ts",
       requiresServerOnlyImport: true,
     },
     {
-      approvedOwnerIds: ["worker", "privileged-route", "server-service"],
+      approvedOwnerIds: ["worker", "cloudflare-worker", "privileged-route", "server-service"],
       description: "server environment",
       path: "src/env/server.ts",
       requiresServerOnlyImport: true,
     },
     {
-      approvedOwnerIds: ["worker", "privileged-route", "server-service"],
+      approvedOwnerIds: ["worker", "cloudflare-worker", "privileged-route", "server-service"],
       description: "workspace secret crypto",
       path: "src/lib/secrets/crypto.ts",
       requiresServerOnlyImport: true,
     },
   ],
-  sourceRoots: ["src"],
+  sourceRoots: ["src", "cloudflare"],
 } satisfies PrivilegedImportBoundaryConfig;

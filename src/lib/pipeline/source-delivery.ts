@@ -7,7 +7,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 
 import { SOURCE_CHECKPOINT_BUCKET, type SourceCheckpoint } from "./source-checkpoint";
-import { restoreAndPushSource } from "./source-delivery-git";
+import { restoreAndPushSourceInSandbox } from "./source-delivery-sandbox";
 import { ensureSourcePullRequest } from "./source-pull-request";
 
 type AdminClient = SupabaseClient<Database>;
@@ -142,7 +142,7 @@ async function resolveDeliveryRepository(
   signal.throwIfAborted();
   const response = await fetch(`https://api.github.com/repos/${repository.full_name}`, {
     signal,
-    redirect: "error",
+    redirect: "manual",
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
@@ -189,17 +189,20 @@ export async function deliverSourceCheckpoint(
   const current = await resolveDeliveryRepository(admin, delivery, signal);
   const { token } = current;
   await assertClaim(admin, delivery, signal);
-  const branch = await restoreAndPushSource({
-    baseSha: delivery.base_sha,
-    headSha: delivery.head_sha,
-    branch: delivery.branch_name,
-    bytes,
-    sha256: delivery.bundle_sha256 ?? "",
-    remoteUrl: `https://github.com/${current.delivery.repository_full_name}.git`,
-    token,
-    signal,
-    beforePush: () => assertClaim(admin, delivery, signal),
-  });
+  const branch = await restoreAndPushSourceInSandbox(
+    {
+      baseSha: delivery.base_sha,
+      headSha: delivery.head_sha,
+      branch: delivery.branch_name,
+      bytes,
+      sha256: delivery.bundle_sha256 ?? "",
+      remoteUrl: `https://github.com/${current.delivery.repository_full_name}.git`,
+      token,
+      signal,
+      beforePush: () => assertClaim(admin, delivery, signal),
+    },
+    { admin, workspaceId: delivery.workspace_id, runId: delivery.run_id },
+  );
   await assertClaim(admin, delivery, signal);
   await ensureSourcePullRequest({
     admin,
