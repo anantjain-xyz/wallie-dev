@@ -30,5 +30,11 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "test/fixtures/privileged-imports"]
+  "exclude": [
+    "node_modules",
+    "test/fixtures/privileged-imports",
+    "cloudflare",
+    ".wallie",
+    ".wrangler"
+  ]
 }

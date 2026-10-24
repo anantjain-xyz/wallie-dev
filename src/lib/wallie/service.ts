@@ -1,4 +1,5 @@
 import "server-only";
+import { wakeWorker } from "@/lib/worker/wake";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -234,6 +235,8 @@ export async function createSessionWithFirstJob(input: {
   if (error || !data) {
     throw error ?? new Error("Wallie could not create that session.");
   }
+
+  await wakeWorker();
 
   return {
     jobId: data.job_id,
@@ -554,6 +557,8 @@ export async function enqueueSessionJobWithRun(
   if (error) throw error;
   const queued = data?.[0];
   if (!queued) throw new Error("Wallie enqueue returned no job.");
+
+  await wakeWorker();
 
   const run = queued.run_id ? await loadRunById(admin, queued.run_id) : null;
   return {

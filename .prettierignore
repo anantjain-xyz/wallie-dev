@@ -5,6 +5,8 @@ AGENTS.md
 .env.local
 .next
 .vercel
+.wallie
+.wrangler
 build
 coverage
 test-results

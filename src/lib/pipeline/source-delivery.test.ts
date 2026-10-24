@@ -7,7 +7,7 @@ import type { Database } from "@/lib/supabase/database.types";
 const mocked = vi.hoisted(() => ({ upload: vi.fn(), push: vi.fn(), pr: vi.fn(), token: vi.fn() }));
 vi.mock("@/lib/workspaces/resource-operations", () => ({ uploadWorkspaceObject: mocked.upload }));
 vi.mock("@/features/github/sandbox-token", () => ({ mintSandboxRepositoryToken: mocked.token }));
-vi.mock("./source-delivery-git", () => ({ restoreAndPushSource: mocked.push }));
+vi.mock("./source-delivery-sandbox", () => ({ restoreAndPushSourceInSandbox: mocked.push }));
 vi.mock("./source-pull-request", () => ({ ensureSourcePullRequest: mocked.pr }));
 
 import {
@@ -189,6 +189,7 @@ it("uses the bounded private DB fallback during a Storage outage and restores it
   expect(download).not.toHaveBeenCalled();
   expect(mocked.push).toHaveBeenLastCalledWith(
     expect.objectContaining({ bytes, remoteUrl: "https://github.com/acme/app.git" }),
+    expect.objectContaining({ runId: "run", workspaceId: "workspace" }),
   );
   expect(row.bundle_base64).toBeNull();
   expect(row.status).toBe("delivered");
@@ -318,6 +319,7 @@ it("reloads renamed repository and replacement installation identity on every re
   });
   expect(mocked.push).toHaveBeenLastCalledWith(
     expect.objectContaining({ remoteUrl: "https://github.com/new-owner/renamed.git" }),
+    expect.objectContaining({ runId: "run", workspaceId: "workspace" }),
   );
   expect(mocked.pr).toHaveBeenLastCalledWith(
     expect.objectContaining({

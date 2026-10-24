@@ -206,6 +206,24 @@ export async function hasRecoverableE2BSandboxSource(
 
 export const e2bSandboxDriver: SandboxProviderDriver<E2BConnection> = {
   create: createE2BSessionSandbox,
+  createUtility: async (input, connection) => {
+    const sandbox = await Sandbox.create({
+      apiKey: connection.credentials.apiKey,
+      lifecycle: { onTimeout: "kill" },
+      metadata: { wallie_owner_id: input.ownerId, wallie_workspace_id: input.workspaceId },
+      timeoutMs: input.timeoutMs,
+      signal: input.signal,
+    });
+    const handle = new E2BSandboxHandle(sandbox);
+    try {
+      await input.onSandboxCreated({ provider: "e2b", sandboxId: handle.id });
+      input.signal?.throwIfAborted();
+      return handle;
+    } catch (error) {
+      await handle.stop();
+      throw error;
+    }
+  },
   listRunning: listRunningE2BSandboxes,
   hasRecoverableSource: hasRecoverableE2BSandboxSource,
   stopById: stopE2BSandboxById,

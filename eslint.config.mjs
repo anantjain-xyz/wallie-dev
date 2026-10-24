@@ -107,6 +107,8 @@ const eslintConfig = defineConfig([
   eslintConfigPrettier,
   globalIgnores([
     ".next/**",
+    ".wallie/**",
+    ".wrangler/**",
     "out/**",
     "build/**",
     "coverage/**",

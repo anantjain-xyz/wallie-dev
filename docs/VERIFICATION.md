@@ -19,27 +19,29 @@ The fast profile runs:
 verify:validation → format:check → lint → typecheck → check:privileged-imports
 ```
 
-The full profile runs `check:fast` and then the complete Vitest suite. Before
-review, run `pnpm check`, the repository-owned full pre-PR gate.
+The full profile runs `check:fast`, the complete Node Vitest suite, and
+`check:cloudflare` (native runtime types, workerd tests, and a Wrangler dry build).
+Before review, run `pnpm check`, the repository-owned full pre-PR gate.
 
 Pull-request CI runs `pnpm check:fast` in the `lint-and-format` job and
-`pnpm test` in the `test` job. Together these cover the full `pnpm check`
-profile, including typechecking, without repeating fast validation. A separate CI job builds the production
+`pnpm test` in the `test` job, and `pnpm check:cloudflare` in the `cloudflare-worker`
+job. Together these cover the full `pnpm check` profile without repeating fast validation. A separate CI job builds the production
 app and enforces route budgets; production builds and route-budget checks are
 not part of either canonical profile.
 
 ## CI scope
 
-The workflows run four jobs on pull requests and main pushes:
+The workflows run five jobs on pull requests and main pushes:
 
-| Job               | Coverage                                                             |
-| ----------------- | -------------------------------------------------------------------- |
-| `lint-and-format` | Validation contract, formatting, lint, types, and privileged imports |
-| `test`            | Complete Vitest suite                                                |
-| `route-budgets`   | Production Next.js build and route bundle ceilings                   |
-| `database-tests`  | Disposable local Supabase, migrations, and pgTAP                     |
+| Job                 | Coverage                                                             |
+| ------------------- | -------------------------------------------------------------------- |
+| `lint-and-format`   | Validation contract, formatting, lint, types, and privileged imports |
+| `test`              | Complete Vitest suite                                                |
+| `cloudflare-worker` | Native runtime types, workerd tests, and Wrangler build              |
+| `route-budgets`     | Production Next.js build and route bundle ceilings                   |
+| `database-tests`    | Disposable local Supabase, migrations, and pgTAP                     |
 
-- Deployment target: Vercel web, hosted Supabase, and the Railway worker configured in `railway.json`.
+- Deployment target: Vercel web, hosted Supabase, and native Cloudflare orchestration configured in `wrangler.jsonc`. Native qualification and live provider checks are described in [Cloudflare worker](CLOUDFLARE-WORKER.md).
 - Local Supabase tests protect application database behavior used by hosted Supabase; keep them in CI.
 - Retired checks: six AWS infrastructure workflows, AWS web/worker container qualification, and upstream self-hosted Supabase qualification. Their infrastructure, scripts, and local verification commands remain available for an explicitly resumed AWS effort.
 - `Lint and Format` retains fast validation; `Test` runs Vitest directly instead of repeating `check:fast` through `pnpm check`.
@@ -47,22 +49,23 @@ The workflows run four jobs on pull requests and main pushes:
 
 ## Verification lanes
 
-| Lane                       | Command                                           | What it proves                                                                            | What it does not prove                                     |
-| -------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Focused unit or contract   | `pnpm test path/to/file.test.ts`                  | The selected Vitest file in the Node test environment                                     | Unrelated tests, formatting, types, browser behavior       |
-| Focused behavior           | `pnpm test -t "name"`                             | Tests matching one title                                                                  | That the intended file was the only match                  |
-| Formatting                 | `pnpm format:check`                               | Tracked and nonignored files match Prettier                                               | Types or behavior                                          |
-| Static analysis            | `pnpm lint`                                       | ESLint and repository custom rules pass with zero warnings                                | TypeScript or runtime behavior                             |
-| Types                      | `pnpm typecheck`                                  | TypeScript compiles with no emit                                                          | Database runtime compatibility                             |
-| Unit suite                 | `pnpm test`                                       | All colocated Vitest tests pass                                                           | A real browser, worker, provider, or hosted database       |
-| Canonical fast profile     | `pnpm check:fast`                                 | Validation contract, format, lint, types, and privileged imports pass                     | Unit tests, production build, route budgets, E2E           |
-| Canonical full profile     | `pnpm check`                                      | The fast profile and all unit tests pass together                                         | Production build, route budgets, E2E, hosted integrations  |
-| Production route budget    | `pnpm build && pnpm check:route-budgets`          | Next production build succeeds and committed route ceilings hold                          | Interaction latency or user-perceived behavior             |
-| Authenticated bundle check | `pnpm build && pnpm analyze:authenticated-bundle` | Selected authenticated chunks omit the script's prohibited bundle markers                 | A general dependency audit or runtime correctness          |
-| Local schema reset         | `supabase db reset`                               | The full migration chain and seed apply to a clean local stack                            | Upgrade compatibility from an older deployed schema        |
-| SQL test suite             | `pnpm check:db-tests`                             | The checked-in pgTAP tests pass against local Supabase                                    | Complete RLS/RPC coverage beyond the checked-in assertions |
-| Generated-types comparison | `pnpm db:types:check` / `pnpm check:types-drift`  | Actual local schema projection exactly matches committed types without rewriting the file | RLS behavior or unapplied migrations                       |
-| Generated types            | `pnpm db:types` followed by a clean diff          | Applied local schema projects to the committed TypeScript types                           | RLS behavior for multiple identities                       |
+| Lane                       | Command                                           | What it proves                                                                            | What it does not prove                                      |
+| -------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Focused unit or contract   | `pnpm test path/to/file.test.ts`                  | The selected Vitest file in the Node test environment                                     | Unrelated tests, formatting, types, browser behavior        |
+| Focused behavior           | `pnpm test -t "name"`                             | Tests matching one title                                                                  | That the intended file was the only match                   |
+| Formatting                 | `pnpm format:check`                               | Tracked and nonignored files match Prettier                                               | Types or behavior                                           |
+| Static analysis            | `pnpm lint`                                       | ESLint and repository custom rules pass with zero warnings                                | TypeScript or runtime behavior                              |
+| Types                      | `pnpm typecheck`                                  | TypeScript compiles with no emit                                                          | Database runtime compatibility                              |
+| Unit suite                 | `pnpm test`                                       | All colocated Vitest tests pass                                                           | A real browser, worker, provider, or hosted database        |
+| Canonical fast profile     | `pnpm check:fast`                                 | Validation contract, format, lint, types, and privileged imports pass                     | Unit tests, production build, route budgets, E2E            |
+| Native worker profile      | `pnpm check:cloudflare`                           | Native types, simulated workerd execution, and Wrangler build pass                        | Live sandbox/agent parity or deployed configuration         |
+| Canonical full profile     | `pnpm check`                                      | Fast validation, unit tests, and the native worker profile pass together                  | Web production build, route budgets, E2E, live integrations |
+| Production route budget    | `pnpm build && pnpm check:route-budgets`          | Next production build succeeds and committed route ceilings hold                          | Interaction latency or user-perceived behavior              |
+| Authenticated bundle check | `pnpm build && pnpm analyze:authenticated-bundle` | Selected authenticated chunks omit the script's prohibited bundle markers                 | A general dependency audit or runtime correctness           |
+| Local schema reset         | `supabase db reset`                               | The full migration chain and seed apply to a clean local stack                            | Upgrade compatibility from an older deployed schema         |
+| SQL test suite             | `pnpm check:db-tests`                             | The checked-in pgTAP tests pass against local Supabase                                    | Complete RLS/RPC coverage beyond the checked-in assertions  |
+| Generated-types comparison | `pnpm db:types:check` / `pnpm check:types-drift`  | Actual local schema projection exactly matches committed types without rewriting the file | RLS behavior or unapplied migrations                        |
+| Generated types            | `pnpm db:types` followed by a clean diff          | Applied local schema projects to the committed TypeScript types                           | RLS behavior for multiple identities                        |
 
 `pnpm db:types` rewrites a generated file. Run it only against the intended
 local Supabase schema and inspect the diff.

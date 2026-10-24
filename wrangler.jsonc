@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wallie-worker",
+  "keep_vars": true,
+  "main": "cloudflare/index.ts",
+  "compatibility_date": "2026-10-24",
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
+  "tsconfig": "cloudflare/tsconfig.json",
+  "alias": {
+    "server-only": "./cloudflare/server-only.ts",
+    "undici": "./cloudflare/undici.ts",
+    "isomorphic-ws": "./cloudflare/websocket.ts",
+  },
+  "define": { "process.env.NODE_ENV": "\"production\"" },
+  "vars": {
+    "WALLIE_DEPLOY_ENV": "production",
+    "WALLIE_WORKER_DISPATCH_ENABLED": "false",
+    "WALLIE_WORKER_AUTH_ENABLED": "false",
+    "WORKER_MAX_CONCURRENT_JOBS": "10",
+    "WORKER_JOB_TIMEOUT_MS": "1800000",
+    "WALLIE_ENABLED_SANDBOX_PROVIDERS": "vercel,e2b,daytona",
+  },
+  "durable_objects": { "bindings": [{ "name": "DISPATCHER", "class_name": "Dispatcher" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Dispatcher"] }],
+  "workflows": [
+    {
+      "name": "wallie-session-attempt",
+      "binding": "SESSION_ATTEMPT",
+      "class_name": "SessionAttemptWorkflow",
+    },
+    { "name": "wallie-cursor-auth", "binding": "CURSOR_AUTH", "class_name": "CursorAuthWorkflow" },
+    { "name": "wallie-maintenance", "binding": "MAINTENANCE", "class_name": "MaintenanceWorkflow" },
+  ],
+  "triggers": { "crons": ["* * * * *"] },
+  "limits": { "cpu_ms": 300000 },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+}

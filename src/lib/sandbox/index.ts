@@ -1,5 +1,6 @@
 import type {
   CreateSessionSandboxInput,
+  CreateUtilitySandboxInput,
   RunningSandboxSummary,
   SandboxConnection,
   SandboxHandle,
@@ -17,6 +18,7 @@ import {
 export type {
   AgentProvider,
   CreateSessionSandboxInput,
+  CreateUtilitySandboxInput,
   DaytonaSandboxCredentials,
   E2BSandboxCredentials,
   RunningSandboxSummary,
@@ -32,6 +34,28 @@ export type {
   VercelSandboxCredentials,
 } from "./types";
 const IMPLEMENTATIONS = [...listSandboxProviders(), "fake"] as const;
+
+export async function createUtilitySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: SandboxConnection,
+): Promise<SandboxHandle> {
+  try {
+    return await runBoundedSandboxProviderOperation({
+      operation: "acquire",
+      provider: connection.provider,
+      signal: input.signal,
+      timeoutMs: Math.min(
+        60_000,
+        getSandboxProviderContract(connection.provider).deadlines.acquire,
+      ),
+      onLateSuccess: (sandbox) => sandbox.stop(),
+      run: async (signal) =>
+        (await loadProviderDriver(connection)).createUtility({ ...input, signal }, connection),
+    });
+  } catch (error) {
+    throw sanitizedSandboxError(error, connection, []);
+  }
+}
 
 async function loadProviderDriver<Connection extends SandboxConnection>(
   connection: Connection,

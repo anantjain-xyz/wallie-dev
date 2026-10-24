@@ -1,9 +1,12 @@
 import { APIError, Sandbox } from "@vercel/sandbox";
 
+import { formatVercelSandboxError } from "@/lib/vercel-sandbox/errors";
+
 import { redactSecrets } from "./command";
 import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
+  CreateUtilitySandboxInput,
   RunningSandboxSummary,
   SandboxConnection,
   SandboxExecHandle,
@@ -117,12 +120,16 @@ export async function createVercelSessionSandbox(
     teamId: credentials.teamId,
     timeout: timeoutMs,
     token: credentials.token,
+    ...(input.signal ? { signal: input.signal } : {}),
     resources: { vcpus: 2 },
     env: {
       CI: "1",
       // Used by the setup script + any subsequent git op.
       GH_TOKEN: input.installationToken,
     },
+  }).catch((error: unknown) => {
+    if (!(error instanceof APIError)) throw error;
+    throw new Error(formatVercelSandboxError(error, [credentials.token, input.installationToken]));
   });
 
   const handle = new VercelSandboxHandle(sandbox);
@@ -236,10 +243,7 @@ export async function validateVercelConnectionDriver(connection: VercelConnectio
     return { ok: true as const };
   } catch (error) {
     return {
-      error: redactSecrets(
-        error instanceof Error ? error.message : "Vercel rejected the connection.",
-        [connection.credentials.token],
-      ),
+      error: formatVercelSandboxError(error, [connection.credentials.token]),
       ok: false as const,
     };
   }
@@ -272,6 +276,27 @@ export async function hasRecoverableVercelSandboxSource(
 
 export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {
   create: createVercelSessionSandbox,
+  createUtility: async (input: CreateUtilitySandboxInput, connection) => {
+    const sandbox = await Sandbox.create({
+      ...connection.credentials,
+      runtime: "node22",
+      timeout: input.timeoutMs,
+      resources: { vcpus: 2 },
+      signal: input.signal,
+    }).catch((error: unknown) => {
+      if (!(error instanceof APIError)) throw error;
+      throw new Error(formatVercelSandboxError(error, [connection.credentials.token]));
+    });
+    const handle = new VercelSandboxHandle(sandbox);
+    try {
+      await input.onSandboxCreated({ provider: "vercel", sandboxId: handle.id });
+      input.signal?.throwIfAborted();
+      return handle;
+    } catch (error) {
+      await handle.stop();
+      throw error;
+    }
+  },
   hasRecoverableSource: hasRecoverableVercelSandboxSource,
   listRunning: (connection, options) =>
     listRunningVercelSandboxes(connection, { throwOnError: true, ...options }),

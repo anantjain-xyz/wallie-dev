@@ -21,11 +21,23 @@ const DAYTONA_CLOUD_API_URL = "https://app.daytona.io/api";
 
 type DaytonaConnection = Extract<SandboxConnection, { provider: "daytona" }>;
 
+const cloudflareRuntime =
+  typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair === "function";
+if (cloudflareRuntime) {
+  const createAxios = Daytona.createAxiosInstance.bind(Daytona);
+  Daytona.createAxiosInstance = () => {
+    const client = createAxios();
+    client.defaults.adapter = "fetch";
+    return client;
+  };
+}
+
 function createClient(connection: DaytonaConnection): Daytona {
   return new Daytona({
     apiKey: connection.credentials.apiKey,
     apiUrl: connection.credentials.apiUrl ?? DAYTONA_CLOUD_API_URL,
     target: connection.credentials.target,
+    ...(cloudflareRuntime ? { useDeprecatedPolling: true, otelEnabled: false } : {}),
   });
 }
 
@@ -267,6 +279,31 @@ export async function hasRecoverableDaytonaSandboxSource(
 
 export const daytonaSandboxDriver: SandboxProviderDriver<DaytonaConnection> = {
   create: createDaytonaSessionSandbox,
+  createUtility: async (input, connection) => {
+    const client = createClient(connection);
+    let handle: DaytonaSandboxHandle | undefined;
+    try {
+      const sandbox = await client.create(
+        {
+          image: "node:22-bookworm",
+          ephemeral: true,
+          autoStopInterval: 0,
+          ttlMinutes: Math.ceil(input.timeoutMs / 60_000) + 10,
+          labels: { wallie_owner_id: input.ownerId, wallie_workspace_id: input.workspaceId },
+          resources: { cpu: 2, disk: 10, memory: 4 },
+        },
+        { timeout: 60 },
+      );
+      handle = new DaytonaSandboxHandle(client, sandbox);
+      await input.onSandboxCreated({ provider: "daytona", sandboxId: handle.id });
+      input.signal?.throwIfAborted();
+      return handle;
+    } catch (error) {
+      if (handle) await handle.stop();
+      else await client[Symbol.asyncDispose]();
+      throw error;
+    }
+  },
   listRunning: listRunningDaytonaSandboxes,
   hasRecoverableSource: hasRecoverableDaytonaSandboxSource,
   stopById: stopDaytonaSandboxById,

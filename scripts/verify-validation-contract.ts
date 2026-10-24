@@ -26,7 +26,13 @@ const expectedScripts = {
   "db:types:check": "tsx scripts/check-db-types-drift.ts",
   "check:fast":
     "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
-  check: "pnpm check:fast && pnpm test",
+  "typecheck:cloudflare": "tsc --noEmit -p cloudflare/tsconfig.json",
+  "test:cloudflare":
+    "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false WRANGLER_SEND_METRICS=false vitest run --config cloudflare/vitest.config.mts",
+  "build:worker":
+    "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir .wallie/cloudflare-build",
+  "check:cloudflare": "pnpm typecheck:cloudflare && pnpm test:cloudflare && pnpm build:worker",
+  check: "pnpm check:fast && pnpm test && pnpm check:cloudflare",
 } as const;
 
 const classifiedScripts = {
@@ -110,6 +116,18 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
               name: "Run unit tests",
               run: "pnpm test",
             },
+          ],
+        },
+        "cloudflare-worker": {
+          "runs-on": "ubuntu-latest",
+          "timeout-minutes": 15,
+          steps: [
+            ...setupSteps.map((step) =>
+              step.name === "Set up Node.js"
+                ? { ...step, with: { "node-version": "22.23.1", cache: "pnpm" } }
+                : step,
+            ),
+            { name: "Verify native Cloudflare worker", run: "pnpm check:cloudflare" },
           ],
         },
         "database-tests": {

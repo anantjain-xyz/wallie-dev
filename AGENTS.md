@@ -20,7 +20,8 @@ Use Vercel route handlers for privileged and third-party integrations.
 
 ```bash
 pnpm check:fast                 # validation contract + format + lint + typecheck + privileged imports
-pnpm check                      # check:fast + test — the full pre-PR gate
+pnpm check                      # check:fast + test + check:cloudflare — the full pre-PR gate
+pnpm check:cloudflare           # native runtime types + workerd tests + Wrangler build
 pnpm test path/to/file.test.ts  # run a single test file
 pnpm test -t "name of test"     # run tests matching a name
 pnpm test:watch                 # Vitest watch mode
@@ -32,7 +33,7 @@ supabase start                  # local Postgres/Auth/Realtime/Storage via Docke
 supabase db reset               # re-apply migrations + seed
 ```
 
-PR CI runs `check:fast` (including `typecheck`) and `test` in separate jobs, together covering the canonical `check` profile without duplicate validation. Production builds and route-budget checks run separately; environment-dependent verification still requires its relevant local service or credentials.
+PR CI runs `check:fast` (including `typecheck`), `test`, and `check:cloudflare` in separate jobs, together covering the canonical `check` profile without duplicate validation. Web production builds and route-budget checks run separately; environment-dependent verification still requires its relevant local service or credentials.
 
 Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Without the worker, sessions stay stuck in `in_progress`.
 

@@ -1,6 +1,9 @@
 # dependencies
 /node_modules
 /.pnpm-store/
+/.wrangler/
+.dev.vars*
+cloudflare/.dev.vars*
 /.pnp
 .pnp.*
 .yarn/*

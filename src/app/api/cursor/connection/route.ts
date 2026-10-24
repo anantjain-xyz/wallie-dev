@@ -5,6 +5,7 @@ import type { CursorConnectionStatus } from "@/lib/cursor/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { wakeWorker } from "@/lib/worker/wake";
 
 const startSchema = z.object({
   workspaceId: z.string().uuid().optional(),
@@ -75,6 +76,7 @@ export async function POST(request: Request) {
     .select("id, status, expires_at")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  await wakeWorker();
   return NextResponse.json(
     { expiresAt: data.expires_at, flowId: data.id, status: data.status },
     { status: 202 },

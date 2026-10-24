@@ -19,7 +19,8 @@ flowchart LR
   app --> db["Supabase Auth, Postgres, RLS, Realtime, Storage"]
   app --> reviewRpcs["approve_session_stage / reject_session_stage"]
   reviewRpcs --> db
-  worker["Always-on worker"] --> db
+  app -->|Authenticated wake| worker["Cloudflare dispatcher and Workflows"]
+  worker --> db
   worker --> pipeline["processPipelineJob / runStage"]
   pipeline --> sandbox["Sandbox provider"]
   pipeline --> agent["Codex, Claude Code, Cursor, or OpenCode"]
@@ -29,7 +30,7 @@ flowchart LR
   db -. "Realtime" .-> member
 ```
 
-Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. Users can exclude stages when starting a session; the selected membership is captured with the session while each selected stage's live configuration and position continue to come from the workspace pipeline. Session creation, selected stages, the first queued job, and its queued run are written atomically. An always-on worker drains the job queue, runs the session's current stage, and flips it to `awaiting_review` for a human to approve or reject from the in-app dashboard.
+Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. Users can exclude stages when starting a session; the selected membership is captured with the session while each selected stage's live configuration and position continue to come from the workspace pipeline. Session creation, selected stages, the first queued job, and its queued run are written atomically. Cloudflare dispatches each captured job attempt to a Workflow, which runs the session's current stage and flips it to `awaiting_review` for a human to approve or reject from the in-app dashboard. The Node daemon remains available for local development.
 
 Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `plan → build` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, description, prompt template, and approver list. The stock Build stage validates and publishes a PR, then stops for external review and manual merge. Pipelines also carry workspace-editable operating rules that are prepended to every stage prompt. Nothing in the runner distinguishes one stage from another.
 
@@ -176,7 +177,8 @@ The default `plan → build` seed lives in the `internal.default_pipeline_stages
 
 #### Worker (`src/worker/`) -- the daemon
 
-- [index.ts](src/worker/index.ts) -- main entry (`pnpm worker`).
+- [Cloudflare entry](cloudflare/index.ts) -- production dispatcher, attempt/auth Workflows, and scheduled maintenance. See [deployment and qualification](docs/CLOUDFLARE-WORKER.md).
+- [index.ts](src/worker/index.ts) -- local Node entry (`pnpm worker`).
 - [scheduler.ts](src/worker/scheduler.ts) -- bounded-concurrency fill/wait loop and in-flight job tracking.
 - [loop.ts](src/worker/loop.ts) -- atomic concurrency-aware job claim + execution.
 - [heartbeat.ts](src/worker/heartbeat.ts) -- worker registration.
@@ -531,29 +533,30 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 
 ## Scripts
 
-| Command                                  | Description                                                                                     |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `pnpm dev`                               | Start Next.js dev server                                                                        |
-| `pnpm build`                             | Production build                                                                                |
-| `pnpm start`                             | Start production server                                                                         |
-| `pnpm worker`                            | Start the bounded-concurrency background worker                                                 |
-| `pnpm test`                              | Run unit/integration tests (Vitest)                                                             |
-| `pnpm test:watch`                        | Run Vitest in watch mode                                                                        |
-| `pnpm test:e2e:onboarding`               | Build and run onboarding mutation-request Playwright coverage                                   |
-| `pnpm test:e2e:responsive`               | Build and run responsive/touch Playwright coverage                                              |
-| `pnpm test:e2e:session-prefetch`         | Build and verify session-detail prefetch behavior                                               |
-| `pnpm test:benchmark:interaction`        | Build and run the interaction RUM benchmark                                                     |
-| `pnpm test:benchmark:content-visibility` | Build and run the content-visibility benchmark                                                  |
-| `pnpm lint`                              | Lint with ESLint (zero warnings)                                                                |
-| `pnpm lint:fix`                          | Auto-fix lint issues                                                                            |
-| `pnpm format`                            | Format with Prettier                                                                            |
-| `pnpm format:check`                      | Check formatting                                                                                |
-| `pnpm typecheck`                         | TypeScript type check                                                                           |
-| `pnpm db:types`                          | Regenerate local Supabase database types                                                        |
-| `pnpm db:types:check`                    | Compare generated local schema types with the committed file without rewriting it               |
-| `pnpm analyze:authenticated-bundle`      | Analyze authenticated-route client bundles                                                      |
-| `pnpm check:route-budgets`               | Check built route bundles against committed byte budgets                                        |
-| `pnpm check`                             | Full pre-PR gate: `check:fast` (validation, format, lint, typecheck, privileged imports) + test |
+| Command                                  | Description                                                                       |
+| ---------------------------------------- | --------------------------------------------------------------------------------- |
+| `pnpm dev`                               | Start Next.js dev server                                                          |
+| `pnpm build`                             | Production build                                                                  |
+| `pnpm start`                             | Start production server                                                           |
+| `pnpm worker`                            | Start the bounded-concurrency background worker                                   |
+| `pnpm test`                              | Run unit/integration tests (Vitest)                                               |
+| `pnpm test:watch`                        | Run Vitest in watch mode                                                          |
+| `pnpm test:e2e:onboarding`               | Build and run onboarding mutation-request Playwright coverage                     |
+| `pnpm test:e2e:responsive`               | Build and run responsive/touch Playwright coverage                                |
+| `pnpm test:e2e:session-prefetch`         | Build and verify session-detail prefetch behavior                                 |
+| `pnpm test:benchmark:interaction`        | Build and run the interaction RUM benchmark                                       |
+| `pnpm test:benchmark:content-visibility` | Build and run the content-visibility benchmark                                    |
+| `pnpm lint`                              | Lint with ESLint (zero warnings)                                                  |
+| `pnpm lint:fix`                          | Auto-fix lint issues                                                              |
+| `pnpm format`                            | Format with Prettier                                                              |
+| `pnpm format:check`                      | Check formatting                                                                  |
+| `pnpm typecheck`                         | TypeScript type check                                                             |
+| `pnpm db:types`                          | Regenerate local Supabase database types                                          |
+| `pnpm db:types:check`                    | Compare generated local schema types with the committed file without rewriting it |
+| `pnpm analyze:authenticated-bundle`      | Analyze authenticated-route client bundles                                        |
+| `pnpm check:route-budgets`               | Check built route bundles against committed byte budgets                          |
+| `pnpm check:cloudflare`                  | Native worker types, workerd tests, and Wrangler build                            |
+| `pnpm check`                             | Full pre-PR gate: `check:fast` + unit tests + `check:cloudflare`                  |
 
 ## Architecture Notes
 

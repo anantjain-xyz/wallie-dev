@@ -170,6 +170,7 @@ export interface CreateSessionSandboxInput {
 
 export interface SandboxProviderDriver<Connection extends SandboxConnection = SandboxConnection> {
   create(input: CreateSessionSandboxInput, connection: Connection): Promise<SandboxHandle>;
+  createUtility(input: CreateUtilitySandboxInput, connection: Connection): Promise<SandboxHandle>;
   listRunning(
     connection: Connection,
     options?: { workspaceId?: string },
@@ -178,4 +179,12 @@ export interface SandboxProviderDriver<Connection extends SandboxConnection = Sa
   hasRecoverableSource(sandboxId: string, connection: Connection): Promise<boolean>;
   stopById(sandboxId: string, connection: Connection): Promise<void>;
   validate(connection: Connection): Promise<{ error?: string; ok: boolean }>;
+}
+
+export interface CreateUtilitySandboxInput {
+  workspaceId: string;
+  ownerId: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  onSandboxCreated: (metadata: { provider: SandboxProvider; sandboxId: string }) => Promise<void>;
 }

@@ -271,6 +271,44 @@ describe("runClaimedJob", () => {
     ]);
   });
 
+  it("keeps the captured absolute deadline after dispatch and heartbeat delays", async () => {
+    vi.useFakeTimers();
+    const deadlineAt = new Date(Date.now() + 50).toISOString();
+    await vi.advanceTimersByTimeAsync(30);
+    mocked.processPipelineJob.mockImplementation(() => new Promise(() => {}));
+    const admin = recoveryAdmin();
+    const processing = runClaimedJob(admin as never, baseJob as never, { deadlineAt });
+    expect(mocked.processPipelineJob.mock.calls.at(-1)![0].deadlineAt).toBe(deadlineAt);
+    const signal = mocked.processPipelineJob.mock.calls.at(-1)![0].signal as AbortSignal;
+    await vi.advanceTimersByTimeAsync(20);
+    await processing;
+    expect(signal.aborted).toBe(true);
+    expect(admin.rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_retry: false,
+      }),
+    );
+  });
+
+  it("retires an attempt that expired before execution without starting a processor", async () => {
+    const admin = recoveryAdmin();
+    await runClaimedJob(admin as never, baseJob as never, {
+      deadlineAt: new Date(Date.now() - 1).toISOString(),
+    });
+    expect(mocked.processPipelineJob).not.toHaveBeenCalled();
+    expect(admin.rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_retry: false,
+      }),
+    );
+  });
+
   it("bounds stalled recovery and prevents its late lookup from issuing a write", async () => {
     vi.useFakeTimers();
     mocked.processPipelineJob.mockImplementation(() => new Promise(() => {}));

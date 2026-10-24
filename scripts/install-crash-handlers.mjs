@@ -15,7 +15,7 @@ function reportFatalAndExit(label, detail) {
   process.exitCode = 1;
 
   // `process.exit()` can truncate not-yet-flushed writes to a piped stderr
-  // (Railway/pnpm logs) — losing the very stack trace these handlers exist to
+  // (container/package-manager logs) — losing the very stack trace these handlers exist to
   // capture. Write the diagnostic, exit from the flush callback, and keep an
   // unref'd fallback in case the callback never fires.
   let exited = false;
