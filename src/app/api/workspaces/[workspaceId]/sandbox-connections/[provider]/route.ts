@@ -97,8 +97,18 @@ export async function PUT(request: Request, context: RouteContext) {
     if (!parsed.success) return invalid(parsed.error.issues[0]?.message);
     const validation = await validateVercelSandboxCredentials(parsed.data);
     if (!validation.ok) return invalid(validation.error);
-    if (existing)
-      await cleanupExistingConnection(admin, existing.connection, access.context.workspace.id);
+    if (existing) {
+      // A revoked token cannot retire its sandboxes. A validated replacement
+      // for the same project can do so while retaining the old ownership revision.
+      const previous = existing.connection;
+      const cleanupConnection =
+        previous.provider === "vercel" &&
+        previous.credentials.projectId === parsed.data.projectId &&
+        previous.credentials.teamId === parsed.data.teamId
+          ? { ...previous, credentials: parsed.data }
+          : previous;
+      await cleanupExistingConnection(admin, cleanupConnection, access.context.workspace.id);
+    }
     const connection = await saveVercelSandboxConnection({
       admin,
       credentials: parsed.data,
