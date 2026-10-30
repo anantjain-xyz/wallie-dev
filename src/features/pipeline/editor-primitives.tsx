@@ -364,13 +364,6 @@ export function validatePipelineDraft({
   return { ok: true };
 }
 
-export function isPipelineDraftValid(input: {
-  name: string;
-  stages: DraftPipelineStage[];
-}): boolean {
-  return validatePipelineDraft(input).ok;
-}
-
 export type StageFieldErrors = Partial<
   Record<"approvers" | "description" | "name" | "prompt", string>
 >;
