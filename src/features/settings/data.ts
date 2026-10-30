@@ -55,7 +55,7 @@ export type SettingsPageData = {
   linearRouting: WorkspaceOnboardingData["linearRouting"];
   linearSecret: WorkspaceOnboardingData["linearSecret"];
   onboarding: WorkspaceOnboardingData["onboarding"];
-  sandboxSettings?: WorkspaceOnboardingData["sandboxSettings"];
+  sandboxSettings: WorkspaceOnboardingData["sandboxSettings"];
   setupHealth: WorkspaceOnboardingData["setupHealth"];
   vercelSandboxConnection: WorkspaceOnboardingData["vercelSandboxConnection"];
   workspace: {

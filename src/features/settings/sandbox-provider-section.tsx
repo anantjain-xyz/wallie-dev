@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status } from "@/components/ui/status";
@@ -45,7 +45,7 @@ type Props = {
   canManage: boolean;
   onSettingsChange: (settings: SandboxSettingsResponse) => void;
   setFlashMessage: (message: FlashMessage) => void;
-  settings?: SandboxSettingsResponse;
+  settings: SandboxSettingsResponse;
   variant?: "onboarding" | "settings";
   vercelConnection: SettingsPageData["vercelSandboxConnection"];
   workspaceId: string;
@@ -55,15 +55,11 @@ export function SandboxProviderSection({
   canManage,
   onSettingsChange,
   setFlashMessage,
-  settings: suppliedSettings,
+  settings,
   variant = "settings",
   vercelConnection,
   workspaceId,
 }: Props) {
-  const settings = useMemo(
-    () => suppliedSettings ?? legacySettings(vercelConnection),
-    [suppliedSettings, vercelConnection],
-  );
   const [apiKeys, setApiKeys] = useState<Record<"daytona" | "e2b", string>>({
     daytona: "",
     e2b: "",
@@ -687,18 +683,6 @@ function displaySecretPreview(preview: string | null) {
 
 function providerLabel(provider: SandboxProvider) {
   return PROVIDERS.find((candidate) => candidate.id === provider)?.label ?? provider;
-}
-
-function legacySettings(
-  vercel: SettingsPageData["vercelSandboxConnection"],
-): SandboxSettingsResponse {
-  return {
-    activeProvider: "vercel",
-    connections: { daytona: null, e2b: null, vercel },
-    enabledProviders: ["vercel", "e2b", "daytona"],
-    revision: 1,
-    updatedAt: null,
-  };
 }
 
 export function applySandboxSettingsToData(
