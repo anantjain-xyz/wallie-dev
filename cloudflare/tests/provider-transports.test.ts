@@ -5,25 +5,34 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("provider SDK data paths under workerd", () => {
   it("provisions Vercel, transfers files, streams a command, and stops", async () => {
-    const sandbox = {
-      id: "sbx-synthetic",
+    const session = {
+      id: "ses-synthetic",
       memory: 4096,
       vcpus: 2,
       region: "test",
       runtime: "node22",
       timeout: 120_000,
-      status: "running",
+      status: "running" as const,
       requestedAt: 1,
       createdAt: 1,
       updatedAt: 1,
       cwd: "/vercel/sandbox",
+    };
+    const sandbox = {
+      name: "sbx-synthetic",
+      persistent: false,
+      runtime: "node22",
+      status: session.status,
+      createdAt: 1,
+      updatedAt: 1,
+      currentSessionId: session.id,
     };
     const command = {
       id: "cmd-synthetic",
       name: "git",
       args: ["status"],
       cwd: "/tmp",
-      sandboxId: sandbox.id,
+      sessionId: session.id,
       exitCode: 0,
       startedAt: 1,
     };
@@ -38,15 +47,21 @@ describe("provider SDK data paths under workerd", () => {
           uploadedBytes = (await new Response(options?.body).arrayBuffer()).byteLength;
           return Response.json({});
         }
-        if (url.pathname.endsWith("/fs/read")) return new Response("private source");
+        if (url.pathname.endsWith("/fs/read"))
+          return new Response("private source", {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
         if (url.pathname.endsWith("/logs"))
           return new Response('{"stream":"stdout","data":"live output"}\n', {
             headers: { "Content-Type": "application/x-ndjson" },
           });
         if (url.pathname.includes("/cmd")) return Response.json({ command });
         if (url.pathname.endsWith("/stop"))
-          return Response.json({ sandbox: { ...sandbox, status: "stopped" } });
-        return Response.json({ sandbox, routes: [] });
+          return Response.json({
+            sandbox: { ...sandbox, status: "stopped" },
+            session: { ...session, status: "stopped" },
+          });
+        return Response.json({ sandbox, session, routes: [] });
       }),
     );
     const driver = await loadSandboxProviderDriver("vercel");
@@ -78,8 +93,11 @@ describe("provider SDK data paths under workerd", () => {
     expect(await execution.exitCode).toBe(0);
     expect(await execution.output()).toEqual({ stdout: "live output", stderr: "" });
     await handle.stop();
-    expect(created).toHaveBeenCalledExactlyOnceWith({ provider: "vercel", sandboxId: sandbox.id });
-    expect(requests).toContain(`/api/v1/sandboxes/${sandbox.id}/stop`);
+    expect(created).toHaveBeenCalledExactlyOnceWith({
+      provider: "vercel",
+      sandboxId: sandbox.name,
+    });
+    expect(requests).toContain(`/api/v2/sandboxes/sessions/${session.id}/stop`);
   });
 
   it("provisions E2B and uses native multipart upload, file download, and destroy", async () => {

@@ -8,7 +8,8 @@
   "tsconfig": "cloudflare/tsconfig.json",
   "alias": {
     "server-only": "./cloudflare/server-only.ts",
-    "undici": "./cloudflare/undici.ts",
+    "undici": "./cloudflare/undici.mjs",
+    "@vercel/oidc": "./cloudflare/vercel-oidc.mjs",
     "isomorphic-ws": "./cloudflare/websocket.ts",
   },
   "define": { "process.env.NODE_ENV": "\"production\"" },
