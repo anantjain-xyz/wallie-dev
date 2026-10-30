@@ -45,6 +45,7 @@ function onboardingResponse(data: WorkspaceOnboardingData) {
     linearSecret: data.linearSecret,
     onboarding: data.onboarding,
     pipeline: data.pipeline,
+    sandboxSettings: data.sandboxSettings,
     setupHealth: data.setupHealth,
     vercelSandboxConnection: data.vercelSandboxConnection,
     workspace: data.workspace,

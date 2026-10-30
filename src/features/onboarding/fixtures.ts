@@ -1,6 +1,7 @@
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
+import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 export const configuredPipeline = {
@@ -110,6 +111,24 @@ export function onboardingData(overrides: OnboardingDataOverrides = {}): Workspa
     workspace: workspaceOverride,
     ...topLevelOverrides
   } = overrides;
+  const vercelSandboxConnection = {
+    lastValidatedAt: "2026-05-16T18:00:00.000Z",
+    lastValidationError: null,
+    projectId: "prj_123",
+    projectName: "wallie-sandboxes",
+    status: "connected" as const,
+    teamId: "team_123",
+    tokenPreview: "vca_...123",
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    workspaceId: "workspace-1",
+  };
+  const sandboxSettings = {
+    activeProvider: "vercel",
+    connections: { daytona: null, e2b: null, vercel: vercelSandboxConnection },
+    enabledProviders: ["vercel", "e2b", "daytona"],
+    revision: 1,
+    updatedAt: null,
+  } satisfies SandboxSettingsResponse;
 
   return {
     agentConfig: {
@@ -229,17 +248,8 @@ export function onboardingData(overrides: OnboardingDataOverrides = {}): Workspa
       },
       ...setupHealthOverride,
     },
-    vercelSandboxConnection: {
-      lastValidatedAt: "2026-05-16T18:00:00.000Z",
-      lastValidationError: null,
-      projectId: "prj_123",
-      projectName: "wallie-sandboxes",
-      status: "connected",
-      teamId: "team_123",
-      tokenPreview: "vca_...123",
-      updatedAt: "2026-05-16T18:00:00.000Z",
-      workspaceId: "workspace-1",
-    },
+    sandboxSettings,
+    vercelSandboxConnection,
     workspace: { id: "workspace-1", name: "Northwind", slug: "northwind", ...workspaceOverride },
     workspaceMembers: [],
     workspaceSecrets: [],

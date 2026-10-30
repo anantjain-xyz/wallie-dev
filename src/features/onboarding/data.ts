@@ -71,7 +71,7 @@ export type WorkspaceOnboardingData = {
   onboarding: WorkspaceOnboardingState;
   pipeline: PipelineConfiguration | null;
   setupHealth: OnboardingSetupHealth;
-  sandboxSettings?: SandboxSettingsResponse;
+  sandboxSettings: SandboxSettingsResponse;
   vercelSandboxConnection: VercelSandboxConnectionPreview | null;
   workspace: {
     id: string;

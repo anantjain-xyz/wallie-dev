@@ -170,6 +170,27 @@ const onboardingData: WorkspaceOnboardingData = {
       status: "placeholder",
     },
   },
+  sandboxSettings: {
+    activeProvider: "vercel",
+    connections: {
+      daytona: null,
+      e2b: null,
+      vercel: {
+        lastValidatedAt: "2026-05-16T18:00:00.000Z",
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+        tokenPreview: "vca_...123",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+        workspaceId: WORKSPACE_ID,
+      },
+    },
+    enabledProviders: ["vercel", "e2b", "daytona"],
+    revision: 1,
+    updatedAt: null,
+  },
   vercelSandboxConnection: {
     lastValidatedAt: "2026-05-16T18:00:00.000Z",
     lastValidationError: null,
