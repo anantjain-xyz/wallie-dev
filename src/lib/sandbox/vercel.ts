@@ -1,8 +1,11 @@
 import { APIError, Sandbox } from "@vercel/sandbox";
 
-import { formatVercelSandboxError } from "@/lib/vercel-sandbox/errors";
+import {
+  formatVercelSandboxError,
+  isVercelSandboxApiError,
+  vercelSandboxFetch,
+} from "@/lib/vercel-sandbox/errors";
 
-import { redactSecrets } from "./command";
 import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
@@ -12,13 +15,40 @@ import type {
   SandboxExecHandle,
   SandboxExecOptions,
   SandboxHandle,
-  SandboxLogEntry,
   SandboxProviderDriver,
 } from "./types";
 
 const REPO_PATH = "/vercel/sandbox";
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const TERMINAL_SOURCE_STATUSES = new Set(["stopped", "failed", "aborted"]);
 type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
+type VercelCredentials = VercelConnection["credentials"];
+
+function vercelClientOptions(credentials: VercelCredentials) {
+  return {
+    fetch: vercelSandboxFetch,
+    projectId: credentials.projectId,
+    teamId: credentials.teamId,
+    token: credentials.token,
+  };
+}
+
+function rethrowVercelSandboxError(error: unknown, secrets: Array<string | undefined>): never {
+  if (isVercelSandboxApiError(error)) {
+    throw new Error(formatVercelSandboxError(error, secrets), { cause: error });
+  }
+  throw error;
+}
+
+/**
+ * v2 reports a missing sandbox as 404 and an already-stopped session as 410.
+ * Either one means the provider has nothing left to stop.
+ */
+function isConfirmedGone(error: unknown): boolean {
+  return (
+    error instanceof APIError && (error.response.status === 404 || error.response.status === 410)
+  );
+}
 
 /**
  * Vercel Sandbox-backed implementation of `SandboxHandle`.
@@ -29,10 +59,13 @@ type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
 class VercelSandboxHandle implements SandboxHandle {
   readonly repoPath = REPO_PATH;
 
-  constructor(private readonly sandbox: Sandbox) {}
+  constructor(
+    private readonly sandbox: Sandbox,
+    private readonly secrets: Array<string | undefined>,
+  ) {}
 
   get id(): string {
-    return this.sandbox.sandboxId;
+    return this.sandbox.name;
   }
 
   async exec(
@@ -40,29 +73,56 @@ class VercelSandboxHandle implements SandboxHandle {
     args: string[],
     opts: SandboxExecOptions = {},
   ): Promise<SandboxExecHandle> {
-    const command = await this.sandbox.runCommand({
-      cmd,
-      args,
-      cwd: opts.cwd ?? REPO_PATH,
-      env: opts.env,
-      detached: true,
-      signal: opts.signal,
-    });
+    let command;
+    try {
+      command = await this.sandbox.runCommand({
+        cmd,
+        args,
+        cwd: opts.cwd ?? REPO_PATH,
+        env: opts.env,
+        detached: true,
+        signal: opts.signal,
+      });
+    } catch (error) {
+      rethrowVercelSandboxError(error, this.secrets);
+    }
 
-    const waitPromise = command.wait().then((r) => r.exitCode);
+    const secrets = this.secrets;
+    const waitPromise = command.wait().then(
+      (result) => result.exitCode,
+      (error: unknown) => rethrowVercelSandboxError(error, secrets),
+    );
 
     return {
-      logs: () => command.logs() as AsyncIterable<SandboxLogEntry>,
+      logs: () => ({
+        async *[Symbol.asyncIterator]() {
+          try {
+            for await (const entry of command.logs()) {
+              yield { data: entry.data, stream: entry.stream };
+            }
+          } catch (error) {
+            rethrowVercelSandboxError(error, secrets);
+          }
+        },
+      }),
       output: async () => {
-        const [stdout, stderr] = await Promise.all([
-          command.output("stdout"),
-          command.output("stderr"),
-        ]);
-        return { stdout, stderr };
+        try {
+          const [stdout, stderr] = await Promise.all([
+            command.output("stdout"),
+            command.output("stderr"),
+          ]);
+          return { stdout, stderr };
+        } catch (error) {
+          rethrowVercelSandboxError(error, secrets);
+        }
       },
       exitCode: waitPromise,
       kill: async (signal) => {
-        await command.kill(signal);
+        try {
+          await command.kill(signal);
+        } catch (error) {
+          rethrowVercelSandboxError(error, secrets);
+        }
       },
     };
   }
@@ -73,12 +133,20 @@ class VercelSandboxHandle implements SandboxHandle {
     opts: { mode?: number } = {},
   ): Promise<void> {
     const content = typeof data === "string" ? Buffer.from(data, "utf8") : data;
-    await this.sandbox.writeFiles([{ path, content, mode: opts.mode }]);
+    try {
+      await this.sandbox.writeFiles([{ path, content, mode: opts.mode }]);
+    } catch (error) {
+      rethrowVercelSandboxError(error, this.secrets);
+    }
   }
 
   async readFile(path: string): Promise<string | null> {
-    const buf = await this.sandbox.readFileToBuffer({ path });
-    return buf ? buf.toString("utf8") : null;
+    try {
+      const buf = await this.sandbox.readFileToBuffer({ path });
+      return buf ? buf.toString("utf8") : null;
+    } catch (error) {
+      rethrowVercelSandboxError(error, this.secrets);
+    }
   }
 
   async stop(): Promise<void> {
@@ -94,6 +162,11 @@ class VercelSandboxHandle implements SandboxHandle {
  * Boot a Vercel Sandbox for a session: clone the repo with the GH App token,
  * check out the working branch and install the chosen agent CLI. Provider
  * credentials are injected by the runner only for the process that needs them.
+ *
+ * `runtime: "node22"` stays on the Amazon Linux image the setup script's dnf
+ * bootstrap expects. SDK 3.x prefers `image`, and the Ubuntu node image would
+ * change that bootstrap. `persistent: false` keeps the v1 ephemeral lifecycle:
+ * stopping a sandbox drops its filesystem unless an explicit snapshot exists.
  */
 export async function createVercelSessionSandbox(
   input: CreateSessionSandboxInput,
@@ -105,9 +178,10 @@ export async function createVercelSessionSandbox(
   const revision = mode.kind === "checkout-pr" ? mode.prBranch : input.baseBranch;
 
   const credentials = connection.credentials;
+  const secrets = [credentials.token, input.installationToken];
 
   const sandbox = await Sandbox.create({
-    projectId: credentials.projectId,
+    ...vercelClientOptions(credentials),
     source: {
       type: "git",
       url: `https://github.com/${input.repoFullName}.git`,
@@ -117,9 +191,8 @@ export async function createVercelSessionSandbox(
       depth: 1,
     },
     runtime: "node22",
-    teamId: credentials.teamId,
     timeout: timeoutMs,
-    token: credentials.token,
+    persistent: false,
     ...(input.signal ? { signal: input.signal } : {}),
     resources: { vcpus: 2 },
     env: {
@@ -128,11 +201,10 @@ export async function createVercelSessionSandbox(
       GH_TOKEN: input.installationToken,
     },
   }).catch((error: unknown) => {
-    if (!(error instanceof APIError)) throw error;
-    throw new Error(formatVercelSandboxError(error, [credentials.token, input.installationToken]));
+    rethrowVercelSandboxError(error, secrets);
   });
 
-  const handle = new VercelSandboxHandle(sandbox);
+  const handle = new VercelSandboxHandle(sandbox, secrets);
   return finalizeSandboxAcquisition({
     handle,
     provider: "vercel",
@@ -150,27 +222,23 @@ export async function createVercelSessionSandbox(
  */
 export async function stopVercelSandboxById(
   sandboxId: string,
-  connection: VercelConnection | VercelConnection["credentials"],
+  connection: VercelConnection | VercelCredentials,
   options: { throwOnError?: boolean } = {},
 ): Promise<void> {
   const credentials = "credentials" in connection ? connection.credentials : connection;
 
   try {
     const sandbox = await Sandbox.get({
-      projectId: credentials.projectId,
-      sandboxId,
-      teamId: credentials.teamId,
-      token: credentials.token,
+      ...vercelClientOptions(credentials),
+      name: sandboxId,
     });
     await sandbox.stop();
   } catch (error) {
-    if (error instanceof APIError && error.response.status === 404) return;
+    if (isConfirmedGone(error)) return;
 
-    const message = redactSecrets(error instanceof Error ? error.message : String(error), [
-      credentials.token,
-    ]);
+    const message = formatVercelSandboxError(error, [credentials.token]);
     if (options.throwOnError) {
-      throw new Error(message);
+      throw new Error(message, { cause: error });
     }
     console.error("[sandbox] failed to stop sandbox", {
       error: message,
@@ -179,51 +247,55 @@ export async function stopVercelSandboxById(
   }
 }
 
+async function eachVercelSandboxPage(
+  credentials: VercelCredentials,
+  visit: (sandbox: {
+    createdAt: number;
+    currentSnapshotId?: string;
+    name: string;
+    status: string;
+  }) => boolean | void,
+): Promise<void> {
+  let cursor: string | undefined;
+  do {
+    const page = await Sandbox.list({
+      ...vercelClientOptions(credentials),
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const sandbox of page.sandboxes) {
+      if (visit(sandbox) === false) return;
+    }
+    cursor = page.pagination.next ?? undefined;
+  } while (cursor);
+}
+
 /**
  * List sandboxes in the current Vercel project. Used by the reaper to find
  * orphans. Returns only sandboxes in active states (`pending` or `running`)
  * — terminal states do not need cleanup.
  */
 export async function listRunningVercelSandboxes(
-  connection: VercelConnection | VercelConnection["credentials"],
+  connection: VercelConnection | VercelCredentials,
   options: { throwOnError?: boolean } = {},
 ): Promise<RunningSandboxSummary[]> {
   const credentials = "credentials" in connection ? connection.credentials : connection;
 
   try {
     const activeSandboxes: RunningSandboxSummary[] = [];
-    let until: number | null = null;
-
-    do {
-      const result = await Sandbox.list({
-        projectId: credentials.projectId,
-        teamId: credentials.teamId,
-        token: credentials.token,
-        limit: 100,
-        ...(until === null ? {} : { until }),
+    await eachVercelSandboxPage(credentials, (sandbox) => {
+      if (sandbox.status !== "pending" && sandbox.status !== "running") return;
+      activeSandboxes.push({
+        id: sandbox.name,
+        status: sandbox.status,
+        createdAt: sandbox.createdAt,
       });
-
-      for (const sandbox of result.json.sandboxes) {
-        if (sandbox.status !== "pending" && sandbox.status !== "running") {
-          continue;
-        }
-        activeSandboxes.push({
-          id: sandbox.id,
-          status: sandbox.status,
-          createdAt: sandbox.createdAt,
-        });
-      }
-
-      until = result.json.pagination.next;
-    } while (until !== null);
-
+    });
     return activeSandboxes;
   } catch (error) {
-    const message = redactSecrets(error instanceof Error ? error.message : String(error), [
-      credentials.token,
-    ]);
+    const message = formatVercelSandboxError(error, [credentials.token]);
     if (options.throwOnError) {
-      throw new Error(message);
+      throw new Error(message, { cause: error });
     }
     console.error("[sandbox] failed to list sandboxes", {
       error: message,
@@ -235,10 +307,8 @@ export async function listRunningVercelSandboxes(
 export async function validateVercelConnectionDriver(connection: VercelConnection) {
   try {
     await Sandbox.list({
+      ...vercelClientOptions(connection.credentials),
       limit: 1,
-      projectId: connection.credentials.projectId,
-      teamId: connection.credentials.teamId,
-      token: connection.credentials.token,
     });
     return { ok: true as const };
   } catch (error) {
@@ -253,41 +323,33 @@ export async function hasRecoverableVercelSandboxSource(
   sandboxId: string,
   connection: VercelConnection,
 ): Promise<boolean> {
-  let until: number | null = null;
-  do {
-    const result = await Sandbox.list({
-      ...connection.credentials,
-      limit: 100,
-      ...(until === null ? {} : { until }),
-    });
-    const sandbox = result.json.sandboxes.find((candidate) => candidate.id === sandboxId);
-    if (sandbox) {
-      // This driver uses SDK 1.x's ephemeral /v1 sandboxes, not v2 persistent
-      // sandboxes. Preserve explicit snapshots and unknown/transitional states.
-      return (
-        sandbox.snapshottedAt !== undefined ||
-        !["stopped", "failed", "aborted"].includes(sandbox.status)
-      );
-    }
-    until = result.json.pagination.next;
-  } while (until !== null);
-  return false;
+  let recoverable = false;
+  await eachVercelSandboxPage(connection.credentials, (sandbox) => {
+    if (sandbox.name !== sandboxId) return;
+    // Non-persistent sandboxes lose their filesystem once stopped, failed, or
+    // aborted. An explicit snapshot, or any non-terminal status, still has source.
+    recoverable =
+      sandbox.currentSnapshotId !== undefined || !TERMINAL_SOURCE_STATUSES.has(sandbox.status);
+    return false;
+  });
+  return recoverable;
 }
 
 export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {
   create: createVercelSessionSandbox,
   createUtility: async (input: CreateUtilitySandboxInput, connection) => {
+    const secrets = [connection.credentials.token];
     const sandbox = await Sandbox.create({
-      ...connection.credentials,
+      ...vercelClientOptions(connection.credentials),
       runtime: "node22",
+      persistent: false,
       timeout: input.timeoutMs,
       resources: { vcpus: 2 },
       signal: input.signal,
     }).catch((error: unknown) => {
-      if (!(error instanceof APIError)) throw error;
-      throw new Error(formatVercelSandboxError(error, [connection.credentials.token]));
+      rethrowVercelSandboxError(error, secrets);
     });
-    const handle = new VercelSandboxHandle(sandbox);
+    const handle = new VercelSandboxHandle(sandbox, secrets);
     try {
       await input.onSandboxCreated({ provider: "vercel", sandboxId: handle.id });
       input.signal?.throwIfAborted();

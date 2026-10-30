@@ -73,7 +73,7 @@
     "@supabase/ssr": "^0.10.0",
     "@supabase/supabase-js": "^2.101.0",
     "@vercel/analytics": "^2.0.1",
-    "@vercel/sandbox": "1.10.0",
+    "@vercel/sandbox": "3.9.1",
     "@vercel/speed-insights": "^2.0.0",
     "clsx": "^2.1.1",
     "e2b": "2.35.0",

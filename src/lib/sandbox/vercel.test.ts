@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError } from "@vercel/sandbox";
 
+import { vercelSandboxFetch } from "@/lib/vercel-sandbox/errors";
+
 import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
 import { createSessionSandbox } from "./index";
 import {
@@ -56,9 +58,9 @@ function command(exitCode = 0) {
 
 function sandbox(overrides: Record<string, unknown> = {}) {
   return {
+    name: "sandbox-1",
     readFileToBuffer: vi.fn(),
     runCommand: vi.fn(async () => command()),
-    sandboxId: "sandbox-1",
     stop: vi.fn(),
     writeFiles: vi.fn(),
     ...overrides,
@@ -83,13 +85,11 @@ beforeEach(() => {
   mocked.sandboxCreate.mockResolvedValue(sandbox());
   mocked.sandboxGet.mockResolvedValue({ stop: vi.fn() });
   mocked.sandboxList.mockResolvedValue({
-    json: {
-      pagination: { count: 2, next: null, prev: null },
-      sandboxes: [
-        { createdAt: 1000, id: "running", status: "running" },
-        { createdAt: 2000, id: "stopped", status: "stopped" },
-      ],
-    },
+    pagination: { count: 2, next: null },
+    sandboxes: [
+      { createdAt: 1000, name: "running", status: "running" },
+      { createdAt: 2000, name: "stopped", status: "stopped" },
+    ],
   });
 });
 
@@ -121,7 +121,10 @@ describe("createVercelSessionSandbox", () => {
 
     expect(mocked.sandboxCreate).toHaveBeenCalledWith(
       expect.objectContaining({
+        fetch: vercelSandboxFetch,
+        persistent: false,
         projectId: credentials.projectId,
+        runtime: "node22",
         teamId: credentials.teamId,
         token: credentials.token,
       }),
@@ -191,17 +194,23 @@ describe("stopVercelSandboxById", () => {
     await stopVercelSandboxById("sandbox-1", credentials);
 
     expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      fetch: vercelSandboxFetch,
+      name: "sandbox-1",
       projectId: credentials.projectId,
-      sandboxId: "sandbox-1",
       teamId: credentials.teamId,
       token: credentials.token,
     });
   });
 
-  it.each(["lookup", "stop"])(
-    "accepts provider-confirmed absence during %s in strict mode",
-    async (step) => {
-      const error = new APIError(new Response(null, { status: 404 }), { message: "sandbox gone" });
+  it.each([
+    ["lookup", 404],
+    ["stop", 404],
+    ["lookup", 410],
+    ["stop", 410],
+  ] as const)(
+    "accepts provider-confirmed absence during %s (%i) in strict mode",
+    async (step, status) => {
+      const error = new APIError(new Response(null, { status }), { message: "sandbox gone" });
       if (step === "lookup") mocked.sandboxGet.mockRejectedValueOnce(error);
       else mocked.sandboxGet.mockResolvedValueOnce({ stop: vi.fn().mockRejectedValue(error) });
 
@@ -217,7 +226,11 @@ describe("stopVercelSandboxById", () => {
 
     await expect(
       stopVercelSandboxById("sandbox-1", credentials, { throwOnError: true }),
-    ).rejects.toThrow(`provider ${status}`);
+    ).rejects.toThrow(
+      status === 401 || status === 403
+        ? `Vercel Sandbox request failed (${status}): Check the saved Vercel token, its team access, and the connected project.`
+        : `Vercel Sandbox request failed (${status}): provider ${status}`,
+    );
   });
 
   it("does not infer absence from an untyped error message or status field", async () => {
@@ -245,6 +258,7 @@ describe("listRunningVercelSandboxes", () => {
     const sandboxes = await listRunningVercelSandboxes(credentials);
 
     expect(mocked.sandboxList).toHaveBeenCalledWith({
+      fetch: vercelSandboxFetch,
       limit: 100,
       projectId: credentials.projectId,
       teamId: credentials.teamId,
@@ -256,35 +270,33 @@ describe("listRunningVercelSandboxes", () => {
   it("pages through every Vercel sandbox list result", async () => {
     mocked.sandboxList
       .mockResolvedValueOnce({
-        json: {
-          pagination: { count: 100, next: 1234, prev: null },
-          sandboxes: [
-            { createdAt: 3000, id: "running-page-1", status: "running" },
-            { createdAt: 2500, id: "stopped-page-1", status: "stopped" },
-          ],
-        },
+        pagination: { count: 100, next: "1234" },
+        sandboxes: [
+          { createdAt: 3000, name: "running-page-1", status: "running" },
+          { createdAt: 2500, name: "stopped-page-1", status: "stopped" },
+        ],
       })
       .mockResolvedValueOnce({
-        json: {
-          pagination: { count: 1, next: null, prev: null },
-          sandboxes: [{ createdAt: 1000, id: "pending-page-2", status: "pending" }],
-        },
+        pagination: { count: 1, next: null },
+        sandboxes: [{ createdAt: 1000, name: "pending-page-2", status: "pending" }],
       });
 
     const sandboxes = await listRunningVercelSandboxes(credentials);
 
     expect(mocked.sandboxList).toHaveBeenNthCalledWith(1, {
+      fetch: vercelSandboxFetch,
       limit: 100,
       projectId: credentials.projectId,
       teamId: credentials.teamId,
       token: credentials.token,
     });
     expect(mocked.sandboxList).toHaveBeenNthCalledWith(2, {
+      cursor: "1234",
+      fetch: vercelSandboxFetch,
       limit: 100,
       projectId: credentials.projectId,
       teamId: credentials.teamId,
       token: credentials.token,
-      until: 1234,
     });
     expect(sandboxes).toEqual([
       { createdAt: 3000, id: "running-page-1", status: "running" },
@@ -302,13 +314,14 @@ describe("listRunningVercelSandboxes", () => {
 });
 
 describe("Vercel retained source inspection", () => {
-  const listed = (rows: object[], next: number | null = null) => ({
-    json: { sandboxes: rows, pagination: { next } },
+  const listed = (rows: object[], next: string | null = null) => ({
+    sandboxes: rows,
+    pagination: { next },
   });
   it.each(["pending", "running", "stopping", "snapshotting", "unknown"])(
     "retains %s source without stopping it",
     async (status) => {
-      mocked.sandboxList.mockResolvedValue(listed([{ id: "sandbox-1", status }]));
+      mocked.sandboxList.mockResolvedValue(listed([{ name: "sandbox-1", status }]));
       expect(await hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).toBe(true);
       expect(mocked.sandboxGet).not.toHaveBeenCalled();
     },
@@ -316,24 +329,31 @@ describe("Vercel retained source inspection", () => {
   it.each(["stopped", "failed", "aborted"])(
     "releases expired ephemeral %s source",
     async (status) => {
-      mocked.sandboxList.mockResolvedValue(listed([{ id: "sandbox-1", status }]));
+      mocked.sandboxList.mockResolvedValue(listed([{ name: "sandbox-1", status }]));
       expect(await hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).toBe(false);
-      mocked.sandboxList.mockResolvedValue(listed([{ id: "sandbox-1", status, snapshottedAt: 1 }]));
+      mocked.sandboxList.mockResolvedValue(
+        listed([{ name: "sandbox-1", status, currentSnapshotId: "snap-1" }]),
+      );
       expect(await hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).toBe(true);
     },
   );
   it("reads every provider page before proving absence", async () => {
     mocked.sandboxList
-      .mockResolvedValueOnce(listed([{ id: "other", status: "stopped" }], 7))
-      .mockResolvedValueOnce(listed([{ id: "sandbox-1", status: "running" }]));
+      .mockResolvedValueOnce(listed([{ name: "other", status: "stopped" }], "7"))
+      .mockResolvedValueOnce(listed([{ name: "sandbox-1", status: "running" }]));
     expect(await hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).toBe(true);
-    expect(mocked.sandboxList).toHaveBeenLastCalledWith({ ...credentials, limit: 100, until: 7 });
+    expect(mocked.sandboxList).toHaveBeenLastCalledWith({
+      ...credentials,
+      cursor: "7",
+      fetch: vercelSandboxFetch,
+      limit: 100,
+    });
     mocked.sandboxList.mockResolvedValue(listed([]));
     expect(await hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).toBe(false);
   });
   it("does not turn a failed provider page into absence", async () => {
     mocked.sandboxList
-      .mockResolvedValueOnce(listed([], 7))
+      .mockResolvedValueOnce(listed([], "7"))
       .mockRejectedValueOnce(new Error("Provider unavailable"));
     await expect(hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).rejects.toThrow(
       "Provider unavailable",

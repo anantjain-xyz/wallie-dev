@@ -29,6 +29,7 @@ import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib
 import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
 import { getOpenCodeAuthForSession } from "@/lib/opencode/tokens";
 import { resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
+import { formatVercelSandboxError, isVercelSandboxApiError } from "@/lib/vercel-sandbox/errors";
 import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
@@ -71,6 +72,7 @@ class MissingReviewableOutputError extends Error {
 }
 
 const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
+const VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH = 4_096;
 const REDACTED_RUN_DIAGNOSTIC_VALUE = "[redacted]";
 const RUN_FAILURE_SECRET_KEY_SOURCE = String.raw`(?:access[_-]?key|access[_-]?token|api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)`;
 const RUN_FAILURE_SECRET_KEY_PATTERN = new RegExp(RUN_FAILURE_SECRET_KEY_SOURCE, "i");
@@ -629,6 +631,7 @@ async function publishArtifact(input: {
 // --- Approval + rejection handlers ---
 
 function getErrorMessage(error: unknown, fallback: string) {
+  if (isVercelSandboxApiError(error)) return formatVercelSandboxError(error);
   if (error instanceof Error) {
     return error.message;
   }
@@ -1032,10 +1035,15 @@ async function persistRunFailureDiagnostic(
   admin: AdminClient,
   input: { error: unknown; runId: string; workspaceId: string },
 ): Promise<void> {
-  const message = sanitizeRunFailureDiagnostic(
+  const failureText =
     typeof input.error === "string"
       ? input.error
-      : getErrorMessage(input.error, "Stage generation failed"),
+      : getErrorMessage(input.error, "Stage generation failed");
+  const message = sanitizeRunFailureDiagnostic(
+    failureText,
+    failureText.startsWith("Vercel Sandbox request failed")
+      ? VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH
+      : RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH,
   );
 
   try {
@@ -1167,7 +1175,10 @@ function findJsonDiagnosticValueEnd(message: string, start: number): number {
   return index;
 }
 
-function sanitizeRunFailureDiagnostic(message: string): string {
+function sanitizeRunFailureDiagnostic(
+  message: string,
+  maxLength = RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH,
+): string {
   const fallback = "Stage generation failed";
   let sanitized = message.trim() || fallback;
 
@@ -1194,8 +1205,8 @@ function sanitizeRunFailureDiagnostic(message: string): string {
       REDACTED_RUN_DIAGNOSTIC_VALUE,
     );
 
-  if (sanitized.length > RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH) {
-    return `${sanitized.slice(0, RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH - 3)}...`;
+  if (sanitized.length > maxLength) {
+    return `${sanitized.slice(0, maxLength - 3)}...`;
   }
 
   return sanitized;

@@ -1,3 +1,4 @@
+import { APIError } from "@vercel/sandbox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -374,5 +375,43 @@ describe("completeSandboxCapabilityCheck", () => {
         status: "error",
       }),
     );
+  });
+
+  it("stores the Vercel response body, url, method, and status when a check fails", async () => {
+    const token = "vca_1234567890abcdef";
+    const response = new Response(`1x ${token}`, { status: 502 });
+    Object.defineProperty(response, "url", {
+      value: "https://vercel.com/api/v1/sandboxes/sb/cmd",
+    });
+    Object.defineProperty(response, "method", { value: "POST" });
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new APIError(response, {
+        message:
+          "Can't parse JSON: SyntaxError: Unexpected non-whitespace character after JSON at position 1 (line 1 column 2)",
+        text: `1x ${token}`,
+      }),
+    );
+    const { admin } = adminMock();
+
+    const result = await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository: {
+        default_branch: "main",
+        full_name: "acme/app",
+        github_installation_id: "installation-row-1",
+        id: "repo-1",
+        workspace_id: "workspace-1",
+      },
+      userId: "user-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.errorText).toContain(
+      "Vercel Sandbox request failed (502 POST https://vercel.com/api/v1/sandboxes/sb/cmd)",
+    );
+    expect(result.errorText).toContain("body: 1x [REDACTED]");
+    expect(result.errorText).not.toContain(token);
   });
 });
