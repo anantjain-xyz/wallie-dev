@@ -16,7 +16,7 @@ Closes #
 
 ## Checklist
 
-- [ ] `pnpm check` passes locally (format, lint with zero warnings, typecheck, tests)
+- [ ] `pnpm check` passes locally (format, lint with zero warnings, typecheck, tests, and `check:cloudflare`)
 - [ ] Added/updated tests where it makes sense
 - [ ] Updated docs (README, `docs/`, `.env.example`) if behavior, setup, or env vars changed
 - [ ] No secrets or credentials are included in the diff

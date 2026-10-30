@@ -7,7 +7,7 @@ flowchart LR
   browser[Browser] -->|staging DNS + TLS| alb[Public ALB]
   alb -->|HTTP 3000| web[Private ECS web task<br/>services-a]
   web -->|HTTPS via NAT| hosted[Existing Supabase Cloud<br/>live Wallie data]
-  railway[Existing Railway worker] --> hosted
+  worker[Cloudflare worker] --> hosted
   future[Future AWS worker + Supabase + sandboxes] -. not deployed .-> web
 ```
 
@@ -22,7 +22,7 @@ flowchart LR
 | ------------- | ----------------------------------------- | ---------------------------------------------------------- |
 | Web           | One private Fargate task behind HTTPS ALB | Durable service, monitoring, multi-AZ rollout and rollback |
 | Data and Auth | Existing hosted Supabase project          | Self-hosted API, PostgreSQL, Storage, backup and recovery  |
-| Jobs          | Existing Railway worker                   | AWS worker with drain and active-job recovery              |
+| Jobs          | Cloudflare worker                         | AWS worker with drain and active-job recovery              |
 | Sandboxes     | Existing external providers               | In-account execution for every required use case           |
 | Edge/egress   | Staging DNS and one-AZ NAT                | Production cutover, WAF, reviewed egress and availability  |
 

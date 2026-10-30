@@ -9,7 +9,7 @@ flowchart LR
   browser[Browser] -->|external DNS CNAME + HTTPS| alb[Staging ALB]
   alb -->|port 3000| web[ECS web task<br/>services-a]
   web -->|NAT · HTTPS| cloud[Existing Supabase Cloud<br/>live Wallie data]
-  railway[Railway worker] --> cloud
+  worker[Cloudflare worker] --> cloud
 ```
 
 | Gate    | Evidence before advancing                                                                                                                                                                                                                                                                                                                                                           |
@@ -18,7 +18,7 @@ flowchart LR
 | DNS     | `wallie.dev` is currently delegated outside Route 53. Confirm control of `aws-staging.wallie.dev`, no existing A/CNAME, and an operator for the current DNS provider. Terraform never edits DNS.                                                                                                                                                                                    |
 | Runtime | Apply the already merged `services-a` HTTPS NAT option; verify the route and two task security groups. Populate only the web runtime secret. The existing web digest `sha256:038383bb66be04cd81d4c6110d3d4a18aca427110ebab0502e31a84131602e4b` is aligned with current runtime inputs; require fresh ECR image/scanning readback and strict signature verification before using it. |
 | Auth    | Add `https://aws-staging.wallie.dev/auth/confirm**` to the **existing** Supabase Auth redirect allowlist before testing sign-in. The `**` covers the app's `?next=...` callbacks. Do not change the production site URL.                                                                                                                                                            |
-| Scope   | The web image receives only the Supabase secret and encryption key. GitHub app, OAuth, webhook, and other optional integration credentials are absent. This is a login/read canary, not full Wallie functionality. The existing Railway worker may process jobs created through this web app; session progress does not prove an AWS worker.                                        |
+| Scope   | The web image receives only the Supabase secret and encryption key. GitHub app, OAuth, webhook, and other optional integration credentials are absent. This is a login/read canary, not full Wallie functionality. The Cloudflare worker may process jobs created through this web app; session progress does not prove an AWS worker.                                              |
 
 ## 1. Review and write the web secret
 
