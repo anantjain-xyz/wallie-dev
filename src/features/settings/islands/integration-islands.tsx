@@ -38,32 +38,6 @@ import {
   type SandboxChangedDetail,
   type SecretsChangedDetail,
 } from "@/features/settings/settings-island-events";
-import type { AgentProvider } from "@/lib/agent-config/contracts";
-
-export function preloadProviderIsland(provider: AgentProvider) {
-  if (provider === "claude-code") {
-    void import("@/features/settings/claude-code-connection-panel");
-  } else if (provider === "cursor") {
-    void import("@/features/settings/cursor-connection-panel");
-  } else if (provider === "opencode") {
-    void import("@/features/settings/opencode-connection-panel");
-  } else {
-    void import("@/features/settings/codex-connection-panel");
-  }
-}
-
-export function ProviderIntentLink({ provider }: { provider: AgentProvider }) {
-  return (
-    <a
-      className="ui-button"
-      href="#runtime"
-      onFocus={() => preloadProviderIsland(provider)}
-      onPointerEnter={() => preloadProviderIsland(provider)}
-    >
-      Agent
-    </a>
-  );
-}
 
 export function GithubIntegrationIsland({
   canManage,

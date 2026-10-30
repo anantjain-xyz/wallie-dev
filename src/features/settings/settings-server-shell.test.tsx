@@ -8,7 +8,6 @@ vi.mock("@/features/settings/settings-category-nav", () => ({
 vi.mock("@/features/settings/islands/integration-islands", () => ({
   GithubIntegrationIsland: () => <p>GitHub integration island</p>,
   LinearIntegrationIsland: () => <p>Linear integration island</p>,
-  ProviderIntentLink: () => <p>Provider intent island</p>,
   RepositoryIntegrationIsland: () => <p>Repository integration island</p>,
   RuntimeIntegrationIsland: () => <p>Runtime integration island</p>,
   VercelIntegrationIsland: () => <p>Sandbox integration island</p>,
