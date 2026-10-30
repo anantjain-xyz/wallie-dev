@@ -29,11 +29,11 @@ pnpm worker                  # in another
 ## Before you open a PR
 
 Run the full check suite locally — this is the pre-PR gate. PR CI runs
-`check:fast` and `test` in separate jobs, covering the same full profile without
-repeating fast validation. This includes typechecking:
+`check:fast`, `test`, and `check:cloudflare` in separate jobs, together covering
+the same full profile without repeating fast validation. This includes typechecking:
 
 ```bash
-pnpm check   # check:fast + test
+pnpm check   # check:fast + test + check:cloudflare
 ```
 
 The fast profile covers validation-contract verification, formatting, lint,
@@ -42,12 +42,13 @@ run with the full profile. You can run either profile or the individual pieces
 while iterating:
 
 ```bash
-pnpm check:fast    # canonical fast profile
-pnpm format       # auto-format with Prettier
-pnpm lint:fix     # auto-fix lint issues
-pnpm typecheck    # TypeScript, no emit
-pnpm test         # Vitest (one-shot)
-pnpm test:watch   # Vitest in watch mode
+pnpm check:fast       # canonical fast profile
+pnpm check:cloudflare # native runtime types, workerd tests, and Wrangler build
+pnpm format           # auto-format with Prettier
+pnpm lint:fix         # auto-fix lint issues
+pnpm typecheck        # TypeScript, no emit
+pnpm test             # Vitest (one-shot)
+pnpm test:watch       # Vitest in watch mode
 ```
 
 To run a single test file or a focused subset:

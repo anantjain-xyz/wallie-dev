@@ -2,11 +2,11 @@
 
 Proposal · September 19, 2026
 
-**Historical proposal · staging was torn down September 27, 2026.** Production remains on Vercel, hosted Supabase, and Railway. Use the [milestone and replay guide](AWS-STAGING-MILESTONE.md) before any new AWS deployment.
+**Historical proposal · staging was torn down September 27, 2026.** Production remains on Vercel, hosted Supabase, and the Cloudflare worker. Use the [milestone and replay guide](AWS-STAGING-MILESTONE.md) before any new AWS deployment.
 
 **Progress · September 27, 2026**
 
-- **Web milestone:** [`aws-staging.wallie.dev` served HTTP 200 over valid TLS](AWS-STAGING-MILESTONE.md) from one healthy private ECS web task through a public ALB. That task used the existing hosted Wallie Supabase project via NAT. The canary ended with **94 Terraform-managed staging resources destroyed** across five roots; the state bucket and image manifests were also removed. The owner reports the external staging DNS and Auth entries removed. The hosted Supabase project, production Vercel site, and Railway worker remain in use.
+- **Web milestone:** [`aws-staging.wallie.dev` served HTTP 200 over valid TLS](AWS-STAGING-MILESTONE.md) from one healthy private ECS web task through a public ALB. That task used the existing hosted Wallie Supabase project via NAT. The canary ended with **94 Terraform-managed staging resources destroyed** across five roots; the state bucket and image manifests were also removed. The owner reports the external staging DNS and Auth entries removed. The hosted Supabase project, production Vercel site, and Cloudflare worker remain in use.
 - **Previously deployed foundations:** private Terraform state, hardened two-AZ staging VPC, web/worker ECR repositories with qualification images, an active OCI signing profile, ECS cluster/log groups, networking, secret containers, and a private PostgreSQL qualification host. The host never ran PostgreSQL.
 - **Local checks passed:** web/worker container smoke tests, idle worker drain, and pinned Supabase compatibility checks. Active-job recovery remains unqualified.
 - **Earlier image checks:** web `fc605b36` and worker `924e28b8` passed smoke tests, uploads, manifest/config verification, fresh ECR BASIC scans with zero findings, and strict signature verification. Both use the pinned Amazon Linux 2023 runtime; [qualification details](AWS-IMAGE-PUBLISHING.md#verification-boundary). The later canary used a separately reviewed pinned web digest; no worker image has been launched on AWS.
@@ -91,7 +91,7 @@ flowchart TB
 | Dependency in the repo                | Target                                                                             |
 | ------------------------------------- | ---------------------------------------------------------------------------------- |
 | Vercel web hosting                    | Next.js container on ECS                                                           |
-| Railway worker deployment             | Separate ECS worker service                                                        |
+| Cloudflare worker                     | Separate ECS worker service                                                        |
 | Supabase Cloud configuration          | Self-hosted Supabase + PostgreSQL in AWS                                           |
 | Vercel Sandbox                        | One in-account provider, covering sessions, onboarding, helpers, and agent sign-in |
 | Vercel Analytics / Speed Insights     | CloudWatch and configurable browser telemetry                                      |
@@ -132,7 +132,7 @@ flowchart TB
 - **Isolation:** sandbox network/IAM restrictions; block database, deployment secrets, metadata, and unrelated networks. Allowlist egress; use private AWS endpoints.
 - **Enterprise webhooks:** narrow signed/deduplicated ingress, or an outbound relay/polling implementation.
 - **Operations:** restore database, objects, and keys; test rotation, forward-only upgrades, audit export, retention, alerts, and spend limits.
-- **Completion:** retire Vercel, Railway, and hosted Supabase after validation; verify no production dependency remains.
+- **Completion:** retire Vercel, the Cloudflare worker, and hosted Supabase after validation; verify no production dependency remains.
 
 **Later**
 
