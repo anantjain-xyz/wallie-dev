@@ -26,6 +26,12 @@ import {
 } from "@/lib/workspaces/resource-operations";
 import type { Database } from "@/lib/supabase/database.types";
 import type { VercelSandboxCredentials } from "@/lib/vercel-sandbox/contracts";
+import {
+  formatVercelSandboxError,
+  isVercelSandboxApiError,
+  vercelSandboxErrorStatus,
+  vercelSandboxFetch,
+} from "@/lib/vercel-sandbox/errors";
 
 const FLOW_TTL_MS = 10 * 60_000;
 const PROMPT_WAIT_MS = 2_500;
@@ -717,6 +723,8 @@ async function createAuthSandbox(
   const sandbox = await Sandbox.create({
     ...resolveVercelCredentials(vercelCredentials),
     env: { CI: "1", CODEX_HOME: VERCEL_CODEX_HOME },
+    fetch: vercelSandboxFetch,
+    persistent: false,
     resources: { vcpus: 1 },
     runtime: "node22",
     timeout: FLOW_TTL_MS + 60_000,
@@ -726,7 +734,21 @@ async function createAuthSandbox(
     codexHome: VERCEL_CODEX_HOME,
     cwd: VERCEL_SANDBOX_CWD,
     installCodex: true,
-    sandbox: sandbox as unknown as AuthSandbox,
+    sandbox: adaptVercelAuthSandbox(sandbox),
+  };
+}
+
+function adaptVercelAuthSandbox(sandbox: Sandbox & { sandboxId?: string }): AuthSandbox {
+  return {
+    get sandboxId() {
+      return sandbox.name || sandbox.sandboxId || "";
+    },
+    getCommand: (commandId) => sandbox.getCommand(commandId),
+    readFileToBuffer: (input) => sandbox.readFileToBuffer(input),
+    runCommand: (input) => sandbox.runCommand(input),
+    stop: async () => {
+      await sandbox.stop();
+    },
   };
 }
 
@@ -760,10 +782,13 @@ async function getAuthSandbox(
 
   const vercelCredentials = connection?.provider === "vercel" ? connection.credentials : undefined;
 
-  return Sandbox.get({
-    ...resolveVercelCredentials(vercelCredentials),
-    sandboxId,
-  }) as unknown as AuthSandbox;
+  return adaptVercelAuthSandbox(
+    await Sandbox.get({
+      ...resolveVercelCredentials(vercelCredentials),
+      fetch: vercelSandboxFetch,
+      name: sandboxId,
+    }),
+  );
 }
 
 async function stopSandboxQuietly(
@@ -1424,13 +1449,18 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function startAuthErrorMessage(error: unknown): string {
-  const message = errorMessage(error, "Failed to start Codex sign-in.");
-  if (isPaymentRequiredError(message)) return SANDBOX_PAYMENT_REQUIRED_MESSAGE;
-  return message;
+  return authSandboxErrorMessage(error, "Failed to start Codex sign-in.");
 }
 
 function pollAuthErrorMessage(error: unknown): string {
-  const message = errorMessage(error, "Failed to read Codex sign-in status.");
+  return authSandboxErrorMessage(error, "Failed to read Codex sign-in status.");
+}
+
+function authSandboxErrorMessage(error: unknown, fallback: string): string {
+  if (vercelSandboxErrorStatus(error) === 402) return SANDBOX_PAYMENT_REQUIRED_MESSAGE;
+  const message = isVercelSandboxApiError(error)
+    ? formatVercelSandboxError(error)
+    : errorMessage(error, fallback);
   if (isPaymentRequiredError(message)) return SANDBOX_PAYMENT_REQUIRED_MESSAGE;
   return message;
 }

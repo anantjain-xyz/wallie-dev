@@ -9,7 +9,7 @@ import {
   type VercelSandboxCredentials,
 } from "@/lib/vercel-sandbox/contracts";
 import { redactSecrets } from "@/lib/sandbox/command";
-import { formatVercelSandboxError } from "@/lib/vercel-sandbox/errors";
+import { formatVercelSandboxError, vercelSandboxFetch } from "@/lib/vercel-sandbox/errors";
 import { buildSecretPreview, decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
@@ -127,6 +127,7 @@ export async function validateVercelSandboxCredentials(
 
   try {
     await Sandbox.list({
+      fetch: vercelSandboxFetch,
       limit: 1,
       projectId: credentials.projectId,
       teamId: credentials.teamId,

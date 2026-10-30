@@ -1,3 +1,4 @@
+import { APIError } from "@vercel/sandbox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -2642,6 +2643,37 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
+  });
+
+  it("persists the Vercel response body, url, method, and status on sandbox failures", async () => {
+    const token = "vca_1234567890abcdef";
+    const response = new Response(`1x ${token} ${"b".repeat(1_500)}`, { status: 502 });
+    Object.defineProperty(response, "url", {
+      value: "https://vercel.com/api/v2/sandboxes/sessions/ses_1/cmd?wait=true",
+    });
+    Object.defineProperty(response, "method", { value: "GET" });
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new APIError(response, {
+        message:
+          "Can't parse JSON: SyntaxError: Unexpected non-whitespace character after JSON at position 1 (line 1 column 2)",
+        text: `1x ${token} ${"b".repeat(1_500)}`,
+      }),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages, updatedJobs } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    const diagnostic = insertedMessages.find((message) => message.kind === "error")?.message_md;
+    expect(diagnostic).toContain(
+      "Vercel Sandbox request failed (502 GET https://vercel.com/api/v2/sandboxes/sessions/ses_1/cmd?wait=true)",
+    );
+    expect(diagnostic).toContain("body: 1x [REDACTED]");
+    expect(diagnostic).toContain("b".repeat(1_500));
+    expect(diagnostic).not.toContain(token);
+    expect(updatedJobs.at(-1)?.last_error).toContain("body: 1x [REDACTED]");
+    expect(updatedJobs.at(-1)?.last_error).not.toContain(token);
   });
 
   it("swallows diagnostic insert failures and preserves sandbox failure handling", async () => {

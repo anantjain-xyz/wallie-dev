@@ -18,7 +18,8 @@ it("deploys native orchestration with dispatch disabled until live qualification
   ]);
   expect(config.alias["server-only"]).toBe("./cloudflare/server-only.ts");
   expect(config.alias["isomorphic-ws"]).toBe("./cloudflare/websocket.ts");
-  expect(config.alias.undici).toBe("./cloudflare/undici.ts");
+  expect(config.alias.undici).toBe("./cloudflare/undici.mjs");
+  expect(config.alias["@vercel/oidc"]).toBe("./cloudflare/vercel-oidc.mjs");
   for (const secret of [
     "SUPABASE_SECRET_KEY",
     "WALLIE_ENCRYPTION_KEY",

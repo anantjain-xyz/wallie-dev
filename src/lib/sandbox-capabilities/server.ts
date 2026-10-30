@@ -11,6 +11,7 @@ import { getCodexCredentialForUser } from "@/lib/codex/tokens";
 import { getCursorCredentialForUser } from "@/lib/cursor/tokens";
 import { getOpenCodeAuthForUser } from "@/lib/opencode/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
+import { sandboxFailureText } from "@/lib/vercel-sandbox/errors";
 import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
 import type { AgentProvider, SandboxConnection } from "@/lib/sandbox/types";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
@@ -320,7 +321,7 @@ export async function completeSandboxCapabilityCheck(input: {
       admin: input.admin,
       capabilities: {},
       checkId: input.checkId,
-      errorText: error instanceof Error ? error.message : String(error),
+      errorText: sandboxFailureText(error),
       status: "error",
     });
   } finally {

@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 
+import { vercelSandboxFetch } from "@/lib/vercel-sandbox/errors";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -322,6 +324,8 @@ describe("Codex device auth", () => {
     expect(mocked.sandboxCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         env: { CI: "1", CODEX_HOME: "/vercel/sandbox/.codex" },
+        fetch: vercelSandboxFetch,
+        persistent: false,
         projectId: "prj_workspace",
         runtime: "node22",
         teamId: "team_workspace",
@@ -329,8 +333,9 @@ describe("Codex device auth", () => {
       }),
     );
     expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      fetch: vercelSandboxFetch,
+      name: "sandbox-1",
       projectId: "prj_workspace",
-      sandboxId: "sandbox-1",
       teamId: "team_workspace",
       token: "vca_workspace",
     });
@@ -384,8 +389,9 @@ describe("Codex device auth", () => {
       status: "canceled",
     });
     expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      fetch: vercelSandboxFetch,
+      name: "sandbox-race",
       projectId: "prj_workspace",
-      sandboxId: "sandbox-race",
       teamId: "team_workspace",
       token: "vca_workspace",
     });
@@ -716,8 +722,9 @@ describe("Codex device auth", () => {
 
     expect(snapshot).toMatchObject({ status: "authenticated" });
     expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      fetch: vercelSandboxFetch,
+      name: "sandbox-1",
       projectId: "prj_workspace",
-      sandboxId: "sandbox-1",
       teamId: "team_workspace",
       token: "vca_workspace",
     });
@@ -994,7 +1001,8 @@ describe("Codex device auth", () => {
     });
     expect(mocked.sandboxCreate).not.toHaveBeenCalled();
     expect(mocked.sandboxGet).toHaveBeenCalledWith({
-      sandboxId: "sandbox-1",
+      fetch: vercelSandboxFetch,
+      name: "sandbox-1",
     });
   });
 
