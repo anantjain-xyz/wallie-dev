@@ -49,36 +49,6 @@ export async function cleanupExpiredSessionAttachments(admin: AdminClient, maxCo
   return { claimed: ids.length, deleted: ids.length, failed: 0 };
 }
 
-export async function removeWorkspaceSessionAttachments(
-  admin: AdminClient,
-  workspaceId: string,
-  knownPaths: string[] = [],
-) {
-  const bucket = admin.storage.from(sessionAttachmentBucket);
-  const paths = new Set(knownPaths);
-  let offset = 0;
-
-  while (true) {
-    const { data, error } = await bucket.list(workspaceId, {
-      limit: 100,
-      offset,
-      sortBy: { column: "name", order: "asc" },
-    });
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-
-    for (const object of data) paths.add(`${workspaceId}/${object.name}`);
-    if (data.length < 100) break;
-    offset += data.length;
-  }
-
-  const pathList = Array.from(paths);
-  for (let index = 0; index < pathList.length; index += 100) {
-    const { error } = await bucket.remove(pathList.slice(index, index + 100));
-    if (error) throw error;
-  }
-}
-
 async function restoreClaimedAttachments(
   admin: AdminClient,
   ids: string[],

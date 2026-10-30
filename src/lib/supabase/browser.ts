@@ -16,5 +16,3 @@ export function createSupabaseBrowserClient(config: SupabasePublicConfig | null)
 
   return createBrowserClient<Database>(url, publishableKey);
 }
-
-export const createBrowserSupabaseClient = createSupabaseBrowserClient;
