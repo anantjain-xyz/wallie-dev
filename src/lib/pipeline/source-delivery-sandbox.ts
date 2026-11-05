@@ -14,6 +14,8 @@ import {
 } from "@/lib/workspaces/resource-operations";
 import {
   restoreAndPushSourceWithWorkspace,
+  type GitExecutor,
+  type SourceGitWorkspace,
   type SourceRestoreInput,
 } from "./source-delivery-git-core";
 
@@ -26,12 +28,26 @@ export async function restoreAndPushSourceInSandbox(
     runId: string;
   },
 ) {
+  return withSourceGitSandbox(input.signal, context, (dependencies) =>
+    restoreAndPushSourceWithWorkspace(input, dependencies),
+  );
+}
+
+/** Trusted Git plumbing only; never bootstraps or executes repository source. */
+export async function withSourceGitSandbox<T>(
+  signal: AbortSignal | undefined,
+  context: { admin: SupabaseClient<Database>; workspaceId: string; runId: string },
+  execute: (dependencies: {
+    execGit: GitExecutor;
+    createWorkspace: () => Promise<SourceGitWorkspace>;
+  }) => Promise<T>,
+): Promise<T> {
   const { connection } = await loadRequiredWorkspaceSandboxConnection(
     context.admin,
     context.workspaceId,
   );
   let sandbox: SandboxHandle | undefined;
-  return restoreAndPushSourceWithWorkspace(input, {
+  return execute({
     execGit: async (args, options) => {
       if (!sandbox) throw new Error("Source utility sandbox is unavailable.");
       const command = await sandbox.exec("git", args, {
@@ -64,7 +80,7 @@ export async function restoreAndPushSourceInSandbox(
             workspaceId: context.workspaceId,
             ownerId: context.runId,
             timeoutMs: 120_000,
-            signal: input.signal,
+            signal,
             onSandboxCreated: async ({ sandboxId }) => {
               const accepted = await recordWorkspaceSandbox(context.admin, operationId, sandboxId);
               recorded = true;
@@ -94,7 +110,7 @@ export async function restoreAndPushSourceInSandbox(
         try {
           const command = await handle.exec("mkdir", ["-m", "700", path], {
             cwd: "/tmp",
-            signal: input.signal,
+            signal,
           });
           if ((await command.exitCode) !== 0) throw new Error("Could not prepare source delivery.");
           return {

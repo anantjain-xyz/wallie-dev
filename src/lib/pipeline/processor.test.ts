@@ -1336,12 +1336,12 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     const result = await processPipelineJob({ admin, job });
 
-    expect(mocked.octokitRequest).toHaveBeenCalledWith(
+    expect(mocked.octokitRequest).toHaveBeenCalledExactlyOnceWith(
       "POST /app/installations/{installation_id}/access_tokens",
       {
         installation_id: 123,
         repositories: ["app"],
-        permissions: { contents: "write", pull_requests: "write" },
+        permissions: { contents: "read" },
       },
     );
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
@@ -1390,6 +1390,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
+        installationToken: "gh-token",
         connection: {
           credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
           provider: "vercel",

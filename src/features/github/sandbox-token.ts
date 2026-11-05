@@ -6,7 +6,8 @@ export async function mintSandboxRepositoryToken(input: {
   installationId: number;
   repositoryFullName: string;
   repositoryId?: number;
-  purpose: "execution" | "capability-check";
+  /** Agent checkout/probes are read-only; execution is reserved for trusted publication. */
+  purpose: "checkout" | "execution" | "capability-check";
 }): Promise<string> {
   const [owner, repository, extra] = input.repositoryFullName.split("/");
   if (!owner || !repository || extra !== undefined || /\s/.test(input.repositoryFullName)) {

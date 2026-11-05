@@ -124,11 +124,9 @@ async function assertClaim(admin: AdminClient, delivery: SourceDelivery, signal:
   if (error || data !== true) throw new Error("Delivery claim expired.");
 }
 
-export async function resolveSourceDeliveryRepository(
-  admin: AdminClient,
-  delivery: SourceDelivery,
-  signal: AbortSignal,
-) {
+export async function resolveSourceDeliveryRepository<
+  T extends Pick<SourceDelivery, "repository_id" | "workspace_id" | "repository_full_name">,
+>(admin: AdminClient, delivery: T, signal: AbortSignal) {
   if (!delivery.repository_id) throw new Error("Source repository connection is unavailable.");
   const { data: repository, error: repositoryError } = await admin
     .from("github_repositories")
@@ -183,6 +181,7 @@ export async function resolveSourceDeliveryRepository(
     throw new Error("Source repository identity changed.");
   return {
     token,
+    repositoryNumericId: repository.repo_id,
     delivery: {
       ...delivery,
       installation_id: installation.installation_id,

@@ -50,6 +50,30 @@ describe("sandbox repository tokens", () => {
     );
   });
 
+  it.each([undefined, 777])(
+    "gives agent checkout read-only access without pull-request permissions (repository id: %j)",
+    async (repositoryId) => {
+      const token = await mintSandboxRepositoryToken({
+        installationId: 123,
+        repositoryFullName: "acme/selected-repo",
+        ...(repositoryId !== undefined ? { repositoryId } : {}),
+        purpose: "checkout",
+      });
+
+      expect(token).toBe("repository-scoped-token");
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        "POST /app/installations/{installation_id}/access_tokens",
+        {
+          installation_id: 123,
+          ...(repositoryId !== undefined
+            ? { repository_ids: [repositoryId] }
+            : { repositories: ["selected-repo"] }),
+          permissions: { contents: "read" },
+        },
+      );
+    },
+  );
+
   it("pins delivery access to the numeric repository identity across renames", async () => {
     await mintSandboxRepositoryToken({
       installationId: 123,

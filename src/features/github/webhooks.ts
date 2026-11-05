@@ -27,6 +27,23 @@ const pullRequestObservationSchema = pullRequestEventSchema.shape.pull_request.e
   base: z.object({ repo: z.object({ id: z.number().int().positive().safe() }) }),
 });
 
+const canonicalBranchSchema = z
+  .string()
+  .regex(
+    /^wallie\/sessions\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
+  );
+const canonicalObservationSchema = pullRequestObservationSchema
+  .extend({
+    base: z.object({
+      ref: z.string().min(1),
+      repo: z.object({ id: z.number().int().positive().safe() }),
+    }),
+    head: pullRequestEventSchema.shape.pull_request.shape.head.extend({
+      sha: z.string().regex(/^[a-f0-9]{40}$/),
+    }),
+  })
+  .refine((snapshot) => !snapshot.merged || snapshot.state === "closed");
+
 export async function verifyGitHubWebhookRequest(
   payload: string,
   signature: string,
@@ -138,6 +155,88 @@ export async function handleGitHubPullRequestEvent(
   // A branch is not a repository identity. Unknown repositories must never
   // claim a link from another repository, even within the same workspace.
   if (!repository) return;
+
+  if (canonicalBranchSchema.safeParse(branchName).success) {
+    // Canonical epochs never use the legacy branch fallback. Only their pinned
+    // PR identity may dirty state, and only a fenced current GET may finish it.
+    const { data: observationId, error: beginError } = await admin.rpc(
+      "begin_session_pr_observation",
+      {
+        p_workspace_id: installation.workspace_id,
+        p_repository_id: repository.id,
+        p_branch_name: branchName,
+        p_pr_number: payload.pull_request.number,
+      },
+    );
+    if (beginError) throw beginError;
+    if (!observationId) return;
+    const [, , sessionId, epochId] = branchName.split("/");
+    const { data: epoch, error: epochError } = await admin
+      .from("session_pr_epochs")
+      .select("base_branch, branch_name, pr_number, github_repository_id, repository_full_name")
+      .eq("id", epochId)
+      .eq("session_id", sessionId)
+      .eq("workspace_id", installation.workspace_id)
+      .eq("repository_id", repository.id)
+      .eq("branch_name", branchName)
+      .maybeSingle();
+    if (epochError) throw epochError;
+    if (!epoch || epoch.pr_number !== payload.pull_request.number) return;
+    if (
+      epoch.github_repository_id !== payload.repository.id ||
+      epoch.repository_full_name.toLowerCase() !== repository.full_name.toLowerCase() ||
+      epoch.branch_name !== branchName
+    )
+      throw new Error("GitHub repository no longer matches the canonical pull request epoch.");
+    const [owner, repo, extra] = epoch.repository_full_name.split("/");
+    if (!owner || !repo || extra) throw new Error("Invalid GitHub repository identity.");
+    const { App } = await import("@octokit/app");
+    const octokit = await new App(resolveGitHubAppConfig(input)).getInstallationOctokit(
+      payload.installation.id,
+    );
+    const { data } = await octokit
+      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+        owner,
+        repo,
+        pull_number: payload.pull_request.number,
+        request: { signal: AbortSignal.timeout(10_000) },
+      })
+      .catch(() => {
+        throw new Error("Canonical pull request observation is temporarily unavailable.");
+      });
+    const snapshot = canonicalObservationSchema.parse(data);
+    const headRepositoryMatches = snapshot.head.repo?.id === epoch.github_repository_id;
+    const url = new URL(snapshot.html_url);
+    if (
+      snapshot.number !== payload.pull_request.number ||
+      snapshot.base.repo.id !== epoch.github_repository_id ||
+      snapshot.base.ref !== epoch.base_branch ||
+      snapshot.head.ref !== branchName ||
+      (snapshot.head.repo && !headRepositoryMatches) ||
+      (snapshot.state === "open" && !headRepositoryMatches) ||
+      url.origin !== "https://github.com" ||
+      url.pathname.toLowerCase() !==
+        `/${epoch.repository_full_name}/pull/${snapshot.number}`.toLowerCase() ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error("GitHub returned a different canonical pull request identity.");
+    }
+    const { error: finishError } = await admin.rpc("finish_session_pr_observation", {
+      p_observation_id: observationId,
+      p_pr_url: snapshot.html_url,
+      p_pr_state: snapshot.merged ? "merged" : snapshot.state,
+      p_is_draft: snapshot.draft,
+      // A deleted head repository can prove terminal state, never a synced head.
+      // Generated RPC types omit this SQL argument's accepted nullability.
+      p_pr_head_sha: headRepositoryMatches ? snapshot.head.sha : null!,
+      p_pr_updated_at: snapshot.updated_at,
+    });
+    if (finishError) throw finishError;
+    return;
+  }
 
   const { error } = await admin.rpc("apply_github_pull_request_event", {
     target_workspace_id: installation.workspace_id,

@@ -326,7 +326,7 @@ async function runStage(input: {
     installationToken = await mintSandboxRepositoryToken({
       installationId: github.installationId,
       repositoryFullName: github.repo.full_name,
-      purpose: "execution",
+      purpose: "checkout",
     });
     throwIfAborted(signal);
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))

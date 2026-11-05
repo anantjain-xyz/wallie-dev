@@ -2,6 +2,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { startCursorAuthProcessor } from "@/lib/cursor/auth-processor";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
+import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 
@@ -117,6 +118,7 @@ async function main() {
       setInterval(() => {
         timerTasks.run("reconciliation", async () => {
           await drainCheckpointPublications(admin);
+          await drainCanonicalPullRequests(admin);
           await drainSourceDeliveries(admin);
           const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([
             reconcileLinearState(admin),
