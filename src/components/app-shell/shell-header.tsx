@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -11,6 +10,8 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
+  type ComponentProps,
   type MouseEvent,
   type ReactNode,
   type RefObject,
@@ -51,15 +52,52 @@ type ShellHeaderProps = {
 };
 
 type CreateSessionDialogModule = typeof import("@/features/sessions/create-session-dialog");
+type CreateSessionDialogComponent = CreateSessionDialogModule["CreateSessionDialog"];
+type PreloadedCreateSessionDialogModule = Pick<
+  CreateSessionDialogModule,
+  "preloadSessionRepositories"
+> &
+  Partial<Pick<CreateSessionDialogModule, "CreateSessionDialog">>;
 
 const loadCreateSessionDialogModule = () => import("@/features/sessions/create-session-dialog");
+
+let createSessionDialogModule: CreateSessionDialogComponent | null = null;
+let createSessionDialogModulePromise: Promise<CreateSessionDialogComponent> | null = null;
+const createSessionDialogListeners = new Set<() => void>();
+
+function publishCreateSessionDialog(component: CreateSessionDialogComponent) {
+  if (createSessionDialogModule === component) return;
+  createSessionDialogModule = component;
+  for (const listener of createSessionDialogListeners) listener();
+}
+
+function subscribeCreateSessionDialog(listener: () => void) {
+  createSessionDialogListeners.add(listener);
+  return () => {
+    createSessionDialogListeners.delete(listener);
+  };
+}
+
+function retainCreateSessionDialogModule() {
+  if (createSessionDialogModule) return Promise.resolve(createSessionDialogModule);
+  if (!createSessionDialogModulePromise) {
+    createSessionDialogModulePromise = loadCreateSessionDialogModule()
+      .then((module) => {
+        publishCreateSessionDialog(module.CreateSessionDialog);
+        return module.CreateSessionDialog;
+      })
+      .catch((error: unknown) => {
+        createSessionDialogModulePromise = null;
+        throw error;
+      });
+  }
+  return createSessionDialogModulePromise;
+}
 
 export function preloadCreateSessionDialogOnce(
   startedKey: { current: string | null },
   input: { userId: string; workspaceId: string },
-  load: () => Promise<
-    Pick<CreateSessionDialogModule, "preloadSessionRepositories">
-  > = loadCreateSessionDialogModule,
+  load: () => Promise<PreloadedCreateSessionDialogModule> = loadCreateSessionDialogModule,
 ) {
   const key = `${input.userId}:${input.workspaceId}`;
   if (startedKey.current === key) {
@@ -69,7 +107,10 @@ export function preloadCreateSessionDialogOnce(
   startedKey.current = key;
   // Reset on failure so a transient chunk error allows retry, not a permanent preload lockout.
   load()
-    .then((module) => module.preloadSessionRepositories(input))
+    .then((module) => {
+      if (module.CreateSessionDialog) publishCreateSessionDialog(module.CreateSessionDialog);
+      return module.preloadSessionRepositories(input);
+    })
     .catch(() => {
       if (startedKey.current === key) startedKey.current = null;
     });
@@ -106,13 +147,29 @@ export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void }
   );
 }
 
-const CreateSessionDialog = dynamic(
-  () => loadCreateSessionDialogModule().then((module) => module.CreateSessionDialog),
-  {
-    loading: () => <CreateSessionDialogLoading />,
-    ssr: false,
-  },
-);
+type CreateSessionDialogProps = ComponentProps<CreateSessionDialogComponent>;
+
+function CreateSessionDialog(props: CreateSessionDialogProps) {
+  const DialogImpl = useSyncExternalStore(
+    subscribeCreateSessionDialog,
+    () => createSessionDialogModule,
+    () => null,
+  );
+
+  useEffect(() => {
+    if (!props.open || DialogImpl) return;
+    void retainCreateSessionDialogModule().catch(() => undefined);
+  }, [DialogImpl, props.open]);
+
+  // next/dynamic wraps this chunk in Suspense. React then keeps that fallback
+  // on screen for FALLBACK_THROTTLE_MS (300ms) after the chunk has already
+  // loaded. Render the dialog from the resolved module instead.
+  if (!DialogImpl) return <CreateSessionDialogLoading onClose={props.onClose} />;
+
+  // The value is the cached module export, not a component created in render.
+  // eslint-disable-next-line react-hooks/static-components -- module is loaded once and reused
+  return <DialogImpl {...props} />;
+}
 
 function WorkspaceAvatar({ name, url }: { name: string; url: string | null }) {
   if (url) {
