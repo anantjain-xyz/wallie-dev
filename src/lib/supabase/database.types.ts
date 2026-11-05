@@ -1207,6 +1207,114 @@ export type Database = {
           },
         ]
       }
+      session_checkpoint_publications: {
+        Row: {
+          adopted_at: string | null
+          artifact_id: string | null
+          artifact_md: string
+          attempt_count: number
+          claim_id: string | null
+          created_at: string
+          deadline_at: string
+          expected_artifact_version: number
+          job_id: string
+          last_error_code: string | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          publication_attempt_count: number
+          remote_verified_at: string | null
+          remote_verified_ref: string | null
+          remote_verified_sha: string | null
+          retained_ref: string | null
+          run_id: string
+          session_id: string
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          adopted_at?: string | null
+          artifact_id?: string | null
+          artifact_md: string
+          attempt_count: number
+          claim_id?: string | null
+          created_at?: string
+          deadline_at: string
+          expected_artifact_version: number
+          job_id: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          publication_attempt_count?: number
+          remote_verified_at?: string | null
+          remote_verified_ref?: string | null
+          remote_verified_sha?: string | null
+          retained_ref?: string | null
+          run_id: string
+          session_id: string
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          adopted_at?: string | null
+          artifact_id?: string | null
+          artifact_md?: string
+          attempt_count?: number
+          claim_id?: string | null
+          created_at?: string
+          deadline_at?: string
+          expected_artifact_version?: number
+          job_id?: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          publication_attempt_count?: number
+          remote_verified_at?: string | null
+          remote_verified_ref?: string | null
+          remote_verified_sha?: string | null
+          retained_ref?: string | null
+          run_id?: string
+          session_id?: string
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_checkpoint_publications_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: true
+            referencedRelation: "session_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_publications_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_publications_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "session_source_deliveries"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_publications_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_publications_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_git_checkpoints: {
         Row: {
           artifact_id: string
@@ -1218,7 +1326,7 @@ export type Database = {
           input_sha: string
           job_id: string
           output_kind: string
-          output_ref: string
+          output_ref: string | null
           output_sha: string
           repository_full_name: string
           repository_id: string
@@ -1236,7 +1344,7 @@ export type Database = {
           input_sha: string
           job_id: string
           output_kind: string
-          output_ref: string
+          output_ref?: string | null
           output_sha: string
           repository_full_name: string
           repository_id: string
@@ -1254,7 +1362,7 @@ export type Database = {
           input_sha?: string
           job_id?: string
           output_kind?: string
-          output_ref?: string
+          output_ref?: string | null
           output_sha?: string
           repository_full_name?: string
           repository_id?: string
@@ -2859,6 +2967,15 @@ export type Database = {
         }
         Returns: Json
       }
+      adopt_session_checkpoint_publication: {
+        Args: {
+          p_claim_id: string
+          p_remote_ref?: string
+          p_remote_sha?: string
+          p_run_id: string
+        }
+        Returns: boolean
+      }
       apply_github_pull_request_event: {
         Args: {
           source_head_repository_matches?: boolean
@@ -2936,6 +3053,10 @@ export type Database = {
           job_ids: string[]
           run_ids: string[]
         }[]
+      }
+      assert_session_checkpoint_publication_claim: {
+        Args: { p_claim_id: string; p_run_id: string }
+        Returns: boolean
       }
       assert_session_source_delivery_claim: {
         Args: { p_claim_id: string; p_run_id: string }
@@ -3085,6 +3206,10 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      claim_session_checkpoint_publication: {
+        Args: { p_run_id?: string }
+        Returns: string
       }
       claim_session_source_delivery: { Args: never; Returns: string }
       complete_cursor_auth_flow: {
@@ -3274,6 +3399,17 @@ export type Database = {
         }
       }
       fail_session_job_attempt: {
+        Args: {
+          p_attempt_count: number
+          p_error: string
+          p_job_id: string
+          p_max_retries: number
+          p_retry: boolean
+          p_run_id?: string
+        }
+        Returns: string
+      }
+      fail_stalled_session_job_attempt: {
         Args: {
           p_attempt_count: number
           p_error: string
@@ -3592,6 +3728,33 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      prepare_session_checkpoint_publication: {
+        Args: {
+          p_artifact_md: string
+          p_deadline_at?: string
+          p_expected_artifact_version: number
+          p_run_id: string
+        }
+        Returns: boolean
+      }
+      prepare_session_source_and_checkpoint_publication: {
+        Args: {
+          p_artifact_md: string
+          p_base_branch: string
+          p_base_sha: string
+          p_body: string
+          p_bundle_base64: string
+          p_bundle_sha256: string
+          p_checkpoint_path: string
+          p_deadline_at?: string
+          p_expected_artifact_version: number
+          p_head_sha: string
+          p_repository_id: string
+          p_run_id: string
+          p_title: string
+        }
+        Returns: boolean
+      }
       prepare_session_source_delivery: {
         Args: {
           p_base_branch: string
@@ -3692,6 +3855,10 @@ export type Database = {
           session_id: string
           workspace_id: string
         }[]
+      }
+      release_session_checkpoint_publication: {
+        Args: { p_claim_id: string; p_run_id: string }
+        Returns: boolean
       }
       remove_workspace_member: {
         Args: { expected_workspace_id: string; target_member_id: string }

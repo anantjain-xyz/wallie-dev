@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "@/lib/agent-runner/types";
 import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import {
@@ -62,10 +62,15 @@ const mocked = vi.hoisted(() => ({
     .fn()
     .mockResolvedValue({ kind: "unchanged", baseSha: "a".repeat(40), headSha: "a".repeat(40) }),
   prepareSourceDelivery: vi.fn(),
+  publishSessionCheckpoint: vi.fn(),
   checkoutPinnedGitInput: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./git-input", () => ({ checkoutPinnedGitInput: mocked.checkoutPinnedGitInput }));
+vi.mock("./checkpoint-publication", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./checkpoint-publication")>()),
+  publishSessionCheckpoint: mocked.publishSessionCheckpoint,
+}));
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
@@ -261,6 +266,18 @@ interface MockOptions {
   currentAttempt?: number;
   replacementJobId?: string;
   failRpcError?: { message: string };
+  checkpointPublications?: Array<
+    Pick<
+      Tables<"session_checkpoint_publications">,
+      | "run_id"
+      | "job_id"
+      | "workspace_id"
+      | "attempt_count"
+      | "status"
+      | "deadline_at"
+      | "artifact_md"
+    >
+  >;
   jobStatus?: string;
   artifactInsertError?: { message: string } | null;
   messageInsertError?: { message: string } | null;
@@ -717,8 +734,21 @@ function buildAdminMock(opts: MockOptions) {
       updatedJobs.push({ status: "success" });
       return { data: true, error: null };
     }
-    if (fn === "fail_session_job_attempt") {
+    if (fn === "fail_session_job_attempt" || fn === "fail_stalled_session_job_attempt") {
       if (opts.failRpcError) return { data: null, error: opts.failRpcError };
+      if (
+        fn === "fail_stalled_session_job_attempt" &&
+        opts.checkpointPublications?.some(
+          (publication) =>
+            publication.run_id === payload.p_run_id &&
+            publication.job_id === payload.p_job_id &&
+            publication.workspace_id === "ws-1" &&
+            publication.attempt_count === attempt &&
+            ["pending", "claimed"].includes(publication.status) &&
+            Date.parse(publication.deadline_at) > Date.now(),
+        )
+      )
+        return { data: "stale", error: null };
       if (stale || (!payload.p_run_id && runRows.some((row) => row.attempt_count === attempt)))
         return { data: "stale", error: null };
       if (run?.status === "success") {
@@ -790,6 +820,20 @@ describe("processPipelineJob (generic stage runner)", () => {
     mocked.prepareSourceDelivery.mockImplementation(async (input) => {
       input.onDurable();
       return true;
+    });
+    mocked.publishSessionCheckpoint.mockImplementation(async (input) => {
+      // Keep these processor tests' in-memory owned artifact transaction. The
+      // publication module and SQL suites exercise the new remote-first RPCs.
+      const { data, error } = await input.admin.rpc("publish_session_job_with_source", {
+        p_job_id: input.jobId,
+        p_attempt_count: input.attemptCount,
+        p_run_id: input.runId,
+        p_expected_artifact_version: input.expectedArtifactVersion,
+        p_artifact_json: input.artifactMarkdown,
+        ...(input.deadlineAt ? { p_deadline_at: input.deadlineAt } : {}),
+      });
+      if (error) throw error;
+      return data === true ? "adopted" : "stale";
     });
     mocked.resolveSandboxImplementation.mockReturnValue("vercel");
     mocked.createSessionSandbox.mockImplementation(async (input) => {
@@ -1234,10 +1278,16 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(sandboxInput.timeoutMs).toBeGreaterThan(0);
     expect(sandboxInput.timeoutMs).toBeLessThanOrEqual(60_000);
     expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(expect.objectContaining({ signal }));
-    const publicationIndex = rpc.mock.calls.findIndex(
-      ([name]) => name === "publish_session_job_with_source",
+    expect(mocked.publishSessionCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signal,
+        deadlineAt,
+        runId: "run-1",
+        jobId: "job-1",
+        attemptCount: 4,
+        workspaceId: "ws-1",
+      }),
     );
-    expect(rpc.mock.results[publicationIndex].value.abortSignal).toHaveBeenCalledWith(signal);
     expect(legacyMutationCalls).toEqual([]);
     expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
   });
@@ -1330,6 +1380,69 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
     const sandbox = await mocked.createSessionSandbox.mock.results[0]!.value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
+  });
+
+  it.each(["pending result", "unknown commit response"])(
+    "keeps completed execution idle without failing its job for a %s",
+    async (outcome) => {
+      const { admin, rpc, insertedArtifacts, insertedMessages, runRows, updatedJobs } =
+        buildAdminMock({ session: baseSession() });
+      if (outcome === "pending result")
+        mocked.publishSessionCheckpoint.mockResolvedValueOnce("pending");
+      else {
+        const { CheckpointPublicationPendingError } = await import("./checkpoint-publication");
+        mocked.publishSessionCheckpoint.mockRejectedValueOnce(
+          new CheckpointPublicationPendingError(),
+        );
+      }
+      expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+        result: "idle",
+        runId: "run-1",
+      });
+      expect(mocked.captureSourceCheckpoint).toHaveBeenCalledOnce();
+      expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
+      expect(mocked.publishSessionCheckpoint).toHaveBeenCalledOnce();
+      expect(insertedArtifacts).toEqual([]);
+      expect(updatedJobs).toEqual([]);
+      expect(runRows[0].status).toBe("running");
+      expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+      expect(rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
+      expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "error" }));
+      // The private bundle is durable before publication, so a remote outage no
+      // longer requires keeping the execution sandbox alive.
+      expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("captures the prompt and every runtime credential registered by the agent invocation", async () => {
+    const { admin } = buildAdminMock({ session: baseSession() });
+    mocked.createAgentRunner.mockReturnValue({
+      ...makeRunner([]),
+      start: vi.fn(async function* (input: AgentRunnerStartInput) {
+        input.onSensitiveValue?.("original-agent-token");
+        input.onSensitiveValue?.("refreshed-agent-token");
+        input.onSensitiveValue?.("original-agent-token");
+        yield {
+          type: "completion",
+          taskComplete: true,
+          finalOutput: "Reviewable output",
+          summary: "Done",
+        } as AgentEvent;
+      }),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sensitiveValues: expect.arrayContaining([
+          "rendered prompt",
+          "gh-token",
+          "original-agent-token",
+          "refreshed-agent-token",
+        ]),
+      }),
+    );
+    const values = mocked.captureSourceCheckpoint.mock.calls[0][0].sensitiveValues as string[];
+    expect(values.filter((value) => value === "original-agent-token")).toHaveLength(1);
   });
 
   it.each(["newer attempt", "replacement job"])(
@@ -2238,10 +2351,99 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toEqual([]);
     expect(runRows[0].source_recovery_required).toBe(true);
     expect(rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_retry: false }),
     );
     expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
+  });
+
+  it("preserves a committed source and artifact intent when its combined prepare response is lost", async () => {
+    const opts: MockOptions = { session: baseSession(), checkpointPublications: [] };
+    const { admin, insertedArtifacts, insertedMessages, runRows, updatedJobs, rpc } =
+      buildAdminMock(opts);
+    const { SourcePreservationError } = await import("./source-delivery");
+    const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+    mocked.prepareSourceDelivery.mockImplementationOnce(async (input) => {
+      // Model a committed transaction followed by a lost transport response.
+      // The authoritative failure RPC sees the receipt, even though the worker
+      // did not receive confirmation from preparation.
+      opts.checkpointPublications!.push({
+        run_id: input.runId,
+        job_id: "job-1",
+        attempt_count: 2,
+        workspace_id: input.workspaceId,
+        status: "pending",
+        deadline_at: deadlineAt,
+        artifact_md: input.publication.artifactMarkdown,
+      });
+      input.onDurable();
+      throw new SourcePreservationError(true);
+    });
+    expect(
+      await processPipelineJob({ admin, job: baseJob({ attempt_count: 2 }), deadlineAt }),
+    ).toMatchObject({
+      result: "idle",
+      runId: "run-1",
+    });
+    expect(opts.checkpointPublications).toEqual([
+      expect.objectContaining({
+        status: "pending",
+        artifact_md: "Drafted spec body",
+        deadline_at: deadlineAt,
+      }),
+    ]);
+    expect(runRows[0].status).toBe("running");
+    expect(updatedJobs).toEqual([]);
+    expect(insertedArtifacts).toEqual([]);
+    expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "error" }));
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_stalled_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: 2,
+        p_run_id: "run-1",
+        p_retry: false,
+      }),
+    );
+    expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+  });
+
+  it("accepts maintenance adoption after a lost prepare response without recording a false failure", async () => {
+    const opts: MockOptions = { session: baseSession(), checkpointPublications: [] };
+    const { admin, insertedArtifacts, insertedMessages, runRows, updatedJobs, rpc } =
+      buildAdminMock(opts);
+    const { SourcePreservationError } = await import("./source-delivery");
+    mocked.prepareSourceDelivery.mockImplementationOnce(async (input) => {
+      opts.checkpointPublications!.push({
+        run_id: input.runId,
+        job_id: "job-1",
+        attempt_count: 1,
+        workspace_id: input.workspaceId,
+        status: "adopted",
+        deadline_at: new Date(Date.now() + 60_000).toISOString(),
+        artifact_md: input.publication.artifactMarkdown,
+      });
+      // Maintenance adopted the durable intent before this worker observed its
+      // lost prepare response. Its guarded retirement must acknowledge success.
+      runRows[0].status = "success";
+      insertedArtifacts.push({ artifact_json: input.publication.artifactMarkdown, version: 1 });
+      input.onDurable();
+      throw new SourcePreservationError(true);
+    });
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+      result: "success",
+      runId: "run-1",
+    });
+    expect(runRows[0].status).toBe("success");
+    expect(updatedJobs).toEqual([{ status: "success" }]);
+    expect(insertedArtifacts).toEqual([{ artifact_json: "Drafted spec body", version: 1 }]);
+    expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "error" }));
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", expect.anything());
+    expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
   });
 
   it("protects completed source before completion-history persistence fails", async () => {
@@ -2334,7 +2536,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
       expect(runRows[0].source_recovery_required).toBe(true);
       expect(rpc).toHaveBeenCalledWith(
-        "fail_session_job_attempt",
+        "fail_stalled_session_job_attempt",
         expect.objectContaining({ p_retry: false }),
       );
       expect(
@@ -2343,6 +2545,35 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
     },
   );
+
+  it("retains unsafe runtime source and reports the actionable reason without publishing or retrying", async () => {
+    const { UnsafeRuntimeCheckpointError } = await import("./source-checkpoint");
+    mocked.captureSourceCheckpoint.mockRejectedValueOnce(new UnsafeRuntimeCheckpointError());
+    const { admin, insertedArtifacts, insertedMessages, runRows, rpc } = buildAdminMock({
+      session: baseSession(),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(insertedArtifacts).toEqual([]);
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_stalled_session_job_attempt",
+      expect.objectContaining({
+        p_retry: false,
+        p_error: expect.stringContaining(
+          "Runtime prompt or credential material cannot be included",
+        ),
+      }),
+    );
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({
+        kind: "error",
+        message_md: expect.stringContaining("Remove it before retrying"),
+      }),
+    );
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
+  });
 
   it("does not persist the stage completion message when artifact persistence fails", async () => {
     const session = baseSession();

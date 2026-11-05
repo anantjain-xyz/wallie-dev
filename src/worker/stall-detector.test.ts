@@ -71,10 +71,12 @@ function buildAdmin(
     rpcError?: string;
     failOutcome?: string;
     beforeRpc?: (name: string, args: RpcArgs) => void;
+    publications?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const rows: Record<string, Array<Record<string, unknown>>> = {
     agent_runs: input.runs ?? [run()],
+    session_checkpoint_publications: input.publications ?? [],
     agent_jobs: input.jobs ?? [job()],
     workspace_agent_config: input.configs ?? [],
     worker_heartbeats: input.heartbeatJobIds?.length
@@ -141,6 +143,19 @@ function buildAdmin(
     rpc: vi.fn(async (name: string, args: RpcArgs) => {
       input.beforeRpc?.(name, args);
       if (input.rpcError) return { data: null, error: { message: input.rpcError } };
+      if (
+        name === "fail_stalled_session_job_attempt" &&
+        rows.session_checkpoint_publications.some(
+          (publication) =>
+            publication.run_id === args.p_run_id &&
+            publication.job_id === args.p_job_id &&
+            publication.attempt_count === args.p_attempt_count &&
+            publication.workspace_id === "ws-1" &&
+            ["pending", "claimed"].includes(String(publication.status)) &&
+            Date.parse(String(publication.deadline_at)) > Date.now(),
+        )
+      )
+        return { data: "stale", error: null };
       const current = rows.agent_jobs.find((row) => row.id === args.p_job_id);
       const currentRun = rows.agent_runs.find((row) => row.id === args.p_run_id);
       const owned =
@@ -149,7 +164,7 @@ function buildAdmin(
           (currentRun?.attempt_count === args.p_attempt_count &&
             currentRun?.agent_job_id === args.p_job_id));
       if (name === "complete_session_job_attempt") return { data: owned, error: null };
-      if (name !== "fail_session_job_attempt") throw new Error(`Unexpected RPC ${name}`);
+      if (name !== "fail_stalled_session_job_attempt") throw new Error(`Unexpected RPC ${name}`);
       const outcome = owned ? (input.failOutcome ?? "queued") : "stale";
       if (outcome === "queued" || outcome === "error") {
         for (const row of rows.agent_runs) {
@@ -175,10 +190,136 @@ describe("sweepStalledRuns ownership recovery", () => {
     expect(admin.rpc).not.toHaveBeenCalled();
   });
 
+  it.each(["pending", "claimed"])(
+    "leaves %s checkpoint publication to maintenance until the original execution deadline",
+    async (status) => {
+      const { admin, inserts, reads } = buildAdmin({
+        publications: [
+          {
+            run_id: "run-1",
+            job_id: "job-1",
+            attempt_count: 1,
+            workspace_id: "ws-1",
+            status,
+            deadline_at: new Date(Date.now() + 60_000).toISOString(),
+            // Lease expiry allows another publisher to recover the same intent;
+            // it does not authorize another agent execution.
+            lease_expires_at: oldTime(),
+          },
+        ],
+      });
+      expect(await sweepStalledRuns(admin as never, TIMEOUT)).toEqual({
+        stalledRunIds: [],
+        stalledJobIds: [],
+        stoppedSandboxIds: [],
+        retriedJobIds: [],
+      });
+      expect(admin.rpc).not.toHaveBeenCalled();
+      expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
+      expect(inserts).toEqual([]);
+      expect(reads).toContainEqual({
+        table: "session_checkpoint_publications",
+        filters: { run_id: "run-1", job_id: "job-1", attempt_count: 1, workspace_id: "ws-1" },
+      });
+    },
+  );
+
+  it.each(["pending", "claimed"])(
+    "allows stalled %s publication to fail after its original deadline despite a later lease",
+    async (status) => {
+      const { admin } = buildAdmin({
+        publications: [
+          {
+            run_id: "run-1",
+            job_id: "job-1",
+            attempt_count: 1,
+            workspace_id: "ws-1",
+            status,
+            deadline_at: new Date(Date.now() - 1).toISOString(),
+            lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+          },
+        ],
+      });
+      expect((await sweepStalledRuns(admin as never, TIMEOUT)).retriedJobIds).toEqual(["job-1"]);
+      expect(admin.rpc).toHaveBeenCalledWith(
+        "fail_stalled_session_job_attempt",
+        expect.objectContaining({ p_job_id: "job-1", p_attempt_count: 1, p_run_id: "run-1" }),
+      );
+    },
+  );
+
+  it("fails closed when publication metadata cannot be read", async () => {
+    const { admin, inserts } = buildAdmin({ failRead: "session_checkpoint_publications" });
+    expect(await sweepStalledRuns(admin as never, TIMEOUT)).toEqual({
+      stalledRunIds: [],
+      stalledJobIds: [],
+      stoppedSandboxIds: [],
+      retriedJobIds: [],
+    });
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
+    expect(inserts).toEqual([]);
+  });
+
+  it("preserves an intent committed after the metadata read but before stalled-attempt retirement", async () => {
+    const publications: Array<Record<string, unknown>> = [];
+    const { admin, inserts, rows } = buildAdmin({
+      publications,
+      beforeRpc: (name) => {
+        if (name === "fail_stalled_session_job_attempt")
+          publications.push({
+            run_id: "run-1",
+            job_id: "job-1",
+            workspace_id: "ws-1",
+            attempt_count: 1,
+            status: "pending",
+            deadline_at: new Date(Date.now() + 60_000).toISOString(),
+          });
+      },
+    });
+    expect(await sweepStalledRuns(admin as never, TIMEOUT)).toEqual({
+      stalledRunIds: [],
+      stalledJobIds: [],
+      stoppedSandboxIds: [],
+      retriedJobIds: [],
+    });
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith(
+      "fail_stalled_session_job_attempt",
+      expect.objectContaining({ p_job_id: "job-1", p_attempt_count: 1, p_run_id: "run-1" }),
+    );
+    expect(rows.agent_runs[0].status).toBe("running");
+    expect(publications[0].status).toBe("pending");
+    expect(inserts).toEqual([]);
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { workspace_id: "foreign-workspace" },
+    { job_id: "replacement-job" },
+    { attempt_count: 2 },
+    { run_id: "replacement-run" },
+  ])("does not let another execution's publication suppress recovery (%j)", async (identity) => {
+    const { admin } = buildAdmin({
+      publications: [
+        {
+          run_id: "run-1",
+          job_id: "job-1",
+          attempt_count: 1,
+          workspace_id: "ws-1",
+          status: "pending",
+          deadline_at: new Date(Date.now() + 60_000).toISOString(),
+          ...identity,
+        },
+      ],
+    });
+    expect((await sweepStalledRuns(admin as never, TIMEOUT)).retriedJobIds).toEqual(["job-1"]);
+    expect(admin.rpc).toHaveBeenCalledOnce();
+  });
+
   it("resolves the exact stalled attempt before stopping its captured sandbox", async () => {
     const { admin, inserts } = buildAdmin();
     mocked.stopRunSandbox.mockImplementationOnce(async () => {
-      expect(admin.rpc).toHaveBeenCalledWith("fail_session_job_attempt", {
+      expect(admin.rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", {
         p_job_id: "job-1",
         p_attempt_count: 1,
         p_run_id: "run-1",
@@ -282,7 +423,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     expect(result.stalledJobIds).toEqual(["job-1"]);
     expect(result.retriedJobIds).toEqual([]);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_attempt_count: 3, p_max_retries: 3 }),
     );
   });
@@ -298,7 +439,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     });
     expect((await sweepStalledRuns(admin as never, TIMEOUT)).stalledJobIds).toEqual(["job-1"]);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_max_retries: 0 }),
     );
   });
@@ -348,7 +489,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     });
     const result = await sweepStalledRuns(admin as never, TIMEOUT);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({
         p_job_id: "job-1",
         p_attempt_count: 1,
@@ -409,7 +550,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     const result = await sweepStalledRuns(admin as never, TIMEOUT);
     expect(result.retriedJobIds).toEqual(["job-1"]);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_attempt_count: 2, p_run_id: undefined }),
     );
     expect(admin.rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
@@ -422,7 +563,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     });
     expect((await sweepStalledRuns(admin as never, TIMEOUT)).stalledRunIds).toEqual(["run-1"]);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_attempt_count: 1, p_run_id: undefined }),
     );
   });
@@ -453,7 +594,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     const { admin } = buildAdmin({ runs: [run({ attempt_count: null, status: "success" })] });
     await sweepStalledRuns(admin as never, TIMEOUT);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_run_id: undefined }),
     );
     expect(admin.rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
@@ -556,7 +697,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     finishStop.resolve();
     const result = await sweep;
     expect(admin.rpc).toHaveBeenLastCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({
         p_job_id: "job-2",
         p_attempt_count: 1,
@@ -587,7 +728,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     finishRead.resolve();
     const result = await sweep;
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_attempt_count: 1, p_run_id: "run-1" }),
     );
     expect(result.stalledRunIds).toEqual([]);

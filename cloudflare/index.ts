@@ -21,6 +21,7 @@ import { sweepStalledRuns } from "@/worker/stall-detector";
 import { reapOrphanSandboxes } from "@/worker/sandbox-reaper";
 import { reconcileLinearState } from "@/worker/reconciler";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
+import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 
@@ -270,6 +271,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
           });
         },
       ],
+      ["checkpoint publication", () => drainCheckpointPublications(admin)],
       ["stall recovery", () => sweepStalledRuns(admin, 900_000)],
       ["source delivery", () => drainSourceDeliveries(admin)],
       ["Linear reconciliation", () => reconcileLinearState(admin)],

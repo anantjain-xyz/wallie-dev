@@ -15,13 +15,15 @@ export type SourceDelivery = Tables<"session_source_deliveries">;
 
 /** No raw source or transport error is safe to include in logs or run history. */
 export class SourcePreservationError extends Error {
-  constructor(durable = false, reason?: "lfs" | "gitlink") {
+  constructor(durable = false, reason?: "lfs" | "gitlink" | "unsafe-runtime") {
     super(
-      (reason === "lfs"
-        ? "Changed Git LFS files require external payload storage and cannot be checkpointed. "
-        : reason === "gitlink"
-          ? "Changed Git submodules require separate object storage and cannot be checkpointed. "
-          : "Source checkpoint could not be recorded. ") +
+      (reason === "unsafe-runtime"
+        ? "Runtime prompt or credential material cannot be included in a code checkpoint. Remove it before retrying. "
+        : reason === "lfs"
+          ? "Changed Git LFS files require external payload storage and cannot be checkpointed. "
+          : reason === "gitlink"
+            ? "Changed Git submodules require separate object storage and cannot be checkpointed. "
+            : "Source checkpoint could not be recorded. ") +
         "No artifact was published. " +
         (durable
           ? "The durable checkpoint is retained for recovery."
@@ -37,6 +39,11 @@ export async function prepareSourceDelivery(input: {
   body: string;
   checkpoint: SourceCheckpoint;
   onDurable: () => void;
+  publication?: {
+    expectedArtifactVersion: number;
+    artifactMarkdown: string;
+    deadlineAt?: string;
+  };
   repositoryId: string;
   runId: string;
   signal?: AbortSignal;
@@ -68,7 +75,7 @@ export async function prepareSourceDelivery(input: {
     }
   } else input.onDurable();
   input.signal?.throwIfAborted();
-  const { data, error } = await input.admin.rpc("prepare_session_source_delivery", {
+  const sourceArgs = {
     p_run_id: input.runId,
     p_repository_id: input.repositoryId,
     p_base_branch: input.baseBranch,
@@ -79,7 +86,17 @@ export async function prepareSourceDelivery(input: {
     p_checkpoint_path: checkpointPath,
     p_bundle_sha256: checkpoint.kind === "bundle" ? checkpoint.sha256 : "",
     p_bundle_base64: fallback,
-  });
+  };
+  // Production saves the full artifact intent with its source in one transaction.
+  // A later ambiguous prepare response can therefore recover from that receipt.
+  const { data, error } = await (input.publication
+    ? input.admin.rpc("prepare_session_source_and_checkpoint_publication", {
+        ...sourceArgs,
+        p_expected_artifact_version: input.publication.expectedArtifactVersion,
+        p_artifact_md: input.publication.artifactMarkdown,
+        ...(input.publication.deadlineAt ? { p_deadline_at: input.publication.deadlineAt } : {}),
+      })
+    : input.admin.rpc("prepare_session_source_delivery", sourceArgs));
   if (error)
     throw new SourcePreservationError(checkpoint.kind === "unchanged" || checkpointPath !== "");
   if (data === true) input.onDurable();
@@ -100,7 +117,7 @@ async function assertClaim(admin: AdminClient, delivery: SourceDelivery, signal:
   if (error || data !== true) throw new Error("Delivery claim expired.");
 }
 
-async function resolveDeliveryRepository(
+export async function resolveSourceDeliveryRepository(
   admin: AdminClient,
   delivery: SourceDelivery,
   signal: AbortSignal,
@@ -175,18 +192,8 @@ export async function deliverSourceCheckpoint(
   await assertClaim(admin, delivery, signal);
   if (delivery.base_sha === delivery.head_sha) return null;
   if (!delivery.repository_id) throw new Error("Source repository connection is unavailable.");
-  let bytes: Buffer;
-  if (delivery.bundle_base64) bytes = Buffer.from(delivery.bundle_base64, "base64");
-  else {
-    if (!delivery.checkpoint_path) throw new Error("Source checkpoint is unavailable.");
-    const { data, error } = await admin.storage
-      .from(SOURCE_CHECKPOINT_BUCKET)
-      .download(delivery.checkpoint_path);
-    signal.throwIfAborted();
-    if (error || !data) throw new Error("Source checkpoint is unavailable.");
-    bytes = Buffer.from(await data.arrayBuffer());
-  }
-  const current = await resolveDeliveryRepository(admin, delivery, signal);
+  const bytes = await readSourceDeliveryBundle(admin, delivery, signal);
+  const current = await resolveSourceDeliveryRepository(admin, delivery, signal);
   const { token } = current;
   await assertClaim(admin, delivery, signal);
   const branch = await restoreAndPushSourceInSandbox(
@@ -212,6 +219,25 @@ export async function deliverSourceCheckpoint(
     verifyOwnership: () => assertClaim(admin, delivery, signal),
   });
   return `refs/heads/${branch}`;
+}
+
+export async function readSourceDeliveryBundle(
+  admin: AdminClient,
+  delivery: SourceDelivery,
+  signal: AbortSignal,
+): Promise<Buffer> {
+  let bytes: Buffer;
+  if (delivery.bundle_base64) bytes = Buffer.from(delivery.bundle_base64, "base64");
+  else {
+    if (!delivery.checkpoint_path) throw new Error("Source checkpoint is unavailable.");
+    const { data, error } = await admin.storage
+      .from(SOURCE_CHECKPOINT_BUCKET)
+      .download(delivery.checkpoint_path);
+    signal.throwIfAborted();
+    if (error || !data) throw new Error("Source checkpoint is unavailable.");
+    bytes = Buffer.from(await data.arrayBuffer());
+  }
+  return bytes;
 }
 
 /** A lease survives worker crashes; bounded work releases the maintenance loop. */

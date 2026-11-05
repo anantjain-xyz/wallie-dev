@@ -26,7 +26,7 @@ export class CursorRunner implements AgentRunner {
   }
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
-    const safety = new AgentOutputSafety(input.secrets);
+    const safety = new AgentOutputSafety(input.secrets, input.onSensitiveValue);
     return safety.events(this.startUnsafe(input, safety), input.signal);
   }
 

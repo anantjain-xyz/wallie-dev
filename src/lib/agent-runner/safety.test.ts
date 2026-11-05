@@ -62,6 +62,64 @@ async function* emit(...events: AgentEvent[]): AsyncIterable<AgentEvent> {
 
 describe("runner credential boundary", () => {
   it.each(providers)(
+    "reports only the authorized %s credentials to an in-memory sink",
+    async (provider) => {
+      const sandbox = new FakeSandbox();
+      const values: string[] = [];
+      const events = await collect(
+        runnerFor(provider).start({
+          sandbox,
+          prompt: "task",
+          sessionId: "session",
+          secrets: [githubSecret],
+          onSensitiveValue: (value) => values.push(value),
+        }),
+      );
+      expect(values).toEqual(expect.arrayContaining([githubSecret, providerSecret]));
+      expect(JSON.stringify(events)).not.toContain(providerSecret);
+      expect(JSON.stringify(events)).not.toContain(githubSecret);
+    },
+  );
+
+  it("reports original and refreshed credential envelopes and nested token fields", () => {
+    const values: string[] = [];
+    const original = JSON.stringify({
+      tokens: { access_token: "original-access-token", refresh_token: "original-refresh-token" },
+      account_id: "public-account-id",
+    });
+    const refreshed = JSON.stringify({
+      tokens: { access_token: "refreshed-access-token", refresh_token: "refreshed-refresh-token" },
+    });
+    const safety = new AgentOutputSafety([original], (value) => values.push(value));
+    safety.addSecret(refreshed);
+    expect(values).toEqual([
+      original,
+      "original-access-token",
+      "original-refresh-token",
+      refreshed,
+      "refreshed-access-token",
+      "refreshed-refresh-token",
+    ]);
+    expect(values).not.toContain("public-account-id");
+    expect(safety.redact("refreshed-access-token")).toBe("[REDACTED]");
+  });
+
+  it("fails closed if a sensitive-value sink fails without retaining its error contents", () => {
+    expect(
+      () =>
+        new AgentOutputSafety([providerSecret], () => {
+          throw new Error(providerSecret);
+        }),
+    ).toThrow("Could not register runtime material");
+    expect(
+      () =>
+        new AgentOutputSafety([providerSecret], () => {
+          throw new Error(providerSecret);
+        }),
+    ).not.toThrow(providerSecret);
+  });
+
+  it.each(providers)(
     "never launches %s after a canceled prompt write eventually finishes",
     async (provider) => {
       const sandbox = new FakeSandbox();

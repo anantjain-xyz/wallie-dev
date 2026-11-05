@@ -27,20 +27,27 @@ export async function prepareRunnerDirectory(
 export class AgentOutputSafety {
   private readonly secrets: string[] = [];
 
-  constructor(secrets: AgentRunnerStartInput["secrets"]) {
+  constructor(
+    secrets: AgentRunnerStartInput["secrets"],
+    private readonly onSensitiveValue?: AgentRunnerStartInput["onSensitiveValue"],
+  ) {
     for (const secret of secrets ?? []) this.addSecret(secret);
   }
 
   addSecret(secret: string | undefined): void {
     if (!secret) return;
     this.secrets.push(secret);
+    this.registerSensitiveValue(secret);
     // Codex subscription auth is a JSON envelope. Redact individual tokens as
     // well as the envelope, including when the CLI prints a reformatted cache.
+    let fields: unknown;
     try {
-      this.addSecretFields(JSON.parse(secret));
+      fields = JSON.parse(secret);
     } catch {
       // API keys and access tokens are normally scalar strings.
+      return;
     }
+    this.addSecretFields(fields);
   }
 
   redact(value: string): string {
@@ -185,9 +192,19 @@ export class AgentOutputSafety {
     for (const [key, child] of Object.entries(value)) {
       if (typeof child === "string" && /token|secret|api[_-]?key|password|credential/i.test(key)) {
         this.secrets.push(child);
+        this.registerSensitiveValue(child);
       } else if (typeof child === "object") {
         this.addSecretFields(child);
       }
+    }
+  }
+
+  private registerSensitiveValue(value: string): void {
+    try {
+      this.onSensitiveValue?.(value);
+    } catch {
+      // Fail closed without retaining a callback error that could echo a value.
+      throw new Error("Could not register runtime material for source checkpoint safety.");
     }
   }
 }
