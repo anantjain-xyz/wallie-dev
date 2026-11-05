@@ -86,6 +86,7 @@ export class FakeSandbox implements SandboxHandle {
   private stopped = false;
   private readonly passthroughExec: boolean;
   private readonly tempRoot: string | null;
+  private readonly tempHome: string | null;
 
   constructor(id?: string, opts: FakeSandboxOptions = {}) {
     this.id = id ?? `fake-sandbox-${++fakeSandboxCounter}`;
@@ -93,6 +94,7 @@ export class FakeSandbox implements SandboxHandle {
     this.tempRoot = this.passthroughExec
       ? mkdtempSync(join(tmpdir(), "wallie-fake-sandbox-"))
       : null;
+    this.tempHome = this.passthroughExec ? mkdtempSync(join(tmpdir(), "wallie-fake-home-")) : null;
     this.repoPath = this.tempRoot ?? "/vercel/sandbox";
 
     if (this.passthroughExec) {
@@ -134,7 +136,10 @@ export class FakeSandbox implements SandboxHandle {
 
     const idx = this.scripts.findIndex((s) => s.matches(call));
     if (idx < 0 && this.passthroughExec) {
-      return execLocalCommand(call);
+      return execLocalCommand({
+        ...call,
+        opts: { ...call.opts, env: { HOME: this.tempHome!, ...call.opts.env } },
+      });
     }
 
     const script =
@@ -195,6 +200,7 @@ export class FakeSandbox implements SandboxHandle {
     if (this.tempRoot) {
       rmSync(this.tempRoot, { force: true, recursive: true });
     }
+    if (this.tempHome) rmSync(this.tempHome, { force: true, recursive: true });
     const entry = fakeRegistry.get(this.id);
     if (entry) entry.status = "stopped";
   }

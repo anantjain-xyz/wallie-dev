@@ -33,6 +33,24 @@ import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-conne
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
+/** Read a previously pinned job input before provisioning a replacement sandbox. */
+export async function loadPinnedSessionJobGitInput(input: {
+  admin: AdminClient;
+  jobId: string;
+  sessionId: string;
+  workspaceId: string;
+}): Promise<PinnedGitInput | null> {
+  const { data, error } = await input.admin
+    .from("session_job_git_inputs")
+    .select("*")
+    .eq("job_id", input.jobId)
+    .eq("session_id", input.sessionId)
+    .eq("workspace_id", input.workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 /** Pin before executing any agent code. Empty receipts indicate lost ownership. */
 export async function pinSessionJobGitInput(input: {
   admin: AdminClient;

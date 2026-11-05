@@ -94,6 +94,27 @@ beforeEach(() => {
 });
 
 describe("createVercelSessionSandbox", () => {
+  it("restores checkpoint mode through the common checkout instead of native branch cloning", async () => {
+    const runCommand = vi.fn(async (request: SandboxCommandInput) => {
+      void request;
+      return command();
+    });
+    mocked.sandboxCreate.mockResolvedValue(sandbox({ runCommand }));
+    await createVercelSessionSandbox(
+      input({
+        mode: { kind: "checkpoint", ref: "refs/heads/wallie/retained", sha: "a".repeat(40) },
+      }),
+      vercelConnection,
+    );
+    expect(mocked.sandboxCreate.mock.calls[0]?.[0]).not.toHaveProperty("source");
+    const scripts = runCommand.mock.calls.map(([request]) =>
+      (request as SandboxCommandInput).args.join(" "),
+    );
+    expect(scripts[0]).toContain("git init");
+    expect(scripts[1]).toContain("refs/heads/wallie/retained");
+    expect(scripts[1]).not.toContain("'main'");
+    expect(scripts[2]).toContain("npm install -g @openai/codex");
+  });
   it("preserves the provider's creation rejection reason without exposing credentials", async () => {
     mocked.sandboxCreate.mockRejectedValueOnce(
       new APIError(new Response(null, { status: 403 }), {
@@ -259,7 +280,7 @@ describe("listRunningVercelSandboxes", () => {
 
     expect(mocked.sandboxList).toHaveBeenCalledWith({
       fetch: vercelSandboxFetch,
-      limit: 100,
+      limit: 50,
       projectId: credentials.projectId,
       teamId: credentials.teamId,
       token: credentials.token,
@@ -270,7 +291,7 @@ describe("listRunningVercelSandboxes", () => {
   it("pages through every Vercel sandbox list result", async () => {
     mocked.sandboxList
       .mockResolvedValueOnce({
-        pagination: { count: 100, next: "1234" },
+        pagination: { count: 50, next: "1234" },
         sandboxes: [
           { createdAt: 3000, name: "running-page-1", status: "running" },
           { createdAt: 2500, name: "stopped-page-1", status: "stopped" },
@@ -285,7 +306,7 @@ describe("listRunningVercelSandboxes", () => {
 
     expect(mocked.sandboxList).toHaveBeenNthCalledWith(1, {
       fetch: vercelSandboxFetch,
-      limit: 100,
+      limit: 50,
       projectId: credentials.projectId,
       teamId: credentials.teamId,
       token: credentials.token,
@@ -293,7 +314,7 @@ describe("listRunningVercelSandboxes", () => {
     expect(mocked.sandboxList).toHaveBeenNthCalledWith(2, {
       cursor: "1234",
       fetch: vercelSandboxFetch,
-      limit: 100,
+      limit: 50,
       projectId: credentials.projectId,
       teamId: credentials.teamId,
       token: credentials.token,
@@ -346,7 +367,7 @@ describe("Vercel retained source inspection", () => {
       ...credentials,
       cursor: "7",
       fetch: vercelSandboxFetch,
-      limit: 100,
+      limit: 50,
     });
     mocked.sandboxList.mockResolvedValue(listed([]));
     expect(await hasRecoverableVercelSandboxSource("sandbox-1", vercelConnection)).toBe(false);

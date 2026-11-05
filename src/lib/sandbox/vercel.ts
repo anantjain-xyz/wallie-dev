@@ -182,14 +182,18 @@ export async function createVercelSessionSandbox(
 
   const sandbox = await Sandbox.create({
     ...vercelClientOptions(credentials),
-    source: {
-      type: "git",
-      url: `https://github.com/${input.repoFullName}.git`,
-      username: "x-access-token",
-      password: input.installationToken,
-      revision,
-      depth: 1,
-    },
+    ...(mode.kind === "checkpoint"
+      ? {}
+      : {
+          source: {
+            type: "git",
+            url: `https://github.com/${input.repoFullName}.git`,
+            username: "x-access-token",
+            password: input.installationToken,
+            revision,
+            depth: 1,
+          },
+        }),
     runtime: "node22",
     timeout: timeoutMs,
     persistent: false,
@@ -208,7 +212,7 @@ export async function createVercelSessionSandbox(
   return finalizeSandboxAcquisition({
     handle,
     provider: "vercel",
-    repoAlreadyCloned: true,
+    repoAlreadyCloned: mode.kind !== "checkpoint",
     request: input,
   });
 }
@@ -260,7 +264,7 @@ async function eachVercelSandboxPage(
   do {
     const page = await Sandbox.list({
       ...vercelClientOptions(credentials),
-      limit: 100,
+      limit: 50,
       ...(cursor ? { cursor } : {}),
     });
     for (const sandbox of page.sandboxes) {

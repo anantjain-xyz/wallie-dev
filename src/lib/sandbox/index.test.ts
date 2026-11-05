@@ -7,9 +7,36 @@ import {
   validateSandboxConnection,
 } from "./index";
 import { getSandboxProviderContract } from "./provider-contract";
+import { SandboxCheckpointRecoveryError } from "./checkout";
 import { SANDBOX_PROVIDER_IDS, type SandboxHandle, type SandboxProviderDriver } from "./types";
 
 describe("sandbox provider registry", () => {
+  it("preserves the typed checkpoint recovery contract through provider sanitization", async () => {
+    const contract = getSandboxProviderContract("e2b");
+    const originalLoad = contract.driver.load;
+    contract.driver.load = async () =>
+      ({
+        create: async () => {
+          throw new SandboxCheckpointRecoveryError("sha_mismatch");
+        },
+      }) as unknown as SandboxProviderDriver;
+    try {
+      await expect(
+        createSessionSandbox({
+          agentProvider: "codex",
+          baseBranch: "main",
+          branch: "wallie/attempt",
+          repoFullName: "acme/app",
+          installationToken: "synthetic",
+          sessionId: "s",
+          connection: { provider: "e2b", revision: "test", credentials: { apiKey: "synthetic" } },
+          mode: { kind: "checkpoint", ref: "refs/heads/retained", sha: "a".repeat(40) },
+        }),
+      ).rejects.toMatchObject({ name: "SandboxCheckpointRecoveryError", code: "sha_mismatch" });
+    } finally {
+      contract.driver.load = originalLoad;
+    }
+  });
   it("fails closed when the requested implementation and connection disagree", async () => {
     await expect(
       createSessionSandbox({
