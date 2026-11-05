@@ -269,6 +269,184 @@ export type Database = {
           },
         ]
       }
+      artifact_review_comments: {
+        Row: {
+          author_label: string
+          author_member_id: string
+          body: string
+          created_at: string
+          id: string
+          revision: number
+          thread_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          author_label: string
+          author_member_id: string
+          body: string
+          created_at?: string
+          id?: string
+          revision?: number
+          thread_id: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          author_label?: string
+          author_member_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          revision?: number
+          thread_id?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_review_comments_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_review_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_review_comments_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      artifact_review_events: {
+        Row: {
+          actor_label: string
+          actor_member_id: string
+          created_at: string
+          detail: Json
+          event_type: string
+          id: string
+          review_revision: number
+          thread_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_label: string
+          actor_member_id: string
+          created_at?: string
+          detail: Json
+          event_type: string
+          id?: string
+          review_revision: number
+          thread_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_label?: string
+          actor_member_id?: string
+          created_at?: string
+          detail?: Json
+          event_type?: string
+          id?: string
+          review_revision?: number
+          thread_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_review_events_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_review_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_review_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      artifact_review_threads: {
+        Row: {
+          anchor: Json
+          artifact_id: string
+          artifact_version: number
+          author_label: string
+          author_member_id: string
+          created_at: string
+          id: string
+          kind: string
+          revision: number
+          session_id: string
+          stage_id: string
+          stage_slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          anchor: Json
+          artifact_id: string
+          artifact_version: number
+          author_label: string
+          author_member_id: string
+          created_at?: string
+          id?: string
+          kind: string
+          revision?: number
+          session_id: string
+          stage_id: string
+          stage_slug: string
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          anchor?: Json
+          artifact_id?: string
+          artifact_version?: number
+          author_label?: string
+          author_member_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          revision?: number
+          session_id?: string
+          stage_id?: string
+          stage_slug?: string
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_review_threads_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "session_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_review_threads_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_review_threads_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       codex_device_auth_flows: {
         Row: {
           account_email: string | null
@@ -1543,6 +1721,7 @@ export type Database = {
       sessions: {
         Row: {
           archived_at: string | null
+          artifact_review_revision: number
           created_at: string
           creator_member_id: string | null
           current_artifact_id: string | null
@@ -1565,6 +1744,7 @@ export type Database = {
         }
         Insert: {
           archived_at?: string | null
+          artifact_review_revision?: number
           created_at?: string
           creator_member_id?: string | null
           current_artifact_id?: string | null
@@ -1587,6 +1767,7 @@ export type Database = {
         }
         Update: {
           archived_at?: string | null
+          artifact_review_revision?: number
           created_at?: string
           creator_member_id?: string | null
           current_artifact_id?: string | null
@@ -2921,6 +3102,41 @@ export type Database = {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
       }
+      create_artifact_review_thread: {
+        Args: {
+          p_anchor: Json
+          p_artifact_id: string
+          p_artifact_version: number
+          p_body: string
+          p_kind: string
+          p_session_id: string
+          p_stage_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          anchor: Json
+          artifact_id: string
+          artifact_version: number
+          author_label: string
+          author_member_id: string
+          created_at: string
+          id: string
+          kind: string
+          revision: number
+          session_id: string
+          stage_id: string
+          stage_slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "artifact_review_threads"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_session_once_with_first_job: {
         Args: {
           agent_model_name: string
@@ -3155,6 +3371,90 @@ export type Database = {
           total_output_tokens: number
           total_runs: number
         }[]
+      }
+      list_artifact_review_comments: {
+        Args: {
+          p_after_created_at?: string
+          p_after_id?: string
+          p_limit?: number
+          p_thread_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          author_label: string
+          author_member_id: string
+          body: string
+          created_at: string
+          id: string
+          revision: number
+          thread_id: string
+          updated_at: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "artifact_review_comments"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      list_artifact_review_events: {
+        Args: {
+          p_after_created_at?: string
+          p_after_id?: string
+          p_limit?: number
+          p_thread_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          actor_label: string
+          actor_member_id: string
+          created_at: string
+          detail: Json
+          event_type: string
+          id: string
+          review_revision: number
+          thread_id: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "artifact_review_events"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      list_artifact_review_threads: {
+        Args: {
+          p_after_created_at?: string
+          p_after_id?: string
+          p_artifact_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: {
+          anchor: Json
+          artifact_id: string
+          artifact_version: number
+          author_label: string
+          author_member_id: string
+          created_at: string
+          id: string
+          kind: string
+          revision: number
+          session_id: string
+          stage_id: string
+          stage_slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "artifact_review_threads"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       load_session_claude_code_credential: {
         Args: { p_creator_member_id: string; p_workspace_id: string }
@@ -3516,6 +3816,38 @@ export type Database = {
         }
         Returns: string
       }
+      transition_artifact_review_thread: {
+        Args: {
+          p_expected_revision: number
+          p_reason: string
+          p_status: string
+          p_thread_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          anchor: Json
+          artifact_id: string
+          artifact_version: number
+          author_label: string
+          author_member_id: string
+          created_at: string
+          id: string
+          kind: string
+          revision: number
+          session_id: string
+          stage_id: string
+          stage_slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "artifact_review_threads"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       update_user_profile: {
         Args: {
           actor_avatar_changed?: boolean
@@ -3529,6 +3861,32 @@ export type Database = {
           saved_full_name: string
           superseded_avatar_path: string
         }[]
+      }
+      write_artifact_review_comment: {
+        Args: {
+          p_body: string
+          p_comment_id?: string
+          p_expected_revision?: number
+          p_thread_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          author_label: string
+          author_member_id: string
+          body: string
+          created_at: string
+          id: string
+          revision: number
+          thread_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "artifact_review_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
     }
     Enums: {

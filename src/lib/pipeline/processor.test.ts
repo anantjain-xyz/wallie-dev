@@ -211,6 +211,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
 
 function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessions"> {
   return {
+    artifact_review_revision: 0,
     id: "sess-1",
     workspace_id: "ws-1",
     number: 1,
