@@ -20,7 +20,7 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   });
 
   await page.goto(workspacePath);
-  await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pipeline", exact: true })).toBeVisible();
   await page.waitForTimeout(750);
   expect(detailRequests, "Pipeline must not prefetch visible session cards").toHaveLength(0);
 
@@ -35,19 +35,34 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   expect(detailRequests, "touch interaction must not trigger intent prefetch").toHaveLength(0);
 
   await pipelineSessionLink.focus();
-  await expect.poll(() => detailRequests.length).toBe(1);
+  await expect
+    .poll(async () => {
+      const before = detailRequests.length;
+      if (before === 0) return false;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return detailRequests.length === before;
+    })
+    .toBe(true);
+  const intentRequestCount = detailRequests.length;
   await pipelineSessionLink.hover();
   await pipelineSessionLink.focus();
   await page.waitForTimeout(500);
 
-  expect(detailRequests, "focus and hover must share one href-level prefetch").toHaveLength(1);
-  expect(new URL(detailRequests[0]!.url()).pathname).toBe(intentHref);
+  // A full prefetch can be more than one RSC response for the same href.
+  // Focus and hover still share that one prefetch.
+  expect(
+    detailRequests.map((request) => new URL(request.url()).pathname),
+    "focus and hover must prefetch only the focused session",
+  ).toEqual(Array.from({ length: detailRequests.length }, () => intentHref));
+  expect(detailRequests, "hover must not start a second prefetch").toHaveLength(intentRequestCount);
 
-  await page.getByRole("link", { name: "Sessions" }).click();
+  await page.getByRole("link", { name: "Sessions", exact: true }).click();
   await expect(page).toHaveURL(`${workspacePath}/sessions`);
-  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
   await page.waitForTimeout(750);
-  expect(detailRequests, "Sessions must not prefetch visible session rows").toHaveLength(1);
+  expect(detailRequests, "Sessions must not prefetch visible session rows").toHaveLength(
+    intentRequestCount,
+  );
 
   const unprefetchedSessionLink = page
     .locator(`a[href^="${workspacePath}/sessions/"]:not([href="${intentHref}"])`)
@@ -71,7 +86,10 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
     (element as HTMLAnchorElement).click();
   });
   await expect(page.getByRole("status", { name: "Loading session" })).toBeVisible();
-  expect(detailRequests, "click navigation should request only its destination").toHaveLength(2);
+  expect(
+    detailRequests.slice(intentRequestCount).map((request) => new URL(request.url()).pathname),
+    "click navigation should request only its destination",
+  ).toEqual([navigationHref]);
 
   releaseNavigation();
   await expect(page).toHaveURL(navigationHref);
@@ -81,6 +99,6 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   expect(new Set(requestedPaths)).toEqual(new Set([intentHref, navigationHref]));
 
   console.log(
-    `session-detail RSC requests: initial Pipeline=0, initial Sessions=0, intent=1, after click=${detailRequests.length}`,
+    `session-detail RSC requests: initial Pipeline=0, initial Sessions=0, intent=${intentRequestCount}, after click=${detailRequests.length}`,
   );
 });
