@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   isSessionDetailHoverPointer,
+  isSessionDetailPrefetchResource,
   prefetchSessionDetailOnce,
   SessionDetailLink,
+  shouldReuseSessionDetailPrefetch,
 } from "@/features/sessions/components/session-detail-link";
 
 vi.mock("next/link", () => ({
@@ -33,6 +35,60 @@ describe("SessionDetailLink", () => {
     expect(isSessionDetailHoverPointer("pen")).toBe(true);
     expect(isSessionDetailHoverPointer("touch")).toBe(false);
     expect(isSessionDetailHoverPointer("")).toBe(false);
+  });
+});
+
+describe("session detail prefetch reuse", () => {
+  it("matches only the RSC response for the opened session", () => {
+    expect(
+      isSessionDetailPrefetchResource(
+        "http://localhost:3100/w/acme/sessions/7?_rsc=abc",
+        "/w/acme/sessions/7",
+      ),
+    ).toBe(true);
+    expect(
+      isSessionDetailPrefetchResource(
+        "http://localhost:3100/w/acme/sessions/8?_rsc=abc",
+        "/w/acme/sessions/7",
+      ),
+    ).toBe(false);
+    expect(
+      isSessionDetailPrefetchResource(
+        "http://localhost:3100/w/acme/sessions/7",
+        "/w/acme/sessions/7",
+      ),
+    ).toBe(false);
+  });
+
+  it("reuses a prefetch only for an unmodified click that already started one", () => {
+    expect(
+      shouldReuseSessionDetailPrefetch({
+        defaultPrevented: false,
+        prefetchStarted: true,
+        unmodifiedPrimaryClick: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldReuseSessionDetailPrefetch({
+        defaultPrevented: false,
+        prefetchStarted: false,
+        unmodifiedPrimaryClick: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReuseSessionDetailPrefetch({
+        defaultPrevented: true,
+        prefetchStarted: true,
+        unmodifiedPrimaryClick: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReuseSessionDetailPrefetch({
+        defaultPrevented: false,
+        prefetchStarted: true,
+        unmodifiedPrimaryClick: false,
+      }),
+    ).toBe(false);
   });
 });
 
