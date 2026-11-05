@@ -32,6 +32,10 @@ export type SessionMutationStage = {
 };
 
 export type SessionPhaseMutationResult = {
+  feedbackBatchId?: string;
+  revisionJobId?: string;
+  revisionRunId?: string;
+  revisionGeneration?: string;
   archivedAt: string | null;
   currentArtifactId?: string | null;
   artifactVersion: number;

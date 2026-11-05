@@ -272,6 +272,183 @@ export type Database = {
           },
         ]
       }
+      artifact_feedback_batch_threads: {
+        Row: {
+          anchor: Json
+          artifact_id: string
+          batch_id: string
+          comments: Json
+          created_at: string
+          kind: string
+          session_id: string
+          thread_id: string
+          thread_revision: number
+          workspace_id: string
+        }
+        Insert: {
+          anchor: Json
+          artifact_id: string
+          batch_id: string
+          comments: Json
+          created_at?: string
+          kind: string
+          session_id: string
+          thread_id: string
+          thread_revision: number
+          workspace_id: string
+        }
+        Update: {
+          anchor?: Json
+          artifact_id?: string
+          batch_id?: string
+          comments?: Json
+          created_at?: string
+          kind?: string
+          session_id?: string
+          thread_id?: string
+          thread_revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_feedback_batch_threads_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "session_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_threads_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_threads_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_threads_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      artifact_feedback_batches: {
+        Row: {
+          actor_label: string
+          artifact_id: string
+          artifact_version: number
+          checkpoint_run_id: string | null
+          created_at: string
+          id: string
+          job_created: boolean
+          job_id: string
+          rejection_count: number
+          rendered_feedback_text: string
+          request_id: string
+          requested_by_member_id: string
+          review_revision: number
+          run_id: string
+          selected_thread_ids: string[]
+          session_id: string
+          stage_id: string
+          whole_stage_feedback: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_label: string
+          artifact_id: string
+          artifact_version: number
+          checkpoint_run_id?: string | null
+          created_at?: string
+          id?: string
+          job_created: boolean
+          job_id: string
+          rejection_count: number
+          rendered_feedback_text: string
+          request_id: string
+          requested_by_member_id: string
+          review_revision: number
+          run_id: string
+          selected_thread_ids: string[]
+          session_id: string
+          stage_id: string
+          whole_stage_feedback: string
+          workspace_id: string
+        }
+        Update: {
+          actor_label?: string
+          artifact_id?: string
+          artifact_version?: number
+          checkpoint_run_id?: string | null
+          created_at?: string
+          id?: string
+          job_created?: boolean
+          job_id?: string
+          rejection_count?: number
+          rendered_feedback_text?: string
+          request_id?: string
+          requested_by_member_id?: string
+          review_revision?: number
+          run_id?: string
+          selected_thread_ids?: string[]
+          session_id?: string
+          stage_id?: string
+          whole_stage_feedback?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_feedback_batches_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "session_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_git_checkpoints"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       artifact_review_comments: {
         Row: {
           author_label: string
@@ -4626,6 +4803,36 @@ export type Database = {
           p_run_type: string
         }
         Returns: string
+      }
+      submit_artifact_feedback_batch: {
+        Args: {
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_artifact_version: number
+          p_expected_artifact_id: string
+          p_expected_review_revision: number
+          p_expected_stage_id: string
+          p_feedback_text: string
+          p_request_id: string
+          p_requested_by_member_id?: string
+          p_run_type?: string
+          p_selected_thread_ids: string[]
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string
+          current_artifact_version: number
+          current_stage_id: string
+          feedback_batch_id: string
+          job_created: boolean
+          job_id: string
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          rejection_count: number
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }[]
       }
       transition_artifact_review_thread: {
         Args: {

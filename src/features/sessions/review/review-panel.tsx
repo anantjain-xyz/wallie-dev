@@ -36,6 +36,8 @@ export type ArtifactReviewPanelProps = {
   openerRef?: RefObject<HTMLElement | null>;
 };
 
+type LoadedReviewSnapshot = ReviewThreadListPayload & { knownCoverageIds: Set<string> };
+
 const buttonClass =
   "min-h-11 rounded-[4px] border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-control-muted disabled:cursor-wait disabled:opacity-60";
 const fieldClass =
@@ -110,7 +112,7 @@ export function ArtifactReviewPanel({
   const composerId = useId();
   const replyId = useId();
   const reasonId = useId();
-  const [snapshot, setSnapshot] = useState<ReviewThreadListPayload | null>(null);
+  const [snapshot, setSnapshot] = useState<LoadedReviewSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(initialThreadId);
   const [comments, setComments] = useState<ArtifactReviewComment[]>([]);
   const [commentCursor, setCommentCursor] = useState<ReviewCursor | null>(null);
@@ -153,15 +155,30 @@ export function ArtifactReviewPanel({
         const params = new URLSearchParams(pageQuery(cursor));
         params.set("artifactId", artifactId);
         const next = await reviewRequest<ReviewThreadListPayload>(`${baseUrl}?${params}`);
+        const knownCoverageIds = new Set(next.threads.map((thread) => thread.id));
         const selected = selectedRef.current;
         let linkedThreadError: string | null = null;
         if (selected && !next.threads.some((thread) => thread.id === selected)) {
           try {
-            const exact = await reviewRequest<{ thread: ArtifactReviewThread }>(
-              `${baseUrl}/${encodeURIComponent(selected)}`,
-            );
-            if (exact.thread.artifact_id === artifactId)
+            const exact = await reviewRequest<{
+              thread: ArtifactReviewThread;
+              submittedThreadRevision?: number | null;
+            }>(`${baseUrl}/${encodeURIComponent(selected)}`);
+            if (exact.thread.artifact_id === artifactId) {
               next.threads = mergeRows(next.threads, [exact.thread]);
+              if (exact.submittedThreadRevision === null) knownCoverageIds.add(exact.thread.id);
+              else if (
+                typeof exact.submittedThreadRevision === "number" &&
+                Number.isSafeInteger(exact.submittedThreadRevision) &&
+                exact.submittedThreadRevision > 0
+              ) {
+                knownCoverageIds.add(exact.thread.id);
+                next.submittedThreadRevisions = {
+                  ...next.submittedThreadRevisions,
+                  [exact.thread.id]: exact.submittedThreadRevision,
+                };
+              }
+            }
           } catch {
             linkedThreadError = "The linked thread is unavailable. Other comments are shown below.";
           }
@@ -169,7 +186,15 @@ export function ArtifactReviewPanel({
         if (!mounted.current || sequence !== threadLoadSequence.current) return;
         setSnapshot((current) => ({
           ...next,
+          knownCoverageIds:
+            cursor && current
+              ? new Set([...current.knownCoverageIds, ...knownCoverageIds])
+              : knownCoverageIds,
           threads: cursor && current ? mergeRows(current.threads, next.threads) : next.threads,
+          submittedThreadRevisions:
+            cursor && current
+              ? { ...current.submittedThreadRevisions, ...next.submittedThreadRevisions }
+              : next.submittedThreadRevisions,
         }));
         setLoadError(linkedThreadError);
       } catch (error) {
@@ -581,6 +606,15 @@ export function ArtifactReviewPanel({
                 {threadQuote(thread)}
               </span>
               <span className="mt-1 block text-xs text-muted">{thread.author_label}</span>
+              <span className="mt-1 block text-xs text-muted">
+                {!snapshot.knownCoverageIds.has(thread.id)
+                  ? "Submission status unavailable"
+                  : snapshot.submittedThreadRevisions?.[thread.id] === undefined
+                    ? "Not submitted"
+                    : snapshot.submittedThreadRevisions[thread.id] < thread.revision
+                      ? "Unsent changes"
+                      : "Submitted"}
+              </span>
             </button>
           </li>
         ))}

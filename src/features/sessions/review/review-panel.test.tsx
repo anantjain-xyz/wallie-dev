@@ -113,6 +113,8 @@ beforeEach(() => {
   realtime.remove.mockReset();
   clearAnchor.mockReset();
   snapshot = {
+    reviewRevision: 7,
+    submittedThreadRevisions: {},
     threads: [makeThread()],
     nextCursor: null,
     counts: { total: 1, open: 1, blocking: 0 },
@@ -151,7 +153,10 @@ beforeEach(() => {
     }
     if (url.pathname.endsWith("/comments")) return Response.json({ comments, nextCursor: null });
     if (/\/reviews\/[^/]+$/.test(url.pathname))
-      return Response.json({ thread: makeThread(url.pathname.split("/").at(-1)) });
+      return Response.json({
+        thread: makeThread(url.pathname.split("/").at(-1)),
+        submittedThreadRevision: null,
+      });
     return Response.json(snapshot);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -167,6 +172,18 @@ async function selectThread(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("artifact threaded review", () => {
+  it("distinguishes submitted threads from later unsent edits and new comments", async () => {
+    snapshot.threads = [
+      makeThread("submitted"),
+      makeThread("edited", { revision: 2 }),
+      makeThread("new"),
+    ];
+    snapshot.submittedThreadRevisions = { submitted: 1, edited: 1 };
+    render(panel());
+    await screen.findByText("Submitted");
+    expect(screen.getByText("Unsent changes")).toBeVisible();
+    expect(screen.getByText("Not submitted")).toBeVisible();
+  });
   it("focuses an anchored composer and keeps an unchanged failed draft's idempotency key on retry", async () => {
     const user = userEvent.setup();
     saveFailures = 1;
@@ -467,6 +484,66 @@ describe("artifact threaded review", () => {
     expect(
       fetchMock.mock.calls.some(([input]) => String(input).endsWith("/reviews/deep-thread")),
     ).toBe(true);
+  });
+
+  it.each([
+    { revision: 3, label: "Submitted" },
+    { revision: null, label: "Not submitted" },
+    { revision: undefined, label: "Submission status unavailable" },
+  ])(
+    "uses verified single-thread coverage for a deep link: $label",
+    async ({ revision, label }) => {
+      window.history.replaceState({}, "", "/w/acme/sessions/session-1?reviewThread=deep-thread");
+      snapshot.threads = Array.from({ length: 20 }, (_, index) =>
+        makeThread(`first-page-${index}`),
+      );
+      snapshot.nextCursor = { createdAt: "2026-11-05T00:00:00Z", id: "first-page-19" };
+      const normalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input).endsWith("/reviews/deep-thread")
+          ? Response.json({
+              thread: makeThread("deep-thread", { author_label: "Deep reviewer", revision: 3 }),
+              submittedThreadRevision: revision,
+            })
+          : normalFetch(input, init),
+      );
+      render(panel());
+      const deepLink = await screen.findByRole("button", { name: /Deep reviewer/ });
+      expect(within(deepLink).getByText(label)).toBeVisible();
+      if (label !== "Not submitted")
+        expect(within(deepLink).queryByText("Not submitted")).toBeNull();
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input).includes("cursorId=")),
+      ).toHaveLength(0);
+    },
+  );
+
+  it("retains verified submitted coverage on earlier pages when loading more threads", async () => {
+    const user = userEvent.setup();
+    snapshot.threads = [makeThread("first", { author_label: "First reviewer" })];
+    snapshot.submittedThreadRevisions = { first: 1 };
+    snapshot.nextCursor = { createdAt: "2026-11-05T00:00:00Z", id: "first" };
+    const normalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) =>
+      new URL(input, "https://wallie.test").searchParams.has("cursorId")
+        ? Response.json({
+            ...snapshot,
+            threads: [makeThread("second", { author_label: "Second reviewer" })],
+            submittedThreadRevisions: { second: 1 },
+            nextCursor: null,
+          })
+        : normalFetch(input, init),
+    );
+    render(panel());
+    await screen.findByRole("button", { name: /First reviewer/ });
+    await user.click(screen.getByRole("button", { name: "Load more threads" }));
+    await screen.findByRole("button", { name: /Second reviewer/ });
+    expect(
+      within(screen.getByRole("button", { name: /First reviewer/ })).getByText("Submitted"),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("button", { name: /Second reviewer/ })).getByText("Submitted"),
+    ).toBeVisible();
   });
 
   it("requires a human-entered reason and reviewer authority to resolve a blocking request", async () => {

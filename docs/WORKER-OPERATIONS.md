@@ -133,6 +133,30 @@ commit and create a new session against the intended repository. If provenance i
 unknown, keep the old session for investigation and start fresh; no automatic
 legacy-head adoption is offered.
 
+## Submitted artifact feedback
+
+Request changes can include selected open inline threads and an optional
+whole-stage note. The submission checks the displayed artifact, version and
+review revision, saves the selected comment revisions, and queues one job from
+the reviewed artifact's exact checkpoint in the same transaction. Later comment
+edits and replies remain unsent; they do not change that job's prompt.
+
+An uncertain response should be retried with the same request ID and content.
+The saved receipt returns the same feedback batch and job generation even after
+the session advances. Reusing that ID for different content conflicts. If the
+transaction commits but the session refresh fails, the API returns an accepted
+receipt and the UI refreshes state; it must not roll back or submit another job.
+
+Each batch permits 20 threads, 100 comments, 4,000 code points of whole-stage
+feedback and 40,000 code points of rendered feedback, including quoted text.
+Oversized submissions fail without truncation or enqueueing. Select fewer
+threads or shorten the note before retrying. A stale review requires an explicit
+refresh so the reviewer can inspect the changed comments.
+
+Existing whole-stage integrations continue to use their established rejection
+path. Feedback batches do not enable continuity or bypass legacy fresh-start
+requirements.
+
 ## Source durability and delivery
 
 ```mermaid

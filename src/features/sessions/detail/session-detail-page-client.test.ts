@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
+
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -395,6 +397,15 @@ describe("SessionDetailPageClient", () => {
         return new Promise<Response>((resolve) => {
           finish = resolve;
         });
+      if (String(input).includes("/reviews?"))
+        return Response.json({
+          reviewRevision: 7,
+          submittedThreadRevisions: {},
+          threads: [],
+          nextCursor: null,
+          counts: { total: 0, open: 0, blocking: 0 },
+          viewer: { memberId: "member-1", canReview: true, readOnly: false },
+        });
       return Response.json({});
     });
     render(
@@ -410,19 +421,22 @@ describe("SessionDetailPageClient", () => {
     fireEvent.change(await screen.findByRole("textbox", { name: "Feedback for Wallie" }), {
       target: { value: "Keep the keyboard focus visible." },
     });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Queue rerun" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
-    expect(fetchMock).toHaveBeenCalledWith(
-      `/api/sessions/${data.session.id}/phase-action`,
-      expect.objectContaining({
-        body: JSON.stringify({
-          action: "reject",
-          artifactId: "artifact-1",
-          feedbackText: "Keep the keyboard focus visible.",
-          stageId: "stage-1",
-          version: 1,
-        }),
-      }),
-    );
+    const phaseCall = fetchMock.mock.calls.find(([path]) => String(path).includes("phase-action"));
+    expect(phaseCall?.[0]).toBe(`/api/sessions/${data.session.id}/phase-action`);
+    expect(JSON.parse(String(phaseCall?.[1]?.body))).toEqual({
+      action: "reject",
+      artifactId: "artifact-1",
+      feedbackText: "Keep the keyboard focus visible.",
+      feedbackSubmission: {
+        requestId: expect.any(String),
+        expectedReviewRevision: 7,
+        selectedThreadIds: [],
+      },
+      stageId: "stage-1",
+      version: 1,
+    });
     expect(screen.getByRole("dialog", { name: "Request changes" })).toBeTruthy();
     expect(document.querySelector('[aria-label="Product artifact"]')).not.toBeNull();
     await act(async () => finish(Response.json({ error: "Try again" }, { status: 500 })));
@@ -431,6 +445,82 @@ describe("SessionDetailPageClient", () => {
     ).toBe("Keep the keyboard focus visible.");
     expect(screen.getByRole("button", { name: "Queue rerun" }).hasAttribute("disabled")).toBe(
       false,
+    );
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent("Try again");
+  });
+
+  it("accepts an already committed feedback batch while refreshing its unreconciled session", async () => {
+    const data = makeSessionDetailData();
+    data.session.artifacts = [
+      {
+        stageSlug: "product",
+        version: 1,
+        payload: "Review this",
+        id: "artifact-1",
+        createdAt: data.session.updatedAt,
+      },
+    ];
+    const calls: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).includes("/reviews?"))
+        return Response.json({
+          reviewRevision: 7,
+          submittedThreadRevisions: {},
+          threads: [
+            {
+              id: "thread-1",
+              revision: 1,
+              status: "open",
+              kind: "discussion",
+              anchor: { quote: "Review this" },
+            },
+          ],
+          nextCursor: null,
+          counts: { total: 1, open: 1, blocking: 0 },
+          viewer: { memberId: "member-1", canReview: true, readOnly: false },
+        });
+      if (String(input).includes("phase-action")) {
+        calls.push(JSON.parse(String(init?.body)));
+        return Response.json(
+          {
+            feedbackBatchId: "batch-1",
+            revisionJobId: "job-1",
+            revisionRunId: "run-1",
+            revisionGeneration: "job-1",
+            reconciliationRequired: true,
+          },
+          { status: 202 },
+        );
+      }
+      return Response.json({});
+    });
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: null,
+        initialData: data,
+        initialFormattedArtifact: createElement("p", null, "Review this"),
+        initialFormattedArtifactKey: `${data.session.id}:product:id:artifact-1`,
+      }),
+      { wrapper: OverlayProvider },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Include thread: Review this" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Request changes" })).toBeNull(),
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      action: "reject",
+      feedbackText: "",
+      feedbackSubmission: { expectedReviewRevision: 7, selectedThreadIds: ["thread-1"] },
+    });
+    await waitFor(() => expect(mocked.refresh).toHaveBeenCalledOnce());
+    expect(mocked.pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Changes queued.", tone: "success" }),
+    );
+    expect(mocked.pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Could not queue changes." }),
     );
   });
 

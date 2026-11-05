@@ -48,6 +48,7 @@ import {
   SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
+import { loadJobFeedback } from "./job-feedback";
 
 import {
   captureSourceCheckpoint,
@@ -101,6 +102,9 @@ const RUN_FAILURE_UNQUOTED_SECRET_ASSIGNMENT_PATTERN = new RegExp(
 
 export type PipelinePhaseActionResult = {
   error?: string;
+  errorCode?: string;
+  feedbackBatchId?: string;
+  revisionRunId?: string;
   jobId?: string | null;
   session?: {
     archivedAt: string | null;
@@ -232,7 +236,7 @@ async function runStage(input: {
     ] = await Promise.all([
       loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadCompletedStageArtifacts(admin, session.id),
-      loadLatestFeedback(admin, session.id, stage.id),
+      loadJobFeedback(admin, job, stage.id),
       loadPipelineOperatingRules(admin, stage.pipelineId),
       loadSessionAttachmentInputs(admin, {
         sessionId: session.id,
@@ -822,6 +826,11 @@ export async function handleRejection(input: {
   expectedStageId: string;
   expectedWorkspaceId: string;
   feedbackText: string;
+  feedbackSubmission?: {
+    requestId: string;
+    expectedReviewRevision: number;
+    selectedThreadIds: string[];
+  };
   requestedByMemberId: string | null;
   sessionId: string;
   version: number;
@@ -832,17 +841,42 @@ export async function handleRejection(input: {
   // session's run mode, resolved with the same lookups the shared enqueue path
   // uses. These are configuration reads, not state transitions, so they sit
   // outside the RPC; a failure here changes nothing.
-  let runConfig: Awaited<ReturnType<typeof resolveQueuedRunConfig>>;
-  try {
-    runConfig = await resolveQueuedRunConfig(admin, {
-      id: input.sessionId,
-      workspace_id: input.expectedWorkspaceId,
-    });
-  } catch (error) {
-    return {
-      error: getErrorMessage(error, "Failed to queue Wallie retry."),
-      success: false,
-    };
+  let runConfig: Awaited<ReturnType<typeof resolveQueuedRunConfig>> | undefined;
+  if (input.feedbackSubmission) {
+    if (!input.requestedByMemberId)
+      return {
+        error: "Active human workspace membership is required.",
+        errorCode: "42501",
+        success: false,
+      };
+    const { data: receipt, error: receiptError } = await admin
+      .from("artifact_feedback_batches")
+      .select("id")
+      .eq("workspace_id", input.expectedWorkspaceId)
+      .eq("session_id", input.sessionId)
+      .eq("requested_by_member_id", input.requestedByMemberId ?? "")
+      .eq("request_id", input.feedbackSubmission.requestId)
+      .maybeSingle();
+    if (receiptError) return { error: "Could not load the feedback submission.", success: false };
+    if (!receipt) {
+      try {
+        runConfig = await resolveQueuedRunConfig(admin, {
+          id: input.sessionId,
+          workspace_id: input.expectedWorkspaceId,
+        });
+      } catch (error) {
+        return { error: getErrorMessage(error, "Failed to queue Wallie retry."), success: false };
+      }
+    }
+  } else {
+    try {
+      runConfig = await resolveQueuedRunConfig(admin, {
+        id: input.sessionId,
+        workspace_id: input.expectedWorkspaceId,
+      });
+    } catch (error) {
+      return { error: getErrorMessage(error, "Failed to queue Wallie retry."), success: false };
+    }
   }
 
   // One transaction: lock the session, validate workspace/archive/phase/version,
@@ -852,24 +886,40 @@ export async function handleRejection(input: {
   // session wedged with a bumped rejection count and nothing queued, and a
   // concurrent approval serializes behind the row lock instead of racing the
   // final phase write.
-  const { data, error } = await admin.rpc("reject_session_stage", {
-    p_agent_model_name: runConfig.modelName,
-    p_agent_model_provider: runConfig.modelProvider,
+  const argumentsForRejection = {
+    p_agent_model_name: runConfig?.modelName,
+    p_agent_model_provider: runConfig?.modelProvider,
     p_artifact_version: input.version,
     p_expected_artifact_id: input.expectedArtifactId,
     p_expected_stage_id: input.expectedStageId,
     p_feedback_text: input.feedbackText,
     p_requested_by_member_id: input.requestedByMemberId ?? undefined,
-    p_run_type: runConfig.runType,
+    p_run_type: runConfig?.runType,
     p_session_id: input.sessionId,
     p_workspace_id: input.expectedWorkspaceId,
-  });
+  };
+  const { data, error } = input.feedbackSubmission
+    ? await admin.rpc("submit_artifact_feedback_batch", {
+        ...argumentsForRejection,
+        p_request_id: input.feedbackSubmission.requestId,
+        p_expected_review_revision: input.feedbackSubmission.expectedReviewRevision,
+        p_selected_thread_ids: input.feedbackSubmission.selectedThreadIds,
+      })
+    : await admin.rpc("reject_session_stage", {
+        ...argumentsForRejection,
+        p_agent_model_name: runConfig!.modelName,
+        p_agent_model_provider: runConfig!.modelProvider,
+      });
 
   if (error) {
     // The RPC raises with the reviewer-facing message for every guard
     // ("Session not found.", "Session is archived.", "Session is not awaiting
     // review.", "Version mismatch: a newer version exists."); surface it as-is.
-    return { error: error.message, success: false };
+    return {
+      error: error.message,
+      ...(input.feedbackSubmission ? { errorCode: error.code } : {}),
+      success: false,
+    };
   }
 
   const row = Array.isArray(data) ? data[0] : null;
@@ -883,6 +933,11 @@ export async function handleRejection(input: {
   if (row.job_id) await wakeWorker();
   return {
     jobId: row.job_id,
+    ...(input.feedbackSubmission &&
+    "feedback_batch_id" in row &&
+    typeof row.feedback_batch_id === "string"
+      ? { feedbackBatchId: row.feedback_batch_id, revisionRunId: row.run_id }
+      : {}),
     session: {
       archivedAt: row.archived_at,
       currentArtifactVersion: row.current_artifact_version,
@@ -900,23 +955,6 @@ async function loadSessionById(admin: AdminClient, id: string): Promise<SessionR
   const { data, error } = await admin.from("sessions").select("*").eq("id", id).maybeSingle();
   if (error) throw error;
   return data;
-}
-
-async function loadLatestFeedback(
-  admin: AdminClient,
-  sessionId: string,
-  stageId: string,
-): Promise<string | null> {
-  const { data, error } = await admin
-    .from("session_artifact_feedback")
-    .select("feedback_text")
-    .eq("session_id", sessionId)
-    .eq("stage_id", stageId)
-    .order("target_version", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.feedback_text ?? null;
 }
 
 function createSessionAgentRunner(input: {

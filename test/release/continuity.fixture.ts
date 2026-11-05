@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,8 +9,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { expect, it, vi } from "vitest";
+import { createClient } from "@supabase/supabase-js";
 
 import type { AgentEvent } from "@/lib/agent-runner/types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
+import { createArtifactSourceAnchor } from "@/features/sessions/review/source-anchor";
 import {
   adminClient,
   checked,
@@ -32,6 +36,9 @@ const originalCode = 'export const original = "preserve me";\n';
 const planCode = 'export const planned = "reviewed plan";\n';
 const buildCode = 'export const feature = "first build";\n';
 const revisedCode = 'export const feature = "reviewed revision";\n';
+const submittedInlineFeedback = "Keep the original implementation while revising the feature.";
+const laterInlineEdit = "This edited comment has not been submitted to the revision.";
+const laterInlineReply = "This later reply must remain unsent.";
 
 async function dueAt(value: string | null) {
   const milliseconds = value ? Math.max(0, Date.parse(value) - Date.now() + 25) : 0;
@@ -47,6 +54,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   const repositoryName = `wallie-fixture/continuity-${ids.workspaceId}`;
   const repositoryNumericId = Math.floor(Date.now() / 1000);
   let userId: string | undefined;
+  let signOutReviewer: (() => Promise<unknown>) | undefined;
   let staleRelease: ReturnType<typeof deferred<void>> | undefined;
   let staleWorker: Promise<unknown> | undefined;
   let stopSandboxes: (() => Promise<void>) | undefined;
@@ -86,6 +94,9 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
           else {
             expect(await sandbox.readFile(`${sandbox.repoPath}/src/feature.ts`)).toBe(buildCode);
             expect(input.prompt).toContain("Preserve the original file and revise the feature");
+            expect(input.prompt).toContain(submittedInlineFeedback);
+            expect(input.prompt).not.toContain(laterInlineEdit);
+            expect(input.prompt).not.toContain(laterInlineReply);
             if (mode === "stale") {
               await sandbox.writeFile(
                 `${sandbox.repoPath}/stale-only.ts`,
@@ -127,6 +138,23 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     if (account.error) throw account.error;
     assert(account.data.user);
     userId = account.data.user.id;
+    const reviewer = createClient<Database>(
+      process.env.WALLIE_CONTINUITY_SUPABASE_URL!,
+      process.env.WALLIE_CONTINUITY_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    const signedIn = await reviewer.auth.signInWithPassword({
+      email: account.data.user.email!,
+      password: `fixture-${ids.workspaceId}`,
+    });
+    if (signedIn.error) throw signedIn.error;
+    assert(signedIn.data.session);
+    expect(
+      JSON.parse(
+        Buffer.from(signedIn.data.session.access_token.split(".")[1], "base64url").toString(),
+      ).role,
+    ).toBe("authenticated");
+    signOutReviewer = () => reviewer.auth.signOut();
     await checked(
       admin.from("workspaces").insert({
         id: ids.workspaceId,
@@ -311,8 +339,39 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     buildSha = (await checkpoint(buildResult.runId!)).output_sha;
     expect((await canonical()).id).toBe(firstEpoch.id);
 
+    const reviewedBeforeComments = await session();
+    const reviewedArtifact = await checked(
+      admin
+        .from("session_artifacts")
+        .select("*")
+        .eq("id", reviewedBeforeComments.current_artifact_id!)
+        .single(),
+    );
+    assert(typeof reviewedArtifact.artifact_json === "string");
+    const thread = await rpc<Tables<"artifact_review_threads">>(
+      reviewer,
+      "create_artifact_review_thread_once",
+      {
+        p_request_id: randomUUID(),
+        p_workspace_id: ids.workspaceId,
+        p_session_id: sessionId,
+        p_stage_id: reviewedBeforeComments.current_stage_id,
+        p_artifact_id: reviewedArtifact.id,
+        p_artifact_version: reviewedArtifact.version,
+        p_anchor: createArtifactSourceAnchor(
+          reviewedArtifact.artifact_json,
+          0,
+          Math.min(7, Array.from(reviewedArtifact.artifact_json).length),
+        ),
+        p_kind: "discussion",
+        p_body: submittedInlineFeedback,
+      },
+    );
+    const submittedComment = await checked(
+      admin.from("artifact_review_comments").select("*").eq("thread_id", thread.id).single(),
+    );
     const reviewed = await session();
-    const rejection = await production.handleRejection({
+    const rejectInput = {
       admin,
       expectedArtifactId: reviewed.current_artifact_id!,
       expectedStageId: reviewed.current_stage_id,
@@ -321,9 +380,70 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       requestedByMemberId: ids.memberId,
       sessionId,
       version: reviewed.current_artifact_version,
-    });
+      feedbackSubmission: {
+        requestId: randomUUID(),
+        expectedReviewRevision: reviewed.artifact_review_revision,
+        selectedThreadIds: [thread.id],
+      },
+    };
+    const rejection = await production.handleRejection(rejectInput);
     expect(rejection.success).toBe(true);
     assert(rejection.jobId);
+    assert(rejection.feedbackBatchId);
+    const replay = await production.handleRejection(rejectInput);
+    expect(replay.success).toBe(true);
+    expect(replay.jobId).toBe(rejection.jobId);
+    expect(replay.feedbackBatchId).toBe(rejection.feedbackBatchId);
+    expect((await session()).rejection_count).toBe(1);
+
+    await rpc(reviewer, "write_artifact_review_comment_once", {
+      p_request_id: randomUUID(),
+      p_workspace_id: ids.workspaceId,
+      p_thread_id: thread.id,
+      p_comment_id: submittedComment.id,
+      p_expected_revision: submittedComment.revision,
+      p_body: laterInlineEdit,
+    });
+    await rpc(reviewer, "write_artifact_review_comment_once", {
+      p_request_id: randomUUID(),
+      p_workspace_id: ids.workspaceId,
+      p_thread_id: thread.id,
+      p_body: laterInlineReply,
+    });
+    const savedBatch = await checked(
+      admin
+        .from("artifact_feedback_batches")
+        .select("*")
+        .eq("id", rejection.feedbackBatchId)
+        .single(),
+    );
+    const savedThread = await checked(
+      admin
+        .from("artifact_feedback_batch_threads")
+        .select("*")
+        .eq("batch_id", rejection.feedbackBatchId)
+        .single(),
+    );
+    expect(savedBatch.checkpoint_run_id).toBe(buildResult.runId);
+    expect(savedBatch.job_id).toBe(rejection.jobId);
+    expect(savedBatch.rendered_feedback_text).toContain(submittedInlineFeedback);
+    expect(savedBatch.rendered_feedback_text).not.toContain(laterInlineEdit);
+    expect(savedBatch.rendered_feedback_text).not.toContain(laterInlineReply);
+    expect(savedThread.thread_revision).toBe(thread.revision);
+    expect(savedThread.comments).toEqual([
+      expect.objectContaining({
+        id: submittedComment.id,
+        revision: 1,
+        body: submittedInlineFeedback,
+      }),
+    ]);
+    const editedThread = await checked(
+      admin.from("artifact_review_threads").select("*").eq("id", thread.id).single(),
+    );
+    expect(editedThread.revision).toBeGreaterThan(savedThread.thread_revision);
+    const replayAfterEdits = await production.handleRejection(rejectInput);
+    expect(replayAfterEdits.feedbackBatchId).toBe(rejection.feedbackBatchId);
+    expect(replayAfterEdits.jobId).toBe(rejection.jobId);
     const savedInput = await production.loadPinnedSessionJobGitInput({
       admin,
       jobId: rejection.jobId,
@@ -520,6 +640,18 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         outputSha: restarted.outputSha,
         outputKind: restarted.outputKind,
       },
+      feedbackBatch: {
+        id: savedBatch.id,
+        jobId: savedBatch.job_id,
+        checkpointRunId: savedBatch.checkpoint_run_id,
+        reviewedArtifactId: savedBatch.artifact_id,
+        reviewRevision: savedBatch.review_revision,
+        threadId: savedThread.thread_id,
+        submittedThreadRevision: savedThread.thread_revision,
+        commentsImmutable: true,
+        laterEditAndReplyRemainUnsent: true,
+        networkRetrySameGeneration: true,
+      },
       staleWorker: {
         runId: oldExecution.runId,
         attemptCount: oldJob.attempt_count,
@@ -541,6 +673,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       subprocessRestart: true,
       staleWorkerFenced: true,
       capturedRecoveryWhilePaused: true,
+      immutableInlineFeedback: true,
     });
   } finally {
     staleRelease?.resolve();
@@ -556,6 +689,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       expect(restored.reason).toBe(priorRelease.reason || "Restore prior local release state");
     } finally {
       try {
+        await signOutReviewer?.();
         if (userId) await cleanupLocalFixture(admin, { workspaceId: ids.workspaceId, userId });
       } finally {
         vi.unstubAllGlobals();
