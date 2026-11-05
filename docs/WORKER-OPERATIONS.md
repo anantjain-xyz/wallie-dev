@@ -113,7 +113,9 @@ qualification and normal worker dispatch controls remain separate requirements.
 Pausing blocks new pipeline claims, new execution starts and canonical PR
 promotion. A claim caught between admission and start is deferred under its same
 job generation, retaining fixed Git inputs and the queued run. A previous release
-revision cannot revive across disable/re-enable. Already-started runs and durable
+revision cannot revive across disable/re-enable. Claim attempt IDs remain
+monotonic for fencing, while release-only deferrals do not consume the execution
+retry budget or increase execution retry backoff. Already-started runs and durable
 checkpoint publication/recovery can finish, including retained-ref pushes needed
 to preserve completed source. Cleanup and auth dispatch remain available. A pause
 cannot revoke an already-authorized or already-issued GitHub request: wait for claims/provider resources
