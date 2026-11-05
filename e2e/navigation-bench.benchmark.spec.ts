@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, extname } from "node:path";
 
 import {
   expect,
@@ -21,6 +21,12 @@ const runs = Number(process.env.SNAPPY_RUNS ?? "5");
 const sessionOnly = process.env.SNAPPY_SESSION_ONLY === "1";
 const sessionIntent = process.env.SNAPPY_SESSION_INTENT ?? "immediate";
 const profile = process.env.SNAPPY_PROFILE === "1";
+const conditions = {
+  cpuRate: Number(process.env.SNAPPY_CPU_RATE ?? "1"),
+  latencyMs: Number(process.env.SNAPPY_LATENCY_MS ?? "0"),
+  downloadKbps: Number(process.env.SNAPPY_DOWNLOAD_KBPS ?? "-1"),
+  uploadKbps: Number(process.env.SNAPPY_UPLOAD_KBPS ?? "-1"),
+};
 
 test.use({ trace: "off" });
 
@@ -33,12 +39,32 @@ type SessionOpenTiming = {
   intent: string;
   pushToReviewReadyMs: number;
   recoveryRequestCount: number;
+  intentEvents: Array<{ name: string; relativeToClickMs: number }>;
   rscResponses: Array<{
     responseEndMs: number;
     responseStatus: number;
     serverTiming: string[];
     startMs: number;
   }>;
+};
+
+type DiagnosticEvent = { kind: string; at: number } & Record<string, unknown>;
+type DiagnosticNetworkRequest = {
+  requestId: string;
+  url: string;
+  phase: "tree" | "page-data" | "other";
+  requestTimestamp: number;
+  requestWallTime: number;
+  hasRouterStateTree: boolean;
+  responseTimestamp?: number;
+  loadingFinishedTimestamp?: number;
+  loadingFailedTimestamp?: number;
+  status?: number;
+  decodedBytes: number;
+  encodedBytes?: number;
+  failure?: string;
+  requestHeaders: Record<string, string>;
+  responseHeaders?: Record<string, string>;
 };
 
 type FlowId =
@@ -217,6 +243,157 @@ async function visibleNavLink(page: Page, name: string) {
   return link;
 }
 
+async function installSessionDiagnostics(page: Page) {
+  await page.addInitScript((destination) => {
+    const events: DiagnosticEvent[] = [];
+    (window as unknown as { sessionOpenDiagnostics: DiagnosticEvent[] }).sessionOpenDiagnostics =
+      events;
+    const active = () =>
+      performance.getEntriesByName("snappy-begin").length > 0 &&
+      performance.getEntriesByName("session-open:review-ready").length === 0;
+    const record = (kind: string, fields: Record<string, unknown> = {}) => {
+      if (active()) events.push({ kind, at: performance.now(), ...fields });
+    };
+    const matches = (url: string) => new URL(url, location.href).pathname === destination;
+    const callbacks = new WeakMap<object, number>();
+    const callbackId = (callback: object) => {
+      let id = callbacks.get(callback);
+      if (id === undefined) {
+        id = ++callbackOrdinal;
+        callbacks.set(callback, id);
+      }
+      return id;
+    };
+    let callbackOrdinal = 0;
+    const timers = new Set<number>();
+    const setTimer = window.setTimeout.bind(window);
+    const clearTimer = window.clearTimeout.bind(window);
+    Object.defineProperty(window, "setTimeout", {
+      value(handler: TimerHandler, timeout?: number, ...args: unknown[]) {
+        if (!active() || typeof handler !== "function" || ![0, 80, 2_000].includes(timeout ?? 0)) {
+          return Reflect.apply(setTimer, window, [handler, timeout, ...args]);
+        }
+        const callback = callbackId(handler);
+        let id = 0;
+        id = setTimer(() => {
+          timers.delete(id);
+          record("timer-fire", { id, callback, timeout });
+          Reflect.apply(handler, window, args);
+        }, timeout);
+        timers.add(id);
+        record("timer-schedule", { id, callback, timeout: timeout ?? 0, stack: new Error().stack });
+        return id;
+      },
+    });
+    Object.defineProperty(window, "clearTimeout", {
+      value(id?: number) {
+        if (id !== undefined && timers.delete(id)) record("timer-clear", { id });
+        return clearTimer(id);
+      },
+    });
+    const frame = window.requestAnimationFrame.bind(window);
+    Object.defineProperty(window, "requestAnimationFrame", {
+      value(callback: FrameRequestCallback) {
+        const tracked = active();
+        let id = 0;
+        id = frame((timestamp) => {
+          if (tracked) record("frame-fire", { id });
+          callback(timestamp);
+        });
+        if (tracked) record("frame-schedule", { id, stack: new Error().stack });
+        return id;
+      },
+    });
+    const Observer = window.PerformanceObserver;
+    class DiagnosticObserver extends Observer {
+      constructor(callback: PerformanceObserverCallback) {
+        const id = callbackId(callback);
+        super((list, observer) => {
+          const resources = list
+            .getEntries()
+            .filter(
+              (entry): entry is PerformanceResourceTiming =>
+                entry instanceof PerformanceResourceTiming && matches(entry.name),
+            )
+            .map((entry) => ({
+              name: entry.name,
+              startTime: entry.startTime,
+              responseEnd: entry.responseEnd,
+              serverTiming: entry.serverTiming.map((timing) => timing.name),
+            }));
+          if (resources.length) record("resource-delivery", { callback: id, resources });
+          callback(list, observer);
+        });
+        record("observer-create", { callback: id, stack: new Error().stack });
+      }
+    }
+    window.PerformanceObserver = DiagnosticObserver;
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let digestOrdinal = 0;
+    crypto.subtle.digest = (...args) => {
+      const id = ++digestOrdinal;
+      record("digest-start", { id, stack: new Error().stack });
+      const pending = digest(...args);
+      void pending.then(
+        () => record("digest-end", { id }),
+        () => record("digest-error", { id }),
+      );
+      return pending;
+    };
+    const fetchResource = window.fetch.bind(window);
+    let fetchOrdinal = 0;
+    window.fetch = (...args) => {
+      const input = args[0];
+      const url = input instanceof Request ? input.url : String(input);
+      const pending = fetchResource(...args);
+      if (!matches(url)) return pending;
+      const id = ++fetchOrdinal;
+      record("fetch-start", { id, url });
+      void pending.then(
+        (response) => {
+          record("fetch-headers", { id, url, status: response.status });
+          const body = response.body;
+          if (!body) return;
+          const getReader = body.getReader.bind(body);
+          Object.defineProperty(body, "getReader", {
+            value(options?: ReadableStreamGetReaderOptions) {
+              if (options?.mode === "byob") return getReader(options);
+              const reader = getReader();
+              const read = reader.read.bind(reader);
+              const cancel = reader.cancel.bind(reader);
+              let chunks = 0;
+              let bytes = 0;
+              reader.read = () => {
+                const result = read();
+                void result.then(
+                  (chunk) => {
+                    if (chunk.done) record("fetch-body-done", { id, chunks, bytes });
+                    else {
+                      chunks += 1;
+                      bytes += chunk.value.byteLength;
+                      if (chunks === 1) record("fetch-body-first-chunk", { id });
+                    }
+                  },
+                  () => record("fetch-body-error", { id, chunks, bytes }),
+                );
+                return result;
+              };
+              reader.cancel = (reason) => {
+                record("fetch-body-cancel", { id, chunks, bytes });
+                return cancel(reason);
+              };
+              record("fetch-body-reader", { id });
+              return reader;
+            },
+          });
+        },
+        () => record("fetch-error", { id, url }),
+      );
+      return pending;
+    };
+  }, sessionPath);
+}
+
 async function installSessionOpenProbe(page: Page) {
   await page.addInitScript(
     ({ destination, title }) => {
@@ -224,7 +401,10 @@ async function installSessionOpenProbe(page: Page) {
         const key = `session-open:${name}`;
         if (performance.getEntriesByName(key).length === 0) performance.mark(key);
       };
-      type Router = { push: (href: string, options?: { scroll?: boolean }) => void };
+      type Router = {
+        push: (href: string, options?: { scroll?: boolean }) => void;
+        prefetch: (href: string, options?: unknown) => void;
+      };
       let next: { router?: Router };
       Object.defineProperty(window, "next", {
         configurable: true,
@@ -241,6 +421,11 @@ async function installSessionOpenProbe(page: Page) {
               router.push = function (href, options) {
                 if (new URL(href, location.origin).pathname === destination) mark("push");
                 return push.call(this, href, options);
+              };
+              const prefetch = router.prefetch;
+              router.prefetch = function (href, options) {
+                if (new URL(href, location.origin).pathname === destination) mark("prefetch");
+                return prefetch.call(this, href, options);
               };
             },
           });
@@ -284,6 +469,16 @@ async function installSessionOpenProbe(page: Page) {
           });
         } else requestAnimationFrame(check);
       };
+      for (const name of ["pointerenter", "pointerdown", "focusin"]) {
+        document.addEventListener(
+          name,
+          (event) => {
+            const link = event.target instanceof Element ? event.target.closest("a") : null;
+            if (link?.pathname === destination) mark(name);
+          },
+          { capture: true },
+        );
+      }
       document.addEventListener(
         "click",
         (event) => {
@@ -318,6 +513,14 @@ async function readSessionOpenTiming(page: Page, requests: Request[]): Promise<S
       clickToReviewReadyMs: ready - click,
       clickToStageMs: at("stage") - click,
       pushToReviewReadyMs: ready - push,
+      intentEvents: ["pointerenter", "pointerdown", "focusin", "prefetch", "click"]
+        .flatMap((name) =>
+          performance.getEntriesByName(`session-open:${name}`).map((entry) => ({
+            name,
+            relativeToClickMs: entry.startTime - click,
+          })),
+        )
+        .sort((left, right) => left.relativeToClickMs - right.relativeToClickMs),
       rscResponses: performance.getEntriesByType("resource").flatMap((entry) => {
         const resource = entry as PerformanceResourceTiming;
         const url = new URL(resource.name);
@@ -365,10 +568,79 @@ async function finishProfile(session: CDPSession, path: string) {
     if (chunk.eof) break;
   }
   await session.send("IO.close", { handle });
-  await session.detach();
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, trace);
   console.log(`session-open diagnostic trace ${path}`);
+}
+
+function profilePath(run: number) {
+  const path = process.env.SNAPPY_PROFILE_PATH ?? test.info().outputPath("session-open.trace.json");
+  if (runs === 1) return path;
+  const extension = extname(path);
+  return `${path.slice(0, path.length - extension.length)}-run${run}${extension}`;
+}
+
+function recordNetwork(session: CDPSession) {
+  const requests = new Map<string, DiagnosticNetworkRequest>();
+  session.on("Network.requestWillBeSent", (event) => {
+    if (new URL(event.request.url).pathname !== sessionPath) return;
+    const headers = Object.fromEntries(
+      Object.entries(event.request.headers)
+        .map(([key, value]) => [key.toLowerCase(), String(value)])
+        .filter(([key]) =>
+          ["rsc", "next-router-prefetch", "next-router-segment-prefetch"].includes(key),
+        ),
+    );
+    const tree = headers["next-router-segment-prefetch"] === "/_tree";
+    const hasRouterStateTree = Object.keys(event.request.headers).some(
+      (key) => key.toLowerCase() === "next-router-state-tree",
+    );
+    requests.set(event.requestId, {
+      requestId: event.requestId,
+      url: event.request.url,
+      phase: tree
+        ? "tree"
+        : headers.rsc === "1" &&
+            hasRouterStateTree &&
+            !("next-router-prefetch" in headers) &&
+            !("next-router-segment-prefetch" in headers)
+          ? "page-data"
+          : "other",
+      requestTimestamp: event.timestamp,
+      requestWallTime: event.wallTime,
+      hasRouterStateTree,
+      decodedBytes: 0,
+      requestHeaders: headers,
+    });
+  });
+  session.on("Network.responseReceived", (event) => {
+    const request = requests.get(event.requestId);
+    if (!request) return;
+    request.status = event.response.status;
+    request.responseTimestamp = event.timestamp;
+    request.responseHeaders = Object.fromEntries(
+      Object.entries(event.response.headers)
+        .map(([key, value]) => [key.toLowerCase(), String(value)])
+        .filter(([key]) => ["content-type", "server-timing", "content-length"].includes(key)),
+    );
+  });
+  session.on("Network.dataReceived", (event) => {
+    const request = requests.get(event.requestId);
+    if (request) request.decodedBytes += event.dataLength;
+  });
+  session.on("Network.loadingFinished", (event) => {
+    const request = requests.get(event.requestId);
+    if (!request) return;
+    request.loadingFinishedTimestamp = event.timestamp;
+    request.encodedBytes = event.encodedDataLength;
+  });
+  session.on("Network.loadingFailed", (event) => {
+    const request = requests.get(event.requestId);
+    if (!request) return;
+    request.loadingFailedTimestamp = event.timestamp;
+    request.failure = event.errorText;
+  });
+  return requests;
 }
 
 async function collectSample(
@@ -494,6 +766,17 @@ async function collectSample(
 
 test("measures five logged-in navigation flows", async ({ browser }) => {
   assertRunCount(runs);
+  if (
+    !Number.isFinite(conditions.cpuRate) ||
+    conditions.cpuRate < 1 ||
+    !Number.isFinite(conditions.latencyMs) ||
+    conditions.latencyMs < 0 ||
+    [conditions.downloadKbps, conditions.uploadKbps].some(
+      (rate) => !Number.isFinite(rate) || (rate !== -1 && rate <= 0),
+    )
+  ) {
+    throw new Error("Invalid browser CPU or network conditions.");
+  }
   if (!["immediate", "settled", "keyboard", "touch"].includes(sessionIntent)) {
     throw new Error("SNAPPY_SESSION_INTENT must be immediate, settled, keyboard, or touch.");
   }
@@ -567,6 +850,15 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
         if (sessionIntent === "keyboard") await page.keyboard.press("Enter");
         else if (sessionIntent === "touch") await link.tap();
         else await link.click();
+        if (sessionOnly) {
+          await page.waitForFunction(
+            () => performance.getEntriesByName("session-open:review-ready").length > 0,
+          );
+          return page.evaluate(
+            (start) => performance.getEntriesByName("session-open:stage")[0].startTime - start,
+            startedAt,
+          );
+        }
         await waitForSession(page);
         return page.evaluate((start) => performance.now() - start, startedAt);
       }),
@@ -601,7 +893,9 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
   }
 
   const failed = samples.filter((sample) => !sample.ok);
-  console.log(`navigation-bench ${JSON.stringify({ diagnostic: profile, runs, samples })}`);
+  console.log(
+    `navigation-bench ${JSON.stringify({ browserVersion: browser.version(), conditions, diagnostic: profile, sessionOnly, runs, samples })}`,
+  );
   expect(
     failed.map(
       (sample) =>
@@ -627,12 +921,21 @@ async function measure(
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
   if (flow === "session-open") await installSessionOpenProbe(page);
-  let profileSession: CDPSession | null = null;
-  if (profile && flow === "session-open" && run === 1) {
-    profileSession = await context.newCDPSession(page);
-    await profileSession.send("Tracing.start", {
+  const constrained =
+    conditions.cpuRate !== 1 ||
+    conditions.latencyMs !== 0 ||
+    conditions.downloadKbps !== -1 ||
+    conditions.uploadKbps !== -1;
+  const controlSession = profile || constrained ? await context.newCDPSession(page) : null;
+  let network: Map<string, DiagnosticNetworkRequest> | null = null;
+  const tracing = profile && flow === "session-open";
+  if (controlSession) await controlSession.send("Network.enable");
+  if (tracing && controlSession) {
+    await installSessionDiagnostics(page);
+    network = recordNetwork(controlSession);
+    await controlSession.send("Tracing.start", {
       categories:
-        "devtools.timeline,blink.user_timing,toplevel,v8,disabled-by-default-v8.cpu_profiler",
+        "devtools.timeline,blink.user_timing,toplevel,v8,disabled-by-default-v8.cpu_profiler,disabled-by-default-devtools.timeline.stack",
       transferMode: "ReturnAsStream",
     });
   }
@@ -652,6 +955,16 @@ async function measure(
     aborted.clear();
     pageErrors.length = 0;
     await page.setExtraHTTPHeaders({ "x-request-id": requestId });
+    if (controlSession && constrained) {
+      await controlSession.send("Emulation.setCPUThrottlingRate", { rate: conditions.cpuRate });
+      await controlSession.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: conditions.latencyMs,
+        downloadThroughput:
+          conditions.downloadKbps === -1 ? -1 : (conditions.downloadKbps * 1_000) / 8,
+        uploadThroughput: conditions.uploadKbps === -1 ? -1 : (conditions.uploadKbps * 1_000) / 8,
+      });
+    }
     await page.evaluate(() => {
       performance.clearResourceTimings();
       performance.clearMarks("snappy-begin");
@@ -690,6 +1003,7 @@ async function measure(
       await page.waitForFunction(
         () => performance.getEntriesByName("session-open:review-ready").length > 0,
       );
+      if (sessionOnly) await waitForSession(page);
       await page.waitForTimeout(250);
     }
     recording = false;
@@ -757,12 +1071,33 @@ async function measure(
       ttfbMs: null,
     };
   } finally {
-    if (profileSession) {
-      await finishProfile(
-        profileSession,
-        process.env.SNAPPY_PROFILE_PATH ?? test.info().outputPath("session-open.trace.json"),
+    if (tracing && controlSession) {
+      const path = profilePath(run);
+      await finishProfile(controlSession, path);
+      const browserProbe = await page.evaluate(() => ({
+        timeOrigin: performance.timeOrigin,
+        click: performance.getEntriesByName("session-open:click")[0]?.startTime ?? null,
+        events:
+          (window as unknown as { sessionOpenDiagnostics?: DiagnosticEvent[] })
+            .sessionOpenDiagnostics ?? [],
+      }));
+      const diagnosticPath = `${path.slice(0, path.length - extname(path).length)}.network.json`;
+      writeFileSync(
+        diagnosticPath,
+        JSON.stringify(
+          {
+            browserVersion: browser.version(),
+            conditions,
+            browserProbe,
+            network: [...(network?.values() ?? [])],
+          },
+          null,
+          2,
+        ),
       );
+      console.log(`session-open diagnostic network ${diagnosticPath}`);
     }
+    if (controlSession) await controlSession.detach();
     await context.close();
   }
 }

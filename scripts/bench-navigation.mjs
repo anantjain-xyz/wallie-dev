@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,23 @@ const runs = Number(readFlag("--runs", diagnostic ? "1" : "5"));
 if (!Number.isInteger(runs) || runs < 1) {
   throw new Error("--runs must be a positive integer.");
 }
+const conditions = {
+  cpuRate: Number(readFlag("--cpu-rate", "1")),
+  latencyMs: Number(readFlag("--latency-ms", "0")),
+  downloadKbps: Number(readFlag("--download-kbps", "-1")),
+  uploadKbps: Number(readFlag("--upload-kbps", "-1")),
+};
+if (
+  !Number.isFinite(conditions.cpuRate) ||
+  conditions.cpuRate < 1 ||
+  !Number.isFinite(conditions.latencyMs) ||
+  conditions.latencyMs < 0 ||
+  [conditions.downloadKbps, conditions.uploadKbps].some(
+    (rate) => !Number.isFinite(rate) || (rate !== -1 && rate <= 0),
+  )
+) {
+  throw new Error("CPU rate must be >=1, latency >=0, and network rates positive or -1.");
+}
 
 const supabaseWorkdir = readFlag("--supabase-workdir", root);
 const statusText = execFileSync("supabase", ["status", "--workdir", supabaseWorkdir, "-o", "env"], {
@@ -153,6 +170,10 @@ const benchEnv = {
   PLAYWRIGHT_PORT: "3100",
   SERVICE_ROLE_KEY: supabase.SERVICE_ROLE_KEY,
   SNAPPY_RUNS: String(runs),
+  SNAPPY_CPU_RATE: String(conditions.cpuRate),
+  SNAPPY_LATENCY_MS: String(conditions.latencyMs),
+  SNAPPY_DOWNLOAD_KBPS: String(conditions.downloadKbps),
+  SNAPPY_UPLOAD_KBPS: String(conditions.uploadKbps),
   SNAPPY_SESSION_ONLY: hasFlag("--session-only") ? "1" : "0",
   SNAPPY_SESSION_INTENT: readFlag("--session-intent", "immediate"),
   SNAPPY_PROFILE: diagnostic ? "1" : "0",
@@ -210,6 +231,9 @@ writeFileSync(
   outPath,
   JSON.stringify(
     {
+      browserVersion: payload.browserVersion,
+      buildId: readFileSync(resolve(root, ".next/BUILD_ID"), "utf8").trim(),
+      conditions: payload.conditions,
       cores: cpus().length,
       diagnostic,
       loadavg: loadavg(),
