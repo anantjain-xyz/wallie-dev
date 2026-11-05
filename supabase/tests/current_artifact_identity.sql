@@ -49,7 +49,7 @@ returns table(id uuid,pipeline_id uuid,current_stage_id uuid,current_stage_slug 
 language sql as $$
   select receipt.* from public.sessions session cross join lateral public.approve_session_stage(
     session.id,session.workspace_id,session.current_stage_id,artifact_id,version,
-    'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project') receipt
+    'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project',session.artifact_review_revision) receipt
   where session.id=(select session_id from identity_session);
 $$;
 create function pg_temp.reject_identity(artifact_id uuid,version integer default 1)

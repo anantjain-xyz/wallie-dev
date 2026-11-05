@@ -41,9 +41,13 @@ const PhaseActionBodySchema = z
       )
       .optional(),
     feedbackSubmission: FeedbackSubmissionSchema.optional(),
+    expectedReviewRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     version: z.number().int().nonnegative().max(2147483647),
   })
   .strict()
+  .refine((body) => body.action !== "approve" || body.expectedReviewRevision !== undefined, {
+    message: "Refresh the review before approving.",
+  })
   .refine((body) => !body.feedbackSubmission || body.action === "reject", {
     message: "Feedback submissions can only request changes.",
   });
@@ -164,6 +168,7 @@ export async function POST(request: Request, { params }: Params) {
         handleApproval({
           approverMemberId: memberRow.id,
           expectedArtifactId: body.artifactId,
+          expectedReviewRevision: body.expectedReviewRevision!,
           expectedStageId: body.stageId,
           expectedWorkspaceId: sessionRow.workspace_id,
           sessionId: sessionRow.id,
@@ -171,7 +176,19 @@ export async function POST(request: Request, { params }: Params) {
         }),
       );
       if (!result.success) {
-        return errorResponse("stale_version", result.error ?? "Approval failed", 409);
+        if (result.errorCode === "PT409")
+          return errorResponse(
+            "blocking_review",
+            "Resolve or supersede open blocking requests before approving.",
+            409,
+          );
+        return errorResponse(
+          "stale_version",
+          result.errorCode === "PT412"
+            ? "This review changed. Refresh the review before approving."
+            : (result.error ?? "Approval failed"),
+          409,
+        );
       }
       return loadMutationResult(supabase, timing, sessionRow.id);
     }
@@ -219,7 +236,7 @@ export async function POST(request: Request, { params }: Params) {
 
 /** Database batch errors use fixed messages, never echoed comment or anchor text. */
 function feedbackSubmissionError(code: string | undefined, message: string | undefined) {
-  if (code === "40001" || code === "55000")
+  if (code === "40001" || code === "PT412" || code === "55000")
     return errorResponse(
       "stale_version",
       "This artifact or review changed. Refresh comments before submitting again.",

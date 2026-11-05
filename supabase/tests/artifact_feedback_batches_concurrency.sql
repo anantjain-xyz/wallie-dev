@@ -84,7 +84,7 @@ create function public.test_feedback_batch_race_approve(fixture integer)
 returns bigint language sql set search_path='' as $$
   select count(*) from public.session_git_checkpoints checkpoint cross join lateral public.approve_session_stage(
     checkpoint.session_id,checkpoint.workspace_id,'aef50200-0000-4000-8000-000000000991',checkpoint.artifact_id,1,
-    'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project') receipt
+    'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project',(select artifact_review_revision from public.sessions where id=checkpoint.session_id)) receipt
   where checkpoint.run_id=('aef50200-0000-4000-8000-'||lpad((200+fixture)::text,12,'0'))::uuid;
 $$;
 create function public.test_feedback_batch_race_edit(fixture integer)

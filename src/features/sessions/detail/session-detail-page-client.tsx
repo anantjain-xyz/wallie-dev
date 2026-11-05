@@ -758,6 +758,7 @@ function SessionDetailContent({
     artifact: SessionReviewArtifact | null,
     feedbackText?: string,
     feedbackSubmission?: SessionFeedbackSubmission,
+    expectedReviewRevision?: number,
   ): Promise<boolean> {
     if (phaseActionPending !== null) return false;
     if (viewingHistoricalArtifact) return false;
@@ -844,6 +845,7 @@ function SessionDetailContent({
           const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
             body: JSON.stringify({
               action,
+              expectedReviewRevision: action === "approve" ? expectedReviewRevision : undefined,
               artifactId: artifact.artifactId,
               feedbackText: action === "reject" ? feedbackText?.trim() : undefined,
               feedbackSubmission: action === "reject" ? feedbackSubmission : undefined,
@@ -1245,7 +1247,9 @@ function SessionDetailContent({
               phaseActionPending ? undefined : "Final-stage approval may also archive the session."
             }
             mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
-            onApprove={(artifact) => void handlePhaseAction("approve", artifact)}
+            onApprove={(artifact, revision) =>
+              void handlePhaseAction("approve", artifact, undefined, undefined, revision)
+            }
             onReject={(feedback, artifact, submission) =>
               handlePhaseAction("reject", artifact, feedback, submission)
             }

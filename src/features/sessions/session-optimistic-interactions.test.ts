@@ -12,6 +12,14 @@ import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import type { SessionSummary, SessionArtifactSummary } from "@/features/sessions/types";
 
+vi.mock("@/features/sessions/detail/use-approval-review", () => ({
+  useApprovalReview: () => ({
+    value: { reviewRevision: 7, blockingCount: 0 },
+    error: null,
+    refresh: vi.fn(),
+  }),
+}));
+
 vi.mock("@/lib/supabase/realtime-subscription", () => ({
   subscribeAuthenticatedChannel: (
     client: { removeChannel: (channel: unknown) => void },

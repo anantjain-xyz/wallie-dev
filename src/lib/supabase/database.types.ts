@@ -3827,6 +3827,7 @@ export type Database = {
           expected_workspace_id: string
           p_agent_model_name: string
           p_agent_model_provider: string
+          p_expected_review_revision?: number
           p_run_type?: string
           target_session_id: string
         }

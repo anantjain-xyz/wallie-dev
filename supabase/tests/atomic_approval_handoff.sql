@@ -37,17 +37,17 @@ returns table(id uuid,pipeline_id uuid,current_stage_id uuid,current_stage_slug 
   phase_status public.pipeline_phase_status,workspace_id uuid,linear_issue_url text,archived_at timestamptz,
   current_artifact_version integer,rejection_count integer,job_id uuid,run_id uuid,job_created boolean)
 language sql as $$
-  select * from public.approve_session_stage(target,workspace,stage,artifact,version,reviewer,'codex','gpt-5.5','project');
+  select * from public.approve_session_stage(target,workspace,stage,artifact,version,reviewer,'codex','gpt-5.5','project',(select artifact_review_revision from public.sessions where id=target));
 $$;
 
 select is(to_regprocedure('public.approve_session_stage(uuid,uuid,integer,uuid)'),null::regprocedure,'old approval without immutable identity is removed');
 select is(to_regprocedure('public.reject_session_stage(uuid,uuid,integer,text,text,text,text,uuid)'),null::regprocedure,'old rejection without immutable identity is not public');
 select ok(has_function_privilege('service_role',signature,'EXECUTE'),'service role can execute '||signature)
-from (values ('public.approve_session_stage(uuid,uuid,uuid,uuid,integer,uuid,text,text,text)'),
+from (values ('public.approve_session_stage(uuid,uuid,uuid,uuid,integer,uuid,text,text,text,bigint)'),
  ('public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid)')) api(signature);
 select ok(not has_function_privilege(role_name,signature,'EXECUTE'),role_name||' cannot execute '||signature)
 from (values('anon'),('authenticated')) roles(role_name)
-cross join (values ('public.approve_session_stage(uuid,uuid,uuid,uuid,integer,uuid,text,text,text)'),
+cross join (values ('public.approve_session_stage(uuid,uuid,uuid,uuid,integer,uuid,text,text,text,bigint)'),
  ('public.reject_session_stage(uuid,uuid,integer,text,text,text,uuid,uuid,text,uuid)')) api(signature);
 select ok(not has_function_privilege('service_role','internal.reject_session_stage(uuid,uuid,integer,text,text,text,text,uuid)','EXECUTE'),'unbound rejection implementation is private');
 

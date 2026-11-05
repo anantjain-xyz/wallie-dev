@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "before": {
+    "events": "324d2ccff80865b0b57a678a03d12092",
+    "threads": "ffc67b7d814732d808d2f22ae83956de",
+    "artifact": "5ea56428137233ce610aaa6f44b8886e",
+    "comments": "bbd71dbf6ed530cc72ecf1d4ce76bc32"
+  },
+  "after": {
+    "events": "324d2ccff80865b0b57a678a03d12092",
+    "threads": "ffc67b7d814732d808d2f22ae83956de",
+    "artifact": "5ea56428137233ce610aaa6f44b8886e",
+    "comments": "bbd71dbf6ed530cc72ecf1d4ce76bc32"
+  },
+  "historyUnchanged": true,
+  "generatedTypesMatchFreshSchema": true,
+  "queuedJobs": 0,
+  "blockedCode": "PT409",
+  "openBlockers": 1,
+  "releaseEnabled": false,
+  "oldSignatureRemoved": true
+}

@@ -90,6 +90,12 @@ export function reviewErrorResponse(error: unknown) {
   }
   const code =
     error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+  if (code === "55000" || code === "PT409") {
+    return reviewJson(
+      { error: "This stage is closed for review changes. Refresh the session." },
+      409,
+    );
+  }
   if (code === "40001") {
     return reviewJson({ error: "This review changed. Refresh it before saving again." }, 409);
   }
@@ -129,7 +135,7 @@ export async function loadReviewContext(sessionId: string, write = false) {
 
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id, pipeline_id, archived_at, artifact_review_revision")
+    .select("id, workspace_id, pipeline_id, archived_at, phase_status, artifact_review_revision")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw sessionError;
@@ -145,8 +151,8 @@ export async function loadReviewContext(sessionId: string, write = false) {
     .maybeSingle();
   if (memberError) throw memberError;
   if (!member) throw new ReviewHttpError(403, "Active workspace membership is required.");
-  if (write && session.archived_at) {
-    throw new ReviewHttpError(409, "Archived sessions are read-only.");
+  if (write && (session.archived_at || session.phase_status === "approved")) {
+    throw new ReviewHttpError(409, "Closed sessions are read-only.");
   }
   return { supabase, session, member };
 }
@@ -194,7 +200,7 @@ export async function reviewViewer(context: ReviewContext, stageId: string | nul
   const approvers = stage?.approver_member_ids ?? [];
   return {
     memberId: member.id,
-    readOnly: Boolean(session.archived_at),
+    readOnly: Boolean(session.archived_at || session.phase_status === "approved"),
     canReview: Boolean(
       stage &&
       (stage.anyone_can_approve ||

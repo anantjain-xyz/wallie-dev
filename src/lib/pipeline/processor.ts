@@ -766,6 +766,7 @@ export async function handleApproval(input: {
   admin?: AdminClient;
   approverMemberId: string | null;
   expectedArtifactId: string;
+  expectedReviewRevision: number;
   expectedStageId: string;
   expectedWorkspaceId: string;
   sessionId: string;
@@ -789,6 +790,7 @@ export async function handleApproval(input: {
   const { data, error } = await admin.rpc("approve_session_stage", {
     approver_member_id: input.approverMemberId,
     expected_artifact_id: input.expectedArtifactId,
+    p_expected_review_revision: input.expectedReviewRevision,
     expected_stage_id: input.expectedStageId,
     expected_version: input.version,
     expected_workspace_id: input.expectedWorkspaceId,
@@ -797,7 +799,7 @@ export async function handleApproval(input: {
     p_run_type: runConfig.runType,
     target_session_id: input.sessionId,
   });
-  if (error) return { error: error.message, success: false };
+  if (error) return { error: error.message, errorCode: error.code, success: false };
   const row = Array.isArray(data) ? data[0] : null;
   if (!row) {
     return {

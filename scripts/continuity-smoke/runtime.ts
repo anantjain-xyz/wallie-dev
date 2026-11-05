@@ -850,7 +850,11 @@ export async function decide(context: Context, manifest: Manifest, action: "appr
   const last = manifest.evidence.at(-1)!;
   assert.ok(last.artifactId);
   const session = await required(
-    context.admin.from("sessions").select("current_stage_id").eq("id", manifest.sessionId).single(),
+    context.admin
+      .from("sessions")
+      .select("current_stage_id, artifact_review_revision")
+      .eq("id", manifest.sessionId)
+      .single(),
   );
   const result =
     action === "approve"
@@ -861,6 +865,7 @@ export async function decide(context: Context, manifest: Manifest, action: "appr
             expected_stage_id: session.current_stage_id,
             expected_artifact_id: last.artifactId,
             expected_version: last.artifactVersion!,
+            p_expected_review_revision: session.artifact_review_revision,
             approver_member_id: manifest.memberId,
             p_agent_model_provider: "codex",
             p_agent_model_name: "deterministic-release-smoke",

@@ -9,6 +9,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
 
+const approvalState = vi.hoisted(() => ({
+  value: { reviewRevision: 7, blockingCount: 0 } as {
+    reviewRevision: number;
+    blockingCount: number;
+  } | null,
+  error: null as string | null,
+  refresh: vi.fn(),
+}));
+
+vi.mock("@/features/sessions/detail/use-approval-review", () => ({
+  useApprovalReview: () => approvalState,
+}));
+
 const reviewArtifact = { artifactId: "artifact-1", stageId: "stage-1", version: 1 };
 
 function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = {}) {
@@ -36,6 +49,8 @@ function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = 
 
 describe("SessionReviewBar", () => {
   afterEach(() => {
+    approvalState.value = { reviewRevision: 7, blockingCount: 0 };
+    approvalState.error = null;
     cleanup();
     vi.unstubAllGlobals();
   });
@@ -523,4 +538,30 @@ describe("SessionReviewBar", () => {
     await waitFor(() => expect(onReject).toHaveBeenCalledTimes(1));
     expect(onReject.mock.calls[0][2].selectedThreadIds).toHaveLength(20);
   });
+});
+
+it("explains blocking approval while keeping request changes available", () => {
+  approvalState.value = { reviewRevision: 9, blockingCount: 2 };
+  const { onApprove } = renderBar({ sessionId: "session" });
+  expect(screen.getByRole("button", { name: "Approve & advance" })).toBeDisabled();
+  expect(screen.getByText(/2 open blocking requests/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Request changes" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Approve & advance" }));
+  expect(onApprove).not.toHaveBeenCalled();
+});
+it("approves using the revision displayed by the review summary", () => {
+  approvalState.value = { reviewRevision: 7, blockingCount: 0 };
+  const { onApprove } = renderBar({ sessionId: "session" });
+  fireEvent.click(screen.getByRole("button", { name: "Approve & advance" }));
+  expect(onApprove).toHaveBeenCalledWith(reviewArtifact, 7);
+});
+
+it("keeps approval disabled when review evidence is unavailable", () => {
+  approvalState.value = null;
+  approvalState.error = "Could not confirm blocking requests.";
+  renderBar({ sessionId: "session" });
+  expect(screen.getByRole("button", { name: "Approve & advance" })).toBeDisabled();
+  expect(screen.getByText("Could not confirm blocking requests.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh review" }));
+  expect(approvalState.refresh).toHaveBeenCalled();
 });
