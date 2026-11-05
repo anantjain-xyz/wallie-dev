@@ -24,6 +24,14 @@ import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
+vi.mock("@/features/sessions/detail/use-approval-review", () => ({
+  useApprovalReview: () => ({
+    value: { reviewRevision: 7, blockingCount: 0 },
+    error: null,
+    refresh: vi.fn(),
+  }),
+}));
+
 const feedbackEventCleanups: Array<() => void> = [];
 const feedbackArtifactId = "22222222-2222-4222-8222-222222222222";
 const feedbackBatchId = "33333333-3333-4333-8333-333333333333";
@@ -285,6 +293,7 @@ describe("SessionDetailPageClient", () => {
         expect.objectContaining({
           body: JSON.stringify({
             action: "approve",
+            expectedReviewRevision: 7,
             artifactId: "artifact-1",
             stageId: "stage-1",
             version: 1,

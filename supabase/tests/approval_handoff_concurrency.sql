@@ -47,7 +47,7 @@ begin
     where artifact.session_id=original_job.session_id and artifact.stage_id=original_job.stage_id and artifact.version=1;
   if decision='approve' then
     select * into receipt from public.approve_session_stage(original_job.session_id,original_job.workspace_id,
-      original_job.stage_id,artifact_id,1,'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project');
+      original_job.stage_id,artifact_id,1,'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project',(select artifact_review_revision from public.sessions where id=original_job.session_id));
     if not found then return 'stale'; end if;
     return 'approved';
   end if;

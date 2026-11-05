@@ -90,7 +90,7 @@ returns table(job_id uuid,run_id uuid,current_stage_id uuid,job_created boolean)
 language sql as $$
   select result.job_id,result.run_id,result.current_stage_id,result.job_created
   from public.approve_session_stage(target_session,'b1b2c3d4-0001-4000-8000-000000000001',target_stage,target_artifact,
-    target_version,'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project') result;
+    target_version,'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project',(select artifact_review_revision from public.sessions where id=target_session)) result;
 $$;
 create function pg_temp.lifecycle_reject(target_session uuid,target_stage uuid,target_artifact uuid,target_version integer default 1)
 returns table(job_id uuid,run_id uuid,current_stage_id uuid,job_created boolean)

@@ -9,6 +9,7 @@ export type SessionMutationErrorCode =
   | "mutation_failed"
   | "not_found"
   | "rate_limited"
+  | "blocking_review"
   | "stale_version"
   | "unauthorized";
 

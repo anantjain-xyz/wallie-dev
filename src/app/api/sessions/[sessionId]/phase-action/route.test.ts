@@ -33,7 +33,12 @@ const UPDATED_AT = "2026-07-17T12:00:00.000Z";
 
 function makeRequest(body: Record<string, unknown>) {
   return new Request("http://localhost:3000/api/sessions/sess-1/phase-action", {
-    body: JSON.stringify({ artifactId: ARTIFACT_ID, stageId: STAGE_ID, ...body }),
+    body: JSON.stringify({
+      artifactId: ARTIFACT_ID,
+      stageId: STAGE_ID,
+      expectedReviewRevision: 7,
+      ...body,
+    }),
     headers: { "content-type": "application/json" },
     method: "POST",
   });
@@ -610,5 +615,32 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     const payload = await response.json();
     expect(payload.code).toBe(code);
     if (errorCode === "22001") expect(payload.error).toContain("100 comments");
+  });
+  it("rejects approval without an inspected review token", async () => {
+    const response = await POST(
+      makeRequest({ action: "approve", version: 1, expectedReviewRevision: undefined }),
+      routeContext(),
+    );
+    expect(response.status).toBe(400);
+    expect(mocked.handleApproval).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["PT409", "blocking_review", "Resolve or supersede"],
+    ["PT412", "stale_version", "This review changed"],
+  ])("returns a deterministic approval conflict for %s", async (errorCode, code, message) => {
+    mocked.handleApproval.mockResolvedValue({
+      success: false,
+      errorCode,
+      error: "Database conflict",
+    });
+    const response = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());
+    expect(response.status).toBe(409);
+    const payload = await response.json();
+    expect(payload.code).toBe(code);
+    expect(payload.error).toContain(message);
+    expect(mocked.handleApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedReviewRevision: 7 }),
+    );
   });
 });

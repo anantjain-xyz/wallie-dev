@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { useApprovalReview } from "./use-approval-review";
 import type { ReviewMode } from "@/features/sessions/detail/review-mode";
 import type {
   ArtifactReviewThread,
@@ -46,7 +47,7 @@ type SessionReviewBarProps = {
   approveLabel: string;
   approveDescription?: string;
   mode: ReviewMode;
-  onApprove: (artifact: SessionReviewArtifact | null) => void;
+  onApprove: (artifact: SessionReviewArtifact | null, expectedReviewRevision?: number) => void;
   onReject: (
     feedback: string,
     artifact: SessionReviewArtifact | null,
@@ -92,6 +93,12 @@ export function SessionReviewBar({
   const reviewLoadSequence = useRef(0);
   const reviewController = useRef<AbortController | null>(null);
   const requestMemory = useRef(new Map<string, string>());
+  const approvalReview = useApprovalReview(
+    mode.kind === "reviewable" && mode.canApprove ? sessionId : undefined,
+    reviewArtifact?.artifactId,
+  );
+  const approvalBlocked =
+    Boolean(sessionId) && (!approvalReview.value || approvalReview.value.blockingCount > 0);
   const phaseActionBusy = phaseActionPending !== null;
   const displayedError = requestError ?? feedbackError;
   const artifactChanged =
@@ -373,10 +380,11 @@ export function SessionReviewBar({
               type="button"
               aria-describedby={approveDescription ? approveDescriptionId : undefined}
               className="ui-button-primary min-h-11 min-w-0 whitespace-normal [overflow-wrap:anywhere] sm:min-h-9"
-              disabled={phaseActionBusy}
+              disabled={phaseActionBusy || approvalBlocked}
               onClick={() => {
-                if (phaseActionBusy) return;
-                onApprove(reviewArtifact);
+                if (phaseActionBusy || approvalBlocked) return;
+                if (sessionId) onApprove(reviewArtifact, approvalReview.value?.reviewRevision);
+                else onApprove(reviewArtifact);
               }}
             >
               <ActionButtonLabel
@@ -391,6 +399,29 @@ export function SessionReviewBar({
             </p>
           )}
         </div>
+        {mode.kind === "reviewable" && mode.canApprove && sessionId ? (
+          <div
+            className="mt-2 flex flex-wrap items-center justify-end gap-2 text-xs text-muted"
+            role="status"
+          >
+            <span>
+              {approvalReview.error ??
+                (approvalReview.value
+                  ? approvalReview.value.blockingCount > 0
+                    ? `${approvalReview.value.blockingCount} open blocking request${approvalReview.value.blockingCount === 1 ? "" : "s"}. Resolve or supersede them in Comments before approving.`
+                    : "No open blocking requests."
+                  : "Checking blocking requests…")}
+            </span>
+            <button
+              type="button"
+              className="min-h-11 shrink-0 text-accent underline"
+              disabled={phaseActionBusy}
+              onClick={() => void approvalReview.refresh()}
+            >
+              Refresh review
+            </button>
+          </div>
+        ) : null}
         {mode.kind === "reviewable" && mode.canApprove && approveDescription ? (
           <p id={approveDescriptionId} className="mt-2 text-xs leading-5 text-muted sm:text-right">
             {approveDescription}

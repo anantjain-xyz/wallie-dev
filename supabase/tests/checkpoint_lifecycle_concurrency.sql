@@ -101,7 +101,7 @@ end;
 $$;
 create function pg_temp.lifecycle_approve_sql(fixture integer)
 returns text language sql as $$
-  select format('select * from public.approve_session_stage(%L,%L,%L,%L,1,%L,%L,%L,%L)',
+  select format('select * from public.approve_session_stage(%L,%L,%L,%L,1,%L,%L,%L,%L,0)',
     target.session_id,'b1b2c3d4-0001-4000-8000-000000000001',target.stage_id,target.artifact_id,
     'c1b2c3d4-0001-4000-8000-000000000001','codex','gpt-5.5','project')
   from lifecycle_race_targets target where target.n=fixture;

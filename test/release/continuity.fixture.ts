@@ -54,6 +54,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   const repositoryName = `wallie-fixture/continuity-${ids.workspaceId}`;
   const repositoryNumericId = Math.floor(Date.now() / 1000);
   let userId: string | undefined;
+  let secondUserId: string | undefined;
+  let signOutSecondReviewer: (() => Promise<unknown>) | undefined;
   let signOutReviewer: (() => Promise<unknown>) | undefined;
   let staleRelease: ReturnType<typeof deferred<void>> | undefined;
   let staleWorker: Promise<unknown> | undefined;
@@ -259,6 +261,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         admin,
         approverMemberId: ids.memberId,
         expectedArtifactId: current.current_artifact_id,
+        expectedReviewRevision: current.artifact_review_revision,
         expectedStageId: current.current_stage_id,
         expectedWorkspaceId: ids.workspaceId,
         sessionId,
@@ -363,10 +366,57 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
           0,
           Math.min(7, Array.from(reviewedArtifact.artifact_json).length),
         ),
-        p_kind: "discussion",
+        p_kind: "blocking",
         p_body: submittedInlineFeedback,
       },
     );
+    const secondMemberId = randomUUID();
+    const secondAccount = await admin.auth.admin.createUser({
+      email: `second-reviewer-${ids.workspaceId}@example.invalid`,
+      password: `fixture-second-${ids.workspaceId}`,
+      email_confirm: true,
+    });
+    if (secondAccount.error) throw secondAccount.error;
+    assert(secondAccount.data.user);
+    secondUserId = secondAccount.data.user.id;
+    await checked(
+      admin.from("workspace_members").insert({
+        id: secondMemberId,
+        workspace_id: ids.workspaceId,
+        user_id: secondUserId,
+        role: "member",
+        kind: "human",
+        is_active: true,
+        full_name: "Second reviewer",
+      }),
+    );
+    const secondReviewer = createClient<Database>(
+      process.env.WALLIE_CONTINUITY_SUPABASE_URL!,
+      process.env.WALLIE_CONTINUITY_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    const secondLogin = await secondReviewer.auth.signInWithPassword({
+      email: secondAccount.data.user.email!,
+      password: `fixture-second-${ids.workspaceId}`,
+    });
+    if (secondLogin.error) throw secondLogin.error;
+    signOutSecondReviewer = () => secondReviewer.auth.signOut();
+    const secondThread = await rpc<Tables<"artifact_review_threads">>(
+      secondReviewer,
+      "create_artifact_review_thread_once",
+      {
+        p_request_id: randomUUID(),
+        p_workspace_id: ids.workspaceId,
+        p_session_id: sessionId,
+        p_stage_id: reviewedBeforeComments.current_stage_id,
+        p_artifact_id: reviewedArtifact.id,
+        p_artifact_version: reviewedArtifact.version,
+        p_anchor: createArtifactSourceAnchor(reviewedArtifact.artifact_json, 0, 7),
+        p_kind: "blocking",
+        p_body: "Retain the plan and original code in the revised checkpoint.",
+      },
+    );
+    expect(secondThread.author_member_id).toBe(secondMemberId);
     const submittedComment = await checked(
       admin.from("artifact_review_comments").select("*").eq("thread_id", thread.id).single(),
     );
@@ -383,7 +433,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       feedbackSubmission: {
         requestId: randomUUID(),
         expectedReviewRevision: reviewed.artifact_review_revision,
-        selectedThreadIds: [thread.id],
+        selectedThreadIds: [thread.id, secondThread.id],
       },
     };
     const rejection = await production.handleRejection(rejectInput);
@@ -422,6 +472,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         .from("artifact_feedback_batch_threads")
         .select("*")
         .eq("batch_id", rejection.feedbackBatchId)
+        .eq("thread_id", thread.id)
         .single(),
     );
     expect(savedBatch.checkpoint_run_id).toBe(buildResult.runId);
@@ -565,6 +616,43 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(existsSync(oldExecution.sandboxPath)).toBe(false);
     expect(transport.createCount).toBe(1);
 
+    // Accepted v2 and agent responses leave both human blockers open.
+    const beforeResolution = await session();
+    const decision = (revision: number) =>
+      production.handleApproval({
+        admin,
+        approverMemberId: ids.memberId,
+        sessionId,
+        expectedWorkspaceId: ids.workspaceId,
+        expectedStageId: beforeResolution.current_stage_id,
+        expectedArtifactId: beforeResolution.current_artifact_id!,
+        version: beforeResolution.current_artifact_version,
+        expectedReviewRevision: revision,
+      });
+    expect(await decision(beforeResolution.artifact_review_revision)).toMatchObject({
+      success: false,
+      errorCode: "PT409",
+    });
+    for (const original of [thread, secondThread]) {
+      const open = await checked(
+        admin.from("artifact_review_threads").select("*").eq("id", original.id).single(),
+      );
+      expect(open.status).toBe("open");
+      await rpc(reviewer, "transition_artifact_review_thread_once", {
+        p_request_id: randomUUID(),
+        p_workspace_id: ids.workspaceId,
+        p_thread_id: open.id,
+        p_expected_revision: open.revision,
+        p_status: "resolved",
+        p_reason:
+          "Inspected preserved original, plan and revised feature at the accepted v2 checkpoint.",
+      });
+    }
+    expect(await decision(beforeResolution.artifact_review_revision)).toMatchObject({
+      success: false,
+      errorCode: "PT412",
+    });
+
     // A genuinely new Node/Vitest worker receives no in-memory sandbox state.
     const verifyJobId = await approve();
     const selected = await production.loadPinnedSessionJobGitInput({
@@ -629,6 +717,20 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(await git(remote, "rev-parse", "refs/heads/main")).toBe(movedMain);
     expect(transport.createCount).toBe(1);
     expect((await session()).phase_status).toBe("awaiting_review");
+    const terminal = await session();
+    const terminalApproval = await production.handleApproval({
+      admin,
+      approverMemberId: ids.memberId,
+      sessionId,
+      expectedWorkspaceId: ids.workspaceId,
+      expectedStageId: terminal.current_stage_id,
+      expectedArtifactId: terminal.current_artifact_id!,
+      version: terminal.current_artifact_version,
+      expectedReviewRevision: terminal.artifact_review_revision,
+    });
+    expect(terminalApproval.success).toBe(true);
+    expect(terminalApproval.jobId).toBeNull();
+    expect((await session()).phase_status).toBe("approved");
     const lineage = await checked(
       admin
         .from("session_git_checkpoints")
@@ -718,6 +820,16 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         capturedCheckpointRecoveredWhilePaused: true,
         canonicalPublicationWaitedForResume: true,
       },
+      inlineAcceptance: {
+        reviewerMemberIds: [ids.memberId, secondMemberId],
+        blockingThreadIds: [thread.id, secondThread.id],
+        oneImmutableBatch: true,
+        newOutputLeftBlockersOpen: true,
+        blockedApprovalCode: "PT409",
+        staleResolutionTokenCode: "PT412",
+        explicitHumanResolution: true,
+        terminalApproval: true,
+      },
       cleanup: { completed: false },
     };
     await persistEvidence();
@@ -744,6 +856,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     } finally {
       try {
         await signOutReviewer?.();
+        await signOutSecondReviewer?.();
+        if (secondUserId) await admin.auth.admin.deleteUser(secondUserId);
         if (userId) await cleanupLocalFixture(admin, { workspaceId: ids.workspaceId, userId });
       } finally {
         vi.unstubAllGlobals();

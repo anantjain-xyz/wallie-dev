@@ -18,7 +18,7 @@ returns table (id uuid, pipeline_id uuid, current_stage_id uuid, current_stage_s
   cross join lateral public.approve_session_stage(target, workspace, session.current_stage_id,
     (select artifact.id from public.session_artifacts artifact where artifact.session_id = target
       and artifact.stage_id = session.current_stage_id and artifact.version = version),
-    version, reviewer, 'codex', 'gpt-5.5', 'project') result
+    version, reviewer, 'codex', 'gpt-5.5', 'project', session.artifact_review_revision) result
   where session.id = target;
 $$;
 

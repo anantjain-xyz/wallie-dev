@@ -3578,6 +3578,7 @@ describe("handleApproval", () => {
   const approvalInput = {
     approverMemberId: "mem-1",
     expectedArtifactId: "artifact-1",
+    expectedReviewRevision: 7,
     expectedStageId: "stage-product",
     expectedWorkspaceId: "ws-1",
     sessionId: "sess-1",
@@ -3601,6 +3602,7 @@ describe("handleApproval", () => {
     expect(rpc).toHaveBeenCalledWith("approve_session_stage", {
       approver_member_id: "mem-1",
       expected_artifact_id: "artifact-1",
+      p_expected_review_revision: 7,
       expected_stage_id: "stage-product",
       expected_version: 1,
       expected_workspace_id: "ws-1",
