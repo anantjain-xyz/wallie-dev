@@ -166,6 +166,8 @@ function CreateSessionDialog(props: CreateSessionDialogProps) {
   // loaded. Render the dialog from the resolved module instead.
   if (!DialogImpl) return <CreateSessionDialogLoading onClose={props.onClose} />;
 
+  // The value is the cached module export, not a component created in render.
+  // eslint-disable-next-line react-hooks/static-components -- module is loaded once and reused
   return <DialogImpl {...props} />;
 }
 
