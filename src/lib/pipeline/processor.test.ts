@@ -660,6 +660,18 @@ function buildAdminMock(opts: MockOptions) {
     },
     sessions: sessionsTable,
     session_artifact_feedback: feedbackTable,
+    artifact_feedback_batch_jobs: {
+      select: () => {
+        const builder = {
+          eq: () => builder,
+          maybeSingle: async () => ({
+            data: opts.batchFeedback ? { batch_id: "batch-1" } : null,
+            error: null,
+          }),
+        };
+        return builder;
+      },
+    },
     artifact_feedback_batches: {
       select: () => {
         const builder = {

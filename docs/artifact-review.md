@@ -42,7 +42,17 @@ Every write requires a caller-generated request UUID. Keep the same UUID and pay
 - Thread links include the artifact UUID/version. Older versions and prior stages show a historical label; archived sessions allow reading only.
 - Saves and lifecycle changes do not enqueue an agent execution.
 
-This foundation does not yet gate artifact approval on blocking threads. Feedback batches, revision comparison, and approval serialization are separate milestones in OP-502 through OP-504. OP-501 adds the commenting controls; feedback submission remains separate.
+## Revision review and feedback history
+
+- **Request changes** explicitly selects up to 20 open threads from the inspected artifact or earlier versions of the same stage, with an optional whole-stage note. **Preview feedback** displays the exact selected source identities, quotes and comment revisions. A concurrent review edit invalidates the submission token; drafts survive errors.
+- Submission pins the currently inspected artifact/checkpoint while each immutable thread snapshot retains its original source artifact. Retry receipts remain scoped to the submitting human. Later comments, edits and replies never alter an earlier batch.
+- **Compare** lazily loads exact artifact UUIDs, an exact Markdown source diff, and bounded unresolved feedback/history pages. Repeated or changed selections remain visible under **Outdated selections**. Mapping uses the artifact renderer’s Markdown grammar and requires a unique quote plus an unchanged source and target enclosing block; it is derived presentation and never rewrites an anchor or status. Large split blocks fail closed.
+- **Submitted feedback** shows immutable comments and the exact saved agent input, the reviewed artifact, the initial run status and capped pages of every accepted output linked by checkpoint provenance, including new jobs created by manual retries. Producing-run and received-feedback identities come from exact run/job/checkpoint associations. Missing legacy provenance stays unavailable.
+- Failed/canceled attempts retain their batch. **Retry Run** may create a new job; its owned attempt binds once to the exact session/stage/rejection generation, then consumes the original immutable batch. Queued manual jobs can still be adopted by a newer explicit submission before starting. Existing associations cannot be rewritten; ambiguous generation matches fail closed. Historical manual retries without recorded provenance remain unavailable. A later review may explicitly resubmit unresolved threads against its new checkpoint, including outdated original selections. Original author snapshots, source version and selection remain inspectable.
+- Automatic retries retain the job’s consumed feedback generation. Neither retry path loads later live comment edits as submitted feedback.
+- New artifacts, agent responses, previews and submissions never resolve or supersede a request. Human status transitions retain their existing authorization and revision checks. Blocking approval serialization remains OP-504.
+
+Review/history APIs use the authenticated RLS client, scoped by workspace/session/stage. History uses capped keyset pages; snapshots load on demand and render as escaped text. No new service-role read path is exposed to the browser.
 
 ## Verification
 

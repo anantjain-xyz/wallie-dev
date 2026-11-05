@@ -77,6 +77,9 @@ export function SessionReviewBar({
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewChanged, setReviewChanged] = useState(false);
+  const [preview, setPreview] = useState<{ key: string; text: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewSequence = useRef(0);
   const feedbackFieldId = useId();
   const approveDescriptionId = useId();
   const feedbackErrorId = useId();
@@ -96,6 +99,47 @@ export function SessionReviewBar({
     (reviewArtifact?.artifactId !== rejectionArtifactRef.current?.artifactId ||
       reviewArtifact?.stageId !== rejectionArtifactRef.current?.stageId ||
       reviewArtifact?.version !== rejectionArtifactRef.current?.version);
+  const previewKey = JSON.stringify([
+    rejectionArtifactRef.current,
+    reviewSnapshot?.reviewRevision,
+    [...selectedThreadIds].sort(),
+    feedbackDraft.trim(),
+  ]);
+
+  async function previewFeedback() {
+    const artifact = rejectionArtifactRef.current;
+    if (!sessionId || !artifact || reviewRevisionRef.current === null) return;
+    const sequence = ++previewSequence.current;
+    setPreviewLoading(true);
+    setFeedbackError(null);
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/feedback-batches/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifactId: artifact.artifactId,
+          version: artifact.version,
+          expectedReviewRevision: reviewRevisionRef.current,
+          selectedThreadIds,
+          note: feedbackDraft,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || typeof result.renderedFeedback !== "string")
+        throw new Error(result.error ?? "Could not preview feedback.");
+      if (sequence === previewSequence.current)
+        setPreview({ key: previewKey, text: result.renderedFeedback });
+    } catch (cause) {
+      if (sequence === previewSequence.current)
+        setFeedbackError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not preview feedback. Your draft is retained.",
+        );
+    } finally {
+      if (sequence === previewSequence.current) setPreviewLoading(false);
+    }
+  }
 
   const loadReview = useCallback(
     async (cursor: ReviewCursor | null = null) => {
@@ -108,7 +152,10 @@ export function SessionReviewBar({
       setReviewLoading(true);
       setReviewError(null);
       try {
-        const query = new URLSearchParams({ artifactId: artifact.artifactId });
+        const query = new URLSearchParams({
+          artifactId: artifact.artifactId,
+          includeUnresolved: "true",
+        });
         if (cursor) {
           query.set("cursorCreatedAt", cursor.createdAt);
           query.set("cursorId", cursor.id);
@@ -144,6 +191,8 @@ export function SessionReviewBar({
         reviewRevisionRef.current = payload.reviewRevision;
         setReviewSnapshot((current) => ({
           ...payload,
+          mappings:
+            cursor && current ? { ...current.mappings, ...payload.mappings } : payload.mappings,
           submittedThreadRevisions:
             cursor && current
               ? { ...current.submittedThreadRevisions, ...payload.submittedThreadRevisions }
@@ -437,6 +486,15 @@ export function SessionReviewBar({
                           {quote}
                         </span>
                         <span className="mt-1 block text-muted">
+                          Original version {thread.artifact_version} · {thread.author_label}
+                          {thread.artifact_id !== rejectionArtifactRef.current?.artifactId
+                            ? " · Carried forward"
+                            : ""}
+                          {reviewSnapshot.mappings?.[thread.id]?.status === "outdated"
+                            ? " · Outdated selection"
+                            : ""}
+                        </span>
+                        <span className="mt-1 block text-muted">
                           {sentRevision === undefined
                             ? "Not submitted"
                             : sentRevision < thread.revision
@@ -512,6 +570,23 @@ export function SessionReviewBar({
             ) : null}
           </div>
           <DialogFooter>
+            {sessionId ? (
+              <button
+                type="button"
+                className="ui-button"
+                disabled={
+                  phaseActionBusy ||
+                  previewLoading ||
+                  reviewLoading ||
+                  reviewChanged ||
+                  artifactChanged ||
+                  Boolean(reviewError)
+                }
+                onClick={() => void previewFeedback()}
+              >
+                {previewLoading ? "Loading preview…" : "Preview feedback"}
+              </button>
+            ) : null}
             <button
               type="button"
               className="ui-button"
@@ -542,6 +617,23 @@ export function SessionReviewBar({
               />
             </button>
           </DialogFooter>
+          {preview?.key === previewKey ? (
+            <section
+              aria-label="Feedback preview"
+              className="mt-3 min-w-0 border-t border-border pt-3"
+            >
+              <p className="text-xs text-muted">
+                Exact current selection. A concurrent review edit will require a refresh before
+                submission.
+              </p>
+              <pre
+                tabIndex={0}
+                className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs [overflow-wrap:anywhere]"
+              >
+                {preview.text}
+              </pre>
+            </section>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

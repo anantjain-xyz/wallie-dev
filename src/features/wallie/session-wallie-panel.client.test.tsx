@@ -9,6 +9,7 @@ import {
 } from "@/features/sessions/detail/execution-summary";
 import { SessionActivityPresentationProvider } from "@/features/sessions/detail/session-activity-presentation";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
+import { RunActivityLink } from "@/features/sessions/review/run-activity-link";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -184,6 +185,7 @@ async function settleRecovery() {
 let idleCallback: (() => void) | null;
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/");
   idleCallback = null;
   Object.defineProperty(window, "requestIdleCallback", {
     configurable: true,
@@ -217,6 +219,98 @@ function panel(initialData: WallieSessionData, supabase: SupabaseClient<Database
 }
 
 describe("SessionWalliePanel run history lifecycle", () => {
+  it("opens and focuses the exact run activity linked from revision review", async () => {
+    const id = "50300000-0000-4000-8000-000000000001";
+    const fake = fakeSupabase();
+    const view = panel(data([run(1, { id })]), fake.supabase);
+    await act(async () => {
+      window.location.hash = `wallie-run-${id}`;
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector(`[data-run-id="${id}"] button[aria-expanded]`)
+          ?.getAttribute("aria-expanded"),
+      ).toBe("true"),
+    );
+    await waitFor(() => expect(document.activeElement?.id).toBe(`wallie-run-${id}`));
+    render(<RunActivityLink runId={id}>Open producing run again</RunActivityLink>);
+    fireEvent.click(view.container.querySelector(`[data-run-id="${id}"] button[aria-expanded]`)!);
+    expect(
+      view.container
+        .querySelector(`[data-run-id="${id}"] button[aria-expanded]`)
+        ?.getAttribute("aria-expanded"),
+    ).toBe("false");
+    fireEvent.click(screen.getByRole("link", { name: "Open producing run again" }));
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector(`[data-run-id="${id}"] button[aria-expanded]`)
+          ?.getAttribute("aria-expanded"),
+      ).toBe("true"),
+    );
+  });
+  it("scopes an off-page provenance lookup and reports unavailable runs without opening another session", async () => {
+    const id = "50300000-0000-4000-8000-000000000002";
+    let linkedRow: Record<string, unknown> | null = null;
+    const filters: Array<[string, string]> = [];
+    const builder = {
+      select: () => builder,
+      eq: (key: string, value: string) => {
+        filters.push([key, value]);
+        return builder;
+      },
+      maybeSingle: async () => ({ data: linkedRow, error: null }),
+    };
+    const fake = fakeSupabase();
+    const original = fake.supabase.from.bind(fake.supabase);
+    vi.spyOn(fake.supabase, "from").mockImplementation(((table: string) =>
+      table === "agent_runs" ? builder : original(table as never)) as never);
+    const view = panel(data([run(1)]), fake.supabase);
+    await act(async () => {
+      window.history.replaceState(null, "", `#wallie-run-${id}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await screen.findByText(/The linked run is unavailable in this session/);
+    expect(filters).toEqual(
+      expect.arrayContaining([
+        ["id", id],
+        ["workspace_id", "workspace-1"],
+        ["session_id", "session-1"],
+      ]),
+    );
+    linkedRow = {
+      id,
+      status: "success",
+      model_provider: "codex",
+      model_name: "test",
+      attempt_count: 1,
+      created_at: "2026-07-18T14:00:00Z",
+      updated_at: "2026-07-18T14:00:00Z",
+      finished_at: "2026-07-18T14:01:00Z",
+      started_at: "2026-07-18T14:00:00Z",
+      last_activity_at: null,
+      stage_id: null,
+      stage_slug: null,
+      stage_name: "Recovered",
+      run_type: "code",
+      triggered_by_member_id: null,
+      branch_name: null,
+      sandbox_id: null,
+      sandbox_provider: null,
+    };
+    render(<RunActivityLink runId={id}>Retry the same run link</RunActivityLink>);
+    fireEvent.click(screen.getByRole("link", { name: "Retry the same run link" }));
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector(`[data-run-id="${id}"] button[aria-expanded]`)
+          ?.getAttribute("aria-expanded"),
+      ).toBe("true"),
+    );
+    expect(screen.queryByText(/The linked run is unavailable in this session/)).toBeNull();
+  });
   it("cancels a queued rejected-stage rerun through the run fallback", async () => {
     const queued = run(1, {
       stageId: "build",
