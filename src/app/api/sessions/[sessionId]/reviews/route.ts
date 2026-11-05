@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { loadSubmittedThreadRevisions } from "@/features/sessions/review/submitted";
+import { listCarriedReviewThreads } from "@/features/sessions/review/carry-forward";
 
 import {
   createReviewThreadSchema,
@@ -28,23 +29,35 @@ export async function GET(request: Request, { params }: RouteContext) {
     const page = readReviewPage(request);
     const context = await loadReviewContext(sessionId);
     const artifact = await loadReviewArtifact(context, artifactId);
+    const carryForward = new URL(request.url).searchParams.get("includeUnresolved") === "true";
     const { supabase, session } = context;
     const reviewRevision = session.artifact_review_revision;
     if (!Number.isSafeInteger(reviewRevision) || reviewRevision < 0)
       throw new Error("The review revision cannot be represented safely.");
-    const countQuery = () =>
-      supabase
+    const countQuery = () => {
+      let query = supabase
         .from("artifact_review_threads")
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", session.workspace_id)
-        .eq("session_id", session.id)
-        .eq("artifact_id", artifact.id);
+        .eq("session_id", session.id);
+      query =
+        carryForward && artifact.stage_id
+          ? query
+              .eq("stage_id", artifact.stage_id)
+              .or(
+                `artifact_id.eq.${artifact.id},and(status.eq.open,artifact_version.lt.${artifact.version})`,
+              )
+          : query.eq("artifact_id", artifact.id);
+      return query;
+    };
     const [threads, viewer, total, open, blocking] = await Promise.all([
-      listArtifactReviewThreads(supabase, {
-        workspaceId: session.workspace_id,
-        artifactId: artifact.id,
-        ...page,
-      }),
+      carryForward && artifact.stage_id
+        ? listCarriedReviewThreads(context, artifact, page)
+        : listArtifactReviewThreads(supabase, {
+            workspaceId: session.workspace_id,
+            artifactId: artifact.id,
+            ...page,
+          }),
       reviewViewer(context, artifact.stage_id),
       countQuery(),
       countQuery().eq("status", "open"),
@@ -53,10 +66,22 @@ export async function GET(request: Request, { params }: RouteContext) {
     for (const result of [total, open, blocking]) {
       if (result.error) throw result.error;
     }
-    const submittedThreadRevisions = await loadSubmittedThreadRevisions(
-      context,
-      artifact.id,
-      threads.items.map((thread) => thread.id),
+    const sourceIds = carryForward
+      ? [...new Set(threads.items.map((thread) => thread.artifact_id))]
+      : [artifact.id];
+    const submittedThreadRevisions = Object.assign(
+      {},
+      ...(await Promise.all(
+        sourceIds.map((sourceId) =>
+          loadSubmittedThreadRevisions(
+            context,
+            sourceId,
+            threads.items
+              .filter((thread) => !carryForward || thread.artifact_id === sourceId)
+              .map((thread) => thread.id),
+          ),
+        ),
+      )),
     );
     return reviewJson({
       // Captured by loadReviewContext before thread reads. A concurrent change
@@ -64,6 +89,7 @@ export async function GET(request: Request, { params }: RouteContext) {
       reviewRevision,
       submittedThreadRevisions,
       threads: threads.items,
+      mappings: "mappings" in threads ? threads.mappings : undefined,
       nextCursor: threads.nextCursor,
       counts: { total: total.count ?? 0, open: open.count ?? 0, blocking: blocking.count ?? 0 },
       viewer,

@@ -5,7 +5,11 @@ import { loadJobFeedback } from "./job-feedback";
 import { trustedPromptValue, untrustedPromptValue } from "./prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-function client(batch: { rendered_feedback_text: string } | null, error: unknown = null) {
+function client(
+  batch: { rendered_feedback_text: string } | null,
+  error: unknown = null,
+  linked = Boolean(batch),
+) {
   const filters: Array<[string, string, unknown]> = [];
   const tables: string[] = [];
   const admin = {
@@ -20,9 +24,11 @@ function client(batch: { rendered_feedback_text: string } | null, error: unknown
         order: () => builder,
         limit: () => builder,
         maybeSingle: async () =>
-          table === "artifact_feedback_batches"
-            ? { data: batch, error }
-            : { data: { feedback_text: "Legacy whole-stage note" }, error: null },
+          table === "artifact_feedback_batch_jobs"
+            ? { data: linked ? { batch_id: "batch-1" } : null, error }
+            : table === "artifact_feedback_batches"
+              ? { data: batch, error: null }
+              : { data: { feedback_text: "Legacy whole-stage note" }, error: null },
       };
       return builder;
     },
@@ -37,11 +43,27 @@ describe("loadJobFeedback", () => {
     const { admin, filters, tables } = client({ rendered_feedback_text: text });
     expect(await loadJobFeedback(admin, job, "stage-1")).toBe(text);
     expect(filters).toEqual([
-      ["artifact_feedback_batches", "job_id", job.id],
+      ["artifact_feedback_batch_jobs", "job_id", job.id],
+      ["artifact_feedback_batch_jobs", "session_id", job.session_id],
+      ["artifact_feedback_batch_jobs", "workspace_id", job.workspace_id],
+      ["artifact_feedback_batches", "id", "batch-1"],
       ["artifact_feedback_batches", "session_id", job.session_id],
       ["artifact_feedback_batches", "workspace_id", job.workspace_id],
+      ["artifact_feedback_batches", "stage_id", "stage-1"],
     ]);
-    expect(tables).toEqual(["artifact_feedback_batches"]);
+    expect(tables).toEqual(["artifact_feedback_batch_jobs", "artifact_feedback_batches"]);
+  });
+  it("loads an inherited manual retry by its explicit generation and fails closed on missing batch data", async () => {
+    const { admin, filters } = client({ rendered_feedback_text: "Original immutable generation" });
+    expect(await loadJobFeedback(admin, { ...job, id: "manual-retry-job" }, "stage-1")).toBe(
+      "Original immutable generation",
+    );
+    expect(filters).toContainEqual(["artifact_feedback_batch_jobs", "job_id", "manual-retry-job"]);
+    const broken = client(null, null, true);
+    await expect(loadJobFeedback(broken.admin, job, "stage-1")).rejects.toThrow(
+      "immutable feedback generation is unavailable",
+    );
+    expect(broken.tables).not.toContain("session_artifact_feedback");
   });
   it("renders hostile submitted quotes and comment text as data without expanding their template syntax", async () => {
     const body =
@@ -81,6 +103,6 @@ describe("loadJobFeedback", () => {
     const error = { message: "Unavailable" };
     const { admin, tables } = client(null, error);
     await expect(loadJobFeedback(admin, job, "stage-1")).rejects.toBe(error);
-    expect(tables).toEqual(["artifact_feedback_batches"]);
+    expect(tables).toEqual(["artifact_feedback_batch_jobs"]);
   });
 });

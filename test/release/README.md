@@ -32,7 +32,7 @@ The scenario proves:
   original files and exact reviewed input SHAs while updating one canonical PR.
 - Inline feedback is submitted once with the displayed review revision. Exact
   retries return the same batch and job; later edits/replies remain unsent and
-  cannot change the saved feedback used by either worker attempt.
+  cannot change the saved feedback. A terminal failure creates a new manual-retry job, which binds to that same immutable generation before real processor execution. Automatic replacement attempts retain it too.
 - A captured result survives a failed retained-ref push and sandbox destruction;
   checkpoint recovery proceeds while the release is paused, while canonical
   publication waits for resume.

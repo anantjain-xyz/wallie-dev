@@ -453,9 +453,50 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(savedInput?.input_sha).toBe(buildSha);
     assert(savedInput?.input_ref);
 
+    // A terminal failure followed by Retry Run creates a new job. It must
+    // inherit the original immutable batch before entering the real processor.
+    const terminalJob = await claimJob(admin, rejection.jobId);
+    const initialFailedRunId = await rpc<string>(admin, "start_session_job_attempt", {
+      p_job_id: terminalJob.id,
+      p_attempt_count: terminalJob.attempt_count,
+      p_expected_stage_id: reviewedBeforeComments.current_stage_id,
+      p_expected_artifact_version: reviewedArtifact.version,
+      p_model_provider: "codex",
+      p_model_name: "gpt-5.5",
+      p_run_type: "project",
+      p_branch_name: "wallie/controlled-terminal-feedback-failure",
+    });
+    assert(initialFailedRunId);
+    expect(
+      await rpc(admin, "fail_session_job_attempt", {
+        p_job_id: terminalJob.id,
+        p_attempt_count: terminalJob.attempt_count,
+        p_run_id: initialFailedRunId,
+        p_error: "Controlled terminal feedback failure",
+        p_retry: false,
+        p_max_retries: 1,
+      }),
+    ).toBe("error");
+    const manualReceipts = await rpc<Array<{ job_id: string; run_id: string }>>(
+      admin,
+      "enqueue_session_job_with_run",
+      {
+        p_session_id: sessionId,
+        p_workspace_id: ids.workspaceId,
+        p_expected_stage_id: reviewedBeforeComments.current_stage_id,
+        p_requested_by_member_id: ids.memberId,
+        p_trigger_type: "manual_retry",
+        p_agent_model_provider: "codex",
+        p_agent_model_name: "gpt-5.5",
+        p_run_type: "project",
+      },
+    );
+    const manualRetryJobId = manualReceipts[0]?.job_id;
+    assert(manualRetryJobId && manualRetryJobId !== rejection.jobId);
+
     // An old worker loses its actual database claim while its runner is paused.
     phase = "stale";
-    const oldJob = await claimJob(admin, rejection.jobId);
+    const oldJob = await claimJob(admin, manualRetryJobId);
     const pendingOldWorker = production.processPipelineJob({ admin, job: oldJob });
     staleWorker = pendingOldWorker;
     const oldExecution = await Promise.race([
@@ -464,6 +505,17 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         throw new Error("Old worker completed before reaching the replacement barrier.");
       }),
     ]);
+    expect(
+      await checked(
+        admin
+          .from("artifact_feedback_batch_jobs")
+          .select("batch_id")
+          .eq("job_id", oldJob.id)
+          .eq("workspace_id", ids.workspaceId)
+          .eq("session_id", sessionId)
+          .single(),
+      ),
+    ).toEqual({ batch_id: rejection.feedbackBatchId });
     expect(
       await rpc(admin, "fail_stalled_session_job_attempt", {
         p_job_id: oldJob.id,
@@ -641,6 +693,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         outputKind: restarted.outputKind,
       },
       feedbackBatch: {
+        manualRetryJobId,
+        initialFailedRunId,
         id: savedBatch.id,
         jobId: savedBatch.job_id,
         checkpointRunId: savedBatch.checkpoint_run_id,

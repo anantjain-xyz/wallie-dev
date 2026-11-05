@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -63,12 +65,26 @@ type ArtifactPanelProps = {
   stageSlug: string;
 };
 
-type ArtifactTab = "rendered" | "raw" | "versions";
+const RevisionReviewPanel = dynamic(
+  () =>
+    import("@/features/sessions/review/revision-review-panel").then(
+      (module) => module.RevisionReviewPanel,
+    ),
+  {
+    loading: () => (
+      <p role="status" className="text-xs text-muted">
+        Loading revision review…
+      </p>
+    ),
+  },
+);
+
+type ArtifactTab = "rendered" | "raw" | "versions" | "compare";
 type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
   sanitizedHtml?: string | null;
 };
 
-const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions"];
+const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions", "compare"];
 export const ARTIFACT_ID_PARAM = "artifactId";
 export const ARTIFACT_VERSION_PARAM = "artifactVersion";
 export const ARTIFACT_STAGE_PARAM = "artifactStage";
@@ -1114,6 +1130,7 @@ function ArtifactPanelStage({
     raw: "Raw",
     rendered: "Rendered",
     versions: "Versions",
+    compare: "Compare",
   };
 
   const versionHeading =
@@ -1217,6 +1234,23 @@ function ArtifactPanelStage({
               })}
             </ul>
           ) : null}
+        </div>
+      ) : activeTab === "compare" ? (
+        <div aria-labelledby="artifact-compare-tab" id="artifact-compare-panel" role="tabpanel">
+          {visibleBody?.id ? (
+            <RevisionReviewPanel
+              key={visibleBody.id}
+              sessionId={sessionId}
+              artifactId={visibleBody.id}
+              version={visibleBody.version}
+              stageSlug={stageSlug}
+              source={visibleBody.payload}
+            />
+          ) : bodyError ? (
+            <FailureHint message={bodyError} onRetry={retryBody} />
+          ) : (
+            <ProgressHint text="Loading artifact identity for comparison." />
+          )}
         </div>
       ) : (
         <div

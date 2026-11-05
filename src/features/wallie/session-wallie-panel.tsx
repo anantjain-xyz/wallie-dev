@@ -43,6 +43,8 @@ import { cn } from "@/lib/utils";
 
 /** Cap auto-loaded message history so opening a busy run cannot mount unbounded logs. */
 export const WALLIE_RUN_MESSAGE_LIMIT = 100;
+const LINKED_RUN_UNAVAILABLE =
+  "The linked run is unavailable in this session. Retry the link after refreshing run history.";
 
 type FlashMessage = {
   kind: "error" | "info" | "success";
@@ -190,6 +192,8 @@ function SessionWalliePanelContent({
     session.archivedAt,
   ]);
   const summaryRunId = summaryRun?.id ?? null;
+  const linkedRunSequence = useRef(0);
+  const linkedRunFocus = useRef<string | null>(null);
   usePublishExecution({
     sessionId: session.id,
     run: summaryRun ?? undefined,
@@ -621,6 +625,70 @@ function SessionWalliePanelContent({
   const handleToggleRun = useCallback((runId: string) => {
     setExpandedRunId((currentRunId) => (currentRunId === runId ? null : runId));
   }, []);
+
+  // Review provenance links may refer to an attempt outside the first history
+  // page. Load that exact run through RLS, without scanning unrelated history.
+  const openLinkedRun = useEffectEvent(async () => {
+    const match = window.location.hash.match(
+      /^#wallie-run-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+    );
+    const sequence = ++linkedRunSequence.current;
+    if (!match) return;
+    const id = match[1]!;
+    try {
+      if (!runs.some((run) => run.id === id)) {
+        const { data: row, error } = await supabase
+          .from("agent_runs")
+          .select(
+            "id, branch_name, created_at, finished_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, started_at, stage_id, stage_name, stage_slug, status, triggered_by_member_id, updated_at, attempt_count",
+          )
+          .eq("id", id)
+          .eq("workspace_id", session.workspaceId)
+          .eq("session_id", session.id)
+          .maybeSingle();
+        if (sequence !== linkedRunSequence.current) return;
+        if (error || !row) throw new Error("The linked run is unavailable in this session.");
+        setRuns((current) =>
+          mergeWallieRuns(current, [
+            mapAgentRunRow(row, memberIndex, [], { attemptCount: row.attempt_count ?? 1 }),
+          ]),
+        );
+      }
+      if (sequence !== linkedRunSequence.current) return;
+      setFlashMessage((current) => (current?.text === LINKED_RUN_UNAVAILABLE ? null : current));
+      linkedRunFocus.current = id;
+      setExpandedRunId(id);
+    } catch {
+      if (sequence === linkedRunSequence.current)
+        setFlashMessage({
+          kind: "error",
+          text: LINKED_RUN_UNAVAILABLE,
+        });
+    }
+  });
+  useEffect(() => {
+    const receive = () => {
+      void openLinkedRun();
+    };
+    window.addEventListener("hashchange", receive);
+    queueMicrotask(receive);
+    return () => {
+      linkedRunSequence.current += 1;
+      window.removeEventListener("hashchange", receive);
+    };
+  }, [session.id]);
+  useEffect(() => {
+    if (!expandedRunId || linkedRunFocus.current !== expandedRunId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(`wallie-run-${expandedRunId}`);
+      if (target) {
+        target.focus();
+        target.scrollIntoView?.({ block: "start" });
+        linkedRunFocus.current = null;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [expandedRunId, runs]);
 
   const handleLoadOlderRuns = useCallback(async () => {
     if (!nextRunCursor || isLoadingOlderRuns) return;

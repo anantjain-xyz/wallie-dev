@@ -1,4 +1,5 @@
 import type { Tables } from "@/lib/supabase/database.types";
+import type { AnchorMapping } from "./revision";
 
 export type ArtifactReviewThread = Tables<"artifact_review_threads">;
 export type ArtifactReviewComment = Tables<"artifact_review_comments">;
@@ -8,6 +9,7 @@ export type ReviewThreadListPayload = {
   reviewRevision: number;
   submittedThreadRevisions: Record<string, number>;
   threads: ArtifactReviewThread[];
+  mappings?: Record<string, AnchorMapping>;
   nextCursor: ReviewCursor | null;
   counts: { total: number; open: number; blocking: number };
   viewer: ReviewViewer;

@@ -354,7 +354,8 @@ describe("ArtifactPanel", () => {
     renderPanel();
     const artifactTab = screen.getByRole("tab", { name: "Rendered" });
     artifactTab.focus();
-    fireEvent.keyDown(artifactTab, { key: "End" });
+    fireEvent.keyDown(artifactTab, { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Raw" }), { key: "ArrowRight" });
 
     expect(screen.getByRole("tab", { name: "Versions" }).getAttribute("aria-selected")).toBe(
       "true",
