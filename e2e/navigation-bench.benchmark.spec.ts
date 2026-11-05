@@ -1,9 +1,11 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import {
   expect,
   test,
   type Browser,
+  type CDPSession,
   type Page,
   type Request,
   type Response,
@@ -16,6 +18,28 @@ const sessionPath = `${workspacePath}/sessions/1001`;
 const sessionTitle = "[bench] Checkout latency";
 const timingLogPath = process.env.WALLIE_TIMING_LOG_PATH ?? "/tmp/wallie-navigation-bench.jsonl";
 const runs = Number(process.env.SNAPPY_RUNS ?? "5");
+const sessionOnly = process.env.SNAPPY_SESSION_ONLY === "1";
+const sessionIntent = process.env.SNAPPY_SESSION_INTENT ?? "immediate";
+const profile = process.env.SNAPPY_PROFILE === "1";
+
+test.use({ trace: "off" });
+
+type SessionOpenTiming = {
+  abortedRscRequestCount: number;
+  clickToArtifactMs: number;
+  clickToPushMs: number;
+  clickToReviewReadyMs: number;
+  clickToStageMs: number;
+  intent: string;
+  pushToReviewReadyMs: number;
+  recoveryRequestCount: number;
+  rscResponses: Array<{
+    responseEndMs: number;
+    responseStatus: number;
+    serverTiming: string[];
+    startMs: number;
+  }>;
+};
 
 type FlowId =
   | "pipeline-load"
@@ -64,6 +88,7 @@ type FlowSample = {
   run: number;
   scriptBytes: number;
   serverTimings: ServerTimingRecord[];
+  sessionOpen?: SessionOpenTiming;
   styleBytes: number;
   ttfbMs: number | null;
 };
@@ -192,6 +217,160 @@ async function visibleNavLink(page: Page, name: string) {
   return link;
 }
 
+async function installSessionOpenProbe(page: Page) {
+  await page.addInitScript(
+    ({ destination, title }) => {
+      const mark = (name: string) => {
+        const key = `session-open:${name}`;
+        if (performance.getEntriesByName(key).length === 0) performance.mark(key);
+      };
+      type Router = { push: (href: string, options?: { scroll?: boolean }) => void };
+      let next: { router?: Router };
+      Object.defineProperty(window, "next", {
+        configurable: true,
+        get: () => next,
+        set(value: { router?: Router }) {
+          next = value;
+          let router: Router;
+          Object.defineProperty(value, "router", {
+            configurable: true,
+            get: () => router,
+            set(value: Router) {
+              router = value;
+              const push = router.push;
+              router.push = function (href, options) {
+                if (new URL(href, location.origin).pathname === destination) mark("push");
+                return push.call(this, href, options);
+              };
+            },
+          });
+        },
+      });
+
+      const visible = (element: Element | null) =>
+        element !== null &&
+        element.getClientRects().length > 0 &&
+        getComputedStyle(element).visibility !== "hidden";
+      const reviewReady = () => {
+        if (location.pathname !== destination) return false;
+        const heading = document.querySelector("h1");
+        const stages = document.querySelector('nav[aria-label="Pipeline stages"] button');
+        const stageReady = heading?.textContent?.trim() === title && visible(stages);
+        if (stageReady) mark("stage");
+        const panel = document.querySelector("#artifact-rendered-panel");
+        const body = panel?.querySelector(".artifact-content");
+        const artifactReady =
+          visible(body ?? null) &&
+          body?.querySelector("h1")?.textContent === "Checkout latency" &&
+          body?.textContent?.includes(
+            "The checkout path waits on inventory, tax, and shipping before it can show a total.",
+          ) &&
+          /v1\s*·\s*Latest/.test(panel?.textContent ?? "");
+        if (artifactReady) mark("artifact");
+        const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+        const enabled = (label: string) =>
+          buttons.some(
+            (button) => button.innerText.trim() === label && !button.disabled && visible(button),
+          );
+        return (
+          stageReady && artifactReady && enabled("Approve stage") && enabled("Request changes")
+        );
+      };
+      const check = () => {
+        if (reviewReady()) {
+          requestAnimationFrame(() => {
+            if (reviewReady()) mark("review-ready");
+            else requestAnimationFrame(check);
+          });
+        } else requestAnimationFrame(check);
+      };
+      document.addEventListener(
+        "click",
+        (event) => {
+          const link = event.target instanceof Element ? event.target.closest("a") : null;
+          if (link?.pathname !== destination) return;
+          mark("click");
+          requestAnimationFrame(check);
+        },
+        { capture: true, once: true },
+      );
+    },
+    { destination: sessionPath, title: sessionTitle },
+  );
+}
+
+async function readSessionOpenTiming(page: Page, requests: Request[]): Promise<SessionOpenTiming> {
+  await page.waitForFunction(
+    () => performance.getEntriesByName("session-open:review-ready").length > 0,
+  );
+  const timing = await page.evaluate((destination) => {
+    const at = (name: string) => {
+      const entry = performance.getEntriesByName(`session-open:${name}`)[0];
+      if (!entry) throw new Error(`Session timing is missing ${name}.`);
+      return entry.startTime;
+    };
+    const click = at("click");
+    const push = at("push");
+    const ready = at("review-ready");
+    return {
+      clickToArtifactMs: at("artifact") - click,
+      clickToPushMs: push - click,
+      clickToReviewReadyMs: ready - click,
+      clickToStageMs: at("stage") - click,
+      pushToReviewReadyMs: ready - push,
+      rscResponses: performance.getEntriesByType("resource").flatMap((entry) => {
+        const resource = entry as PerformanceResourceTiming;
+        const url = new URL(resource.name);
+        return url.pathname === destination && url.searchParams.has("_rsc")
+          ? [
+              {
+                responseEndMs: resource.responseEnd - click,
+                responseStatus: resource.responseStatus,
+                serverTiming: resource.serverTiming.map((entry) => entry.name),
+                startMs: resource.startTime - click,
+              },
+            ]
+          : [];
+      }),
+    };
+  }, sessionPath);
+  return {
+    ...timing,
+    abortedRscRequestCount: requests.filter(
+      (request) =>
+        new URL(request.url()).pathname === sessionPath &&
+        request.headers().rsc === "1" &&
+        request.failure() !== null,
+    ).length,
+    intent: sessionIntent,
+    recoveryRequestCount: requests.filter((request) =>
+      /\/review-capabilities(?:\?|$)|\/rpc\/get_session_detail_page(?:\?|$)/.test(request.url()),
+    ).length,
+  };
+}
+
+async function finishProfile(session: CDPSession, path: string) {
+  const complete = new Promise<string>((resolve, reject) => {
+    session.once("Tracing.tracingComplete", ({ stream }) => {
+      if (stream) resolve(stream);
+      else reject(new Error("Chrome returned a trace without a stream."));
+    });
+  });
+  await session.send("Tracing.end");
+  const handle = await complete;
+  let trace = "";
+  for (;;) {
+    const chunk = await session.send("IO.read", { handle });
+    trace += chunk.base64Encoded ? Buffer.from(chunk.data, "base64").toString("utf8") : chunk.data;
+    if (chunk.eof) break;
+  }
+  await session.send("IO.close", { handle });
+  await session.detach();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, trace);
+  console.log(`session-open diagnostic trace ${path}`);
+}
+
 async function collectSample(
   page: Page,
   flow: FlowId,
@@ -287,7 +466,7 @@ async function collectSample(
     .filter((request) => request.path.includes("_rsc="))
     .reduce((total, request) => total + request.transferBytes, 0);
   const failedRequestCount = requests.filter(
-    (request) => request.failed || (request.status !== null && request.status >= 500),
+    (request) => request.failed || (request.status !== null && request.status >= 400),
   ).length;
   const error = pageErrors[0] ?? null;
 
@@ -315,6 +494,9 @@ async function collectSample(
 
 test("measures five logged-in navigation flows", async ({ browser }) => {
   assertRunCount(runs);
+  if (!["immediate", "settled", "keyboard", "touch"].includes(sessionIntent)) {
+    throw new Error("SNAPPY_SESSION_INTENT must be immediate, settled, keyboard, or touch.");
+  }
   writeFileSync(timingLogPath, "");
   const setup = await browser.newContext();
   const setupPage = await setup.newPage();
@@ -325,26 +507,28 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
 
   const samples: FlowSample[] = [];
   for (let run = 1; run <= runs; run += 1) {
-    samples.push(
-      await measure(browser, storageState, "pipeline-load", run, async (page, begin) => {
-        await begin();
-        await page.goto(workspacePath, { waitUntil: "commit" });
-        await waitForPipeline(page);
-        return page.evaluate(() => performance.now());
-      }),
-    );
-    samples.push(
-      await measure(browser, storageState, "sessions-switch", run, async (page, begin) => {
-        await page.goto(workspacePath, { waitUntil: "commit" });
-        await waitForPipeline(page);
-        const link = await visibleNavLink(page, "Sessions");
-        await begin();
-        const startedAt = await page.evaluate(() => performance.now());
-        await link.click();
-        await waitForSessions(page);
-        return page.evaluate((start) => performance.now() - start, startedAt);
-      }),
-    );
+    if (!sessionOnly) {
+      samples.push(
+        await measure(browser, storageState, "pipeline-load", run, async (page, begin) => {
+          await begin();
+          await page.goto(workspacePath, { waitUntil: "commit" });
+          await waitForPipeline(page);
+          return page.evaluate(() => performance.now());
+        }),
+      );
+      samples.push(
+        await measure(browser, storageState, "sessions-switch", run, async (page, begin) => {
+          await page.goto(workspacePath, { waitUntil: "commit" });
+          await waitForPipeline(page);
+          const link = await visibleNavLink(page, "Sessions");
+          await begin();
+          const startedAt = await page.evaluate(() => performance.now());
+          await link.click();
+          await waitForSessions(page);
+          return page.evaluate((start) => performance.now() - start, startedAt);
+        }),
+      );
+    }
     samples.push(
       await measure(browser, storageState, "session-open", run, async (page, begin) => {
         await page.goto(`${workspacePath}/sessions`, { waitUntil: "commit" });
@@ -354,41 +538,70 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
         });
         await expect(link).toBeVisible();
         await begin();
+        if (sessionIntent === "settled") {
+          const pageResponse = page.waitForResponse((response) => {
+            const headers = response.request().headers();
+            return (
+              new URL(response.url()).pathname === sessionPath &&
+              headers.rsc === "1" &&
+              Boolean(headers["next-router-state-tree"]) &&
+              !("next-router-prefetch" in headers) &&
+              !("next-router-segment-prefetch" in headers)
+            );
+          });
+          await link.hover();
+          const response = await pageResponse;
+          expect(response.ok()).toBe(true);
+          await page.waitForFunction((responseUrl) => {
+            const resource = performance.getEntriesByName(responseUrl)[0] as
+              | PerformanceResourceTiming
+              | undefined;
+            return (
+              resource !== undefined &&
+              resource.responseEnd > 0 &&
+              performance.now() - resource.responseEnd > 150
+            );
+          }, response.url());
+        } else if (sessionIntent === "keyboard") await link.focus();
         const startedAt = await page.evaluate(() => performance.now());
-        await link.click();
+        if (sessionIntent === "keyboard") await page.keyboard.press("Enter");
+        else if (sessionIntent === "touch") await link.tap();
+        else await link.click();
         await waitForSession(page);
         return page.evaluate((start) => performance.now() - start, startedAt);
       }),
     );
-    samples.push(
-      await measure(browser, storageState, "settings-switch", run, async (page, begin) => {
-        await page.goto(workspacePath, { waitUntil: "commit" });
-        await waitForPipeline(page);
-        const link = await visibleNavLink(page, "Settings");
-        await begin();
-        const startedAt = await page.evaluate(() => performance.now());
-        await link.click();
-        await waitForSettings(page);
-        return page.evaluate((start) => performance.now() - start, startedAt);
-      }),
-    );
-    samples.push(
-      await measure(browser, storageState, "new-session-modal", run, async (page, begin) => {
-        await page.goto(workspacePath, { waitUntil: "commit" });
-        await waitForPipeline(page);
-        const button = page.getByRole("button", { name: "New session", exact: true });
-        await expect(button).toHaveCount(1);
-        await begin();
-        const startedAt = await page.evaluate(() => performance.now());
-        await button.click();
-        await waitForNewSession(page);
-        return page.evaluate((start) => performance.now() - start, startedAt);
-      }),
-    );
+    if (!sessionOnly) {
+      samples.push(
+        await measure(browser, storageState, "settings-switch", run, async (page, begin) => {
+          await page.goto(workspacePath, { waitUntil: "commit" });
+          await waitForPipeline(page);
+          const link = await visibleNavLink(page, "Settings");
+          await begin();
+          const startedAt = await page.evaluate(() => performance.now());
+          await link.click();
+          await waitForSettings(page);
+          return page.evaluate((start) => performance.now() - start, startedAt);
+        }),
+      );
+      samples.push(
+        await measure(browser, storageState, "new-session-modal", run, async (page, begin) => {
+          await page.goto(workspacePath, { waitUntil: "commit" });
+          await waitForPipeline(page);
+          const button = page.getByRole("button", { name: "New session", exact: true });
+          await expect(button).toHaveCount(1);
+          await begin();
+          const startedAt = await page.evaluate(() => performance.now());
+          await button.click();
+          await waitForNewSession(page);
+          return page.evaluate((start) => performance.now() - start, startedAt);
+        }),
+      );
+    }
   }
 
   const failed = samples.filter((sample) => !sample.ok);
-  console.log(`navigation-bench ${JSON.stringify({ runs, samples })}`);
+  console.log(`navigation-bench ${JSON.stringify({ diagnostic: profile, runs, samples })}`);
   expect(
     failed.map(
       (sample) =>
@@ -405,8 +618,24 @@ async function measure(
   runFlow: (page: Page, begin: () => Promise<void>) => Promise<number>,
 ): Promise<FlowSample> {
   const requestId = `snappy-${flow}-${run}-${Date.now()}`;
-  const context = await browser.newContext({ storageState });
+  const context = await browser.newContext({
+    storageState,
+    ...(flow === "session-open" && sessionIntent === "touch"
+      ? { hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } }
+      : {}),
+  });
   const page = await context.newPage();
+  page.setDefaultTimeout(20_000);
+  if (flow === "session-open") await installSessionOpenProbe(page);
+  let profileSession: CDPSession | null = null;
+  if (profile && flow === "session-open" && run === 1) {
+    profileSession = await context.newCDPSession(page);
+    await profileSession.send("Tracing.start", {
+      categories:
+        "devtools.timeline,blink.user_timing,toplevel,v8,disabled-by-default-v8.cpu_profiler",
+      transferMode: "ReturnAsStream",
+    });
+  }
   await page.setExtraHTTPHeaders({ "x-request-id": `${requestId}-warmup` });
   const startedRequests: Request[] = [];
   const finished = new Map<Request, Response | null>();
@@ -457,6 +686,12 @@ async function measure(
 
   try {
     const durationMs = await runFlow(page, begin);
+    if (flow === "session-open") {
+      await page.waitForFunction(
+        () => performance.getEntriesByName("session-open:review-ready").length > 0,
+      );
+      await page.waitForTimeout(250);
+    }
     recording = false;
     const settleDeadline = Date.now() + 2_000;
     while (finished.size < startedRequests.length && Date.now() < settleDeadline) {
@@ -475,6 +710,20 @@ async function measure(
       pageErrors,
     );
     sample.durationMs = Math.round(durationMs);
+    if (flow === "session-open") {
+      sample.sessionOpen = await readSessionOpenTiming(page, startedRequests);
+      const reviewResponse = page.waitForResponse((response) =>
+        /\/api\/sessions\/[^/]+\/reviews\?/.test(response.url()),
+      );
+      await page.getByRole("button", { name: "Request changes", exact: true }).click();
+      expect(
+        (await reviewResponse).ok(),
+        "Review controls must load the displayed artifact's review",
+      ).toBe(true);
+      await expect(
+        page.getByRole("dialog", { name: "Request changes", exact: true }),
+      ).toBeVisible();
+    }
     if (flow === "pipeline-load" && sample.serverTimings.length === 0) {
       sample.ok = false;
       sample.error = sample.error ?? "Server timing log has no record for the pipeline document.";
@@ -508,6 +757,12 @@ async function measure(
       ttfbMs: null,
     };
   } finally {
+    if (profileSession) {
+      await finishProfile(
+        profileSession,
+        process.env.SNAPPY_PROFILE_PATH ?? test.info().outputPath("session-open.trace.json"),
+      );
+    }
     await context.close();
   }
 }

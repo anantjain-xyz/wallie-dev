@@ -14,10 +14,11 @@ import {
 } from "react";
 
 import { isUnmodifiedPrimaryClick, startInteraction } from "@/lib/telemetry/interaction-rum";
+import { sessionPageDataResponseEnd } from "@/lib/performance/session-prefetch";
 
 type Prefetch = (href: string) => void;
 
-const SessionDetailPrefetchContext = createContext<Set<string> | null>(null);
+const SessionDetailPrefetchContext = createContext<Map<string, number> | null>(null);
 const PREFETCH_SETTLE_TIMEOUT_MS = 2_000;
 const PREFETCH_QUIET_MS = 80;
 
@@ -36,13 +37,13 @@ export function isSessionDetailPrefetchResource(resourceUrl: string, href: strin
 }
 
 export function prefetchSessionDetailOnce(
-  prefetchedHrefs: Set<string>,
+  prefetchedHrefs: Map<string, number>,
   href: string,
   prefetch: Prefetch,
 ) {
   if (prefetchedHrefs.has(href)) return;
 
-  prefetchedHrefs.add(href);
+  prefetchedHrefs.set(href, performance.now());
   prefetch(href);
 }
 
@@ -58,40 +59,45 @@ function sessionDetailPrefetchHasBody(entry: PerformanceResourceTiming) {
   return entry.responseEnd > 0 && (entry.decodedBodySize > 0 || entry.transferSize > 0);
 }
 
-function sessionDetailPrefetchSettled(href: string) {
-  return performance.getEntriesByType("resource").some((entry) => {
-    return (
-      entry instanceof PerformanceResourceTiming &&
-      isSessionDetailPrefetchResource(entry.name, href) &&
-      sessionDetailPrefetchHasBody(entry)
-    );
-  });
-}
-
-function waitForSessionDetailPrefetch(href: string) {
+function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
   // A full prefetch can be more than one RSC response. Navigating on the first
   // one aborts the rest. Wait until the burst has gone quiet.
   return new Promise<void>((resolve) => {
     let quietTimer = 0;
     let settled = false;
+    let latestPageResponseEnd: number | null = null;
     const timeout = window.setTimeout(finish, PREFETCH_SETTLE_TIMEOUT_MS);
     const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        if (
-          entry instanceof PerformanceResourceTiming &&
-          isSessionDetailPrefetchResource(entry.name, href) &&
-          sessionDetailPrefetchHasBody(entry)
-        ) {
-          armQuietPeriod();
-        }
-      }
+      observeResponses(list.getEntries());
     });
     observer.observe({ type: "resource", buffered: true });
-    if (sessionDetailPrefetchSettled(href)) armQuietPeriod();
+    observeResponses(performance.getEntriesByType("resource"));
 
-    function armQuietPeriod() {
-      window.clearTimeout(quietTimer);
-      quietTimer = window.setTimeout(finish, PREFETCH_QUIET_MS);
+    function observeResponses(entries: PerformanceEntry[]) {
+      for (const entry of entries) {
+        if (
+          !(entry instanceof PerformanceResourceTiming) ||
+          !isSessionDetailPrefetchResource(entry.name, href) ||
+          !sessionDetailPrefetchHasBody(entry)
+        ) {
+          continue;
+        }
+        const responseEnd = sessionPageDataResponseEnd(
+          entry,
+          href,
+          intentStartedAt,
+          location.origin,
+        );
+        if (responseEnd !== null) {
+          latestPageResponseEnd = Math.max(latestPageResponseEnd ?? 0, responseEnd);
+        }
+        const delay =
+          latestPageResponseEnd === null
+            ? PREFETCH_QUIET_MS
+            : Math.max(0, latestPageResponseEnd + PREFETCH_QUIET_MS - performance.now());
+        window.clearTimeout(quietTimer);
+        quietTimer = window.setTimeout(finish, delay);
+      }
     }
 
     function finish() {
@@ -106,7 +112,7 @@ function waitForSessionDetailPrefetch(href: string) {
 }
 
 export function SessionDetailLinkPrefetchBoundary({ children }: { children: ReactNode }) {
-  const [prefetchedHrefs] = useState(() => new Set<string>());
+  const [prefetchedHrefs] = useState(() => new Map<string, number>());
 
   return (
     <SessionDetailPrefetchContext.Provider value={prefetchedHrefs}>
@@ -137,7 +143,7 @@ export function SessionDetailLink({
 }: SessionDetailLinkProps) {
   const router = useRouter();
   const boundaryPrefetchedHrefs = useContext(SessionDetailPrefetchContext);
-  const [localPrefetchedHrefs] = useState(() => new Set<string>());
+  const [localPrefetchedHrefs] = useState(() => new Map<string, number>());
   const prefetchedHrefs = boundaryPrefetchedHrefs ?? localPrefetchedHrefs;
 
   function prefetch() {
@@ -176,9 +182,11 @@ export function SessionDetailLink({
         }
         event.preventDefault();
         const destination = href;
-        void waitForSessionDetailPrefetch(destination).then(() => {
-          router.push(destination);
-        });
+        void waitForSessionDetailPrefetch(destination, prefetchedHrefs.get(destination)!).then(
+          () => {
+            router.push(destination);
+          },
+        );
       }}
       onFocus={(event) => {
         onFocus?.(event);

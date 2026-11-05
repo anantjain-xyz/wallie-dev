@@ -15,6 +15,24 @@ The command loads 160 extra sessions into the `acme-corp` workspace, builds the 
 
 Use `--skip-build` when the current production build is the one you want to measure. Use `--skip-seed` when the `[bench]` sessions are already loaded. Use `--runs 5` to change the run count. Use `--out bench-results/custom.json` to choose the result file.
 
+## Measure session review readiness
+
+Run `pnpm bench:navigation --session-only --session-intent immediate`. The default intent keeps the existing mouse-click flow. Other intent values are `settled`, which waits for hover prefetch responses before clicking, `keyboard`, which focuses the row then presses Enter, and `touch`, which taps at a 390px viewport with touch enabled. Use `--supabase-workdir /path/to/local/project` for an isolated local Supabase stack.
+
+Session samples retain the original `durationMs` metric and add `sessionOpen` timings from browser marks:
+
+| Field                  | Boundary                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `clickToPushMs`        | Native click capture to the router's push call                                                                    |
+| `clickToArtifactMs`    | Native click to the expected rendered latest artifact                                                             |
+| `clickToReviewReadyMs` | Native click to a painted frame with the expected artifact and enabled Approve stage and Request changes controls |
+| `pushToReviewReadyMs`  | Router push to that review-ready frame                                                                            |
+| `rscResponses`         | Destination RSC request start and response end, relative to the native click                                      |
+
+The readiness check requires the seeded Checkout latency heading, its expected paragraph, and the v1 Latest label. It checks that Request changes loads a review successfully after the timed region. Run activity and the unopened comments panel are separate work and do not delay this metric. Browser marks exclude Playwright's actionability and pointer setup time. Resource timings remain intact between intent and click so the app can observe its prefetch responses. Request recording extends 250 ms after the benchmark observes readiness to capture later recovery reads.
+
+Reported runs disable Playwright tracing. Use `--profile --session-only --trace-out bench-results/session-open.trace.json` for a separate Chrome diagnostic trace with browser tasks, CPU samples, network work, and the same marks. Profiling defaults to one run. The result JSON labels these runs `diagnostic`; do not use their durations for before/after claims.
+
 ## What each flow times
 
 The clock stops when the content below is visible and the workspace shell has hydrated. A run that misses that content, throws a page error, or returns HTTP 500 is a failed run.
