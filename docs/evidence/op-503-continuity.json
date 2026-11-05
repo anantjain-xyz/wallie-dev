@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "fixture": "local-fake-provider-with-real-database-and-git",
+  "verifiedAt": "2026-11-05T19:51:17.446Z",
+  "workspaceId": "d2fa889e-da3a-4eea-8e9f-4b54c0c602e0",
+  "sessionId": "9d5de8bf-5594-47b8-84c8-1805b6762d8a",
+  "repository": {
+    "connectionId": "3b1862c3-90b1-4d86-936a-7a969a7fccee",
+    "numericId": 1793908248,
+    "fullName": "wallie-fixture/continuity-d2fa889e-da3a-4eea-8e9f-4b54c0c602e0"
+  },
+  "initialBaseSha": "a8ae1b67c16b2bebbbe68139368a8ce355f0f3f5",
+  "movingDefaultSha": "c65369dda49dfa910c67d8f8a05a92679e75c9e6",
+  "checkpoints": [
+    {
+      "run_id": "35a45ce6-10cd-4edd-bde4-2511e8b8c49c",
+      "job_id": "85ed74d3-6e37-494d-8284-ba337170e9c2",
+      "attempt_count": 1,
+      "artifact_id": "5fb39954-eb77-480b-aaba-c398ae68bc5f",
+      "input_sha": "a8ae1b67c16b2bebbbe68139368a8ce355f0f3f5",
+      "output_sha": "2b0c7576e7e6ea95b0aa08c1a17b3b328234d9e5",
+      "output_ref": "refs/heads/wallie/checkpoints/35a45ce6-10cd-4edd-bde4-2511e8b8c49c/2b0c7576e7e6ea95b0aa08c1a17b3b328234d9e5",
+      "output_kind": "code",
+      "initial_base_sha": "a8ae1b67c16b2bebbbe68139368a8ce355f0f3f5",
+      "stage": "plan",
+      "artifactVersion": 1
+    },
+    {
+      "run_id": "450b9038-aec2-48c1-bc13-cc3b4b13c4d9",
+      "job_id": "74501795-e4e9-4e92-84ed-cfa59bb74fbe",
+      "attempt_count": 1,
+      "artifact_id": "0c9e377f-9942-4dc1-90e5-b03d47a02f82",
+      "input_sha": "2b0c7576e7e6ea95b0aa08c1a17b3b328234d9e5",
+      "output_sha": "9c1a028b2e7327e6b4b35dc38341a87694b6680f",
+      "output_ref": "refs/heads/wallie/checkpoints/450b9038-aec2-48c1-bc13-cc3b4b13c4d9/9c1a028b2e7327e6b4b35dc38341a87694b6680f",
+      "output_kind": "code",
+      "initial_base_sha": "a8ae1b67c16b2bebbbe68139368a8ce355f0f3f5",
+      "stage": "build",
+      "artifactVersion": 1
+    },
+    {
+      "run_id": "2d08b4a0-8834-4b36-8350-e9e1026f1bfb",
+      "job_id": "0044189f-c464-4bd5-bb3f-63f2208c55bf",
+      "attempt_count": 2,
+      "artifact_id": "e1dbd56a-56c2-42c9-8606-2a0abbecde5f",
+      "input_sha": "9c1a028b2e7327e6b4b35dc38341a87694b6680f",
+      "output_sha": "0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+      "output_ref": "refs/heads/wallie/checkpoints/2d08b4a0-8834-4b36-8350-e9e1026f1bfb/0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+      "output_kind": "code",
+      "initial_base_sha": "a8ae1b67c16b2bebbbe68139368a8ce355f0f3f5",
+      "stage": "build",
+      "artifactVersion": 2
+    },
+    {
+      "run_id": "8fc898c6-6fc8-441e-ac32-594c3b78dcdb",
+      "job_id": "325fbc4a-cef8-4fbe-bc22-9f72f9dae244",
+      "attempt_count": 1,
+      "artifact_id": "a4ce3378-151f-4386-9c9b-13d9d27cb30c",
+      "input_sha": "0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+      "output_sha": "0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+      "output_ref": null,
+      "output_kind": "no-code",
+      "initial_base_sha": "a8ae1b67c16b2bebbbe68139368a8ce355f0f3f5",
+      "stage": "verify",
+      "artifactVersion": 1
+    }
+  ],
+  "canonicalPullRequest": {
+    "transport": "in-process-fake",
+    "epochId": "c7a467ab-3a6c-4dea-94e0-d9f87db2c04f",
+    "number": 1,
+    "branch": "wallie/sessions/9d5de8bf-5594-47b8-84c8-1805b6762d8a/c7a467ab-3a6c-4dea-94e0-d9f87db2c04f",
+    "headSha": "0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+    "fenceSha": "f68fde2294e71001b3c01217c442a36cde842b26"
+  },
+  "restart": {
+    "parentPid": 50913,
+    "workerPid": 52323,
+    "inputSha": "0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+    "outputSha": "0ee562e40d5c08bf24aa5ebab4578594c5959c0c",
+    "outputKind": "no-code"
+  },
+  "feedbackBatch": {
+    "id": "67b13220-7c6a-4752-b258-5b9658ecd614",
+    "jobId": "0044189f-c464-4bd5-bb3f-63f2208c55bf",
+    "checkpointRunId": "450b9038-aec2-48c1-bc13-cc3b4b13c4d9",
+    "reviewedArtifactId": "0c9e377f-9942-4dc1-90e5-b03d47a02f82",
+    "reviewRevision": 1,
+    "threadId": "d3385852-09e4-4c4a-94b6-9861948851d2",
+    "submittedThreadRevision": 1,
+    "commentsImmutable": true,
+    "laterEditAndReplyRemainUnsent": true,
+    "networkRetrySameGeneration": true
+  },
+  "staleWorker": {
+    "runId": "98d13ae6-08cf-4912-bb0b-27dcfd5acfef",
+    "attemptCount": 1,
+    "replacementRunId": "2d08b4a0-8834-4b36-8350-e9e1026f1bfb",
+    "acceptedCheckpoint": false,
+    "cursorUnchanged": true,
+    "canonicalHeadUnchanged": true
+  },
+  "releasePause": {
+    "capturedCheckpointRecoveredWhilePaused": true,
+    "canonicalPublicationWaitedForResume": true
+  },
+  "cleanup": {
+    "completed": true,
+    "releaseEnabledRestoredTo": false,
+    "fixtureWorkspaceRemoved": true,
+    "fixtureStorageRemoved": true,
+    "localSandboxesRemoved": true
+  }
+}

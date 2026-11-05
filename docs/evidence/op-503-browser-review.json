@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "environment": "isolated-local-supabase",
+  "browser": "Chromium",
+  "modelExecution": "Lifecycle RPC failure/retry/publication fixture; no external provider or GitHub calls",
+  "desktopViewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "mobileComparison": {
+    "width": 390,
+    "rootHorizontalOverflow": 0,
+    "unresolved": 1,
+    "outdated": 3,
+    "savedBatchContainsLaterReply": false
+  },
+  "mobileResubmissionDialog": {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "dialog": {
+      "left": 16,
+      "right": 374,
+      "top": 16,
+      "bottom": 828
+    },
+    "checked": 4,
+    "rootHorizontalOverflow": 0
+  },
+  "immutablePreview": {
+    "httpStatus": 200,
+    "previewExactlyMatchesSavedInput": true,
+    "snapshotCount": 4,
+    "initialRunStatus": "error",
+    "allBlockingOpen": true
+  },
+  "finalRevisionFlow": {
+    "latestVersion": 3,
+    "batchCount": 3,
+    "firstBatchThreads": 4,
+    "resubmittedThreads": 4,
+    "resubmittedSourceVersions": [1],
+    "reviewedVersion": 3,
+    "initialRunStatus": "error",
+    "successfulRetryStatus": "success",
+    "firstBatchContainsLaterReply": false,
+    "resubmittedBatchContainsLaterReply": true,
+    "keysetThreadCount": 4,
+    "keysetUniqueThreads": 4,
+    "mapped": 1,
+    "outdated": 3
+  },
+  "producingRunLink": {
+    "hash": "#wallie-run-067e92c1-f5eb-47de-b4fb-b72c983d040c",
+    "focusedElement": "wallie-run-067e92c1-f5eb-47de-b4fb-b72c983d040c",
+    "runExpanded": "true"
+  },
+  "twoAuthenticatedReviewers": true,
+  "reviewerUpdatesObservedWithoutReload": true,
+  "initialAndResubmissionHttpStatus": 200,
+  "screenshotsFullPage": true,
+  "screenshots": [
+    "op503-compare-desktop.png",
+    "op503-compare-mobile.png",
+    "op503-failed-feedback.png",
+    "op503-preview-desktop.png",
+    "op503-resubmit-mobile.png"
+  ]
+}

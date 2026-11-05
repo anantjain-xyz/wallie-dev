@@ -199,6 +199,8 @@ export const WallieRunCard = memo(function WallieRunCard({
 
   return (
     <article
+      id={`wallie-run-${run.id}`}
+      tabIndex={-1}
       aria-label={isPrimary ? "Current Wallie run" : undefined}
       className={cn(
         "min-w-0",

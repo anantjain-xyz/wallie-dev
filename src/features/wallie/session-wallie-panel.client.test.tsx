@@ -184,6 +184,7 @@ async function settleRecovery() {
 let idleCallback: (() => void) | null;
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/");
   idleCallback = null;
   Object.defineProperty(window, "requestIdleCallback", {
     configurable: true,
@@ -217,6 +218,53 @@ function panel(initialData: WallieSessionData, supabase: SupabaseClient<Database
 }
 
 describe("SessionWalliePanel run history lifecycle", () => {
+  it("opens and focuses the exact run activity linked from revision review", async () => {
+    const id = "50300000-0000-4000-8000-000000000001";
+    const fake = fakeSupabase();
+    const view = panel(data([run(1, { id })]), fake.supabase);
+    await act(async () => {
+      window.location.hash = `wallie-run-${id}`;
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector(`[data-run-id="${id}"] button[aria-expanded]`)
+          ?.getAttribute("aria-expanded"),
+      ).toBe("true"),
+    );
+    await waitFor(() => expect(document.activeElement?.id).toBe(`wallie-run-${id}`));
+  });
+  it("scopes an off-page provenance lookup and reports unavailable runs without opening another session", async () => {
+    const id = "50300000-0000-4000-8000-000000000002";
+    const filters: Array<[string, string]> = [];
+    const builder = {
+      select: () => builder,
+      eq: (key: string, value: string) => {
+        filters.push([key, value]);
+        return builder;
+      },
+      maybeSingle: async () => ({ data: null, error: null }),
+    };
+    const fake = fakeSupabase();
+    const original = fake.supabase.from.bind(fake.supabase);
+    vi.spyOn(fake.supabase, "from").mockImplementation((table) =>
+      table === "agent_runs" ? (builder as never) : original(table),
+    );
+    panel(data([run(1)]), fake.supabase);
+    await act(async () => {
+      window.location.hash = `wallie-run-${id}`;
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await screen.findByText(/The linked run is unavailable in this session/);
+    expect(filters).toEqual(
+      expect.arrayContaining([
+        ["id", id],
+        ["workspace_id", "workspace-1"],
+        ["session_id", "session-1"],
+      ]),
+    );
+  });
   it("cancels a queued rejected-stage rerun through the run fallback", async () => {
     const queued = run(1, {
       stageId: "build",

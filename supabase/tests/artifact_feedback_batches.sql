@@ -395,5 +395,84 @@ select ok((select rejection.job_id is not null from batch_targets target cross j
 select is((select count(*) from public.artifact_feedback_batches where session_id=(select session_id from batch_targets where label='legacy-whole')),
   0::bigint,'the legacy path does not fabricate an inline submission receipt');
 
+
+-- OP-503: failures and replacement output cannot resolve a source request.
+create function pg_temp.lifecycle_start(target_job uuid,attempt integer default 1,observed_sha text default null,bind_input boolean default true)
+returns uuid language plpgsql as $$
+declare owner public.sessions; selected_input public.session_job_git_inputs; started uuid;
+begin
+  select s.* into strict owner from public.sessions s join public.agent_jobs j on j.session_id=s.id where j.id=target_job;
+  update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=attempt where id=target_job;
+  started:=public.start_session_job_attempt(target_job,attempt,owner.current_stage_id,owner.current_artifact_version,
+    'codex','gpt-5.5','project','wallie/lifecycle-'||target_job::text||'-'||attempt::text);
+  select * into selected_input from public.session_job_git_inputs where job_id=target_job;
+  if bind_input then
+    perform public.pin_session_job_git_input(target_job,attempt,started,
+      '12b2c3d4-0001-4000-8000-000000000001',coalesce(selected_input.base_branch,'main'),
+      coalesce(observed_sha,selected_input.input_sha,repeat('a',40)));
+  end if;
+  return started;
+end;
+$$;
+
+create function pg_temp.lifecycle_publish(target_job uuid,target_run uuid,output_sha text,artifact_md text default 'Reviewed source')
+returns uuid language plpgsql as $$
+declare owner public.sessions; selected_input public.session_job_git_inputs; claim uuid; retained text;
+begin
+  select s.* into strict owner from public.sessions s join public.agent_jobs j on j.session_id=s.id where j.id=target_job;
+  select * into strict selected_input from public.session_job_git_inputs where job_id=target_job;
+  if not public.prepare_session_source_and_checkpoint_publication(target_run,selected_input.repository_id,
+    selected_input.base_branch,selected_input.input_sha,output_sha,'Lifecycle checkpoint','PR body','',
+    case when selected_input.input_sha<>output_sha then encode(extensions.digest('lifecycle source'::bytea,'sha256'),'hex') else '' end,
+    case when selected_input.input_sha<>output_sha then encode('lifecycle source'::bytea,'base64') else '' end,
+    owner.current_artifact_version,artifact_md) then raise exception 'Lifecycle source preparation failed'; end if;
+  claim:=public.claim_session_checkpoint_publication(target_run);
+  select retained_ref into retained from public.session_checkpoint_publications where run_id=target_run;
+  if claim is null or not public.adopt_session_checkpoint_publication(target_run,claim,retained,
+    case when retained is not null then output_sha end) then raise exception 'Lifecycle adoption failed'; end if;
+  return (select current_artifact_id from public.sessions where id=owner.id);
+end;
+$$;
+select pg_temp.batch_fixture('carry-forward');
+create temp table carried_thread as select * from pg_temp.batch_thread('carry-forward','Blocking request from version one','blocking');
+create temp table carried_batch as select pg_temp.batch_send('carry-forward',gen_random_uuid(),array[(select id from carried_thread)],'') as value;
+create temp table carried_before as select rendered_feedback_text from public.artifact_feedback_batches where id=(select (value->>'feedback_batch_id')::uuid from carried_batch);
+create temp table carried_first as select pg_temp.lifecycle_start((select (value->>'job_id')::uuid from carried_batch)) as run_id;
+select is(public.fail_session_job_attempt((select (value->>'job_id')::uuid from carried_batch),1,'Injected revision failure',true,3,(select run_id from carried_first)),
+  'queued','failed revision remains retryable in the same feedback generation');
+select is((select status from public.artifact_review_threads where id=(select id from carried_thread)),'open','failed revision does not resolve the blocking request');
+select is((select rendered_feedback_text from public.artifact_feedback_batches where id=(select (value->>'feedback_batch_id')::uuid from carried_batch)),
+  (select rendered_feedback_text from carried_before),'failure retains the exact immutable submitted agent input');
+create temp table carried_retry as select pg_temp.lifecycle_start((select (value->>'job_id')::uuid from carried_batch),2,repeat('b',40)) as run_id;
+create temp table carried_output as select pg_temp.lifecycle_publish((select (value->>'job_id')::uuid from carried_batch),(select run_id from carried_retry),repeat('c',40),'Changed paragraph without the original selected text.') as artifact_id;
+select is((select version from public.session_artifacts where id=(select artifact_id from carried_output)),2,'successful retry publishes version two');
+select is((select status from public.artifact_review_threads where id=(select id from carried_thread)),'open','successful replacement output never resolves a blocking request');
+select ok((select artifact_id=(select artifact_id from batch_targets where label='carry-forward') and artifact_version=1 and anchor=(select anchor from carried_thread)
+  from public.artifact_review_threads where id=(select id from carried_thread)),'original author, selection and version remain bound to the original artifact');
+create function pg_temp.carry_send(selected uuid[], expected_review bigint default null) returns jsonb language sql as $$
+  select to_jsonb(receipt) from public.sessions s cross join lateral public.submit_artifact_feedback_batch(
+    s.id,s.workspace_id,s.current_artifact_version,s.current_stage_id,s.current_artifact_id,
+    coalesce(expected_review,s.artifact_review_revision),gen_random_uuid(),selected,'Please address the unresolved original request.',
+    'codex','gpt-5.5','project','c1b2c3d4-0001-4000-8000-000000000001') receipt
+  where s.id=(select session_id from batch_targets where label='carry-forward');
+$$;
+select is(pg_temp.batch_failure($q$select pg_temp.carry_send(array[(select id from invalid_thread)])$q$)->>'code','22023',
+  'carried feedback cannot cross session or stage boundaries');
+create temp table carry_token as select artifact_review_revision as revision from public.sessions where id=(select session_id from batch_targets where label='carry-forward');
+select public.write_artifact_review_comment_once(gen_random_uuid(),'b1b2c3d4-0001-4000-8000-000000000001',(select id from carried_thread),'Explicitly added after version two');
+select is(pg_temp.batch_failure($q$select pg_temp.carry_send(array[(select id from carried_thread)],(select revision from carry_token))$q$)->>'code','40001',
+  'concurrent edits to a carried thread invalidate the current review token');
+create temp table resubmitted as select pg_temp.carry_send(array[(select id from carried_thread)]) as value;
+select ok((select batch.artifact_id=output.artifact_id and batch.artifact_version=2 and snapshot.artifact_id=original.artifact_id
+  and snapshot.anchor=thread.anchor and snapshot.thread_revision=(select revision from public.artifact_review_threads where id=thread.id)
+  and jsonb_array_length(snapshot.comments)=2 and batch.checkpoint_run_id=retry.run_id
+  from public.artifact_feedback_batches batch join public.artifact_feedback_batch_threads snapshot on snapshot.batch_id=batch.id
+  cross join carried_output output cross join carried_thread thread cross join carried_retry retry cross join batch_targets original
+  where batch.id=(select (value->>'feedback_batch_id')::uuid from resubmitted) and original.label='carry-forward'),
+  'explicit resubmission pins version two while snapshotting exact original version-one feedback and later replies');
+select is((select rendered_feedback_text from public.artifact_feedback_batches where id=(select (value->>'feedback_batch_id')::uuid from carried_batch)),
+  (select rendered_feedback_text from carried_before),'resubmitting never modifies the earlier batch');
+select is((select status from public.artifact_review_threads where id=(select id from carried_thread)),'open','resubmission leaves status decisions to the human reviewer');
+
 select * from finish();
 rollback;

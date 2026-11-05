@@ -338,6 +338,35 @@ describe("SessionReviewBar", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
   });
 
+  it("previews selected current comments and invalidates preview when the note changes", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(reviewPage({ ids: ["thread-1"] })))
+      .mockResolvedValueOnce(Response.json({ renderedFeedback: "Exact current comments" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { onReject } = renderBar({ sessionId: "session-1" });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Include thread: Review thread-1" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Preview feedback" }));
+    expect(await screen.findByRole("region", { name: "Feedback preview" })).toHaveTextContent(
+      "Exact current comments",
+    );
+    expect(onReject).not.toHaveBeenCalled();
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({
+      artifactId: reviewArtifact.artifactId,
+      version: 1,
+      expectedReviewRevision: 7,
+      selectedThreadIds: ["thread-1"],
+      note: "",
+    });
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Another note" },
+    });
+    expect(screen.queryByRole("region", { name: "Feedback preview" })).toBeNull();
+  });
+
   it("keeps one semantic request key across unchanged network retries and duplicate clicks", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(reviewPage())));
     const onReject = vi.fn().mockResolvedValue(false);
