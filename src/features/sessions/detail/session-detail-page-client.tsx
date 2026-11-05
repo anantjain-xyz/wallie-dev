@@ -78,6 +78,7 @@ import {
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
+import { publishArtifactFeedbackSubmission } from "@/features/sessions/review/submission-events";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -871,6 +872,13 @@ function SessionDetailContent({
           return body;
         },
         commit: (result) => {
+          if (action === "reject" && feedbackSubmission && result.feedbackBatchId) {
+            publishArtifactFeedbackSubmission({
+              sessionId: session.id,
+              artifactId: artifact.artifactId,
+              batchId: result.feedbackBatchId,
+            });
+          }
           if (isAcceptedFeedbackReceipt(result)) {
             queuedMutationRefreshRef.current = true;
             setPostMutationRefreshRequested(true);

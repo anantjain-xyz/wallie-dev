@@ -6,12 +6,14 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { subscribeArtifactFeedbackSubmissions } from "@/features/sessions/review/submission-events";
 
 import {
   centerStageRailSelection,
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
+
 import {
   SessionActivityPlaceholder,
   useSessionActivityPresentation,
@@ -21,6 +23,18 @@ import type { ToastInput } from "@/components/ui/toast";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
+
+const feedbackEventCleanups: Array<() => void> = [];
+const feedbackArtifactId = "22222222-2222-4222-8222-222222222222";
+const feedbackBatchId = "33333333-3333-4333-8333-333333333333";
+
+function watchFeedbackSubmission(sessionId: string) {
+  const accepted = vi.fn();
+  feedbackEventCleanups.push(
+    subscribeArtifactFeedbackSubmissions({ sessionId, artifactId: feedbackArtifactId }, accepted),
+  );
+  return accepted;
+}
 
 vi.mock("@/lib/supabase/realtime-subscription", () => ({
   subscribeAuthenticatedChannel: (
@@ -145,6 +159,7 @@ function renderDetail(
 }
 
 afterEach(() => {
+  for (const unsubscribe of feedbackEventCleanups.splice(0)) unsubscribe();
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -451,12 +466,14 @@ describe("SessionDetailPageClient", () => {
 
   it("accepts an already committed feedback batch while refreshing its unreconciled session", async () => {
     const data = makeSessionDetailData();
+    data.session.currentArtifactId = feedbackArtifactId;
+    const accepted = watchFeedbackSubmission(data.session.id);
     data.session.artifacts = [
       {
         stageSlug: "product",
         version: 1,
         payload: "Review this",
-        id: "artifact-1",
+        id: feedbackArtifactId,
         createdAt: data.session.updatedAt,
       },
     ];
@@ -483,7 +500,7 @@ describe("SessionDetailPageClient", () => {
         calls.push(JSON.parse(String(init?.body)));
         return Response.json(
           {
-            feedbackBatchId: "batch-1",
+            feedbackBatchId,
             revisionJobId: "job-1",
             revisionRunId: "run-1",
             revisionGeneration: "job-1",
@@ -499,7 +516,7 @@ describe("SessionDetailPageClient", () => {
         activity: null,
         initialData: data,
         initialFormattedArtifact: createElement("p", null, "Review this"),
-        initialFormattedArtifactKey: `${data.session.id}:product:id:artifact-1`,
+        initialFormattedArtifactKey: `${data.session.id}:product:id:${feedbackArtifactId}`,
       }),
       { wrapper: OverlayProvider },
     );
@@ -510,6 +527,11 @@ describe("SessionDetailPageClient", () => {
       expect(screen.queryByRole("dialog", { name: "Request changes" })).toBeNull(),
     );
     expect(calls).toHaveLength(1);
+    expect(accepted).toHaveBeenCalledExactlyOnceWith({
+      sessionId: data.session.id,
+      artifactId: feedbackArtifactId,
+      batchId: feedbackBatchId,
+    });
     expect(calls[0]).toMatchObject({
       action: "reject",
       feedbackText: "",
@@ -523,6 +545,116 @@ describe("SessionDetailPageClient", () => {
       expect.objectContaining({ title: "Could not queue changes." }),
     );
   });
+
+  it.each([
+    {
+      label: "a normal accepted batch",
+      action: "reject" as const,
+      status: 200,
+      batch: true,
+      notifies: true,
+    },
+    {
+      label: "a rejected submission",
+      action: "reject" as const,
+      status: 500,
+      batch: true,
+      notifies: false,
+    },
+    { label: "an approval", action: "approve" as const, status: 200, batch: true, notifies: false },
+    {
+      label: "a response without a batch receipt",
+      action: "reject" as const,
+      status: 200,
+      batch: false,
+      notifies: false,
+    },
+  ])(
+    "publishes coverage invalidation only for accepted feedback: $label",
+    async ({ action, status, batch, notifies }) => {
+      const data = makeSessionDetailData();
+      data.session.currentArtifactId = feedbackArtifactId;
+      data.session.artifacts = [
+        {
+          stageSlug: "product",
+          version: 1,
+          payload: "Review this",
+          id: feedbackArtifactId,
+          createdAt: data.session.updatedAt,
+        },
+      ];
+      const accepted = watchFeedbackSubmission(data.session.id);
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        if (String(input).includes("/reviews?"))
+          return Response.json({
+            reviewRevision: 7,
+            submittedThreadRevisions: {},
+            threads: [],
+            nextCursor: null,
+            counts: { total: 0, open: 0, blocking: 0 },
+            viewer: { memberId: "member-1", canReview: true, readOnly: false },
+          });
+        if (String(input).includes("phase-action"))
+          return Response.json(
+            {
+              id: data.session.id,
+              archivedAt: null,
+              currentArtifactId: feedbackArtifactId,
+              artifactVersion: 1,
+              currentStageId: data.session.currentStageId,
+              currentStage: data.session.pipeline.stages[0],
+              phaseStatus: action === "reject" ? "rejected" : "approved",
+              rejectionCount: 1,
+              updatedAt: "2026-06-07T12:00:00.000Z",
+              feedbackBatchId: batch ? feedbackBatchId : undefined,
+              ...(status >= 400 ? { error: "Submission rejected." } : {}),
+            },
+            { status },
+          );
+        return Response.json({});
+      });
+      render(
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: data,
+          initialFormattedArtifact: createElement("p", null, "Review this"),
+          initialFormattedArtifactKey: `${data.session.id}:product:id:${feedbackArtifactId}`,
+        }),
+        { wrapper: OverlayProvider },
+      );
+      if (action === "approve")
+        fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+      else {
+        fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+        fireEvent.change(await screen.findByLabelText("Feedback for Wallie"), {
+          target: { value: "Please revise this." },
+        });
+        await waitFor(() =>
+          expect(screen.getByRole("button", { name: "Queue rerun" })).toBeEnabled(),
+        );
+        fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+      }
+      await waitFor(() =>
+        expect(mocked.pushToast).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title:
+              status >= 400
+                ? "Could not queue changes."
+                : action === "reject"
+                  ? "Changes queued."
+                  : "Review approved.",
+          }),
+        ),
+      );
+      if (notifies)
+        expect(accepted).toHaveBeenCalledExactlyOnceWith({
+          sessionId: data.session.id,
+          artifactId: feedbackArtifactId,
+          batchId: feedbackBatchId,
+        });
+      else expect(accepted).not.toHaveBeenCalled();
+    },
+  );
 
   it("refreshes after a successful archive Undo has cleared its pending state", async () => {
     const data = makeSessionDetailData();

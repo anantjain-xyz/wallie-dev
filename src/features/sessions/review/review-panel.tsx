@@ -16,6 +16,7 @@ import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { cn } from "@/lib/utils";
 
 import type { ArtifactSourceAnchor } from "./source-anchor";
+import { subscribeArtifactFeedbackSubmissions } from "./submission-events";
 import type {
   ArtifactReviewComment,
   ArtifactReviewThread,
@@ -142,6 +143,7 @@ export function ArtifactReviewPanel({
   const focusReplyAfterSave = useRef(false);
   const mounted = useRef(true);
   const threadLoadSequence = useRef(0);
+  const fullThreadRefreshInFlight = useRef(false);
   const commentLoadSequence = useRef(0);
   const config = useSupabasePublicConfig();
   selectedRef.current = selectedId;
@@ -150,6 +152,13 @@ export function ArtifactReviewPanel({
 
   const loadThreads = useCallback(
     async (cursor: ReviewCursor | null = null) => {
+      // A later page cannot supersede the accepted-receipt refresh of earlier
+      // coverage, even before React renders the disabled pagination control.
+      if (cursor && fullThreadRefreshInFlight.current) return;
+      if (!cursor) {
+        fullThreadRefreshInFlight.current = true;
+        setLoading(true);
+      }
       const sequence = ++threadLoadSequence.current;
       try {
         const params = new URLSearchParams(pageQuery(cursor));
@@ -201,7 +210,10 @@ export function ArtifactReviewPanel({
         if (mounted.current && sequence === threadLoadSequence.current)
           setLoadError(error instanceof Error ? error.message : "Could not load review threads.");
       } finally {
-        if (mounted.current && sequence === threadLoadSequence.current) setLoading(false);
+        if (mounted.current && sequence === threadLoadSequence.current) {
+          if (!cursor) fullThreadRefreshInFlight.current = false;
+          setLoading(false);
+        }
       }
     },
     [artifactId, baseUrl],
@@ -246,6 +258,15 @@ export function ArtifactReviewPanel({
   useEffect(() => {
     if (selectedId) void loadComments(selectedId);
   }, [loadComments, selectedId]);
+
+  useEffect(
+    () =>
+      subscribeArtifactFeedbackSubmissions({ sessionId, artifactId }, () => {
+        setSnapshot((current) => (current ? { ...current, knownCoverageIds: new Set() } : current));
+        void loadThreads();
+      }),
+    [artifactId, loadThreads, sessionId],
+  );
 
   useEffect(() => {
     if (anchor && !readOnly) composerRef.current?.focus();
@@ -622,6 +643,7 @@ export function ArtifactReviewPanel({
       {snapshot?.nextCursor ? (
         <button
           className={cn(buttonClass, "mt-3")}
+          disabled={loading || pending}
           onClick={() => {
             void loadThreads(snapshot.nextCursor);
           }}

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import { createRef } from "react";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createArtifactSourceAnchor } from "./source-anchor";
+import { publishArtifactFeedbackSubmission } from "./submission-events";
 import type { ArtifactReviewComment, ArtifactReviewThread, ReviewThreadListPayload } from "./types";
 
 const realtime = vi.hoisted(() => ({
@@ -172,6 +173,153 @@ async function selectThread(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("artifact threaded review", () => {
+  it("refreshes mounted submission labels after an exact accepted receipt without losing drafts or selection", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      artifactId: "22222222-2222-4222-8222-222222222222",
+      batchId: "33333333-3333-4333-8333-333333333333",
+    };
+    snapshot.threads = [
+      makeThread("thread-1", { session_id: scope.sessionId, artifact_id: scope.artifactId }),
+    ];
+    const view = render(
+      panel({ sessionId: scope.sessionId, artifactId: scope.artifactId, anchor }),
+    );
+    await selectThread(user);
+    await screen.findByText("Please explain the retry policy.");
+    const composer = screen.getByLabelText("Comment", { exact: true });
+    const reply = screen.getByLabelText("Reply to thread");
+    await user.type(composer, "Keep my new comment draft.");
+    await user.type(reply, "Keep my reply draft.");
+    const threadButton = screen.getByRole("button", { name: /Discussion · open/ });
+    expect(within(threadButton).getByText("Not submitted")).toBeVisible();
+    const initialRequests = fetchMock.mock.calls.length;
+    await act(async () => {
+      publishArtifactFeedbackSubmission({
+        ...scope,
+        sessionId: "44444444-4444-4444-8444-444444444444",
+      });
+      publishArtifactFeedbackSubmission({
+        ...scope,
+        artifactId: "55555555-5555-4555-8555-555555555555",
+      });
+      window.dispatchEvent(
+        new CustomEvent("wallie:artifact-feedback-submitted", {
+          detail: { ...scope, batchId: null },
+        }),
+      );
+      window.dispatchEvent(
+        new CustomEvent("wallie:artifact-feedback-submitted", {
+          detail: { ...scope, extra: "unexpected" },
+        }),
+      );
+    });
+    expect(fetchMock.mock.calls).toHaveLength(initialRequests);
+
+    snapshot.submittedThreadRevisions = { "thread-1": 1 };
+    await act(async () => publishArtifactFeedbackSubmission(scope));
+    await waitFor(() => expect(within(threadButton).getByText("Submitted")).toBeVisible());
+    expect(fetchMock.mock.calls).toHaveLength(initialRequests + 1);
+    expect(threadButton).toHaveAttribute("aria-current", "true");
+    expect(composer).toHaveValue("Keep my new comment draft.");
+    expect(reply).toHaveValue("Keep my reply draft.");
+
+    // A late acknowledgement must re-read current revisions, not mark a later
+    // edit submitted merely because an older batch was accepted.
+    snapshot.threads = [
+      makeThread("thread-1", {
+        session_id: scope.sessionId,
+        artifact_id: scope.artifactId,
+        revision: 2,
+      }),
+    ];
+    await act(async () => publishArtifactFeedbackSubmission(scope));
+    await waitFor(() => expect(within(threadButton).getByText("Unsent changes")).toBeVisible());
+    expect(composer).toHaveValue("Keep my new comment draft.");
+    expect(reply).toHaveValue("Keep my reply draft.");
+    const finalRequests = fetchMock.mock.calls.length;
+    view.unmount();
+    publishArtifactFeedbackSubmission(scope);
+    expect(fetchMock.mock.calls).toHaveLength(finalRequests);
+  });
+
+  it("keeps an accepted coverage refresh authoritative when another page is requested", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      artifactId: "22222222-2222-4222-8222-222222222222",
+      batchId: "33333333-3333-4333-8333-333333333333",
+    };
+    snapshot.threads = [
+      makeThread("thread-1", { session_id: scope.sessionId, artifact_id: scope.artifactId }),
+    ];
+    snapshot.nextCursor = { createdAt: "2026-11-05T00:00:00Z", id: "thread-1" };
+    render(panel({ sessionId: scope.sessionId, artifactId: scope.artifactId }));
+    await selectThread(user);
+    await screen.findByText("Please explain the retry policy.");
+    const reply = screen.getByLabelText("Reply to thread");
+    await user.type(reply, "Keep this selection and draft.");
+    const loadMore = screen.getByRole("button", { name: "Load more threads" });
+    const normalFetch = fetchMock.getMockImplementation()!;
+    let completeRefresh!: (response: Response) => void;
+    let cursorRequests = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(input, "https://wallie.test");
+      if (url.pathname.endsWith("/reviews")) {
+        if (url.searchParams.has("cursorId")) {
+          cursorRequests++;
+          return Response.json({
+            ...snapshot,
+            threads: [makeThread("thread-2")],
+            submittedThreadRevisions: {},
+            nextCursor: null,
+          });
+        }
+        return new Promise<Response>((resolve) => {
+          completeRefresh = resolve;
+        });
+      }
+      return normalFetch(input, init);
+    });
+    await act(async () => {
+      publishArtifactFeedbackSubmission(scope);
+      fireEvent.click(loadMore);
+    });
+    expect(cursorRequests).toBe(0);
+    expect(loadMore).toBeDisabled();
+    snapshot.submittedThreadRevisions = { "thread-1": 1 };
+    await act(async () => completeRefresh(Response.json(snapshot)));
+    const selected = screen.getByRole("button", { name: /Discussion · open.*Alex/ });
+    expect(within(selected).getByText("Submitted")).toBeVisible();
+    expect(selected).toHaveAttribute("aria-current", "true");
+    expect(reply).toHaveValue("Keep this selection and draft.");
+    await user.click(loadMore);
+    expect(cursorRequests).toBe(1);
+    expect(
+      within(screen.getByRole("button", { name: /Submitted/ })).getByText("Submitted"),
+    ).toBeVisible();
+    expect(reply).toHaveValue("Keep this selection and draft.");
+  });
+
+  it("keeps cached submission coverage unknown if the accepted-receipt refresh fails", async () => {
+    const scope = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      artifactId: "22222222-2222-4222-8222-222222222222",
+      batchId: "33333333-3333-4333-8333-333333333333",
+    };
+    render(panel({ sessionId: scope.sessionId, artifactId: scope.artifactId }));
+    const thread = await screen.findByRole("button", { name: /Discussion · open/ });
+    expect(within(thread).getByText("Not submitted")).toBeVisible();
+    fetchMock.mockResolvedValue(
+      Response.json({ error: "Coverage refresh interrupted." }, { status: 503 }),
+    );
+    await act(async () => publishArtifactFeedbackSubmission(scope));
+    await screen.findByText(/Coverage refresh interrupted/);
+    expect(within(thread).queryByText("Not submitted")).toBeNull();
+    expect(within(thread).getByText("Submission status unavailable")).toBeVisible();
+  });
+
   it("distinguishes submitted threads from later unsent edits and new comments", async () => {
     snapshot.threads = [
       makeThread("submitted"),
