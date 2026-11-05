@@ -43,6 +43,8 @@ import { cn } from "@/lib/utils";
 
 /** Cap auto-loaded message history so opening a busy run cannot mount unbounded logs. */
 export const WALLIE_RUN_MESSAGE_LIMIT = 100;
+const LINKED_RUN_UNAVAILABLE =
+  "The linked run is unavailable in this session. Retry the link after refreshing run history.";
 
 type FlashMessage = {
   kind: "error" | "info" | "success";
@@ -653,13 +655,14 @@ function SessionWalliePanelContent({
         );
       }
       if (sequence !== linkedRunSequence.current) return;
+      setFlashMessage((current) => (current?.text === LINKED_RUN_UNAVAILABLE ? null : current));
       linkedRunFocus.current = id;
       setExpandedRunId(id);
     } catch {
       if (sequence === linkedRunSequence.current)
         setFlashMessage({
           kind: "error",
-          text: "The linked run is unavailable in this session. Retry the link after refreshing run history.",
+          text: LINKED_RUN_UNAVAILABLE,
         });
     }
   });

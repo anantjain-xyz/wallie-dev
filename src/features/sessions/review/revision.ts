@@ -1,57 +1,8 @@
-import { artifactSourceBlocks } from "./selection";
-import {
-  createArtifactSourceAnchor,
-  validateArtifactSourceAnchor,
-  type ArtifactSourceAnchor,
-} from "./source-anchor";
+import type { ArtifactSourceAnchor } from "./source-anchor";
 
 export type AnchorMapping =
   | { status: "mapped"; anchor: ArtifactSourceAnchor }
   | { status: "outdated"; reason: string };
-
-function uniqueOffset(source: string, quote: string): number | null {
-  const first = source.indexOf(quote);
-  return first >= 0 && source.indexOf(quote, first + 1) < 0 ? first : null;
-}
-
-/** Derived presentation only. Never rewrite the original anchor or thread status.
- * Require both a unique quote and an unchanged enclosing source block. In
- * particular an unchanged token inside an edited code fence is not a match.
- */
-export function mapRevisionAnchor(source: string, target: string, anchor: unknown): AnchorMapping {
-  const outdated = (reason: string): AnchorMapping => ({ status: "outdated", reason });
-  if (!validateArtifactSourceAnchor(source, anchor))
-    return outdated("Original source is unavailable or invalid.");
-  if (source === target) return { status: "mapped", anchor };
-  // A keyboard paragraph anchor may include different trailing blank lines.
-  // Those delimiters must not disambiguate otherwise repeated visible text.
-  const salientQuote = anchor.quote.trim();
-  if (
-    !salientQuote ||
-    uniqueOffset(source, salientQuote) === null ||
-    uniqueOffset(target, salientQuote) === null
-  )
-    return outdated("Selected text was deleted, edited or repeated.");
-  if (uniqueOffset(source, anchor.quote) === null || uniqueOffset(target, anchor.quote) === null)
-    return outdated("Selected text was deleted, edited or repeated.");
-  const blocks = artifactSourceBlocks(source);
-  if (blocks.some(({ anchor: value }) => value.end - value.start === 10000))
-    return outdated("Large source blocks cannot be mapped safely.");
-  const block = blocks.find(
-    ({ anchor: value }) => value.start <= anchor.start && value.end >= anchor.end,
-  );
-  // Large blocks are split by the keyboard picker. They cannot prove that an
-  // enclosing code fence is unchanged, so conservatively leave them outdated.
-  if (!block || block.anchor.end - block.anchor.start === 10000)
-    return outdated("The original block cannot be mapped safely.");
-  const blockOffset = uniqueOffset(target, block.anchor.quote);
-  if (blockOffset === null) return outdated("The original paragraph or code block changed.");
-  const start = Array.from(target.slice(0, blockOffset)).length + anchor.start - block.anchor.start;
-  return {
-    status: "mapped",
-    anchor: createArtifactSourceAnchor(target, start, start + anchor.end - anchor.start),
-  };
-}
 
 export type RevisionDiff = { kind: "unchanged" | "removed" | "added"; text: string };
 

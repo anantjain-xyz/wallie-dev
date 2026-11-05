@@ -164,6 +164,21 @@ beforeEach(() => {
         ],
       },
     ],
+    artifact_feedback_batch_jobs: [
+      { job_id: job, batch_id: batch, workspace_id: workspace, session_id: session },
+    ],
+    artifact_feedback_outputs: [
+      {
+        batch_id: batch,
+        workspace_id: workspace,
+        session_id: session,
+        job_id: job,
+        run_id: run,
+        artifact_id: artifact,
+        artifact_version: 2,
+        created_at: "2026-11-05T01:00:00Z",
+      },
+    ],
     artifact_review_threads: [
       {
         id: thread,
@@ -268,7 +283,7 @@ describe("authenticated feedback history", () => {
       sourceVersion: 1,
       comments: [{ body: "Immutable request", author_label: "Original reviewer", revision: 1 }],
     });
-    expect(result.output).toMatchObject({ artifactId: artifact, version: 2, run: { id: run } });
+    expect(result.outputs[0]).toMatchObject({ artifactId: artifact, version: 2, run: { id: run } });
     expect(filters).toEqual(
       expect.arrayContaining([
         ["artifact_feedback_batches", "workspace_id", workspace],
@@ -280,11 +295,49 @@ describe("authenticated feedback history", () => {
   });
   it("keeps failed batches available with no accepted output", async () => {
     rows.session_git_checkpoints = [];
+    rows.artifact_feedback_outputs = [];
     rows.agent_runs![0]!.status = "failed";
     const result = await (await call(`&batchId=${batch}`)).json();
     expect(result.initialRun.status).toBe("failed");
-    expect(result.output).toBeNull();
+    expect(result.outputs).toEqual([]);
     expect(result.threads).toHaveLength(1);
+  });
+  it("links manual retry outputs back to the original batch and pages every accepted output", async () => {
+    const manualJob = id(25),
+      manualRun = id(26);
+    rows.session_git_checkpoints![0]!.job_id = manualJob;
+    rows.artifact_feedback_batch_jobs!.push({
+      job_id: manualJob,
+      batch_id: batch,
+      workspace_id: workspace,
+      session_id: session,
+    });
+    rows.agent_runs!.push({
+      id: manualRun,
+      workspace_id: workspace,
+      session_id: session,
+      status: "success",
+    });
+    rows.artifact_feedback_outputs!.push({
+      ...rows.artifact_feedback_outputs![0],
+      artifact_id: id(27),
+      artifact_version: 3,
+      run_id: manualRun,
+      job_id: manualJob,
+      created_at: "2026-11-05T02:00:00Z",
+    });
+    expect((await (await call()).json()).receivedBatchId).toBe(batch);
+    const result = await (await call(`&batchId=${batch}`)).json();
+    expect(result.outputs).toHaveLength(2);
+    expect(result.outputs[1]).toMatchObject({
+      artifactId: id(27),
+      version: 3,
+      run: { id: manualRun },
+    });
+    const page = await (await call(`&batchId=${batch}&pageSize=1`)).json();
+    expect(page.outputs).toHaveLength(1);
+    expect(page.outputNextCursor).toEqual({ createdAt: "2026-11-05T01:00:00Z", id: run });
+    expect(filters).toContainEqual(["artifact_feedback_batch_jobs", "job_id", manualJob]);
   });
   it("does not require authenticated access to the private jobs table", async () => {
     fail = "agent_jobs";

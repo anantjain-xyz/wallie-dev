@@ -1,7 +1,8 @@
 import "server-only";
 
 import type { ReviewContext, loadReviewArtifact } from "./http";
-import { mapRevisionAnchor, type AnchorMapping } from "./revision";
+import { mapRevisionAnchor } from "./revision-anchor.server";
+import type { AnchorMapping } from "./revision";
 import type { ReviewCursor } from "./types";
 
 export async function listCarriedReviewThreads(

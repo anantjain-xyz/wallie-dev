@@ -272,6 +272,59 @@ export type Database = {
           },
         ]
       }
+      artifact_feedback_batch_jobs: {
+        Row: {
+          batch_id: string
+          created_at: string
+          job_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          batch_id: string
+          created_at?: string
+          job_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          batch_id?: string
+          created_at?: string
+          job_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       artifact_feedback_batch_threads: {
         Row: {
           anchor: Json
@@ -411,6 +464,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "session_artifacts"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_outputs"
+            referencedColumns: ["run_id"]
           },
           {
             foreignKeyName: "artifact_feedback_batches_checkpoint_run_id_fkey"
@@ -1750,6 +1810,13 @@ export type Database = {
             foreignKeyName: "session_git_heads_checkpoint_run_id_fkey"
             columns: ["checkpoint_run_id"]
             isOneToOne: false
+            referencedRelation: "artifact_feedback_outputs"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_git_heads_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
             referencedRelation: "session_git_checkpoints"
             referencedColumns: ["run_id"]
           },
@@ -1881,6 +1948,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "sessions"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_job_git_inputs_source_checkpoint_run_id_fkey"
+            columns: ["source_checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_outputs"
+            referencedColumns: ["run_id"]
           },
           {
             foreignKeyName: "session_job_git_inputs_source_checkpoint_run_id_fkey"
@@ -2144,6 +2218,13 @@ export type Database = {
             foreignKeyName: "session_pr_operations_checkpoint_run_id_fkey"
             columns: ["checkpoint_run_id"]
             isOneToOne: false
+            referencedRelation: "artifact_feedback_outputs"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_pr_operations_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
             referencedRelation: "session_git_checkpoints"
             referencedColumns: ["run_id"]
           },
@@ -2214,6 +2295,13 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "session_pr_sync_desired_checkpoint_run_id_fkey"
+            columns: ["desired_checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_outputs"
+            referencedColumns: ["run_id"]
+          },
           {
             foreignKeyName: "session_pr_sync_desired_checkpoint_run_id_fkey"
             columns: ["desired_checkpoint_run_id"]
@@ -3608,7 +3696,69 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      artifact_feedback_outputs: {
+        Row: {
+          artifact_id: string | null
+          artifact_version: number | null
+          batch_id: string | null
+          created_at: string | null
+          job_id: string | null
+          run_id: string | null
+          session_id: string | null
+          workspace_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: true
+            referencedRelation: "session_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_source_delivery_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "session_source_deliveries"
+            referencedColumns: ["run_id"]
+          },
+        ]
+      }
     }
     Functions: {
       accept_workspace_invitation: {

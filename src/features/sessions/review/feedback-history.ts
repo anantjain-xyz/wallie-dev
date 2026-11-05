@@ -41,5 +41,12 @@ export type FeedbackBatchDetail = {
     }
   >;
   initialRun: ReviewRun | null;
-  output: { artifactId: string; version: number; run: ReviewRun | null } | null;
+  outputs: Array<{
+    artifactId: string;
+    version: number;
+    runId: string;
+    createdAt: string;
+    run: ReviewRun | null;
+  }>;
+  outputNextCursor: ReviewCursor | null;
 };

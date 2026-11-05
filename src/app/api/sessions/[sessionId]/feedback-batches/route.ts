@@ -51,7 +51,20 @@ export async function GET(request: Request, { params }: RouteContext) {
       const { data: batch, error } = await scoped().eq("id", batchId).maybeSingle();
       if (error) throw error;
       if (!batch) return reviewJson({ error: "Feedback batch not found." }, 404);
-      const [snapshots, checkpoint, initialRun] = await Promise.all([
+      let outputsQuery = supabase
+        .from("artifact_feedback_outputs")
+        .select("artifact_id, artifact_version, run_id, created_at")
+        .eq("batch_id", batch.id)
+        .eq("workspace_id", session.workspace_id)
+        .eq("session_id", session.id)
+        .order("created_at", { ascending: false })
+        .order("run_id", { ascending: false })
+        .limit(page.pageSize + 1);
+      if (page.cursor)
+        outputsQuery = outputsQuery.or(
+          `created_at.lt.${page.cursor.createdAt},and(created_at.eq.${page.cursor.createdAt},run_id.lt.${page.cursor.id})`,
+        );
+      const [snapshots, outputsResult, initialRun] = await Promise.all([
         supabase
           .from("artifact_feedback_batch_threads")
           .select("*")
@@ -60,24 +73,14 @@ export async function GET(request: Request, { params }: RouteContext) {
           .eq("session_id", session.id)
           .order("thread_id")
           .limit(21),
-        supabase
-          .from("session_git_checkpoints")
-          .select("artifact_id, run_id")
-          .eq("job_id", batch.job_id)
-          .eq("workspace_id", session.workspace_id)
-          .eq("session_id", session.id)
-          .maybeSingle(),
+        outputsQuery,
         run(batch.run_id),
       ]);
-      for (const result of [snapshots, checkpoint]) if (result.error) throw result.error;
+      for (const result of [snapshots, outputsResult]) if (result.error) throw result.error;
       if ((snapshots.data?.length ?? 0) > 20)
         throw new Error("Feedback snapshot exceeds its contract.");
       const ids = [
-        ...new Set([
-          batch.artifact_id,
-          ...(snapshots.data ?? []).map((row) => row.artifact_id),
-          ...(checkpoint.data ? [checkpoint.data.artifact_id] : []),
-        ]),
+        ...new Set([batch.artifact_id, ...(snapshots.data ?? []).map((row) => row.artifact_id)]),
       ];
       const sources = await supabase
         .from("session_artifacts")
@@ -88,6 +91,35 @@ export async function GET(request: Request, { params }: RouteContext) {
         .in("id", ids);
       if (sources.error) throw sources.error;
       const byId = new Map(sources.data?.map((row) => [row.id, row]));
+      const outputs = (outputsResult.data ?? []).slice(0, page.pageSize).map((row) => {
+        if (
+          !row.artifact_id ||
+          !row.run_id ||
+          typeof row.artifact_version !== "number" ||
+          !row.created_at
+        )
+          throw new Error("Accepted feedback output identity is unavailable.");
+        return {
+          artifactId: row.artifact_id,
+          version: row.artifact_version,
+          runId: row.run_id,
+          createdAt: row.created_at,
+        };
+      });
+      const outputRuns = outputs.length
+        ? await supabase
+            .from("agent_runs")
+            .select(runFields)
+            .eq("workspace_id", session.workspace_id)
+            .eq("session_id", session.id)
+            .in(
+              "id",
+              outputs.map((row) => row.runId),
+            )
+        : { data: [], error: null };
+      if (outputRuns.error) throw outputRuns.error;
+      const outputRunById = new Map(outputRuns.data?.map((row) => [row.id, row]));
+      const lastOutput = outputs.at(-1);
       return reviewJson({
         batch,
         threads: (snapshots.data ?? []).map((row) => {
@@ -105,13 +137,11 @@ export async function GET(request: Request, { params }: RouteContext) {
           };
         }),
         initialRun,
-        output: checkpoint.data
-          ? {
-              artifactId: checkpoint.data.artifact_id,
-              version: byId.get(checkpoint.data.artifact_id)?.version,
-              run: await run(checkpoint.data.run_id),
-            }
-          : null,
+        outputs: outputs.map((row) => ({ ...row, run: outputRunById.get(row.runId) ?? null })),
+        outputNextCursor:
+          outputsResult.data && outputsResult.data.length > page.pageSize && lastOutput
+            ? { createdAt: lastOutput.createdAt, id: lastOutput.runId }
+            : null,
       });
     }
     let batchesQuery = scoped()
@@ -137,12 +167,19 @@ export async function GET(request: Request, { params }: RouteContext) {
     if (checkpoint.error) throw checkpoint.error;
     let receivedBatchId: string | null = null;
     if (checkpoint.data) {
-      const received = await scoped()
-        .select("id")
+      const input = await supabase
+        .from("artifact_feedback_batch_jobs")
+        .select("batch_id")
         .eq("job_id", checkpoint.data.job_id)
+        .eq("workspace_id", session.workspace_id)
+        .eq("session_id", session.id)
         .maybeSingle();
-      if (received.error) throw received.error;
-      receivedBatchId = received.data?.id ?? null;
+      if (input.error) throw input.error;
+      if (input.data) {
+        const received = await scoped().select("id").eq("id", input.data.batch_id).maybeSingle();
+        if (received.error) throw received.error;
+        receivedBatchId = received.data?.id ?? null;
+      }
     }
     const items = (batches.data ?? []).slice(0, page.pageSize);
     const last = items.at(-1);

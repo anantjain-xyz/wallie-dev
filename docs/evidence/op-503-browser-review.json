@@ -65,6 +65,45 @@
     "op503-compare-mobile.png",
     "op503-failed-feedback.png",
     "op503-preview-desktop.png",
-    "op503-resubmit-mobile.png"
-  ]
+    "op503-resubmit-mobile.png",
+    "op503-manual-retry-desktop.png",
+    "op503-manual-retry-mobile.png"
+  ],
+  "reviewFixVerification": {
+    "environment": "isolated-local-supabase",
+    "fixture": "SQL lifecycle fixture with two manual retry jobs; authenticated browser reads and interactions",
+    "api": {
+      "receivedOriginalBatch": true,
+      "initialRunStatus": "error",
+      "acceptedVersions": [3, 2],
+      "acceptedRunIds": [
+        "09d4be57-5e28-4542-bb12-39985f7af454",
+        "6d063a2a-6598-4dc1-892f-50432957f360"
+      ],
+      "uniqueOutputs": 2,
+      "outputPagesExhausted": true,
+      "threadCount": 4,
+      "immutableInputContainsLaterEdit": false,
+      "outputStatuses": ["success", "success"]
+    },
+    "mobile": {
+      "horizontalOverflow": 0,
+      "unresolved": 1,
+      "outdated": 3,
+      "allBlockingOpen": true,
+      "output3Visible": true,
+      "output2Visible": true
+    },
+    "wrappedParagraphOutdated": true,
+    "sameRunLinkReopenedAfterCollapse": true,
+    "sameRunLinkFocusedExactArticle": true,
+    "desktopViewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "mobileViewport": {
+      "width": 390,
+      "height": 844
+    }
+  }
 }

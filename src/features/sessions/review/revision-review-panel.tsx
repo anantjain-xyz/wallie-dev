@@ -5,6 +5,7 @@ import type { SessionArtifactMetadata } from "@/features/sessions/types";
 import { compareRevisionSources } from "./revision";
 import type { FeedbackBatchDetail, FeedbackHistoryPage, ReviewRun } from "./feedback-history";
 import type { ReviewCursor, ReviewThreadListPayload } from "./types";
+import { RunActivityLink } from "./run-activity-link";
 
 const buttonClass =
   "min-h-11 rounded-[4px] border border-border px-3 py-2 text-xs font-medium hover:bg-control-muted disabled:opacity-60";
@@ -46,13 +47,13 @@ function RunIdentity({ run, label }: { run: ReviewRun; label: string }) {
         {run.model_provider} · {run.model_name} · Attempt {run.attempt_count ?? "unknown"}
       </p>
       <p className="mt-1 font-mono">{run.id}</p>
-      <a
+      <RunActivityLink
         className="mt-2 inline-flex min-h-11 items-center text-accent underline"
-        href={`#wallie-run-${run.id}`}
+        runId={run.id}
         aria-label={`${label} activity`}
       >
         View run activity
-      </a>
+      </RunActivityLink>
     </div>
   );
 }
@@ -194,16 +195,28 @@ export function RevisionReviewPanel({
     [before, beforeId, source],
   );
 
-  async function showBatch(id: string) {
+  async function showBatch(id: string, cursor: ReviewCursor | null = null) {
     const sequence = ++detailSequence.current;
-    setDetail(null);
+    if (!cursor) setDetail(null);
     setDetailLoading(true);
     setDetailError(null);
     try {
       const result = await read<FeedbackBatchDetail>(
-        `${base}/feedback-batches?${new URLSearchParams({ artifactId, batchId: id })}`,
+        `${base}/feedback-batches?${new URLSearchParams({ artifactId, batchId: id, ...(cursor ? { cursorCreatedAt: cursor.createdAt, cursorId: cursor.id } : {}) })}`,
       );
-      if (sequence === detailSequence.current) setDetail(result);
+      if (sequence === detailSequence.current)
+        setDetail((current) =>
+          cursor && current?.batch.id === result.batch.id
+            ? {
+                ...result,
+                outputs: [
+                  ...new Map(
+                    [...current.outputs, ...result.outputs].map((row) => [row.artifactId, row]),
+                  ).values(),
+                ],
+              }
+            : result,
+        );
     } catch (cause) {
       if (sequence === detailSequence.current)
         setDetailError(
@@ -388,12 +401,12 @@ export function RevisionReviewPanel({
         <h4 className="text-sm font-semibold">Submitted feedback</h4>
         {history?.producingRun ? (
           <>
-            <a
+            <RunActivityLink
               className="text-xs text-accent underline"
-              href={`#wallie-run-${history.producingRun.id}`}
+              runId={history.producingRun.id}
             >
               Producing run for version {version}
-            </a>
+            </RunActivityLink>
             <RunIdentity run={history.producingRun} label="Producing run" />
           </>
         ) : history ? (
@@ -525,28 +538,38 @@ export function RevisionReviewPanel({
             ) : (
               <p className="text-xs text-muted">Initial run unavailable.</p>
             )}
-            {detail.output ? (
-              <>
-                <a
-                  className="text-xs text-accent underline"
-                  href={reviewArtifactLink(
-                    detail.output.artifactId,
-                    detail.output.version,
-                    stageSlug,
-                  )}
-                >
-                  Output version {detail.output.version}
-                </a>
-                {detail.output.run && detail.output.run.id !== detail.initialRun?.id ? (
-                  <RunIdentity run={detail.output.run} label="Successful revision run" />
-                ) : null}
-              </>
+            {detail.outputs.length ? (
+              <ul aria-label="Revision outputs" className="space-y-3">
+                {detail.outputs.map((output) => (
+                  <li key={output.artifactId}>
+                    <a
+                      className="text-xs text-accent underline"
+                      href={reviewArtifactLink(output.artifactId, output.version, stageSlug)}
+                    >
+                      Output version {output.version}
+                    </a>
+                    {output.run && output.run.id !== detail.initialRun?.id ? (
+                      <RunIdentity run={output.run} label="Successful revision run" />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             ) : (
               <p className="text-xs text-muted">
                 No accepted output yet. Failed or canceled runs keep this feedback intact; use Retry
                 Run, or explicitly select these threads in Request changes on the next review.
               </p>
             )}
+            {detail.outputNextCursor ? (
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={detailLoading}
+                onClick={() => void showBatch(detail.batch.id, detail.outputNextCursor)}
+              >
+                Load more revision outputs
+              </button>
+            ) : null}
           </section>
         ) : null}
       </section>

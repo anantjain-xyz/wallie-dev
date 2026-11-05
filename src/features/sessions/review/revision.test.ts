@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createArtifactSourceAnchor } from "./source-anchor";
-import { compareRevisionSources, mapRevisionAnchor } from "./revision";
+import { compareRevisionSources } from "./revision";
+import { mapRevisionAnchor } from "./revision-anchor.server";
 
 describe("conservative revision anchors", () => {
   it("maps a moved unique unchanged paragraph using code points", () => {
@@ -22,6 +23,9 @@ describe("conservative revision anchors", () => {
     ["```js\nkeep()\nold()\n```\n", "```js\nkeep()\nnew()\n```\n", "keep()"],
     ["```js\nkeep()\n\nold()\n```\n", "```js\nkeep()\n\nnew()\n```\n", "keep()"],
     ["café\r\n", "café\n", "café"],
+    ["Unique paragraph.\n\n", "```text\nUnique paragraph.\n\n```\n", "Unique paragraph."],
+    ["Unique paragraph.\n\n", "Larger Unique paragraph.\n\n", "Unique paragraph."],
+    ["Unique paragraph.\n\n", "<pre>\n\nUnique paragraph.\n\n</pre>\n", "Unique paragraph."],
   ])("leaves uncertain selections outdated", (source, target, quote) => {
     const start = Array.from(source.slice(0, source.indexOf(quote))).length;
     expect(

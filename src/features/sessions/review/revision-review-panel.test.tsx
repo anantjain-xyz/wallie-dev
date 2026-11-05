@@ -92,7 +92,8 @@ const detail = {
     model_name: "test",
     attempt_count: 1,
   },
-  output: null,
+  outputs: [],
+  outputNextCursor: null,
 };
 function setup(overrides?: (url: string) => Promise<unknown> | undefined) {
   vi.stubGlobal(
@@ -181,6 +182,36 @@ describe("revision review workspace", () => {
     await waitFor(() =>
       expect(screen.queryByText("Exact submitted feedback · Version 1")).toBeNull(),
     );
+  });
+
+  it("loads additional accepted outputs without losing the immutable snapshot", async () => {
+    const output = (version: number) => ({
+      artifactId: `output-${version}`,
+      version,
+      runId: `run-${version}`,
+      createdAt: "2026-11-05",
+      run: null,
+    });
+    setup((url) =>
+      url.includes("batchId=batch-a")
+        ? Promise.resolve({
+            ...detail,
+            outputs: [output(url.includes("cursorId=") ? 2 : 3)],
+            outputNextCursor: url.includes("cursorId=")
+              ? null
+              : { createdAt: "2026-11-05T00:00:00Z", id: "run-3" },
+          })
+        : undefined,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "View feedback received by this revision" }),
+    );
+    await screen.findByRole("link", { name: "Output version 3" });
+    fireEvent.click(screen.getByRole("button", { name: "Load more revision outputs" }));
+    await screen.findByRole("link", { name: "Output version 2" });
+    expect(screen.getByRole("link", { name: "Output version 3" })).toBeVisible();
+    expect(screen.getByText("<script>saved comment</script>")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Load more revision outputs" })).toBeNull();
   });
   it("does not display a mismatched artifact as comparison evidence", async () => {
     setup((url) =>

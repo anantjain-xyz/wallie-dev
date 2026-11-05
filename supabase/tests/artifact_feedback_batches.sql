@@ -474,5 +474,91 @@ select is((select rendered_feedback_text from public.artifact_feedback_batches w
   (select rendered_feedback_text from carried_before),'resubmitting never modifies the earlier batch');
 select is((select status from public.artifact_review_threads where id=(select id from carried_thread)),'open','resubmission leaves status decisions to the human reviewer');
 
+
+-- Manual retry is a new job, but it must consume and expose the same immutable
+-- feedback generation after terminal failure or cancellation.
+create function pg_temp.enqueue_feedback_retry(target_label text) returns uuid language plpgsql as $$
+declare owner public.sessions; receipt record;
+begin
+  select s.* into strict owner from public.sessions s join batch_targets t on t.session_id=s.id where t.label=target_label;
+  select * into strict receipt from public.enqueue_session_job_with_run(owner.id,owner.workspace_id,owner.current_stage_id,
+    'c1b2c3d4-0001-4000-8000-000000000001','manual_retry','codex','gpt-5.5','project');
+  return receipt.job_id;
+end;
+$$;
+select ok(not has_table_privilege('authenticated','public.artifact_feedback_batch_jobs','INSERT')
+  and not has_table_privilege('service_role','public.artifact_feedback_batch_jobs','UPDATE'),
+  'clients and worker roles cannot fabricate or rewrite consumed feedback provenance');
+select ok((select relrowsecurity from pg_class where oid='public.artifact_feedback_batch_jobs'::regclass),
+  'feedback job associations enforce tenant RLS');
+select ok((select reloptions @> array['security_invoker=true'] from pg_class where oid='public.artifact_feedback_outputs'::regclass),
+  'accepted feedback outputs preserve underlying tenant RLS');
+select pg_temp.batch_fixture('manual-feedback');
+create temp table manual_thread as select * from pg_temp.batch_thread('manual-feedback','Original manual retry feedback','blocking');
+create temp table manual_batch as select pg_temp.batch_send('manual-feedback',gen_random_uuid(),array[(select id from manual_thread)]) as value;
+create temp table manual_batch_before as select to_jsonb(batch) as value from public.artifact_feedback_batches batch
+  where id=(select (value->>'feedback_batch_id')::uuid from manual_batch);
+create temp table terminal_attempt as select pg_temp.lifecycle_start((select (value->>'job_id')::uuid from manual_batch)) as run_id;
+select is(public.fail_session_job_attempt((select (value->>'job_id')::uuid from manual_batch),1,'Exhausted revision',false,1,
+  (select run_id from terminal_attempt)),'error','revision can exhaust automatic retries');
+select public.write_artifact_review_comment_once(gen_random_uuid(),'b1b2c3d4-0001-4000-8000-000000000001',
+  (select id from manual_thread),'This later reply must not enter the manually retried input');
+create temp table manual_retry_job as select pg_temp.enqueue_feedback_retry('manual-feedback') as job_id;
+select isnt((select job_id from manual_retry_job),(select (value->>'job_id')::uuid from manual_batch),'manual retry creates a distinct job');
+select is((select count(*) from public.artifact_feedback_batch_jobs where job_id=(select job_id from manual_retry_job)),0::bigint,
+  'queued manual work does not claim to have consumed feedback before owned start');
+create temp table manual_retry_run as select pg_temp.lifecycle_start((select job_id from manual_retry_job),1,repeat('b',40)) as run_id;
+select is((select batch_id from public.artifact_feedback_batch_jobs where job_id=(select job_id from manual_retry_job)),
+  (select (value->>'feedback_batch_id')::uuid from manual_batch),'owned manual start binds the original feedback generation');
+select is((select b.rendered_feedback_text from public.artifact_feedback_batch_jobs i join public.artifact_feedback_batches b on b.id=i.batch_id
+  where i.job_id=(select job_id from manual_retry_job)),(select value->>'rendered_feedback_text' from manual_batch_before),
+  'manual retry input remains exact despite later mutable replies');
+create temp table manual_retry_output as select pg_temp.lifecycle_publish((select job_id from manual_retry_job),(select run_id from manual_retry_run),
+  repeat('c',40),'Manual retry output') as artifact_id;
+select ok((select o.batch_id=(select (value->>'feedback_batch_id')::uuid from manual_batch) and o.run_id=(select run_id from manual_retry_run)
+  and o.artifact_version=2 from public.artifact_feedback_outputs o where o.artifact_id=(select artifact_id from manual_retry_output)),
+  'manual retry output reverse-links its exact received feedback and producing run');
+create temp table second_manual_job as select pg_temp.enqueue_feedback_retry('manual-feedback') as job_id;
+create temp table second_manual_run as select pg_temp.lifecycle_start((select job_id from second_manual_job),1,repeat('c',40)) as run_id;
+create temp table second_manual_output as select pg_temp.lifecycle_publish((select job_id from second_manual_job),(select run_id from second_manual_run),
+  repeat('c',40),'Second output of the same feedback generation') as artifact_id;
+select is((select count(*) from public.artifact_feedback_outputs where batch_id=(select (value->>'feedback_batch_id')::uuid from manual_batch)),
+  2::bigint,'a feedback generation can expose multiple accepted outputs without choosing an arbitrary one');
+select is(pg_temp.batch_failure($q$update public.artifact_feedback_batch_jobs set batch_id=batch_id where job_id=(select job_id from manual_retry_job)$q$)->>'code',
+  '23514','consumed retry provenance cannot be rebound after execution');
+-- A queued manual job may be adopted by a newer explicit review. Since it has
+-- not consumed old feedback, the new batch remains the only authoritative link.
+create temp table queued_for_adoption as select pg_temp.enqueue_feedback_retry('manual-feedback') as job_id;
+create temp table adopted_new_feedback as select to_jsonb(receipt) as value from public.sessions s cross join lateral public.submit_artifact_feedback_batch(
+  s.id,s.workspace_id,s.current_artifact_version,s.current_stage_id,s.current_artifact_id,s.artifact_review_revision,
+  gen_random_uuid(),array[(select id from manual_thread)],'A new explicit review generation','codex','gpt-5.5','project',
+  'c1b2c3d4-0001-4000-8000-000000000001') receipt where s.id=(select session_id from batch_targets where label='manual-feedback');
+select ok((select (value->>'job_id')::uuid=(select job_id from queued_for_adoption) and not (value->>'job_created')::boolean from adopted_new_feedback),
+  'new explicit feedback can still adopt queued manual work');
+select is((select batch_id from public.artifact_feedback_batch_jobs where job_id=(select job_id from queued_for_adoption)),
+  (select (value->>'feedback_batch_id')::uuid from adopted_new_feedback),'queued adoption binds the new explicit batch rather than stale feedback');
+select is((select to_jsonb(b) from public.artifact_feedback_batches b where id=(select (value->>'feedback_batch_id')::uuid from manual_batch)),
+  (select value from manual_batch_before),'manual retries and later reviews never mutate the earlier batch');
+select pg_temp.batch_fixture('canceled-feedback');
+create temp table canceled_thread as select * from pg_temp.batch_thread('canceled-feedback','Canceled revision input','blocking');
+create temp table canceled_batch as select pg_temp.batch_send('canceled-feedback',gen_random_uuid(),array[(select id from canceled_thread)]) as value;
+create temp table canceled_execution as select pg_temp.lifecycle_start((select (value->>'job_id')::uuid from canceled_batch)) as run_id;
+select public.cancel_session_job_attempts((select session_id from batch_targets where label='canceled-feedback'),
+  'b1b2c3d4-0001-4000-8000-000000000001','Cancel revision',(select run_id from canceled_execution));
+create temp table canceled_retry as select pg_temp.enqueue_feedback_retry('canceled-feedback') as job_id;
+create temp table canceled_retry_execution as select pg_temp.lifecycle_start((select job_id from canceled_retry),1,repeat('b',40)) as run_id;
+select is((select batch_id from public.artifact_feedback_batch_jobs where job_id=(select job_id from canceled_retry)),
+  (select (value->>'feedback_batch_id')::uuid from canceled_batch),'manual retry after cancellation preserves the exact feedback generation');
+select is((select status from public.artifact_review_threads where id=(select id from canceled_thread)),'open',
+  'cancellation and manual retry leave human blocking decisions open');
+set local role authenticated;
+set local request.jwt.claim.role='authenticated';
+set local request.jwt.claim.sub='50200000-0000-4000-8000-000000000401';
+select is((select count(*) from public.artifact_feedback_batch_jobs),0::bigint,'foreign workspace cannot read retry provenance');
+select is((select count(*) from public.artifact_feedback_outputs),0::bigint,'security-invoker output history cannot leak foreign accepted artifacts');
+reset role;
+set local request.jwt.claim.role='service_role';
+set local request.jwt.claim.sub='a1b2c3d4-0001-4000-8000-000000000001';
+
 select * from finish();
 rollback;
