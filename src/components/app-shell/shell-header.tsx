@@ -267,6 +267,10 @@ export function ShellHeader({
         <Link
           key={item.href}
           href={item.href}
+          // From the pipeline, load the real page ahead of the click. The default
+          // stops at loading.tsx, and prefetching every page from every page
+          // competes with opening a session.
+          prefetch={!active && pathname === pipelineHref ? true : undefined}
           aria-current={active ? "page" : undefined}
           className={cn("ui-shell-nav-link", active && "ui-shell-nav-link-active")}
           onClick={(event) => {
