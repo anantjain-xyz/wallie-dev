@@ -21,7 +21,7 @@ The clock stops when the content below is visible and the workspace shell has hy
 
 1. `pipeline-load`. A new browser context opens `/w/acme-corp`. Ready when the Pipeline heading, the pipeline board, and a session link are visible.
 2. `sessions-switch`. From a loaded pipeline page, click Sessions. Ready when the Sessions heading and a session row are visible.
-3. `session-open`. From the sessions list, open `[bench] Checkout latency`. Ready when that heading and the pipeline stage navigation are visible.
+3. `session-open`. From the sessions list, open `[bench] Checkout latency`. Ready when that heading, the pipeline stage navigation, and a stage button are visible.
 4. `settings-switch`. From the pipeline page, click Settings. Ready when the Settings heading, the GitHub section, and the Pipeline section are visible.
 5. `new-session-modal`. From the pipeline page, click New session. Ready when the title field and the stage picker are visible.
 
@@ -29,7 +29,7 @@ Each sample records the request count, failed requests, transferred script, styl
 
 ## Volume
 
-`scripts/bench/seed-navigation-volume.sql` deletes previous `[bench]` sessions and inserts 160 sessions numbered from 1001. Each session has one artifact and one successful run. Session 1001 is the session the benchmark opens, and its artifact is longer than the others. Run the SQL again to rebuild the same rows. `supabase db reset` removes them with the rest of the local database.
+`scripts/bench/seed-navigation-volume.sql` deletes previous `[bench]` sessions and inserts 160 sessions numbered from 1001. Each session selects every active stage in its pipeline and has one artifact and one successful run. Session 1001 is the session the benchmark opens, and its artifact is longer than the others. Run the SQL again to rebuild the same rows. `supabase db reset` removes them with the rest of the local database.
 
 ## Compare two results
 

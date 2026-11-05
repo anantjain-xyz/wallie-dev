@@ -158,7 +158,9 @@ async function waitForSession(page: Page) {
   await expect(
     page.getByRole("heading", { level: 1, name: sessionTitle, exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Pipeline stages" })).toBeVisible();
+  const stageNav = page.getByRole("navigation", { name: "Pipeline stages" });
+  await expect(stageNav).toBeVisible();
+  await expect(stageNav.getByRole("button").first()).toBeVisible();
   await waitForShellHydration(page);
 }
 

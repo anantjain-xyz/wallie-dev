@@ -1,7 +1,8 @@
 -- Extra acme-corp sessions for the navigation benchmark.
 -- Safe to rerun. Deletes prior [bench] rows, then inserts 160 sessions
--- numbered from 1001, each with one artifact and one successful run.
--- Session 1001 is "[bench] Checkout latency" and is the row the benchmark opens.
+-- numbered from 1001, each with the pipeline's selected stages, one artifact,
+-- and one successful run. Session 1001 is "[bench] Checkout latency" and is
+-- the row the benchmark opens.
 
 begin;
 
@@ -84,6 +85,17 @@ join lateral (
   )
   limit 1
 ) as stage on true;
+
+-- The detail page inner-joins selected stages. A direct session insert does
+-- not create those rows, so the stage timeline would render with no buttons.
+insert into public.session_selected_stages (session_id, workspace_id, stage_id)
+select session.id, session.workspace_id, stage.id
+from public.sessions as session
+join public.pipeline_stages as stage
+  on stage.pipeline_id = session.pipeline_id
+ and stage.workspace_id = session.workspace_id
+ and stage.archived_at is null
+where session.title like '[bench] %';
 
 insert into public.session_artifacts (
   session_id,
