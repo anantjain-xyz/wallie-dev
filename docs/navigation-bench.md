@@ -27,6 +27,14 @@ The clock stops when the content below is visible and the workspace shell has hy
 
 Each sample records the request count, failed requests, transferred script, style, document, and RSC bytes, render-blocking requests, and the server timing records for that request. Render-blocking counts include only resources that start after the clock starts, so a warmup page is not charged to the click. An even number of successful runs reports the average of the two middle durations. The diagnostic row is the upper of those two when the count is even. Server timing is written only when `WALLIE_TIMING_LOGS=1`, and the JSONL path is `WALLIE_TIMING_LOG_PATH`. The benchmark sets both for the `next start` process.
 
+Script transfers include background requests that start before readiness, even when they finish during sample collection. They are not the same as the JavaScript required to hydrate the page. Server timings can also include navigation prefetches. The summary's server duration is the largest loader duration in that sample, not the total time for the Pipeline document.
+
+## Inspect required client JavaScript
+
+After `pnpm build`, run `pnpm analyze:authenticated-bundle`. Its `initialRouteJavaScript` output reports deduplicated client-entry chunks in raw and gzip bytes. Next's separate runtime chunks are excluded. The check rejects an eager create-session form on Pipeline, Sessions, or Settings, and an eager Supabase SDK on Pipeline.
+
+The board starts the realtime SDK after hydration. A delayed or failed SDK load still uses the existing subscription recovery and snapshot reconciliation. Run `pnpm exec playwright test e2e/pipeline-first-load.spec.ts` against the production build and local Supabase to verify that Pipeline filters work while the SDK request is blocked.
+
 ## Volume
 
 `scripts/bench/seed-navigation-volume.sql` deletes previous `[bench]` sessions and inserts 160 sessions numbered from 1001. Each session selects every active stage in its pipeline and has one artifact and one successful run. Session 1001 is the session the benchmark opens, and its artifact is longer than the others. Run the SQL again to rebuild the same rows. `supabase db reset` removes them with the rest of the local database.
