@@ -15,7 +15,7 @@ create temp table git_fixture as select * from public.create_session_with_first_
   'Git lineage fixture','Keep the execution input','codex','gpt-5.5',null,null,null,null);
 update public.sessions set github_repository_id='12b2c3d4-0001-4000-8000-000000000001'
   where id=(select session_id from git_fixture);
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from git_fixture);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from git_fixture);
 select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,0,'codex','gpt-5.5','project','wallie/git-fixture-1')
 from git_fixture f join public.sessions s on s.id=f.session_id;
 
@@ -56,7 +56,7 @@ select lives_ok($$update public.agent_runs set last_activity_at=clock_timestamp(
   'normal run activity and recovery bookkeeping remain writable');
 
 -- A retry keeps the durable job intent and receives a new run/claim attempt.
-update public.agent_jobs set attempt_count=2 where id=(select job_id from git_fixture);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), attempt_count=2 where id=(select job_id from git_fixture);
 create temp table git_retry as select public.start_session_job_attempt(
   f.job_id,2,s.current_stage_id,0,'codex','gpt-5.5','project','wallie/git-fixture-2') as run_id
 from git_fixture f join public.sessions s on s.id=f.session_id;
@@ -180,7 +180,7 @@ update public.agent_jobs set stage_id='49400000-0003-4000-8000-000000000001',sta
   where id=(select job_id from git_other);
 update public.agent_runs set stage_id='49400000-0003-4000-8000-000000000001',stage_slug='git-checkpoint-fixture',stage_name='Git fixture'
   where id=(select run_id from git_other);
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from git_other);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from git_other);
 select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,0,'codex','gpt-5.5','project','wallie/git-other')
 from git_other f join public.sessions s on s.id=f.session_id;
 select public.pin_session_job_git_input(f.job_id,1,f.run_id,'12b2c3d4-0001-4000-8000-000000000001','main',repeat('b',40)) from git_other f;

@@ -30,6 +30,14 @@ const workspace = "b1b2c3d4-0001-4000-8000-000000000001";
 const member = "c1b2c3d4-0001-4000-8000-000000000001";
 const sha = "a".repeat(40);
 const fixtures = [];
+const releaseState = () =>
+  JSON.parse(sql("select row_to_json(state) from public.get_git_continuity_release_state() state"));
+const initialRelease = releaseState();
+if (!initialRelease.enabled) {
+  sql(
+    `select public.set_git_continuity_release(true,${initialRelease.revision},'Isolated loopback ownership concurrency fixture')`,
+  );
+}
 
 function session() {
   const row = JSON.parse(
@@ -39,7 +47,7 @@ function session() {
   );
   fixtures.push(row.session_id);
   sql(
-    `update public.agent_jobs set status='running',attempt_count=1 where id='${row.job_id}'; select public.start_session_job_attempt('${row.job_id}',1,current_stage_id,0,'codex','gpt-5.5','project','wallie/concurrency-${row.job_id}') from public.sessions where id='${row.session_id}'`,
+    `update public.agent_jobs set status='running',attempt_count=1,git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()) where id='${row.job_id}'; select public.start_session_job_attempt('${row.job_id}',1,current_stage_id,0,'codex','gpt-5.5','project','wallie/concurrency-${row.job_id}') from public.sessions where id='${row.session_id}'`,
   );
   return row;
 }
@@ -159,4 +167,10 @@ try {
   console.log("PASS: an attempt replaced while waiting cannot adopt a checkpoint or artifact");
 } finally {
   for (const id of fixtures) sql(`delete from public.sessions where id='${id}'`);
+  if (!initialRelease.enabled) {
+    const current = releaseState();
+    sql(
+      `select public.set_git_continuity_release(false,${current.revision},'Restore pause after isolated ownership concurrency fixture')`,
+    );
+  }
 }

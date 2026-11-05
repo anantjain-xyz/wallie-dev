@@ -96,6 +96,7 @@ const creationSchema = z.object({
     .max(256)
     .refine((value) => value.trim().length > 0),
   body: z.string().max(65_536),
+  draft: z.boolean().optional(),
 });
 
 async function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
@@ -367,7 +368,11 @@ export function createCanonicalPrApi(input: {
       if (pr.number !== number) throw new CanonicalPrApiError("pr_identity_conflict");
       return receipt(pr, true);
     },
-    async create(body: { title: string; body: string }): Promise<CanonicalPullRequest> {
+    async create(body: {
+      title: string;
+      body: string;
+      draft?: boolean;
+    }): Promise<CanonicalPullRequest> {
       const parsedBody = creationSchema.safeParse(body);
       if (!parsedBody.success)
         throw new CanonicalPrApiError("pr_creation_rejected", { retryCreationSafe: true });

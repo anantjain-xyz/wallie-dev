@@ -15,6 +15,7 @@ export type Database = {
           created_at: string
           dedupe_key: string | null
           finished_at: string | null
+          git_continuity_release_revision: number | null
           id: string
           last_error: string | null
           requested_by_member_id: string | null
@@ -34,6 +35,7 @@ export type Database = {
           created_at?: string
           dedupe_key?: string | null
           finished_at?: string | null
+          git_continuity_release_revision?: number | null
           id?: string
           last_error?: string | null
           requested_by_member_id?: string | null
@@ -53,6 +55,7 @@ export type Database = {
           created_at?: string
           dedupe_key?: string | null
           finished_at?: string | null
+          git_continuity_release_revision?: number | null
           id?: string
           last_error?: string | null
           requested_by_member_id?: string | null
@@ -1207,6 +1210,101 @@ export type Database = {
           },
         ]
       }
+      session_checkpoint_cleanup: {
+        Row: {
+          attempt_count: number
+          claim_id: string | null
+          cleanup_attempt_count: number
+          created_at: string
+          eligible_after: string
+          expected_sha: string
+          github_repository_id: number | null
+          job_id: string
+          last_error_code: string | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          remote_absent_at: string | null
+          repository_full_name: string
+          repository_id: string
+          retained_ref: string
+          run_id: string
+          session_id: string
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count: number
+          claim_id?: string | null
+          cleanup_attempt_count?: number
+          created_at?: string
+          eligible_after: string
+          expected_sha: string
+          github_repository_id?: number | null
+          job_id: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          remote_absent_at?: string | null
+          repository_full_name: string
+          repository_id: string
+          retained_ref: string
+          run_id: string
+          session_id: string
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          claim_id?: string | null
+          cleanup_attempt_count?: number
+          created_at?: string
+          eligible_after?: string
+          expected_sha?: string
+          github_repository_id?: number | null
+          job_id?: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          remote_absent_at?: string | null
+          repository_full_name?: string
+          repository_id?: string
+          retained_ref?: string
+          run_id?: string
+          session_id?: string
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_checkpoint_cleanup_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_cleanup_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "session_checkpoint_publications"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_cleanup_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_cleanup_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_checkpoint_publications: {
         Row: {
           adopted_at: string | null
@@ -1408,6 +1506,42 @@ export type Database = {
           },
           {
             foreignKeyName: "session_git_checkpoints_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_git_continuity_enrollments: {
+        Row: {
+          created_at: string
+          release_version: number
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          release_version?: number
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          release_version?: number
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_git_continuity_enrollments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_continuity_enrollments_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -1752,6 +1886,7 @@ export type Database = {
           expected_fence_sha: string | null
           expected_head_sha: string | null
           fence_commit_body: string
+          git_continuity_release_revision: number | null
           id: string
           last_error_code: string | null
           lease_expires_at: string | null
@@ -1780,6 +1915,7 @@ export type Database = {
           expected_fence_sha?: string | null
           expected_head_sha?: string | null
           fence_commit_body: string
+          git_continuity_release_revision?: number | null
           id?: string
           last_error_code?: string | null
           lease_expires_at?: string | null
@@ -1808,6 +1944,7 @@ export type Database = {
           expected_fence_sha?: string | null
           expected_head_sha?: string | null
           fence_commit_body?: string
+          git_continuity_release_revision?: number | null
           id?: string
           last_error_code?: string | null
           lease_expires_at?: string | null
@@ -3398,6 +3535,10 @@ export type Database = {
         Args: { p_claim_id: string; p_epoch_id: string; p_operation_id: string }
         Returns: boolean
       }
+      assert_session_checkpoint_cleanup_claim: {
+        Args: { p_claim_id: string; p_run_id: string }
+        Returns: boolean
+      }
       assert_session_checkpoint_publication_claim: {
         Args: { p_claim_id: string; p_run_id: string }
         Returns: boolean
@@ -3520,6 +3661,7 @@ export type Database = {
           created_at: string
           dedupe_key: string | null
           finished_at: string | null
+          git_continuity_release_revision: number | null
           id: string
           last_error: string | null
           requested_by_member_id: string | null
@@ -3581,6 +3723,10 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      claim_session_checkpoint_cleanup: {
+        Args: { p_run_id?: string }
+        Returns: string
       }
       claim_session_checkpoint_publication: {
         Args: { p_run_id?: string }
@@ -3773,6 +3919,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      defer_session_job_for_continuity_release: {
+        Args: { p_attempt_count: number; p_job_id: string }
+        Returns: boolean
+      }
       enqueue_session_job_with_run: {
         Args: {
           p_agent_model_name?: string
@@ -3812,6 +3962,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      fail_session_checkpoint_cleanup: {
+        Args: { p_claim_id: string; p_error_code: string; p_run_id: string }
+        Returns: boolean
       }
       fail_session_job_attempt: {
         Args: {
@@ -3874,6 +4028,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      finish_session_checkpoint_cleanup: {
+        Args: { p_claim_id: string; p_remote_absent: boolean; p_run_id: string }
+        Returns: boolean
+      }
       finish_session_pr_observation: {
         Args: {
           p_is_draft: boolean
@@ -3913,6 +4071,15 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: boolean
       }
+      get_git_continuity_release_state: {
+        Args: never
+        Returns: {
+          enabled: boolean
+          reason: string
+          revision: number
+          updated_at: string
+        }[]
+      }
       get_pipeline_dashboard_page: {
         Args: {
           cursor_seen_ids?: string[]
@@ -3926,6 +4093,14 @@ export type Database = {
       get_session_detail_page: {
         Args: { target_session_number: number; target_workspace_slug: string }
         Returns: Json
+      }
+      get_session_git_continuity_state: {
+        Args: { p_session_id: string }
+        Returns: {
+          enabled: boolean
+          revision: number
+          state: string
+        }[]
       }
       get_session_list_page: {
         Args: {
@@ -4391,6 +4566,19 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: string
+      }
+      set_git_continuity_release: {
+        Args: {
+          p_enabled: boolean
+          p_expected_revision: number
+          p_reason: string
+        }
+        Returns: {
+          enabled: boolean
+          reason: string
+          revision: number
+          updated_at: string
+        }[]
       }
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }

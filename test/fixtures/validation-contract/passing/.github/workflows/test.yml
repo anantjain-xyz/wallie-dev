@@ -102,6 +102,9 @@ jobs:
       - name: Run database regression tests
         run: pnpm check:db-tests
 
+      - name: Verify checkpoint continuity and worker recovery
+        run: pnpm check:continuity
+
       - name: Verify concurrent checkpoint ownership
         run: node scripts/test-git-checkpoint-concurrency.mjs postgresql://postgres:postgres@127.0.0.1:54322/postgres
 

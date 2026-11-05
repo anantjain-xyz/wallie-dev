@@ -25,9 +25,10 @@ insert into public.session_selected_stages(session_id,workspace_id,stage_id)
 select session.id,session.workspace_id,stage.id from public.sessions session
 join public.pipeline_stages stage on stage.pipeline_id=session.pipeline_id and stage.slug<>'race-skip'
 where session.id::text like 'aef49700-0000-4000-8000-%' on conflict do nothing;
-insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count)
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count,git_continuity_release_revision)
 select ('aef49700-0000-4000-8000-'||lpad((100+n)::text,12,'0'))::uuid,
-  session.workspace_id,session.id,stage.id,stage.slug,stage.name,'assignment','running',1
+  session.workspace_id,session.id,stage.id,stage.slug,stage.name,'assignment','running',1,
+  (select revision from public.get_git_continuity_release_state())
 from generate_series(1,7) n
 join public.sessions session on session.id=('aef49700-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid
 join public.pipeline_stages stage on stage.id=session.current_stage_id;
@@ -73,7 +74,7 @@ begin
     select * into strict successor from public.reject_session_stage(target.session_id,
       'b1b2c3d4-0001-4000-8000-000000000001',1,'Revise this reviewed checkpoint','codex','gpt-5.5',
       target.stage_id,target.artifact_id,'project','c1b2c3d4-0001-4000-8000-000000000001');
-    update public.agent_jobs set status='running',attempt_count=1 where id=successor.job_id;
+    update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=successor.job_id;
     started:=public.start_session_job_attempt(successor.job_id,1,target.stage_id,1,'codex','gpt-5.5','project',
       'wallie/lifecycle-revision-'||target.n::text);
     if target.n=6 then
@@ -246,7 +247,7 @@ select is((select outcome from extensions.dblink('lifecycle_owner',format(
   'select public.fail_session_job_attempt(%L,1,%L,true,3,%L)',target.job_id,'Retry after failure',target.run_id))
   as result(outcome text)),'queued','automatic retry retains the durable job while holding lifecycle ownership')
 from lifecycle_race_targets target where n=6;
-select extensions.dblink_exec('lifecycle_owner',format('update public.agent_jobs set status=''running'',attempt_count=2 where id=%L',job_id))
+select extensions.dblink_exec('lifecycle_owner',format('update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status=''running'',attempt_count=2 where id=%L',job_id))
 from lifecycle_race_targets where n=6;
 create temp table replacement_run as select started.* from lifecycle_race_targets target
 cross join lateral extensions.dblink('lifecycle_owner',format(

@@ -125,7 +125,7 @@ select is((select outcome from pg_temp.route(8,'Backlog')),'observed','ignore st
 -- must retain that successful run in cleanup without rewriting its history.
 create temp table publisher as select run.id as run_id, job.id as job_id from public.agent_jobs job
 join public.agent_runs run on run.agent_job_id=job.id where job.session_id=(select session_id from linear_session) and job.status='queued';
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from publisher);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from publisher);
 update public.agent_runs set status='success',attempt_count=1,sandbox_id='linear-publisher' where id=(select run_id from publisher);
 create temp table canceled_disposition as select * from pg_temp.route(9,'Canceled');
 select is((select outcome from canceled_disposition),'archived','terminal cancellation commits through guarded archive');
@@ -202,7 +202,7 @@ select is((select array_agg(version order by version) from public.session_artifa
 insert into public.session_artifacts(session_id,workspace_id,stage_id,stage_slug,version,artifact_json)
 select session_id,'b1b2c3d4-0001-4000-8000-000000000001'::uuid,stage.id,'implement',6,'"occupied legacy label v6"'::jsonb
 from linear_session cross join public.pipeline_stages stage where stage.pipeline_id=(select id from linear_pipeline) and stage.slug='plan';
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from renamed_route);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from renamed_route);
 create temp table publishing_run as select public.start_session_job_attempt(
 (select job_id from renamed_route),1,(select id from renamed_stage),5,'codex','gpt-5.5','project') as id;
 select is((select id from publishing_run),(select run_id from renamed_route),'publication regression owns the exact queued replacement run');

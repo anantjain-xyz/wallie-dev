@@ -22,7 +22,8 @@ const expectedScripts = {
   typecheck: "tsc --noEmit",
   "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
   test: "vitest run",
-  "check:db-tests": "SUPABASE_TELEMETRY_DISABLED=1 supabase test db --local",
+  "check:db-tests": "node --import tsx scripts/check-db-tests.ts",
+  "check:continuity": "node --import tsx scripts/check-continuity.ts",
   "db:types:check": "tsx scripts/check-db-types-drift.ts",
   "check:fast":
     "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
@@ -148,6 +149,10 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
             },
             { name: "Verify generated database types", run: "pnpm db:types:check" },
             { name: "Run database regression tests", run: "pnpm check:db-tests" },
+            {
+              name: "Verify checkpoint continuity and worker recovery",
+              run: "pnpm check:continuity",
+            },
             {
               name: "Verify concurrent checkpoint ownership",
               run: "node scripts/test-git-checkpoint-concurrency.mjs postgresql://postgres:postgres@127.0.0.1:54322/postgres",

@@ -93,7 +93,7 @@ $$;
 
 select is(pg_temp.start_owned((select job_id from attempt_fixture), 0), null::uuid,
   'a queued job cannot start before the queue claims it');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from attempt_fixture);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from attempt_fixture);
 select is(pg_temp.start_owned((select job_id from attempt_fixture), null), null::uuid, 'missing attempt cannot start');
 select is(pg_temp.start_owned((select job_id from attempt_fixture), 0), null::uuid, 'old attempt cannot start');
 select is(pg_temp.start_owned((select job_id from attempt_fixture), 2), null::uuid, 'future attempt cannot start');
@@ -126,7 +126,7 @@ select is((select status::text from public.agent_jobs where id = (select job_id 
   'retry leaves a queued job');
 select is((select phase_status::text from public.sessions where id = (select session_id from attempt_fixture)), 'rejected',
   'retry parks the failed execution until the next claim');
-update public.agent_jobs set status = 'running', attempt_count = 2 where id = (select job_id from attempt_fixture);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 2 where id = (select job_id from attempt_fixture);
 create temp table second_attempt as select pg_temp.start_owned((select job_id from attempt_fixture), 2, 'wallie/second-attempt') as run_id;
 select isnt((select run_id from second_attempt), (select run_id from attempt_fixture), 'retry receives a distinct run');
 select is((select attempt_count from public.agent_runs where id = (select run_id from second_attempt)), 2, 'retry records attempt two');
@@ -159,7 +159,7 @@ create temp table replacement as select * from public.enqueue_session_job_with_r
   (select session_id from attempt_fixture), 'b1b2c3d4-0001-4000-8000-000000000001',
   (select current_stage_id from public.sessions where id = (select session_id from attempt_fixture)),
   null, 'manual_retry', 'codex', 'gpt-5.5', 'project');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from replacement);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from replacement);
 select is(pg_temp.start_owned((select job_id from replacement), 1), (select run_id from replacement), 'replacement job starts at the unchanged stage and version');
 select ok(not public.publish_session_job_attempt((select job_id from attempt_fixture), 2, (select run_id from second_attempt), 0, 'replaced output'), 'replacement job identity fences old publication despite matching stage/version');
 select is(public.fail_session_job_attempt((select job_id from attempt_fixture), 2, 'replaced failure', true, 3), 'stale', 'replacement job identity fences old failure');
@@ -168,7 +168,7 @@ select is((select status::text from public.agent_jobs where id = (select job_id 
 -- Legacy runless work binds its stage once; explicit historical stage evidence wins.
 create temp table legacy as select * from pg_temp.ownership_fixture('Legacy runless binding');
 delete from public.agent_runs where id = (select run_id from legacy);
-update public.agent_jobs set status = 'running', attempt_count = 1, stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from legacy);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1, stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from legacy);
 create temp table legacy_started as select pg_temp.start_owned((select job_id from legacy), 1) as run_id;
 select ok((select run_id is not null from legacy_started), 'legacy runless job can bind its first execution');
 select is((select stage_id from public.agent_jobs where id = (select job_id from legacy)),
@@ -176,7 +176,7 @@ select is((select stage_id from public.agent_jobs where id = (select job_id from
 select is((select stage_id from public.agent_runs where id = (select run_id from legacy_started)),
   (select current_stage_id from public.sessions where id = (select session_id from legacy)), 'legacy run receives the same durable stage identity');
 create temp table wrong_stage as select * from pg_temp.ownership_fixture('Legacy historical stage guard');
-update public.agent_jobs set status = 'running', attempt_count = 1, stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from wrong_stage);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1, stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from wrong_stage);
 update public.agent_runs set status = 'error' where id = (select run_id from wrong_stage);
 update public.sessions set current_stage_id = (select id from public.pipeline_stages where pipeline_id = (select id from ownership_pipeline) and slug = 'build') where id = (select session_id from wrong_stage);
 select is(pg_temp.start_owned((select job_id from wrong_stage), 1), null::uuid, 'NULL job stage cannot hide an old-stage historical run');
@@ -188,7 +188,7 @@ update public.agent_runs set status = 'error' where id = (select run_id from mal
 update public.sessions set current_stage_id = (select id from public.pipeline_stages
   where pipeline_id = (select id from ownership_pipeline) and slug = 'build')
   where id = (select session_id from malformed_stage);
-update public.agent_jobs set status = 'running', attempt_count = 1, stage_id = (select current_stage_id from public.sessions
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1, stage_id = (select current_stage_id from public.sessions
   where id = (select session_id from malformed_stage)) where id = (select job_id from malformed_stage);
 select is(pg_temp.start_owned((select job_id from malformed_stage), 1), null::uuid,
   'matching job stage cannot bypass mismatched historical run evidence');
@@ -200,7 +200,7 @@ select is((select phase_status::text from public.sessions where id = (select ses
 -- Failure at run creation rolls back phase changes and legacy stage binding.
 create temp table atomic_start as select * from pg_temp.ownership_fixture('Atomic start rollback');
 delete from public.agent_runs where id = (select run_id from atomic_start);
-update public.agent_jobs set status = 'running', attempt_count = 1, stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from atomic_start);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1, stage_id = null, stage_slug = null, stage_name = null where id = (select job_id from atomic_start);
 update public.sessions set phase_status = 'awaiting_review' where id = (select session_id from atomic_start);
 create function pg_temp.reject_owned_run() returns trigger language plpgsql as $$
 begin
@@ -219,7 +219,7 @@ drop trigger ownership_start_failure on public.agent_runs;
 
 -- Publication owns the artifact row as well as the session pointer and run.
 create temp table publishing as select * from pg_temp.ownership_fixture('Publication atomicity');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from publishing);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from publishing);
 select pg_temp.start_owned((select job_id from publishing), 1);
 insert into public.session_artifacts(workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
 select workspace_id, id, current_stage_id, 'plan', 1, to_jsonb('pre-existing artifact'::text)
@@ -256,7 +256,7 @@ create temp table review_retry as select * from public.enqueue_session_job_with_
   (select session_id from publishing), 'b1b2c3d4-0001-4000-8000-000000000001',
   (select current_stage_id from public.sessions where id = (select session_id from publishing)),
   null, 'manual_retry', 'codex', 'gpt-5.5', 'project');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from review_retry);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from review_retry);
 select is(pg_temp.start_owned((select job_id from review_retry), 1), (select run_id from review_retry), 'new retry can start while the session awaits review');
 select is((select phase_status::text from public.sessions where id = (select session_id from publishing)), 'in_progress', 'new retry atomically leaves review');
 select ok(public.publish_session_job_attempt((select job_id from review_retry), 1, (select run_id from review_retry), 1, 'revised output'), 'new retry publishes the next version');
@@ -264,7 +264,7 @@ select is((select artifact_json from public.session_artifacts where session_id =
 
 -- Approval may advance the session before the publishing worker finishes cleanup.
 create temp table advancing as select * from pg_temp.ownership_fixture('Post-approval completion');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from advancing);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from advancing);
 select pg_temp.start_owned((select job_id from advancing), 1);
 select public.publish_session_job_attempt((select job_id from advancing), 1, (select run_id from advancing), 0, 'approved plan');
 create temp table advanced as select * from pg_temp.approve_current_review(
@@ -277,7 +277,7 @@ select is((select current_artifact_version from public.sessions where id = (sele
 create temp table next_stage as select * from public.enqueue_session_job_with_run(
   (select session_id from advancing), 'b1b2c3d4-0001-4000-8000-000000000001', (select current_stage_id from advanced),
   null, 'assignment', 'codex', 'gpt-5.5', 'project');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from next_stage);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from next_stage);
 select pg_temp.start_owned((select job_id from next_stage), 1);
 select is(public.fail_session_job_attempt((select job_id from advancing), 1, 'late old-stage cleanup', true, 3, (select run_id from advancing)), 'success', 'published old job failure remains idempotent after a replacement starts');
 select ok(not public.complete_session_job_attempt((select job_id from next_stage), 1, (select run_id from advancing)), 'new job cannot complete using an old successful run');
@@ -287,7 +287,7 @@ select is((select current_stage_id from public.sessions where id = (select sessi
 
 -- A delayed failure before completion must also respect a human's approval.
 create temp table advanced_failure as select * from pg_temp.ownership_fixture('Post-approval failure');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from advanced_failure);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from advanced_failure);
 select pg_temp.start_owned((select job_id from advanced_failure), 1);
 select public.publish_session_job_attempt((select job_id from advanced_failure), 1, (select run_id from advanced_failure), 0, 'approved before failure');
 select * from pg_temp.approve_current_review((select session_id from advanced_failure), 'b1b2c3d4-0001-4000-8000-000000000001', 1, 'c1b2c3d4-0001-4000-8000-000000000001');
@@ -315,7 +315,7 @@ select is(public.fail_session_job_attempt((select job_id from legacy), 1, 'late 
 
 -- Refused starts still have an exact cleanup path, without disturbing session decisions.
 create temp table unbound_active as select * from pg_temp.ownership_fixture('Legacy worker already running');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from unbound_active);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from unbound_active);
 update public.agent_runs set status = 'running' where id = (select run_id from unbound_active);
 select is(pg_temp.start_owned((select job_id from unbound_active), 1), null::uuid, 'unbound running legacy worker is never adopted by another executor');
 select is((select attempt_count from public.agent_runs where id = (select run_id from unbound_active)), null::integer, 'refused legacy adoption does not manufacture ownership');
@@ -324,7 +324,7 @@ select is((select status::text from public.agent_runs where id = (select run_id 
 create temp table refused_archive as select * from pg_temp.ownership_fixture('Archived pre-start cleanup');
 delete from public.agent_runs where id = (select run_id from refused_archive);
 update public.sessions set archived_at = now(), phase_status = 'awaiting_review' where id = (select session_id from refused_archive);
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from refused_archive);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from refused_archive);
 select is(pg_temp.start_owned((select job_id from refused_archive), 1), null::uuid, 'archived runless work cannot acquire execution authority');
 select is(public.fail_session_job_attempt((select job_id from refused_archive), 1, 'archived before start', true, 3), 'error', 'exact claimed runless job can be retired after refused archived start');
 select is((select phase_status::text from public.sessions where id = (select session_id from refused_archive)), 'awaiting_review', 'refused-start cleanup does not alter archived review state');
@@ -332,7 +332,7 @@ select is((select status::text from public.agent_jobs where id = (select job_id 
 
 create temp table prestart_retry as select * from pg_temp.ownership_fixture('Review pre-start retry');
 update public.sessions set phase_status = 'awaiting_review' where id = (select session_id from prestart_retry);
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from prestart_retry);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from prestart_retry);
 select is(public.fail_session_job_attempt((select job_id from prestart_retry), 1, 'setup unavailable', true, 3), 'queued', 'fresh pre-start request is retryable while awaiting review');
 select is((select phase_status::text from public.sessions where id = (select session_id from prestart_retry)), 'awaiting_review', 'pre-start retry preserves the existing review');
 select is((select status::text from public.agent_runs where id = (select run_id from prestart_retry)), 'error', 'pre-start failure retires the unbound placeholder');
@@ -342,7 +342,7 @@ select is((select status::text from public.agent_jobs where id = (select job_id 
 select ok(not public.publish_session_job_attempt((select job_id from next_stage), 1, (select run_id from advancing), 0, 'wrong run'), 'publication rejects a successful run from a different job');
 
 create temp table moved_before_publish as select * from pg_temp.ownership_fixture('Stage moved before publication');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from moved_before_publish);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from moved_before_publish);
 select pg_temp.start_owned((select job_id from moved_before_publish), 1);
 update public.sessions set current_stage_id = (select id from public.pipeline_stages where pipeline_id = (select id from ownership_pipeline) and slug = 'build'),
   phase_status = 'in_progress' where id = (select session_id from moved_before_publish);
@@ -353,7 +353,7 @@ select is((select status::text from public.agent_runs where id = (select run_id 
 
 -- Cancellation remains available between the queue claim and owned start.
 create temp table claimed_cancel as select * from pg_temp.ownership_fixture('Cancel claim before start');
-update public.agent_jobs set status = 'running', attempt_count = 1 where id = (select job_id from claimed_cancel);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1 where id = (select job_id from claimed_cancel);
 create temp table claim_gap_cancel as select * from public.cancel_session_job_attempts(
   (select session_id from claimed_cancel), 'b1b2c3d4-0001-4000-8000-000000000001', 'cancel before start', (select run_id from claimed_cancel));
 select is((select job_ids from claim_gap_cancel), array[(select job_id from claimed_cancel)], 'queued run can cancel a job already claimed but not started');

@@ -12,9 +12,10 @@ select ('aef49600-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
 from public.pipeline_stages stage join public.pipelines pipeline on pipeline.id=stage.pipeline_id
 cross join generate_series(1,6) n
 where stage.workspace_id='b1b2c3d4-0001-4000-8000-000000000001' and pipeline.is_default and stage.slug='plan';
-insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count)
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count,git_continuity_release_revision)
 select ('aef49600-0000-4000-8000-'||lpad((100+n)::text,12,'0'))::uuid,
-  s.workspace_id,s.id,stage.id,stage.slug,stage.name,'assignment','running',1
+  s.workspace_id,s.id,stage.id,stage.slug,stage.name,'assignment','running',1,
+  (select revision from public.get_git_continuity_release_state())
 from generate_series(1,6) n
 join public.sessions s on s.id=('aef49600-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid
 join public.pipeline_stages stage on stage.id=s.current_stage_id;
@@ -111,7 +112,7 @@ select count(*) from extensions.dblink('checkpoint_owner',$q$
   select id from public.sessions where id='aef49600-0000-4000-8000-000000000003' for no key update
 $q$) as locked(id uuid);
 select extensions.dblink_exec('checkpoint_owner',$q$
-  update public.agent_jobs set attempt_count=2 where id='aef49600-0000-4000-8000-000000000103'
+  update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), attempt_count=2 where id='aef49600-0000-4000-8000-000000000103'
 $q$);
 select ok((select run_id is not null from extensions.dblink('checkpoint_owner',$q$
   select public.start_session_job_attempt(id,2,stage_id,0,'codex','gpt-5.5','project','wallie/publication-race-replacement')

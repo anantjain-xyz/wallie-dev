@@ -23,6 +23,7 @@ import { reconcileLinearState } from "@/worker/reconciler";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
+import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 
@@ -276,6 +277,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["canonical PR", () => drainCanonicalPullRequests(admin)],
       ["stall recovery", () => sweepStalledRuns(admin, 900_000)],
       ["source delivery", () => drainSourceDeliveries(admin)],
+      ["checkpoint cleanup", () => drainCheckpointCleanup(admin)],
       ["Linear reconciliation", () => reconcileLinearState(admin)],
       ["sandbox reaping", () => reapOrphanSandboxes(admin)],
       ["attachment cleanup", () => cleanupExpiredSessionAttachments(admin)],

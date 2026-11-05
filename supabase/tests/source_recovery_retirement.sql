@@ -13,9 +13,10 @@ select ('aef10000-0000-4000-8000-' || lpad(n::text,12,'0'))::uuid,
 from public.pipeline_stages stage join public.pipelines pipeline on pipeline.id=stage.pipeline_id
 cross join generate_series(1,2) n
 where stage.workspace_id='b1b2c3d4-0001-4000-8000-000000000001' and pipeline.is_default and stage.slug='plan';
-insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count)
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count,git_continuity_release_revision)
 select ('aef10000-0000-4000-8000-'||lpad((100+n)::text,12,'0'))::uuid,
- session.workspace_id,session.id,stage.id,stage.slug,stage.name,'assignment','running',1
+ session.workspace_id,session.id,stage.id,stage.slug,stage.name,'assignment','running',1,
+  (select revision from public.get_git_continuity_release_state())
 from generate_series(1,2) n
 join public.sessions session on session.id=('aef10000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid
 join public.pipeline_stages stage on stage.id=session.current_stage_id;

@@ -11,7 +11,7 @@ on conflict(workspace_id) do update set last_issue_number=greatest(counters.last
 create temp table source_fixture as select * from public.create_session_with_first_job(
   'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
   'Source delivery fixture','Preserve source','codex','gpt-5.5',null,null,null,null);
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from source_fixture);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from source_fixture);
 select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,0,'codex','gpt-5.5','project','wallie/source-fixture')
 from source_fixture f join public.sessions s on s.id=f.session_id;
 select public.pin_session_job_git_input(f.job_id,1,f.run_id,
