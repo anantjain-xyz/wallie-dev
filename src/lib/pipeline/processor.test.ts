@@ -255,6 +255,7 @@ interface MockOptions {
   agentConfigError?: { message: string };
   claimSucceeds?: boolean;
   pinnedInputSha?: string;
+  priorGitInput?: Partial<Tables<"session_job_git_inputs">>;
   pinInputMiss?: boolean;
   pinInputError?: { message: string };
   currentAttempt?: number;
@@ -596,6 +597,26 @@ function buildAdminMock(opts: MockOptions) {
   } as const;
 
   const tables: Record<string, unknown> = {
+    session_job_git_inputs: {
+      select: () => {
+        const chain = {
+          eq: () => chain,
+          maybeSingle: async () => ({
+            data: opts.priorGitInput
+              ? {
+                  repository_id: "repo-1",
+                  repository_full_name: "acme/app",
+                  input_sha: "a".repeat(40),
+                  base_branch: "main",
+                  ...opts.priorGitInput,
+                }
+              : null,
+            error: null,
+          }),
+        };
+        return chain;
+      },
+    },
     sessions: sessionsTable,
     session_artifact_feedback: feedbackTable,
     workspace_agent_config: agentConfigTable,
@@ -824,6 +845,35 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
       expect.objectContaining({ baseSha: pinnedSha }),
     );
+  });
+
+  it("provisions a retry directly from its pinned input even when the default branch was renamed", async () => {
+    const sha = "c".repeat(40);
+    const { admin, rpc } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { input_sha: sha, base_branch: "old-default" },
+      pinnedInputSha: sha,
+    });
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+      result: "success",
+    });
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: { kind: "checkpoint", sha } }),
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "pin_session_job_git_input",
+      expect.objectContaining({ p_base_branch: "old-default" }),
+    );
+  });
+
+  it("refuses a pinned input from another repository before provisioning", async () => {
+    const { admin, insertedArtifacts } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { repository_id: "foreign-repository" },
+    });
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({ result: "error" });
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(insertedArtifacts).toEqual([]);
   });
 
   it.each([

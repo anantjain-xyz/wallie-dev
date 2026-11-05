@@ -114,6 +114,8 @@ export type SandboxConnection =
     };
 
 export type SandboxCheckoutMode =
+  /** Restore a pinned commit; a retained ref, when supplied, must still match. */
+  | { kind: "checkpoint"; sha: string; ref?: string }
   /** Clone baseBranch and create a new `branch` from it (default). */
   | { kind: "fresh-branch" }
   /** Clone and check out an existing PR branch (review phase). */
@@ -139,7 +141,7 @@ export interface CreateSessionSandboxInput {
   repoFullName: string;
   /** The branch the agent will work on (push target). */
   branch: string;
-  /** The branch to start from when `mode.kind === "fresh-branch"`. */
+  /** The branch to start from in fresh-branch mode; ignored for checkpoints. */
   baseBranch: string;
   /** Short-lived GitHub App installation token — passed as clone credentials + push credentials. */
   installationToken: string;
