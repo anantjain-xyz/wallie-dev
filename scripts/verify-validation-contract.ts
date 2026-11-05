@@ -45,6 +45,7 @@ const classifiedScripts = {
     "test:e2e:session-prefetch",
     "test:benchmark:interaction",
     "test:benchmark:content-visibility",
+    "bench:navigation",
   ],
 } as const;
 

@@ -20,6 +20,7 @@ implementation.
 | Production deployment or self-hosting                                                 | [Self-hosting](SELF_HOSTING.md)                               | `.env.example`, `src/env/`, `wrangler.jsonc`, Supabase migrations                | Deployment smoke test plus worker heartbeat          |
 | Accessible composite controls and overlays                                            | [Accessibility primitives](accessibility-primitives.md)       | `src/components/ui/`                                                             | Focused component tests and keyboard/browser proof   |
 | Product telemetry or performance measurements                                         | [Telemetry](telemetry.md)                                     | `src/lib/telemetry/`, analytics components, performance tests                    | Unit tests plus the relevant runtime measurement     |
+| Logged-in navigation timing                                                           | [Navigation benchmark](navigation-bench.md)                   | `scripts/bench-navigation.mjs`, `e2e/navigation-bench.benchmark.spec.ts`         | `pnpm bench:navigation`                              |
 | Typography roles and small-text rules                                                 | [Typography](typography.md)                                   | Typography utilities and the custom ESLint rule                                  | `pnpm lint` and responsive visual proof              |
 
 ## Document roles

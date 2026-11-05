@@ -1,5 +1,7 @@
 import "server-only";
 
+import { appendFileSync } from "node:fs";
+
 import { headers } from "next/headers";
 
 type TimingMetadataValue = boolean | number | string | null | undefined;
@@ -30,6 +32,17 @@ const noopCollector: ServerTimingCollector = {
 
 function timingLogsEnabled() {
   return process.env.WALLIE_TIMING_LOGS === "1";
+}
+
+function writeTimingRecord(record: Record<string, unknown>) {
+  const path = process.env.WALLIE_TIMING_LOG_PATH;
+  if (!path) return;
+
+  try {
+    appendFileSync(path, `${JSON.stringify(record)}\n`);
+  } catch {
+    // The benchmark log is diagnostic. A full disk must not fail the request.
+  }
 }
 
 function roundDuration(durationMs: number) {
@@ -111,17 +124,19 @@ export async function withServerTiming<T>(
 
   try {
     const result = await operation(timing);
-    console.info("[server-timing]", {
+    const record = {
       durationMs: roundDuration(performance.now() - startedAt),
       ...requestMetadata,
       ...metadata,
       name,
       ok: true,
       segments,
-    });
+    };
+    console.info("[server-timing]", record);
+    writeTimingRecord(record);
     return result;
   } catch (error) {
-    console.error("[server-timing]", {
+    const record = {
       durationMs: roundDuration(performance.now() - startedAt),
       error: error instanceof Error ? error.message : String(error),
       ...requestMetadata,
@@ -129,7 +144,9 @@ export async function withServerTiming<T>(
       name,
       ok: false,
       segments,
-    });
+    };
+    console.error("[server-timing]", record);
+    writeTimingRecord(record);
     throw error;
   }
 }
