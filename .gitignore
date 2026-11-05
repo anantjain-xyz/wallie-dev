@@ -15,6 +15,7 @@ cloudflare/.dev.vars*
 # testing
 /coverage
 /test-results
+/bench-results
 
 # next.js
 /.next/

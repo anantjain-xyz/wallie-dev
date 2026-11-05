@@ -44,6 +44,7 @@
     "test:e2e:responsive": "pnpm build && playwright test e2e/responsive-polish.spec.ts",
     "test:e2e:session-prefetch": "pnpm build && playwright test e2e/session-detail-prefetch.spec.ts",
     "test:benchmark:interaction": "pnpm build && playwright test e2e/interaction-rum.benchmark.spec.ts --repeat-each=2",
+    "bench:navigation": "node scripts/bench-navigation.mjs",
     "test:benchmark:content-visibility": "pnpm build && playwright test e2e/content-visibility.benchmark.spec.ts",
     "test:watch": "vitest",
     "db:types": "SUPABASE_TELEMETRY_DISABLED=1 supabase gen types typescript --local > src/lib/supabase/database.types.ts && prettier --write src/lib/supabase/database.types.ts",

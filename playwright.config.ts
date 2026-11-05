@@ -11,6 +11,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: "list",
   testDir: "./e2e",
+  testIgnore: ["**/navigation-bench.benchmark.spec.ts"],
   timeout: 45_000,
   use: {
     ...devices["Desktop Chrome"],
