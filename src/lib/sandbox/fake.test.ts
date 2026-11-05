@@ -1,10 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 
 import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
 import { FakeSandbox } from "./fake";
 
 describe("FakeSandbox", () => {
+  it("keeps credential home outside the checkout and removes it on stop", async () => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    let home: string | undefined;
+    try {
+      const command = await sandbox.exec("bash", ["-lc", 'printf "%s" "$HOME"']);
+      expect(await command.exitCode).toBe(0);
+      home = (await command.output()).stdout.trim();
+      expect(home).not.toBe(sandbox.repoPath);
+      expect(home.startsWith(`${sandbox.repoPath}/`)).toBe(false);
+      writeFileSync(`${home}/.git-credentials`, "synthetic credential");
+      const status = await sandbox.exec("git", ["status", "--porcelain"]);
+      expect((await status.output()).stdout).toBe("");
+    } finally {
+      await sandbox.stop();
+    }
+    expect(home).toBeDefined();
+    expect(existsSync(home!)).toBe(false);
+  });
   it("records calls and returns scripted logs", async () => {
     const sb = new FakeSandbox();
     sb.scriptExec("echo", [

@@ -1,5 +1,10 @@
 import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
 import { shellQuote } from "./command";
+import {
+  assertValidSandboxCheckpoint,
+  checkoutSandboxCheckpoint,
+  SandboxCheckpointRecoveryError,
+} from "./checkout";
 import type { CreateSessionSandboxInput, SandboxHandle, SandboxProvider } from "./types";
 
 const PLAYWRIGHT_SYSTEM_PACKAGES = [
@@ -34,7 +39,31 @@ export async function prepareSessionSandbox(input: {
   request: CreateSessionSandboxInput;
 }): Promise<void> {
   const { handle, provider, repoAlreadyCloned, request } = input;
+  request.signal?.throwIfAborted();
   const mode = request.mode ?? { kind: "fresh-branch" as const };
+  if (mode.kind === "checkpoint") {
+    assertValidSandboxCheckpoint(mode);
+    await initializeCheckpointRepository({ handle, repoAlreadyCloned, request });
+    await checkoutSandboxCheckpoint({
+      sandbox: handle,
+      branch: request.branch,
+      checkpoint: mode,
+      signal: request.signal,
+    });
+    await runSetupScript(
+      handle,
+      [
+        "set -euo pipefail",
+        resolveMemoryBootstrap(provider),
+        resolveNodeBootstrap(provider),
+        resolveGitHubCliBootstrap(provider),
+        resolveAgentCliInstall(request.agentProvider),
+        resolveBrowserBootstrap(provider),
+      ].join(" && "),
+      request,
+    );
+    return;
+  }
   const revision = mode.kind === "checkout-pr" ? mode.prBranch : request.baseBranch;
   const checkoutArgs =
     mode.kind === "fresh-branch"
@@ -63,12 +92,57 @@ export async function prepareSessionSandbox(input: {
     resolveBrowserBootstrap(provider),
   ].join(" && ");
 
+  await runSetupScript(handle, script, request);
+}
+
+/** An empty checkout never resolves the repository's moving default branch. */
+export async function initializeCheckpointRepository(input: {
+  handle: SandboxHandle;
+  repoAlreadyCloned: boolean;
+  request: CreateSessionSandboxInput;
+}): Promise<void> {
+  const { handle, request } = input;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(request.repoFullName)) {
+    throw new SandboxCheckpointRecoveryError("invalid_input");
+  }
+  request.signal?.throwIfAborted();
+  const script = [
+    "set -euo pipefail",
+    `mkdir -p ${shellQuote(handle.repoPath)}`,
+    `printf "https://x-access-token:%s@github.com\\n" "$GH_TOKEN" > "$HOME/.git-credentials"`,
+    `chmod 600 "$HOME/.git-credentials"`,
+    "git config --global credential.helper store",
+    ...(input.repoAlreadyCloned
+      ? []
+      : [
+          `git init -q ${shellQuote(handle.repoPath)}`,
+          `git -C ${shellQuote(handle.repoPath)} remote add origin ${shellQuote(`https://github.com/${request.repoFullName}.git`)}`,
+        ]),
+    `git -C ${shellQuote(handle.repoPath)} config user.email ${shellQuote(WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email)}`,
+    `git -C ${shellQuote(handle.repoPath)} config user.name ${shellQuote(WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name)}`,
+  ].join(" && ");
+  const process = await handle.exec("bash", ["-lc", script], {
+    cwd: "/tmp",
+    env: { CI: "1", GH_TOKEN: request.installationToken, GIT_TERMINAL_PROMPT: "0" },
+    signal: request.signal,
+  });
+  const [, code] = await Promise.all([process.output(), process.exitCode]);
+  request.signal?.throwIfAborted();
+  if (code !== 0) throw new SandboxCheckpointRecoveryError("checkpoint_unavailable");
+}
+
+async function runSetupScript(
+  handle: SandboxHandle,
+  script: string,
+  request: CreateSessionSandboxInput,
+) {
   const proc = await handle.exec("bash", ["-lc", script], {
     cwd: "/tmp",
     env: { CI: "1", GH_TOKEN: request.installationToken },
     signal: request.signal,
   });
   const [output, code] = await Promise.all([proc.output(), proc.exitCode]);
+  request.signal?.throwIfAborted();
   if (code !== 0) {
     throw new Error(`Sandbox setup failed (exit ${code}): ${formatFailureOutput(output)}`);
   }

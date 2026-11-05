@@ -22,7 +22,11 @@ import {
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
-import { pinSessionJobGitInput, resolveQueuedRunConfig } from "@/lib/wallie/service";
+import {
+  loadPinnedSessionJobGitInput,
+  pinSessionJobGitInput,
+  resolveQueuedRunConfig,
+} from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
 import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
@@ -291,9 +295,27 @@ async function runStage(input: {
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
     throwIfAborted(signal);
+    const priorGitInput = await loadPinnedSessionJobGitInput({
+      admin,
+      jobId: job.id,
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
+    });
+    if (
+      priorGitInput &&
+      (priorGitInput.repository_id !== github.repo.id ||
+        priorGitInput.repository_full_name !== github.repo.full_name)
+    ) {
+      throw new Error(
+        "The pinned Git input belongs to a different repository. Restore the original repository connection before retrying.",
+      );
+    }
     sandbox = await createWorkspaceSessionSandbox(admin, {
       agentProvider: provider,
       baseBranch: github.repo.default_branch ?? "main",
+      ...(priorGitInput
+        ? { mode: { kind: "checkpoint" as const, sha: priorGitInput.input_sha } }
+        : {}),
       branch,
       implementation: sandboxSelection?.provider ?? "fake",
       connection: sandboxSelection?.connection,
@@ -346,7 +368,7 @@ async function runStage(input: {
       attemptCount: job.attempt_count,
       runId,
       repositoryId: github.repo.id,
-      baseBranch: github.repo.default_branch ?? "main",
+      baseBranch: priorGitInput?.base_branch ?? github.repo.default_branch ?? "main",
       observedSha,
       signal,
     });

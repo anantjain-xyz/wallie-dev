@@ -8,6 +8,7 @@ import type {
   SandboxProviderDriver,
 } from "./types";
 import { redactSecrets } from "./command";
+import { SandboxCheckpointRecoveryError } from "./checkout";
 import { runBoundedSandboxProviderOperation, SandboxProviderDeadlineError } from "./lifecycle";
 import {
   getSandboxProviderContract,
@@ -96,14 +97,46 @@ export async function createSessionSandbox(
 ): Promise<SandboxHandle> {
   const implementation = resolveInputImplementation(input);
   if (implementation === "fake") {
+    input.signal?.throwIfAborted();
     const { FakeSandbox } = await import("./fake");
     const sandbox = new FakeSandbox(undefined, {
       baseBranch: input.baseBranch,
       branch: input.branch,
       passthroughExec: true,
     });
-    await input.onSandboxCreated?.({ provider: "fake", sandboxId: sandbox.id });
-    return sandbox;
+    let stopped: Promise<void> | undefined;
+    const stop = () => (stopped ??= sandbox.stop());
+    const onAbort = () => {
+      void stop();
+    };
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      input.signal?.throwIfAborted();
+      await input.onSandboxCreated?.({ provider: "fake", sandboxId: sandbox.id });
+      input.signal?.throwIfAborted();
+      if (input.mode?.kind === "checkpoint") {
+        const { initializeCheckpointRepository } = await import("./setup");
+        const { checkoutSandboxCheckpoint } = await import("./checkout");
+        await initializeCheckpointRepository({
+          handle: sandbox,
+          repoAlreadyCloned: false,
+          request: input,
+        });
+        await checkoutSandboxCheckpoint({
+          sandbox,
+          branch: input.branch,
+          checkpoint: input.mode,
+          signal: input.signal,
+        });
+      }
+      input.signal?.throwIfAborted();
+      return sandbox;
+    } catch (error) {
+      await stop();
+      throw error;
+    } finally {
+      input.signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   const connection = input.connection;
@@ -250,6 +283,9 @@ function sanitizedSandboxError(
   connection: SandboxConnection,
   extraSecrets: string[] = [],
 ): Error {
+  if (error instanceof SandboxCheckpointRecoveryError) {
+    return new SandboxCheckpointRecoveryError(error.code);
+  }
   const message = error instanceof Error ? error.message : String(error);
   const sanitized = new Error(
     redactSecrets(message, [...connectionSecrets(connection), ...extraSecrets]),

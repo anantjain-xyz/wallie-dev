@@ -45,11 +45,11 @@ it("fails closed when the pinned input is unavailable", async () => {
     const original = await readSourceBase(sandbox);
     await expect(
       checkoutPinnedGitInput({ sandbox, branch: "wallie/retry", sha: "f".repeat(40) }),
-    ).rejects.toThrow("Could not restore the pinned Git input.");
+    ).rejects.toThrow("Restore its retained ref or reconnect the repository before retrying.");
     expect(await readSourceBase(sandbox)).toBe(original);
     await expect(
       checkoutPinnedGitInput({ sandbox, branch: "wallie/retry", sha: "main; echo unsafe" }),
-    ).rejects.toThrow("Invalid pinned Git input.");
+    ).rejects.toThrow("The pinned Git checkpoint or attempt branch is invalid.");
   } finally {
     await sandbox.stop();
   }
