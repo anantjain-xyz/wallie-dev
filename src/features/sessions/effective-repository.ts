@@ -18,6 +18,7 @@ export type EffectiveSessionRepository = {
 };
 
 export type EffectiveSessionRepositorySource =
+  | "job_git_input"
   | "session"
   | "session_pull_request"
   // Temporary compatibility: legacy is_primary profiles still contribute a session default.
@@ -143,10 +144,24 @@ async function loadCandidateRepositoryIds(input: {
 }
 
 export async function resolveEffectiveSessionRepository(input: {
+  pinnedRepositoryId?: string;
   sessionId: string;
   supabase: SupabaseLike;
   workspaceId: string;
 }): Promise<EffectiveSessionRepositoryResolution> {
+  // A queued generation has already selected its repository. A changed default
+  // or missing connection cannot redirect that work to another checkout.
+  if (input.pinnedRepositoryId) {
+    const repository = await loadRepository(input.supabase, {
+      repositoryId: input.pinnedRepositoryId,
+      workspaceId: input.workspaceId,
+    });
+    return {
+      repository,
+      repositoryId: input.pinnedRepositoryId,
+      source: "job_git_input",
+    };
+  }
   const candidates = await loadCandidateRepositoryIds(input);
   const firstConfiguredCandidate = candidates.find((candidate) => candidate.repositoryId);
 

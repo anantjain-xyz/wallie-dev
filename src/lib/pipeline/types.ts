@@ -1,6 +1,6 @@
 import type { Enums, Tables } from "@/lib/supabase/database.types";
 
-/** One immutable code input per job intent; claim retries reuse this row. */
+/** Fixed at enqueue when lineage is known; its first execution binds once, and retries reuse it. */
 export type PinnedGitInput = Tables<"session_job_git_inputs">;
 
 /** Accepted artifact provenance; an absent row means historical/unknown code. */
