@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -54,32 +54,45 @@ function medianRowFor(rows) {
 }
 
 function summarize(samples) {
-  return flows.map((flow) => {
-    const rows = samples.filter((sample) => sample.flow === flow);
-    const okRows = rows.filter((sample) => sample.ok);
-    const durations = okRows.map((sample) => sample.durationMs);
-    const medianMs = durations.length > 0 ? median(durations) : null;
-    const medianRow = medianRowFor(okRows);
-    const serverDurations = medianRow
-      ? medianRow.serverTimings.map((timing) => timing.durationMs)
-      : [];
-    return {
-      failed: rows.length - okRows.length,
-      flow,
-      maxMs: durations.length > 0 ? Math.max(...durations) : null,
-      medianDocumentBytes: medianRow?.documentBytes ?? null,
-      medianMs,
-      medianRequestCount: medianRow?.requestCount ?? null,
-      medianRscBytes: medianRow?.rscBytes ?? null,
-      medianScriptBytes: medianRow?.scriptBytes ?? null,
-      medianServerMs: serverDurations.length > 0 ? Math.max(...serverDurations) : null,
-      medianServerTimings: medianRow?.serverTimings ?? [],
-      medianStyleBytes: medianRow?.styleBytes ?? null,
-      medianTtfbMs: medianRow?.ttfbMs ?? null,
-      minMs: durations.length > 0 ? Math.min(...durations) : null,
-      runs: rows.length,
-    };
-  });
+  return flows
+    .filter((flow) => samples.some((sample) => sample.flow === flow))
+    .map((flow) => {
+      const rows = samples.filter((sample) => sample.flow === flow);
+      const okRows = rows.filter((sample) => sample.ok);
+      const durations = okRows.map((sample) => sample.durationMs);
+      const medianMs = durations.length > 0 ? median(durations) : null;
+      const medianRow = medianRowFor(okRows);
+      const reviewDurations = okRows.flatMap((row) =>
+        row.sessionOpen ? [row.sessionOpen.clickToReviewReadyMs] : [],
+      );
+      const serverDurations = medianRow
+        ? medianRow.serverTimings.map((timing) => timing.durationMs)
+        : [];
+      return {
+        failed: rows.length - okRows.length,
+        flow,
+        maxMs: durations.length > 0 ? Math.max(...durations) : null,
+        medianDocumentBytes: medianRow?.documentBytes ?? null,
+        medianMs,
+        clickToReviewReadyMs:
+          reviewDurations.length > 0
+            ? {
+                median: median(reviewDurations),
+                min: Math.min(...reviewDurations),
+                max: Math.max(...reviewDurations),
+              }
+            : null,
+        medianRequestCount: medianRow?.requestCount ?? null,
+        medianRscBytes: medianRow?.rscBytes ?? null,
+        medianScriptBytes: medianRow?.scriptBytes ?? null,
+        medianServerMs: serverDurations.length > 0 ? Math.max(...serverDurations) : null,
+        medianServerTimings: medianRow?.serverTimings ?? [],
+        medianStyleBytes: medianRow?.styleBytes ?? null,
+        medianTtfbMs: medianRow?.ttfbMs ?? null,
+        minMs: durations.length > 0 ? Math.min(...durations) : null,
+        runs: rows.length,
+      };
+    });
 }
 
 function printSummary(summary) {
@@ -95,15 +108,23 @@ function printSummary(summary) {
         ok.padStart(6),
       ].join(" "),
     );
+    if (row.clickToReviewReadyMs) {
+      const timing = row.clickToReviewReadyMs;
+      console.log(
+        `  actual click to review ready: ${timing.median.toFixed(1)} ms (${timing.min.toFixed(1)}-${timing.max.toFixed(1)})`,
+      );
+    }
   }
 }
 
-const runs = Number(readFlag("--runs", "5"));
+const diagnostic = hasFlag("--profile");
+const runs = Number(readFlag("--runs", diagnostic ? "1" : "5"));
 if (!Number.isInteger(runs) || runs < 1) {
   throw new Error("--runs must be a positive integer.");
 }
 
-const statusText = execSync("supabase status -o env", {
+const supabaseWorkdir = readFlag("--supabase-workdir", root);
+const statusText = execFileSync("supabase", ["status", "--workdir", supabaseWorkdir, "-o", "env"], {
   cwd: root,
   encoding: "utf8",
   stdio: ["ignore", "pipe", "pipe"],
@@ -114,8 +135,9 @@ for (const key of ["API_URL", "DB_URL", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVIC
 }
 
 if (!hasFlag("--skip-seed")) {
-  execSync(
-    `psql "${supabase.DB_URL}" -v ON_ERROR_STOP=1 -f scripts/bench/seed-navigation-volume.sql`,
+  execFileSync(
+    "psql",
+    [supabase.DB_URL, "-v", "ON_ERROR_STOP=1", "-f", "scripts/bench/seed-navigation-volume.sql"],
     {
       cwd: root,
       stdio: "inherit",
@@ -131,6 +153,13 @@ const benchEnv = {
   PLAYWRIGHT_PORT: "3100",
   SERVICE_ROLE_KEY: supabase.SERVICE_ROLE_KEY,
   SNAPPY_RUNS: String(runs),
+  SNAPPY_SESSION_ONLY: hasFlag("--session-only") ? "1" : "0",
+  SNAPPY_SESSION_INTENT: readFlag("--session-intent", "immediate"),
+  SNAPPY_PROFILE: diagnostic ? "1" : "0",
+  SNAPPY_PROFILE_PATH: resolve(
+    root,
+    readFlag("--trace-out", "bench-results/session-open.trace.json"),
+  ),
   SUPABASE_SECRET_KEY: supabase.SECRET_KEY,
   WALLIE_DEPLOY_ENV: "preview",
   WALLIE_ENCRYPTION_KEY: encryptionKey,
@@ -170,6 +199,8 @@ if (!benchLine) {
 
 const payload = JSON.parse(benchLine.slice(benchLine.indexOf("{")));
 const summary = summarize(payload.samples);
+if (diagnostic)
+  console.log("Diagnostic profile only. Do not compare these durations with untraced runs.");
 printSummary(summary);
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -180,6 +211,7 @@ writeFileSync(
   JSON.stringify(
     {
       cores: cpus().length,
+      diagnostic,
       loadavg: loadavg(),
       payload,
       summary,
