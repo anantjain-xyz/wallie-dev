@@ -46,9 +46,14 @@ begin
 exception when query_canceled then return true;
 end;
 $$;
-select is(pg_temp.expired_source_publication(),true,'source durability does not bypass the publication deadline');
-select is((select public.publish_session_job_with_source(job_id,1,run_id,0,'Artifact',clock_timestamp()+interval '1 minute') from source_fixture),true,
-  'publication makes the prepared checkpoint eligible in the same transaction');
+select throws_ok($$select pg_temp.expired_source_publication()$$,'23514','Exact retained remote checkpoint proof is required.',
+  'private source durability does not bypass the remote checkpoint publication gate');
+select is(public.prepare_session_checkpoint_publication((select run_id from source_fixture),0,'Artifact'),true,
+  'source publication records the immutable full artifact intent');
+create temp table source_publication_claim as select public.claim_session_checkpoint_publication((select run_id from source_fixture)) as claim_id;
+select is(public.adopt_session_checkpoint_publication((select run_id from source_fixture),(select claim_id from source_publication_claim),
+  'refs/heads/wallie/checkpoints/'||(select run_id::text from source_fixture)||'/'||repeat('b',40),repeat('b',40)),true,
+  'verified remote checkpoint makes the artifact and source delivery eligible atomically');
 select ok(public.claim_session_source_delivery() is not null,'published work is claimed for delivery');
 create temp table old_source_lease as select claim_id from public.session_source_deliveries where run_id=(select run_id from source_fixture);
 select is(public.claim_session_source_delivery(),null::uuid,'another worker cannot claim an unexpired delivery lease');

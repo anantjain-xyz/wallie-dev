@@ -61,7 +61,10 @@ function makeAdmin(
     last_error_code: null,
   } as SourceDelivery;
   const rpc = vi.fn((name: string, args?: Record<string, unknown>) => {
-    if (name === "prepare_session_source_delivery")
+    if (
+      name === "prepare_session_source_delivery" ||
+      name === "prepare_session_source_and_checkpoint_publication"
+    )
       return query({
         data: !input.prepareError,
         error: input.prepareError ? { message: "payload private synthetic source" } : null,
@@ -167,6 +170,207 @@ it("records Storage durability before the outbox and uses a deterministic tenant
     expect.objectContaining({ p_checkpoint_path: "workspace/run.bundle", p_bundle_base64: "" }),
   );
 });
+
+it("atomically prepares source and the full original artifact intent with its version and deadline", async () => {
+  const { admin, rpc } = makeAdmin();
+  const durable = vi.fn();
+  const artifactMarkdown = `# Original output\n${"Detailed artifact output\n".repeat(10_000)}END`;
+  const deadlineAt = "2026-11-05T12:30:00.000Z";
+  expect(
+    await prepareSourceDelivery({
+      admin,
+      baseBranch: "trunk",
+      body: artifactMarkdown,
+      checkpoint,
+      onDurable: durable,
+      publication: { artifactMarkdown, expectedArtifactVersion: 7, deadlineAt },
+      repositoryId: "repository",
+      runId: "run",
+      title: "Build",
+      workspaceId: "workspace",
+    }),
+  ).toBe(true);
+  expect(durable.mock.invocationCallOrder[0]).toBeLessThan(rpc.mock.invocationCallOrder[0]);
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(
+    "prepare_session_source_and_checkpoint_publication",
+    expect.objectContaining({
+      p_run_id: "run",
+      p_repository_id: "repository",
+      p_checkpoint_path: "workspace/run.bundle",
+      p_artifact_md: artifactMarkdown,
+      p_expected_artifact_version: 7,
+      p_deadline_at: deadlineAt,
+      p_body: artifactMarkdown.slice(0, 60_000),
+    }),
+  );
+  expect(mocked.push).not.toHaveBeenCalled();
+  expect(mocked.pr).not.toHaveBeenCalled();
+  expect(rpc.mock.calls[0][1]).not.toHaveProperty("p_input_tokens");
+  expect(rpc.mock.calls[0][1]).not.toHaveProperty("p_output_tokens");
+});
+
+it.each([
+  { inputTokens: 10, outputTokens: 20 },
+  { inputTokens: 0, outputTokens: 0 },
+  { inputTokens: 0, outputTokens: 20 },
+  { inputTokens: 10, outputTokens: 0 },
+])("prepares both usage counts atomically with source and intent: %j", async (usage) => {
+  const { admin, rpc } = makeAdmin();
+  expect(
+    await prepareSourceDelivery({
+      admin,
+      baseBranch: "trunk",
+      body: "Done",
+      checkpoint,
+      onDurable: vi.fn(),
+      publication: { artifactMarkdown: "Done", expectedArtifactVersion: 1, usage },
+      repositoryId: "repository",
+      runId: "run",
+      title: "Build",
+      workspaceId: "workspace",
+    }),
+  ).toBe(true);
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(
+    "prepare_session_source_and_checkpoint_publication",
+    expect.objectContaining({
+      p_run_id: "run",
+      p_input_tokens: usage.inputTokens,
+      p_output_tokens: usage.outputTokens,
+      p_artifact_md: "Done",
+      p_checkpoint_path: "workspace/run.bundle",
+    }),
+  );
+  expect(mocked.push).not.toHaveBeenCalled();
+});
+
+it("waits for the source, artifact and usage transaction receipt before resolving preparation", async () => {
+  const { admin, rpc } = makeAdmin();
+  let acknowledge!: (value: { data: boolean; error: null }) => void;
+  const receipt = new Promise<{ data: boolean; error: null }>((resolve) => {
+    acknowledge = resolve;
+  });
+  rpc.mockImplementationOnce(() => Object.assign(receipt, { abortSignal: vi.fn(() => receipt) }));
+  let resolved = false;
+  const preparing = prepareSourceDelivery({
+    admin,
+    baseBranch: "trunk",
+    body: "Done",
+    checkpoint,
+    onDurable: vi.fn(),
+    publication: {
+      artifactMarkdown: "Done",
+      expectedArtifactVersion: 1,
+      usage: { inputTokens: 10, outputTokens: 20 },
+    },
+    repositoryId: "repository",
+    runId: "run",
+    title: "Build",
+    workspaceId: "workspace",
+  }).then((prepared) => {
+    resolved = true;
+    return prepared;
+  });
+  await vi.waitFor(() => expect(rpc).toHaveBeenCalledOnce());
+  expect(rpc).toHaveBeenCalledWith(
+    "prepare_session_source_and_checkpoint_publication",
+    expect.objectContaining({ p_input_tokens: 10, p_output_tokens: 20 }),
+  );
+  expect(resolved).toBe(false);
+  expect(mocked.push).not.toHaveBeenCalled();
+  acknowledge({ data: true, error: null });
+  await expect(preparing).resolves.toBe(true);
+});
+
+it("stores the private bundle fallback and publication intent in the same transaction", async () => {
+  mocked.upload.mockRejectedValueOnce(new Error("Storage offline"));
+  const { admin, rpc } = makeAdmin();
+  const durable = vi.fn();
+  expect(
+    await prepareSourceDelivery({
+      admin,
+      baseBranch: "trunk",
+      body: "PR summary",
+      checkpoint,
+      onDurable: durable,
+      publication: { artifactMarkdown: "Full original artifact", expectedArtifactVersion: 3 },
+      repositoryId: "repository",
+      runId: "run",
+      title: "Build",
+      workspaceId: "workspace",
+    }),
+  ).toBe(true);
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(
+    "prepare_session_source_and_checkpoint_publication",
+    expect.objectContaining({
+      p_checkpoint_path: "",
+      p_bundle_base64: bytes.toString("base64"),
+      p_artifact_md: "Full original artifact",
+      p_expected_artifact_version: 3,
+    }),
+  );
+  expect(rpc.mock.calls[0][1]).not.toHaveProperty("p_deadline_at");
+  expect(durable).toHaveBeenCalledOnce();
+  expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(durable.mock.invocationCallOrder[0]);
+});
+
+it("prepares no-code source and artifact intent together without uploading or inventing Git output", async () => {
+  const { admin, rpc } = makeAdmin();
+  expect(
+    await prepareSourceDelivery({
+      admin,
+      baseBranch: "trunk",
+      body: "No code changed",
+      checkpoint: { kind: "unchanged", baseSha: checkpoint.baseSha, headSha: checkpoint.baseSha },
+      onDurable: vi.fn(),
+      publication: { artifactMarkdown: "No code changed", expectedArtifactVersion: 0 },
+      repositoryId: "repository",
+      runId: "run",
+      title: "Build",
+      workspaceId: "workspace",
+    }),
+  ).toBe(true);
+  expect(mocked.upload).not.toHaveBeenCalled();
+  expect(mocked.push).not.toHaveBeenCalled();
+  expect(mocked.pr).not.toHaveBeenCalled();
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(
+    "prepare_session_source_and_checkpoint_publication",
+    expect.objectContaining({
+      p_base_sha: checkpoint.baseSha,
+      p_head_sha: checkpoint.baseSha,
+      p_bundle_sha256: "",
+      p_bundle_base64: "",
+      p_checkpoint_path: "",
+      p_artifact_md: "No code changed",
+    }),
+  );
+});
+
+it.each([false, true])(
+  "keeps combined source-publication errors private (Storage unavailable: %s)",
+  async (storageUnavailable) => {
+    if (storageUnavailable) mocked.upload.mockRejectedValueOnce(new Error("Storage offline"));
+    const { admin } = makeAdmin({ prepareError: true });
+    const durable = vi.fn();
+    const preparing = prepareSourceDelivery({
+      admin,
+      baseBranch: "trunk",
+      body: "Private PR body",
+      checkpoint,
+      onDurable: durable,
+      publication: { artifactMarkdown: "Private original artifact", expectedArtifactVersion: 3 },
+      repositoryId: "repository",
+      runId: "run",
+      title: "Build",
+      workspaceId: "workspace",
+    });
+    await expect(preparing).rejects.toThrow("No artifact was published");
+    await expect(preparing).rejects.not.toThrow("private synthetic source");
+    await expect(preparing).rejects.not.toThrow("Private original artifact");
+    expect(durable).toHaveBeenCalledTimes(storageUnavailable ? 0 : 1);
+    expect(mocked.push).not.toHaveBeenCalled();
+    expect(mocked.pr).not.toHaveBeenCalled();
+  },
+);
 
 it("uses the bounded private DB fallback during a Storage outage and restores it on retry", async () => {
   mocked.upload.mockRejectedValue(new Error("Storage offline"));

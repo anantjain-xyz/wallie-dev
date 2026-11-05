@@ -29,6 +29,8 @@ export async function restoreAndPushSourceWithWorkspace(
     token: string;
     signal?: AbortSignal;
     beforePush?: () => Promise<void>;
+    /** Publish a retained checkpoint ref with create-only, exact-SHA semantics. */
+    exactRef?: boolean;
   },
   dependencies: { execGit: GitExecutor; createWorkspace: () => Promise<SourceGitWorkspace> },
 ): Promise<string> {
@@ -42,6 +44,12 @@ export async function restoreAndPushSourceWithWorkspace(
   }
   if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(input.remoteUrl)) {
     throw new Error("Source delivery requires a canonical GitHub repository URL.");
+  }
+  if (
+    input.exactRef &&
+    !new RegExp(`^wallie/checkpoints/[^/]+/${input.headSha}$`).test(input.branch)
+  ) {
+    throw new Error("Exact checkpoint publication requires a retained checkpoint branch.");
   }
   const signal = AbortSignal.any([
     AbortSignal.timeout(60_000),
@@ -73,8 +81,18 @@ export async function restoreAndPushSourceWithWorkspace(
     GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${input.token}`).toString("base64")}`,
   };
   const execGit = dependencies.execGit;
-  const git = (args: string[]) =>
-    execGit(args, { cwd: root, env, signal, maxBuffer: 1024 * 1024, timeout: 30_000 });
+  const git = async (args: string[]) => {
+    signal.throwIfAborted();
+    const result = await execGit(args, {
+      cwd: root,
+      env,
+      signal,
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    signal.throwIfAborted();
+    return result;
+  };
   // Keep recovery names bounded even when the attempt branch is very long.
   // Including the attempt identity avoids linking two sessions to one PR.
   const recoveryBranch = `wallie/recovery/${createHash("sha256")
@@ -131,6 +149,32 @@ export async function restoreAndPushSourceWithWorkspace(
     const refs = unbundled.stdout.trim().split("\n");
     if (!refs.includes(`${input.headSha} ${SOURCE_CHECKPOINT_REF}`)) {
       throw new Error("Checkpoint does not contain its recorded source commit.");
+    }
+    if (input.exactRef) {
+      const existing = await remoteHead(input.branch);
+      if (existing === input.headSha) return input.branch;
+      if (existing) throw new Error("Retained checkpoint ref has a different source commit.");
+      await input.beforePush?.();
+      signal.throwIfAborted();
+      const ref = `refs/heads/${input.branch}`;
+      try {
+        // An empty expected lease only creates an absent ref. Even an ancestor
+        // written after our read must remain untouched by this publication.
+        await git([
+          "push",
+          `--force-with-lease=${ref}:`,
+          input.remoteUrl,
+          `${input.headSha}:${ref}`,
+        ]);
+      } catch {
+        signal.throwIfAborted();
+        // A transport failure can happen after the server accepted the push.
+        // Only an exact remote read below can establish publication proof.
+      }
+      if ((await remoteHead(input.branch)) !== input.headSha) {
+        throw new Error("Retained checkpoint ref could not be verified.");
+      }
+      return input.branch;
     }
     // Once recovery was used, retries keep its identity even if the attempt
     // branch is later deleted or rewritten. Human updates are never replaced.

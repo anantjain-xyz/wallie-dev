@@ -54,7 +54,12 @@ import {
   readSourceBase,
   UnsupportedLfsCheckpointError,
   UnsupportedSubmoduleCheckpointError,
+  UnsafeRuntimeCheckpointError,
 } from "./source-checkpoint";
+import {
+  publishSessionCheckpoint,
+  CheckpointPublicationPendingError,
+} from "./checkpoint-publication";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { checkoutPinnedGitInput } from "./git-input";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
@@ -204,6 +209,7 @@ async function runStage(input: {
   let finalOutput: string | undefined;
   let taskComplete = false;
   let runFailureMessageRecorded = false;
+  const checkpointSensitiveValues = new Set<string>();
   try {
     const [
       config,
@@ -456,6 +462,9 @@ async function runStage(input: {
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
       secrets: installationToken ? [installationToken] : undefined,
+      onSensitiveValue: (value) => {
+        checkpointSensitiveValues.add(value);
+      },
       signal,
       sessionId: session.id,
     })) {
@@ -523,7 +532,16 @@ async function runStage(input: {
     // the source is durable. A dual-store outage leaves the provider TTL as the
     // recovery window, and the reaper honors this explicit retention marker.
     try {
-      const checkpoint = await captureSourceCheckpoint({ sandbox, baseSha: sourceBase, signal });
+      const checkpoint = await captureSourceCheckpoint({
+        sandbox,
+        baseSha: sourceBase,
+        signal,
+        sensitiveValues: [
+          prompt,
+          ...(installationToken ? [installationToken] : []),
+          ...checkpointSensitiveValues,
+        ],
+      });
       const prepared = await prepareSourceDelivery({
         admin,
         baseBranch: gitInput.base_branch,
@@ -531,6 +549,12 @@ async function runStage(input: {
         checkpoint,
         onDurable: () => {
           retainSource = false;
+        },
+        publication: {
+          expectedArtifactVersion: session.current_artifact_version,
+          artifactMarkdown,
+          deadlineAt: input.deadlineAt,
+          usage,
         },
         repositoryId: github.repo.id,
         runId,
@@ -545,11 +569,13 @@ async function runStage(input: {
       if (error instanceof ExecutionOwnershipLostError || signal?.aborted) throw error;
       throw new SourcePreservationError(
         !retainSource,
-        error instanceof UnsupportedLfsCheckpointError
-          ? "lfs"
-          : error instanceof UnsupportedSubmoduleCheckpointError
-            ? "gitlink"
-            : undefined,
+        error instanceof UnsafeRuntimeCheckpointError
+          ? "unsafe-runtime"
+          : error instanceof UnsupportedLfsCheckpointError
+            ? "lfs"
+            : error instanceof UnsupportedSubmoduleCheckpointError
+              ? "gitlink"
+              : undefined,
       );
     }
     throwIfAborted(signal);
@@ -563,7 +589,6 @@ async function runStage(input: {
       deadlineAt: input.deadlineAt,
       signal,
       stage,
-      usage,
     });
     if (published === "idle") {
       return { jobId: job.id, processed: true, result: "idle", runId };
@@ -572,6 +597,11 @@ async function runStage(input: {
     // The supervising worker owns timeout recovery. A late provider result must
     // not enqueue retries or append output after its captured attempt expires.
     if (signal?.aborted) return { jobId: job.id, processed: true, result: "idle", runId };
+    // The durable intent owns retrying remote persistence. Starting another
+    // agent here would abandon completed work and could race its adoption.
+    if (error instanceof CheckpointPublicationPendingError) {
+      return { jobId: job.id, processed: true, result: "idle", runId };
+    }
     // Sandbox providers sanitize acquisition errors while preserving their name.
     if (error instanceof Error && error.name === "ExecutionOwnershipLostError") {
       return { jobId: job.id, processed: true, result: "idle", runId };
@@ -582,6 +612,9 @@ async function runStage(input: {
       getErrorMessage(error, "Stage generation failed"),
       {
         runId,
+        // Source+intent preparation may have committed despite a lost reply.
+        // The database guard serializes with that transaction before failing.
+        preservePublication: error instanceof SourcePreservationError,
         retry:
           !retainSource &&
           !(error instanceof MissingReviewableOutputError) &&
@@ -589,7 +622,7 @@ async function runStage(input: {
           !isSandboxConnectionSetupError(error),
       },
     );
-    if (runId && !runFailureMessageRecorded) {
+    if (result === "error" && runId && !runFailureMessageRecorded) {
       await persistRunFailureDiagnostic(admin, { error, runId, workspaceId: session.workspace_id });
     }
     return { jobId: job.id, processed: true, result, runId };
@@ -621,39 +654,24 @@ async function publishArtifact(input: {
   deadlineAt?: string;
   signal?: AbortSignal;
   stage: PipelineStage;
-  usage: { inputTokens: number; outputTokens: number } | undefined;
 }): Promise<"idle" | "published"> {
   const { admin, artifactMarkdown, job, runId, session, stage } = input;
 
   throwIfAborted(input.signal);
-  const publication = admin.rpc("publish_session_job_with_source", {
-    p_job_id: job.id,
-    p_attempt_count: job.attempt_count,
-    p_run_id: runId,
-    p_expected_artifact_version: session.current_artifact_version,
-    p_artifact_json: artifactMarkdown,
-    ...(input.deadlineAt ? { p_deadline_at: input.deadlineAt } : {}),
+  const publication = await publishSessionCheckpoint({
+    admin,
+    runId,
+    jobId: job.id,
+    attemptCount: job.attempt_count,
+    workspaceId: session.workspace_id,
+    expectedArtifactVersion: session.current_artifact_version,
+    artifactMarkdown,
+    deadlineAt: input.deadlineAt,
+    signal: input.signal,
   });
-  const { data: published, error: publishError } = await (input.signal
-    ? publication.abortSignal(input.signal)
-    : publication);
-
-  if (publishError) throw publishError;
-  if (published !== true) return "idle";
+  if (publication === "pending") throw new CheckpointPublicationPendingError();
+  if (publication !== "adopted") return "idle";
   throwIfAborted(input.signal);
-
-  if (input.usage) {
-    const { error } = await admin
-      .from("agent_runs")
-      .update({
-        input_tokens: input.usage.inputTokens,
-        output_tokens: input.usage.outputTokens,
-      })
-      .eq("id", runId)
-      .eq("attempt_count", job.attempt_count)
-      .eq("status", "success");
-    if (error) throw error;
-  }
 
   // Publication already made this run successful. Append its final history
   // without requiring active execution or refreshing its activity timestamp.
@@ -1288,17 +1306,20 @@ async function failPipelineJob(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
-  options: { retry?: boolean; runId?: string | null } = {},
+  options: { retry?: boolean; runId?: string | null; preservePublication?: boolean } = {},
 ): Promise<ProcessPipelineJobResult["result"]> {
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
-  const { data, error } = await admin.rpc("fail_session_job_attempt", {
-    p_job_id: job.id,
-    p_attempt_count: job.attempt_count,
-    p_run_id: options.runId ?? undefined,
-    p_error: errorMessage,
-    p_retry: options.retry !== false,
-    p_max_retries: maxRetries,
-  });
+  const { data, error } = await admin.rpc(
+    options.preservePublication ? "fail_stalled_session_job_attempt" : "fail_session_job_attempt",
+    {
+      p_job_id: job.id,
+      p_attempt_count: job.attempt_count,
+      p_run_id: options.runId ?? undefined,
+      p_error: errorMessage,
+      p_retry: options.retry !== false,
+      p_max_retries: maxRetries,
+    },
+  );
   if (error) throw error;
   if (data === "stale") return "idle";
   if (data === "success") return "success";

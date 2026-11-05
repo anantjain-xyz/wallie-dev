@@ -72,6 +72,8 @@ export interface AgentRunnerStartInput {
    * stdout cannot leak a repository-capable credential into run history.
    */
   secrets?: Array<string | undefined>;
+  /** In-memory sink for the exact credentials authorized by this invocation, including refreshed token fields. Never persist or log these values. */
+  onSensitiveValue?: (value: string) => void;
   /** Max output tokens for the agent (optional, provider-specific). */
   maxTokens?: number;
   /** Optional deadline signal used by bounded route handlers. */

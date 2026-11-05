@@ -112,10 +112,27 @@ export async function sweepStalledRuns(
       : (job.started_at ?? job.created_at);
     const elapsed = now - Date.parse(activity);
     if (!Number.isFinite(elapsed) || elapsed < timeoutMs) continue;
+    if (ownedRun) {
+      const { data: publication, error: publicationError } = await admin
+        .from("session_checkpoint_publications")
+        .select("status, deadline_at")
+        .eq("run_id", ownedRun.id)
+        .eq("job_id", job.id)
+        .eq("attempt_count", job.attempt_count)
+        .eq("workspace_id", job.workspace_id)
+        .maybeSingle();
+      if (publicationError) continue;
+      if (
+        publication &&
+        ["pending", "claimed"].includes(publication.status) &&
+        Date.parse(publication.deadline_at) > now
+      )
+        continue;
+    }
     const reason = ownedRun
       ? `Stalled: no activity for ${Math.round(elapsed / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`
       : RUNLESS_STALL_REASON;
-    const { data: outcome, error } = await admin.rpc("fail_session_job_attempt", {
+    const { data: outcome, error } = await admin.rpc("fail_stalled_session_job_attempt", {
       p_job_id: job.id,
       p_attempt_count: job.attempt_count,
       p_run_id: ownedRun?.id,
@@ -156,7 +173,7 @@ export async function sweepStalledRuns(
 }
 
 async function mayStopRetiredRun(admin: AdminClient, run: RecoveryRun): Promise<boolean> {
-  // fail_session_job_attempt locked this run and made it terminal. The sole
+  // fail_stalled_session_job_attempt locked this run and made it terminal. The sole
   // true-marker writer requires status=running, so it cannot acquire retention
   // after this read. Never authorize cleanup from the earlier sweep snapshot.
   const { data, error } = await admin

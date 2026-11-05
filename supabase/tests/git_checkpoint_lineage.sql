@@ -99,7 +99,7 @@ select is((select current_artifact_version from public.sessions where id=(select
 select is(public.publish_session_job_with_source((select job_id from git_fixture),2,(select run_id from git_retry),0,'Artifact',clock_timestamp()+interval '1 minute'),
   true,'current publication adopts checkpoint and artifact in one transaction');
 select ok((select c.artifact_id=s.current_artifact_id and c.input_sha=repeat('a',40) and c.output_sha=c.input_sha
-  and c.output_kind='no-code' and c.attempt_count=2 and c.output_ref='refs/heads/wallie/git-fixture-2'
+  and c.output_kind='no-code' and c.attempt_count=2 and c.output_ref is null
   from public.session_git_checkpoints c join public.sessions s on s.id=c.session_id where c.run_id=(select run_id from git_retry)),
   'accepted artifact has exact no-code lineage and producing claim');
 select is((select status from public.session_source_deliveries where run_id=(select run_id from git_retry)),'pending',
@@ -172,15 +172,20 @@ select public.prepare_session_source_delivery((select run_id from git_other),
   'Code','Artifact','',encode(extensions.digest('source'::bytea,'sha256'),'hex'),encode('source'::bytea,'base64'));
 update public.session_source_deliveries set session_id=(select session_id from git_fixture) where run_id=(select run_id from git_other);
 select throws_ok($$select public.publish_session_job_with_source((select job_id from git_other),1,(select run_id from git_other),0,'Other artifact')$$,
-  '23514','Git checkpoint does not match the accepted execution and artifact.',
+  '23514','Exact retained remote checkpoint proof is required.',
   'a source record from another session cannot be adopted');
 select is((select current_artifact_version from public.sessions where id=(select session_id from git_other)),0,
   'adoption failure rolls back the primitive artifact publication');
 select is((select status::text from public.agent_runs where id=(select run_id from git_other)),'running',
   'adoption failure rolls back the run success transition');
 update public.session_source_deliveries set session_id=(select session_id from git_other) where run_id=(select run_id from git_other);
-select is(public.publish_session_job_with_source((select job_id from git_other),1,(select run_id from git_other),0,'Other artifact'),true,
-  'valid code checkpoint publishes after repairing the mismatched association');
+select is(public.prepare_session_checkpoint_publication((select run_id from git_other),0,'Other artifact'),true,
+  'valid code checkpoint prepares an immutable publication intent');
+create temp table git_other_publication_claim as select public.claim_session_checkpoint_publication((select run_id from git_other)) as claim_id;
+select is(public.adopt_session_checkpoint_publication((select run_id from git_other),
+  (select claim_id from git_other_publication_claim),
+  'refs/heads/wallie/checkpoints/'||(select run_id::text from git_other)||'/'||repeat('c',40),repeat('c',40)),true,
+  'valid code checkpoint publishes only after exact retained remote proof');
 select ok((select c.output_kind='code' and c.input_sha=repeat('b',40) and c.output_sha=repeat('c',40)
   and c.bundle_sha256=encode(extensions.digest('source'::bytea,'sha256'),'hex')
   from public.session_git_checkpoints c where c.run_id=(select run_id from git_other)),
@@ -212,7 +217,8 @@ select is(public.finish_session_source_delivery_with_ref((select run_id from git
 select is((select delivered_ref from public.session_source_deliveries where run_id=(select run_id from git_other)),
   'refs/heads/wallie/git-other-recovery','the actual durable ref is persisted separately from its intended target');
 select is((select output_ref from public.session_git_checkpoints where run_id=(select run_id from git_other)),
-  'refs/heads/wallie/git-other','recording a recovery ref does not rewrite the immutable intended target');
+  'refs/heads/wallie/checkpoints/'||(select run_id::text from git_other)||'/'||repeat('c',40),
+  'PR recovery does not rewrite the immutable retained checkpoint ref');
 select throws_ok($$update public.session_source_deliveries set delivered_ref='refs/heads/rewrite' where run_id=(select run_id from git_other)$$,
   '23514','Delivered Git ref is immutable.','a known durable ref cannot be overwritten');
 select ok(not has_column_privilege('service_role','public.session_source_deliveries','delivered_ref','UPDATE'),

@@ -27,12 +27,35 @@ function fixture() {
     source_recovery_required: false,
     workspace_id: "workspace",
   };
+  const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+  const recovery = { now: Date.now() };
+  const publications: Array<{
+    run_id: string;
+    job_id: string;
+    attempt_count: number;
+    status: "pending" | "claimed";
+    deadline_at: string;
+    artifact_md: string;
+  }> = [];
   let executed = false;
-  const rpc = vi.fn(async (name: string) => {
+  const rpc = vi.fn(async (name: string, args?: Record<string, unknown>) => {
     if (name === "begin_worker_dispatch") {
       const data = !executed;
       executed = true;
       return { data, error: null };
+    }
+    if (name === "fail_stalled_session_job_attempt") {
+      const saved = publications.some(
+        (publication) =>
+          publication.run_id === args?.p_run_id &&
+          publication.job_id === args?.p_job_id &&
+          publication.attempt_count === args?.p_attempt_count &&
+          Date.parse(publication.deadline_at) > recovery.now,
+      );
+      if (saved) return { data: "stale", error: null };
+      run.status = "error";
+      job.status = args?.p_retry ? "queued" : "error";
+      return { data: job.status, error: null };
     }
     return { data: "error", error: null };
   });
@@ -41,10 +64,7 @@ function fixture() {
       select: () => query,
       eq: () => query,
       single: async () => ({
-        data:
-          table === "worker_dispatches"
-            ? { deadline_at: new Date(Date.now() + 60_000).toISOString() }
-            : job,
+        data: table === "worker_dispatches" ? { deadline_at: deadlineAt } : job,
         error: null,
       }),
       maybeSingle: async () => ({
@@ -60,7 +80,16 @@ function fixture() {
   vi.mocked(registerWorker).mockResolvedValue(undefined);
   vi.mocked(sendHeartbeat).mockResolvedValue(undefined);
   vi.mocked(deregisterWorker).mockResolvedValue(undefined);
-  return { id, job, run, admin, params: { jobId: "job", attemptCount: 2, workflowId: id } };
+  return {
+    id,
+    job,
+    run,
+    admin,
+    publications,
+    recovery,
+    deadlineAt,
+    params: { jobId: "job", attemptCount: 2, workflowId: id },
+  };
 }
 
 beforeEach(() => vi.resetAllMocks());
@@ -106,7 +135,7 @@ describe("native Workflow ownership", () => {
       await bindings.SESSION_ATTEMPT.create({ id: f.id, params: f.params });
       await inspection.waitForStatus("complete");
       expect(runClaimedJob).toHaveBeenCalledOnce();
-      expect(f.admin.rpc).toHaveBeenCalledWith("fail_session_job_attempt", {
+      expect(f.admin.rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", {
         p_job_id: "job",
         p_attempt_count: 2,
         p_run_id: "run",
@@ -115,6 +144,93 @@ describe("native Workflow ownership", () => {
         p_max_retries: 3,
       });
       expect(deregisterWorker).toHaveBeenCalledOnce();
+    } finally {
+      await inspection.dispose();
+    }
+  });
+
+  it.each(["pending", "claimed"] as const)(
+    "preserves a saved %s intent after a lost preparation response and an explicit Workflow replay",
+    async (status) => {
+      const f = fixture();
+      vi.mocked(runClaimedJob).mockImplementationOnce(async () => {
+        f.publications.push({
+          run_id: "run",
+          job_id: "job",
+          attempt_count: 2,
+          status,
+          deadline_at: f.deadlineAt,
+          artifact_md: "Original completed artifact saved with its private source",
+        });
+        throw new Error("Combined preparation committed but its response was lost");
+      });
+      const inspection = await introspectWorkflowInstance(bindings.SESSION_ATTEMPT, f.id);
+      try {
+        const instance = await bindings.SESSION_ATTEMPT.create({ id: f.id, params: f.params });
+        await inspection.waitForStatus("complete");
+        expect(f.admin.rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", {
+          p_job_id: "job",
+          p_attempt_count: 2,
+          p_run_id: "run",
+          p_error: "Cloudflare execution interrupted or reached its deadline.",
+          p_retry: true,
+          p_max_retries: 3,
+        });
+        expect(f.run.status).toBe("running");
+        expect(f.job.status).toBe("running");
+        expect(f.publications).toEqual([
+          expect.objectContaining({
+            status,
+            deadline_at: f.deadlineAt,
+            artifact_md: "Original completed artifact saved with its private source",
+          }),
+        ]);
+        await instance.restart();
+        await vi.waitFor(() =>
+          expect(
+            f.admin.rpc.mock.calls.filter(([name]) => name === "fail_stalled_session_job_attempt"),
+          ).toHaveLength(2),
+        );
+        await inspection.waitForStatus("complete");
+        expect(runClaimedJob).toHaveBeenCalledOnce();
+        expect(f.run.status).toBe("running");
+        expect(f.job.status).toBe("running");
+        expect(f.publications).toHaveLength(1);
+        expect(f.admin.rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+      } finally {
+        await inspection.dispose();
+      }
+    },
+  );
+
+  it("retires the interrupted Workflow attempt after its saved intent's original deadline", async () => {
+    const f = fixture();
+    vi.mocked(runClaimedJob).mockImplementationOnce(async () => {
+      f.publications.push({
+        run_id: "run",
+        job_id: "job",
+        attempt_count: 2,
+        status: "claimed",
+        deadline_at: f.deadlineAt,
+        artifact_md: "Completed output awaiting remote persistence",
+      });
+      // The authoritative transaction observes the original deadline elapsed;
+      // no replacement deadline is assigned during Workflow recovery.
+      f.recovery.now = Date.parse(f.deadlineAt) + 1;
+      throw new Error("Execution interrupted after original deadline");
+    });
+    const inspection = await introspectWorkflowInstance(bindings.SESSION_ATTEMPT, f.id);
+    try {
+      await bindings.SESSION_ATTEMPT.create({ id: f.id, params: f.params });
+      await inspection.waitForStatus("complete");
+      expect(f.admin.rpc).toHaveBeenCalledWith(
+        "fail_stalled_session_job_attempt",
+        expect.objectContaining({ p_job_id: "job", p_attempt_count: 2, p_run_id: "run" }),
+      );
+      expect(f.run.status).toBe("error");
+      expect(f.job.status).toBe("queued");
+      expect(f.publications[0].deadline_at).toBe(f.deadlineAt);
+      expect(runClaimedJob).toHaveBeenCalledOnce();
     } finally {
       await inspection.dispose();
     }

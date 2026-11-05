@@ -2,6 +2,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { startCursorAuthProcessor } from "@/lib/cursor/auth-processor";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
+import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 
 import { parseWorkerConfig } from "./config";
@@ -99,6 +100,7 @@ async function main() {
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("stall sweep", async () => {
+          await drainCheckpointPublications(admin);
           const result = await sweepStalledRuns(admin, config.defaultStallTimeoutMs);
           if (result.stalledRunIds.length > 0) {
             console.log("[worker] stall sweep results", {
@@ -114,6 +116,7 @@ async function main() {
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("reconciliation", async () => {
+          await drainCheckpointPublications(admin);
           await drainSourceDeliveries(admin);
           const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([
             reconcileLinearState(admin),
