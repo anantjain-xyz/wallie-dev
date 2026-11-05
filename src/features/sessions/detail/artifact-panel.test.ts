@@ -226,11 +226,13 @@ describe("ArtifactPanel", () => {
     fireEvent.click(historical);
     expect(await screen.findByText("Historical formatted")).toBeTruthy();
     expect(screen.queryByText("Latest formatted")).toBeNull();
-    expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
-      id: "historical-artifact",
-      stageSlug: "build",
-      version: 1,
-    });
+    await waitFor(() =>
+      expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+        id: "historical-artifact",
+        stageSlug: "build",
+        version: 1,
+      }),
+    );
     expect(onViewingHistoricalChange).toHaveBeenLastCalledWith(true);
     expect(new URLSearchParams(window.location.search).get("artifactId")).toBe(
       "historical-artifact",
@@ -238,11 +240,13 @@ describe("ArtifactPanel", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Version 1.*Current author/i }));
     expect(screen.getByText("Latest formatted")).toBeTruthy();
-    expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
-      id: current.id,
-      stageSlug: "build",
-      version: 1,
-    });
+    await waitFor(() =>
+      expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+        id: current.id,
+        stageSlug: "build",
+        version: 1,
+      }),
+    );
     expect(onViewingHistoricalChange).toHaveBeenLastCalledWith(false);
     expect(new URLSearchParams(window.location.search).has("artifactId")).toBe(false);
     expect(
