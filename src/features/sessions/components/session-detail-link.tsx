@@ -19,6 +19,7 @@ type Prefetch = (href: string) => void;
 
 const SessionDetailPrefetchContext = createContext<Set<string> | null>(null);
 const PREFETCH_SETTLE_TIMEOUT_MS = 2_000;
+const PREFETCH_QUIET_MS = 80;
 
 export function isSessionDetailHoverPointer(pointerType: string) {
   return pointerType === "mouse" || pointerType === "pen";
@@ -68,24 +69,38 @@ function sessionDetailPrefetchSettled(href: string) {
 }
 
 function waitForSessionDetailPrefetch(href: string) {
-  const settle = () =>
-    new Promise<void>((resolve) => {
-      requestAnimationFrame(() => resolve());
-    });
-
-  if (sessionDetailPrefetchSettled(href)) return settle();
-
+  // A full prefetch can be more than one RSC response. Navigating on the first
+  // one aborts the rest. Wait until the burst has gone quiet.
   return new Promise<void>((resolve) => {
+    let quietTimer = 0;
+    let settled = false;
     const timeout = window.setTimeout(finish, PREFETCH_SETTLE_TIMEOUT_MS);
-    const observer = new PerformanceObserver(() => {
-      if (sessionDetailPrefetchSettled(href)) finish();
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (
+          entry instanceof PerformanceResourceTiming &&
+          isSessionDetailPrefetchResource(entry.name, href) &&
+          sessionDetailPrefetchHasBody(entry)
+        ) {
+          armQuietPeriod();
+        }
+      }
     });
     observer.observe({ type: "resource", buffered: true });
+    if (sessionDetailPrefetchSettled(href)) armQuietPeriod();
+
+    function armQuietPeriod() {
+      window.clearTimeout(quietTimer);
+      quietTimer = window.setTimeout(finish, PREFETCH_QUIET_MS);
+    }
 
     function finish() {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timeout);
+      window.clearTimeout(quietTimer);
       observer.disconnect();
-      void settle().then(resolve);
+      requestAnimationFrame(() => resolve());
     }
   });
 }
