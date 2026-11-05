@@ -33,6 +33,35 @@ The readiness check requires the seeded Checkout latency heading, its expected p
 
 Reported runs disable Playwright tracing. Use `--profile --session-only --trace-out bench-results/session-open.trace.json` for a separate Chrome diagnostic trace with browser tasks, CPU samples, network work, and the same marks. Profiling defaults to one run. The result JSON labels these runs `diagnostic`; do not use their durations for before/after claims.
 
+### Separate request waiting from browser work
+
+The result records the production build ID, Chromium version, and browser conditions. Use these flags to constrain the timed interaction:
+
+| Flag              | Default | Meaning                                           |
+| ----------------- | ------: | ------------------------------------------------- |
+| `--cpu-rate`      |     `1` | Browser CPU slowdown multiplier, at least 1       |
+| `--latency-ms`    |     `0` | Minimum browser request latency in milliseconds   |
+| `--download-kbps` |    `-1` | Download kilobits per second, or -1 for unlimited |
+| `--upload-kbps`   |    `-1` | Upload kilobits per second, or -1 for unlimited   |
+
+Conditions apply after the list warmup and before the timed interaction. Browser networking is constrained; server-to-database networking remains local. Use the same values for every compared sample. A constrained desktop browser is not a measurement of a physical mobile device.
+
+```bash
+pnpm bench:navigation --session-only --session-intent touch --cpu-rate 4 --latency-ms 80 --download-kbps 1600 --upload-kbps 750
+```
+
+`sessionOpen.intentEvents` records pointer entry, pointer down, focus, prefetch, and click relative to the native click. An immediate Playwright click can start prefetch on hover before its click. A touch tap can also focus the link. These fields expose that lead time instead of treating either flow as guaranteed unprefetched navigation.
+
+Session-only runs wait on the browser readiness mark before running Playwright's URL, heading, and control assertions. This keeps selector and style inspection out of the primary click-to-review-ready interval. Their `durationMs` still ends at stage readiness, using the browser's stage mark instead of the test driver's observation. The default five-flow mode retains its original locator timing. Compare session-only samples produced by the same harness revision.
+
+Diagnostic runs profile every requested run. `--trace-out bench-results/session-open.trace.json --runs 3` writes `session-open.trace-run1.json` through `session-open.trace-run3.json`, with a matching `.network.json` sidecar per run. The sidecar contains:
+
+- CDP request, response-header, body-byte, completion, and failure events for the destination. Only routing and content/timing headers are retained.
+- Diagnostic-only observer delivery, timer callback IDs and firing, animation frames, digest completion, and destination fetch-reader events. Browser event times use `performance.now()`; CDP event timestamps use monotonic seconds, and each request also records its epoch wall time.
+- No response bodies, auth headers, or cookies.
+
+These probes add work. Keep diagnostic traces separate from untraced latency samples. Reader completion, CDP network completion, and `PerformanceResourceTiming.responseEnd` are distinct observations; do not substitute one for another without checking the trace.
+
 ## What each flow times
 
 The clock stops when the content below is visible and the workspace shell has hydrated. A run that misses that content, throws a page error, or returns HTTP 500 is a failed run.
