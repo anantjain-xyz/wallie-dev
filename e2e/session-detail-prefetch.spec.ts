@@ -255,7 +255,9 @@ for (const delayedPhase of ["tree", "page"] as const) {
       expect(whilePending.pushes, "navigation must not discard an in-flight prefetch").toBe(0);
       release();
       await expect(page).toHaveURL(href);
-      await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+      await expect(
+        page.locator("header").getByRole("heading", { level: 1, name: title, exact: true }),
+      ).toBeVisible();
       await expect(page.getByRole("navigation", { name: "Pipeline stages" })).toBeVisible();
       await expect(page.getByRole("status", { name: "Loading session" })).toBeHidden();
       expect(await page.locator("html").getAttribute("data-session-pushes")).toBe("1");
@@ -270,7 +272,7 @@ for (const delayedPhase of ["tree", "page"] as const) {
         await link.click();
         await expect(page).toHaveURL(href);
         await expect(
-          page.getByRole("heading", { level: 1, name: title, exact: true }),
+          page.locator("header").getByRole("heading", { level: 1, name: title, exact: true }),
         ).toBeVisible();
         expect(await page.locator("html").getAttribute("data-session-pushes")).toBe("2");
       }

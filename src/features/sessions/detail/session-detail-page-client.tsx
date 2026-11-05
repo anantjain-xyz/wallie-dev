@@ -81,8 +81,10 @@ import type { SessionArtifactSummary } from "@/features/sessions/types";
 import { publishArtifactFeedbackSubmission } from "@/features/sessions/review/submission-events";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { subscribeAuthenticatedChannel } from "@/lib/supabase/realtime-subscription";
+import {
+  loadSupabaseBrowserClient,
+  subscribeDeferredAuthenticatedChannel,
+} from "@/lib/supabase/deferred-browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
@@ -198,8 +200,9 @@ function SessionDetailContent({
   const searchParams = useSearchParams();
   const { pushToast } = useOptionalToast();
   const supabaseConfig = useSupabasePublicConfig();
-  const [supabase] = useState<SupabaseClient<Database>>(() =>
-    createSupabaseBrowserClient(supabaseConfig),
+  const getSupabase = useCallback(
+    () => loadSupabaseBrowserClient(supabaseConfig),
+    [supabaseConfig],
   );
   const { recovery } = useRealtimeRecovery();
   const [session, setSession] = useState(initialData.session);
@@ -556,6 +559,8 @@ function SessionDetailContent({
     };
     recoveryChangesRef.current = changes;
     try {
+      const supabase = await getSupabase();
+      if (signal.aborted) return;
       const result = await loadSessionRecoverySnapshot({
         supabase,
         workspaceSlug: initialData.workspaceSlug,
@@ -619,138 +624,146 @@ function SessionDetailContent({
         required: true,
         refresh: (signal) => catchUpSession(signal),
         subscribe: (onStatus, isCurrent) => {
-          const channel = supabase
-            .channel(`session-detail:${session.id}`)
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                filter: `id=eq.${session.id}`,
-                schema: "public",
-                table: "sessions",
-              },
-              (payload) => {
-                if (!isCurrent()) return;
-                if (payload.eventType === "DELETE") {
-                  leaveUnavailableSession();
-                  return;
-                }
-
-                handleSessionRealtimeUpdate(payload.new as Tables<"sessions">);
-              },
-            )
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                filter: `session_id=eq.${session.id}`,
-                schema: "public",
-                table: "session_artifacts",
-              },
-              (payload) => {
-                if (!isCurrent()) return;
-                if (payload.eventType === "DELETE") {
-                  const deleted = payload.old as Pick<Tables<"session_artifacts">, "id"> &
-                    Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>;
-                  trackRecoveryChange(
-                    "artifacts",
-                    deleted.id,
-                    `${deleted.stage_slug}:${deleted.version}`,
-                  );
-                  setSession((current) => removeArtifactRealtimeRow(current, deleted));
-                  return;
-                }
-
-                const row = payload.new as Tables<"session_artifacts">;
-                trackRecoveryChange("artifacts", row.id, `${row.stage_slug}:${row.version}`);
-                handleArtifactRealtimeUpdate(payload.new as Tables<"session_artifacts">);
-              },
-            )
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                filter: `session_id=eq.${session.id}`,
-                schema: "public",
-                table: "session_phase_completions",
-              },
-              (payload) => {
-                if (!isCurrent()) return;
-                if (payload.eventType === "DELETE") {
-                  const deleted = payload.old as Pick<Tables<"session_phase_completions">, "id"> &
-                    Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>;
-                  trackRecoveryChange(
-                    "phaseCompletions",
-                    deleted.id,
-                    ...(deleted.stage_slug ? [deleted.stage_slug] : []),
-                  );
-                  setSession((current) => removeCompletionRealtimeRow(current, deleted));
-                  return;
-                }
-
-                const row = payload.new as Tables<"session_phase_completions">;
-                trackRecoveryChange("phaseCompletions", row.id, row.stage_id ?? row.stage_slug);
-                handleCompletionRealtimeUpdate(payload.new as Tables<"session_phase_completions">);
-              },
-            )
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                filter: `session_id=eq.${session.id}`,
-                schema: "public",
-                table: "session_pull_requests",
-              },
-              (payload) => {
-                if (!isCurrent()) return;
-                const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as Pick<
-                  Tables<"session_pull_requests">,
-                  "id" | "pull_request_number" | "pull_request_url" | "updated_at"
-                >;
-                trackRecoveryChange("pullRequests", row.id);
-                setSession((current) => {
-                  const existing = current.pullRequests.find(
-                    (pullRequest) => pullRequest.id === row.id,
-                  );
-
+          const createChannel = (supabase: SupabaseClient<Database>) =>
+            supabase
+              .channel(`session-detail:${session.id}`)
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  filter: `id=eq.${session.id}`,
+                  schema: "public",
+                  table: "sessions",
+                },
+                (payload) => {
+                  if (!isCurrent()) return;
                   if (payload.eventType === "DELETE") {
-                    pullRequestUpdatedAtRef.current.delete(row.id);
-                    return removePullRequestRealtimeRow(current, row);
+                    leaveUnavailableSession();
+                    return;
                   }
 
-                  const previousUpdatedAt = pullRequestUpdatedAtRef.current.get(row.id);
-                  if (
-                    previousUpdatedAt &&
-                    compareSessionTimestamps(row.updated_at, previousUpdatedAt) <= 0
-                  ) {
-                    return current;
+                  handleSessionRealtimeUpdate(payload.new as Tables<"sessions">);
+                },
+              )
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  filter: `session_id=eq.${session.id}`,
+                  schema: "public",
+                  table: "session_artifacts",
+                },
+                (payload) => {
+                  if (!isCurrent()) return;
+                  if (payload.eventType === "DELETE") {
+                    const deleted = payload.old as Pick<Tables<"session_artifacts">, "id"> &
+                      Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>;
+                    trackRecoveryChange(
+                      "artifacts",
+                      deleted.id,
+                      `${deleted.stage_slug}:${deleted.version}`,
+                    );
+                    setSession((current) => removeArtifactRealtimeRow(current, deleted));
+                    return;
                   }
 
-                  const pullRequests = current.pullRequests.filter(
-                    (pullRequest) => pullRequest.id !== row.id,
+                  const row = payload.new as Tables<"session_artifacts">;
+                  trackRecoveryChange("artifacts", row.id, `${row.stage_slug}:${row.version}`);
+                  handleArtifactRealtimeUpdate(payload.new as Tables<"session_artifacts">);
+                },
+              )
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  filter: `session_id=eq.${session.id}`,
+                  schema: "public",
+                  table: "session_phase_completions",
+                },
+                (payload) => {
+                  if (!isCurrent()) return;
+                  if (payload.eventType === "DELETE") {
+                    const deleted = payload.old as Pick<Tables<"session_phase_completions">, "id"> &
+                      Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>;
+                    trackRecoveryChange(
+                      "phaseCompletions",
+                      deleted.id,
+                      ...(deleted.stage_slug ? [deleted.stage_slug] : []),
+                    );
+                    setSession((current) => removeCompletionRealtimeRow(current, deleted));
+                    return;
+                  }
+
+                  const row = payload.new as Tables<"session_phase_completions">;
+                  trackRecoveryChange("phaseCompletions", row.id, row.stage_id ?? row.stage_slug);
+                  handleCompletionRealtimeUpdate(
+                    payload.new as Tables<"session_phase_completions">,
                   );
-                  pullRequestUpdatedAtRef.current.set(row.id, row.updated_at);
-                  if (
-                    existing?.pullRequestNumber === row.pull_request_number &&
-                    existing.pullRequestUrl === row.pull_request_url
-                  ) {
-                    return current;
-                  }
+                },
+              )
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  filter: `session_id=eq.${session.id}`,
+                  schema: "public",
+                  table: "session_pull_requests",
+                },
+                (payload) => {
+                  if (!isCurrent()) return;
+                  const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as Pick<
+                    Tables<"session_pull_requests">,
+                    "id" | "pull_request_number" | "pull_request_url" | "updated_at"
+                  >;
+                  trackRecoveryChange("pullRequests", row.id);
+                  setSession((current) => {
+                    const existing = current.pullRequests.find(
+                      (pullRequest) => pullRequest.id === row.id,
+                    );
 
-                  pullRequests.push({
-                    id: row.id,
-                    pullRequestNumber: row.pull_request_number,
-                    pullRequestUrl: row.pull_request_url,
+                    if (payload.eventType === "DELETE") {
+                      pullRequestUpdatedAtRef.current.delete(row.id);
+                      return removePullRequestRealtimeRow(current, row);
+                    }
+
+                    const previousUpdatedAt = pullRequestUpdatedAtRef.current.get(row.id);
+                    if (
+                      previousUpdatedAt &&
+                      compareSessionTimestamps(row.updated_at, previousUpdatedAt) <= 0
+                    ) {
+                      return current;
+                    }
+
+                    const pullRequests = current.pullRequests.filter(
+                      (pullRequest) => pullRequest.id !== row.id,
+                    );
+                    pullRequestUpdatedAtRef.current.set(row.id, row.updated_at);
+                    if (
+                      existing?.pullRequestNumber === row.pull_request_number &&
+                      existing.pullRequestUrl === row.pull_request_url
+                    ) {
+                      return current;
+                    }
+
+                    pullRequests.push({
+                      id: row.id,
+                      pullRequestNumber: row.pull_request_number,
+                      pullRequestUrl: row.pull_request_url,
+                    });
+
+                    return { ...current, pullRequests };
                   });
-
-                  return { ...current, pullRequests };
-                });
-              },
-            );
-          return subscribeAuthenticatedChannel(supabase, channel, onStatus);
+                },
+              );
+          return subscribeDeferredAuthenticatedChannel(
+            getSupabase,
+            createChannel,
+            onStatus,
+            isCurrent,
+          );
         },
       }),
-    [initialData.workspaceSlug, recovery, session.id, supabase],
+    [getSupabase, initialData.workspaceSlug, recovery, session.id],
   );
 
   async function handlePhaseAction(

@@ -33,8 +33,10 @@ import {
 } from "@/features/wallie/data";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { subscribeAuthenticatedChannel } from "@/lib/supabase/realtime-subscription";
+import {
+  loadSupabaseBrowserClient,
+  subscribeDeferredAuthenticatedChannel,
+} from "@/lib/supabase/deferred-browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
@@ -139,8 +141,9 @@ function SessionWalliePanelContent({
   const focused = useSessionRunFocus();
   const supabaseConfig = useSupabasePublicConfig();
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
-  const [supabase] = useState<SupabaseClient<Database>>(
-    () => injectedSupabase ?? createSupabaseBrowserClient(supabaseConfig),
+  const getSupabase = useCallback(
+    async () => injectedSupabase ?? loadSupabaseBrowserClient(supabaseConfig),
+    [injectedSupabase, supabaseConfig],
   );
   const [runs, setRuns] = useState(initialData.runs);
   const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);
@@ -257,6 +260,7 @@ function SessionWalliePanelContent({
 
   const loadRunMessages = useCallback(
     (runId: string, signal?: AbortSignal): Promise<void> => {
+      if (signal?.aborted) return Promise.resolve();
       const generation = messageGenerationRef.current;
       const key = `${generation}:${runId}`;
       const existing = messageRequestsRef.current.get(key);
@@ -275,6 +279,8 @@ function SessionWalliePanelContent({
           next.delete(runId);
           return next;
         });
+        const supabase = await getSupabase();
+        if (generation !== messageGenerationRef.current || controller.signal.aborted) return;
         let query = supabase
           .from("agent_run_messages")
           .select("agent_run_id, created_at, id, kind, message_md")
@@ -293,10 +299,7 @@ function SessionWalliePanelContent({
           ),
         ]);
         if (generation !== messageGenerationRef.current || controller.signal.aborted) return;
-        if (error) {
-          setMessageLoadErrorRunIds((current) => new Set(current).add(runId));
-          throw error;
-        }
+        if (error) throw error;
         const rows = [...(data ?? [])].reverse();
         setRuns((currentRuns) => {
           let nextRuns = currentRuns;
@@ -309,16 +312,22 @@ function SessionWalliePanelContent({
           return nextRuns;
         });
         setLoadedMessageRunIds((current) => new Set(current).add(runId));
-      })().finally(() => {
-        clearTimeout(timeout);
-        signal?.removeEventListener("abort", abort);
-        if (messageRequestsRef.current.get(key)?.promise === request)
-          messageRequestsRef.current.delete(key);
-      });
+      })()
+        .catch((error: unknown) => {
+          if (generation === messageGenerationRef.current && !controller.signal.aborted)
+            setMessageLoadErrorRunIds((current) => new Set(current).add(runId));
+          throw error;
+        })
+        .finally(() => {
+          clearTimeout(timeout);
+          signal?.removeEventListener("abort", abort);
+          if (messageRequestsRef.current.get(key)?.promise === request)
+            messageRequestsRef.current.delete(key);
+        });
       messageRequestsRef.current.set(key, { promise: request, controller });
       return request;
     },
-    [supabase],
+    [getSupabase],
   );
 
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
@@ -348,6 +357,7 @@ function SessionWalliePanelContent({
     const invalidate = () => {
       reconcileGenerationRef.current += 1;
       messageGenerationRef.current += 1;
+      linkedRunSequence.current += 1;
       messageRequestsRef.current.forEach(({ controller }) => controller.abort());
       messageRequestsRef.current.clear();
     };
@@ -412,24 +422,29 @@ function SessionWalliePanelContent({
       required: true,
       refresh: (signal) => reconcileLatestRuns(signal),
       subscribe: (onStatus, isCurrent) => {
-        const channel = supabase.channel(`wallie-runs:${session.id}`).on(
-          "postgres_changes",
-          {
-            event: "*",
-            filter: `session_id=eq.${session.id}`,
-            schema: "public",
-            table: "agent_runs",
-          },
-          (payload) => {
-            if (!isCurrent()) return;
-            if (payload.eventType !== "DELETE")
-              handleRunRealtimeUpdate(payload.new as Tables<"agent_runs">);
-          },
+        return subscribeDeferredAuthenticatedChannel(
+          getSupabase,
+          (supabase) =>
+            supabase.channel(`wallie-runs:${session.id}`).on(
+              "postgres_changes",
+              {
+                event: "*",
+                filter: `session_id=eq.${session.id}`,
+                schema: "public",
+                table: "agent_runs",
+              },
+              (payload) => {
+                if (!isCurrent()) return;
+                if (payload.eventType !== "DELETE")
+                  handleRunRealtimeUpdate(payload.new as Tables<"agent_runs">);
+              },
+            ),
+          onStatus,
+          isCurrent,
         );
-        return subscribeAuthenticatedChannel(supabase, channel, onStatus);
       },
     });
-  }, [realtimeReady, recovery, session.id, supabase]);
+  }, [getSupabase, realtimeReady, recovery, session.id]);
 
   useEffect(() => {
     if (expandedRunId && !loadedMessageRunIds.has(expandedRunId)) {
@@ -454,24 +469,29 @@ function SessionWalliePanelContent({
       required: true,
       refresh: (signal) => loadRunMessages(runId, signal),
       subscribe: (onStatus, isCurrent) => {
-        const channel = supabase.channel(`wallie-summary-messages:${runId}`).on(
-          "postgres_changes",
-          {
-            event: "*",
-            filter: `agent_run_id=eq.${runId}`,
-            schema: "public",
-            table: "agent_run_messages",
-          },
-          (payload) => {
-            if (!isCurrent()) return;
-            if (payload.eventType !== "DELETE")
-              handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
-          },
+        return subscribeDeferredAuthenticatedChannel(
+          getSupabase,
+          (supabase) =>
+            supabase.channel(`wallie-summary-messages:${runId}`).on(
+              "postgres_changes",
+              {
+                event: "*",
+                filter: `agent_run_id=eq.${runId}`,
+                schema: "public",
+                table: "agent_run_messages",
+              },
+              (payload) => {
+                if (!isCurrent()) return;
+                if (payload.eventType !== "DELETE")
+                  handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+              },
+            ),
+          onStatus,
+          isCurrent,
         );
-        return subscribeAuthenticatedChannel(supabase, channel, onStatus);
       },
     });
-  }, [loadRunMessages, realtimeReady, recovery, summaryRunId, supabase]);
+  }, [getSupabase, loadRunMessages, realtimeReady, recovery, summaryRunId]);
 
   const historyRunId = expandedRunId !== summaryRunId ? expandedRunId : null;
   useEffect(() => {
@@ -483,24 +503,29 @@ function SessionWalliePanelContent({
       required: false,
       refresh: (signal) => loadRunMessages(runId, signal),
       subscribe: (onStatus, isCurrent) => {
-        const channel = supabase.channel(`wallie-run-messages:${runId}`).on(
-          "postgres_changes",
-          {
-            event: "*",
-            filter: `agent_run_id=eq.${runId}`,
-            schema: "public",
-            table: "agent_run_messages",
-          },
-          (payload) => {
-            if (!isCurrent()) return;
-            if (payload.eventType !== "DELETE")
-              handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
-          },
+        return subscribeDeferredAuthenticatedChannel(
+          getSupabase,
+          (supabase) =>
+            supabase.channel(`wallie-run-messages:${runId}`).on(
+              "postgres_changes",
+              {
+                event: "*",
+                filter: `agent_run_id=eq.${runId}`,
+                schema: "public",
+                table: "agent_run_messages",
+              },
+              (payload) => {
+                if (!isCurrent()) return;
+                if (payload.eventType !== "DELETE")
+                  handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+              },
+            ),
+          onStatus,
+          isCurrent,
         );
-        return subscribeAuthenticatedChannel(supabase, channel, onStatus);
       },
     });
-  }, [historyRunId, loadRunMessages, realtimeReady, recovery, supabase]);
+  }, [getSupabase, historyRunId, loadRunMessages, realtimeReady, recovery]);
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
@@ -637,6 +662,8 @@ function SessionWalliePanelContent({
     const id = match[1]!;
     try {
       if (!runs.some((run) => run.id === id)) {
+        const supabase = await getSupabase();
+        if (sequence !== linkedRunSequence.current) return;
         const { data: row, error } = await supabase
           .from("agent_runs")
           .select(

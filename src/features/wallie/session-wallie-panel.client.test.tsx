@@ -15,6 +15,15 @@ import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+const deferredClient = vi.hoisted(() => ({
+  load: vi.fn<() => Promise<SupabaseClient<Database>>>(),
+}));
+
+vi.mock("@/lib/supabase/deferred-browser", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/supabase/deferred-browser")>()),
+  loadSupabaseBrowserClient: deferredClient.load,
+}));
+
 vi.mock("@/lib/supabase/realtime-subscription", () => ({
   subscribeAuthenticatedChannel: (
     client: { removeChannel: (channel: unknown) => void },
@@ -185,6 +194,7 @@ async function settleRecovery() {
 let idleCallback: (() => void) | null;
 
 beforeEach(() => {
+  deferredClient.load.mockReset();
   window.history.replaceState(null, "", "/");
   idleCallback = null;
   Object.defineProperty(window, "requestIdleCallback", {
@@ -207,7 +217,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function panel(initialData: WallieSessionData, supabase: SupabaseClient<Database>) {
+function panel(initialData: WallieSessionData, supabase?: SupabaseClient<Database>) {
   return render(
     <SessionWalliePanel
       initialData={initialData}
@@ -219,6 +229,96 @@ function panel(initialData: WallieSessionData, supabase: SupabaseClient<Database
 }
 
 describe("SessionWalliePanel run history lifecycle", () => {
+  it("renders and opens existing activity while the browser client is loading", async () => {
+    const fake = fakeSupabase({
+      "run-1": [
+        {
+          agent_run_id: "run-1",
+          created_at: "2026-07-18T13:00:00.000Z",
+          id: "message-late",
+          kind: "progress",
+          message_md: "Loaded after the browser client",
+        },
+      ],
+    });
+    let finish!: (client: SupabaseClient<Database>) => void;
+    deferredClient.load.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const view = panel(data([run(1)]));
+
+    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(1);
+    fireEvent.click(view.container.querySelector('[data-run-id="run-1"] button[aria-expanded]')!);
+    expect(screen.getByText("Loading run messages…")).toBeTruthy();
+    await act(async () => idleCallback?.());
+    expect(fake.supabase.channel).not.toHaveBeenCalled();
+    expect(fake.supabase.from).not.toHaveBeenCalled();
+
+    await act(async () => finish(fake.supabase));
+    await screen.findByText("Loaded after the browser client");
+    expect(fake.messageQueries).toEqual(["run-1"]);
+    expect(fake.activeChannels.size).toBe(2);
+  });
+
+  it.each(["unmount", "pagehide"])(
+    "does not start message queries when the browser client loads after %s",
+    async (departure) => {
+      const fake = fakeSupabase();
+      let finish!: (client: SupabaseClient<Database>) => void;
+      deferredClient.load.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+      const view = panel(data([run(1)]));
+      await act(async () => idleCallback?.());
+      if (departure === "unmount") view.unmount();
+      else act(() => window.dispatchEvent(new Event("pagehide")));
+
+      await act(async () => finish(fake.supabase));
+      expect(fake.supabase.from).not.toHaveBeenCalled();
+      if (departure === "unmount") expect(fake.supabase.channel).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores a superseded provenance lookup while the browser client loads", async () => {
+    const fake = fakeSupabase();
+    let finish!: (client: SupabaseClient<Database>) => void;
+    deferredClient.load.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    panel(data([run(1)], false, { loadedMessageRunIds: ["run-1"] }));
+    await act(async () => {
+      window.history.replaceState(null, "", "#wallie-run-50300000-0000-4000-8000-000000000002");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(deferredClient.load).toHaveBeenCalled();
+    await act(async () => {
+      window.history.replaceState(null, "", "/");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      finish(fake.supabase);
+    });
+
+    expect(fake.supabase.from).not.toHaveBeenCalled();
+    expect(screen.queryByText(/The linked run is unavailable/)).toBeNull();
+  });
+
+  it("lets an expanded run retry when the browser client cannot load", async () => {
+    const fake = fakeSupabase({
+      "run-1": [
+        {
+          agent_run_id: "run-1",
+          created_at: "2026-07-18T13:00:00.000Z",
+          id: "message-retry",
+          kind: "progress",
+          message_md: "Loaded on retry",
+        },
+      ],
+    });
+    deferredClient.load.mockRejectedValue(new Error("SDK chunk unavailable"));
+    const view = panel(data([run(1)]));
+    const toggle = view.container.querySelector('[data-run-id="run-1"] button[aria-expanded]')!;
+    fireEvent.click(toggle);
+
+    await screen.findByText("Could not load run messages. Collapse and expand this run to retry.");
+    deferredClient.load.mockResolvedValue(fake.supabase);
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    await screen.findByText("Loaded on retry");
+  });
+
   it("opens and focuses the exact run activity linked from revision review", async () => {
     const id = "50300000-0000-4000-8000-000000000001";
     const fake = fakeSupabase();
