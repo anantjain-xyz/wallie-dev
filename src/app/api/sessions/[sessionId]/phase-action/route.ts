@@ -17,13 +17,36 @@ export const preferredRegion = "home";
 
 type Params = { params: Promise<{ sessionId: string }> };
 
-const PhaseActionBodySchema = z.object({
-  action: z.enum(["approve", "reject"]),
-  artifactId: z.string().uuid(),
-  stageId: z.string().uuid(),
-  feedbackText: z.string().optional(),
-  version: z.number(),
-});
+const FeedbackSubmissionSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    expectedReviewRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    selectedThreadIds: z
+      .array(z.string().uuid())
+      .max(20, "Select at most 20 inline threads.")
+      .refine((ids) => new Set(ids).size === ids.length, "Select each inline thread only once."),
+  })
+  .strict();
+
+const PhaseActionBodySchema = z
+  .object({
+    action: z.enum(["approve", "reject"]),
+    artifactId: z.string().uuid(),
+    stageId: z.string().uuid(),
+    feedbackText: z
+      .string()
+      .refine(
+        (text) => Array.from(text).length <= 4000,
+        "Whole-stage feedback must be at most 4,000 characters.",
+      )
+      .optional(),
+    feedbackSubmission: FeedbackSubmissionSchema.optional(),
+    version: z.number().int().nonnegative().max(2147483647),
+  })
+  .strict()
+  .refine((body) => !body.feedbackSubmission || body.action === "reject", {
+    message: "Feedback submissions can only request changes.",
+  });
 
 function errorResponse(code: SessionMutationErrorCode, error: string, status: number) {
   return NextResponse.json<SessionMutationErrorResponse>({ code, error }, { status });
@@ -81,11 +104,12 @@ export async function POST(request: Request, { params }: Params) {
 
     // An archived session is frozen: approving/rejecting must not advance or
     // re-run it. Block before any RPC mutation.
-    if (sessionRow.archived_at) {
+    const immutableSubmission = body.action === "reject" && body.feedbackSubmission;
+    if (sessionRow.archived_at && !immutableSubmission) {
       return errorResponse("archived", "Session is archived.", 409);
     }
 
-    if (sessionRow.phase_status !== "awaiting_review") {
+    if (sessionRow.phase_status !== "awaiting_review" && !immutableSubmission) {
       return errorResponse("invalid_state", "Session is not awaiting review.", 409);
     }
 
@@ -99,6 +123,8 @@ export async function POST(request: Request, { params }: Params) {
           .select("id, role")
           .eq("workspace_id", sessionRow.workspace_id)
           .eq("user_id", user.id)
+          .eq("kind", "human")
+          .eq("is_active", true)
           .maybeSingle(),
       ),
     ]);
@@ -152,7 +178,7 @@ export async function POST(request: Request, { params }: Params) {
 
     if (body.action === "reject") {
       const feedbackText = (body.feedbackText ?? "").trim();
-      if (!feedbackText) {
+      if (!feedbackText && !body.feedbackSubmission?.selectedThreadIds.length) {
         return errorResponse("invalid_input", "Feedback is required", 400);
       }
       const result = await timing.segment("mutation", () =>
@@ -161,20 +187,69 @@ export async function POST(request: Request, { params }: Params) {
           expectedStageId: body.stageId,
           expectedWorkspaceId: sessionRow.workspace_id,
           feedbackText,
+          ...(body.feedbackSubmission ? { feedbackSubmission: body.feedbackSubmission } : {}),
           requestedByMemberId: memberRow.id,
           sessionId: sessionRow.id,
           version: body.version,
         }),
       );
       if (!result.success) {
+        if (body.feedbackSubmission) return feedbackSubmissionError(result.errorCode, result.error);
         const code = isStaleVersionError(result.error) ? "stale_version" : "mutation_conflict";
         return errorResponse(code, result.error ?? "Rejection failed", 409);
       }
-      return loadMutationResult(supabase, timing, sessionRow.id);
+      return loadMutationResult(
+        supabase,
+        timing,
+        sessionRow.id,
+        result.feedbackBatchId && result.jobId && result.revisionRunId
+          ? {
+              feedbackBatchId: result.feedbackBatchId,
+              revisionJobId: result.jobId,
+              revisionRunId: result.revisionRunId,
+              revisionGeneration: result.jobId,
+            }
+          : undefined,
+      );
     }
 
     return errorResponse("invalid_input", "Unknown action", 400);
   });
+}
+
+/** Database batch errors use fixed messages, never echoed comment or anchor text. */
+function feedbackSubmissionError(code: string | undefined, message: string | undefined) {
+  if (code === "40001" || code === "55000")
+    return errorResponse(
+      "stale_version",
+      "This artifact or review changed. Refresh comments before submitting again.",
+      409,
+    );
+  if (code === "23505")
+    return errorResponse(
+      "mutation_conflict",
+      "This request was already submitted with different feedback. Refresh the review.",
+      409,
+    );
+  if (code === "42501")
+    return errorResponse("forbidden", "Active human workspace membership is required.", 403);
+  if (code === "22001")
+    return errorResponse(
+      "invalid_input",
+      message ?? "Feedback batch exceeds its limits. Select fewer threads or shorten your note.",
+      400,
+    );
+  if (["22023", "22P02", "23514", "23503"].includes(code ?? ""))
+    return errorResponse(
+      "invalid_input",
+      "Selected feedback is invalid or unavailable for this artifact. Refresh comments and select them again.",
+      400,
+    );
+  return errorResponse(
+    "mutation_failed",
+    "Could not submit feedback. Your draft is retained; retry with the same request.",
+    500,
+  );
 }
 
 function isStaleVersionError(error: string | undefined) {
@@ -185,6 +260,12 @@ async function loadMutationResult(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   timing: ServerTimingCollector,
   sessionId: string,
+  feedbackReceipt?: {
+    feedbackBatchId: string;
+    revisionJobId: string;
+    revisionRunId: string;
+    revisionGeneration: string;
+  },
 ) {
   const { data, error } = await timing.segment("mutation.result", () =>
     supabase
@@ -197,6 +278,12 @@ async function loadMutationResult(
   );
 
   if (error || !data || !data.currentStage) {
+    if (feedbackReceipt) {
+      return NextResponse.json(
+        { ...feedbackReceipt, reconciliationRequired: true },
+        { status: 202 },
+      );
+    }
     return errorResponse(
       "mutation_failed",
       error?.message ?? "Wallie could not reconcile that session action.",
@@ -205,6 +292,7 @@ async function loadMutationResult(
   }
 
   return NextResponse.json<SessionPhaseMutationResult>({
+    ...feedbackReceipt,
     archivedAt: data.archived_at,
     currentArtifactId: data.current_artifact_id ?? null,
     artifactVersion: data.current_artifact_version,

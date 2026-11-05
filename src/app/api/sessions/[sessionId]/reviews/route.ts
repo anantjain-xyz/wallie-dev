@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { loadSubmittedThreadRevisions } from "@/features/sessions/review/submitted";
+
 import {
   createReviewThreadSchema,
   loadReviewArtifact,
@@ -27,6 +29,9 @@ export async function GET(request: Request, { params }: RouteContext) {
     const context = await loadReviewContext(sessionId);
     const artifact = await loadReviewArtifact(context, artifactId);
     const { supabase, session } = context;
+    const reviewRevision = session.artifact_review_revision;
+    if (!Number.isSafeInteger(reviewRevision) || reviewRevision < 0)
+      throw new Error("The review revision cannot be represented safely.");
     const countQuery = () =>
       supabase
         .from("artifact_review_threads")
@@ -48,7 +53,16 @@ export async function GET(request: Request, { params }: RouteContext) {
     for (const result of [total, open, blocking]) {
       if (result.error) throw result.error;
     }
+    const submittedThreadRevisions = await loadSubmittedThreadRevisions(
+      context,
+      artifact.id,
+      threads.items.map((thread) => thread.id),
+    );
     return reviewJson({
+      // Captured by loadReviewContext before thread reads. A concurrent change
+      // invalidates this token instead of pairing old content with a new token.
+      reviewRevision,
+      submittedThreadRevisions,
       threads: threads.items,
       nextCursor: threads.nextCursor,
       counts: { total: total.count ?? 0, open: open.count ?? 0, blocking: blocking.count ?? 0 },

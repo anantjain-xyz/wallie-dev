@@ -16,6 +16,7 @@ import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { cn } from "@/lib/utils";
 
 import type { ArtifactSourceAnchor } from "./source-anchor";
+import { subscribeArtifactFeedbackSubmissions } from "./submission-events";
 import type {
   ArtifactReviewComment,
   ArtifactReviewThread,
@@ -35,6 +36,8 @@ export type ArtifactReviewPanelProps = {
   onClose?: () => void;
   openerRef?: RefObject<HTMLElement | null>;
 };
+
+type LoadedReviewSnapshot = ReviewThreadListPayload & { knownCoverageIds: Set<string> };
 
 const buttonClass =
   "min-h-11 rounded-[4px] border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-control-muted disabled:cursor-wait disabled:opacity-60";
@@ -110,7 +113,7 @@ export function ArtifactReviewPanel({
   const composerId = useId();
   const replyId = useId();
   const reasonId = useId();
-  const [snapshot, setSnapshot] = useState<ReviewThreadListPayload | null>(null);
+  const [snapshot, setSnapshot] = useState<LoadedReviewSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(initialThreadId);
   const [comments, setComments] = useState<ArtifactReviewComment[]>([]);
   const [commentCursor, setCommentCursor] = useState<ReviewCursor | null>(null);
@@ -140,6 +143,7 @@ export function ArtifactReviewPanel({
   const focusReplyAfterSave = useRef(false);
   const mounted = useRef(true);
   const threadLoadSequence = useRef(0);
+  const fullThreadRefreshInFlight = useRef(false);
   const commentLoadSequence = useRef(0);
   const config = useSupabasePublicConfig();
   selectedRef.current = selectedId;
@@ -148,20 +152,42 @@ export function ArtifactReviewPanel({
 
   const loadThreads = useCallback(
     async (cursor: ReviewCursor | null = null) => {
+      // A later page cannot supersede the accepted-receipt refresh of earlier
+      // coverage, even before React renders the disabled pagination control.
+      if (cursor && fullThreadRefreshInFlight.current) return;
+      if (!cursor) {
+        fullThreadRefreshInFlight.current = true;
+        setLoading(true);
+      }
       const sequence = ++threadLoadSequence.current;
       try {
         const params = new URLSearchParams(pageQuery(cursor));
         params.set("artifactId", artifactId);
         const next = await reviewRequest<ReviewThreadListPayload>(`${baseUrl}?${params}`);
+        const knownCoverageIds = new Set(next.threads.map((thread) => thread.id));
         const selected = selectedRef.current;
         let linkedThreadError: string | null = null;
         if (selected && !next.threads.some((thread) => thread.id === selected)) {
           try {
-            const exact = await reviewRequest<{ thread: ArtifactReviewThread }>(
-              `${baseUrl}/${encodeURIComponent(selected)}`,
-            );
-            if (exact.thread.artifact_id === artifactId)
+            const exact = await reviewRequest<{
+              thread: ArtifactReviewThread;
+              submittedThreadRevision?: number | null;
+            }>(`${baseUrl}/${encodeURIComponent(selected)}`);
+            if (exact.thread.artifact_id === artifactId) {
               next.threads = mergeRows(next.threads, [exact.thread]);
+              if (exact.submittedThreadRevision === null) knownCoverageIds.add(exact.thread.id);
+              else if (
+                typeof exact.submittedThreadRevision === "number" &&
+                Number.isSafeInteger(exact.submittedThreadRevision) &&
+                exact.submittedThreadRevision > 0
+              ) {
+                knownCoverageIds.add(exact.thread.id);
+                next.submittedThreadRevisions = {
+                  ...next.submittedThreadRevisions,
+                  [exact.thread.id]: exact.submittedThreadRevision,
+                };
+              }
+            }
           } catch {
             linkedThreadError = "The linked thread is unavailable. Other comments are shown below.";
           }
@@ -169,14 +195,25 @@ export function ArtifactReviewPanel({
         if (!mounted.current || sequence !== threadLoadSequence.current) return;
         setSnapshot((current) => ({
           ...next,
+          knownCoverageIds:
+            cursor && current
+              ? new Set([...current.knownCoverageIds, ...knownCoverageIds])
+              : knownCoverageIds,
           threads: cursor && current ? mergeRows(current.threads, next.threads) : next.threads,
+          submittedThreadRevisions:
+            cursor && current
+              ? { ...current.submittedThreadRevisions, ...next.submittedThreadRevisions }
+              : next.submittedThreadRevisions,
         }));
         setLoadError(linkedThreadError);
       } catch (error) {
         if (mounted.current && sequence === threadLoadSequence.current)
           setLoadError(error instanceof Error ? error.message : "Could not load review threads.");
       } finally {
-        if (mounted.current && sequence === threadLoadSequence.current) setLoading(false);
+        if (mounted.current && sequence === threadLoadSequence.current) {
+          if (!cursor) fullThreadRefreshInFlight.current = false;
+          setLoading(false);
+        }
       }
     },
     [artifactId, baseUrl],
@@ -221,6 +258,15 @@ export function ArtifactReviewPanel({
   useEffect(() => {
     if (selectedId) void loadComments(selectedId);
   }, [loadComments, selectedId]);
+
+  useEffect(
+    () =>
+      subscribeArtifactFeedbackSubmissions({ sessionId, artifactId }, () => {
+        setSnapshot((current) => (current ? { ...current, knownCoverageIds: new Set() } : current));
+        void loadThreads();
+      }),
+    [artifactId, loadThreads, sessionId],
+  );
 
   useEffect(() => {
     if (anchor && !readOnly) composerRef.current?.focus();
@@ -581,6 +627,15 @@ export function ArtifactReviewPanel({
                 {threadQuote(thread)}
               </span>
               <span className="mt-1 block text-xs text-muted">{thread.author_label}</span>
+              <span className="mt-1 block text-xs text-muted">
+                {!snapshot.knownCoverageIds.has(thread.id)
+                  ? "Submission status unavailable"
+                  : snapshot.submittedThreadRevisions?.[thread.id] === undefined
+                    ? "Not submitted"
+                    : snapshot.submittedThreadRevisions[thread.id] < thread.revision
+                      ? "Unsent changes"
+                      : "Submitted"}
+              </span>
             </button>
           </li>
         ))}
@@ -588,6 +643,7 @@ export function ArtifactReviewPanel({
       {snapshot?.nextCursor ? (
         <button
           className={cn(buttonClass, "mt-3")}
+          disabled={loading || pending}
           onClick={() => {
             void loadThreads(snapshot.nextCursor);
           }}

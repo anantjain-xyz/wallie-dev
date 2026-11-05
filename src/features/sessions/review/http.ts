@@ -129,7 +129,7 @@ export async function loadReviewContext(sessionId: string, write = false) {
 
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id, pipeline_id, archived_at")
+    .select("id, workspace_id, pipeline_id, archived_at, artifact_review_revision")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw sessionError;

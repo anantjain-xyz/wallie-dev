@@ -6,6 +6,7 @@ import {
   reviewThreadParamsSchema,
   transitionReviewThreadSchema,
 } from "@/features/sessions/review/http";
+import { loadSubmittedThreadRevisions } from "@/features/sessions/review/submitted";
 import { transitionArtifactReviewThread } from "@/features/sessions/review/repository";
 
 export const preferredRegion = "home";
@@ -16,7 +17,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     const { sessionId, threadId } = reviewThreadParamsSchema.parse(await params);
     const context = await loadReviewContext(sessionId);
     const thread = await loadReviewThread(context, threadId);
-    return reviewJson({ thread });
+    const submitted = await loadSubmittedThreadRevisions(context, thread.artifact_id, [thread.id]);
+    return reviewJson({ thread, submittedThreadRevision: submitted[thread.id] ?? null });
   } catch (error) {
     return reviewErrorResponse(error);
   }

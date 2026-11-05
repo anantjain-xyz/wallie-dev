@@ -30,7 +30,8 @@ resource ownership and cleanup, see
 1. The worker loads the session and its current stage, then CAS-claims the
    unarchived session into `in_progress`.
 2. The processor resolves the workspace's selected agent provider and model.
-3. It loads pipeline operating rules, the latest feedback for this stage, and
+3. It loads pipeline operating rules, the job's immutable feedback batch (or
+   legacy whole-stage feedback when no batch exists), and
    the latest artifact version for every stage slug present on the session.
    After a rejection, that map can include the current stage's unapproved
    artifact.
@@ -70,7 +71,7 @@ The renderer currently exposes:
 | `session.prompt`                 | `sessions.prompt_md`                                          | Member-controlled data           |
 | `session.stageSlug`              | Current `pipeline_stages` row                                 | Manager-controlled configuration |
 | `attempt.number`                 | `rejection_count + 1`                                         | Derived value                    |
-| `attempt.feedback`               | Latest feedback for the current immutable stage ID            | Reviewer-controlled data         |
+| `attempt.feedback`               | Saved feedback for the exact job, with legacy stage fallback  | Reviewer-controlled data         |
 | `artifact.previousStages.<slug>` | Latest artifact per slug, including the current slug on retry | Agent-generated data             |
 | `repo.name`                      | Resolved session repository name                              | Repository data                  |
 | `repo.fullName`                  | Resolved session repository full name                         | Repository data                  |
@@ -227,9 +228,9 @@ lineage; private payload-retention exceptions are documented in Worker operation
 These are current limitations, not desired contracts:
 
 - A total rendered-prompt budget is not enforced.
-- Session prompt and reviewer feedback sizes are not bounded by the prompt
-  renderer; route limits on templates and operating rules do not bound the
-  combined prompt.
+- Session prompts and legacy reviewer feedback are not bounded by the prompt
+  renderer. New feedback batches enforce a 40,000-code-point limit, but this and
+  route limits on templates and operating rules do not bound the combined prompt.
 - Artifact variables for valid hyphenated stage slugs are not recognized and
   remain verbatim in rendered prompts.
 - Continuation IDs and `maxTokens` are not supplied by the generic processor.

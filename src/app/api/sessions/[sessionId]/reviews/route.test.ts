@@ -114,6 +114,7 @@ function client({
             id: SESSION,
             workspace_id: WORKSPACE,
             pipeline_id: PIPELINE,
+            artifact_review_revision: 8,
             archived_at: archived ? "2026-11-05" : null,
           },
         ]
@@ -145,11 +146,35 @@ function client({
             id: STAGE,
             workspace_id: WORKSPACE,
             pipeline_id: PIPELINE,
+            artifact_review_revision: 8,
             anyone_can_approve: anyoneCanApprove,
             approver_member_ids: approvers,
           },
         ]
       : [],
+    artifact_feedback_batch_threads: [
+      {
+        thread_id: THREAD,
+        thread_revision: 2,
+        workspace_id: WORKSPACE,
+        session_id: SESSION,
+        artifact_id: ARTIFACT,
+      },
+      {
+        thread_id: THREAD,
+        thread_revision: 4,
+        workspace_id: WORKSPACE,
+        session_id: SESSION,
+        artifact_id: ARTIFACT,
+      },
+      {
+        thread_id: THREAD,
+        thread_revision: 99,
+        workspace_id: OTHER,
+        session_id: OTHER,
+        artifact_id: ARTIFACT,
+      },
+    ],
     artifact_review_comments: [
       { id: COMMENT, thread_id: THREAD, workspace_id: WORKSPACE, body: "Latest body", revision: 4 },
       { id: OTHER, thread_id: OTHER, workspace_id: WORKSPACE, body: "Another thread", revision: 1 },
@@ -188,18 +213,23 @@ function client({
           rows = rows.filter((row) => row[column] === value);
           return builder;
         },
+        in(column: string, values: unknown[]) {
+          filters.push([table, column, values]);
+          rows = rows.filter((row) => values.includes(row[column]));
+          return builder;
+        },
         maybeSingle: async () => ({ data: error ? null : (rows[0] ?? null), error }),
-        then<TResult1 = { data: null; count: number; error: typeof error }, TResult2 = never>(
+        then<TResult1 = { data: Row[]; count: number; error: typeof error }, TResult2 = never>(
           fulfilled?:
             | ((result: {
-                data: null;
+                data: Row[];
                 count: number;
                 error: typeof error;
               }) => TResult1 | PromiseLike<TResult1>)
             | null,
           rejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
         ) {
-          return Promise.resolve({ data: null, count: rows.length, error }).then(
+          return Promise.resolve({ data: rows, count: rows.length, error }).then(
             fulfilled,
             rejected,
           );
@@ -268,6 +298,8 @@ describe("artifact review HTTP APIs", () => {
     const response = await GET(request(), context());
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await response.json()).toEqual({
+      reviewRevision: 8,
+      submittedThreadRevisions: { [THREAD]: 4 },
       threads: [{ id: THREAD }],
       nextCursor: null,
       counts: { total: 2, open: 2, blocking: 1 },
@@ -280,6 +312,19 @@ describe("artifact review HTTP APIs", () => {
       cursor: undefined,
     });
     expect(mocked.listArtifactReviewComments).not.toHaveBeenCalled();
+  });
+  it("scopes submitted coverage to the requested workspace, session, artifact and loaded threads", async () => {
+    const { filters } = client();
+    const response = await GET(request(), context());
+    expect((await response.json()).submittedThreadRevisions).toEqual({ [THREAD]: 4 });
+    expect(filters).toEqual(
+      expect.arrayContaining([
+        ["artifact_feedback_batch_threads", "workspace_id", WORKSPACE],
+        ["artifact_feedback_batch_threads", "session_id", SESSION],
+        ["artifact_feedback_batch_threads", "artifact_id", ARTIFACT],
+        ["artifact_feedback_batch_threads", "thread_id", [THREAD]],
+      ]),
+    );
   });
   it.each([
     [{ anyoneCanApprove: true }, true],
@@ -295,8 +340,31 @@ describe("artifact review HTTP APIs", () => {
   it("loads a deep-linked exact thread without scanning every thread page", async () => {
     const response = await getThread(request(), context());
     expect(response.status).toBe(200);
-    expect((await response.json()).thread.id).toBe(THREAD);
+    const payload = await response.json();
+    expect(payload.thread.id).toBe(THREAD);
+    expect(payload.submittedThreadRevision).toBe(4);
     expect(mocked.listArtifactReviewThreads).not.toHaveBeenCalled();
+  });
+  it("returns known-unsent status for an exact thread with no submitted snapshot", async () => {
+    const response = await getThread(request(), context(SESSION, OTHER));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      thread: { id: OTHER },
+      submittedThreadRevision: null,
+    });
+  });
+  it("scopes exact-thread coverage by workspace, session and artifact even outside a list page", async () => {
+    const { filters } = client();
+    const response = await getThread(request(), context());
+    expect((await response.json()).submittedThreadRevision).toBe(4);
+    expect(filters).toEqual(
+      expect.arrayContaining([
+        ["artifact_feedback_batch_threads", "workspace_id", WORKSPACE],
+        ["artifact_feedback_batch_threads", "session_id", SESSION],
+        ["artifact_feedback_batch_threads", "artifact_id", ARTIFACT],
+        ["artifact_feedback_batch_threads", "thread_id", [THREAD]],
+      ]),
+    );
   });
   it("allows read-only archived review history", async () => {
     client({ archived: true });

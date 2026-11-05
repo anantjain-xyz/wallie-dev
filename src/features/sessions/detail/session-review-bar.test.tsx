@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
@@ -37,6 +37,7 @@ function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = 
 describe("SessionReviewBar", () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it("approves with a single confirmation click", () => {
@@ -53,7 +54,7 @@ describe("SessionReviewBar", () => {
     );
   });
 
-  it("keeps the artifact snapshot from dialog opening when the reviewed output changes", async () => {
+  it("preserves the draft and refuses to retarget it when the reviewed output changes", async () => {
     const onReject = vi.fn().mockResolvedValue(false);
     const view = renderBar({ onReject });
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
@@ -74,11 +75,10 @@ describe("SessionReviewBar", () => {
       ),
     );
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
-    await waitFor(() =>
-      expect(onReject).toHaveBeenCalledExactlyOnceWith(
-        "Feedback for the original artifact.",
-        reviewArtifact,
-      ),
+    expect(onReject).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
+      "A different artifact is now shown",
     );
     expect(feedback).toHaveValue("Feedback for the original artifact.");
   });
@@ -290,5 +290,208 @@ describe("SessionReviewBar", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(trigger);
     });
+  });
+
+  function reviewPage(
+    options: {
+      revision?: number;
+      ids?: string[];
+      cursor?: { createdAt: string; id: string } | null;
+    } = {},
+  ) {
+    return {
+      reviewRevision: options.revision ?? 7,
+      submittedThreadRevisions: {},
+      viewer: { memberId: "member-1", canReview: true, readOnly: false },
+      counts: { total: options.ids?.length ?? 0, open: options.ids?.length ?? 0, blocking: 0 },
+      nextCursor: options.cursor ?? null,
+      threads: (options.ids ?? []).map((id) => ({
+        id,
+        artifact_id: reviewArtifact.artifactId,
+        revision: 1,
+        kind: "discussion",
+        status: "open",
+        anchor: { quote: `Review ${id}` },
+      })),
+    };
+  }
+
+  it("submits selected inline threads without requiring a whole-stage note", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json(reviewPage({ ids: ["thread-1"] }))),
+    );
+    const onReject = vi.fn().mockResolvedValue(false);
+    renderBar({ sessionId: "session-1", onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Include thread: Review thread-1" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    await waitFor(() =>
+      expect(onReject).toHaveBeenCalledExactlyOnceWith("", reviewArtifact, {
+        requestId: expect.any(String),
+        expectedReviewRevision: 7,
+        selectedThreadIds: ["thread-1"],
+      }),
+    );
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("keeps one semantic request key across unchanged network retries and duplicate clicks", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(reviewPage())));
+    const onReject = vi.fn().mockResolvedValue(false);
+    renderBar({ sessionId: "session-1", onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await screen.findByText("No inline comments on this artifact yet.");
+    const note = screen.getByLabelText("Feedback for Wallie");
+    fireEvent.change(note, { target: { value: "Preserve this retry intent." } });
+    const submit = screen.getByRole("button", { name: "Queue rerun" });
+    await act(async () => {
+      fireEvent.click(submit);
+      fireEvent.click(submit);
+    });
+    expect(onReject).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+    expect(onReject).toHaveBeenCalledTimes(2);
+    expect(onReject.mock.calls[1]).toEqual(onReject.mock.calls[0]);
+    expect(note).toHaveValue("Preserve this retry intent.");
+  });
+
+  it("blocks a changed review during pagination and refreshes explicitly without losing the note", async () => {
+    let requests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        requests++;
+        return Response.json(
+          requests === 1
+            ? reviewPage({
+                ids: ["thread-1"],
+                cursor: { createdAt: "2026-11-05T00:00:00Z", id: "thread-1" },
+              })
+            : reviewPage({ revision: 8, ids: ["thread-1", "thread-2"] }),
+        );
+      }),
+    );
+    const onReject = vi.fn().mockResolvedValue(false);
+    renderBar({ sessionId: "session-1", onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Include thread: Review thread-1" }),
+    );
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Keep my note." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Load more threads" }));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      "This review changed",
+    );
+    expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
+    expect(onReject).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh comments" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Include thread: Review thread-1" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Include thread: Review thread-1" }),
+    ).not.toBeChecked();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveValue("Keep my note.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include thread: Review thread-2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    await waitFor(() =>
+      expect(onReject).toHaveBeenCalledWith(
+        "Keep my note.",
+        reviewArtifact,
+        expect.objectContaining({ expectedReviewRevision: 8, selectedThreadIds: ["thread-2"] }),
+      ),
+    );
+  });
+
+  it("requires a confirmed review token even for a whole-stage note", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ threads: [], nextCursor: null })),
+    );
+    const onReject = vi.fn();
+    renderBar({ sessionId: "session-1", onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      "Could not confirm this review",
+    );
+    fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
+      target: { value: "Keep this draft." },
+    });
+    expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
+    expect(onReject).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Feedback for Wallie")).toHaveValue("Keep this draft.");
+  });
+
+  it("keeps submitted markers and selections from earlier comment pages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) =>
+        Response.json(
+          new URL(input, "https://wallie.test").searchParams.has("cursorId")
+            ? { ...reviewPage({ ids: ["second"] }), submittedThreadRevisions: { second: 1 } }
+            : {
+                ...reviewPage({
+                  ids: ["first"],
+                  cursor: { createdAt: "2026-11-05T00:00:00Z", id: "first" },
+                }),
+                submittedThreadRevisions: { first: 1 },
+              },
+        ),
+      ),
+    );
+    renderBar({ sessionId: "session-1" });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Include thread: Review first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load more threads" }));
+    await screen.findByRole("checkbox", { name: "Include thread: Review second" });
+    const first = screen.getByRole("checkbox", { name: "Include thread: Review first" });
+    expect(first).toBeChecked();
+    expect(within(first.closest("label")!).getByText("Submitted")).toBeVisible();
+  });
+
+  it("rejects oversized notes without truncating Unicode text", async () => {
+    renderBar();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const note = await screen.findByLabelText("Feedback for Wallie");
+    const longNote = "😀".repeat(4001);
+    fireEvent.change(note, { target: { value: longNote } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      "within 4,000 characters",
+    );
+    expect(note).toHaveValue(longNote);
+  });
+
+  it("keeps the first twenty choices when a reviewer selects too many threads", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(reviewPage({ ids: Array.from({ length: 21 }, (_, i) => `thread-${i}`) })),
+        ),
+    );
+    const onReject = vi.fn().mockResolvedValue(false);
+    renderBar({ sessionId: "session-1", onReject });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const choices = await screen.findAllByRole("checkbox");
+    for (const choice of choices) fireEvent.click(choice);
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
+      "at most 20 threads",
+    );
+    expect(choices[20]).not.toBeChecked();
+    expect(choices.filter((choice) => (choice as HTMLInputElement).checked)).toHaveLength(20);
+    fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+    await waitFor(() => expect(onReject).toHaveBeenCalledTimes(1));
+    expect(onReject.mock.calls[0][2].selectedThreadIds).toHaveLength(20);
   });
 });

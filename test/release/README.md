@@ -16,8 +16,9 @@ bare repository.
 
 This gate exercises the real service, worker claims, processor, review RPCs,
 checkpoint capture/storage/adoption, canonical Git promotion, and GitHub API
-client. Only the model runner, sandbox provider, authentication, and remote
-transport are substituted. It does not model database state with an in-memory
+client. Inline comments use a real local authenticated reviewer. Only the model
+runner, sandbox provider, GitHub authentication, and remote transport are
+substituted. It does not model database state with an in-memory
 RPC implementation. Ordinary `pnpm test` does not require a database.
 
 Set `WALLIE_CONTINUITY_EVIDENCE_PATH=.wallie/continuity-evidence.json` to retain
@@ -29,6 +30,9 @@ The scenario proves:
 
 - Plan, build, requested changes, revised build, and the next stage preserve the
   original files and exact reviewed input SHAs while updating one canonical PR.
+- Inline feedback is submitted once with the displayed review revision. Exact
+  retries return the same batch and job; later edits/replies remain unsent and
+  cannot change the saved feedback used by either worker attempt.
 - A captured result survives a failed retained-ref push and sandbox destruction;
   checkpoint recovery proceeds while the release is paused, while canonical
   publication waits for resume.

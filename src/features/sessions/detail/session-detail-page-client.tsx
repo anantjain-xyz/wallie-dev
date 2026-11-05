@@ -50,6 +50,7 @@ import { SessionActivityPresentationProvider } from "./session-activity-presenta
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import {
   SessionReviewBar,
+  type SessionFeedbackSubmission,
   type SessionReviewArtifact,
 } from "@/features/sessions/detail/session-review-bar";
 import type { DisplayedArtifactIdentity } from "./artifact-panel";
@@ -77,13 +78,35 @@ import {
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
+import { publishArtifactFeedbackSubmission } from "@/features/sessions/review/submission-events";
 import type { Database, Tables } from "@/lib/supabase/database.types";
+
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { subscribeAuthenticatedChannel } from "@/lib/supabase/realtime-subscription";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
+
+type AcceptedFeedbackReceipt = {
+  feedbackBatchId: string;
+  revisionJobId: string;
+  revisionRunId: string;
+  revisionGeneration: string;
+  reconciliationRequired: true;
+};
+
+function isAcceptedFeedbackReceipt(value: unknown): value is AcceptedFeedbackReceipt {
+  if (!value || typeof value !== "object") return false;
+  const receipt = value as Partial<AcceptedFeedbackReceipt>;
+  return (
+    receipt.reconciliationRequired === true &&
+    [receipt.feedbackBatchId, receipt.revisionJobId, receipt.revisionRunId].every(
+      (id) => typeof id === "string" && id.length > 0,
+    ) &&
+    receipt.revisionGeneration === receipt.revisionJobId
+  );
+}
 
 type SessionDetailPageClientProps = {
   activity: ReactNode;
@@ -194,6 +217,7 @@ function SessionDetailContent({
   const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
   const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
+  const [phaseActionError, setPhaseActionError] = useState<string | null>(null);
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
@@ -733,6 +757,7 @@ function SessionDetailContent({
     action: "approve" | "reject",
     artifact: SessionReviewArtifact | null,
     feedbackText?: string,
+    feedbackSubmission?: SessionFeedbackSubmission,
   ): Promise<boolean> {
     if (phaseActionPending !== null) return false;
     if (viewingHistoricalArtifact) return false;
@@ -747,12 +772,13 @@ function SessionDetailContent({
     }
 
     if (action === "reject") {
-      if (!feedbackText?.trim()) {
+      if (!feedbackText?.trim() && !feedbackSubmission?.selectedThreadIds.length) {
         return false;
       }
     }
 
     setPhaseActionPending(action);
+    setPhaseActionError(null);
     startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
     const reviewStillCurrent =
@@ -820,6 +846,7 @@ function SessionDetailContent({
               action,
               artifactId: artifact.artifactId,
               feedbackText: action === "reject" ? feedbackText?.trim() : undefined,
+              feedbackSubmission: action === "reject" ? feedbackSubmission : undefined,
               stageId: artifact.stageId,
               version: artifact.version,
             }),
@@ -827,16 +854,36 @@ function SessionDetailContent({
             method: "POST",
           });
           const body = (await response.json().catch(() => null)) as
-            | (Partial<SessionPhaseMutationResult> & { error?: string })
+            | (Partial<SessionPhaseMutationResult> &
+                Partial<AcceptedFeedbackReceipt> & { error?: string })
             | null;
 
           if (!response.ok) throw new Error(body?.error ?? "Action failed.");
+          if (
+            action === "reject" &&
+            feedbackSubmission &&
+            response.status === 202 &&
+            isAcceptedFeedbackReceipt(body)
+          )
+            return body;
           if (!isSessionPhaseMutationResult(body)) {
             throw new Error("Action response was invalid.");
           }
           return body;
         },
         commit: (result) => {
+          if (action === "reject" && feedbackSubmission && result.feedbackBatchId) {
+            publishArtifactFeedbackSubmission({
+              sessionId: session.id,
+              artifactId: artifact.artifactId,
+              batchId: result.feedbackBatchId,
+            });
+          }
+          if (isAcceptedFeedbackReceipt(result)) {
+            queuedMutationRefreshRef.current = true;
+            setPostMutationRefreshRequested(true);
+            return;
+          }
           setSession((current) => reconcilePhaseMutationResult(current, result));
           setSelectedStageSlug((currentSlug) =>
             currentSlug === previousStageSlug ? result.currentStage.slug : currentSlug,
@@ -864,6 +911,8 @@ function SessionDetailContent({
       return true;
     } catch (error) {
       finishInteraction(action, "error");
+      if (action === "reject")
+        setPhaseActionError(error instanceof Error ? error.message : "Action failed.");
       pushToast({
         description: error instanceof Error ? error.message : "Action failed.",
         priority: "assertive",
@@ -1190,13 +1239,17 @@ function SessionDetailContent({
         reviewControls={
           <SessionReviewBar
             attached
+            sessionId={session.id}
             approveLabel="Approve stage"
             approveDescription={
               phaseActionPending ? undefined : "Final-stage approval may also archive the session."
             }
             mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
             onApprove={(artifact) => void handlePhaseAction("approve", artifact)}
-            onReject={(feedback, artifact) => handlePhaseAction("reject", artifact, feedback)}
+            onReject={(feedback, artifact, submission) =>
+              handlePhaseAction("reject", artifact, feedback, submission)
+            }
+            requestError={phaseActionError}
             reviewArtifact={reviewArtifact}
             phaseActionPending={phaseActionPending}
           />

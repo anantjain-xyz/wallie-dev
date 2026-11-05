@@ -46,10 +46,12 @@ function routeContext() {
 function buildSupabase(
   opts: {
     memberPromise?: Promise<{ data: { id: string; role: string } | null; error: null }>;
-    memberRow?: { id: string; role: string } | null;
+    memberRow?: { id: string; role: string; kind?: string; is_active?: boolean } | null;
     sessionRow?: Record<string, unknown> | null;
+    resultError?: { message: string };
   } = {},
 ) {
+  const memberFilters: Array<[string, unknown]> = [];
   const memberLookup = vi.fn(async () =>
     opts.memberPromise
       ? opts.memberPromise
@@ -79,40 +81,60 @@ function buildSupabase(
               eq: () => ({
                 maybeSingle: async () => ({ data: initialSession, error: null }),
                 single: async () => ({
-                  data: columns.includes("current_artifact_version")
-                    ? {
-                        archived_at: null,
-                        current_artifact_id: "artifact-current",
-                        current_artifact_version: 1,
-                        currentStage: {
-                          description: "Product work",
-                          id: "stage-product",
-                          name: "Product",
-                          position: 0,
-                          slug: "product",
-                        },
-                        current_stage_id: "stage-product",
-                        id: "sess-1",
-                        phase_status: "rejected",
-                        rejection_count: 2,
-                        updated_at: UPDATED_AT,
-                      }
-                    : null,
-                  error: null,
+                  data:
+                    !opts.resultError && columns.includes("current_artifact_version")
+                      ? {
+                          archived_at: null,
+                          current_artifact_id: "artifact-current",
+                          current_artifact_version: 1,
+                          currentStage: {
+                            description: "Product work",
+                            id: "stage-product",
+                            name: "Product",
+                            position: 0,
+                            slug: "product",
+                          },
+                          current_stage_id: "stage-product",
+                          id: "sess-1",
+                          phase_status: "rejected",
+                          rejection_count: 2,
+                          updated_at: UPDATED_AT,
+                        }
+                      : null,
+                  error: opts.resultError ?? null,
                 }),
               }),
             }),
           };
         }
         if (table === "workspace_members") {
-          return {
-            select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: memberLookup }) }) }),
+          const builder = {
+            eq(column: string, value: unknown) {
+              memberFilters.push([column, value]);
+              return builder;
+            },
+            maybeSingle: async () => {
+              const result = await memberLookup();
+              const kind = opts.memberRow?.kind ?? "human";
+              const active = opts.memberRow?.is_active ?? true;
+              if (
+                memberFilters.some(
+                  ([column, value]) =>
+                    (column === "kind" && kind !== value) ||
+                    (column === "is_active" && active !== value),
+                )
+              )
+                return { data: null, error: null };
+              return result;
+            },
           };
+          return { select: () => builder };
         }
         throw new Error(`Unexpected table: ${table}`);
       },
     },
     memberLookup,
+    memberFilters,
   };
 }
 
@@ -398,5 +420,195 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
       }),
     );
     vi.unstubAllEnvs();
+  });
+  const submission = {
+    requestId: "e1b2c3d4-0001-4000-8000-000000000001",
+    expectedReviewRevision: 4,
+    selectedThreadIds: ["f1b2c3d4-0001-4000-8000-000000000001"],
+  };
+
+  it("accepts selected comments without a whole-stage note and returns stable generation IDs", async () => {
+    mocked.handleRejection.mockResolvedValue({
+      feedbackBatchId: "batch-1",
+      jobId: "job-1",
+      revisionRunId: "run-1",
+      success: true,
+    });
+    const response = await POST(
+      makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+      routeContext(),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      feedbackBatchId: "batch-1",
+      revisionJobId: "job-1",
+      revisionRunId: "run-1",
+      revisionGeneration: "job-1",
+    });
+    expect(mocked.handleRejection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedbackText: "",
+        feedbackSubmission: submission,
+        requestedByMemberId: "mem-reviewer",
+      }),
+    );
+  });
+
+  it.each(["rejected", "completed"])(
+    "allows idempotent receipt replay after the session becomes %s",
+    async (phase) => {
+      mocked.createSupabaseServerClient.mockResolvedValue(
+        buildSupabase({
+          sessionRow: {
+            id: "sess-1",
+            workspace_id: "ws-1",
+            current_stage_id: "stage-later",
+            phase_status: phase,
+            archived_at: UPDATED_AT,
+          },
+        }).client,
+      );
+      mocked.handleRejection.mockResolvedValue({
+        feedbackBatchId: "original-batch",
+        jobId: "original-job",
+        revisionRunId: "original-run",
+        success: true,
+      });
+      const response = await POST(
+        makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+        routeContext(),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        feedbackBatchId: "original-batch",
+        revisionGeneration: "original-job",
+      });
+      expect(mocked.handleRejection).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("still authenticates membership before an archived receipt replay", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue(
+      buildSupabase({
+        memberRow: null,
+        sessionRow: {
+          id: "sess-1",
+          workspace_id: "ws-1",
+          phase_status: "rejected",
+          archived_at: UPDATED_AT,
+        },
+      }).client,
+    );
+    const response = await POST(
+      makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+      routeContext(),
+    );
+    expect(response.status).toBe(403);
+    expect(mocked.handleRejection).not.toHaveBeenCalled();
+  });
+
+  it.each([{ kind: "agent" }, { is_active: false }])(
+    "requires an active human actor for a submitted batch %j",
+    async (invalidActor) => {
+      const { client, memberFilters } = buildSupabase({
+        memberRow: { id: "mem-bot", role: "owner", ...invalidActor },
+      });
+      mocked.createSupabaseServerClient.mockResolvedValue(client);
+      const response = await POST(
+        makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+        routeContext(),
+      );
+      expect(response.status).toBe(403);
+      expect(memberFilters).toContainEqual(["kind", "human"]);
+      expect(memberFilters).toContainEqual(["is_active", true]);
+      expect(mocked.handleRejection).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns an accepted receipt if the committed generation's reconciliation read is unavailable", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue(
+      buildSupabase({ resultError: { message: "Private DB detail" } }).client,
+    );
+    mocked.handleRejection.mockResolvedValue({
+      feedbackBatchId: "batch-1",
+      jobId: "job-1",
+      revisionRunId: "run-1",
+      success: true,
+    });
+    const response = await POST(
+      makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+      routeContext(),
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      feedbackBatchId: "batch-1",
+      revisionJobId: "job-1",
+      revisionRunId: "run-1",
+      revisionGeneration: "job-1",
+      reconciliationRequired: true,
+    });
+  });
+
+  it.each([
+    {
+      ...submission,
+      selectedThreadIds: [submission.selectedThreadIds[0], submission.selectedThreadIds[0]],
+    },
+    { ...submission, selectedThreadIds: ["foreign-malformed"] },
+    {
+      ...submission,
+      selectedThreadIds: Array.from(
+        { length: 21 },
+        (_, i) => `f1b2c3d4-0001-4000-8000-${String(i).padStart(12, "0")}`,
+      ),
+    },
+    { ...submission, expectedReviewRevision: -1 },
+    { ...submission, expectedReviewRevision: 1.5 },
+    { ...submission, actorMemberId: "spoofed" },
+  ])("rejects malformed feedback intent without mutating %j", async (feedbackSubmission) => {
+    const response = await POST(
+      makeRequest({ action: "reject", version: 1, feedbackSubmission }),
+      routeContext(),
+    );
+    expect(response.status).toBe(400);
+    expect(mocked.handleRejection).not.toHaveBeenCalled();
+  });
+
+  it("requires a note or selected threads and rejects an oversized note without truncation", async () => {
+    for (const feedbackText of ["", "a".repeat(4001)]) {
+      const response = await POST(
+        makeRequest({
+          action: "reject",
+          version: 1,
+          feedbackText,
+          feedbackSubmission: { ...submission, selectedThreadIds: [] },
+        }),
+        routeContext(),
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(mocked.handleRejection).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["40001", 409, "stale_version"],
+    ["23505", 409, "mutation_conflict"],
+    ["22023", 400, "invalid_input"],
+    ["22001", 400, "invalid_input"],
+    ["42501", 403, "forbidden"],
+  ])("maps batch error %s to actionable status", async (errorCode, status, code) => {
+    mocked.handleRejection.mockResolvedValue({
+      errorCode,
+      error: "Select at most 100 comments in one feedback batch.",
+      success: false,
+    });
+    const response = await POST(
+      makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+      routeContext(),
+    );
+    expect(response.status).toBe(status);
+    const payload = await response.json();
+    expect(payload.code).toBe(code);
+    if (errorCode === "22001") expect(payload.error).toContain("100 comments");
   });
 });

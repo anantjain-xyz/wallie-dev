@@ -172,6 +172,16 @@ the phase. After rejection commits, approval observes `rejected` and returns
 empty instead of racing a later unguarded write. Validation failures raise so
 the whole transaction rolls back.
 
+The inline review UI uses `submit_artifact_feedback_batch` around that same
+rejection transition. It checks the session's review revision, copies the selected
+thread/comment revisions into immutable snapshots, and binds the batch to the
+returned job and reviewed checkpoint. The session lock also serializes comment
+writes, so a changed review conflicts before enqueueing. A request ID is scoped
+to its workspace and human reviewer; an exact retry returns the original batch
+and generation before checking the newer session state. Edited payloads cannot
+reuse the receipt. Later comments remain unsent and the worker reads the saved
+feedback by exact job ID, including after a restart.
+
 TypeScript resolves the workspace agent config before calling the RPC; those
 reads are not state transitions. Do not describe rejection as a compensated
 multi-step workflow.
