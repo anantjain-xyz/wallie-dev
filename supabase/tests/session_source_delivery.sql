@@ -14,6 +14,9 @@ create temp table source_fixture as select * from public.create_session_with_fir
 update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from source_fixture);
 select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,0,'codex','gpt-5.5','project','wallie/source-fixture')
 from source_fixture f join public.sessions s on s.id=f.session_id;
+select public.pin_session_job_git_input(f.job_id,1,f.run_id,
+  (select id from public.github_repositories where workspace_id='b1b2c3d4-0001-4000-8000-000000000001' limit 1),
+  'trunk',repeat('a',40)) from source_fixture f;
 update public.agent_runs set source_recovery_required=true where id=(select run_id from source_fixture);
 create function pg_temp.prepare_source(path text default '',bundle text default encode('private source'::bytea,'base64'))
 returns boolean language sql as $$

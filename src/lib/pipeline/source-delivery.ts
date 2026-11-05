@@ -171,9 +171,9 @@ export async function deliverSourceCheckpoint(
   admin: AdminClient,
   delivery: SourceDelivery,
   signal: AbortSignal,
-) {
+): Promise<string | null> {
   await assertClaim(admin, delivery, signal);
-  if (delivery.base_sha === delivery.head_sha) return;
+  if (delivery.base_sha === delivery.head_sha) return null;
   if (!delivery.repository_id) throw new Error("Source repository connection is unavailable.");
   let bytes: Buffer;
   if (delivery.bundle_base64) bytes = Buffer.from(delivery.bundle_base64, "base64");
@@ -211,6 +211,7 @@ export async function deliverSourceCheckpoint(
     signal,
     verifyOwnership: () => assertClaim(admin, delivery, signal),
   });
+  return `refs/heads/${branch}`;
 }
 
 /** A lease survives worker crashes; bounded work releases the maintenance loop. */
@@ -248,13 +249,13 @@ export async function drainSourceDeliveries(
         controller.signal.throwIfAborted();
         if (error || !data) throw new Error("Could not load source delivery.");
         delivery = data;
-        await deliverSourceCheckpoint(admin, data, controller.signal);
+        const deliveredRef = await deliverSourceCheckpoint(admin, data, controller.signal);
         controller.signal.throwIfAborted();
         const { data: finished, error: finishError } = await admin
-          .rpc("finish_session_source_delivery", {
+          .rpc("finish_session_source_delivery_with_ref", {
             p_run_id: data.run_id,
             p_claim_id: data.claim_id!,
-            p_delivered: true,
+            ...(deliveredRef ? { p_delivered_ref: deliveredRef } : {}),
           })
           .abortSignal(controller.signal);
         if (finishError || !finished) throw new Error("Source delivery claim expired.");

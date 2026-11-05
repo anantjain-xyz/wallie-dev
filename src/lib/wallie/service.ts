@@ -2,6 +2,7 @@ import "server-only";
 import { wakeWorker } from "@/lib/worker/wake";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { PinnedGitInput } from "@/lib/pipeline/types";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
@@ -31,6 +32,32 @@ import {
 import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
+
+/** Pin before executing any agent code. Empty receipts indicate lost ownership. */
+export async function pinSessionJobGitInput(input: {
+  admin: AdminClient;
+  jobId: string;
+  attemptCount: number;
+  runId: string;
+  repositoryId: string;
+  baseBranch: string;
+  observedSha: string;
+  signal?: AbortSignal;
+}): Promise<PinnedGitInput | null> {
+  input.signal?.throwIfAborted();
+  const request = input.admin.rpc("pin_session_job_git_input", {
+    p_job_id: input.jobId,
+    p_attempt_count: input.attemptCount,
+    p_run_id: input.runId,
+    p_repository_id: input.repositoryId,
+    p_base_branch: input.baseBranch,
+    p_observed_sha: input.observedSha,
+  });
+  const { data, error } = await (input.signal ? request.abortSignal(input.signal) : request);
+  input.signal?.throwIfAborted();
+  if (error) throw error;
+  return data?.[0] ?? null;
+}
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type SessionForRun = Pick<

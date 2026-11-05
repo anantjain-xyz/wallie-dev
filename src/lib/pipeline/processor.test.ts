@@ -62,7 +62,10 @@ const mocked = vi.hoisted(() => ({
     .fn()
     .mockResolvedValue({ kind: "unchanged", baseSha: "a".repeat(40), headSha: "a".repeat(40) }),
   prepareSourceDelivery: vi.fn(),
+  checkoutPinnedGitInput: vi.fn().mockResolvedValue(undefined),
 }));
+
+vi.mock("./git-input", () => ({ checkoutPinnedGitInput: mocked.checkoutPinnedGitInput }));
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
@@ -250,6 +253,9 @@ interface MockOptions {
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   agentConfigError?: { message: string };
   claimSucceeds?: boolean;
+  pinnedInputSha?: string;
+  pinInputMiss?: boolean;
+  pinInputError?: { message: string };
   currentAttempt?: number;
   replacementJobId?: string;
   failRpcError?: { message: string };
@@ -604,6 +610,19 @@ function buildAdminMock(opts: MockOptions) {
 
   const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
+    if (fn === "pin_session_job_git_input") {
+      return {
+        data: opts.pinInputMiss
+          ? []
+          : [
+              {
+                input_sha: opts.pinnedInputSha ?? payload.p_observed_sha,
+                base_branch: payload.p_base_branch,
+              },
+            ],
+        error: opts.pinInputError ?? null,
+      };
+    }
     const attempt = payload.p_attempt_count as number;
     const stale =
       opts.jobStatus === "canceled" ||
@@ -777,6 +796,53 @@ describe("processPipelineJob (generic stage runner)", () => {
         { type: "completion", taskComplete: true, summary: "Done" },
       ]),
     );
+  });
+
+  it("executes the persisted input before starting the agent when the default branch moves", async () => {
+    const pinnedSha = "b".repeat(40);
+    const { admin, rpc } = buildAdminMock({ session: baseSession(), pinnedInputSha: pinnedSha });
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+      result: "success",
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "pin_session_job_git_input",
+      expect.objectContaining({
+        p_job_id: "job-1",
+        p_attempt_count: baseJob().attempt_count,
+        p_run_id: "run-1",
+        p_repository_id: "repo-1",
+        p_observed_sha: "a".repeat(40),
+      }),
+    );
+    expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledWith(
+      expect.objectContaining({ sha: pinnedSha }),
+    );
+    expect(mocked.checkoutPinnedGitInput.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.createAgentRunner.mock.invocationCallOrder[0]!,
+    );
+    expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ baseSha: pinnedSha }),
+    );
+  });
+
+  it.each([
+    { pinInputMiss: true },
+    { pinInputError: { message: "Repository changed after input pinning." } },
+  ])("does not start the agent without an owned immutable input: %j", async (failure) => {
+    const { admin, insertedArtifacts } = buildAdminMock({ session: baseSession(), ...failure });
+    const result = await processPipelineJob({ admin, job: baseJob() });
+    expect(result.result).not.toBe("success");
+    expect(mocked.checkoutPinnedGitInput).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(insertedArtifacts).toEqual([]);
+  });
+
+  it("stops before agent execution when the pinned checkout cannot be restored", async () => {
+    mocked.checkoutPinnedGitInput.mockRejectedValueOnce(new Error("Pinned commit unavailable"));
+    const { admin, insertedArtifacts } = buildAdminMock({ session: baseSession() });
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({ result: "error" });
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(insertedArtifacts).toEqual([]);
   });
 
   it.each(
@@ -1066,7 +1132,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toEqual([]);
     expect(insertedMessages).toHaveLength(messageCount);
     expect(replacement.status).toBe("running");
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "start_session_job_attempt",
+      "pin_session_job_git_input",
+    ]);
     expect(sandbox.stop).toHaveBeenCalledOnce();
   });
 
@@ -1188,7 +1257,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
     expect(insertedArtifacts).toEqual([]);
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "start_session_job_attempt",
+      "pin_session_job_git_input",
+    ]);
     expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
@@ -1477,7 +1549,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     for (const [name, args] of rpc.mock.calls) {
       expect(name).toMatch(
-        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$/,
+        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$/,
       );
       expect(args).toMatchObject({ p_job_id: "job-1", p_attempt_count: 2 });
     }
@@ -1541,7 +1613,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
     expect(insertedArtifacts).toEqual([]);
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "start_session_job_attempt",
+      "pin_session_job_git_input",
+    ]);
   });
 
   it("fails preparation by captured job and attempt before any run is bound", async () => {
