@@ -311,7 +311,7 @@ describe("PipelinePageClient", () => {
     mocked.suspendCard = null;
   });
 
-  it("creates its realtime client with server-provided public configuration", () => {
+  it("creates its realtime client with server-provided public configuration", async () => {
     installSupabaseMock();
     const config = {
       publishableKey: "runtime-public-key",
@@ -324,7 +324,7 @@ describe("PipelinePageClient", () => {
       </SupabasePublicConfigProvider>,
     );
 
-    expect(mocked.createSupabaseBrowserClient).toHaveBeenCalledWith(config);
+    await waitFor(() => expect(mocked.createSupabaseBrowserClient).toHaveBeenCalledWith(config));
   });
 
   it("does not require public configuration when realtime is disabled", () => {
@@ -332,6 +332,38 @@ describe("PipelinePageClient", () => {
 
     expect(mocked.createSupabaseBrowserClient).not.toHaveBeenCalled();
     expect(screen.getByText("Session 1")).toBeTruthy();
+  });
+
+  it("does not initialize realtime after the page unmounts during the SDK load", async () => {
+    installSupabaseMock();
+    const view = render(<PipelinePageClient initialData={initialData()} />);
+    expect(screen.getByText("Session 1")).toBeTruthy();
+    expect(mocked.createSupabaseBrowserClient).not.toHaveBeenCalled();
+
+    view.unmount();
+    await act(async () => vi.dynamicImportSettled());
+
+    expect(mocked.createSupabaseBrowserClient).not.toHaveBeenCalled();
+  });
+
+  it("recovers and retries when the lazy realtime client fails to initialize", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    mocked.createSupabaseBrowserClient.mockImplementationOnce(() => {
+      throw new Error("Temporary SDK initialization failure");
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => snapshotResponse(initialData()));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={initialData()} />);
+    await act(async () => vi.dynamicImportSettled());
+    expect(supabase.getSessionsHandler()).toBeUndefined();
+
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    await act(async () => vi.dynamicImportSettled());
+    expect(mocked.createSupabaseBrowserClient).toHaveBeenCalledTimes(2);
+    expect(supabase.getSessionsHandler()).toBeDefined();
   });
 
   it("catches changes between the server snapshot and the first subscription", async () => {
@@ -344,7 +376,10 @@ describe("PipelinePageClient", () => {
     const fetchMock = vi.fn().mockResolvedValue(snapshotResponse(recovered));
     vi.stubGlobal("fetch", fetchMock);
     const view = render(<PipelinePageClient initialData={initialData()} />);
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Session 1")).toBeNull();
@@ -369,7 +404,10 @@ describe("PipelinePageClient", () => {
     expect(screen.getByText("No sessions").getAttribute("data-zero-state-variant")).toBe(
       "first-run",
     );
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     expect(screen.getByText("No sessions").getAttribute("data-zero-state-variant")).toBe(
       "archived",
@@ -395,7 +433,10 @@ describe("PipelinePageClient", () => {
     expect(screen.getByText("No sessions").getAttribute("data-onboarding-status")).toBe(
       "in_progress",
     );
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     expect(screen.getByText("No sessions").getAttribute("data-onboarding-status")).toBe(
       "completed",
@@ -410,7 +451,10 @@ describe("PipelinePageClient", () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }));
       vi.stubGlobal("fetch", fetchMock);
       render(<PipelinePageClient initialData={initialData()} />);
-      act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+      await act(async () => {
+        await vi.dynamicImportSettled();
+        supabase.getStatusHandler()("SUBSCRIBED");
+      });
       await act(async () => vi.advanceTimersByTimeAsync(200));
       expect(mocked.router.replace).toHaveBeenCalledWith(
         status === 401 ? "/login?next=%2Fw%2Fwallie" : "/",
@@ -434,7 +478,10 @@ describe("PipelinePageClient", () => {
         </RealtimeRecoveryProvider>
       );
       const view = render(page(initialData()));
-      act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+      await act(async () => {
+        await vi.dynamicImportSettled();
+        supabase.getStatusHandler()("SUBSCRIBED");
+      });
       await act(async () => vi.advanceTimersByTimeAsync(200));
       const next = initialData([card(8, PLAN_STAGE_ID, { title: "Workspace B session" })], []);
       next.workspace = { id: "workspace-b", slug: "workspace-b", name: "Workspace B" };
@@ -565,7 +612,10 @@ describe("PipelinePageClient", () => {
     const fetchMock = vi.fn().mockImplementation(async () => snapshotResponse(initialData()));
     vi.stubGlobal("fetch", fetchMock);
     render(<PipelinePageClient initialData={initialData()} />);
-    act(() => supabase.getStatusHandler()("CHANNEL_ERROR"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("CHANNEL_ERROR");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
@@ -579,7 +629,10 @@ describe("PipelinePageClient", () => {
     const fetchMock = vi.fn().mockReturnValue(pending.promise);
     vi.stubGlobal("fetch", fetchMock);
     const view = render(<PipelinePageClient initialData={initialData()} />);
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     act(() =>
       supabase.getSessionsHandler()?.({
@@ -616,7 +669,10 @@ describe("PipelinePageClient", () => {
     const pending = deferredResponse();
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending.promise));
     render(<PipelinePageClient initialData={initialData()} />);
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     await act(async () =>
       supabase.getPullRequestsHandler()?.({
@@ -640,7 +696,10 @@ describe("PipelinePageClient", () => {
       const fetchMock = vi.fn().mockResolvedValueOnce(snapshotResponse(before));
       vi.stubGlobal("fetch", fetchMock);
       render(<PipelinePageClient initialData={before} />);
-      act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+      await act(async () => {
+        await vi.dynamicImportSettled();
+        supabase.getStatusHandler()("SUBSCRIBED");
+      });
       await act(async () => vi.advanceTimersByTimeAsync(200));
       const corrected = initialData();
       corrected.lanes[0]!.totalCount = event === "UNARCHIVE" ? 31 : 29;
@@ -694,7 +753,10 @@ describe("PipelinePageClient", () => {
         <PipelinePageClient initialData={initialData()} />
       </Suspense>,
     );
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     expect(mocked.suspendedRenders).toBeGreaterThan(0);
     expect(
@@ -722,7 +784,10 @@ describe("PipelinePageClient", () => {
     const fetchMock = vi.fn().mockReturnValue(pending.promise);
     vi.stubGlobal("fetch", fetchMock);
     render(<PipelinePageClient initialData={initialData()} />);
-    act(() => supabase.getStatusHandler()("SUBSCRIBED"));
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      supabase.getStatusHandler()("SUBSCRIBED");
+    });
     await act(async () => vi.advanceTimersByTimeAsync(200));
     const button = screen.getByRole("button", {
       name: "Load more Plan sessions",
@@ -750,6 +815,7 @@ describe("PipelinePageClient", () => {
         .mockResolvedValueOnce(snapshotResponse(corrected));
       vi.stubGlobal("fetch", fetchMock);
       render(<PipelinePageClient initialData={initialData()} />);
+      await act(async () => vi.dynamicImportSettled());
       act(() => screen.getByRole("button", { name: "Load more Plan sessions" }).click());
       act(() =>
         supabase.getSessionsHandler()?.(

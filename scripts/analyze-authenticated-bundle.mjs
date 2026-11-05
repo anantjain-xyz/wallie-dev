@@ -48,6 +48,16 @@ function chunkSize(chunk) {
   return { gzipBytes: gzipSync(contents).length, rawBytes: contents.length };
 }
 
+function totalChunkSize(chunks) {
+  return chunks.map(chunkSize).reduce(
+    (total, size) => ({
+      gzipBytes: total.gzipBytes + size.gzipBytes,
+      rawBytes: total.rawBytes + size.rawBytes,
+    }),
+    { gzipBytes: 0, rawBytes: 0 },
+  );
+}
+
 const manifests = Object.fromEntries(routes.map((route) => [route, readManifest(route)]));
 const commonChunks = manifests.pipeline.entryJSFiles[commonLayoutEntry];
 if (!commonChunks) {
@@ -69,9 +79,10 @@ for (const [dependency, markers] of Object.entries(forbiddenCommonMarkers)) {
 const allClientChunks = readdirSync(chunksDirectory)
   .filter((file) => file.endsWith(".js"))
   .map((file) => `static/chunks/${file}`);
-const dialogChunks = allClientChunks.filter((chunk) =>
-  chunkContents(chunk).includes("Start a new session"),
-);
+const dialogChunks = allClientChunks.filter((chunk) => {
+  const contents = chunkContents(chunk).toString("utf8");
+  return contents.includes("session-title") && contents.includes("session-stages");
+});
 if (dialogChunks.length === 0) {
   throw new Error("Could not identify the built create-session dialog chunk.");
 }
@@ -86,13 +97,11 @@ for (const route of routes) {
   initialRouteChunks[route] = chunks;
 }
 
-const after = commonChunks.map(chunkSize).reduce(
-  (total, size) => ({
-    gzipBytes: total.gzipBytes + size.gzipBytes,
-    rawBytes: total.rawBytes + size.rawBytes,
-  }),
-  { gzipBytes: 0, rawBytes: 0 },
-);
+if (initialRouteChunks.pipeline.some((chunk) => chunkContents(chunk).includes("GoTrueClient"))) {
+  throw new Error("Supabase is still present in the initial Pipeline chunks.");
+}
+
+const after = totalChunkSize(commonChunks);
 
 console.log(
   JSON.stringify(
@@ -111,6 +120,13 @@ console.log(
         asyncChunks: dialogChunks.map((chunk) => ({ chunk, ...chunkSize(chunk) })),
         absentFromInitialRoutes: Object.keys(initialRouteChunks),
       },
+      initialRouteJavaScript: Object.fromEntries(
+        Object.entries(initialRouteChunks).map(([route, chunks]) => [
+          route,
+          { ...totalChunkSize(chunks), chunks },
+        ]),
+      ),
+      pipelineRealtime: { absentFromInitialRoute: true },
     },
     null,
     2,
