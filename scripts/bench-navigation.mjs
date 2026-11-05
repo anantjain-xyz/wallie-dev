@@ -41,7 +41,16 @@ function parseStatusEnv(text) {
 
 function median(values) {
   const sorted = [...values].sort((left, right) => left - right);
-  return sorted[Math.floor((sorted.length - 1) / 2)];
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function medianRowFor(rows) {
+  if (rows.length === 0) return null;
+  const sorted = [...rows].sort((left, right) => left.durationMs - right.durationMs);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted[mid];
 }
 
 function summarize(samples) {
@@ -50,8 +59,7 @@ function summarize(samples) {
     const okRows = rows.filter((sample) => sample.ok);
     const durations = okRows.map((sample) => sample.durationMs);
     const medianMs = durations.length > 0 ? median(durations) : null;
-    const medianRow =
-      medianMs === null ? null : okRows.find((sample) => sample.durationMs === medianMs);
+    const medianRow = medianRowFor(okRows);
     const serverDurations = medianRow
       ? medianRow.serverTimings.map((timing) => timing.durationMs)
       : [];

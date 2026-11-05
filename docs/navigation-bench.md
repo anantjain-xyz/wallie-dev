@@ -25,7 +25,7 @@ The clock stops when the content below is visible and the workspace shell has hy
 4. `settings-switch`. From the pipeline page, click Settings. Ready when the Settings heading, the GitHub section, and the Pipeline section are visible.
 5. `new-session-modal`. From the pipeline page, click New session. Ready when the title field and the stage picker are visible.
 
-Each sample records the request count, failed requests, transferred script, style, document, and RSC bytes, render-blocking requests, and the server timing records for that request. Server timing is written only when `WALLIE_TIMING_LOGS=1`. The benchmark sets that for the `next start` process.
+Each sample records the request count, failed requests, transferred script, style, document, and RSC bytes, render-blocking requests, and the server timing records for that request. Render-blocking counts include only resources that start after the clock starts, so a warmup page is not charged to the click. An even number of successful runs reports the average of the two middle durations. The diagnostic row is the upper of those two when the count is even. Server timing is written only when `WALLIE_TIMING_LOGS=1`, and the JSONL path is `WALLIE_TIMING_LOG_PATH`. The benchmark sets both for the `next start` process.
 
 ## Volume
 

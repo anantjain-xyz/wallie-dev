@@ -66,6 +66,8 @@ export const serverEnvSchema = z.object({
   WALLIE_DAYTONA_API_URL_ALLOWLIST: optionalEnvStringSchema,
   // Opt-in request loader timing logs for production canaries.
   WALLIE_TIMING_LOGS: optionalEnvStringSchema,
+  // Optional JSONL path for those records. A write failure does not fail the request.
+  WALLIE_TIMING_LOG_PATH: optionalEnvStringSchema,
 });
 type ServerOnlyEnv = z.infer<typeof serverEnvSchema>;
 export type ServerEnv = ClientEnv & ServerOnlyEnv;
@@ -108,6 +110,7 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     WALLIE_ENABLED_SANDBOX_PROVIDERS: input.WALLIE_ENABLED_SANDBOX_PROVIDERS,
     WALLIE_DAYTONA_API_URL_ALLOWLIST: input.WALLIE_DAYTONA_API_URL_ALLOWLIST,
     WALLIE_TIMING_LOGS: input.WALLIE_TIMING_LOGS,
+    WALLIE_TIMING_LOG_PATH: input.WALLIE_TIMING_LOG_PATH,
   });
 
   return {

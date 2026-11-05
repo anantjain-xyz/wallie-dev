@@ -203,22 +203,26 @@ async function collectSample(
   pageErrors: string[],
 ): Promise<FlowSample> {
   const resourceTimings = await page.evaluate(() => {
-    return performance.getEntriesByType("resource").map((entry) => {
-      const resource = entry as PerformanceResourceTiming;
-      const withStatus = resource as PerformanceResourceTiming & {
-        renderBlockingStatus?: string;
-        responseStatus?: number;
-      };
-      return {
-        duration: resource.duration,
-        initiatorType: resource.initiatorType,
-        name: resource.name,
-        renderBlockingStatus: withStatus.renderBlockingStatus,
-        responseStatus: withStatus.responseStatus,
-        startTime: resource.startTime,
-        transferSize: resource.transferSize,
-      };
-    });
+    const startedAt = performance.getEntriesByName("snappy-begin").at(-1)?.startTime ?? 0;
+    return performance
+      .getEntriesByType("resource")
+      .filter((entry) => entry.startTime >= startedAt)
+      .map((entry) => {
+        const resource = entry as PerformanceResourceTiming;
+        const withStatus = resource as PerformanceResourceTiming & {
+          renderBlockingStatus?: string;
+          responseStatus?: number;
+        };
+        return {
+          duration: resource.duration,
+          initiatorType: resource.initiatorType,
+          name: resource.name,
+          renderBlockingStatus: withStatus.renderBlockingStatus,
+          responseStatus: withStatus.responseStatus,
+          startTime: resource.startTime,
+          transferSize: resource.transferSize,
+        };
+      });
   });
   const navigation = await page.evaluate(() => {
     const entry = performance.getEntriesByType("navigation")[0] as
@@ -417,6 +421,11 @@ async function measure(
     aborted.clear();
     pageErrors.length = 0;
     await page.setExtraHTTPHeaders({ "x-request-id": requestId });
+    await page.evaluate(() => {
+      performance.clearResourceTimings();
+      performance.clearMarks("snappy-begin");
+      performance.mark("snappy-begin");
+    });
     wallStart = Date.now();
     recording = true;
   };
