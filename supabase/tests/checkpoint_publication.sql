@@ -34,21 +34,47 @@ select throws_ok($$select public.prepare_session_source_and_checkpoint_publicati
   (select run_id from publication_fixtures where label='atomic'),'12b2c3d4-0001-4000-8000-000000000001',
   'main',repeat('a',40),repeat('b',40),'Atomic preparation','PR body','',
   encode(extensions.digest('private checkpoint'::bytea,'sha256'),'hex'),encode('private checkpoint'::bytea,'base64'),
-  99,'Complete artifact')$$,'23514','Checkpoint publication intent could not be prepared.',
+  99,'Complete artifact',null,1234,567)$$,'23514','Checkpoint publication intent could not be prepared.',
   'refused publication intent rolls back source preparation in the same transaction');
 select ok((select source_recovery_required from public.agent_runs where id=(select run_id from publication_fixtures where label='atomic'))
   and not exists(select 1 from public.session_source_deliveries where run_id=(select run_id from publication_fixtures where label='atomic'))
   and not exists(select 1 from public.session_checkpoint_publications where run_id=(select run_id from publication_fixtures where label='atomic')),
   'failed combined preparation preserves recovery requirement and leaves neither half of the obligation');
+select ok((select input_tokens is null and output_tokens is null from public.agent_runs
+  where id=(select run_id from publication_fixtures where label='atomic')),
+  'refused atomic preparation does not persist token usage independently of its intent');
 select is(public.prepare_session_source_and_checkpoint_publication(
   (select run_id from publication_fixtures where label='atomic'),'12b2c3d4-0001-4000-8000-000000000001',
   'main',repeat('a',40),repeat('b',40),'Atomic preparation','PR body','',
   encode(extensions.digest('private checkpoint'::bytea,'sha256'),'hex'),encode('private checkpoint'::bytea,'base64'),
-  0,'Complete artifact'),true,'combined preparation saves durable source and complete artifact intent');
+  0,'Complete artifact',null,1234,567),true,'combined preparation saves durable source and complete artifact intent');
 select ok((select not source_recovery_required from public.agent_runs where id=(select run_id from publication_fixtures where label='atomic'))
   and exists(select 1 from public.session_source_deliveries d join public.session_checkpoint_publications p using(run_id)
     where d.run_id=(select run_id from publication_fixtures where label='atomic') and p.artifact_md='Complete artifact'),
   'successful combined preparation clears recovery retention only with both durable obligations present');
+select ok((select status='running' and input_tokens=1234 and output_tokens=567 from public.agent_runs
+  where id=(select run_id from publication_fixtures where label='atomic')),
+  'usage is durable on the exact running attempt before any remote publication or adoption');
+select is(public.prepare_session_source_and_checkpoint_publication(
+  (select run_id from publication_fixtures where label='atomic'),'12b2c3d4-0001-4000-8000-000000000001',
+  'main',repeat('a',40),repeat('b',40),'Atomic preparation','PR body','',
+  encode(extensions.digest('private checkpoint'::bytea,'sha256'),'hex'),encode('private checkpoint'::bytea,'base64'),
+  0,'Complete artifact'),true,'legacy omitted usage arguments can retry the prepared obligation');
+select ok((select input_tokens=1234 and output_tokens=567 from public.agent_runs
+  where id=(select run_id from publication_fixtures where label='atomic')),
+  'omitted optional usage arguments preserve previously recorded token counts');
+select throws_ok($$select public.prepare_session_source_and_checkpoint_publication(
+  (select run_id from publication_fixtures where label='atomic'),'12b2c3d4-0001-4000-8000-000000000001',
+  'main',repeat('a',40),repeat('b',40),'Atomic preparation','PR body','',
+  encode(extensions.digest('private checkpoint'::bytea,'sha256'),'hex'),encode('private checkpoint'::bytea,'base64'),
+  0,'Complete artifact',null,-1,567)$$,'23514','Token usage must not be negative.',
+  'negative input usage is rejected without changing the prepared obligation');
+select throws_ok($$select public.prepare_session_source_and_checkpoint_publication(
+  (select run_id from publication_fixtures where label='atomic'),'12b2c3d4-0001-4000-8000-000000000001',
+  'main',repeat('a',40),repeat('b',40),'Atomic preparation','PR body','',
+  encode(extensions.digest('private checkpoint'::bytea,'sha256'),'hex'),encode('private checkpoint'::bytea,'base64'),
+  0,'Complete artifact',null,1234,-1)$$,'23514','Token usage must not be negative.',
+  'negative output usage is rejected without changing the prepared obligation');
 select is((select public.fail_stalled_session_job_attempt(j.id,1,'Stalled',true,3,r.id)
   from public.agent_runs r join public.agent_jobs j on j.id=r.agent_job_id
   where r.id=(select run_id from publication_fixtures where label='atomic')),'stale',
@@ -58,9 +84,21 @@ select ok((select r.status='running' and j.status='running' and j.attempt_count=
   where r.id=(select run_id from publication_fixtures where label='atomic')),
   'stall protection does not retire or retry the original agent execution');
 select ok(not has_function_privilege('authenticated',
-  'public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz)','EXECUTE')
+  'public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz,bigint,bigint)','EXECUTE')
   and not has_function_privilege('authenticated','public.fail_stalled_session_job_attempt(uuid,integer,text,boolean,integer,uuid)','EXECUTE'),
   'browser cannot prepare privileged obligations or decide stalled ownership');
+
+update publication_fixtures set claim_id=public.claim_session_checkpoint_publication(run_id) where label='atomic';
+select is((select public.adopt_session_checkpoint_publication(f.run_id,f.claim_id,p.retained_ref,repeat('b',40))
+  from publication_fixtures f join public.session_checkpoint_publications p using(run_id) where label='atomic'),true,
+  'maintenance-style adoption recovers a previously prepared artifact without processor state');
+select ok((select r.status='success' and r.input_tokens=1234 and r.output_tokens=567 and j.status='success' and p.status='adopted'
+  from publication_fixtures f join public.agent_runs r on r.id=f.run_id
+  join public.agent_jobs j on j.id=r.agent_job_id join public.session_checkpoint_publications p on p.run_id=r.id where label='atomic'),
+  'recovered successful execution retains complete token usage for analytics');
+select ok(has_function_privilege('service_role',
+  'public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz,bigint,bigint)','EXECUTE'),
+  'service workers can invoke the usage-bearing atomic preparation signature');
 
 insert into publication_fixtures(label,run_id) values('code',pg_temp.publication_fixture('Code publication'));
 

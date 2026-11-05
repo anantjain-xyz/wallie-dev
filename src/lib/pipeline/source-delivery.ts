@@ -43,6 +43,7 @@ export async function prepareSourceDelivery(input: {
     expectedArtifactVersion: number;
     artifactMarkdown: string;
     deadlineAt?: string;
+    usage?: { inputTokens: number; outputTokens: number };
   };
   repositoryId: string;
   runId: string;
@@ -95,6 +96,12 @@ export async function prepareSourceDelivery(input: {
         p_expected_artifact_version: input.publication.expectedArtifactVersion,
         p_artifact_md: input.publication.artifactMarkdown,
         ...(input.publication.deadlineAt ? { p_deadline_at: input.publication.deadlineAt } : {}),
+        ...(input.publication.usage
+          ? {
+              p_input_tokens: input.publication.usage.inputTokens,
+              p_output_tokens: input.publication.usage.outputTokens,
+            }
+          : {}),
       })
     : input.admin.rpc("prepare_session_source_delivery", sourceArgs));
   if (error)

@@ -121,6 +121,51 @@ describe("runClaimedJob", () => {
     };
   }
 
+  function publicationRecoveryAdmin(status: "pending" | "claimed") {
+    const admin = recoveryAdmin();
+    const state = {
+      runStatus: "running",
+      jobStatus: "running",
+      publication: null as {
+        run_id: string;
+        job_id: string;
+        attempt_count: number;
+        status: "pending" | "claimed";
+        deadline_at: string;
+        artifact_md: string;
+      } | null,
+    };
+    admin.rpc.mockImplementation((name, input) => ({
+      abortSignal: vi.fn(async () => {
+        if (name !== "fail_stalled_session_job_attempt")
+          throw new Error(`Unexpected supervisor recovery RPC ${name}`);
+        const args = input as Record<string, unknown>;
+        const publication = state.publication;
+        const saved =
+          publication &&
+          publication.run_id === args.p_run_id &&
+          publication.job_id === args.p_job_id &&
+          publication.attempt_count === args.p_attempt_count &&
+          Date.parse(publication.deadline_at) > Date.now();
+        if (saved) return { data: "stale", error: null };
+        state.runStatus = "error";
+        state.jobStatus = "error";
+        return { data: "error", error: null };
+      }),
+    }));
+    const saveIntent = (deadlineAt: string) => {
+      state.publication = {
+        run_id: "run-attempt-1",
+        job_id: "job-1",
+        attempt_count: 1,
+        status,
+        deadline_at: deadlineAt,
+        artifact_md: "Completed original output retained with its private source",
+      };
+    };
+    return { admin, state, saveIntent };
+  }
+
   it("processes the claim without ownerless activity writes", async () => {
     mocked.processPipelineJob.mockResolvedValue(undefined);
     const admin = recoveryAdmin();
@@ -143,7 +188,7 @@ describe("runClaimedJob", () => {
       ["agent_job_id", "job-1"],
       ["attempt_count", 1],
     ]);
-    expect(admin.rpc).toHaveBeenCalledWith("fail_session_job_attempt", {
+    expect(admin.rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", {
       p_job_id: "job-1",
       p_attempt_count: 1,
       p_run_id: "run-attempt-1",
@@ -153,12 +198,83 @@ describe("runClaimedJob", () => {
     });
   });
 
+  it.each(["pending", "claimed"] as const)(
+    "preserves a committed %s intent when non-timeout processor recovery rejects",
+    async (status) => {
+      const { admin, state, saveIntent } = publicationRecoveryAdmin(status);
+      const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+      mocked.processPipelineJob.mockImplementationOnce(async (input) => {
+        saveIntent(input.deadlineAt);
+        // The source+intent transaction committed, then its response and the
+        // processor's guarded failure response were unavailable to this worker.
+        throw new Error("Publication recovery response unavailable");
+      });
+      await runClaimedJob(admin as never, baseJob as never, { deadlineAt });
+      expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_stalled_session_job_attempt", {
+        p_job_id: "job-1",
+        p_attempt_count: 1,
+        p_run_id: "run-attempt-1",
+        p_error: "Publication recovery response unavailable",
+        p_retry: false,
+        p_max_retries: 0,
+      });
+      expect(state).toMatchObject({
+        runStatus: "running",
+        jobStatus: "running",
+        publication: {
+          status,
+          deadline_at: deadlineAt,
+          artifact_md: "Completed original output retained with its private source",
+        },
+      });
+      expect(admin.query.insert).not.toHaveBeenCalled();
+      expect(mocked.processPipelineJob).toHaveBeenCalledOnce();
+      expect(mocked.processPipelineJob.mock.calls[0][0].signal.aborted).toBe(true);
+    },
+  );
+
+  it.each(["pending", "claimed"] as const)(
+    "retires a saved %s attempt when the captured original deadline expires",
+    async (status) => {
+      vi.useFakeTimers();
+      const { admin, state, saveIntent } = publicationRecoveryAdmin(status);
+      const deadlineAt = new Date(Date.now() + 50).toISOString();
+      mocked.processPipelineJob.mockImplementationOnce((input) => {
+        saveIntent(input.deadlineAt);
+        return new Promise(() => {});
+      });
+      const processing = runClaimedJob(admin as never, baseJob as never, { deadlineAt });
+      await vi.advanceTimersByTimeAsync(49);
+      expect(admin.rpc).not.toHaveBeenCalled();
+      expect(state.runStatus).toBe("running");
+      await vi.advanceTimersByTimeAsync(1);
+      await processing;
+      expect(state.runStatus).toBe("error");
+      expect(state.jobStatus).toBe("error");
+      expect(state.publication?.deadline_at).toBe(deadlineAt);
+      expect(admin.rpc).toHaveBeenCalledExactlyOnceWith(
+        "fail_stalled_session_job_attempt",
+        expect.objectContaining({
+          p_job_id: "job-1",
+          p_attempt_count: 1,
+          p_run_id: "run-attempt-1",
+        }),
+      );
+      expect(admin.query.insert).toHaveBeenCalledExactlyOnceWith({
+        agent_run_id: "run-attempt-1",
+        workspace_id: "workspace-1",
+        kind: "error",
+        message_md: "Worker attempt exceeded its 50ms deadline.",
+      });
+    },
+  );
+
   it("uses runless recovery only when this attempt has no bound run", async () => {
     mocked.processPipelineJob.mockRejectedValue(new Error("setup failed"));
     const admin = recoveryAdmin(null);
     await runClaimedJob(admin as never, baseJob as never);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({
         p_attempt_count: 1,
         p_run_id: undefined,
@@ -184,7 +300,7 @@ describe("runClaimedJob", () => {
     expect(admin.query.eq).toHaveBeenCalledWith("attempt_count", 1);
     expect(admin.query.insert).not.toHaveBeenCalled();
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_attempt_count: 1 }),
     );
   });
@@ -242,7 +358,7 @@ describe("runClaimedJob", () => {
       message_md: "Worker attempt exceeded its 50ms deadline.",
     });
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({
         p_job_id: "job-1",
         p_attempt_count: 1,
@@ -284,7 +400,7 @@ describe("runClaimedJob", () => {
     await processing;
     expect(signal.aborted).toBe(true);
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({
         p_job_id: "job-1",
         p_attempt_count: 1,
@@ -300,7 +416,7 @@ describe("runClaimedJob", () => {
     });
     expect(mocked.processPipelineJob).not.toHaveBeenCalled();
     expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_session_job_attempt",
+      "fail_stalled_session_job_attempt",
       expect.objectContaining({
         p_job_id: "job-1",
         p_attempt_count: 1,

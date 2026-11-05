@@ -3749,6 +3749,8 @@ export type Database = {
           p_deadline_at?: string
           p_expected_artifact_version: number
           p_head_sha: string
+          p_input_tokens?: number
+          p_output_tokens?: number
           p_repository_id: string
           p_run_id: string
           p_title: string

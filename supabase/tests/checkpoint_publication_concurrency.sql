@@ -31,7 +31,7 @@ from public.agent_runs r where r.id::text like 'aef49600-0000-4000-8000-%';
 select public.prepare_session_source_and_checkpoint_publication(r.id,'12b2c3d4-0001-4000-8000-000000000001',
   'main',repeat('a',40),repeat('b',40),'Concurrent checkpoint','PR body','',
   encode(extensions.digest('concurrent checkpoint'::bytea,'sha256'),'hex'),encode('concurrent checkpoint'::bytea,'base64'),
-  0,'Complete concurrent artifact')
+  0,'Complete concurrent artifact',null,4321,765)
 from public.agent_runs r where r.id in (
   'aef49600-0000-4000-8000-000000000201','aef49600-0000-4000-8000-000000000202',
   'aef49600-0000-4000-8000-000000000203','aef49600-0000-4000-8000-000000000205');
@@ -98,11 +98,12 @@ select is((select cardinality(run_ids) from extensions.dblink_get_result('checkp
   'expected-run cancellation rechecks the successful execution after waiting for adoption');
 select count(*) from extensions.dblink_get_result('checkpoint_contender') as canceled(job_ids uuid[],run_ids uuid[]);
 select ok((select r.status='success' and j.status='success' and p.status='adopted'
+  and r.input_tokens=4321 and r.output_tokens=765
   and p.artifact_id=s.current_artifact_id and c.artifact_id=p.artifact_id and c.output_ref=p.retained_ref
   from public.agent_runs r join public.agent_jobs j on j.id=r.agent_job_id join public.sessions s on s.id=r.session_id
   join public.session_checkpoint_publications p on p.run_id=r.id join public.session_git_checkpoints c on c.run_id=r.id
   where r.id='aef49600-0000-4000-8000-000000000202'),
-  'adoption-winning race preserves one canonical successful artifact and exact retained checkpoint');
+  'adoption by an independent worker preserves canonical artifact, exact checkpoint and durable token usage');
 
 -- A generation transition commits while the old publisher is waiting.
 select extensions.dblink_exec('checkpoint_owner','begin');
@@ -142,7 +143,7 @@ select is((select prepared from extensions.dblink('checkpoint_owner',$q$
   select public.prepare_session_source_and_checkpoint_publication('aef49600-0000-4000-8000-000000000204',
     '12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40),repeat('b',40),'Concurrent checkpoint','PR body','',
     encode(extensions.digest('concurrent checkpoint'::bytea,'sha256'),'hex'),encode('concurrent checkpoint'::bytea,'base64'),
-    0,'Complete concurrent artifact')
+    0,'Complete concurrent artifact',null,4321,765)
 $q$) as result(prepared boolean)),true,'atomic preparation records source and full intent under the lifecycle lock');
 select extensions.dblink_send_query('checkpoint_contender',$q$
   select public.fail_stalled_session_job_attempt('aef49600-0000-4000-8000-000000000104',1,'Stale stall observation',true,3,
@@ -155,6 +156,7 @@ select is((select outcome from extensions.dblink_get_result('checkpoint_contende
 select count(*) from extensions.dblink_get_result('checkpoint_contender') as result(outcome text);
 select ok((select r.status='running' and j.status='running' and j.attempt_count=1 and p.status='pending'
   and p.deadline_at>clock_timestamp() and p.artifact_md='Complete concurrent artifact' and d.bundle_base64 is not null
+  and r.input_tokens=4321 and r.output_tokens=765
   from public.agent_runs r join public.agent_jobs j on j.id=r.agent_job_id
   join public.session_checkpoint_publications p on p.run_id=r.id join public.session_source_deliveries d on d.run_id=r.id
   where r.id='aef49600-0000-4000-8000-000000000204'),
@@ -170,7 +172,7 @@ select extensions.dblink_send_query('checkpoint_contender',$q$
   select public.prepare_session_source_and_checkpoint_publication('aef49600-0000-4000-8000-000000000206',
     '12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40),repeat('b',40),'Concurrent checkpoint','PR body','',
     encode(extensions.digest('concurrent checkpoint'::bytea,'sha256'),'hex'),encode('concurrent checkpoint'::bytea,'base64'),
-    0,'Complete concurrent artifact')
+    0,'Complete concurrent artifact',null,4321,765)
 $q$);
 select pg_temp.wait_checkpoint_lock('checkpoint_contender');
 select is((select cardinality(run_ids) from extensions.dblink('checkpoint_owner',$q$

@@ -144,8 +144,10 @@ async function retireAttempt(
       .maybeSingle();
     if (lookupError) throw lookupError;
     input.signal.throwIfAborted();
+    // A processor rejection may follow a committed intent and a lost database
+    // reply. Preserve that completed work until its original deadline expires.
     const { data: result, error } = await admin
-      .rpc("fail_session_job_attempt", {
+      .rpc("fail_stalled_session_job_attempt", {
         p_job_id: input.jobId,
         p_attempt_count: input.attemptCount,
         p_run_id: run?.id,

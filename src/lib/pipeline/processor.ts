@@ -554,6 +554,7 @@ async function runStage(input: {
           expectedArtifactVersion: session.current_artifact_version,
           artifactMarkdown,
           deadlineAt: input.deadlineAt,
+          usage,
         },
         repositoryId: github.repo.id,
         runId,
@@ -588,7 +589,6 @@ async function runStage(input: {
       deadlineAt: input.deadlineAt,
       signal,
       stage,
-      usage,
     });
     if (published === "idle") {
       return { jobId: job.id, processed: true, result: "idle", runId };
@@ -654,7 +654,6 @@ async function publishArtifact(input: {
   deadlineAt?: string;
   signal?: AbortSignal;
   stage: PipelineStage;
-  usage: { inputTokens: number; outputTokens: number } | undefined;
 }): Promise<"idle" | "published"> {
   const { admin, artifactMarkdown, job, runId, session, stage } = input;
 
@@ -673,19 +672,6 @@ async function publishArtifact(input: {
   if (publication === "pending") throw new CheckpointPublicationPendingError();
   if (publication !== "adopted") return "idle";
   throwIfAborted(input.signal);
-
-  if (input.usage) {
-    const { error } = await admin
-      .from("agent_runs")
-      .update({
-        input_tokens: input.usage.inputTokens,
-        output_tokens: input.usage.outputTokens,
-      })
-      .eq("id", runId)
-      .eq("attempt_count", job.attempt_count)
-      .eq("status", "success");
-    if (error) throw error;
-  }
 
   // Publication already made this run successful. Append its final history
   // without requiring active execution or refreshing its activity timestamp.

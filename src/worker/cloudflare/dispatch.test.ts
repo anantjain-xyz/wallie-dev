@@ -76,6 +76,73 @@ function fixture() {
   };
 }
 
+function interruptedFixture(status: "pending" | "claimed", expired = false) {
+  const job = { id: "job", attempt_count: 2, status: "running" };
+  const run = {
+    id: "run",
+    agent_job_id: job.id,
+    attempt_count: job.attempt_count,
+    workspace_id: "workspace",
+    status: "running",
+    source_recovery_required: false,
+  };
+  const publication = {
+    run_id: run.id,
+    job_id: job.id,
+    attempt_count: job.attempt_count,
+    status,
+    deadline_at: new Date(Date.now() + (expired ? -60_000 : 60_000)).toISOString(),
+    artifact_md: "Completed output saved before the interruption",
+  };
+  const receipts = [] as Array<typeof publication>;
+  const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
+    if (name === "fail_stalled_session_job_attempt") {
+      const saved = receipts.some(
+        (receipt) =>
+          receipt.run_id === args.p_run_id &&
+          receipt.job_id === args.p_job_id &&
+          receipt.attempt_count === args.p_attempt_count &&
+          Date.parse(receipt.deadline_at) > Date.now(),
+      );
+      if (saved) return { data: "stale", error: null };
+      run.status = "error";
+      job.status = args.p_retry ? "queued" : "error";
+      return { data: job.status, error: null };
+    }
+    throw new Error(`Unexpected recovery RPC ${name}`);
+  });
+  const from = vi.fn((table: string) => {
+    const filters = new Map<string, unknown>();
+    const query = {
+      select: () => query,
+      eq: (key: string, value: unknown) => {
+        filters.set(key, value);
+        return query;
+      },
+      maybeSingle: async () => ({
+        data:
+          table === "agent_runs" &&
+          filters.get("agent_job_id") === job.id &&
+          filters.get("attempt_count") === job.attempt_count
+            ? { ...run }
+            : table === "workspace_agent_config"
+              ? { value_json: 3 }
+              : null,
+        error: null,
+      }),
+    };
+    return query;
+  });
+  return {
+    admin: { from, rpc } as unknown as Parameters<typeof recoverAttempt>[0],
+    job,
+    run,
+    publication,
+    receipts,
+    rpc,
+  };
+}
+
 describe("durable workflow dispatch", () => {
   it("allows sign-in dispatch while agent claims remain paused", async () => {
     const f = fixture();
@@ -157,5 +224,67 @@ describe("durable workflow dispatch", () => {
       p_attempt_count: 2,
       p_run_id: "run",
     });
+  });
+
+  it.each(["pending", "claimed"] as const)(
+    "preserves a saved %s intent when interruption recovery reaches the publication guard",
+    async (status) => {
+      const f = interruptedFixture(status);
+      f.receipts.push(f.publication);
+      await recoverAttempt(f.admin, "job", 2, "Cloudflare interrupted");
+      expect(f.rpc).toHaveBeenCalledExactlyOnceWith("fail_stalled_session_job_attempt", {
+        p_job_id: "job",
+        p_attempt_count: 2,
+        p_run_id: "run",
+        p_error: "Cloudflare interrupted",
+        p_retry: true,
+        p_max_retries: 3,
+      });
+      expect(f.run.status).toBe("running");
+      expect(f.job.status).toBe("running");
+      expect(f.receipts).toEqual([f.publication]);
+      expect(f.publication.artifact_md).toBe("Completed output saved before the interruption");
+    },
+  );
+
+  it.each(["pending", "claimed"] as const)(
+    "retires the interrupted %s attempt after the saved intent's original deadline",
+    async (status) => {
+      const f = interruptedFixture(status, true);
+      f.receipts.push(f.publication);
+      await recoverAttempt(f.admin, "job", 2, "Original deadline elapsed", false);
+      expect(f.run.status).toBe("error");
+      expect(f.job.status).toBe("error");
+      expect(f.rpc).toHaveBeenCalledExactlyOnceWith(
+        "fail_stalled_session_job_attempt",
+        expect.objectContaining({
+          p_job_id: "job",
+          p_attempt_count: 2,
+          p_run_id: "run",
+          p_retry: false,
+        }),
+      );
+    },
+  );
+
+  it("recovers a lost combined prepare response using the committed intent rather than retiring the attempt", async () => {
+    const f = interruptedFixture("pending");
+    const prepare = async () => {
+      f.receipts.push(f.publication);
+      throw new Error("Combined preparation committed but its response was lost");
+    };
+    try {
+      await prepare();
+    } catch {
+      await recoverAttempt(f.admin, "job", 2, "Workflow execution interrupted");
+    }
+    expect(f.run.status).toBe("running");
+    expect(f.job.status).toBe("running");
+    expect(f.receipts).toHaveLength(1);
+    expect(f.rpc).toHaveBeenCalledExactlyOnceWith(
+      "fail_stalled_session_job_attempt",
+      expect.anything(),
+    );
+    expect(f.rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
   });
 });

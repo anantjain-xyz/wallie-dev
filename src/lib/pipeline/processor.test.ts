@@ -288,7 +288,7 @@ interface MockOptions {
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
   runSandboxUpdateError?: { message: string } | null;
-  usageUpdateError?: { message: string } | null;
+  sourcePreparationError?: { message: string } | null;
   retentionUpdateError?: { message: string } | null;
   beforeRetentionUpdate?: () => Promise<void>;
   runSandboxUpdateMissed?: boolean;
@@ -458,11 +458,7 @@ function buildAdminMock(opts: MockOptions) {
             data: rows,
             error:
               retentionError ??
-              ("sandbox_id" in patch
-                ? (opts.runSandboxUpdateError ?? null)
-                : "input_tokens" in patch
-                  ? (opts.usageUpdateError ?? null)
-                  : null),
+              ("sandbox_id" in patch ? (opts.runSandboxUpdateError ?? null) : null),
           });
         },
       };
@@ -661,6 +657,16 @@ function buildAdminMock(opts: MockOptions) {
             ],
         error: opts.pinInputError ?? null,
       };
+    }
+    if (fn === "prepare_session_source_and_checkpoint_publication") {
+      if (opts.sourcePreparationError) return { data: false, error: opts.sourcePreparationError };
+      const run = runRows.find((row) => row.id === payload.p_run_id && row.status === "running");
+      if (!run) return { data: false, error: null };
+      // This fixture models the combined RPC's committed run-usage receipt;
+      // SQL tests cover its transaction and execution ownership constraints.
+      if (payload.p_input_tokens !== undefined) run.input_tokens = payload.p_input_tokens;
+      if (payload.p_output_tokens !== undefined) run.output_tokens = payload.p_output_tokens;
+      return { data: true, error: null };
     }
     const attempt = payload.p_attempt_count as number;
     const stale =
@@ -1413,6 +1419,54 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
     },
   );
+
+  it("durably prepares usage before remote publication returns pending", async () => {
+    const { admin, rpc, runRows, insertedArtifacts, updatedJobs, updatedRuns } = buildAdminMock({
+      session: baseSession(),
+    });
+    const actual = await vi.importActual<typeof import("./source-delivery")>("./source-delivery");
+    mocked.prepareSourceDelivery.mockImplementationOnce(actual.prepareSourceDelivery);
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Durable output",
+          usage: { inputTokens: 10, outputTokens: 20 },
+        },
+      ]),
+    );
+    mocked.publishSessionCheckpoint.mockImplementationOnce(async () => {
+      expect(runRows[0]).toMatchObject({ status: "running", input_tokens: 10, output_tokens: 20 });
+      expect(rpc).toHaveBeenCalledWith(
+        "prepare_session_source_and_checkpoint_publication",
+        expect.objectContaining({ p_run_id: "run-1", p_input_tokens: 10, p_output_tokens: 20 }),
+      );
+      return "pending";
+    });
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        publication: expect.objectContaining({ usage: { inputTokens: 10, outputTokens: 20 } }),
+      }),
+    );
+    expect(runRows[0]).toMatchObject({ status: "running", input_tokens: 10, output_tokens: 20 });
+    expect(insertedArtifacts).toEqual([]);
+    expect(updatedJobs).toEqual([]);
+    expect(updatedRuns).not.toContainEqual(
+      expect.objectContaining({ input_tokens: expect.anything() }),
+    );
+    const preparationIndex = rpc.mock.calls.findIndex(
+      ([name]) => name === "prepare_session_source_and_checkpoint_publication",
+    );
+    expect(rpc.mock.invocationCallOrder[preparationIndex]).toBeLessThan(
+      mocked.publishSessionCheckpoint.mock.invocationCallOrder[0],
+    );
+    expect(rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+  });
 
   it("captures the prompt and every runtime credential registered by the agent invocation", async () => {
     const { admin } = buildAdminMock({ session: baseSession() });
@@ -2310,11 +2364,13 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
   });
 
-  it("preserves source delivery and successful publication when usage accounting fails", async () => {
-    const { admin, insertedArtifacts, runRows } = buildAdminMock({
+  it("does not publish when combined source and usage preparation fails", async () => {
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
       session: baseSession(),
-      usageUpdateError: { message: "usage unavailable" },
+      sourcePreparationError: { message: "usage unavailable" },
     });
+    const actual = await vi.importActual<typeof import("./source-delivery")>("./source-delivery");
+    mocked.prepareSourceDelivery.mockImplementationOnce(actual.prepareSourceDelivery);
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
         {
@@ -2326,10 +2382,15 @@ describe("processPipelineJob (generic stage runner)", () => {
         },
       ]),
     );
-    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
-    expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
-    expect(insertedArtifacts).toHaveLength(1);
-    expect(runRows[0].status).toBe("success");
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(rpc).toHaveBeenCalledWith(
+      "prepare_session_source_and_checkpoint_publication",
+      expect.objectContaining({ p_input_tokens: 10, p_output_tokens: 20 }),
+    );
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(insertedArtifacts).toEqual([]);
+    expect(runRows[0]).not.toHaveProperty("input_tokens");
+    expect(runRows[0]).not.toHaveProperty("output_tokens");
     expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
   });
 

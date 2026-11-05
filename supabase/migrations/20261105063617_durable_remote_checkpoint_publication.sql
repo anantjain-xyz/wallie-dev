@@ -503,11 +503,15 @@ create trigger guard_source_artifact_publication before insert on public.session
 create function public.prepare_session_source_and_checkpoint_publication(
   p_run_id uuid,p_repository_id uuid,p_base_branch text,p_base_sha text,p_head_sha text,
   p_title text,p_body text,p_checkpoint_path text,p_bundle_sha256 text,p_bundle_base64 text,
-  p_expected_artifact_version integer,p_artifact_md text,p_deadline_at timestamptz default null
+  p_expected_artifact_version integer,p_artifact_md text,p_deadline_at timestamptz default null,
+  p_input_tokens bigint default null,p_output_tokens bigint default null
 ) returns boolean language plpgsql security invoker set search_path='' as $$
 declare owner_session public.sessions%rowtype; owned_job public.agent_jobs%rowtype; owned_run public.agent_runs%rowtype;
 begin
   perform internal.assert_checkpoint_publication_service();
+  if p_input_tokens<0 or p_output_tokens<0 then
+    raise exception 'Token usage must not be negative.' using errcode='23514';
+  end if;
   -- Take the complete lifecycle chain before either preparation API can
   -- mutate a run or intent. This order also holds when a legacy implementation
   -- of source preparation is still installed during a rolling deployment.
@@ -530,12 +534,21 @@ begin
   if not internal.prepare_session_checkpoint_publication(p_run_id,p_expected_artifact_version,p_artifact_md,p_deadline_at) then
     raise exception 'Checkpoint publication intent could not be prepared.' using errcode='23514';
   end if;
+  -- Save usage before remote work or a pending return. A maintenance worker
+  -- may perform adoption later without the original processor's memory.
+  update public.agent_runs set input_tokens=coalesce(p_input_tokens,input_tokens),
+    output_tokens=coalesce(p_output_tokens,output_tokens)
+    where id=owned_run.id and workspace_id=owner_session.workspace_id and session_id=owner_session.id
+      and agent_job_id=owned_job.id and attempt_count=owned_job.attempt_count and status='running';
+  if not found then
+    raise exception 'Checkpoint preparation lost execution ownership.' using errcode='23514';
+  end if;
   return true;
 end;
 $$;
-revoke all on function public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz)
+revoke all on function public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz,bigint,bigint)
   from public,anon,authenticated;
-grant execute on function public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz)
+grant execute on function public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz,bigint,bigint)
   to service_role;
 
 -- A stall detector's preliminary read is advisory. Serialize the decision with

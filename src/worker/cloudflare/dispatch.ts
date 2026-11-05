@@ -62,7 +62,9 @@ export async function recoverAttempt(
       if (config.error) throw new Error("Could not load retry policy.");
       if (typeof config.data?.value_json === "number") maxRetries = config.data.value_json;
     }
-    const result = await admin.rpc("fail_session_job_attempt", {
+    // Interruption can follow a committed publication intent whose response was
+    // lost. Let the transaction guard preserve it until its original deadline.
+    const result = await admin.rpc("fail_stalled_session_job_attempt", {
       p_job_id: jobId,
       p_attempt_count: attemptCount,
       p_run_id: run?.id,
