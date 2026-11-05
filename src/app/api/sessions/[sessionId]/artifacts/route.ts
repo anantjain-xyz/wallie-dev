@@ -204,7 +204,8 @@ export async function GET(request: Request, context: RouteContext) {
         createdAt: artifactRow.created_at,
         id: artifactRow.id,
         payload,
-        sanitizedHtml: typeof payload === "string" ? await renderMarkdownToHtml(payload) : null,
+        sanitizedHtml:
+          typeof payload === "string" ? await renderMarkdownToHtml(payload, true) : null,
         stageSlug: selectedStage.slug,
         version: artifactRow.version,
       },

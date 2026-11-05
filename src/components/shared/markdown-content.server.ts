@@ -12,6 +12,7 @@ import type { SanitizedMarkdownHtml } from "@/components/shared/markdown-content
 type HtmlNode = {
   children?: HtmlNode[];
   properties?: Record<string, unknown>;
+  position?: { start: { offset?: number }; end: { offset?: number } };
   tagName?: string;
   type: string;
   value?: string;
@@ -113,6 +114,60 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
   }
 }
 
+/** Attach only server-derived source coordinates, after sanitization. */
+function reviewSourcePositions(source: string) {
+  const offsets = new Map<number, number>();
+  let utf16 = 0;
+  let points = 0;
+  for (const point of source) {
+    offsets.set(utf16, points++);
+    utf16 += point.length;
+  }
+  offsets.set(utf16, points);
+  function visit(node: HtmlNode) {
+    for (let index = 0; index < (node.children?.length ?? 0); index++) {
+      const child = node.children![index]!;
+      if (child.type === "text" && child.value) {
+        let start = child.position?.start.offset;
+        let end = child.position?.end.offset;
+        // Code nodes create synthetic text children. Map only a unique exact
+        // occurrence within their positioned source; ambiguous/normalized text
+        // remains available through the keyboard block picker.
+        if (start === undefined && node.tagName === "code") {
+          const parentStart = node.position?.start.offset;
+          const parentEnd = node.position?.end.offset;
+          if (parentStart !== undefined && parentEnd !== undefined) {
+            const raw = source.slice(parentStart, parentEnd);
+            const found = raw.indexOf(child.value);
+            if (found >= 0 && raw.indexOf(child.value, found + 1) < 0) {
+              start = parentStart + found;
+              end = start + child.value.length;
+            }
+          }
+        }
+        if (
+          start !== undefined &&
+          end !== undefined &&
+          source.slice(start, end) === child.value &&
+          offsets.has(start) &&
+          offsets.has(end)
+        ) {
+          node.children![index] = {
+            type: "element",
+            tagName: "span",
+            properties: {
+              dataReviewTextStart: offsets.get(start),
+              dataReviewTextEnd: offsets.get(end),
+            },
+            children: [child],
+          };
+        }
+      } else visit(child);
+    }
+  }
+  return (tree: unknown) => visit(tree as HtmlNode);
+}
+
 function styleMarkdownHtml() {
   return (tree: unknown) => styleNode(tree as HtmlNode);
 }
@@ -123,15 +178,15 @@ export type RenderedMarkdown = Readonly<{
 }>;
 
 /** The only parsing, GFM, sanitization, and styling pipeline for artifact Markdown. */
-export function renderMarkdown(markdown: string): RenderedMarkdown {
-  const rendered = unified()
+export function renderMarkdown(markdown: string, reviewSource = false): RenderedMarkdown {
+  const processor = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkRehype)
     .use(rehypeSanitize)
-    .use(styleMarkdownHtml)
-    .use(rehypeStringify)
-    .processSync(markdown);
+    .use(styleMarkdownHtml);
+  if (reviewSource) processor.use(reviewSourcePositions, markdown);
+  const rendered = processor.use(rehypeStringify).processSync(markdown);
   const bodyHtml = String(rendered) as SanitizedMarkdownHtml;
 
   return {
@@ -141,6 +196,6 @@ export function renderMarkdown(markdown: string): RenderedMarkdown {
 }
 
 /** Preserve the artifact API's existing full-document-fragment contract. */
-export function renderMarkdownToHtml(markdown: string): string {
-  return renderMarkdown(markdown).html;
+export function renderMarkdownToHtml(markdown: string, reviewSource = false): string {
+  return renderMarkdown(markdown, reviewSource).html;
 }

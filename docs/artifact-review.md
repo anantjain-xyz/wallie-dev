@@ -27,12 +27,22 @@ flowchart LR
 
 Use an authenticated user client with the typed repository in `src/features/sessions/review/repository.ts`. Write RPCs derive the human actor from `auth.uid()`; they accept no caller-supplied actor. Table DML is revoked for authenticated and service roles. RLS restricts reads to active workspace members.
 
-- `create_artifact_review_thread`: validate source and identity, create thread and initial comment atomically.
-- `write_artifact_review_comment`: reply or edit an owned comment using its expected revision.
-- `transition_artifact_review_thread`: change lifecycle state using the expected thread revision and an explicit reason.
+- `create_artifact_review_thread_once`: validate source and identity, create thread and initial comment atomically.
+- `write_artifact_review_comment_once`: reply or edit an owned comment using its expected revision.
+- `transition_artifact_review_thread_once`: change lifecycle state using the expected thread revision and an explicit reason.
 - `list_artifact_review_{threads,comments,events}`: separate bounded pages; no eager nested history.
 
-This foundation does not yet gate artifact approval on blocking threads. Feedback batches, revision comparison, and approval serialization are separate milestones in OP-502 through OP-504. No user-facing commenting controls ship in OP-500.
+Every write requires a caller-generated request UUID. Keep the same UUID and payload while retrying an uncertain save. Private transaction receipts return the original result without duplicate comments, events, or revision increments. Reusing a UUID with different content fails with a conflict. Current membership, archive state, and lifecycle authority are checked on recovery too.
+
+## Inline review
+
+- Open **Comments** in the artifact reader. Select text and choose **Comment on selection**, or use the keyboard-accessible **Comment on a block** picker.
+- Threads, replies, own-comment edits and lifecycle changes persist through authenticated session review APIs. Comment bodies render as escaped plain text.
+- Realtime thread events refresh bounded thread/comment pages without a route reload. Drafts stay separate from fetched snapshots and survive failed saves and closing the panel.
+- Thread links include the artifact UUID/version. Older versions and prior stages show a historical label; archived sessions allow reading only.
+- Saves and lifecycle changes do not enqueue an agent execution.
+
+This foundation does not yet gate artifact approval on blocking threads. Feedback batches, revision comparison, and approval serialization are separate milestones in OP-502 through OP-504. OP-501 adds the commenting controls; feedback submission remains separate.
 
 ## Verification
 

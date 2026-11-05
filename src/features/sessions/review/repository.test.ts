@@ -94,7 +94,10 @@ function expectRequest(
   expect(JSON.parse(String(options?.body))).toEqual(body);
 }
 
+const requestId = "d191648b-5e54-4812-98a4-127568f6773b";
+
 const createInput = {
+  requestId,
   workspaceId: "workspace-1",
   sessionId: "session-1",
   stageId: "stage-1",
@@ -110,7 +113,8 @@ describe("artifact review repository", () => {
     const { supabase, fetcher } = clientWithResponse(thread());
 
     expect(await createArtifactReviewThread(supabase, createInput)).toEqual(thread());
-    expectRequest(fetcher, "create_artifact_review_thread", {
+    expectRequest(fetcher, "create_artifact_review_thread_once", {
+      p_request_id: requestId,
       p_workspace_id: "workspace-1",
       p_session_id: "session-1",
       p_stage_id: "stage-1",
@@ -127,12 +131,14 @@ describe("artifact review repository", () => {
 
     expect(
       await writeArtifactReviewComment(supabase, {
+        requestId,
         workspaceId: "workspace-1",
         threadId: "thread-1",
         body: "Reply",
       }),
     ).toEqual(comment());
-    expectRequest(fetcher, "write_artifact_review_comment", {
+    expectRequest(fetcher, "write_artifact_review_comment_once", {
+      p_request_id: requestId,
       p_workspace_id: "workspace-1",
       p_thread_id: "thread-1",
       p_body: "Reply",
@@ -143,13 +149,15 @@ describe("artifact review repository", () => {
     const { supabase, fetcher } = clientWithResponse(comment());
 
     await writeArtifactReviewComment(supabase, {
+      requestId,
       workspaceId: "workspace-1",
       threadId: "thread-1",
       commentId: "comment-1",
       expectedRevision: 3,
       body: "Clarified request",
     });
-    expectRequest(fetcher, "write_artifact_review_comment", {
+    expectRequest(fetcher, "write_artifact_review_comment_once", {
+      p_request_id: requestId,
       p_workspace_id: "workspace-1",
       p_thread_id: "thread-1",
       p_comment_id: "comment-1",
@@ -165,6 +173,7 @@ describe("artifact review repository", () => {
 
       expect(
         await transitionArtifactReviewThread(supabase, {
+          requestId,
           workspaceId: "workspace-1",
           threadId: "thread-1",
           expectedRevision: 4,
@@ -172,7 +181,8 @@ describe("artifact review repository", () => {
           reason: "Human review decision",
         }),
       ).toEqual(thread());
-      expectRequest(fetcher, "transition_artifact_review_thread", {
+      expectRequest(fetcher, "transition_artifact_review_thread_once", {
+        p_request_id: requestId,
         p_workspace_id: "workspace-1",
         p_thread_id: "thread-1",
         p_expected_revision: 4,
@@ -274,12 +284,14 @@ describe("artifact review repository", () => {
       createArtifactReviewThread(supabase, createInput),
     (supabase: ReturnType<typeof clientWithResponse>["supabase"]) =>
       writeArtifactReviewComment(supabase, {
+        requestId,
         workspaceId: "workspace-1",
         threadId: "thread-1",
         body: "Reply",
       }),
     (supabase: ReturnType<typeof clientWithResponse>["supabase"]) =>
       transitionArtifactReviewThread(supabase, {
+        requestId,
         workspaceId: "workspace-1",
         threadId: "thread-1",
         expectedRevision: 1,
@@ -310,6 +322,7 @@ describe("artifact review repository", () => {
 
     await expect(
       writeArtifactReviewComment(supabase, {
+        requestId,
         workspaceId: "workspace-1",
         threadId: "thread-1",
         commentId: "comment-1",
