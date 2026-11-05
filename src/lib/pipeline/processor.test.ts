@@ -210,6 +210,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     updated_at: new Date().toISOString(),
     attempt_count: 1,
     scheduled_at: null,
+    git_continuity_release_revision: null,
     ...overrides,
   };
 }
@@ -284,6 +285,8 @@ interface MockOptions {
   gitInputReadError?: { message: string };
   pinInputMiss?: boolean;
   pinInputError?: { message: string };
+  startAdmissionError?: { code: string; message: string };
+  releaseDeferError?: { message: string };
   currentAttempt?: number;
   replacementJobId?: string;
   failRpcError?: { message: string };
@@ -706,7 +709,13 @@ function buildAdminMock(opts: MockOptions) {
       opts.jobStatus === "canceled" ||
       (opts.replacementJobId && opts.replacementJobId !== payload.p_job_id) ||
       (opts.currentAttempt ?? currentAttempt ?? attempt) > attempt;
+    if (fn === "defer_session_job_for_continuity_release") {
+      if (opts.releaseDeferError) return { data: null, error: opts.releaseDeferError };
+      updatedJobs.push({ status: "queued" });
+      return { data: true, error: null };
+    }
     if (fn === "start_session_job_attempt") {
+      if (opts.startAdmissionError) return { data: null, error: opts.startAdmissionError };
       if (
         opts.claimSucceeds === false ||
         stale ||
@@ -3027,6 +3036,36 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect.objectContaining({ p_job_id: "job-1", p_attempt_count: 3, p_run_id: "run-1" }),
     );
   });
+
+  it.each([false, true])(
+    "defers a release-paused claim without failing or bootstrapping it (response lost: %s)",
+    async (lostReply) => {
+      const { admin, rpc, insertedRuns, insertedArtifacts, insertedMessages, updatedSessions } =
+        buildAdminMock({
+          session: baseSession(),
+          startAdmissionError: { code: "P499P", message: "Continuity is paused" },
+          ...(lostReply ? { releaseDeferError: { message: "Response lost" } } : {}),
+        });
+      expect(await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) })).toMatchObject(
+        {
+          result: "idle",
+          runId: null,
+        },
+      );
+      expect(rpc).toHaveBeenCalledWith("defer_session_job_for_continuity_release", {
+        p_job_id: "job-1",
+        p_attempt_count: 3,
+      });
+      expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+      expect(rpc).not.toHaveBeenCalledWith("fail_stalled_session_job_attempt", expect.anything());
+      expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+      expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+      expect(insertedRuns).toEqual([]);
+      expect(insertedArtifacts).toEqual([]);
+      expect(insertedMessages).toEqual([]);
+      expect(updatedSessions).toEqual([]);
+    },
+  );
 
   it("retires a refused startup by captured claim without guessing a run", async () => {
     const { admin, rpc } = buildAdminMock({

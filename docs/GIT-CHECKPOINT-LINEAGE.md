@@ -69,7 +69,7 @@ Closed and merged epochs are terminal. The publisher checks before a Git update 
 
 New managed sessions suppress legacy attempt publishers, including claim rechecks immediately before old remote mutations. Enrollment waits for existing legacy leases to expire. Known open/unknown legacy PRs and attempted but unreceipted legacy deliveries halt enrollment with `legacy_pr_cutover_required`; reconcile that history or start a new session. Lease expiry cannot revoke an already-sent GitHub request. Historical links remain historical rather than being silently adopted as canonical. Initial no-code output creates no branch or empty PR. Later text-only outputs preserve the existing code and canonical PR. Agents receive read-only checkout tokens and a typed platform policy requiring local work; trusted publishers alone receive repository write tokens.
 
-Run `node --import ./scripts/register-server-only.mjs --import tsx scripts/smoke-canonical-pr.ts --repository <owner/private-smoke-repo> --execute` against a new, empty, private disposable repository for the live Git/API smoke. It retains fixture refs and PR history for inspection and never touches production repositories or deployments.
+Use `scripts/smoke-continuity-release.ts` for the combined live-provider/GitHub proof in the existing `anantjain-xyz/wallie-dev` repository. It uses unique test refs and its own PR base while preserving `main`, repository settings and unrelated history. Do not create per-run repositories. The older standalone `smoke-canonical-pr.ts` is a historical empty-fixture helper; it is superseded by the combined release proof. See [Worker operations](WORKER-OPERATIONS.md#isolated-release-proof) for execution and integration boundaries.
 
 ## Follow-up boundaries
 

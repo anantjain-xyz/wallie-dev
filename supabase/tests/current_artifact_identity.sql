@@ -108,7 +108,7 @@ create temp table identity_retry as select queued.* from public.sessions session
 cross join lateral public.enqueue_session_job_with_run(session.id,session.workspace_id,session.current_stage_id,
   'c1b2c3d4-0001-4000-8000-000000000001','manual_retry','codex','gpt-5.5','project') queued
 where session.id=(select session_id from identity_session);
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from identity_retry);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from identity_retry);
 select is(public.start_session_job_attempt((select job_id from identity_retry),1,
   (select current_stage_id from public.sessions where id=(select session_id from identity_session)),1,'codex','gpt-5.5','project'),
   (select run_id from identity_retry),'explicit rerun can start from the unresolved historical version');

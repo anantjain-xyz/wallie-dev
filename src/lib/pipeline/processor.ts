@@ -62,6 +62,10 @@ import {
 } from "./checkpoint-publication";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { checkoutPinnedGitInput } from "./git-input";
+import {
+  deferSessionJobForGitContinuityRelease,
+  isGitContinuityReleasePause,
+} from "./git-continuity-release";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
 
 type AdminClient = SupabaseClient<Database>;
@@ -271,7 +275,17 @@ async function runStage(input: {
       p_run_type: inferWallieRunMode(repository.repositoryId),
       p_branch_name: branch,
     });
-    if (startError) throw startError;
+    if (startError) {
+      if (isGitContinuityReleasePause(startError)) {
+        await deferSessionJobForGitContinuityRelease({
+          admin,
+          jobId: job.id,
+          attemptCount: job.attempt_count,
+        });
+        return { jobId: job.id, processed: true, result: "idle", runId: null };
+      }
+      throw startError;
+    }
     runId = startedRunId;
     throwIfAborted(signal);
     if (!runId) {

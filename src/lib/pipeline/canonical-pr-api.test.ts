@@ -288,6 +288,14 @@ it("creates only the requested canonical head/base and validates the returned re
   );
 });
 
+it("can explicitly create a draft fixture PR while retaining the normal default", async () => {
+  const { api, fetch } = setup([Response.json(pr({ draft: true }), { status: 201 })]);
+  expect(
+    (await api.create({ title: "Smoke fixture", body: "Do not merge", draft: true })).draft,
+  ).toBe(true);
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({ draft: true });
+});
+
 it("reconciles a created PR after losing its POST response without automatically sending another POST", async () => {
   const { api, fetch } = setup();
   let saved: ProviderPr | null = null;

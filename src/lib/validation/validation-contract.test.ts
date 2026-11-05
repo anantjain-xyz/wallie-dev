@@ -63,4 +63,25 @@ describe("validation contract verifier", () => {
       'Validation contract references missing package script "typecheck". Restore "typecheck" in package.json#scripts with command "tsc --noEmit".',
     );
   });
+
+  it.each(["if", "continue-on-error"])(
+    "rejects a continuity fixture bypass using %s",
+    (control) => {
+      const projectDirectory = mkdtempSync(join(tmpdir(), "wallie-validation-contract-"));
+      temporaryDirectories.push(projectDirectory);
+      cpSync(resolve(fixturesDirectory, "passing"), projectDirectory, { recursive: true });
+      const workflowPath = join(projectDirectory, ".github/workflows/test.yml");
+      const workflow = parse(readFileSync(workflowPath, "utf8"));
+      const fixture = workflow.jobs["database-tests"].steps.find(
+        (step: { run?: string }) => step.run === "pnpm check:continuity",
+      );
+      fixture[control] = control === "if" ? "false" : true;
+      writeFileSync(workflowPath, stringify(workflow));
+      expect(
+        verifyValidationContract(projectDirectory).some((error) =>
+          error.includes("approved exact shape"),
+        ),
+      ).toBe(true);
+    },
+  );
 });

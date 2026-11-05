@@ -22,7 +22,7 @@ begin
   select * into fixture from public.create_session_with_first_job(
     'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
     title,'Atomic review fixture','codex','gpt-5.5',null,null,null,(select id from review_pipeline));
-  update public.agent_jobs set status='running',attempt_count=1 where id=fixture.job_id;
+  update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=fixture.job_id;
   select s.current_stage_id into expected_stage from public.sessions s where s.id=fixture.session_id;
   perform public.start_session_job_attempt(fixture.job_id,1,expected_stage,0,'codex','gpt-5.5','project');
   perform public.publish_session_job_attempt(fixture.job_id,1,fixture.run_id,0,'Reviewed markdown');
@@ -112,7 +112,7 @@ select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid,f.session_id,s.id,s.slug,4,t
 from history_fixture f cross join public.pipeline_stages s where s.pipeline_id=(select id from review_pipeline) and s.slug='review-build';
 create temp table history_approval as select a.* from history_fixture f cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a;
 select is((select current_artifact_version from history_approval),4,'handoff returns the retained next-stage history pointer');
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from history_approval);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from history_approval);
 select is(public.start_session_job_attempt((select job_id from history_approval),1,(select current_stage_id from history_approval),4,'codex','gpt-5.5','project'),(select run_id from history_approval),'next execution starts above the retained history');
 select ok(public.publish_session_job_attempt((select job_id from history_approval),1,(select run_id from history_approval),4,'New build'),'next publication does not collide with old versions');
 select is((select current_artifact_version from public.sessions where id=(select session_id from history_fixture)),5,'publication advances retained history monotonically');
@@ -216,7 +216,7 @@ create temp table renamed_history_approval as select a.* from renamed_history_fi
 cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a;
 select is((select current_artifact_version from renamed_history_approval),4,
   'approval carries retained history across a downstream stage slug rename');
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from renamed_history_approval);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from renamed_history_approval);
 select is(public.start_session_job_attempt((select job_id from renamed_history_approval),1,
   (select current_stage_id from renamed_history_approval),4,'codex','gpt-5.5','project'),
   (select run_id from renamed_history_approval),'renamed downstream execution starts above the stable stage history');
@@ -257,7 +257,7 @@ create temp table reused_slug_approval as select a.* from reused_slug_fixture f
 cross join lateral pg_temp.approve_review(f.session_id,f.stage_id,f.artifact_id) a;
 select is((select current_artifact_version from reused_slug_approval),4,
   'approval carries its stable stage version independently of another stage historical slug');
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from reused_slug_approval);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from reused_slug_approval);
 select is(public.start_session_job_attempt((select job_id from reused_slug_approval),1,
   (select current_stage_id from reused_slug_approval),4,'codex','gpt-5.5','project'),
   (select run_id from reused_slug_approval),'reused-slug execution starts from the approved base version');
@@ -304,7 +304,7 @@ create temp table completion_identity_session as select * from public.create_ses
   'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
   'Approve two reused labels','Preserve both stable stage decisions','codex','gpt-5.5',null,null,null,
   (select id from completion_identity_pipeline));
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from completion_identity_session);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from completion_identity_session);
 select public.start_session_job_attempt((select job_id from completion_identity_session),1,
   (select id from completion_identity_stages where position=1),0,'codex','gpt-5.5','project');
 select ok(public.publish_session_job_attempt((select job_id from completion_identity_session),1,
@@ -319,7 +319,7 @@ create temp table completion_first_snapshot as select id,to_jsonb(completion) as
 from public.session_phase_completions completion where session_id=(select session_id from completion_identity_session);
 update public.pipeline_stages set slug='completion-discovery' where id=(select id from completion_identity_stages where position=1);
 update public.pipeline_stages set slug='completion-plan' where id=(select id from completion_identity_stages where position=2);
-update public.agent_jobs set status='running',attempt_count=1 where id=(select job_id from completion_first_approval);
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from completion_first_approval);
 select public.start_session_job_attempt((select job_id from completion_first_approval),1,
   (select id from completion_identity_stages where position=2),0,'codex','gpt-5.5','project');
 select ok(public.publish_session_job_attempt((select job_id from completion_first_approval),1,

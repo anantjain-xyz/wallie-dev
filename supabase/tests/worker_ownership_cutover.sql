@@ -19,7 +19,7 @@ create temp table publication as select * from public.create_session_with_first_
   'b1b2c3d4-0001-4000-8000-000000000001', 'c1b2c3d4-0001-4000-8000-000000000001',
   'Publish canonical markdown', 'Publish only with an execution owner.', 'codex', 'gpt-5.5',
   null, null, '12b2c3d4-0001-4000-8000-000000000001', null);
-update public.agent_jobs set status = 'running', attempt_count = 1
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status = 'running', attempt_count = 1
 where id = (select job_id from publication);
 select is(public.start_session_job_attempt((select job_id from publication), 1,
   (select current_stage_id from public.sessions where id = (select session_id from publication)),

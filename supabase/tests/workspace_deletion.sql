@@ -98,8 +98,9 @@ select 'de200000-0000-4000-8000-000000000001', stage.workspace_id, 99003001, 'De
   'c1b2c3d4-0001-4000-8000-000000000001',stage.pipeline_id,stage.id
 from public.pipeline_stages stage join public.pipelines pipeline on pipeline.id=stage.pipeline_id
 where stage.workspace_id='b1b2c3d4-0001-4000-8000-000000000001' and pipeline.is_default and stage.slug='plan';
-insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count)
-select 'de200000-0000-4000-8000-000000000002',s.workspace_id,s.id,s.current_stage_id,'plan','Plan','assignment','running',1
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count,git_continuity_release_revision)
+select 'de200000-0000-4000-8000-000000000002',s.workspace_id,s.id,s.current_stage_id,'plan','Plan','assignment','running',1,
+  (select revision from public.get_git_continuity_release_state())
 from public.sessions s where s.id='de200000-0000-4000-8000-000000000001';
 insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,stage_name,model_provider,model_name,run_type)
 select 'de200000-0000-4000-8000-000000000003',j.workspace_id,j.session_id,j.id,j.stage_id,j.stage_slug,j.stage_name,'codex','gpt-5.5','project'

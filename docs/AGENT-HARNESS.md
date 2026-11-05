@@ -38,7 +38,7 @@ resource ownership and cleanup, see
    substitution.
 5. It resolves the credential belonging to the human who created the session.
 6. It resolves the pinned repository, mints a GitHub installation token scoped to that repository with only
-   contents and pull-request write permissions,
+   read-only contents permissions,
    derives the stage branch, and loads the selected sandbox connection.
 7. The provider creates a sandbox and reports its identity before setup. The
    processor persists provider, connection revision, and sandbox ownership on
@@ -49,12 +49,16 @@ resource ownership and cleanup, see
    writes the prompt and provider auth there with owner-only permissions, starts
    the CLI, and streams normalized, sanitized events.
 10. The processor persists events, concatenates text events into the artifact,
-    optionally opens or refreshes the stage PR, and CAS-publishes the artifact
-    for review.
+    captures the source and immutable publication intent, verifies its retained
+    ref, then atomically accepts the checkpoint/artifact for review. Trusted
+    maintenance synchronizes one canonical PR separately.
 11. The sandbox is stopped in `finally`, whether the run succeeds or fails.
 
-Every retry creates a fresh sandbox and checks out the stage branch again. A
-Wallie session does not own a persistent filesystem across attempts.
+Every retry creates a fresh sandbox and restores the same generation's fixed input
+SHA/ref/repository before agent bootstrap. Review handoff selects the accepted
+checkpoint for a new generation. A session does not own a persistent filesystem
+across attempts. Agents work locally; their read-only GitHub credentials and typed
+platform policy leave remote publication to the trusted worker.
 
 ## Prompt assembly
 
@@ -167,20 +171,19 @@ the target repository remains their runtime semantic owner.
 - Bundles are limited to 4 MiB and stored privately under
   `session-source-checkpoints/<workspace>/<run>.bundle`. If Storage is unavailable,
   a service-only outbox row can hold a bounded base64 fallback.
-- `publish_session_job_with_source` requires a prepared checkpoint and delegates
-  exact job/attempt/run, stage, artifact-version, and deadline checks to the
-  atomic publication transaction. The artifact and run become successful together.
-- Only published runs enter GitHub delivery. A two-minute lease and captured lease
-  ID fence worker retries; a one-minute delivery deadline bounds network work.
-- Delivery restores the bundle into a temporary bare Git repository, verifies
-  its digest and prerequisite commits, pushes the distinct attempt branch without
-  force, and idempotently creates or reuses its PR. Source code is never executed
-  by the recovery worker.
-- Every delivery resolves the current repository and installation, verifies
-  GitHub's numeric repository identity, and scopes its token to that numeric ID.
-  Reusing a PR requires proof that its head contains the delivered commit.
-- PR metadata uses GitHub's update timestamp and exact repository/PR identity.
-  Token usage or completion-history failures cannot discard the delivery record.
+- Source and artifact text are persisted in one immutable intent before remote I/O.
+  The original attempt deadline, exact run/attempt, repository and bundle digest
+  remain fixed through worker restart. Remote retained-ref proof precedes atomic
+  artifact/checkpoint adoption; no-code output inherits its actual restore ref.
+- Trusted PR synchronization is independent: one immutable epoch fixes the PR
+  identity, atomic code/fence leases preserve external commits, and publisher and
+  webhook observations share a token reserved before their final GET. A PR/head
+  mismatch is unsynchronized, never merge readiness.
+- Closed/merged PRs are terminal and require an explicit human successor. Unknown
+  creation outcomes remain GET-only until reconciled. Agents never push or create
+  PRs themselves, including when older customized stage text asks them to do so.
+- Each trusted remote operation verifies the connected installation and numeric
+  repository identity. Recovery uses bare Git plumbing without source execution.
 
 ## Failure, retry, and teardown
 
@@ -200,6 +203,24 @@ the target repository remains their runtime semantic owner.
 - Cancellation and workspace deletion retain their authority to stop sandboxes.
   Deletion blocks new delivery claims/uploads and drains checkpoint storage before
   removing tenant rows and credentials.
+
+## Continuity release contract
+
+The database release control starts paused. Fresh-session enrollment is explicit
+and immutable; pre-release sessions require a new session rather than a guessed
+head import. Admission/revision checks span claim, execution start and canonical
+promotion; pause defers unstarted claims without failing their generation. Durable
+checkpoint recovery remains available while paused. See
+[Worker operations](WORKER-OPERATIONS.md#controlled-checkpoint-continuity-release)
+for operator enable/disable, legacy recovery and retention steps.
+
+The opt-in `pnpm check:continuity` fixture exercises the actual processor and DB
+with deterministic runner/provider boundaries; real-provider qualification uses
+`scripts/smoke-continuity-release.ts`. Both record exact input/output lineage,
+review transitions, restart recovery and stable canonical PR identity. Ordinary
+`pnpm test` remains independent of a local database. Candidate cleanup retires
+only unadopted, expired owned refs after seven days and cannot delete referenced
+lineage; private payload-retention exceptions are documented in Worker operations.
 
 ## Known implementation gaps
 

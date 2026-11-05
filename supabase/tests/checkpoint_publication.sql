@@ -15,7 +15,7 @@ begin
     'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
     label,'Publish durable exact code','codex','gpt-5.5',null,null,null,null);
   update public.sessions set github_repository_id='12b2c3d4-0001-4000-8000-000000000001' where id=f.session_id;
-  update public.agent_jobs set status='running',attempt_count=1 where id=f.job_id;
+  update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=f.job_id;
   perform public.start_session_job_attempt(f.job_id,1,(select current_stage_id from public.sessions where id=f.session_id),
     0,'codex','gpt-5.5','project','wallie/publication-'||f.run_id::text);
   perform public.pin_session_job_git_input(f.job_id,1,f.run_id,'12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40));
@@ -224,7 +224,7 @@ select ok((select c.output_kind='no-code' and c.output_ref is null and c.input_s
 insert into publication_fixtures(label,run_id) values('stale',pg_temp.publication_fixture('Stale publication'));
 select public.prepare_session_checkpoint_publication((select run_id from publication_fixtures where label='stale'),0,'Stale candidate');
 update publication_fixtures set claim_id=public.claim_session_checkpoint_publication(run_id) where label='stale';
-update public.agent_jobs set attempt_count=2 where id=(select job_id from public.session_checkpoint_publications
+update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), attempt_count=2 where id=(select job_id from public.session_checkpoint_publications
   where run_id=(select run_id from publication_fixtures where label='stale'));
 select is((select public.assert_session_checkpoint_publication_claim(run_id,claim_id) from publication_fixtures where label='stale'),false,
   'new claim generation invalidates the prior publication lease');

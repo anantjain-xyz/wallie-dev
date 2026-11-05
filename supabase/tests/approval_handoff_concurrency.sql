@@ -17,9 +17,10 @@ select session.id,session.workspace_id,stage.id from public.sessions session
 join public.pipeline_stages stage on stage.pipeline_id=session.pipeline_id
 where session.id in ('af000000-0000-4000-8000-000000000001','af000000-0000-4000-8000-000000000002','af000000-0000-4000-8000-000000000003')
 on conflict do nothing;
-insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count)
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,attempt_count,git_continuity_release_revision)
 select ('af000000-0000-4000-8000-'||lpad((100+n)::text,12,'0'))::uuid,
-  session.workspace_id,session.id,stage.id,stage.slug,stage.name,'assignment','running',1
+  session.workspace_id,session.id,stage.id,stage.slug,stage.name,'assignment','running',1,
+  (select revision from public.get_git_continuity_release_state())
 from generate_series(1,3) n join public.sessions session on session.id=('af000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid
 join public.pipeline_stages stage on stage.id=session.current_stage_id;
 insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,stage_name,model_provider,model_name,run_type)

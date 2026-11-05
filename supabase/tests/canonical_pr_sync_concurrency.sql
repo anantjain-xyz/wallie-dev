@@ -33,7 +33,7 @@ begin
       'Canonical PR race '||case_label,'Synchronize accepted code','codex','gpt-5.5',null,null,
       '498c0000-0000-4000-8000-000000000006','498c0000-0000-4000-8000-000000000003',
       array['498c0000-0000-4000-8000-000000000004'::uuid]);
-    update public.agent_jobs set status='running',attempt_count=1 where id=created.job_id;
+    update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=created.job_id;
     started:=public.start_session_job_attempt(created.job_id,1,'498c0000-0000-4000-8000-000000000004',0,
       'codex','gpt-5.5','project','wallie/canonical-race-'||created.job_id::text);
     perform public.pin_session_job_git_input(created.job_id,1,started,

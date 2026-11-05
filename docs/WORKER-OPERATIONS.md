@@ -82,41 +82,148 @@ work, while the database ownership guards protect replacement attempts.
 Do not manually set a queued job to running. That bypasses row locks, workspace
 capacity, mutation locks, attempt accounting, and heartbeat ownership.
 
+## Controlled checkpoint continuity release
+
+Checkpoint continuity starts **paused** after the OP-499 migration. The database
+control is shared by Node and Cloudflare workers; changing a process environment
+variable cannot override it. No migration, deployment hook, or production worker
+automatically enables this release.
+
+Use trusted service-role RPCs to inspect `get_git_continuity_release_state()` and
+call `set_git_continuity_release(p_enabled, p_expected_revision, p_reason)` with
+the observed revision and an operational reason. A stale expected revision returns
+no row: reload and review the newer decision. Each actual toggle advances an
+audited revision; do not edit the private control or audit tables.
+
+```sql
+-- These are service-role RPC calls; run through an authorized operator client.
+select * from public.get_git_continuity_release_state();
+-- Replace N with the returned revision, after completing the release proof.
+select * from public.set_git_continuity_release(true, N, 'Qualified checkpoint continuity release');
+-- Pause with the CURRENT revision, not a revision saved before enablement.
+select * from public.set_git_continuity_release(false, N, 'Pause checkpoint execution and PR promotion');
+```
+
+Before enablement: apply migrations and regenerate/verify types; deploy compatible
+workers; run `pnpm check`, `pnpm check:db-tests` and `pnpm check:continuity` against
+an isolated local project; complete the Vercel/GitHub smoke below; inspect recovery
+and cleanup backlogs; then explicitly enable the reviewed cohort. Provider/auth
+qualification and normal worker dispatch controls remain separate requirements.
+
+Pausing blocks new pipeline claims, new execution starts and canonical PR
+promotion. A claim caught between admission and start is deferred under its same
+job generation, retaining fixed Git inputs and the queued run. A previous release
+revision cannot revive across disable/re-enable. Claim attempt IDs remain
+monotonic for fencing, while release-only deferrals do not consume the execution
+retry budget or increase execution retry backoff. Already-started runs and durable
+checkpoint publication/recovery can finish, including retained-ref pushes needed
+to preserve completed source. Cleanup and auth dispatch remain available. A pause
+cannot revoke an already-authorized or already-issued GitHub request: wait for claims/provider resources
+to become quiescent, inspect receipts, and let the same immutable operation
+reconcile after resume. Never use pause as a substitute for cancellation.
+
+Only sessions created after this migration are enrolled. Existing sessions retain
+artifacts/history and can recover already-produced output, but require an explicit
+fresh start for further execution or canonical promotion. Inspect
+`get_session_git_continuity_state(session_id)` for `fresh_start_required`,
+`release_paused`, or `enabled`; it is tenant-scoped for signed-in viewers. Do not
+insert enrollment rows or infer code from the latest timestamp, PR, artifact or
+workspace default. Recover legacy work in a human-reviewed repository branch/new
+commit and create a new session against the intended repository. If provenance is
+unknown, keep the old session for investigation and start fresh; no automatic
+legacy-head adoption is offered.
+
 ## Source durability and delivery
 
 ```mermaid
 flowchart LR
-  Agent[Agent completes] --> Capture[Commit working tree and capture bounded bundle]
-  Capture --> Store[Private Storage or database fallback]
-  Store --> Outbox[Prepare exact-run delivery record]
-  Outbox --> Publish[Atomically publish artifact and run success]
-  Publish --> Stop[Stop original sandbox]
-  Publish --> Claim[Claim delivery lease]
-  Claim --> Restore[Restore and verify in temporary bare Git repo]
-  Restore --> Push[Push attempt or deterministic recovery branch without force]
-  Push --> PR[Create or reuse PR and record provider timestamp]
+  Agent[Agent completes locally] --> Capture[Safe commit and bounded bundle]
+  Capture --> Intent[Private source plus immutable artifact intent]
+  Intent --> Retain[Push and verify exact retained ref]
+  Retain --> Adopt[Atomically accept checkpoint, artifact and review state]
+  Adopt --> Stop[Stop original sandbox]
+  Adopt --> Canonical[Durable canonical PR intent]
+  Canonical --> CAS[Atomic code and unique fence leases]
+  CAS --> PR[One pinned PR and fenced fresh observation]
 ```
 
-| Condition                        | Behavior                                                                                                                                                                                                        |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Normal checkpoint                | Incremental bundle, maximum 4 MiB; deterministic workspace/run key in the private `session-source-checkpoints` bucket.                                                                                          |
-| Storage outage                   | Bounded service-only DB fallback (up to about 5.6 MiB base64), cleared only after GitHub delivery succeeds.                                                                                                     |
-| Checkpoint or outbox write fails | No artifact publication. An uploaded deterministic checkpoint survives an outbox failure. If neither store is durable, preserve the sandbox until provider expiry; inspect `source_recovery_required` promptly. |
-| Push, PR, or PR metadata fails   | Keep the outbox record; retry with exponential backoff up to one hour. Token usage/history errors do not block delivery.                                                                                        |
-| Worker crashes                   | An unpublished record remains private recovery data. Published work can be reclaimed after its two-minute lease expires. Stale lease IDs cannot acknowledge replacement claims.                                 |
-| Maintenance hangs                | One-minute delivery deadline and 30-second Git subprocess limits; the lease expires for another worker.                                                                                                         |
-| Workspace deletion               | Fence claims/uploads; wait for active delivery leases, remove checkpoint objects, and cascade private fallback rows.                                                                                            |
+A bundle is at most 4 MiB, stored privately under
+`session-source-checkpoints/<workspace>/<run>.bundle`, with a bounded database
+fallback during a Storage outage. The artifact is not accepted until the exact
+retained ref is verified. Interrupted publication retries the immutable intent
+within the original attempt deadline; it never reruns the agent from partial
+output. A text-only result preserves its producing input SHA/ref.
 
-The reconciliation timer drains up to three ready deliveries per sweep. Source
-recovery requires Git in the worker image. Apply the deletion, publication-deadline,
-PR-freshness, and source-delivery migrations before deploying updated workers.
-Inspect `session_source_deliveries.status`, `next_attempt_at`, and `last_error_code`
-for pending delivery; never put bundle bytes or installation tokens into logs.
+Canonical PR synchronization is independent of artifact acceptance. It preserves
+external commits, uses an operation fence as well as a code SHA lease, and cannot
+report a stale PR observation as synchronized. Closed/merged epochs require an
+explicit human successor. An uncertain creation POST is reconciled by all-state
+reads, never a blind POST retry. See [checkpoint lineage](GIT-CHECKPOINT-LINEAGE.md)
+for receipt, successor and conflict-recovery details.
 
-If the attempt branch already contains the checkpoint, delivery preserves its
-newer commits. If the histories diverge, delivery uses a bounded recovery branch
-derived from the attempt branch and checkpoint commit. Retries keep that recovery
-identity for the PR and its metadata. Neither path force-pushes over remote work.
+Inspect `session_checkpoint_publications`, `session_pr_sync`,
+`session_pr_operations` and their safe error/claim metadata. Never log bundle,
+artifact draft, provider credential or installation-token bytes. Trusted recovery
+uses utility sandboxes and Git plumbing only; it never executes repository source.
+
+### Retained-ref policy and cleanup
+
+| Ref or payload                                                                   | Policy                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accepted checkpoint, live/pinned input, artifact lineage, recoverable revision   | Retain the required ref. Accepted lineage is conservatively retained while its session exists.                                                                                                            |
+| Canonical PR, operation-fence, attempt, human or arbitrary ref                   | Never deleted by checkpoint candidate cleanup.                                                                                                                                                            |
+| Unadopted owned retained candidate                                               | Eligible seven days after its immutable original publication deadline, only after irreversible stale retirement and reference/lease checks.                                                               |
+| Candidate ref changed externally                                                 | Preserve it, record a conflict, require operator reconciliation.                                                                                                                                          |
+| Missing candidate after a lost delete response                                   | Exact absent-ref receipt is idempotent recovery.                                                                                                                                                          |
+| Disconnected repository, deleting/deleted workspace, unavailable GitHub/provider | Cleanup is blocked or retried; seven days is eligibility, not a promise during outages or after identity/credentials are removed.                                                                         |
+| Private bundles and original draft payloads                                      | Retained for forensic/source recovery until workspace deletion; remote-ref cleanup does not fake delivery or clear payloads. Storage-only failed-prepare orphans share this explicit retention exception. |
+
+Candidate cleanup is a durable lease/receipt protocol. Workspace admission and
+session → job → run → publication locks precede cleanup state; a repository/SHA
+advisory boundary serializes new consumers with retirement. Once a delete claim
+has existed, its tombstone also fences late consumers after an uncertain delete
+or expired lease. A separately verified accepted ref for the same SHA remains a
+valid restore source. The conservative tombstone also blocks a new raw-SHA root
+from ordinary `main` when that SHA was retired, even if `main` now contains it;
+use a new reachable commit or an explicitly verified retained source, rather than
+expecting a new session alone to bypass retirement. The worker derives only
+`refs/heads/wallie/checkpoints/<run>/<recorded-sha>`, compares the exact remote SHA,
+uses an explicit delete lease and confirms absence. No broad branch scan or
+ancestry-based garbage collection is used.
+
+Monitor `session_checkpoint_cleanup` for due, claimed, deleted and blocked intents.
+Restore the exact repository/installation connection before retrying a disconnected
+candidate. Do not manufacture an absence receipt, clear a tombstone, alter a
+publication deadline, or delete refs directly from guessed naming patterns. After
+workspace deletion, retained remote history belongs to the repository owner and
+requires explicit owner review; tenant cleanup does not guess what to remove.
+
+### Isolated release proof
+
+`pnpm check:db-tests` temporarily enables admission only on the loopback Supabase
+project identified by the local CLI, runs the SQL suite, then restores its prior
+state. `pnpm check:continuity` runs an opt-in local-DB processor fixture with a
+deterministic runner and fake provider/remote transport. It exercises real
+lifecycle RPCs, capture/publication, request changes, stale replacement and a fresh
+worker process. Neither command enables a hosted project. Use an exclusive test
+project; tests deliberately toggle the release revision.
+
+The guarded `scripts/smoke-continuity-release.ts` runs actual lifecycle RPCs with
+real Vercel utility sandboxes and the existing `anantjain-xyz/wallie-dev` GitHub
+repository (exact numeric identity checked). It never creates a repository. Preview
+its plan first; use `--execute` only with a loopback test DB and dedicated fixture
+bindings. Each run creates its own test base/drift branches and a clearly labeled
+smoke PR targeting that base, never `main`. Guarded pushes cannot delete or update
+unrelated refs, and existing refs/PRs are checked afterward. Test history is
+retained; do not delete repositories or refs as automatic cleanup. Fixture source
+contains `vercel.json` disabling automatic deployment. Empty operation-fence commits
+cannot carry that file, so the connected integration may still post checks or
+attempt a preview; the test performs no deployment/promotion command and changes
+no Vercel project settings. Operator credentials stay in process memory/environment. It uses
+deterministic source edits and manual trusted transport orchestration, not an LLM
+or the deployed daemon. Fresh child processes restore persisted inputs and a
+prepared publication after the original sandbox has stopped. Retain its safe
+SHA/ref/PR/digest receipts and sandbox cleanup evidence with the release review.
 
 ## Heartbeats and activity
 
@@ -285,15 +392,15 @@ verify the exact worker before asking a host with a shorter stop budget to repla
 
 ## Safe troubleshooting
 
-| Symptom                                         | Read-only evidence                                                                                    | Safe action                                                                     |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Jobs remain queued                              | Worker startup/fatal logs, latest heartbeat, `scheduled_at`, running count, connection-mutation state | Restore worker/environment/schema; wait if backoff is scheduled                 |
-| Job remains running                             | Fresh heartbeat ownership, run status, `last_activity_at`, messages                                   | Fresh ownership means wait; stale ownership is handled by the stall timeout     |
-| Session remains `in_progress`                   | Latest job/run status and error, provider connection, capability readiness                            | Fix readiness; cancel active work through the session action when needed        |
-| Session is `rejected` without reviewer feedback | Latest run error/cancel message and queued retry                                                      | Distinguish recovery parking from human rejection before rerunning              |
-| Orphan sandbox suspected                        | Recorded provider/revision/ID and reaper/provider logs                                                | Use cancellation or the maintenance path; preserve ownership rows until cleanup |
-| Linear state is stale                           | Reconciler errors/rate-limit messages                                                                 | Run one manager maintenance tick or wait for the next sweep                     |
-| Connection cannot rotate                        | Active jobs/runs/checks/device-auth or mutation-lock evidence                                         | Finish or cancel related work; do not delete the lock or credential row         |
+| Symptom                                         | Read-only evidence                                                                                                                               | Safe action                                                                                                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Jobs remain queued                              | `get_session_git_continuity_state`, release revision/enrollment, worker startup/fatal logs, heartbeat, `scheduled_at`, connection-mutation state | Inspect pause/fresh-start reason first; explicitly enable the qualified release or create a fresh session; otherwise restore worker/schema or wait for backoff |
+| Job remains running                             | Fresh heartbeat ownership, run status, `last_activity_at`, messages                                                                              | Fresh ownership means wait; stale ownership is handled by the stall timeout                                                                                    |
+| Session remains `in_progress`                   | Latest job/run status and error, provider connection, capability readiness                                                                       | Fix readiness; cancel active work through the session action when needed                                                                                       |
+| Session is `rejected` without reviewer feedback | Latest run error/cancel message and queued retry                                                                                                 | Distinguish recovery parking from human rejection before rerunning                                                                                             |
+| Orphan sandbox suspected                        | Recorded provider/revision/ID and reaper/provider logs                                                                                           | Use cancellation or the maintenance path; preserve ownership rows until cleanup                                                                                |
+| Linear state is stale                           | Reconciler errors/rate-limit messages                                                                                                            | Run one manager maintenance tick or wait for the next sweep                                                                                                    |
+| Connection cannot rotate                        | Active jobs/runs/checks/device-auth or mutation-lock evidence                                                                                    | Finish or cancel related work; do not delete the lock or credential row                                                                                        |
 
 The manager maintenance endpoint runs workspace-scoped stall cleanup and Linear
 reconciliation, but its sandbox-reaper call is currently global. A manager can

@@ -26,7 +26,7 @@ returns uuid language plpgsql as $$
 declare owner public.sessions; selected public.session_job_git_inputs; started uuid;
 begin
   select s.* into strict owner from public.sessions s join public.agent_jobs j on j.session_id=s.id where j.id=target_job;
-  update public.agent_jobs set status='running',attempt_count=1 where id=target_job;
+  update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=target_job;
   started:=public.start_session_job_attempt(target_job,1,owner.current_stage_id,owner.current_artifact_version,
     'codex','gpt-5.5','project','wallie/canonical-source-'||target_job::text);
   select * into selected from public.session_job_git_inputs where job_id=target_job;

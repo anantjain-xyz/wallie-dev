@@ -71,6 +71,7 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 - Stay within your ownership boundary.
 - Do not overwrite unrelated work.
 - Coordinate via PR descriptions when making cross-cutting changes.
+- Use the existing `anantjain-xyz/wallie-dev` repository for GitHub smoke tests. Create uniquely scoped test refs and target a test base branch, preserving `main`, repository settings, and unrelated refs/PRs. Do not create per-run repositories or delete existing repositories/test history without explicit user authorization.
 
 ## Working Norms
 
