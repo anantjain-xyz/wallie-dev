@@ -148,6 +148,10 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
             { name: "Verify generated database types", run: "pnpm db:types:check" },
             { name: "Run database regression tests", run: "pnpm check:db-tests" },
             {
+              name: "Verify concurrent checkpoint ownership",
+              run: "node scripts/test-git-checkpoint-concurrency.mjs postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+            },
+            {
               name: "Print database diagnostics on failure",
               if: "failure()",
               run: "docker ps -a\ndocker logs supabase_db_wallie-dev --tail 100\n",

@@ -57,6 +57,7 @@ function makeAdmin(
     next_attempt_at: "2026-10-01T00:00:00Z",
     created_at: "2026-10-01T00:00:00Z",
     delivered_at: null,
+    delivered_ref: null,
     last_error_code: null,
   } as SourceDelivery;
   const rpc = vi.fn((name: string, args?: Record<string, unknown>) => {
@@ -76,10 +77,16 @@ function makeAdmin(
         data: row.status === "claimed" && row.claim_id === args?.p_claim_id,
         error: null,
       });
-    if (name === "finish_session_source_delivery") {
+    if (
+      name === "finish_session_source_delivery" ||
+      name === "finish_session_source_delivery_with_ref"
+    ) {
       if (row.claim_id !== args?.p_claim_id) return query({ data: false, error: null });
-      row.status = args?.p_delivered ? "delivered" : "pending";
-      if (args?.p_delivered) row.bundle_base64 = null;
+      const delivered = name === "finish_session_source_delivery_with_ref" || args?.p_delivered;
+      row.status = delivered ? "delivered" : "pending";
+      if (delivered) row.bundle_base64 = null;
+      if (name === "finish_session_source_delivery_with_ref")
+        row.delivered_ref = (args?.p_delivered_ref as string | null | undefined) ?? null;
       row.claim_id = null;
       return query({ data: true, error: null });
     }
@@ -227,6 +234,23 @@ it("uses the recovered Git branch for both the pull request and its recorded ide
     "record_session_pull_request",
     expect.objectContaining({ target_branch_name: branch, source_pull_request_number: 42 }),
   );
+  expect(rpc).toHaveBeenCalledWith(
+    "finish_session_source_delivery_with_ref",
+    expect.objectContaining({ p_delivered_ref: `refs/heads/${branch}` }),
+  );
+});
+
+it("records no remote ref for no-code output instead of inventing a pushed branch", async () => {
+  const { admin, rpc, row } = makeAdmin();
+  row.head_sha = row.base_sha;
+  expect(await drainSourceDeliveries(admin, { limit: 1 })).toEqual({ delivered: 1, failed: 0 });
+  expect(mocked.push).not.toHaveBeenCalled();
+  expect(mocked.pr).not.toHaveBeenCalled();
+  expect(rpc).toHaveBeenCalledWith(
+    "finish_session_source_delivery_with_ref",
+    expect.not.objectContaining({ p_delivered_ref: expect.anything() }),
+  );
+  expect(row.delivered_ref).toBeNull();
 });
 
 it("does not report durability when both storage and database writes fail or expose source in its error", async () => {

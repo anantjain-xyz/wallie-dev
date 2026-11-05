@@ -22,7 +22,7 @@ import {
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
-import { resolveQueuedRunConfig } from "@/lib/wallie/service";
+import { pinSessionJobGitInput, resolveQueuedRunConfig } from "@/lib/wallie/service";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
 import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
@@ -52,6 +52,7 @@ import {
   UnsupportedSubmoduleCheckpointError,
 } from "./source-checkpoint";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
+import { checkoutPinnedGitInput } from "./git-input";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
 
 type AdminClient = SupabaseClient<Database>;
@@ -338,7 +339,22 @@ async function runStage(input: {
     });
     throwIfAborted(signal);
 
-    const sourceBase = await readSourceBase(sandbox, signal);
+    const observedSha = await readSourceBase(sandbox, signal);
+    const gitInput = await pinSessionJobGitInput({
+      admin,
+      jobId: job.id,
+      attemptCount: job.attempt_count,
+      runId,
+      repositoryId: github.repo.id,
+      baseBranch: github.repo.default_branch ?? "main",
+      observedSha,
+      signal,
+    });
+    if (!gitInput) throw new ExecutionOwnershipLostError();
+    await checkoutPinnedGitInput({ sandbox, branch, sha: gitInput.input_sha, signal });
+    const sourceBase = gitInput.input_sha;
+    if (!(await touchRunActivity(admin, runId, job.attempt_count)))
+      throw new ExecutionOwnershipLostError();
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
     const materializedAttachments = await materializeSessionAttachments(
@@ -488,7 +504,7 @@ async function runStage(input: {
       const checkpoint = await captureSourceCheckpoint({ sandbox, baseSha: sourceBase, signal });
       const prepared = await prepareSourceDelivery({
         admin,
-        baseBranch: github.repo.default_branch ?? "main",
+        baseBranch: gitInput.base_branch,
         body: artifactMarkdown,
         checkpoint,
         onDurable: () => {

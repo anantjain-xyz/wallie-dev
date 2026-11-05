@@ -1,4 +1,10 @@
-import type { Enums } from "@/lib/supabase/database.types";
+import type { Enums, Tables } from "@/lib/supabase/database.types";
+
+/** One immutable code input per job intent; claim retries reuse this row. */
+export type PinnedGitInput = Tables<"session_job_git_inputs">;
+
+/** Accepted artifact provenance; an absent row means historical/unknown code. */
+export type GitCheckpoint = Tables<"session_git_checkpoints">;
 
 export type PipelinePhaseStatus = Enums<"pipeline_phase_status">;
 

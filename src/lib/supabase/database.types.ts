@@ -1029,6 +1029,222 @@ export type Database = {
           },
         ]
       }
+      session_git_checkpoints: {
+        Row: {
+          artifact_id: string
+          attempt_count: number
+          bundle_sha256: string | null
+          checkpoint_path: string | null
+          created_at: string
+          initial_base_sha: string
+          input_sha: string
+          job_id: string
+          output_kind: string
+          output_ref: string
+          output_sha: string
+          repository_full_name: string
+          repository_id: string
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          artifact_id: string
+          attempt_count: number
+          bundle_sha256?: string | null
+          checkpoint_path?: string | null
+          created_at?: string
+          initial_base_sha: string
+          input_sha: string
+          job_id: string
+          output_kind: string
+          output_ref: string
+          output_sha: string
+          repository_full_name: string
+          repository_id: string
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          artifact_id?: string
+          attempt_count?: number
+          bundle_sha256?: string | null
+          checkpoint_path?: string | null
+          created_at?: string
+          initial_base_sha?: string
+          input_sha?: string
+          job_id?: string
+          output_kind?: string
+          output_ref?: string
+          output_sha?: string
+          repository_full_name?: string
+          repository_id?: string
+          run_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_git_checkpoints_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: true
+            referencedRelation: "session_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_source_delivery_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "session_source_deliveries"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_git_roots: {
+        Row: {
+          base_branch: string
+          created_at: string
+          initial_base_sha: string
+          repository_full_name: string
+          repository_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          base_branch: string
+          created_at?: string
+          initial_base_sha: string
+          repository_full_name: string
+          repository_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          base_branch?: string
+          created_at?: string
+          initial_base_sha?: string
+          repository_full_name?: string
+          repository_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_git_roots_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_roots_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_job_git_inputs: {
+        Row: {
+          base_branch: string
+          created_at: string
+          initial_base_sha: string
+          input_sha: string
+          job_id: string
+          pinned_attempt_count: number
+          pinned_run_id: string
+          repository_full_name: string
+          repository_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          base_branch: string
+          created_at?: string
+          initial_base_sha: string
+          input_sha: string
+          job_id: string
+          pinned_attempt_count: number
+          pinned_run_id: string
+          repository_full_name: string
+          repository_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          base_branch?: string
+          created_at?: string
+          initial_base_sha?: string
+          input_sha?: string
+          job_id?: string
+          pinned_attempt_count?: number
+          pinned_run_id?: string
+          repository_full_name?: string
+          repository_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_job_git_inputs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_job_git_inputs_pinned_run_id_fkey"
+            columns: ["pinned_run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_job_git_inputs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_job_git_inputs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_phase_completions: {
         Row: {
           completed_at: string
@@ -1214,6 +1430,7 @@ export type Database = {
           claim_id: string | null
           created_at: string
           delivered_at: string | null
+          delivered_ref: string | null
           delivery_attempt_count: number
           head_sha: string
           installation_id: number
@@ -1241,6 +1458,7 @@ export type Database = {
           claim_id?: string | null
           created_at?: string
           delivered_at?: string | null
+          delivered_ref?: string | null
           delivery_attempt_count?: number
           head_sha: string
           installation_id: number
@@ -1268,6 +1486,7 @@ export type Database = {
           claim_id?: string | null
           created_at?: string
           delivered_at?: string | null
+          delivered_ref?: string | null
           delivery_attempt_count?: number
           head_sha?: string
           installation_id?: number
@@ -2882,6 +3101,10 @@ export type Database = {
         Args: { p_claim_id: string; p_delivered: boolean; p_run_id: string }
         Returns: boolean
       }
+      finish_session_source_delivery_with_ref: {
+        Args: { p_claim_id: string; p_delivered_ref?: string; p_run_id: string }
+        Returns: boolean
+      }
       finish_workspace_deletion: {
         Args: { p_workspace_id: string }
         Returns: boolean
@@ -3039,6 +3262,35 @@ export type Database = {
         Returns: {
           credential_version: number
         }[]
+      }
+      pin_session_job_git_input: {
+        Args: {
+          p_attempt_count: number
+          p_base_branch: string
+          p_job_id: string
+          p_observed_sha: string
+          p_repository_id: string
+          p_run_id: string
+        }
+        Returns: {
+          base_branch: string
+          created_at: string
+          initial_base_sha: string
+          input_sha: string
+          job_id: string
+          pinned_attempt_count: number
+          pinned_run_id: string
+          repository_full_name: string
+          repository_id: string
+          session_id: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "session_job_git_inputs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       prepare_session_source_delivery: {
         Args: {
