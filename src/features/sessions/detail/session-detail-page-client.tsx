@@ -1127,6 +1127,7 @@ function SessionDetailContent({
       onViewingHistoricalChange={setViewingHistoricalArtifact}
       onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}
+      readOnly={Boolean(session.archivedAt)}
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
       sessionId={session.id}
       stageSlug={selectedStageSlug}

@@ -22,6 +22,7 @@ import type {
   SessionArtifactSummary,
 } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
+import { InlineArtifactReview } from "@/features/sessions/review/inline-artifact-review";
 
 export type DisplayedArtifactIdentity = Pick<
   SessionArtifactSummary,
@@ -29,6 +30,7 @@ export type DisplayedArtifactIdentity = Pick<
 >;
 
 type ArtifactPanelProps = {
+  readOnly?: boolean;
   /** Exact current-stage authority; null must not reuse a cached latest artifact. */
   currentArtifactId?: string | null;
   /**
@@ -264,6 +266,7 @@ function ArtifactPanelStage({
   pendingAuthorRefreshByStage,
   persistStageInUrl = false,
   rejectionCount,
+  readOnly = false,
   seenRejectionCountByStage,
   sessionId,
   stageSlug,
@@ -1251,6 +1254,8 @@ function ArtifactPanelStage({
               }}
               sessionId={sessionId}
               showLatestBadge={viewingIsLatest}
+              historical={persistStageInUrl || !viewingIsLatest}
+              readOnly={readOnly}
             />
           ) : bodyLoading ? null : isDrafting ? (
             <ProgressHint text="Waiting for this stage’s artifact. Follow progress in Runs below." />
@@ -1305,6 +1310,8 @@ function ArtifactBodyView({
   onCopyResult,
   sessionId,
   showLatestBadge,
+  historical,
+  readOnly,
 }: {
   motionRef?: RefObject<HTMLDivElement | null>;
   artifact: CachedArtifactBody;
@@ -1315,6 +1322,8 @@ function ArtifactBodyView({
   onCopyResult: (result: "success" | "failure") => void;
   sessionId: string;
   showLatestBadge: boolean;
+  historical: boolean;
+  readOnly: boolean;
 }) {
   const formatted = useMemo(() => formatPayload(artifact.payload), [artifact.payload]);
   const isMarkdown = typeof artifact.payload === "string";
@@ -1352,6 +1361,22 @@ function ArtifactBodyView({
     }
   }
 
+  const content =
+    isMarkdown && !showRaw ? (
+      (serverTree ?? <div dangerouslySetInnerHTML={{ __html: artifact.sanitizedHtml ?? "" }} />)
+    ) : (
+      <pre
+        data-review-text-start={isMarkdown ? 0 : undefined}
+        data-review-text-end={isMarkdown ? Array.from(formatted).length : undefined}
+        className={cn(
+          "whitespace-pre-wrap break-words rounded-[4px] p-3 text-xs leading-5 text-foreground",
+          !isMarkdown && "bg-canvas",
+        )}
+      >
+        {formatted}
+      </pre>
+    );
+
   return (
     <div ref={motionRef}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1382,23 +1407,20 @@ function ArtifactBodyView({
           </button>
         ) : null}
       </div>
-      {isMarkdown && !showRaw ? (
-        (serverTree ?? (
-          <div
-            // The API returns markup from the same canonical server renderer used
-            // for the initial server component tree.
-            dangerouslySetInnerHTML={{ __html: artifact.sanitizedHtml ?? "" }}
-          />
-        ))
-      ) : (
-        <pre
-          className={cn(
-            "whitespace-pre-wrap break-words rounded-[4px] p-3 text-xs leading-5 text-foreground",
-            !isMarkdown && "bg-canvas",
-          )}
+      {isMarkdown && artifact.id ? (
+        <InlineArtifactReview
+          key={artifact.id}
+          sessionId={sessionId}
+          artifactId={artifact.id}
+          artifactVersion={artifact.version}
+          source={formatted}
+          historical={historical}
+          readOnly={readOnly}
         >
-          {formatted}
-        </pre>
+          {content}
+        </InlineArtifactReview>
+      ) : (
+        content
       )}
     </div>
   );

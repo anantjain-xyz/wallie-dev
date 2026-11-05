@@ -10,6 +10,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
+    "bench:navigation": "fixture",
     "test:benchmark:content-visibility": "fixture",
     "test:benchmark:interaction": "fixture",
     "test:e2e:onboarding": "fixture",

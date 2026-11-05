@@ -447,6 +447,7 @@ Fill in the required values. Integration variables can be left blank until you c
 | `WALLIE_ENABLED_SANDBOX_PROVIDERS`     | No       | Comma-separated rollout allowlist; defaults to `vercel,e2b,daytona`.                                                                                       |
 | `WALLIE_DAYTONA_API_URL_ALLOWLIST`     | No       | Exact HTTPS Daytona self-hosted API base URLs; Daytona Cloud is always allowed.                                                                            |
 | `WALLIE_TIMING_LOGS`                   | No       | Set to `1` in a canary to emit server-loader timing logs.                                                                                                  |
+| `WALLIE_TIMING_LOG_PATH`               | No       | Optional JSONL file for those records. A write failure does not fail the request.                                                                          |
 | `WORKER_MAX_CONCURRENT_JOBS`           | No       | Maximum jobs one worker process runs concurrently (default `10`); per-workspace limits still apply.                                                        |
 | `WORKER_JOB_TIMEOUT_MS`                | No       | Hard deadline per claimed attempt, including setup and cleanup (default `1800000`; positive integer up to 30 minutes).                                     |
 
