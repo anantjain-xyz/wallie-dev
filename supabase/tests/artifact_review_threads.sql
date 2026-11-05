@@ -45,7 +45,7 @@ create function pg_temp.review_anchor(source text,start_pos integer,end_pos inte
   'suffix',substring(source from end_pos+1 for 32));
 $$;
 create function pg_temp.review_create(kind text default 'discussion') returns public.artifact_review_threads language sql as $$
- select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+ select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
   '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030',
   '50000000-0000-4000-8000-000000000050',1,
   pg_temp.review_anchor(a.artifact_json #>> '{}',0,8),kind,'Initial comment')
@@ -101,35 +101,35 @@ select throws_ok($$update public.artifact_review_comments set body='Bypass RPC'$
  '42501','permission denied for table artifact_review_comments','direct comment edits are denied');
 select throws_ok($$delete from public.artifact_review_events$$,
  '42501','permission denied for table artifact_review_events','lifecycle and edit history cannot be deleted by a member');
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000041','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000050',1,
  (select anchor from review_discussion),'discussion','Wrong session')$$,
  '23514','Artifact identity does not match the review.','supplied session must own the artifact');
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000031','50000000-0000-4000-8000-000000000050',1,
  (select anchor from review_discussion),'discussion','Wrong stage')$$,
  '23514','Artifact identity does not match the review.','supplied stage must own the artifact');
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000050',2,
  (select anchor from review_discussion),'discussion','Wrong version')$$,
  '23514','Artifact identity does not match the review.','supplied version must match the exact artifact');
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000052',1,
  (select anchor from review_discussion),'discussion','Duplicate version')$$,
  '23514','Invalid artifact source anchor.','equal stage and version cannot substitute different source text');
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000051',2,
  (select anchor from review_discussion),'discussion','Structured')$$,
  '23514','Invalid artifact source anchor.','structured artifact payloads cannot receive source anchors');
 
 -- Replies and author-only edits retain immutable anchor identity and history.
-create temp table review_reply as select * from public.write_artifact_review_comment(
+create temp table review_reply as select * from public.write_artifact_review_comment_once(gen_random_uuid(),
  '50000000-0000-4000-8000-000000000010',(select id from review_discussion),'Reply');
-select is((public.write_artifact_review_comment('50000000-0000-4000-8000-000000000010',
+select is((public.write_artifact_review_comment_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),'Edited reply',(select id from review_reply),1)).revision,2,'author may edit with the current comment revision');
 select is((select anchor from public.artifact_review_threads where id=(select id from review_discussion)),
  (select anchor from review_discussion),'comment editing preserves the exact source anchor');
-select throws_ok($$select public.write_artifact_review_comment('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.write_artifact_review_comment_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),'Stale edit',(select id from review_reply),1)$$,
  '40001','Review comment revision is stale.','stale comment edits are rejected');
 select is((select detail->>'previousBody' from public.artifact_review_events where thread_id=(select id from review_discussion) and event_type='edited'),
@@ -137,96 +137,96 @@ select is((select detail->>'previousBody' from public.artifact_review_events whe
 select is((select detail->>'body' from public.artifact_review_events where thread_id=(select id from review_discussion) and event_type='commented'),
  'Reply','original reply history remains immutable after editing');
 create temp table review_blocking as select * from pg_temp.review_create('blocking');
-select ok(not ((public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select ok(not ((public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000050',1,
  (select anchor from review_discussion)||'{"untrustedExtra":"discard"}'::jsonb,'discussion','Extra anchor data')).anchor ? 'untrustedExtra'),
  'anchor creation stores only canonical coordinate fields');
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),1,'resolved','Author wants to resolve')$$,
  '42501','Authorized human reviewer required.','blocking request author cannot resolve without reviewer authority');
-select is((public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select is((public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),3,'resolved','Discussion complete')).status,'resolved','discussion author may close their own discussion');
 
 -- A separate reviewer cannot edit the first author's prose or resolve under an empty allowlist.
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000003';
-select throws_ok($$select public.write_artifact_review_comment('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.write_artifact_review_comment_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),'Other author edit',(select id from review_reply),2)$$,
  '42501','Only the comment author may edit it.','even a reviewer cannot edit another author comment');
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),1,'resolved','Unlisted reviewer')$$,
  '42501','Authorized human reviewer required.','empty allowlist retains owner/admin fallback');
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000001';
-select is((public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select is((public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),1,'resolved','Owner verified')).status,'resolved','owner may resolve under fallback policy');
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),1,'open','Stale reopen')$$,
  '40001','Review thread revision is stale.','lifecycle writes fence stale thread revisions');
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000006';
-select is((public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select is((public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),2,'open','Admin reopened')).status,'open','admin may reopen under fallback policy');
 reset role;
 update public.pipeline_stages set approver_member_ids=array['50000000-0000-4000-8000-000000000103'::uuid]
  where id='50000000-0000-4000-8000-000000000030';
 set local role authenticated;
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000001';
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),3,'resolved','Owner outside explicit allowlist')$$,
  '42501','Authorized human reviewer required.','explicit reviewer allowlist applies even to the owner');
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000003';
-select is((public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select is((public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),3,'superseded','Replaced by updated requirement')).status,'superseded','allowlisted reviewer may explicitly supersede a blocking request');
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),4,'resolved','Skip reopen')$$,
  '23514','Invalid review lifecycle transition.','terminal states require explicit reopening before another disposition');
 reset role;
 update public.pipeline_stages set anyone_can_approve=true where id='50000000-0000-4000-8000-000000000030';
 set local role authenticated;
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000002';
-select is((public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select is((public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),4,'open','New information')).status,'open','anyone-can-approve permits an active human author to reopen');
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),5,'resolved',' ')$$,
  '23514','Invalid review lifecycle transition.','resolution requires an explicit non-empty reason');
 
 -- RLS and RPC authorization matrix: inactive, foreign, anonymous, service.
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000004';
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000050',1,
  (select anchor from review_discussion),'discussion','Inactive create')$$,
  '42501','Active human membership required.','inactive members cannot create threads');
 select is((select count(*) from public.artifact_review_threads where workspace_id='50000000-0000-4000-8000-000000000010'),0::bigint,'inactive members cannot read threads');
 select is((select count(*) from public.artifact_review_comments where workspace_id='50000000-0000-4000-8000-000000000010'),0::bigint,'inactive members cannot read comments');
 select is((select count(*) from public.artifact_review_events where workspace_id='50000000-0000-4000-8000-000000000010'),0::bigint,'inactive members cannot read history');
-select throws_ok($$select public.write_artifact_review_comment('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.write_artifact_review_comment_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),'Inactive reply')$$,'42501','Active human membership required.','inactive members cannot reply through a security-definer RPC');
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),5,'resolved','Inactive reviewer')$$,
  '42501','Active human membership required.','anyone-can-approve does not bypass active human membership');
 set local "request.jwt.claim.sub"='50000000-0000-4000-8000-000000000005';
 select is((select count(*) from public.list_artifact_review_threads('50000000-0000-4000-8000-000000000010','50000000-0000-4000-8000-000000000050')),0::bigint,'foreign workspace members cannot read thread pages');
 select is((select count(*) from public.list_artifact_review_comments('50000000-0000-4000-8000-000000000010',(select id from review_discussion))),0::bigint,'foreign workspace members cannot read comment pages');
 select is((select count(*) from public.list_artifact_review_events('50000000-0000-4000-8000-000000000010',(select id from review_discussion))),0::bigint,'foreign workspace members cannot read history pages');
-select throws_ok($$select public.write_artifact_review_comment('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.write_artifact_review_comment_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),'Foreign reply')$$,'42501','Active human membership required.','foreign workspace member cannot mutate a known thread ID');
-select throws_ok($$select public.create_artifact_review_thread('50000000-0000-4000-8000-000000000011',
+select throws_ok($$select public.create_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000011',
  '50000000-0000-4000-8000-000000000040','50000000-0000-4000-8000-000000000030','50000000-0000-4000-8000-000000000050',1,
  (select anchor from review_discussion),'discussion','Forged workspace')$$,
  '42501','Review session is unavailable.','foreign workspace cannot be supplied for a known session');
 set local "request.jwt.claim.sub"='';
-select throws_ok($$select public.write_artifact_review_comment('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.write_artifact_review_comment_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_discussion),'Missing human identity')$$,
  '42501','Active human membership required.','authenticated role without a user cannot impersonate a human');
 reset role;
-select ok(not has_function_privilege('anon','public.create_artifact_review_thread(uuid,uuid,uuid,uuid,integer,jsonb,text,text)','EXECUTE'),'anonymous users cannot create threads');
-select ok(not has_function_privilege('service_role','public.transition_artifact_review_thread(uuid,uuid,integer,text,text)','EXECUTE'),'service role cannot automatically resolve a human request');
+select ok(not has_function_privilege('anon','public.create_artifact_review_thread_once(uuid,uuid,uuid,uuid,uuid,integer,jsonb,text,text)','EXECUTE'),'anonymous users cannot create threads');
+select ok(not has_function_privilege('service_role','public.transition_artifact_review_thread_once(uuid,uuid,uuid,integer,text,text)','EXECUTE'),'service role cannot automatically resolve a human request');
 select ok(not has_table_privilege('service_role','public.artifact_review_threads','UPDATE'),'service role cannot bypass reviewer authorization with direct updates');
 select ok(not has_table_privilege('service_role','public.artifact_review_events','INSERT'),'service role cannot fabricate lifecycle history');
 select ok(not has_function_privilege('authenticated','internal.artifact_review_actor(uuid,uuid)','EXECUTE'),'internal privileged actor lookup is not exposed');
 grant select on review_discussion,review_reply,review_blocking to service_role;
 set local role service_role;
-select throws_ok($$select public.transition_artifact_review_thread('50000000-0000-4000-8000-000000000010',
+select throws_ok($$select public.transition_artifact_review_thread_once(gen_random_uuid(),'50000000-0000-4000-8000-000000000010',
  (select id from review_blocking),5,'resolved','Agent resolution')$$,
- '42501','permission denied for function transition_artifact_review_thread','agent service credentials cannot resolve blocking requests');
+ '42501','permission denied for function transition_artifact_review_thread_once','agent service credentials cannot resolve blocking requests');
 reset role;
 
 -- Legacy artifacts gain immutable source protection at first review.

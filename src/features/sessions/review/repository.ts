@@ -44,6 +44,7 @@ function toPage<Row extends { created_at: string; id: string }>(
 export async function createArtifactReviewThread(
   supabase: SupabaseClient<Database>,
   input: {
+    requestId: string;
     workspaceId: string;
     sessionId: string;
     stageId: string;
@@ -54,7 +55,8 @@ export async function createArtifactReviewThread(
     body: string;
   },
 ): Promise<ArtifactReviewThread> {
-  const { data, error } = await supabase.rpc("create_artifact_review_thread", {
+  const { data, error } = await supabase.rpc("create_artifact_review_thread_once", {
+    p_request_id: input.requestId,
     p_workspace_id: input.workspaceId,
     p_session_id: input.sessionId,
     p_stage_id: input.stageId,
@@ -72,6 +74,7 @@ export async function createArtifactReviewThread(
 export async function writeArtifactReviewComment(
   supabase: SupabaseClient<Database>,
   input: {
+    requestId: string;
     workspaceId: string;
     threadId: string;
     body: string;
@@ -80,7 +83,8 @@ export async function writeArtifactReviewComment(
     | { commentId: string; expectedRevision: number }
   ),
 ): Promise<ArtifactReviewComment> {
-  const { data, error } = await supabase.rpc("write_artifact_review_comment", {
+  const { data, error } = await supabase.rpc("write_artifact_review_comment_once", {
+    p_request_id: input.requestId,
     p_workspace_id: input.workspaceId,
     p_thread_id: input.threadId,
     p_body: input.body,
@@ -95,6 +99,7 @@ export async function writeArtifactReviewComment(
 export async function transitionArtifactReviewThread(
   supabase: SupabaseClient<Database>,
   input: {
+    requestId: string;
     workspaceId: string;
     threadId: string;
     expectedRevision: number;
@@ -102,7 +107,8 @@ export async function transitionArtifactReviewThread(
     reason: string;
   },
 ): Promise<ArtifactReviewThread> {
-  const { data, error } = await supabase.rpc("transition_artifact_review_thread", {
+  const { data, error } = await supabase.rpc("transition_artifact_review_thread_once", {
+    p_request_id: input.requestId,
     p_workspace_id: input.workspaceId,
     p_thread_id: input.threadId,
     p_expected_revision: input.expectedRevision,

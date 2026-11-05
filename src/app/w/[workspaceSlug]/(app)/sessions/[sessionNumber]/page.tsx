@@ -29,7 +29,7 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
     : null;
   const initialFormattedArtifact =
     latestArtifact && typeof latestArtifact.payload === "string" ? (
-      <MarkdownContent html={renderMarkdown(latestArtifact.payload).bodyHtml} />
+      <MarkdownContent html={renderMarkdown(latestArtifact.payload, true).bodyHtml} />
     ) : null;
 
   return (
