@@ -493,7 +493,10 @@ export function ArtifactReviewPanel({
           }}
         >
           <p className="text-xs font-semibold text-foreground">New comment on selected text</p>
-          <blockquote className="max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-accent pl-2 text-xs text-muted">
+          <blockquote
+            tabIndex={0}
+            className="max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-accent pl-2 text-xs text-muted"
+          >
             {anchor.quote}
           </blockquote>
           <label className="block text-xs text-muted" htmlFor={`${composerId}-kind`}>
@@ -612,7 +615,10 @@ export function ArtifactReviewPanel({
               Thread link
             </a>
           </div>
-          <blockquote className="max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted">
+          <blockquote
+            tabIndex={0}
+            className="max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted"
+          >
             {threadQuote(selectedThread)}
           </blockquote>
           {commentsLoading ? (

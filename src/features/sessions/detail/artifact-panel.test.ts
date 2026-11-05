@@ -975,7 +975,8 @@ describe("ArtifactPanel", () => {
     );
 
     await waitFor(() => expect(screen.queryByText("Changes requested")).toBeNull());
-    expect(fetch).toHaveBeenCalledTimes(2);
+    // The marker clears before the follow-up history effect starts its request.
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   });
 
   it("ignores rejectionCount bumps when the prop is omitted (prior-stage panels)", async () => {
