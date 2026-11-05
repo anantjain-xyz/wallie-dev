@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { resolveEffectiveSessionRepository } from "./effective-repository";
 
@@ -37,6 +37,7 @@ function buildSupabaseMock(input: {
   primaryRepositoryId?: string | null;
   pullRequestRepositoryId?: string | null;
   repositories?: Repo[];
+  repositoryError?: { message: string; code?: string };
   sessionRepositoryId?: string | null;
 }) {
   const repositories = input.repositories ?? [];
@@ -129,7 +130,7 @@ function buildSupabaseMock(input: {
                       candidate.id === filters.get("id") &&
                       candidate.workspace_id === filters.get("workspace_id"),
                   ) ?? null,
-                error: null,
+                error: input.repositoryError ?? null,
               }),
             };
 
@@ -144,6 +145,123 @@ function buildSupabaseMock(input: {
 }
 
 describe("resolveEffectiveSessionRepository", () => {
+  it("keeps a text-only session on its job's pinned repository despite newer PR and workspace defaults", async () => {
+    const supabase = buildSupabaseMock({
+      primaryRepositoryId: "repo-new-primary",
+      pullRequestRepositoryId: "repo-new-pr",
+      onboardingRepositoryId: "repo-onboarding",
+      repositories: [
+        repo("repo-job", "acme/reviewed", { default_branch: "release", private: true }),
+        repo("repo-new-primary", "acme/new-primary"),
+        repo("repo-new-pr", "acme/new-pr"),
+        repo("repo-onboarding", "acme/onboarding"),
+      ],
+    });
+    const from = vi.spyOn(supabase, "from");
+
+    const resolution = await resolveEffectiveSessionRepository({
+      sessionId: SESSION_ID,
+      supabase: supabase as never,
+      workspaceId: WORKSPACE_ID,
+      pinnedRepositoryId: "repo-job",
+    });
+
+    expect(resolution).toMatchObject({
+      source: "job_git_input",
+      repositoryId: "repo-job",
+      repository: {
+        id: "repo-job",
+        fullName: "acme/reviewed",
+        defaultBranch: "release",
+        isPrivate: true,
+        isArchived: false,
+      },
+    });
+    expect(from.mock.calls).toEqual([["github_repositories"]]);
+  });
+
+  it.each(["missing", "another workspace"])(
+    "preserves an unresolved job pin from %s without using any available fallback",
+    async (state) => {
+      const supabase = buildSupabaseMock({
+        sessionRepositoryId: "repo-session",
+        primaryRepositoryId: "repo-primary",
+        pullRequestRepositoryId: "repo-pr",
+        onboardingRepositoryId: "repo-onboarding",
+        repositories: [
+          repo("repo-session", "acme/session"),
+          repo("repo-primary", "acme/primary"),
+          repo("repo-pr", "acme/pr"),
+          repo("repo-onboarding", "acme/onboarding"),
+          ...(state === "another workspace"
+            ? [repo("repo-job", "other-workspace/private", { workspace_id: "ws-2" })]
+            : []),
+        ],
+      });
+      const from = vi.spyOn(supabase, "from");
+
+      const resolution = await resolveEffectiveSessionRepository({
+        sessionId: SESSION_ID,
+        supabase: supabase as never,
+        workspaceId: WORKSPACE_ID,
+        pinnedRepositoryId: "repo-job",
+      });
+
+      expect(resolution).toEqual({
+        repository: null,
+        repositoryId: "repo-job",
+        source: "job_git_input",
+      });
+      expect(from.mock.calls).toEqual([["github_repositories"]]);
+    },
+  );
+
+  it("preserves the pinned repository's archived state instead of silently choosing an active default", async () => {
+    const supabase = buildSupabaseMock({
+      primaryRepositoryId: "repo-active",
+      pullRequestRepositoryId: "repo-active",
+      repositories: [
+        repo("repo-job", "acme/archived", { is_archived: true }),
+        repo("repo-active", "acme/active"),
+      ],
+    });
+    const from = vi.spyOn(supabase, "from");
+
+    const resolution = await resolveEffectiveSessionRepository({
+      sessionId: SESSION_ID,
+      supabase: supabase as never,
+      workspaceId: WORKSPACE_ID,
+      pinnedRepositoryId: "repo-job",
+    });
+
+    expect(resolution).toMatchObject({
+      repositoryId: "repo-job",
+      source: "job_git_input",
+      repository: { id: "repo-job", fullName: "acme/archived", isArchived: true },
+    });
+    expect(from.mock.calls).toEqual([["github_repositories"]]);
+  });
+
+  it("propagates a pinned repository lookup failure without trying workspace defaults", async () => {
+    const error = { message: "Pinned repository lookup failed", code: "DB_UNAVAILABLE" };
+    const supabase = buildSupabaseMock({
+      repositoryError: error,
+      primaryRepositoryId: "repo-primary",
+      repositories: [repo("repo-primary", "acme/primary")],
+    });
+    const from = vi.spyOn(supabase, "from");
+
+    await expect(
+      resolveEffectiveSessionRepository({
+        sessionId: SESSION_ID,
+        supabase: supabase as never,
+        workspaceId: WORKSPACE_ID,
+        pinnedRepositoryId: "repo-job",
+      }),
+    ).rejects.toBe(error);
+    expect(from.mock.calls).toEqual([["github_repositories"]]);
+  });
+
   it("uses the pinned session repository before pull request and workspace fallbacks", async () => {
     const resolution = await resolveEffectiveSessionRepository({
       sessionId: SESSION_ID,

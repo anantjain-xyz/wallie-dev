@@ -37,12 +37,12 @@ Stages are not hardcoded. A workspace can edit, add, remove, or reorder them fro
 A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/processor.ts`, which delegates to an internal `runStage()` helper) handles every stage:
 
 1. Render the pipeline operating rules and stage prompt template against the session context (title, prompt, prior stage artifacts, attempt number, and last reviewer feedback).
-2. Spin up a sandbox cloned from the workspace's connected GitHub repo on a per-stage branch.
+2. Restore the job's fixed Git checkpoint and repository in a sandbox on its own attempt branch. The first execution resolves the session's initial base; successor inputs are selected during review handoff and retries reuse their original input.
 3. Run the workspace's configured agent (Codex, Claude Code, Cursor, or OpenCode) inside the sandbox.
 4. Capture safe source changes in private durable storage and save the original artifact in an immutable publication intent. Push and verify an exact retained remote checkpoint, then atomically accept the checkpoint, versioned markdown artifact, and review state. Interrupted publication retries within the original attempt deadline; PR delivery runs independently after adoption.
 5. Flip the session to `awaiting_review` without making pull-request plumbing a prerequisite for artifact review.
 
-Humans approve or reject artifacts from the in-app dashboard. Approval validates the displayed stage, immutable artifact ID, and version, then advances to the next selected stage by `position` and queues its job/run in the same `approve_session_stage` transaction. Rejection validates the same review identity, records feedback against the reviewed artifact version and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt.
+Humans approve or reject artifacts from the in-app dashboard. Approval validates the displayed stage, immutable artifact ID, and version, then advances to the next selected stage by `position` and queues its job/run with the approved code checkpoint in the same `approve_session_stage` transaction. Rejection validates the same review identity, records feedback against the reviewed artifact version and enqueues a new job from that exact artifact's code checkpoint, re-running the same stage with `{{attempt.feedback}}` injected into the prompt. Text-only stages preserve the existing code; automatic retries keep their generation's original input.
 
 ### Pipeline Flow
 

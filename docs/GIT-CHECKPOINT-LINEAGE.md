@@ -1,12 +1,13 @@
 # Git checkpoint lineage
 
-Immutable code provenance builds on the attempt-fenced source delivery lifecycle (OP-494–OP-496).
+Immutable code provenance builds on the attempt-fenced source delivery lifecycle (OP-494–OP-497).
 
 ## Read and write contracts
 
-- `session_git_roots` records the repository and initial base commit observed for a session. The first owned execution pins it; subsequent jobs reuse that initial base.
-- `session_job_git_inputs` records one fixed code input per job intent. A retry keeps the job ID and advances `attempt_count`, while keeping the same input. A new review request creates a new job ID.
-- `pin_session_job_git_input` requires the current job attempt and running run, locks session → job → run, and returns the persisted input. An empty receipt means ownership was lost. Workers restore the returned commit before running the agent; they fail closed if it cannot be fetched.
+- `session_git_roots` records the repository and initial base commit observed for a session. The first owned execution pins this immutable identity; later generations may start from an accepted output in the same repository.
+- `session_git_heads` records the session's last accepted output checkpoint. Checkpoint insertion advances it in the artifact-adoption transaction under the session lock. It describes a published result, which can still await human review. Service and browser roles can read scoped metadata; only the private checkpoint trigger maintains the cursor.
+- `session_job_git_inputs` records one fixed code input per job intent, including its exact source checkpoint and effective restore ref. Enqueue preselects successor inputs before a worker can claim them. The execution binding pair starts null and is filled once by the first owned pin; every Git identity field is immutable. A retry keeps the job ID and advances `attempt_count`, while keeping the original input and binding. A new review request creates a new job ID.
+- `pin_session_job_git_input` requires the current job attempt and running run, locks session → job → run, verifies the observed checkout, and returns the persisted input. An empty receipt means ownership was lost. Workers restore the selected SHA and ref before agent bootstrap; they fail closed if it cannot be fetched or no longer matches.
 - `session_git_checkpoints` binds the accepted artifact to its exact input/output SHA and producing job/run/attempt. Adoption occurs in the same transaction as artifact publication. The source delivery outbox keeps the corresponding durable bundle and delivery lease.
 - `session_checkpoint_publications` privately saves the original artifact text, source identity, expected version, retained ref, and original attempt deadline before any remote push. Its identity and payload cannot be replaced during recovery. Browser roles cannot read it; service-role mutations use fenced RPCs.
 
@@ -18,7 +19,7 @@ Immutable code provenance builds on the attempt-fenced source delivery lifecycle
 
 The shared checkout verifies both HEAD and the attempt branch before dependency or agent bootstrap. Vercel creates an empty workspace for this mode; E2B, Daytona, and the fake use the same initialization and checkout code. A missing ref, inaccessible repository, changed ref, or dirty checkout produces an actionable `SandboxCheckpointRecoveryError`. Dirty tracked and untracked work is preserved, and acquired resources are stopped on failure or cancellation. Fake sandbox credentials use a separate temporary home outside its checkout.
 
-For a retry, the worker reads the existing job input within its workspace and session before provisioning and passes its exact SHA into checkpoint mode. It revalidates claim ownership through the pinning RPC afterward. A repository change fails before provisioning, and the saved base-branch identity survives a default-branch rename.
+For both a successor and a retry, the worker reads the job input within its workspace and session before provisioning and passes its exact SHA and effective ref into checkpoint mode. The selected repository wins over changed PR or workspace defaults; a missing or archived connection cannot redirect execution. An explicit session repository conflict fails before provisioning. The pinning RPC revalidates ownership and checkout afterward, and the saved base-branch identity survives a default-branch rename.
 
 Shared real-Git tests exercise all four providers. Run a live Vercel checkout-only smoke using operator credentials in a local env file:
 
@@ -36,7 +37,17 @@ After durable private bundle storage, the worker atomically prepares the source 
 
 `adopt_session_checkpoint_publication` locks session → job → run, verifies the current attempt, publication lease, repository/installation identity, and original deadline, then commits the remote receipt, checkpoint, artifact, successful run/job, and `awaiting_review` transition in one transaction. Failure after push leaves an orphan retained ref and the same private intent available for recovery. Failure after commit is resolved by its adopted receipt. Remote failure leaves the session in progress and never accepts an artifact claiming that code. Node stall recovery and Cloudflare interruption recovery preserve this obligation. Maintenance retries within the original deadline without rerunning the agent; expiration retires that attempt. Stale or cancelled work cannot adopt.
 
-The source-delivery outbox continues to synchronize PR delivery separately after adoption. This change does not select successor inputs or consolidate the session's canonical PR.
+The source-delivery outbox continues to synchronize PR delivery separately after adoption. Consolidating the session's canonical PR remains separate work.
+
+## Lifecycle handoff
+
+Approval validates the displayed stage, artifact ID and version, then selects the next selected stage by position. The reviewed artifact's checkpoint becomes that successor job's fixed input in the same transaction, including when intermediate stages are excluded. Request changes selects the exact reviewed checkpoint for a new job of the same stage. Adopting an existing queued job requires its frozen input to agree; it never repoints an executing generation.
+
+Automatic retries retain the generation's original input. A failed attempt's private bundle or remotely pushed candidate is not an accepted checkpoint and cannot become a retry input. Cancellation and stale review requests keep their existing ownership and version guards.
+
+No-code results keep `output_ref` null and `output_sha = input_sha`. Successors inherit the producing job's effective input ref, so any number of text-only stages preserve the same code and repository without making empty commits or PRs.
+
+Historical cursor recovery uses only an exact current-artifact/checkpoint association. It does not guess from the newest timestamp. Older code checkpoints require a known actual delivery ref; an old intended branch alone does not prove restoration. Missing or ambiguous known lineage produces an actionable recovery error instead of silently resetting to the initial base or current main. Already pinned generations keep their original input.
 
 ## Interpreting checkpoint metadata
 
@@ -46,6 +57,6 @@ New code checkpoints store the verified retained remote ref in `output_ref`. New
 
 ## Follow-up boundaries
 
-OP-495 provides exact restoration of a supplied checkpoint and starts retries from their saved input during provider setup. OP-496 adds durable remote publication and atomic adoption. Orchestration still starts each new job from the session's pinned initial base; OP-497 selects accepted predecessor inputs across review and retry flows. OP-498 synchronizes the canonical PR and review history, and OP-499 verifies the complete continuity workflow and rollout.
+OP-495 provides exact restoration of a supplied checkpoint. OP-496 adds durable remote publication and atomic adoption, and OP-497 carries accepted checkpoints through review transitions and fixed-input retries. OP-498 synchronizes the canonical PR, OP-502 snapshots inline feedback for a revision, and OP-499 verifies the complete continuity workflow and rollout.
 
 Migrations are forward-only and do not backfill fabricated historical SHAs. Run `pnpm check`, the database pgTAP suite, and generated-type drift verification before review. This change adds no user-facing UI.

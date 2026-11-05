@@ -28,10 +28,16 @@ select throws_ok($$select public.pin_session_job_git_input(job_id,1,run_id,
 select is((select count(*) from public.pin_session_job_git_input(
   (select job_id from git_fixture),1,(select run_id from git_fixture),
   '12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40))),1::bigint,'current attempt pins one input');
+select throws_ok($$select public.pin_session_job_git_input(job_id,1,run_id,
+  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('b',40)) from git_fixture$$,
+  '23514','Observed Git input does not match the selected checkpoint.',
+  'provider must restore the selected SHA before reusing a pinned job');
+select is((select input_sha from public.session_job_git_inputs where job_id=(select job_id from git_fixture)),repeat('a',40),
+  'mismatched observed checkout cannot rewrite the immutable input');
 select is((select input_sha from public.pin_session_job_git_input(
   (select job_id from git_fixture),1,(select run_id from git_fixture),
-  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('b',40))),repeat('a',40),
-  'moving the observed branch does not rewrite a pinned job');
+  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40))),repeat('a',40),
+  'the matching observed checkout reuses its pinned input');
 select throws_ok($$select public.pin_session_job_git_input(job_id,1,run_id,
   '12b2c3d4-0001-4000-8000-000000000001','other',repeat('a',40)) from git_fixture$$,
   '23514','Git execution input is already pinned.','a job cannot change its pinned base branch');
@@ -58,10 +64,17 @@ select is((select count(*) from public.pin_session_job_git_input(
   (select job_id from git_fixture),1,(select run_id from git_fixture),
   '12b2c3d4-0001-4000-8000-000000000001','main',repeat('c',40))),0::bigint,
   'stale attempt cannot acquire or adopt execution input');
+select throws_ok($$select public.pin_session_job_git_input((select job_id from git_fixture),2,(select run_id from git_retry),
+  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('c',40))$$,
+  '23514','Observed Git input does not match the selected checkpoint.',
+  'replacement attempt cannot certify a failed or moving checkout as its original input');
+select ok((select input_sha=repeat('a',40) and pinned_run_id=(select run_id from git_fixture) and pinned_attempt_count=1
+  from public.session_job_git_inputs where job_id=(select job_id from git_fixture)),
+  'mismatched retry preserves original SHA and first producing claim binding');
 select is((select input_sha from public.pin_session_job_git_input(
   (select job_id from git_fixture),2,(select run_id from git_retry),
-  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('c',40))),repeat('a',40),
-  'replacement attempt reuses the initial pinned SHA');
+  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40))),repeat('a',40),
+  'replacement attempt reuses the initial pinned SHA after exact restore');
 select is((select count(*) from public.session_job_git_inputs where job_id=(select job_id from git_fixture)),1::bigint,
   'retry does not create a second input record');
 select throws_ok($$delete from public.agent_runs where id=(select run_id from git_fixture)$$,

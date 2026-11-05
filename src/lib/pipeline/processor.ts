@@ -211,6 +211,12 @@ async function runStage(input: {
   let runFailureMessageRecorded = false;
   const checkpointSensitiveValues = new Set<string>();
   try {
+    const gitInputPromise = loadPinnedSessionJobGitInput({
+      admin,
+      jobId: job.id,
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
+    });
     const [
       config,
       previousStages,
@@ -218,6 +224,7 @@ async function runStage(input: {
       operatingRulesMd,
       sessionAttachments,
       repository,
+      priorGitInput,
     ] = await Promise.all([
       loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadCompletedStageArtifacts(admin, session.id),
@@ -227,13 +234,26 @@ async function runStage(input: {
         sessionId: session.id,
         workspaceId: session.workspace_id,
       }),
-      resolveEffectiveSessionRepository({
-        sessionId: session.id,
-        supabase: admin,
-        workspaceId: session.workspace_id,
-      }),
+      gitInputPromise.then((pinned) =>
+        resolveEffectiveSessionRepository({
+          ...(pinned ? { pinnedRepositoryId: pinned.repository_id } : {}),
+          sessionId: session.id,
+          supabase: admin,
+          workspaceId: session.workspace_id,
+        }),
+      ),
+      gitInputPromise,
     ]);
     throwIfAborted(signal);
+    if (
+      priorGitInput &&
+      session.github_repository_id &&
+      session.github_repository_id !== priorGitInput.repository_id
+    ) {
+      throw new Error(
+        "The pinned Git input belongs to a different repository. Restore the original repository connection before retrying.",
+      );
+    }
     const provider = normalizeAgentProviderName(config.provider);
     if (!provider) {
       throw new Error(
@@ -275,7 +295,18 @@ async function runStage(input: {
     throwIfAborted(signal);
     if (!github) {
       throw new Error(
-        "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
+        priorGitInput
+          ? "The pinned Git input's repository connection is unavailable. Restore the original repository connection before retrying."
+          : "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
+      );
+    }
+    if (
+      priorGitInput &&
+      (priorGitInput.repository_id !== github.repo.id ||
+        priorGitInput.repository_full_name !== github.repo.full_name)
+    ) {
+      throw new Error(
+        "The pinned Git input belongs to a different repository. Restore the original repository connection before retrying.",
       );
     }
     const sandboxImplementation = resolveSandboxImplementation();
@@ -301,26 +332,17 @@ async function runStage(input: {
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
     throwIfAborted(signal);
-    const priorGitInput = await loadPinnedSessionJobGitInput({
-      admin,
-      jobId: job.id,
-      sessionId: session.id,
-      workspaceId: session.workspace_id,
-    });
-    if (
-      priorGitInput &&
-      (priorGitInput.repository_id !== github.repo.id ||
-        priorGitInput.repository_full_name !== github.repo.full_name)
-    ) {
-      throw new Error(
-        "The pinned Git input belongs to a different repository. Restore the original repository connection before retrying.",
-      );
-    }
     sandbox = await createWorkspaceSessionSandbox(admin, {
       agentProvider: provider,
-      baseBranch: github.repo.default_branch ?? "main",
+      baseBranch: priorGitInput?.base_branch ?? github.repo.default_branch ?? "main",
       ...(priorGitInput
-        ? { mode: { kind: "checkpoint" as const, sha: priorGitInput.input_sha } }
+        ? {
+            mode: {
+              kind: "checkpoint" as const,
+              sha: priorGitInput.input_sha,
+              ...(priorGitInput.input_ref ? { ref: priorGitInput.input_ref } : {}),
+            },
+          }
         : {}),
       branch,
       implementation: sandboxSelection?.provider ?? "fake",
@@ -379,7 +401,13 @@ async function runStage(input: {
       signal,
     });
     if (!gitInput) throw new ExecutionOwnershipLostError();
-    await checkoutPinnedGitInput({ sandbox, branch, sha: gitInput.input_sha, signal });
+    await checkoutPinnedGitInput({
+      sandbox,
+      branch,
+      sha: gitInput.input_sha,
+      ...(gitInput.input_ref ? { ref: gitInput.input_ref } : {}),
+      signal,
+    });
     const sourceBase = gitInput.input_sha;
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();

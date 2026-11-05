@@ -1415,6 +1415,49 @@ export type Database = {
           },
         ]
       }
+      session_git_heads: {
+        Row: {
+          checkpoint_run_id: string
+          session_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          checkpoint_run_id: string
+          session_id: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          checkpoint_run_id?: string
+          session_id?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_git_heads_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_git_checkpoints"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_git_heads_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_heads_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_git_roots: {
         Row: {
           base_branch: string
@@ -1465,39 +1508,45 @@ export type Database = {
           base_branch: string
           created_at: string
           initial_base_sha: string
+          input_ref: string | null
           input_sha: string
           job_id: string
-          pinned_attempt_count: number
-          pinned_run_id: string
+          pinned_attempt_count: number | null
+          pinned_run_id: string | null
           repository_full_name: string
           repository_id: string
           session_id: string
+          source_checkpoint_run_id: string | null
           workspace_id: string
         }
         Insert: {
           base_branch: string
           created_at?: string
           initial_base_sha: string
+          input_ref?: string | null
           input_sha: string
           job_id: string
-          pinned_attempt_count: number
-          pinned_run_id: string
+          pinned_attempt_count?: number | null
+          pinned_run_id?: string | null
           repository_full_name: string
           repository_id: string
           session_id: string
+          source_checkpoint_run_id?: string | null
           workspace_id: string
         }
         Update: {
           base_branch?: string
           created_at?: string
           initial_base_sha?: string
+          input_ref?: string | null
           input_sha?: string
           job_id?: string
-          pinned_attempt_count?: number
-          pinned_run_id?: string
+          pinned_attempt_count?: number | null
+          pinned_run_id?: string | null
           repository_full_name?: string
           repository_id?: string
           session_id?: string
+          source_checkpoint_run_id?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -1521,6 +1570,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "sessions"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_job_git_inputs_source_checkpoint_run_id_fkey"
+            columns: ["source_checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_git_checkpoints"
+            referencedColumns: ["run_id"]
           },
           {
             foreignKeyName: "session_job_git_inputs_workspace_id_fkey"
@@ -3748,13 +3804,15 @@ export type Database = {
           base_branch: string
           created_at: string
           initial_base_sha: string
+          input_ref: string | null
           input_sha: string
           job_id: string
-          pinned_attempt_count: number
-          pinned_run_id: string
+          pinned_attempt_count: number | null
+          pinned_run_id: string | null
           repository_full_name: string
           repository_id: string
           session_id: string
+          source_checkpoint_run_id: string | null
           workspace_id: string
         }[]
         SetofOptions: {

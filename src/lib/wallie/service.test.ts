@@ -6,6 +6,8 @@ import {
   assertSessionFirstRunReady,
   createSessionWithFirstJob,
   enqueueSessionJobWithRun,
+  loadPinnedSessionJobGitInput,
+  pinSessionJobGitInput,
   retryWallieRun,
 } from "@/lib/wallie/service";
 import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
@@ -148,6 +150,206 @@ describe("wallie service helpers", () => {
         },
       }),
     ).toThrow(/archived repository/i);
+  });
+});
+
+describe("generation Git input receipts", () => {
+  const sha = "b".repeat(40);
+  const ref = `refs/heads/wallie/checkpoints/accepted-run/${sha}`;
+  const row: Tables<"session_job_git_inputs"> = {
+    job_id: "job-1",
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    repository_id: "repository-1",
+    repository_full_name: "acme/app",
+    initial_base_sha: "a".repeat(40),
+    input_sha: sha,
+    input_ref: ref,
+    source_checkpoint_run_id: "accepted-run",
+    base_branch: "saved-default",
+    pinned_run_id: null,
+    pinned_attempt_count: null,
+    created_at: "2026-11-05T12:00:00.000Z",
+  };
+
+  function inputAdmin(input: { row?: Record<string, unknown>; error?: unknown } = {}) {
+    const filters = new Map<string, unknown>();
+    const selected: Record<string, unknown> = input.row ?? row;
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn((key: string, value: unknown) => {
+        filters.set(key, value);
+        return query;
+      }),
+      maybeSingle: vi.fn(async () => ({
+        data: [...filters].every(([key, value]) => selected[key] === value)
+          ? { ...selected }
+          : null,
+        error: input.error ?? null,
+      })),
+    };
+    const from = vi.fn(() => query);
+    const admin = { from } as unknown as Parameters<
+      typeof loadPinnedSessionJobGitInput
+    >[0]["admin"];
+    return { admin, query, from };
+  }
+
+  it("loads queued preselection before a run has bound it while preserving retained-ref provenance", async () => {
+    const { admin, from, query } = inputAdmin();
+    expect(
+      await loadPinnedSessionJobGitInput({
+        admin,
+        jobId: "job-1",
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+      }),
+    ).toEqual(row);
+    expect(from).toHaveBeenCalledExactlyOnceWith("session_job_git_inputs");
+    expect(query.eq.mock.calls).toEqual([
+      ["job_id", "job-1"],
+      ["session_id", "session-1"],
+      ["workspace_id", "workspace-1"],
+    ]);
+    expect(query.maybeSingle).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { job_id: "another-job" },
+    { session_id: "another-session" },
+    { workspace_id: "another-workspace" },
+  ])("does not load another generation's selected input (%j)", async (identity) => {
+    const { admin } = inputAdmin({ row: { ...row, ...identity } });
+    expect(
+      await loadPinnedSessionJobGitInput({
+        admin,
+        jobId: "job-1",
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+      }),
+    ).toBeNull();
+  });
+
+  it("propagates preselection read failures so execution cannot bootstrap a moving default instead", async () => {
+    const error = { message: "Git input read unavailable" };
+    const { admin } = inputAdmin({ error });
+    await expect(
+      loadPinnedSessionJobGitInput({
+        admin,
+        jobId: "job-1",
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+      }),
+    ).rejects.toBe(error);
+  });
+
+  it("preserves the owned pin receipt's selected SHA, retained ref and source provenance", async () => {
+    const pinned = { ...row, pinned_run_id: "current-run", pinned_attempt_count: 3 };
+    const reply = Promise.resolve({ data: [pinned], error: null });
+    const abortSignal = vi.fn(() => reply);
+    const rpc = vi.fn(() => Object.assign(reply, { abortSignal }));
+    const signal = new AbortController().signal;
+    const result = await pinSessionJobGitInput({
+      admin: { rpc } as unknown as Parameters<typeof pinSessionJobGitInput>[0]["admin"],
+      jobId: "job-1",
+      attemptCount: 3,
+      runId: "current-run",
+      repositoryId: "repository-1",
+      baseBranch: "saved-default",
+      observedSha: sha,
+      signal,
+    });
+    expect(result).toEqual(pinned);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("pin_session_job_git_input", {
+      p_job_id: "job-1",
+      p_attempt_count: 3,
+      p_run_id: "current-run",
+      p_repository_id: "repository-1",
+      p_base_branch: "saved-default",
+      p_observed_sha: sha,
+    });
+    expect(abortSignal).toHaveBeenCalledExactlyOnceWith(signal);
+  });
+
+  it("propagates an authoritative pin mismatch instead of accepting the wrong restored checkout", async () => {
+    const error = {
+      code: "23514",
+      message: "Observed Git input does not match the selected checkpoint.",
+    };
+    const rpc = vi.fn().mockResolvedValue({ data: [], error });
+    await expect(
+      pinSessionJobGitInput({
+        admin: { rpc } as unknown as Parameters<typeof pinSessionJobGitInput>[0]["admin"],
+        jobId: "job-1",
+        attemptCount: 2,
+        runId: "wrong-checkout-run",
+        repositoryId: "repository-1",
+        baseBranch: "saved-default",
+        observedSha: "f".repeat(40),
+      }),
+    ).rejects.toBe(error);
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+
+  it("returns no pin when the database rejects stale execution ownership", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    expect(
+      await pinSessionJobGitInput({
+        admin: { rpc } as unknown as Parameters<typeof pinSessionJobGitInput>[0]["admin"],
+        jobId: "job-1",
+        attemptCount: 1,
+        runId: "old-run",
+        repositoryId: "repository-1",
+        baseBranch: "saved-default",
+        observedSha: sha,
+      }),
+    ).toBeNull();
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+
+  it("does not issue a pin for a canceled invocation", async () => {
+    const rpc = vi.fn();
+    const controller = new AbortController();
+    controller.abort(new Error("Generation canceled"));
+    await expect(
+      pinSessionJobGitInput({
+        admin: { rpc } as unknown as Parameters<typeof pinSessionJobGitInput>[0]["admin"],
+        jobId: "job-1",
+        attemptCount: 1,
+        runId: "old-run",
+        repositoryId: "repository-1",
+        baseBranch: "saved-default",
+        observedSha: sha,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("Generation canceled");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a late owned pin receipt after the invocation loses cancellation ownership", async () => {
+    const controller = new AbortController();
+    const rpc = vi.fn(() => ({
+      abortSignal: vi.fn(async () => {
+        controller.abort(new Error("Attempt replaced during pinning"));
+        return {
+          data: [{ ...row, pinned_run_id: "old-run", pinned_attempt_count: 1 }],
+          error: null,
+        };
+      }),
+    }));
+    await expect(
+      pinSessionJobGitInput({
+        admin: { rpc } as unknown as Parameters<typeof pinSessionJobGitInput>[0]["admin"],
+        jobId: "job-1",
+        attemptCount: 1,
+        runId: "old-run",
+        repositoryId: "repository-1",
+        baseBranch: "saved-default",
+        observedSha: sha,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("Attempt replaced during pinning");
+    expect(rpc).toHaveBeenCalledOnce();
   });
 });
 

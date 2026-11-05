@@ -254,13 +254,34 @@ const productStage = {
 
 // ---- supabase mock builder ---------------------------------------------
 
+type GitInputFixture = Tables<"session_job_git_inputs">;
+
+function gitInputFixture(overrides: Partial<GitInputFixture> = {}): GitInputFixture {
+  return {
+    job_id: "job-1",
+    session_id: "sess-1",
+    workspace_id: "ws-1",
+    repository_id: "repo-1",
+    repository_full_name: "acme/app",
+    base_branch: "main",
+    initial_base_sha: "a".repeat(40),
+    input_sha: "a".repeat(40),
+    input_ref: null,
+    source_checkpoint_run_id: null,
+    pinned_run_id: "run-1",
+    pinned_attempt_count: 1,
+    created_at: "2026-11-05T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
 interface MockOptions {
   session: Tables<"sessions"> | null;
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   agentConfigError?: { message: string };
   claimSucceeds?: boolean;
-  pinnedInputSha?: string;
-  priorGitInput?: Partial<Tables<"session_job_git_inputs">>;
+  priorGitInput?: Partial<GitInputFixture>;
+  gitInputReadError?: { message: string };
   pinInputMiss?: boolean;
   pinInputError?: { message: string };
   currentAttempt?: number;
@@ -612,20 +633,23 @@ function buildAdminMock(opts: MockOptions) {
   const tables: Record<string, unknown> = {
     session_job_git_inputs: {
       select: () => {
+        const filters = new Map<string, unknown>();
         const chain = {
-          eq: () => chain,
-          maybeSingle: async () => ({
-            data: opts.priorGitInput
-              ? {
-                  repository_id: "repo-1",
-                  repository_full_name: "acme/app",
-                  input_sha: "a".repeat(40),
-                  base_branch: "main",
-                  ...opts.priorGitInput,
-                }
-              : null,
-            error: null,
-          }),
+          eq: (key: string, value: unknown) => {
+            filters.set(key, value);
+            return chain;
+          },
+          maybeSingle: async () => {
+            const row = opts.priorGitInput ? gitInputFixture(opts.priorGitInput) : null;
+            return {
+              data:
+                row &&
+                [...filters].every(([key, value]) => row[key as keyof GitInputFixture] === value)
+                  ? row
+                  : null,
+              error: opts.gitInputReadError ?? null,
+            };
+          },
         };
         return chain;
       },
@@ -646,14 +670,23 @@ function buildAdminMock(opts: MockOptions) {
   const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
     if (fn === "pin_session_job_git_input") {
+      if (
+        opts.priorGitInput &&
+        gitInputFixture(opts.priorGitInput).input_sha !== payload.p_observed_sha
+      )
+        return {
+          data: [],
+          error: { message: "Observed Git input does not match the selected checkpoint." },
+        };
       return {
         data: opts.pinInputMiss
           ? []
           : [
-              {
-                input_sha: opts.pinnedInputSha ?? payload.p_observed_sha,
-                base_branch: payload.p_base_branch,
-              },
+              gitInputFixture({
+                ...opts.priorGitInput,
+                input_sha: opts.priorGitInput?.input_sha ?? String(payload.p_observed_sha),
+                base_branch: opts.priorGitInput?.base_branch ?? String(payload.p_base_branch),
+              }),
             ],
         error: opts.pinInputError ?? null,
       };
@@ -872,7 +905,11 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("executes the persisted input before starting the agent when the default branch moves", async () => {
     const pinnedSha = "b".repeat(40);
-    const { admin, rpc } = buildAdminMock({ session: baseSession(), pinnedInputSha: pinnedSha });
+    const { admin, rpc } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { input_sha: pinnedSha },
+    });
+    mocked.readSourceBase.mockResolvedValueOnce(pinnedSha);
     expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
       result: "success",
     });
@@ -883,7 +920,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         p_attempt_count: baseJob().attempt_count,
         p_run_id: "run-1",
         p_repository_id: "repo-1",
-        p_observed_sha: "a".repeat(40),
+        p_observed_sha: pinnedSha,
       }),
     );
     expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledWith(
@@ -902,8 +939,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     const { admin, rpc } = buildAdminMock({
       session: baseSession(),
       priorGitInput: { input_sha: sha, base_branch: "old-default" },
-      pinnedInputSha: sha,
     });
+    mocked.readSourceBase.mockResolvedValueOnce(sha);
     expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
       result: "success",
     });
@@ -916,13 +953,270 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
   });
 
-  it("refuses a pinned input from another repository before provisioning", async () => {
+  it.each([
+    { lifecycle: "approved successor", sourceRunId: "approved-build-run", rejectionCount: 0 },
+    { lifecycle: "rejected revision", sourceRunId: "rejected-build-run", rejectionCount: 1 },
+  ])(
+    "bootstraps a $lifecycle from its unbound selected checkpoint before agent execution",
+    async ({ sourceRunId, rejectionCount }) => {
+      const sha = "d".repeat(40);
+      const ref = `refs/heads/wallie/checkpoints/${sourceRunId}/${sha}`;
+      const { admin, rpc } = buildAdminMock({
+        session: baseSession({ rejection_count: rejectionCount }),
+        priorGitInput: {
+          input_sha: sha,
+          input_ref: ref,
+          source_checkpoint_run_id: sourceRunId,
+          base_branch: "saved-default",
+          pinned_run_id: null,
+          pinned_attempt_count: null,
+        },
+      });
+      mocked.readSourceBase.mockResolvedValueOnce(sha);
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+      expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoFullName: "acme/app",
+          baseBranch: "saved-default",
+          mode: { kind: "checkpoint", sha, ref },
+        }),
+      );
+      expect(rpc).toHaveBeenCalledWith(
+        "pin_session_job_git_input",
+        expect.objectContaining({
+          p_job_id: "job-1",
+          p_run_id: "run-1",
+          p_attempt_count: 1,
+          p_repository_id: "repo-1",
+          p_base_branch: "saved-default",
+          p_observed_sha: sha,
+        }),
+      );
+      expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledWith(
+        expect.objectContaining({ sha, ref }),
+      );
+      expect(mocked.createSessionSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+        mocked.checkoutPinnedGitInput.mock.invocationCallOrder[0],
+      );
+      expect(mocked.checkoutPinnedGitInput.mock.invocationCallOrder[0]).toBeLessThan(
+        mocked.createAgentRunner.mock.invocationCallOrder[0],
+      );
+      expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+        expect.objectContaining({ baseSha: sha }),
+      );
+    },
+  );
+
+  it.each([
+    { observed: "e".repeat(40), movement: "failed partial checkout" },
+    { observed: "f".repeat(40), movement: "newer canonical head" },
+  ])(
+    "restores the retry's generation input before pinning despite a $movement",
+    async ({ observed }) => {
+      const sha = "c".repeat(40);
+      const ref = `refs/heads/wallie/checkpoints/selected-run/${sha}`;
+      const { admin, rpc } = buildAdminMock({
+        session: baseSession(),
+        priorGitInput: {
+          input_sha: sha,
+          input_ref: ref,
+          source_checkpoint_run_id: "selected-run",
+          base_branch: "original-default",
+          pinned_run_id: "first-attempt-run",
+          pinned_attempt_count: 1,
+        },
+      });
+      let providerHead = observed;
+      const provision = mocked.createSessionSandbox.getMockImplementation()!;
+      mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+        if (input.mode?.kind === "checkpoint") providerHead = input.mode.sha;
+        return provision(input);
+      });
+      mocked.readSourceBase.mockImplementationOnce(async () => providerHead);
+      expect((await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) })).result).toBe(
+        "success",
+      );
+      expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseBranch: "original-default",
+          mode: { kind: "checkpoint", sha, ref },
+        }),
+      );
+      expect(rpc).toHaveBeenCalledWith(
+        "pin_session_job_git_input",
+        expect.objectContaining({
+          p_attempt_count: 3,
+          p_observed_sha: sha,
+        }),
+      );
+      expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledWith(
+        expect.objectContaining({ sha, ref }),
+      );
+      expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+        expect.objectContaining({ baseSha: sha }),
+      );
+    },
+  );
+
+  it("refuses a provider checkout that did not restore the selected checkpoint before pinning", async () => {
+    const sha = "c".repeat(40);
+    const ref = `refs/heads/wallie/checkpoints/selected-run/${sha}`;
+    const wrongSha = "f".repeat(40);
+    const { admin, rpc, insertedArtifacts } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { input_sha: sha, input_ref: ref },
+    });
+    mocked.readSourceBase.mockResolvedValueOnce(wrongSha);
+    expect((await processPipelineJob({ admin, job: baseJob({ attempt_count: 2 }) })).result).toBe(
+      "error",
+    );
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: { kind: "checkpoint", sha, ref },
+      }),
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "pin_session_job_git_input",
+      expect.objectContaining({ p_observed_sha: wrongSha }),
+    );
+    expect(mocked.checkoutPinnedGitInput).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.captureSourceCheckpoint).not.toHaveBeenCalled();
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(insertedArtifacts).toEqual([]);
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+  });
+
+  it("reuses an inherited retained ref when the selected accepted output changed no code", async () => {
+    const sha = "b".repeat(40);
+    const ref = `refs/heads/wallie/checkpoints/earlier-code-run/${sha}`;
+    const { admin } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: {
+        input_sha: sha,
+        input_ref: ref,
+        source_checkpoint_run_id: "accepted-no-code-run",
+        pinned_run_id: null,
+        pinned_attempt_count: null,
+      },
+    });
+    mocked.captureSourceCheckpoint.mockResolvedValueOnce({
+      kind: "unchanged",
+      baseSha: sha,
+      headSha: sha,
+    });
+    mocked.readSourceBase.mockResolvedValueOnce(sha);
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: { kind: "checkpoint", sha, ref },
+      }),
+    );
+    expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledWith(
+      expect.objectContaining({ sha, ref }),
+    );
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        checkpoint: { kind: "unchanged", baseSha: sha, headSha: sha },
+      }),
+    );
+  });
+
+  it("keeps the selected repository when workspace and pull-request defaults change", async () => {
+    const sha = "d".repeat(40);
+    const ref = `refs/heads/wallie/checkpoints/selected-run/${sha}`;
+    const { admin } = buildAdminMock({
+      session: baseSession({ github_repository_id: null }),
+      priorGitInput: {
+        input_sha: sha,
+        input_ref: ref,
+        base_branch: "original-default",
+        pinned_run_id: null,
+        pinned_attempt_count: null,
+      },
+      primaryRepositoryProfile: { github_repository_id: "new-primary" },
+      sessionPullRequestRepositoryId: "new-pr-repository",
+      githubRepositories: [
+        { id: "repo-1", full_name: "acme/app", default_branch: "renamed-default" },
+        { id: "new-primary", full_name: "acme/new-primary", default_branch: "main" },
+        { id: "new-pr-repository", full_name: "acme/new-pr", default_branch: "main" },
+      ],
+    });
+    mocked.readSourceBase.mockResolvedValueOnce(sha);
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoFullName: "acme/app",
+        baseBranch: "original-default",
+        mode: { kind: "checkpoint", sha, ref },
+      }),
+    );
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1", baseBranch: "original-default" }),
+    );
+    expect(mocked.octokitRequest).toHaveBeenCalledWith(
+      "POST /app/installations/{installation_id}/access_tokens",
+      expect.objectContaining({ repositories: ["app"] }),
+    );
+  });
+
+  it("refuses a missing selected repository even when another primary repository is available", async () => {
+    const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { repository_id: "removed-original-repository" },
+      primaryRepositoryProfile: { github_repository_id: "repo-1" },
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.octokitRequest).not.toHaveBeenCalled();
+    expect(insertedArtifacts).toEqual([]);
+    expect(
+      insertedMessages.some((message) =>
+        String(message.message_md).includes("Restore the original repository connection"),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses an explicit session repository change before binding the selected generation to a run", async () => {
+    const { admin, insertedRuns } = buildAdminMock({
+      session: baseSession({ github_repository_id: "replacement-repository" }),
+      priorGitInput: { repository_id: "repo-1" },
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.octokitRequest).not.toHaveBeenCalled();
+    expect(insertedRuns).toEqual([]);
+  });
+
+  it.each([
+    { repository_id: "foreign-repository" },
+    { repository_full_name: "other-owner/other-repository" },
+  ])(
+    "refuses a selected input from another repository before provisioning (%j)",
+    async (identity) => {
+      const { admin, insertedArtifacts } = buildAdminMock({
+        session: baseSession(),
+        priorGitInput: identity,
+      });
+      expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+        result: "error",
+      });
+      expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+      expect(mocked.octokitRequest).not.toHaveBeenCalled();
+      expect(insertedArtifacts).toEqual([]);
+    },
+  );
+
+  it("fails closed before provisioning when its selected input cannot be read", async () => {
     const { admin, insertedArtifacts } = buildAdminMock({
       session: baseSession(),
-      priorGitInput: { repository_id: "foreign-repository" },
+      gitInputReadError: { message: "Selected Git input unavailable" },
     });
-    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({ result: "error" });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
     expect(insertedArtifacts).toEqual([]);
   });
 
@@ -930,21 +1224,51 @@ describe("processPipelineJob (generic stage runner)", () => {
     { pinInputMiss: true },
     { pinInputError: { message: "Repository changed after input pinning." } },
   ])("does not start the agent without an owned immutable input: %j", async (failure) => {
-    const { admin, insertedArtifacts } = buildAdminMock({ session: baseSession(), ...failure });
+    const { admin, insertedArtifacts } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { pinned_run_id: null, pinned_attempt_count: null },
+      ...failure,
+    });
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(result.result).not.toBe("success");
     expect(mocked.checkoutPinnedGitInput).not.toHaveBeenCalled();
     expect(mocked.createAgentRunner).not.toHaveBeenCalled();
     expect(insertedArtifacts).toEqual([]);
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
   });
 
-  it("stops before agent execution when the pinned checkout cannot be restored", async () => {
-    mocked.checkoutPinnedGitInput.mockRejectedValueOnce(new Error("Pinned commit unavailable"));
-    const { admin, insertedArtifacts } = buildAdminMock({ session: baseSession() });
-    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({ result: "error" });
+  it("fences a canceled selected-checkpoint restore before the agent can execute", async () => {
+    const controller = new AbortController();
+    const { admin, insertedArtifacts, rpc } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { pinned_run_id: null, pinned_attempt_count: null },
+    });
+    mocked.checkoutPinnedGitInput.mockImplementationOnce(async () => {
+      controller.abort(new Error("Execution ownership canceled"));
+      controller.signal.throwIfAborted();
+    });
+    expect(
+      (await processPipelineJob({ admin, job: baseJob(), signal: controller.signal })).result,
+    ).toBe("idle");
     expect(mocked.createAgentRunner).not.toHaveBeenCalled();
     expect(insertedArtifacts).toEqual([]);
+    expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
   });
+
+  it.each(["Pinned commit unavailable", "The attempt checkout contains uncommitted changes"])(
+    "stops before agent execution when exact checkpoint checkout fails: %s",
+    async (message) => {
+      mocked.checkoutPinnedGitInput.mockRejectedValueOnce(new Error(message));
+      const { admin, insertedArtifacts } = buildAdminMock({ session: baseSession() });
+      expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+        result: "error",
+      });
+      expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+      expect(insertedArtifacts).toEqual([]);
+      expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(
     AGENT_PROVIDERS.flatMap((agent) =>

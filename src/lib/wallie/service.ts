@@ -33,7 +33,7 @@ import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-conne
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
-/** Read a previously pinned job input before provisioning a replacement sandbox. */
+/** Read the durable generation input before provisioning its initial or retry sandbox. */
 export async function loadPinnedSessionJobGitInput(input: {
   admin: AdminClient;
   jobId: string;
