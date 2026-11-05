@@ -56,9 +56,23 @@ function payload(action = "opened") {
 function buildPrAdmin({
   installation = { id: "ghi-1", workspace_id: "ws-1" },
   repository = { id: "repo-1", full_name: "acme/app" },
+  epoch = {
+    base_branch: "main",
+    branch_name: canonicalBranch,
+    pr_number: 42,
+    github_repository_id: 555,
+    repository_full_name: "acme/app",
+  },
 }: {
   installation?: { id: string; workspace_id: string } | null;
   repository?: { id: string; full_name: string } | null;
+  epoch?: {
+    base_branch: string;
+    pr_number: number;
+    branch_name?: string;
+    github_repository_id?: number;
+    repository_full_name?: string;
+  } | null;
 } = {}) {
   const rpc = vi.fn(async (name: string) => ({
     data: name === "begin_github_pull_request_observation" ? null : true,
@@ -75,7 +89,12 @@ function buildPrAdmin({
           return query;
         },
         maybeSingle: async () => ({
-          data: table === "github_installations" ? installation : repository,
+          data:
+            table === "github_installations"
+              ? installation
+              : table === "session_pr_epochs"
+                ? epoch
+                : repository,
           error: null,
         }),
       };
@@ -85,6 +104,205 @@ function buildPrAdmin({
   mocked.createSupabaseAdminClient.mockReturnValue(admin);
   return { rpc, filters };
 }
+
+const canonicalSessionId = "49800000-0000-4000-8000-000000000001";
+const canonicalEpochId = "49800000-0000-4000-8000-000000000002";
+const canonicalBranch = `wallie/sessions/${canonicalSessionId}/${canonicalEpochId}`;
+function canonicalPayload(action = "synchronize") {
+  const event = payload(action);
+  event.pull_request.head.ref = canonicalBranch;
+  return event;
+}
+function canonicalSnapshot() {
+  return {
+    ...canonicalPayload().pull_request,
+    head: { ref: canonicalBranch, sha: "a".repeat(40), repo: { id: 555 } },
+    base: { ref: "main", repo: { id: 555 } },
+  };
+}
+
+describe("canonical PR webhook observations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.getInstallationOctokit.mockResolvedValue({ request: mocked.request });
+    mocked.request.mockResolvedValue({ data: canonicalSnapshot() });
+  });
+  function canonicalAdmin(options: Parameters<typeof buildPrAdmin>[0] = {}) {
+    const result = buildPrAdmin(options);
+    result.rpc.mockImplementation(
+      async (name: string) =>
+        ({
+          data: name === "begin_session_pr_observation" ? "canonical-token" : true,
+          error: null,
+        }) as never,
+    );
+    return result;
+  }
+  it("dirties the exact pinned epoch before a fresh GET and finishes only its observation token", async () => {
+    const { rpc, filters } = canonicalAdmin();
+    const operations: string[] = [];
+    rpc.mockImplementation(async (name: string) => {
+      operations.push(name);
+      return {
+        data: name === "begin_session_pr_observation" ? "canonical-token" : true,
+        error: null,
+      } as never;
+    });
+    mocked.request.mockImplementation(async () => {
+      operations.push("GitHub GET");
+      return { data: canonicalSnapshot() };
+    });
+    await handleGitHubPullRequestEvent(canonicalPayload(), env);
+    expect(operations).toEqual([
+      "begin_session_pr_observation",
+      "GitHub GET",
+      "finish_session_pr_observation",
+    ]);
+    expect(rpc).toHaveBeenCalledWith("begin_session_pr_observation", {
+      p_workspace_id: "ws-1",
+      p_repository_id: "repo-1",
+      p_branch_name: canonicalBranch,
+      p_pr_number: 42,
+    });
+    expect(filters).toContainEqual(["session_pr_epochs", "id", canonicalEpochId]);
+    expect(filters).toContainEqual(["session_pr_epochs", "session_id", canonicalSessionId]);
+    expect(filters).toContainEqual(["session_pr_epochs", "workspace_id", "ws-1"]);
+    expect(filters).toContainEqual(["session_pr_epochs", "repository_id", "repo-1"]);
+    expect(filters).toContainEqual(["session_pr_epochs", "branch_name", canonicalBranch]);
+    expect(rpc).toHaveBeenCalledWith("finish_session_pr_observation", {
+      p_observation_id: "canonical-token",
+      p_pr_url: "https://github.com/acme/app/pull/42",
+      p_pr_state: "open",
+      p_is_draft: false,
+      p_pr_head_sha: "a".repeat(40),
+      p_pr_updated_at: "2026-10-11T00:00:00Z",
+    });
+    expect(rpc).not.toHaveBeenCalledWith("apply_github_pull_request_event", expect.anything());
+  });
+  it("never falls back to legacy branch adoption for an unpinned canonical PR", async () => {
+    const { rpc } = canonicalAdmin();
+    rpc.mockResolvedValue({ data: null, error: null });
+    await handleGitHubPullRequestEvent(canonicalPayload(), env);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(mocked.request).not.toHaveBeenCalled();
+  });
+  it.each([null, { base_branch: "main", pr_number: 99 }])(
+    "leaves state dirty if its pinned epoch disappeared or changed",
+    async (epoch) => {
+      const { rpc } = canonicalAdmin({ epoch });
+      await handleGitHubPullRequestEvent(canonicalPayload(), env);
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(mocked.request).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { github_repository_id: 999 },
+    { repository_full_name: "acme/other" },
+    { branch_name: "wallie/other" },
+  ])(
+    "does not observe an epoch whose immutable repository or branch identity drifted",
+    async (change) => {
+      const { rpc } = canonicalAdmin({
+        epoch: {
+          base_branch: "main",
+          pr_number: 42,
+          branch_name: canonicalBranch,
+          github_repository_id: 555,
+          repository_full_name: "acme/app",
+          ...change,
+        },
+      });
+      await expect(handleGitHubPullRequestEvent(canonicalPayload(), env)).rejects.toThrow();
+      expect(mocked.request).not.toHaveBeenCalled();
+      expect(rpc).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each([
+    ["different PR", () => ({ ...canonicalSnapshot(), number: 43 })],
+    [
+      "different base repository",
+      () => ({ ...canonicalSnapshot(), base: { ref: "main", repo: { id: 999 } } }),
+    ],
+    [
+      "different base branch",
+      () => ({ ...canonicalSnapshot(), base: { ref: "other", repo: { id: 555 } } }),
+    ],
+    [
+      "different head repository",
+      () => ({ ...canonicalSnapshot(), head: { ...canonicalSnapshot().head, repo: { id: 999 } } }),
+    ],
+    [
+      "missing open head repository",
+      () => ({ ...canonicalSnapshot(), head: { ...canonicalSnapshot().head, repo: null } }),
+    ],
+    [
+      "different head branch",
+      () => ({
+        ...canonicalSnapshot(),
+        head: { ...canonicalSnapshot().head, ref: "wallie/other" },
+      }),
+    ],
+    [
+      "invalid head SHA",
+      () => ({ ...canonicalSnapshot(), head: { ...canonicalSnapshot().head, sha: "bad" } }),
+    ],
+    [
+      "different URL",
+      () => ({ ...canonicalSnapshot(), html_url: "https://elsewhere.example/pull/42" }),
+    ],
+    [
+      "different URL PR",
+      () => ({ ...canonicalSnapshot(), html_url: "https://github.com/acme/app/pull/43" }),
+    ],
+    ["contradictory state", () => ({ ...canonicalSnapshot(), merged: true })],
+  ] as const)("does not finish a canonical observation with %s", async (_label, snapshot) => {
+    const { rpc } = canonicalAdmin();
+    mocked.request.mockResolvedValue({ data: snapshot() });
+    await expect(handleGitHubPullRequestEvent(canonicalPayload(), env)).rejects.toThrow();
+    expect(rpc).not.toHaveBeenCalledWith("finish_session_pr_observation", expect.anything());
+    expect(rpc).not.toHaveBeenCalledWith("apply_github_pull_request_event", expect.anything());
+  });
+  it("leaves an interrupted GET dirty for later reconciliation", async () => {
+    const { rpc } = canonicalAdmin();
+    mocked.request.mockRejectedValue(new Error("GitHub temporarily unavailable"));
+    await expect(handleGitHubPullRequestEvent(canonicalPayload(), env)).rejects.toThrow();
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+  it.each([false, true])(
+    "records terminal state with a deleted head repository (merged: %s)",
+    async (merged) => {
+      const { rpc } = canonicalAdmin();
+      mocked.request.mockResolvedValue({
+        data: {
+          ...canonicalSnapshot(),
+          state: "closed",
+          merged,
+          head: { ...canonicalSnapshot().head, repo: null },
+        },
+      });
+      await handleGitHubPullRequestEvent(canonicalPayload("closed"), env);
+      expect(rpc).toHaveBeenCalledWith(
+        "finish_session_pr_observation",
+        expect.objectContaining({
+          p_pr_state: merged ? "merged" : "closed",
+          p_pr_head_sha: null,
+        }),
+      );
+    },
+  );
+  it("lets the database discard a superseded observation without a second write", async () => {
+    const { rpc } = canonicalAdmin();
+    rpc.mockImplementation(
+      async (name: string) =>
+        ({
+          data: name === "begin_session_pr_observation" ? "superseded-token" : false,
+          error: null,
+        }) as never,
+    );
+    await expect(handleGitHubPullRequestEvent(canonicalPayload(), env)).resolves.toBeUndefined();
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("handleGitHubPullRequestEvent", () => {
   beforeEach(() => {

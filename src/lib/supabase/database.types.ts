@@ -1646,6 +1646,290 @@ export type Database = {
           },
         ]
       }
+      session_pr_epochs: {
+        Row: {
+          acknowledged_fence_sha: string | null
+          acknowledged_head_sha: string | null
+          base_branch: string
+          branch_name: string
+          create_attempted: boolean
+          created_at: string
+          epoch_number: number
+          fence_branch: string
+          github_repository_id: number
+          id: string
+          is_draft: boolean | null
+          observation_id: string | null
+          pr_head_sha: string | null
+          pr_number: number | null
+          pr_state: string | null
+          pr_updated_at: string | null
+          pr_url: string | null
+          repository_full_name: string
+          repository_id: string | null
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          acknowledged_fence_sha?: string | null
+          acknowledged_head_sha?: string | null
+          base_branch: string
+          branch_name: string
+          create_attempted?: boolean
+          created_at?: string
+          epoch_number: number
+          fence_branch: string
+          github_repository_id: number
+          id?: string
+          is_draft?: boolean | null
+          observation_id?: string | null
+          pr_head_sha?: string | null
+          pr_number?: number | null
+          pr_state?: string | null
+          pr_updated_at?: string | null
+          pr_url?: string | null
+          repository_full_name: string
+          repository_id?: string | null
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          acknowledged_fence_sha?: string | null
+          acknowledged_head_sha?: string | null
+          base_branch?: string
+          branch_name?: string
+          create_attempted?: boolean
+          created_at?: string
+          epoch_number?: number
+          fence_branch?: string
+          github_repository_id?: number
+          id?: string
+          is_draft?: boolean | null
+          observation_id?: string | null
+          pr_head_sha?: string | null
+          pr_number?: number | null
+          pr_state?: string | null
+          pr_updated_at?: string | null
+          pr_url?: string | null
+          repository_full_name?: string
+          repository_id?: string | null
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_epochs_repository_id_fkey"
+            columns: ["repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_epochs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_epochs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_pr_operations: {
+        Row: {
+          attempt_count: number
+          checkpoint_run_id: string
+          claim_id: string | null
+          created_at: string
+          desired_fence_sha: string
+          desired_sha: string
+          epoch_id: string
+          expected_fence_sha: string | null
+          expected_head_sha: string | null
+          fence_commit_body: string
+          id: string
+          last_error_code: string | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          receipt_fence_sha: string | null
+          receipt_head_sha: string | null
+          receipt_observation_id: string | null
+          receipt_pr_head_sha: string | null
+          receipt_pr_number: number | null
+          receipt_pr_state: string | null
+          receipted_at: string | null
+          session_id: string
+          source_ref: string
+          status: string
+          target_generation: number
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          checkpoint_run_id: string
+          claim_id?: string | null
+          created_at?: string
+          desired_fence_sha: string
+          desired_sha: string
+          epoch_id: string
+          expected_fence_sha?: string | null
+          expected_head_sha?: string | null
+          fence_commit_body: string
+          id?: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          receipt_fence_sha?: string | null
+          receipt_head_sha?: string | null
+          receipt_observation_id?: string | null
+          receipt_pr_head_sha?: string | null
+          receipt_pr_number?: number | null
+          receipt_pr_state?: string | null
+          receipted_at?: string | null
+          session_id: string
+          source_ref: string
+          status?: string
+          target_generation: number
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          checkpoint_run_id?: string
+          claim_id?: string | null
+          created_at?: string
+          desired_fence_sha?: string
+          desired_sha?: string
+          epoch_id?: string
+          expected_fence_sha?: string | null
+          expected_head_sha?: string | null
+          fence_commit_body?: string
+          id?: string
+          last_error_code?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          receipt_fence_sha?: string | null
+          receipt_head_sha?: string | null
+          receipt_observation_id?: string | null
+          receipt_pr_head_sha?: string | null
+          receipt_pr_number?: number | null
+          receipt_pr_state?: string | null
+          receipted_at?: string | null
+          session_id?: string
+          source_ref?: string
+          status?: string
+          target_generation?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_operations_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_git_checkpoints"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_pr_operations_epoch_id_fkey"
+            columns: ["epoch_id"]
+            isOneToOne: false
+            referencedRelation: "session_pr_epochs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_operations_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_operations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_pr_sync: {
+        Row: {
+          current_epoch_id: string | null
+          desired_checkpoint_run_id: string
+          last_error_code: string | null
+          next_attempt_at: string
+          observed_fence_sha: string | null
+          observed_head_sha: string | null
+          observed_pr_head_sha: string | null
+          session_id: string
+          status: string
+          target_generation: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          current_epoch_id?: string | null
+          desired_checkpoint_run_id: string
+          last_error_code?: string | null
+          next_attempt_at?: string
+          observed_fence_sha?: string | null
+          observed_head_sha?: string | null
+          observed_pr_head_sha?: string | null
+          session_id: string
+          status: string
+          target_generation?: number
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          current_epoch_id?: string | null
+          desired_checkpoint_run_id?: string
+          last_error_code?: string | null
+          next_attempt_at?: string
+          observed_fence_sha?: string | null
+          observed_head_sha?: string | null
+          observed_pr_head_sha?: string | null
+          session_id?: string
+          status?: string
+          target_generation?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_sync_desired_checkpoint_run_id_fkey"
+            columns: ["desired_checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_git_checkpoints"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_pr_sync_epoch_fkey"
+            columns: ["current_epoch_id"]
+            isOneToOne: false
+            referencedRelation: "session_pr_epochs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_sync_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_sync_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_pull_requests: {
         Row: {
           branch_name: string
@@ -3110,13 +3394,30 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      arm_session_pr_creation: {
+        Args: { p_claim_id: string; p_epoch_id: string; p_operation_id: string }
+        Returns: boolean
+      }
       assert_session_checkpoint_publication_claim: {
         Args: { p_claim_id: string; p_run_id: string }
+        Returns: boolean
+      }
+      assert_session_pr_sync_claim: {
+        Args: { p_claim_id: string; p_operation_id: string }
         Returns: boolean
       }
       assert_session_source_delivery_claim: {
         Args: { p_claim_id: string; p_run_id: string }
         Returns: boolean
+      }
+      authorize_session_pr_successor: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_epoch_id: string
+          p_request_id: string
+          p_session_id: string
+        }
+        Returns: string
       }
       begin_codex_device_auth_flow: {
         Args: {
@@ -3143,6 +3444,24 @@ export type Database = {
       }
       begin_sandbox_connection_mutation: {
         Args: { target_provider: string; target_workspace_id: string }
+        Returns: string
+      }
+      begin_session_pr_observation: {
+        Args: {
+          p_branch_name: string
+          p_pr_number: number
+          p_repository_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
+      begin_session_pr_sync_observation: {
+        Args: {
+          p_claim_id: string
+          p_operation_id: string
+          p_pr_number: number
+          p_pr_url: string
+        }
         Returns: string
       }
       begin_worker_dispatch: {
@@ -3265,6 +3584,10 @@ export type Database = {
       }
       claim_session_checkpoint_publication: {
         Args: { p_run_id?: string }
+        Returns: string
+      }
+      claim_session_pr_sync: {
+        Args: { p_session_id?: string }
         Returns: string
       }
       claim_session_source_delivery: { Args: never; Returns: string }
@@ -3501,6 +3824,16 @@ export type Database = {
         }
         Returns: string
       }
+      fail_session_pr_sync: {
+        Args: {
+          p_claim_id: string
+          p_error_code: string
+          p_is_conflict?: boolean
+          p_operation_id: string
+          p_retry_creation_safe?: boolean
+        }
+        Returns: boolean
+      }
       fail_stalled_session_job_attempt: {
         Args: {
           p_attempt_count: number
@@ -3538,6 +3871,33 @@ export type Database = {
           target_branch_name: string
           target_repository_id: string
           target_workspace_id: string
+        }
+        Returns: boolean
+      }
+      finish_session_pr_observation: {
+        Args: {
+          p_is_draft: boolean
+          p_observation_id: string
+          p_pr_head_sha: string
+          p_pr_state: string
+          p_pr_updated_at: string
+          p_pr_url: string
+        }
+        Returns: boolean
+      }
+      finish_session_pr_sync: {
+        Args: {
+          p_claim_id: string
+          p_is_draft: boolean
+          p_observation_id?: string
+          p_observed_fence_sha: string
+          p_observed_head_sha: string
+          p_operation_id: string
+          p_pr_head_sha: string
+          p_pr_number: number
+          p_pr_state: string
+          p_pr_updated_at: string
+          p_pr_url: string
         }
         Returns: boolean
       }

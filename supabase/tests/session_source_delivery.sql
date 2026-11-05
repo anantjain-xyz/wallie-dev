@@ -51,9 +51,13 @@ select throws_ok($$select pg_temp.expired_source_publication()$$,'23514','Exact 
 select is(public.prepare_session_checkpoint_publication((select run_id from source_fixture),0,'Artifact'),true,
   'source publication records the immutable full artifact intent');
 create temp table source_publication_claim as select public.claim_session_checkpoint_publication((select run_id from source_fixture)) as claim_id;
+-- This fixture predates canonical PR enrollment; retain the complete
+-- historical source/lineage guards while exercising the legacy delivery path.
+alter table public.session_git_heads disable trigger enqueue_session_pr_sync;
 select is(public.adopt_session_checkpoint_publication((select run_id from source_fixture),(select claim_id from source_publication_claim),
   'refs/heads/wallie/checkpoints/'||(select run_id::text from source_fixture)||'/'||repeat('b',40),repeat('b',40)),true,
   'verified remote checkpoint makes the artifact and source delivery eligible atomically');
+alter table public.session_git_heads enable trigger enqueue_session_pr_sync;
 select ok(public.claim_session_source_delivery() is not null,'published work is claimed for delivery');
 create temp table old_source_lease as select claim_id from public.session_source_deliveries where run_id=(select run_id from source_fixture);
 select is(public.claim_session_source_delivery(),null::uuid,'another worker cannot claim an unexpired delivery lease');

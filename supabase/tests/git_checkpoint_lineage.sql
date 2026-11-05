@@ -109,8 +109,12 @@ select is((select count(*) from public.session_git_checkpoints where run_id=(sel
   'deadline failure leaves no accepted checkpoint');
 select is((select current_artifact_version from public.sessions where id=(select session_id from git_fixture)),0,
   'deadline failure leaves no published artifact');
+-- This fixture predates canonical PR enrollment; retain the complete
+-- historical source/lineage guards while exercising the legacy delivery path.
+alter table public.session_git_heads disable trigger enqueue_session_pr_sync;
 select is(public.publish_session_job_with_source((select job_id from git_fixture),2,(select run_id from git_retry),0,'Artifact',clock_timestamp()+interval '1 minute'),
   true,'current publication adopts checkpoint and artifact in one transaction');
+alter table public.session_git_heads enable trigger enqueue_session_pr_sync;
 select ok((select c.artifact_id=s.current_artifact_id and c.input_sha=repeat('a',40) and c.output_sha=c.input_sha
   and c.output_kind='no-code' and c.attempt_count=2 and c.output_ref is null
   from public.session_git_checkpoints c join public.sessions s on s.id=c.session_id where c.run_id=(select run_id from git_retry)),
@@ -195,10 +199,14 @@ update public.session_source_deliveries set session_id=(select session_id from g
 select is(public.prepare_session_checkpoint_publication((select run_id from git_other),0,'Other artifact'),true,
   'valid code checkpoint prepares an immutable publication intent');
 create temp table git_other_publication_claim as select public.claim_session_checkpoint_publication((select run_id from git_other)) as claim_id;
+-- This fixture predates canonical PR enrollment; retain the complete
+-- historical source/lineage guards while exercising the legacy delivery path.
+alter table public.session_git_heads disable trigger enqueue_session_pr_sync;
 select is(public.adopt_session_checkpoint_publication((select run_id from git_other),
   (select claim_id from git_other_publication_claim),
   'refs/heads/wallie/checkpoints/'||(select run_id::text from git_other)||'/'||repeat('c',40),repeat('c',40)),true,
   'valid code checkpoint publishes only after exact retained remote proof');
+alter table public.session_git_heads enable trigger enqueue_session_pr_sync;
 select ok((select c.output_kind='code' and c.input_sha=repeat('b',40) and c.output_sha=repeat('c',40)
   and c.bundle_sha256=encode(extensions.digest('source'::bytea,'sha256'),'hex')
   from public.session_git_checkpoints c where c.run_id=(select run_id from git_other)),
