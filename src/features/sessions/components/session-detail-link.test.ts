@@ -94,7 +94,7 @@ describe("session detail prefetch reuse", () => {
 
 describe("prefetchSessionDetailOnce", () => {
   it("prefetches each href at most once for a mounted boundary", () => {
-    const prefetchedHrefs = new Set<string>();
+    const prefetchedHrefs = new Map<string, number>();
     const prefetch = vi.fn();
 
     prefetchSessionDetailOnce(prefetchedHrefs, "/w/acme/sessions/7", prefetch);
