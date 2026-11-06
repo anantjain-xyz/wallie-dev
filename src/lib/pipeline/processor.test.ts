@@ -57,6 +57,7 @@ const mocked = vi.hoisted(() => ({
   resolveSandboxImplementation: vi.fn(() => "vercel"),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
+  validateCheckpoint: vi.fn(async (input: { checkpoint: unknown }) => input.checkpoint),
   readSourceBase: vi.fn().mockResolvedValue("a".repeat(40)),
   captureSourceCheckpoint: vi
     .fn()
@@ -64,6 +65,10 @@ const mocked = vi.hoisted(() => ({
   prepareSourceDelivery: vi.fn(),
   publishSessionCheckpoint: vi.fn(),
   checkoutPinnedGitInput: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/validation-evidence/service", () => ({
+  validateCheckpoint: mocked.validateCheckpoint,
 }));
 
 vi.mock("./git-input", () => ({ checkoutPinnedGitInput: mocked.checkoutPinnedGitInput }));
@@ -962,6 +967,29 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
       expect.objectContaining({ baseSha: pinnedSha }),
+    );
+  });
+
+  it("validates captured source with current secrets before preparing publication", async () => {
+    const { admin } = buildAdminMock({ session: baseSession() });
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({
+      result: "success",
+    });
+    expect(mocked.validateCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        admin,
+        workspaceId: "ws-1",
+        pipelineId: "pipe-1",
+        runId: "run-1",
+        checkpoint: expect.objectContaining({ headSha: "a".repeat(40) }),
+        secrets: expect.arrayContaining(["rendered prompt", "gh-token"]),
+      }),
+    );
+    expect(mocked.captureSourceCheckpoint.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.validateCheckpoint.mock.invocationCallOrder[0]!,
+    );
+    expect(mocked.validateCheckpoint.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.prepareSourceDelivery.mock.invocationCallOrder[0]!,
     );
   });
 

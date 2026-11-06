@@ -2914,6 +2914,144 @@ export type Database = {
           },
         ]
       }
+      session_validation_assets: {
+        Row: {
+          content_type: string
+          evidence_key: string
+          id: string
+          kind: string
+          required: boolean
+          run_id: string
+          session_id: string
+          sha256: string
+          size_bytes: number
+          storage_path: string
+          workspace_id: string
+        }
+        Insert: {
+          content_type: string
+          evidence_key: string
+          id: string
+          kind: string
+          required: boolean
+          run_id: string
+          session_id: string
+          sha256: string
+          size_bytes: number
+          storage_path: string
+          workspace_id: string
+        }
+        Update: {
+          content_type?: string
+          evidence_key?: string
+          id?: string
+          kind?: string
+          required?: boolean
+          run_id?: string
+          session_id?: string
+          sha256?: string
+          size_bytes?: number
+          storage_path?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_validation_assets_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "session_validation_evidence"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_validation_assets_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_assets_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_validation_evidence: {
+        Row: {
+          assets: Json
+          attempt_count: number
+          commit_sha: string
+          created_at: string
+          job_id: string
+          records: Json
+          repository_full_name: string
+          repository_id: string
+          run_id: string
+          session_id: string
+          validation_tree_sha: string
+          workspace_id: string
+        }
+        Insert: {
+          assets: Json
+          attempt_count: number
+          commit_sha: string
+          created_at?: string
+          job_id: string
+          records: Json
+          repository_full_name: string
+          repository_id: string
+          run_id: string
+          session_id: string
+          validation_tree_sha: string
+          workspace_id: string
+        }
+        Update: {
+          assets?: Json
+          attempt_count?: number
+          commit_sha?: string
+          created_at?: string
+          job_id?: string
+          records?: Json
+          repository_full_name?: string
+          repository_id?: string
+          run_id?: string
+          session_id?: string
+          validation_tree_sha?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_validation_evidence_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_evidence_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_evidence_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_evidence_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sessions: {
         Row: {
           archived_at: string | null
@@ -5260,6 +5398,35 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "session_pull_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      record_session_validation_evidence: {
+        Args: {
+          p_assets?: Json
+          p_commit_sha: string
+          p_records: Json
+          p_run_id: string
+          p_validation_tree_sha: string
+        }
+        Returns: {
+          assets: Json
+          attempt_count: number
+          commit_sha: string
+          created_at: string
+          job_id: string
+          records: Json
+          repository_full_name: string
+          repository_id: string
+          run_id: string
+          session_id: string
+          validation_tree_sha: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_validation_evidence"
           isOneToOne: true
           isSetofReturn: false
         }

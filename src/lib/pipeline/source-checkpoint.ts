@@ -138,6 +138,26 @@ export async function captureSourceCheckpoint(input: {
     `node -e ${shellQuote(CHECK_SENSITIVE_OBJECTS)} ${shellQuote(sensitiveFile)} ${mode} 2>/dev/null`;
   const script = [
     "set -euo pipefail",
+    // Repository configuration must not let a cached stat or filesystem-monitor
+    // answer hide source changes. Special index flags need an explicit failure
+    // rather than clearing them and silently changing the agent's checkout.
+    'git() { command git -c core.fsmonitor=false -c core.ignoreStat=false -c core.trustctime=true -c core.checkStat=default -c core.untrackedCache=false "$@"; }',
+    "assert_plain_index() {",
+    "  git ls-files -v -z | while IFS= read -r -d '' entry; do",
+    '    case "$entry" in [a-z]*|S*) exit 41 ;; esac',
+    "  done",
+    "}",
+    // Reinsert the same staged objects/modes to discard cached stat metadata.
+    // A prior status under weak repo settings can otherwise cache a same-size
+    // edit as clean, even after stronger settings and --really-refresh.
+    "refresh_index() {",
+    "  git ls-files --stage -z 2>/dev/null | git update-index -z --index-info >/dev/null 2>&1",
+    // Refresh may return 1 for a real edit, which the capture below preserves.
+    // Other failures cannot be treated as proof that the checkout is clean.
+    '  git update-index --really-refresh >/dev/null 2>&1 || [ "$?" -eq 1 ]',
+    "}",
+    "assert_plain_index",
+    "refresh_index",
     `trap ${shellQuote(`rm -rf ${shellQuote(directory)}`)} EXIT`,
     // Slash-delimited matching reserves a whole runtime directory, even when
     // copied below a source directory. No path is printed on rejection.
@@ -167,9 +187,11 @@ export async function captureSourceCheckpoint(input: {
       : []),
     "if ! git diff --cached --quiet; then git -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -qm 'Preserve Wallie stage source'; fi",
     // A superproject bundle cannot preserve dirty submodule worktrees.
+    "assert_plain_index",
+    "refresh_index",
     "if [ -n \"$(git status --porcelain --untracked-files=normal --ignore-submodules=none)\" ]; then echo 'Source checkout still contains uncommitted changes' >&2; exit 41; fi",
     "head=$(git rev-parse --verify 'HEAD^{commit}')",
-    `if [ "$head" = ${shellQuote(input.baseSha)} ]; then printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
+    `if [ "$head" = ${shellQuote(input.baseSha)} ]; then assert_plain_index; printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
     // A clean gitlink can still point to a commit available only in a local
     // submodule. Check each new commit, including reverted intermediate edits.
     `git rev-list "$head" ${shellQuote(`^${input.baseSha}`)} | while read -r commit; do`,
@@ -193,6 +215,8 @@ export async function captureSourceCheckpoint(input: {
     `size=$(wc -c < ${shellQuote(bundle)})`,
     `if [ "$size" -gt ${MAX_SOURCE_CHECKPOINT_BYTES} ]; then echo 'Source checkpoint exceeds 4 MiB' >&2; exit 42; fi`,
     `if [ "$(git rev-parse --verify 'HEAD^{commit}')" != "$head" ]; then exit 41; fi`,
+    "assert_plain_index",
+    "refresh_index",
     'if [ -n "$(git status --porcelain --untracked-files=normal --ignore-submodules=none)" ]; then exit 41; fi',
     'printf \'BUNDLE\\n%s\\n%s\\n\' "$head" "$size"',
     `base64 < ${shellQuote(bundle)}`,
@@ -212,7 +236,7 @@ export async function captureSourceCheckpoint(input: {
       });
     const proc = await input.sandbox.exec("bash", ["-lc", script], {
       cwd: input.sandbox.repoPath,
-      env: WALLIE_GIT_IDENTITY_ENV,
+      env: { ...WALLIE_GIT_IDENTITY_ENV, GIT_NO_REPLACE_OBJECTS: "1" },
       signal: input.signal,
     });
     [output, code] = await Promise.all([proc.output(), proc.exitCode]);

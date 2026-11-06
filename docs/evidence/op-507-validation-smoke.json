@@ -1,0 +1,14 @@
+{
+  "repository": "anantjain-xyz/wallie-dev",
+  "execution": "observed",
+  "commitSha": "3a5307f41537f445c32f21174c1134eec5281e9b",
+  "treeSha": "c5a48cc004dc8ba4bdfb471a34656cae97d31ff4",
+  "passingExitCode": 0,
+  "afterEditExitCode": 0,
+  "afterEditStatus": "stale",
+  "laterCheckpointSha": "9b52e7b7325b0556187959a79a53df00f2b38bbd",
+  "earlierEvidenceMatchesLaterCheckpoint": false,
+  "requiredReport": "captured",
+  "redaction": "verified",
+  "assets": 3
+}

@@ -48,7 +48,8 @@ yarn-error.log*
 .playwright-mcp/
 
 # local verification / screenshot proof artifacts
-.wallie/
+.wallie/*
+!.wallie/validation-evidence.json
 
 # Terraform local state, provider downloads, plans, and account-specific inputs
 **/.terraform/

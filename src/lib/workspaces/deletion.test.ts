@@ -165,6 +165,18 @@ describe("durable workspace deletion", () => {
     expect(f.lists.filter((entry) => entry.prefix === workspaceId)).toHaveLength(4);
   });
 
+  it("cleans nested validation evidence without deleting another workspace", async () => {
+    const f = fixture();
+    f.state.objects.set(
+      "session-validation-evidence",
+      new Set([`${workspaceId}/run/report`, "other-workspace/run/report"]),
+    );
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect([...f.state.objects.get("session-validation-evidence")!]).toEqual([
+      "other-workspace/run/report",
+    ]);
+  });
+
   it("retains the workspace on Storage failure and finishes from durable records on retry", async () => {
     const f = fixture();
     f.state.objects.set("workspace-avatars", new Set([`${workspaceId}/avatar.png`]));
