@@ -60,12 +60,12 @@ function sessionDetailPrefetchHasBody(entry: PerformanceResourceTiming) {
 }
 
 function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
-  // A full prefetch can be more than one RSC response. Navigating on the first
-  // one aborts the rest. Wait until the burst has gone quiet.
+  // Validated page data skips the quiet period. Other completed responses
+  // retain the burst fallback before the final frame.
   return new Promise<void>((resolve) => {
     let quietTimer = 0;
     let settled = false;
-    let latestPageResponseEnd: number | null = null;
+    let hasPageDataResponse = false;
     const timeout = window.setTimeout(finish, PREFETCH_SETTLE_TIMEOUT_MS);
     const observer = new PerformanceObserver((list) => {
       observeResponses(list.getEntries());
@@ -89,12 +89,9 @@ function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
           location.origin,
         );
         if (responseEnd !== null) {
-          latestPageResponseEnd = Math.max(latestPageResponseEnd ?? 0, responseEnd);
+          hasPageDataResponse = true;
         }
-        const delay =
-          latestPageResponseEnd === null
-            ? PREFETCH_QUIET_MS
-            : Math.max(0, latestPageResponseEnd + PREFETCH_QUIET_MS - performance.now());
+        const delay = hasPageDataResponse ? 0 : PREFETCH_QUIET_MS;
         window.clearTimeout(quietTimer);
         quietTimer = window.setTimeout(finish, delay);
       }
@@ -167,10 +164,8 @@ export function SessionDetailLink({
             "/w/[workspaceSlug]/sessions/[sessionNumber]",
           );
         }
-        // A click does not wait for an in-flight prefetch. It starts a second
-        // navigation and aborts the first, so the opened row misses the cache
-        // and renders through loading.tsx. Hold this click until the full
-        // prefetch for this href has a body, then navigate from that cache.
+        // An in-flight prefetch can still need data or metadata. Let its
+        // response guard settle before pushing the destination.
         if (
           !shouldReuseSessionDetailPrefetch({
             defaultPrevented: event.defaultPrevented,
