@@ -116,10 +116,21 @@ migrations, all twelve agent/sandbox combinations, live qualification, and rollb
 The web app remains on Vercel; all durable state and encrypted credentials remain
 in Supabase. The checked-in `wrangler.jsonc` keeps dispatch disabled until qualification.
 
+The hosted wallie.dev worker is automatically deployed by Cloudflare from its
+connected repository; routine merges do not require a separate manual deploy.
+For your own instance, configure Cloudflare's Git integration and production
+branch/build/deploy settings, or explicitly deploy it yourself:
+
 ```bash
 pnpm check:cloudflare
 pnpm worker:deploy
 ```
+
+The CLI command is the manual/self-hosted option, not an additional step after an
+automatic deployment. Verify the Cloudflare deployment's commit/version and
+runtime configuration rather than inferring worker deployment from Vercel or CI.
+See [Production deployment](CLOUDFLARE-WORKER.md#production-deployment), including
+how checked-in dispatch defaults interact with automatic deployments.
 
 Supply the current Supabase/encryption/GitHub credentials through Cloudflare
 secrets and matching public connection variables. Configure the same wake secret
@@ -240,14 +251,18 @@ not establish that the worker is healthy.
 
 ## Upgrading
 
-Pull the latest code, redeploy both services, and apply any new migrations:
+Apply required compatible migrations and release compatible web and worker code:
 
 ```bash
 git pull
 supabase db push   # applies any new migrations in supabase/migrations/
 ```
 
-Roll out the web app and worker together so they run the same schema and code.
+For Git-connected deployments, the configured hosts deploy the updated production
+branch automatically. Otherwise, use your chosen manual deployment process.
+Verify both services reached the intended compatible versions; a merge or green
+CI alone does not prove deployment. Keep old/new code compatible during rollout
+and apply prerequisite migrations before code that depends on them.
 
 ## Operational notes
 
