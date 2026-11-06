@@ -344,7 +344,7 @@ grant execute on function internal.reserve_session_repair_attempt(uuid,uuid) to 
 
 create function internal.admit_agent_job_execution()
 returns trigger language plpgsql security invoker set search_path='' as $$
-declare pinned_policy uuid;
+declare pinned_policy uuid; existing_job_id uuid;
 begin
   new.is_repair:=new.is_repair or new.trigger_type in('manual_retry','comment_retry');
   -- Legacy unlimited sessions need no new session lock. This preserves the
@@ -352,7 +352,17 @@ begin
   select execution_policy_revision_id into pinned_policy from public.sessions where id=new.session_id;
   if new.status='queued' and pinned_policy is not null then
     if new.is_repair then
-      if not internal.reserve_session_repair_attempt(new.session_id,new.workspace_id) then return null; end if;
+      -- Let the canonical rejection INSERT hit its active-job uniqueness
+      -- violation and adopt the queued repair without another reservation.
+      -- Lock session -> job before deciding: a legacy contender cannot finish
+      -- the queued job between this check and its own uniqueness check.
+      perform 1 from public.sessions where id=new.session_id for no key update;
+      select existing.id into existing_job_id from public.agent_jobs existing
+        where existing.session_id=new.session_id and existing.workspace_id=new.workspace_id
+          and existing.status='queued' for update;
+      if existing_job_id is null then
+        if not internal.reserve_session_repair_attempt(new.session_id,new.workspace_id) then return null; end if;
+      end if;
     elsif not internal.session_execution_admissible(new.session_id,new.workspace_id) then return null; end if;
   end if;
   return new;

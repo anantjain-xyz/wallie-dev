@@ -286,6 +286,49 @@ describe("parseStreamJsonLine", () => {
     ]);
   });
 
+  it("includes cache reads and cache writes in measured input tokens", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          result: "cached",
+          usage: {
+            input_tokens: 100,
+            cache_read_input_tokens: 800,
+            cache_creation_input_tokens: 200,
+            output_tokens: 30,
+          },
+          total_cost_usd: 0.42,
+        }),
+      )[0],
+    ).toMatchObject({
+      usage: {
+        inputTokens: 1_100,
+        outputTokens: 30,
+        provenance: "measured",
+        costUsd: 0.42,
+        costProvenance: "measured",
+      },
+    });
+  });
+
+  it.each([
+    { cache_read_input_tokens: -1 },
+    { cache_creation_input_tokens: 1.5 },
+    { cache_read_input_tokens: Number.MAX_SAFE_INTEGER },
+  ])("omits usage with invalid cache accounting %j", (cacheUsage) => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 100, output_tokens: 30, ...cacheUsage },
+        }),
+      )[0],
+    ).not.toHaveProperty("usage");
+  });
+
   it("accepts explicitly measured zero usage and cost", () => {
     expect(
       parseStreamJsonLine(

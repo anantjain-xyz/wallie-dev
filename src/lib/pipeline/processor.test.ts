@@ -351,6 +351,7 @@ interface MockOptions {
     total_tokens?: number;
   };
   usageExhaustionCode?: string | null;
+  usageError?: { message: string };
 }
 
 type AdminClient = SupabaseClient<Database>;
@@ -822,6 +823,7 @@ function buildAdminMock(opts: MockOptions) {
       return { data: run.id, error: null };
     }
     if (fn === "record_session_run_usage") {
+      if (opts.usageError) return { data: null, error: opts.usageError };
       const usageRun = runRows.find(
         (row) =>
           row.id === payload.p_run_id && row.attempt_count === attempt && row.status === "running",
@@ -2964,6 +2966,34 @@ describe("processPipelineJob (generic stage runner)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("protects completed source before awaiting fallible usage persistence", async () => {
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
+      session: baseSession(),
+      usageError: { message: "usage database unavailable" },
+    });
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Completed output",
+          usage: { inputTokens: 10, outputTokens: 20 },
+        },
+      ]),
+    );
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(insertedArtifacts).toEqual([]);
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_retry: false }),
+    );
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
   });
 
   it("still attempts durable capture when the recovery-marker write is unavailable", async () => {

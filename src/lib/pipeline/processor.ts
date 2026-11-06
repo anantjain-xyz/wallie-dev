@@ -561,19 +561,9 @@ async function runStage(input: {
       signal,
       sessionId: session.id,
     })) {
-      if (event.type === "completion" && event.usage) {
-        // Persist provider telemetry before any later failure can lose it. The
-        // fenced RPC also performs reactive token/spend exhaustion checks.
-        await recordSessionRunUsage(admin, {
-          attemptCount: job.attempt_count,
-          jobId: job.id,
-          runId,
-          usage: event.usage,
-        });
-      }
       if (event.type === "completion" && event.taskComplete && !retainSource) {
-        // Protect the only source copy synchronously, before any completion
-        // bookkeeping can fail or wait past the worker deadline.
+        // Protect the only source copy synchronously, before usage persistence
+        // or any other completion bookkeeping can fail or wait past the deadline.
         retainSource = true;
         const { data: retained, error: retentionError } = await admin
           .from("agent_runs")
@@ -589,6 +579,16 @@ async function runStage(input: {
           retainSource = false;
           throw new ExecutionOwnershipLostError();
         }
+      }
+      if (event.type === "completion" && event.usage) {
+        // Persist provider telemetry before any later failure can lose it. The
+        // fenced RPC also performs reactive token/spend exhaustion checks.
+        await recordSessionRunUsage(admin, {
+          attemptCount: job.attempt_count,
+          jobId: job.id,
+          runId,
+          usage: event.usage,
+        });
       }
       throwIfAborted(signal);
       if (runId) {

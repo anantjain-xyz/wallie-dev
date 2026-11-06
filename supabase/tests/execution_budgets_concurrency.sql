@@ -85,6 +85,62 @@ select is((select execution_repair_attempts from public.sessions
 select is((select execution_exhaustion_code from public.sessions
   where id='eb000000-0000-4000-8000-000000000001'),'repair_attempts','the first excess request records the durable reason');
 
+-- A legacy insert cannot assume its queued contender will still be adoptable
+-- after the uniqueness check. The trigger locks session -> job and revalidates.
+select count(*) from extensions.dblink_get_result('budget_first') as result(job_id uuid,run_id uuid,created boolean);
+select count(*) from extensions.dblink_get_result('budget_second') as result(job_id uuid,run_id uuid,created boolean);
+set local request.jwt.claim.role='service_role';
+insert into public.sessions(id,workspace_id,number,title,prompt_md,creator_member_id,pipeline_id,current_stage_id,phase_status)
+values('eb000000-0000-4000-8000-000000000021','eb000000-0000-4000-8000-000000000000',2,
+  'Legacy repair race','Recheck the queued contender','eb000000-0000-4000-8000-0000000000f0',
+  'eb000000-0000-4000-8000-000000000100','eb000000-0000-4000-8000-000000000101','rejected');
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,dedupe_key)
+values('eb000000-0000-4000-8000-000000000022','eb000000-0000-4000-8000-000000000000',
+  'eb000000-0000-4000-8000-000000000021','eb000000-0000-4000-8000-000000000101','plan','Plan','assignment','success','initial');
+insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,stage_name,run_type,model_provider,model_name,status,started_at,finished_at)
+values('eb000000-0000-4000-8000-000000000023','eb000000-0000-4000-8000-000000000000',
+  'eb000000-0000-4000-8000-000000000021','eb000000-0000-4000-8000-000000000022',
+  'eb000000-0000-4000-8000-000000000101','plan','Plan','project','codex','gpt-5.5','success',now(),now());
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,dedupe_key)
+values('eb000000-0000-4000-8000-000000000024','eb000000-0000-4000-8000-000000000000',
+  'eb000000-0000-4000-8000-000000000021','eb000000-0000-4000-8000-000000000101','plan','Plan','manual_retry','queued','session:eb000000-0000-4000-8000-000000000021:active');
+insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,stage_name,run_type,model_provider,model_name,status)
+values('eb000000-0000-4000-8000-000000000025','eb000000-0000-4000-8000-000000000000',
+  'eb000000-0000-4000-8000-000000000021','eb000000-0000-4000-8000-000000000024',
+  'eb000000-0000-4000-8000-000000000101','plan','Plan','project','codex','gpt-5.5','queued');
+commit;
+begin;
+select 1 from public.sessions where id='eb000000-0000-4000-8000-000000000021' for no key update;
+select extensions.dblink_exec('budget_first','set application_name = ''legacy_repair_insert_test''');
+select extensions.dblink_send_query('budget_first',$query$
+  insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,stage_name,trigger_type,status,dedupe_key)
+  values('eb000000-0000-4000-8000-000000000026','eb000000-0000-4000-8000-000000000000',
+    'eb000000-0000-4000-8000-000000000021','eb000000-0000-4000-8000-000000000101','plan','Plan','manual_retry','queued','legacy-contender')
+  returning id
+$query$);
+do $$
+declare deadline timestamptz := clock_timestamp()+interval '3 seconds';
+begin
+  while not exists(select 1 from pg_stat_activity where application_name='legacy_repair_insert_test' and wait_event='transactionid') loop
+    if clock_timestamp()>deadline then raise exception 'Legacy repair did not reach the session lock'; end if;
+    perform pg_sleep(0.01);
+  end loop;
+end;
+$$;
+update public.agent_jobs set status='success',finished_at=now() where id='eb000000-0000-4000-8000-000000000024';
+update public.agent_runs set status='success',finished_at=now() where id='eb000000-0000-4000-8000-000000000025';
+commit;
+begin;
+create temp table legacy_repair_result as select * from extensions.dblink_get_result('budget_first') as result(job_id uuid);
+select is((select count(*)::integer from legacy_repair_result),0,
+  'legacy contender is refused after its queued predecessor completes');
+select ok(not exists(select 1 from public.agent_jobs where id='eb000000-0000-4000-8000-000000000026'),
+  'no unreserved legacy repair is inserted');
+select is((select execution_repair_attempts from public.sessions where id='eb000000-0000-4000-8000-000000000021'),1,
+  'legacy race cannot bypass the attempt reservation');
+select is((select execution_exhaustion_code from public.sessions where id='eb000000-0000-4000-8000-000000000021'),'repair_attempts',
+  'legacy race records the durable exhaustion reason');
+
 select extensions.dblink_disconnect('budget_first');
 select extensions.dblink_disconnect('budget_second');
 select * from finish();

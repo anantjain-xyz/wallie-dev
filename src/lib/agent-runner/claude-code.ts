@@ -9,7 +9,7 @@ import {
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
-import { normalizeMeasuredUsage } from "./usage";
+import { isTokenCount, normalizeMeasuredUsage } from "./usage";
 
 export interface ClaudeCodeRunnerOptions {
   /** Pre-resolved credentials; session callers use loadCredential. */
@@ -255,7 +255,19 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
 
 function parseClaudeResultUsage(result: Record<string, unknown>) {
   const usage = isRecord(result.usage) ? result.usage : undefined;
-  return normalizeMeasuredUsage(usage?.input_tokens, usage?.output_tokens, result.total_cost_usd);
+  if (!usage) return undefined;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
+  const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+  if (
+    !isTokenCount(usage.input_tokens) ||
+    !isTokenCount(cacheRead) ||
+    !isTokenCount(cacheCreation)
+  ) {
+    return undefined;
+  }
+  const inputTokens = usage.input_tokens + cacheRead + cacheCreation;
+  if (!isTokenCount(inputTokens)) return undefined;
+  return normalizeMeasuredUsage(inputTokens, usage.output_tokens, result.total_cost_usd);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

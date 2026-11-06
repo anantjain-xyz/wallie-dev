@@ -78,6 +78,25 @@ begin
     'codex','gpt-5.5','project','wallie/budget-'||target_job::text||'-'||target_attempt::text);
 end;
 $$;
+create function pg_temp.publish_budget_checkpoint(target_job uuid,target_run uuid) returns uuid language plpgsql as $$
+declare owner public.sessions; selected public.session_job_git_inputs; claim uuid;
+begin
+  select * into strict owner from public.sessions s join public.agent_jobs j on j.session_id=s.id where j.id=target_job;
+  select * into strict selected from public.session_job_git_inputs where job_id=target_job;
+  perform public.pin_session_job_git_input(target_job,1,target_run,selected.repository_id,
+    selected.base_branch,selected.input_sha);
+  if not public.prepare_session_source_and_checkpoint_publication(target_run,selected.repository_id,
+    selected.base_branch,selected.input_sha,selected.input_sha,'Budget checkpoint','Review body','','','',
+    owner.current_artifact_version,'Review this checkpoint',null,null,null) then
+    raise exception 'Budget checkpoint preparation failed';
+  end if;
+  claim:=public.claim_session_checkpoint_publication(target_run);
+  if claim is null or not public.adopt_session_checkpoint_publication(target_run,claim,null,null) then
+    raise exception 'Budget checkpoint adoption failed';
+  end if;
+  return target_run;
+end;
+$$;
 select is(pg_temp.start_budget_attempt((select job_id from budget_session),1),(select run_id from budget_session),
   'first execution starts within budget');
 create temp table first_usage as select * from public.record_session_run_usage(
@@ -192,6 +211,46 @@ select is((select execution_repair_attempts from public.sessions where id=(selec
   'continuation does not reserve another repair');
 select is((select execution_exhaustion_code from public.sessions where id=(select session_id from linear_continue_session)),null::text,
   'the final admitted repair is not prematurely exhausted');
+
+create temp table adopt_review_session as select * from public.create_session_with_first_job(
+  'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
+  'Checkpoint repair adoption','Adopt at the quota boundary','codex','gpt-5.5',null,null,
+  '12b2c3d4-0001-4000-8000-000000000001',(select id from budget_pipeline));
+insert into public.session_git_roots(session_id,workspace_id,repository_id,repository_full_name,base_branch,initial_base_sha)
+select session_id,'b1b2c3d4-0001-4000-8000-000000000001','12b2c3d4-0001-4000-8000-000000000001',
+  'acme-corp/webapp','main',repeat('a',40) from adopt_review_session;
+select internal.prepare_session_job_git_input((select job_id from adopt_review_session));
+select is(pg_temp.start_budget_attempt((select job_id from adopt_review_session),1),
+  (select run_id from adopt_review_session),'checkpoint adoption fixture starts normally');
+create temp table adopt_initial_usage as select * from public.record_session_run_usage(
+  (select job_id from adopt_review_session),1,(select run_id from adopt_review_session),
+  10,10,'measured',0.01,'measured',null,true);
+select is(pg_temp.publish_budget_checkpoint((select job_id from adopt_review_session),
+  (select run_id from adopt_review_session)),(select run_id from adopt_review_session),
+  'checkpoint adoption fixture publishes its reviewed source');
+update public.agent_jobs set status='success',finished_at=now() where id=(select job_id from adopt_review_session);
+create temp table queued_checkpoint_repair as select * from public.enqueue_session_job_with_run(
+  (select session_id from adopt_review_session),'b1b2c3d4-0001-4000-8000-000000000001',
+  (select current_stage_id from public.sessions where id=(select session_id from adopt_review_session)),
+  null,'manual_retry','codex','gpt-5.5','code');
+create temp table adopted_checkpoint_repair as select * from public.reject_session_stage(
+  (select session_id from adopt_review_session),'b1b2c3d4-0001-4000-8000-000000000001',1,
+  'Adopt the queued checkpoint repair','codex','gpt-5.5',
+  (select current_stage_id from public.sessions where id=(select session_id from adopt_review_session)),
+  (select current_artifact_id from public.sessions where id=(select session_id from adopt_review_session)),
+  'code','c1b2c3d4-0001-4000-8000-000000000001');
+select is((select job_id from adopted_checkpoint_repair),(select job_id from queued_checkpoint_repair),
+  'checkpoint-backed rejection adopts the queued final repair');
+select is((select run_id from adopted_checkpoint_repair),(select run_id from queued_checkpoint_repair),
+  'checkpoint-backed rejection preserves the queued run');
+select ok((select not job_created from adopted_checkpoint_repair),
+  'adoption does not report another repair job');
+select is((select execution_repair_attempts from public.sessions where id=(select session_id from adopt_review_session)),1,
+  'checkpoint adoption consumes no additional repair slot');
+select is((select execution_exhaustion_code from public.sessions where id=(select session_id from adopt_review_session)),null::text,
+  'the checkpoint-backed final repair remains admitted');
+select is((select count(*) from public.agent_jobs where session_id=(select session_id from adopt_review_session)),2::bigint,
+  'checkpoint adoption creates no replacement job');
 
 -- Elapsed accounting includes prior and current execution time, never review age.
 create temp table elapsed_session as select * from public.create_session_with_first_job(
