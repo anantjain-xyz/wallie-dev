@@ -138,11 +138,11 @@ it.each(["changed", "missing"])(
           sha: reviewedSha,
           ref: retainedRef,
         }),
-      ).rejects.toThrow(
-        state === "changed"
-          ? "The retained Git checkpoint no longer matches the pinned commit."
-          : "The pinned Git checkpoint could not be fetched.",
-      );
+      ).rejects.toMatchObject({
+        name: "SandboxCheckpointRecoveryError",
+        code: state === "changed" ? "sha_mismatch" : "checkpoint_unavailable",
+        exitCode: state === "changed" ? 72 : 71,
+      });
       expect(await readSourceBase(sandbox)).toBe(movedSha);
       expect(git(sandbox.repoPath, "symbolic-ref", "--short", "HEAD")).toBe(
         "wallie/fresh-successor",
@@ -161,7 +161,11 @@ it("fails closed when the pinned input is unavailable", async () => {
     const original = await readSourceBase(sandbox);
     await expect(
       checkoutPinnedGitInput({ sandbox, branch: "wallie/retry", sha: "f".repeat(40) }),
-    ).rejects.toThrow("Restore its retained ref or reconnect the repository before retrying.");
+    ).rejects.toMatchObject({
+      name: "SandboxCheckpointRecoveryError",
+      code: "checkpoint_unavailable",
+      exitCode: 71,
+    });
     expect(await readSourceBase(sandbox)).toBe(original);
     await expect(
       checkoutPinnedGitInput({ sandbox, branch: "wallie/retry", sha: "main; echo unsafe" }),

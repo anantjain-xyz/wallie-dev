@@ -37,6 +37,45 @@ describe("sandbox provider registry", () => {
       contract.driver.load = originalLoad;
     }
   });
+  it("preserves checkpoint failure diagnostics through provider acquisition sanitization", async () => {
+    const contract = getSandboxProviderContract("vercel");
+    const originalLoad = contract.driver.load;
+    contract.driver.load = async () =>
+      ({
+        create: async () => {
+          const error = new SandboxCheckpointRecoveryError("repository_setup_failed", 128);
+          error.message += " provider-secret installation-secret";
+          throw error;
+        },
+      }) as unknown as SandboxProviderDriver;
+    try {
+      const error = await createSessionSandbox({
+        agentProvider: "codex",
+        baseBranch: "main",
+        branch: "wallie/attempt",
+        repoFullName: "acme/app",
+        installationToken: "installation-secret",
+        sessionId: "s",
+        connection: {
+          provider: "vercel",
+          revision: "test",
+          credentials: { token: "provider-secret", teamId: "team", projectId: "project" },
+        },
+        mode: { kind: "checkpoint", sha: "a".repeat(40) },
+      }).catch((reason: unknown) => reason);
+      expect(error).toMatchObject({
+        name: "SandboxCheckpointRecoveryError",
+        code: "repository_setup_failed",
+        exitCode: 128,
+      });
+      expect((error as Error).message).toContain("exit 128");
+      expect((error as Error).message).not.toContain("provider-secret");
+      expect((error as Error).message).not.toContain("installation-secret");
+    } finally {
+      contract.driver.load = originalLoad;
+    }
+  });
+
   it("fails closed when the requested implementation and connection disagree", async () => {
     await expect(
       createSessionSandbox({
