@@ -30,6 +30,7 @@ export type ArtifactReviewPanelProps = {
   artifactId: string;
   artifactVersion: number;
   initialThreadId?: string;
+  sourceSelectionRevision?: number;
   panelId?: string;
   syncLocation?: boolean;
   historical: boolean;
@@ -105,6 +106,7 @@ export function ArtifactReviewPanel({
   artifactId,
   artifactVersion,
   initialThreadId: initialSelectionId,
+  sourceSelectionRevision,
   panelId = "artifact-review-panel",
   syncLocation = true,
   historical,
@@ -314,25 +316,47 @@ export function ArtifactReviewPanel({
     };
   }, [artifactId, config, loadComments, loadThreads, panelId, sessionId]);
 
+  const chooseThreadId = useCallback(
+    (threadId: string) => {
+      if (inFlight.current || threadId === selectedId) return;
+      if (selectedId) threadDrafts.current.set(selectedId, { reply, editingTarget, reason });
+      const draft = threadDrafts.current.get(threadId);
+      selectedRef.current = threadId;
+      setSelectedId(threadId);
+      setComments([]);
+      setCommentCursor(null);
+      setEditingTarget(draft?.editingTarget ?? null);
+      setReply(draft?.reply ?? "");
+      setReason(draft?.reason ?? "");
+      setSaveError(null);
+      if (syncLocation) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("reviewThread", threadId);
+        url.searchParams.set("artifactId", artifactId);
+        url.searchParams.set("artifactVersion", String(artifactVersion));
+        window.history.replaceState(window.history.state, "", url);
+      }
+    },
+    [artifactId, artifactVersion, editingTarget, reason, reply, selectedId, syncLocation],
+  );
+
+  const handledSourceSelection = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (
+      !initialSelectionId ||
+      sourceSelectionRevision === undefined ||
+      handledSourceSelection.current === sourceSelectionRevision ||
+      pending
+    )
+      return;
+    chooseThreadId(initialSelectionId);
+    handledSourceSelection.current = sourceSelectionRevision;
+    // The requested blocker can be outside the first page after a Realtime reload.
+    void loadThreads();
+  }, [chooseThreadId, initialSelectionId, loadThreads, pending, sourceSelectionRevision]);
+
   function chooseThread(thread: ArtifactReviewThread) {
-    if (inFlight.current || thread.id === selectedId) return;
-    if (selectedId) threadDrafts.current.set(selectedId, { reply, editingTarget, reason });
-    const draft = threadDrafts.current.get(thread.id);
-    selectedRef.current = thread.id;
-    setSelectedId(thread.id);
-    setComments([]);
-    setCommentCursor(null);
-    setEditingTarget(draft?.editingTarget ?? null);
-    setReply(draft?.reply ?? "");
-    setReason(draft?.reason ?? "");
-    setSaveError(null);
-    if (syncLocation) {
-      const url = new URL(window.location.href);
-      url.searchParams.set("reviewThread", thread.id);
-      url.searchParams.set("artifactId", artifactId);
-      url.searchParams.set("artifactVersion", String(artifactVersion));
-      window.history.replaceState(window.history.state, "", url);
-    }
+    chooseThreadId(thread.id);
   }
 
   async function mutate<T>(

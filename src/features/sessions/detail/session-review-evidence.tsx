@@ -235,6 +235,7 @@ export function SessionReviewEvidence({
     useState<ReviewEvidenceDelivery["artifactBlockingTarget"]>(null);
   const commentsOpenerRef = useRef<HTMLButtonElement | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsSelectionRevision, setCommentsSelectionRevision] = useState(0);
   const pollBaselineRef = useRef<string | null>(null);
   const pollAttemptsRef = useRef(0);
   const autoPollKeyRef = useRef<string | null>(null);
@@ -348,6 +349,7 @@ export function SessionReviewEvidence({
     commentsOpenerRef.current = opener;
     setCommentsTarget(target);
     setCommentsOpen(true);
+    setCommentsSelectionRevision((revision) => revision + 1);
   };
   const pr = delivery.pr;
   const blockers = delivery.evaluation.blockers;
@@ -676,6 +678,7 @@ export function SessionReviewEvidence({
             artifactId={commentsTarget.artifactId}
             artifactVersion={commentsTarget.artifactVersion}
             initialThreadId={commentsTarget.threadId}
+            sourceSelectionRevision={commentsSelectionRevision}
             historical={false}
             anchor={null}
             onClearAnchor={() => undefined}

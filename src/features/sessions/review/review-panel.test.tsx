@@ -650,6 +650,47 @@ describe("artifact threaded review", () => {
     ).toBe(false);
   });
 
+  it("restores the blocker on each source activation while preserving per-thread drafts", async () => {
+    snapshot.threads = [
+      makeThread("thread-1"),
+      makeThread("blocking-thread", { kind: "blocking" }),
+    ];
+    const sourcePanel = (revision: number) =>
+      panel({
+        initialThreadId: "blocking-thread",
+        sourceSelectionRevision: revision,
+        syncLocation: false,
+        panelId: "review-evidence-comments",
+      });
+    const view = render(sourcePanel(1));
+    const selected = await screen.findByRole("region", { name: "Selected review thread" });
+    await waitFor(() =>
+      expect(within(selected).getByRole("link", { name: "Thread link" })).toHaveAttribute(
+        "href",
+        expect.stringContaining("reviewThread=blocking-thread"),
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Reply to thread"), {
+      target: { value: "Blocker draft" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Discussion · open/ }));
+    fireEvent.change(screen.getByLabelText("Reply to thread"), {
+      target: { value: "Discussion draft" },
+    });
+
+    view.rerender(sourcePanel(2));
+
+    await waitFor(() =>
+      expect(within(selected).getByRole("link", { name: "Thread link" })).toHaveAttribute(
+        "href",
+        expect.stringContaining("reviewThread=blocking-thread"),
+      ),
+    );
+    expect(screen.getByLabelText("Reply to thread")).toHaveValue("Blocker draft");
+    fireEvent.click(screen.getByRole("button", { name: /Discussion · open/ }));
+    expect(screen.getByLabelText("Reply to thread")).toHaveValue("Discussion draft");
+  });
+
   it("deep links to a thread beyond the initial page without loading all thread history", async () => {
     window.history.replaceState({}, "", "/w/acme/sessions/session-1?reviewThread=deep-thread");
     render(panel());
