@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 
 import { Status } from "@/components/ui/status";
+import { DeliveryPolicySection } from "@/features/settings/delivery-policy-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import {
   dispatchSettingsDataChanged,
@@ -50,6 +51,13 @@ export function PipelineIsland({ data }: { data: SettingsPageData }) {
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
       />
+      {data.pipeline ? (
+        <DeliveryPolicySection
+          canManage={data.canManage}
+          pipelineId={data.pipeline.id}
+          workspaceId={data.workspace.id}
+        />
+      ) : null}
     </Section>
   );
 }

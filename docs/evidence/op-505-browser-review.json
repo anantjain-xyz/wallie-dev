@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "fixture": "authenticated-owner-settings-on-isolated-local-Supabase",
+  "route": "/w/acme-corp/settings (Integrations \u2192 Pipeline \u2192 Delivery policy)",
+  "environment": {
+    "web": "local Next.js development server",
+    "database": "isolated wallie-op-505 local Supabase with current migrations and demo seed",
+    "hostedResourcesUsed": false,
+    "apiInterception": false
+  },
+  "scope": "Real authorized GET/PUT policy configuration, immutable revision saves, stale-edit recovery, analysis mode, responsive controls, keyboard navigation and automated accessibility. This does not prove GitHub collection or readiness enforcement, which belong to later issues.",
+  "initialCreation": {
+    "status": 200,
+    "expectedRevision": 0,
+    "savedRevision": 1,
+    "deliveryMode": "code",
+    "requiredChecks": ["test", "lint"],
+    "requiredEvidence": ["unit-tests", "browser-proof"],
+    "minimumApprovals": 1,
+    "persistedAfterPageReload": true
+  },
+  "concurrentEdit": {
+    "competingRealApiWrite": {
+      "status": 200,
+      "expectedRevision": 1,
+      "savedRevision": 2,
+      "minimumApprovals": 2
+    },
+    "staleBrowserSave": {
+      "status": 409,
+      "draftPreserved": true,
+      "saveDisabled": true,
+      "message": "This policy changed while you were editing. Reload the saved policy before trying again."
+    },
+    "explicitReload": {
+      "revision": 2,
+      "minimumApprovals": "2",
+      "saveEnabled": true,
+      "checks": "test\nlint"
+    }
+  },
+  "analysisPolicySave": {
+    "status": 200,
+    "revision": 3,
+    "deliveryMode": "analysis"
+  },
+  "finalCodePolicySave": {
+    "status": 200,
+    "revision": 4
+  },
+  "viewportProof": [
+    {
+      "width": 1440,
+      "height": 1000,
+      "documentWidth": 1440,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "documentWidth": 390,
+      "horizontalOverflow": false
+    }
+  ],
+  "keyboard": {
+    "tabFromRequiredChecksToRequiredEvidence": true
+  },
+  "touchTargets": {
+    "saveButtonHeight": 44,
+    "reloadButtonHeight": 44
+  },
+  "accessibility": {
+    "scope": "Delivery policy section at 390px",
+    "engine": "axe-core",
+    "violations": [],
+    "passes": 21,
+    "incomplete": []
+  },
+  "screenshots": {
+    "tracked": false,
+    "desktop": ".wallie/evidence/op-505/desktop.png",
+    "mobile": ".wallie/evidence/op-505/mobile.png"
+  },
+  "defectFoundAndVerified": "Stale save originally used SQLSTATE40001 and real PostgREST returned500 after60s. Changed to nonretryable PT409; final browser retry returned409 and recovered through explicit reload.",
+  "cleanup": "Only isolated local policy fixtures were changed; production settings and deployments were not used."
+}
