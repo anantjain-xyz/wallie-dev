@@ -3,6 +3,34 @@ import { loadSandboxProviderDriver } from "@/lib/sandbox/provider-contract";
 
 afterEach(() => vi.unstubAllGlobals());
 
+/**
+ * Vercel's file endpoint accepts a gzipped tar archive. tar-stream builds the
+ * header through b4a's browser build under workerd, so verify the archive and
+ * its numeric header fields rather than only checking that bytes were sent.
+ */
+async function parseFirstTarEntry(bytes: Uint8Array) {
+  expect([...bytes.subarray(0, 2)]).toEqual([0x1f, 0x8b]);
+  const archive = new Uint8Array(
+    await new Response(
+      new Response(bytes).body!.pipeThrough(new DecompressionStream("gzip")),
+    ).arrayBuffer(),
+  );
+  const header = archive.subarray(0, 512);
+  const field = (offset: number, length: number) =>
+    new TextDecoder().decode(header.subarray(offset, offset + length)).replace(/\0.*$/s, "");
+  const size = Number.parseInt(field(124, 12).trim(), 8);
+  const checksum = Number.parseInt(field(148, 8).trim(), 8);
+  const checksumHeader = header.slice();
+  checksumHeader.fill(0x20, 148, 156);
+  return {
+    calculatedChecksum: checksumHeader.reduce((total, byte) => total + byte, 0),
+    checksum,
+    content: new TextDecoder().decode(archive.subarray(512, 512 + size)),
+    name: field(0, 100),
+    size,
+  };
+}
+
 describe("provider SDK data paths under workerd", () => {
   it("provisions Vercel, transfers files, streams a command, and stops", async () => {
     const session = {
@@ -36,7 +64,7 @@ describe("provider SDK data paths under workerd", () => {
       exitCode: 0,
       startedAt: 1,
     };
-    let uploadedBytes = 0;
+    let uploaded: Uint8Array | undefined;
     const requests: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -44,7 +72,7 @@ describe("provider SDK data paths under workerd", () => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         requests.push(url.pathname);
         if (url.pathname.endsWith("/fs/write")) {
-          uploadedBytes = (await new Response(options?.body).arrayBuffer()).byteLength;
+          uploaded = new Uint8Array(await new Response(options?.body).arrayBuffer());
           return Response.json({});
         }
         if (url.pathname.endsWith("/fs/read"))
@@ -84,7 +112,14 @@ describe("provider SDK data paths under workerd", () => {
       } as never,
     );
     await handle.writeFile("/tmp/source.bundle", Buffer.from("private source"), { mode: 0o600 });
-    expect(uploadedBytes).toBeGreaterThan(0);
+    expect(uploaded).toBeDefined();
+    const entry = await parseFirstTarEntry(uploaded!);
+    expect(entry).toMatchObject({
+      content: "private source",
+      name: "tmp/source.bundle",
+      size: Buffer.byteLength("private source"),
+    });
+    expect(entry.checksum).toBe(entry.calculatedChecksum);
     expect(await handle.readFile("/tmp/source.bundle")).toBe("private source");
     const execution = await handle.exec("git", ["status"], { cwd: "/tmp" });
     const logs = [];

@@ -25,6 +25,11 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "pnpm": {
+    "overrides": {
+      "b4a": "1.9.0"
+    }
+  },
   "scripts": {
     "analyze:authenticated-bundle": "node scripts/analyze-authenticated-bundle.mjs",
     "dev": "next dev",
