@@ -22,14 +22,18 @@ Every blocker has a deterministic label and a source link:
   (checks, reviews, or the pull request itself);
 - named evidence blockers scroll to the in-page evidence section, where harness
   receipts and private asset downloads are listed;
-- blocking artifact feedback opens the existing Comments panel;
+- blocking artifact feedback opens a Comments panel pinned to the exact blocking
+  thread and artifact version, independently of the selected reader tab, stage,
+  or historical artifact;
 - refresh and observation-currency blockers point at the refresh control.
 
 The diff is lazy-loaded. It displays explicit limits instead of silently omitting
 content: GitHub files without a text patch are labelled binary/too large, a
 truncated patch says so, and a paginated result says that only the first page is
 shown and links to GitHub for the complete view. A GitHub head that moved after
-the last verification is called out with both SHAs and a refresh instruction.
+the last verification is called out with both SHAs and a refresh instruction. Loaded
+code changes are invalidated when the canonical head or base changes, while an
+expanded diff remains open.
 
 ## APIs
 

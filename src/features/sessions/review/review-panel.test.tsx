@@ -621,6 +621,35 @@ describe("artifact threaded review", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("opens an explicit blocking source independently of the selected reader thread", async () => {
+    window.history.replaceState({}, "", "/w/acme/sessions/session-1?reviewThread=unrelated-thread");
+    render(
+      panel({
+        initialThreadId: "deep-thread",
+        panelId: "review-evidence-comments",
+        syncLocation: false,
+      }),
+    );
+    const selected = await screen.findByRole("region", { name: "Selected review thread" });
+    expect(within(selected).getByRole("link", { name: "Thread link" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("reviewThread=deep-thread"),
+    );
+    expect(document.getElementById("review-evidence-comments")).toBeTruthy();
+    expect(within(selected).getByRole("link", { name: "Thread link" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("artifactStage=plan"),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: /Discussion · open/ })[0]!);
+    expect(window.location.search).toBe("?reviewThread=unrelated-thread");
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).endsWith("/reviews/deep-thread")),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).endsWith("/reviews/unrelated-thread")),
+    ).toBe(false);
+  });
+
   it("deep links to a thread beyond the initial page without loading all thread history", async () => {
     window.history.replaceState({}, "", "/w/acme/sessions/session-1?reviewThread=deep-thread");
     render(panel());

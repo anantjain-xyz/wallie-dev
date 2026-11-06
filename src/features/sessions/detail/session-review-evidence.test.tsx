@@ -5,9 +5,33 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { OPEN_REVIEW_COMMENTS_EVENT } from "@/features/sessions/review/open-comments";
 import { reviewEvidenceDeliverySchema } from "./review-evidence-contracts";
 import { SessionReviewEvidence } from "./session-review-evidence";
+
+vi.mock("@/features/sessions/review/review-panel", () => ({
+  ArtifactReviewPanel: ({
+    artifactId,
+    artifactVersion,
+    initialThreadId,
+    onClose,
+  }: {
+    artifactId: string;
+    artifactVersion: number;
+    initialThreadId: string;
+    onClose: () => void;
+  }) => (
+    <div
+      data-testid="blocking-comments-panel"
+      data-artifact-id={artifactId}
+      data-artifact-version={artifactVersion}
+      data-thread-id={initialThreadId}
+    >
+      <button type="button" onClick={onClose}>
+        Close comments
+      </button>
+    </div>
+  ),
+}));
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const policyId = "33333333-3333-4333-8333-333333333333";
@@ -190,6 +214,12 @@ describe("SessionReviewEvidence", () => {
         summary: null,
       },
       artifactBlockingCount: 1,
+      artifactBlockingTarget: {
+        threadId: "77777777-7777-4777-8777-777777777777",
+        artifactId: "88888888-8888-4888-8888-888888888888",
+        artifactVersion: 2,
+        stageSlug: "plan",
+      },
       evidence: {
         ...(delivery().evidence ?? {}),
         required: [{ key: "tests", status: "missing" }],
@@ -198,8 +228,6 @@ describe("SessionReviewEvidence", () => {
       },
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ delivery: blocked })));
-    const opened = vi.fn();
-    window.addEventListener(OPEN_REVIEW_COMMENTS_EVENT, opened);
     renderPanel({ historical: true });
 
     expect(await screen.findByText(/Required check “CI” failed/)).toBeTruthy();
@@ -215,9 +243,33 @@ describe("SessionReviewEvidence", () => {
       "#review-evidence-evidence",
     );
     fireEvent.click(screen.getAllByRole("button", { name: "Open Comments" })[0]!);
-    expect(opened).toHaveBeenCalledTimes(1);
+    const comments = await screen.findByTestId("blocking-comments-panel");
+    expect(comments).toHaveAttribute("data-artifact-id", "88888888-8888-4888-8888-888888888888");
+    expect(comments).toHaveAttribute("data-artifact-version", "2");
+    expect(comments).toHaveAttribute("data-thread-id", "77777777-7777-4777-8777-777777777777");
+    expect(screen.getByText(/Blocking feedback on plan/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
+    expect(comments).not.toBeVisible();
+    fireEvent.click(screen.getAllByRole("button", { name: "Open Comments" })[0]!);
+    expect(comments).toBeVisible();
     expect(screen.getByRole("note")).toHaveTextContent("Historical view");
-    window.removeEventListener(OPEN_REVIEW_COMMENTS_EVENT, opened);
+  });
+
+  it("explains when a blocking source is unavailable instead of opening unrelated comments", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          delivery: delivery({ artifactBlockingCount: 1, artifactBlockingTarget: null }),
+        }),
+      ),
+    );
+    renderPanel();
+    expect(
+      await screen.findByText(/Refresh delivery readiness to locate the blocking feedback/),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Comments" })).toBeDisabled();
+    expect(screen.queryByTestId("blocking-comments-panel")).toBeNull();
   });
 
   it("flags a predecessor epoch without presenting its observation as current", async () => {

@@ -1,10 +1,10 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { TimeDisplay } from "@/components/shared/time-display";
-import { OPEN_REVIEW_COMMENTS_EVENT } from "@/features/sessions/review/open-comments";
 import { cn } from "@/lib/utils";
 import type { ReviewEvidenceDelivery } from "./review-evidence-contracts";
 import {
@@ -69,14 +69,27 @@ function reviewDecisionLabel(decision: string | null) {
   }
 }
 
-function SourceLink({ source }: { source: ReturnType<typeof deliveryBlockerSource> }) {
+const BlockingArtifactReviewPanel = dynamic(() =>
+  import("@/features/sessions/review/review-panel").then((module) => module.ArtifactReviewPanel),
+);
+
+function SourceLink({
+  source,
+  onOpenComments,
+  commentsAvailable,
+}: {
+  source: ReturnType<typeof deliveryBlockerSource>;
+  onOpenComments: (opener: HTMLButtonElement) => void;
+  commentsAvailable: boolean;
+}) {
   if (!source) return null;
   if (source.kind === "comments")
     return (
       <button
         type="button"
         className="min-h-11 shrink-0 text-accent underline"
-        onClick={() => window.dispatchEvent(new Event(OPEN_REVIEW_COMMENTS_EVENT))}
+        disabled={!commentsAvailable}
+        onClick={(event) => onOpenComments(event.currentTarget)}
       >
         {source.label}
       </button>
@@ -218,6 +231,10 @@ export function SessionReviewEvidence({
   const [refreshPending, setRefreshPending] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
+  const [commentsTarget, setCommentsTarget] =
+    useState<ReviewEvidenceDelivery["artifactBlockingTarget"]>(null);
+  const commentsOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const pollBaselineRef = useRef<string | null>(null);
   const pollAttemptsRef = useRef(0);
   const autoPollKeyRef = useRef<string | null>(null);
@@ -325,6 +342,13 @@ export function SessionReviewEvidence({
   if (!value || value.requirements.deliveryMode !== "code") return null;
 
   const delivery = value;
+  const openBlockingComments = (opener: HTMLButtonElement) => {
+    const target = delivery.artifactBlockingTarget;
+    if (!target) return;
+    commentsOpenerRef.current = opener;
+    setCommentsTarget(target);
+    setCommentsOpen(true);
+  };
   const pr = delivery.pr;
   const blockers = delivery.evaluation.blockers;
   const evidenceHref = "#review-evidence-evidence";
@@ -433,7 +457,11 @@ export function SessionReviewEvidence({
                   <span className="min-w-0 [overflow-wrap:anywhere]">
                     {formatDeliveryBlocker(blocker)}
                   </span>
-                  <SourceLink source={source} />
+                  <SourceLink
+                    source={source}
+                    onOpenComments={openBlockingComments}
+                    commentsAvailable={Boolean(delivery.artifactBlockingTarget)}
+                  />
                 </li>
               );
             })}
@@ -620,13 +648,42 @@ export function SessionReviewEvidence({
             <button
               type="button"
               className="mt-2 flex min-h-11 items-center text-xs text-accent underline"
-              onClick={() => window.dispatchEvent(new Event(OPEN_REVIEW_COMMENTS_EVENT))}
+              disabled={!delivery.artifactBlockingTarget}
+              onClick={(event) => openBlockingComments(event.currentTarget)}
             >
               Open Comments
             </button>
           ) : null}
         </section>
       </div>
+
+      {delivery.artifactBlockingCount > 0 && !delivery.artifactBlockingTarget ? (
+        <p className="mt-3 text-xs text-warning">
+          Refresh delivery readiness to locate the blocking feedback.
+        </p>
+      ) : null}
+      {commentsTarget ? (
+        <section className="mt-5" aria-label="Blocking artifact feedback" hidden={!commentsOpen}>
+          <p className="mb-2 text-xs text-muted">
+            Blocking feedback on {commentsTarget.stageSlug} · Version{" "}
+            {commentsTarget.artifactVersion}
+          </p>
+          <BlockingArtifactReviewPanel
+            key={commentsTarget.threadId}
+            panelId="review-evidence-comments"
+            syncLocation={false}
+            sessionId={sessionId}
+            artifactId={commentsTarget.artifactId}
+            artifactVersion={commentsTarget.artifactVersion}
+            initialThreadId={commentsTarget.threadId}
+            historical={false}
+            anchor={null}
+            onClearAnchor={() => undefined}
+            onClose={() => setCommentsOpen(false)}
+            openerRef={commentsOpenerRef}
+          />
+        </section>
+      ) : null}
 
       <div className="mt-5">
         <EvidenceSection delivery={delivery} initialNow={initialNow} />
@@ -637,6 +694,7 @@ export function SessionReviewEvidence({
           key={pr?.url ?? "no-pull-request"}
           historical={historical}
           observedHeadSha={pr?.headSha ?? null}
+          observedBaseSha={pr?.baseSha ?? null}
           prUrl={pr?.url ?? null}
           sessionId={sessionId}
         />
