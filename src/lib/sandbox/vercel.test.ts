@@ -266,6 +266,58 @@ describe("VercelSandboxHandle exec", () => {
     );
     expect(wait).toHaveBeenCalledTimes(1);
   });
+
+  it("does not emit an unhandled rejection when cancelled before exitCode is awaited", async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("Run cancelled");
+    let logSignal: AbortSignal | undefined;
+    const wait = vi.fn(
+      (options?: { signal?: AbortSignal }) =>
+        new Promise<never>((_, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason ?? cancellation),
+            { once: true },
+          );
+        }),
+    );
+    mocked.sandboxCreate.mockResolvedValue(
+      sandbox({
+        runCommand: vi.fn(async (request: SandboxCommandInput) => {
+          if (request.cmd === "bash") return command();
+          return {
+            exitCode: null,
+            logs: async function* logs(options?: { signal?: AbortSignal }) {
+              logSignal = options?.signal;
+              await new Promise(() => undefined);
+            },
+            output: vi.fn(),
+            wait,
+          };
+        }),
+      }),
+    );
+
+    const handle = await createVercelSessionSandbox(input(), vercelConnection);
+    const proc = await handle.exec("sleep", ["120"], { signal: controller.signal });
+    // The agent runners drain logs to completion before awaiting exitCode.
+    const logStream = proc.logs()[Symbol.asyncIterator]();
+    void logStream.next();
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      controller.abort(cancellation);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(logSignal).toBe(controller.signal);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    await expect(proc.exitCode).rejects.toThrow("Run cancelled");
+  });
 });
 
 describe("stopVercelSandboxById", () => {

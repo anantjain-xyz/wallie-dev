@@ -138,12 +138,19 @@ class VercelSandboxHandle implements SandboxHandle {
 
     const secrets = this.secrets;
     const waitPromise = waitForVercelCommand(command, secrets, opts.signal);
+    // Callers drain logs before awaiting exitCode, so a cancellation or budget
+    // rejection can land first. Handle it here as well; awaiting the original
+    // promise still observes the error, but the worker no longer treats it as
+    // an unhandled rejection and exits.
+    void waitPromise.catch(() => undefined);
 
     return {
       logs: () => ({
         async *[Symbol.asyncIterator]() {
           try {
-            for await (const entry of command.logs()) {
+            for await (const entry of command.logs(
+              opts.signal ? { signal: opts.signal } : undefined,
+            )) {
               yield { data: entry.data, stream: entry.stream };
             }
           } catch (error) {
