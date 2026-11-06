@@ -48,6 +48,19 @@ capabilities. They should be noninteractive validation commands that leave the
 source checkout unchanged. An observed zero exit status establishes execution
 of that command; it does not prove that the repository's tests are exhaustive.
 
+Git content transformations are currently unsupported for checkpoint capture and
+validation. Declared `filter`, `text` (including the common `* text=auto` rule),
+`eol`, `ident`, `working-tree-encoding`, and legacy `crlf` attributes cause capture
+to fail closed, including explicit negative declarations such as `-text` and
+`-filter`. Git's attribute-query output cannot distinguish every negative state
+from a literal filter name, so this version rejects those declarations too.
+Wallie checks both committed/index and working attributes, including
+`.git/info/attributes` and global attribute files, without invoking filter
+commands. Automatic CRLF conversion is disabled for capture. This conservative
+restriction keeps the bytes actually executed distinguishable from Git's
+normalized or filtered representation. A blocked source capture retains the
+sandbox for recovery rather than publishing a checkpoint that omits those bytes.
+
 ## Commit and tree identity
 
 After a successful agent completion, Wallie captures the intended code checkpoint

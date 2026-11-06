@@ -218,4 +218,61 @@ describe("durable validation evidence", () => {
       p_records: [expect.objectContaining({ commitSha: sha, status: "stale" })],
     });
   });
+  it.each(["exec", "output"])(
+    "preserves captured source when the optional tree probe fails at %s",
+    async (failure) => {
+      const admin = adminMock();
+      const finalCheckpoint = { kind: "unchanged" as const, baseSha: sha, headSha: "c".repeat(40) };
+      mocks.checkpoint.mockResolvedValue(finalCheckpoint);
+      const exec = vi.fn().mockImplementation(async () => {
+        if (failure === "exec") throw new Error("private transport detail");
+        return {
+          output: async () => {
+            throw new Error("private output detail");
+          },
+          exitCode: Promise.resolve(0),
+        };
+      });
+      expect(
+        await validateCheckpoint({
+          admin: admin as never,
+          workspaceId: "ws",
+          pipelineId: "pipeline",
+          runId: "run",
+          sandbox: { exec } as never,
+          checkpoint: { kind: "unchanged", baseSha: sha, headSha: sha },
+          secrets: [],
+        }),
+      ).toBe(finalCheckpoint);
+      expect(admin.rpc).not.toHaveBeenCalled();
+      expect(mocks.upload).not.toHaveBeenCalled();
+    },
+  );
+
+  it("propagates cancellation during the optional tree probe", async () => {
+    const admin = adminMock();
+    const controller = new AbortController();
+    mocks.checkpoint.mockResolvedValue({
+      kind: "unchanged",
+      baseSha: sha,
+      headSha: "c".repeat(40),
+    });
+    const exec = vi.fn(async () => {
+      controller.abort();
+      throw new Error("transport failed after abort");
+    });
+    await expect(
+      validateCheckpoint({
+        admin: admin as never,
+        workspaceId: "ws",
+        pipelineId: "pipeline",
+        runId: "run",
+        sandbox: { exec } as never,
+        checkpoint: { kind: "unchanged", baseSha: sha, headSha: sha },
+        secrets: [],
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
 });

@@ -14,6 +14,7 @@ import {
   readSourceBase,
   SOURCE_CHECKPOINT_REF,
   UnsafeRuntimeCheckpointError,
+  UnsupportedSourceTransformError,
 } from "./source-checkpoint";
 
 function git(sandbox: FakeSandbox, ...args: string[]): string {
@@ -114,6 +115,73 @@ it("captures actual source objects instead of a Git replacement tree", async () 
       headSha: baseSha,
     });
     expect(await sandbox.readFile(`${sandbox.repoPath}/source.txt`)).toBe("original source\n");
+  } finally {
+    await sandbox.stop();
+  }
+});
+
+it.each(["worktree", "index", "info", "HEAD", "literal-unspecified", "literal-unset"])(
+  "rejects masking content filters from %s attributes without invoking them during capture",
+  async (location) => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    try {
+      const filterLog = `${sandbox.repoPath}/.git/filter-ran`;
+      const filterName = location.startsWith("literal-")
+        ? location.slice("literal-".length)
+        : "mask";
+      git(
+        sandbox,
+        "config",
+        `filter.${filterName}.clean`,
+        'printf "called\\n" >> .git/filter-ran; sed s/modified/original/g',
+      );
+      await sandbox.writeFile(
+        `${sandbox.repoPath}/.gitattributes`,
+        `source.txt filter=${filterName}\n`,
+      );
+      await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "original\n");
+      commit(sandbox);
+      const baseSha = await readSourceBase(sandbox);
+      await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "modified\n");
+      expect(git(sandbox, "status", "--porcelain")).toBe("");
+      if (location === "index") {
+        // A worktree-only disabling edit cannot hide an active index attribute.
+        await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "");
+      } else if (location === "info") {
+        await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "");
+        git(sandbox, "add", ".gitattributes");
+        await sandbox.writeFile(
+          `${sandbox.repoPath}/.git/info/attributes`,
+          "source.txt filter=mask\n",
+        );
+      } else if (location === "HEAD") {
+        await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "");
+        git(sandbox, "add", ".gitattributes");
+        rmSync(`${sandbox.repoPath}/.gitattributes`);
+      }
+      rmSync(filterLog, { force: true });
+      await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toBeInstanceOf(
+        UnsupportedSourceTransformError,
+      );
+      expect(existsSync(filterLog)).toBe(false);
+      expect(await sandbox.readFile(`${sandbox.repoPath}/source.txt`)).toBe("modified\n");
+      expect(git(sandbox, "rev-parse", "HEAD")).toBe(baseSha);
+    } finally {
+      await sandbox.stop();
+    }
+  },
+);
+
+it("rejects normalization attributes before publishing transformed source bytes", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    const baseSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "*.txt text=auto\n");
+    await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "source with CRLF\r\n");
+    await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toBeInstanceOf(
+      UnsupportedSourceTransformError,
+    );
+    expect(await sandbox.readFile(`${sandbox.repoPath}/source.txt`)).toBe("source with CRLF\r\n");
   } finally {
     await sandbox.stop();
   }

@@ -3014,6 +3014,24 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
+  it("retains filter-transformed source with an actionable diagnostic instead of publishing", async () => {
+    const { UnsupportedSourceTransformError } = await import("./source-checkpoint");
+    mocked.captureSourceCheckpoint.mockRejectedValueOnce(new UnsupportedSourceTransformError());
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({ session: baseSession() });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(insertedArtifacts).toEqual([]);
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_stalled_session_job_attempt",
+      expect.objectContaining({
+        p_retry: false,
+        p_error: expect.stringContaining("Remove those transformations before retrying"),
+      }),
+    );
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
+  });
+
   it("retains unsafe runtime source and reports the actionable reason without publishing or retrying", async () => {
     const { UnsafeRuntimeCheckpointError } = await import("./source-checkpoint");
     mocked.captureSourceCheckpoint.mockRejectedValueOnce(new UnsafeRuntimeCheckpointError());

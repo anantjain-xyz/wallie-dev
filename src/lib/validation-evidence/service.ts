@@ -160,12 +160,21 @@ export async function validateCheckpoint(input: {
       // Mark every earlier receipt stale even if a command reported exit zero.
       evidence.records = evidence.records.map((record) => ({ ...record, status: "stale" }));
       evidence.commitSha = checkpoint.headSha;
-      const process = await input.sandbox.exec("git", ["rev-parse", "--verify", "HEAD^{tree}"], {
-        signal: input.signal,
-      });
-      const [output, code] = await Promise.all([process.output(), process.exitCode]);
-      if (code !== 0 || !/^[a-f0-9]{40}$/.test(output.stdout.trim())) return checkpoint;
-      evidence.treeSha = output.stdout.trim();
+      try {
+        const process = await input.sandbox.exec("git", ["rev-parse", "--verify", "HEAD^{tree}"], {
+          env: { GIT_NO_REPLACE_OBJECTS: "1" },
+          signal: input.signal,
+        });
+        const [output, code] = await Promise.all([process.output(), process.exitCode]);
+        input.signal?.throwIfAborted();
+        if (code !== 0 || !/^[a-f0-9]{40}$/.test(output.stdout.trim())) return checkpoint;
+        evidence.treeSha = output.stdout.trim();
+      } catch {
+        input.signal?.throwIfAborted();
+        // This identity probe is optional evidence work. The captured source
+        // must still reach prepareSourceDelivery when its transport fails.
+        return checkpoint;
+      }
     }
     try {
       await persistValidationEvidence({ ...input, evidence });

@@ -55,6 +55,7 @@ import {
   captureSourceCheckpoint,
   readSourceBase,
   UnsupportedLfsCheckpointError,
+  UnsupportedSourceTransformError,
   UnsupportedSubmoduleCheckpointError,
   UnsafeRuntimeCheckpointError,
 } from "./source-checkpoint";
@@ -636,7 +637,9 @@ async function runStage(input: {
             ? "lfs"
             : error instanceof UnsupportedSubmoduleCheckpointError
               ? "gitlink"
-              : undefined,
+              : error instanceof UnsupportedSourceTransformError
+                ? "content-transform"
+                : undefined,
       );
     }
     throwIfAborted(signal);

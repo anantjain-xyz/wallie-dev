@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SandboxHandle } from "@/lib/sandbox/types";
+import { shellQuote } from "@/lib/sandbox/command";
 import { captureValidationEvidence, redactValidationText } from "./capture";
 import { validationEvidenceConfigSchema } from "./contracts";
 
@@ -101,6 +102,53 @@ const command = (key: string, script: string, reports: unknown[] = []) => ({
 const report = { key: "results", path: "results.txt", kind: "report", required: true };
 
 describe("trusted validation capture", { timeout: 20_000 }, () => {
+  it.each(["worktree", "index", "info", "HEAD", "literal-unspecified", "literal-unset"])(
+    "rejects masking content filters from %s attributes before validation or Git filtering",
+    async (location) => {
+      const { sandbox, directory, git } = await fixture([
+        command("unit", 'test "$(cat source.txt)" = modified'),
+      ]);
+      const filterName = location.startsWith("literal-")
+        ? location.slice("literal-".length)
+        : "mask";
+      git(
+        "config",
+        `filter.${filterName}.clean`,
+        'printf "called\\n" >> .git/filter-ran; sed s/modified/original/g',
+      );
+      await writeFile(join(directory, ".gitattributes"), `source.txt filter=${filterName}\n`);
+      git("add", ".gitattributes");
+      git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "-qm",
+        "Masked content fixture",
+      );
+      const sha = git("rev-parse", "HEAD");
+      await writeFile(join(directory, "source.txt"), "modified\n");
+      expect(git("status", "--porcelain")).toBe("");
+      if (location === "index") {
+        await writeFile(join(directory, ".gitattributes"), "");
+      } else if (location === "info") {
+        await writeFile(join(directory, ".gitattributes"), "");
+        git("add", ".gitattributes");
+        await writeFile(join(directory, ".git/info/attributes"), "source.txt filter=mask\n");
+      } else if (location === "HEAD") {
+        await writeFile(join(directory, ".gitattributes"), "");
+        git("add", ".gitattributes");
+        await rm(join(directory, ".gitattributes"));
+      }
+      await rm(join(directory, ".git/filter-ran"), { force: true });
+      await expect(captureValidationEvidence({ sandbox, commitSha: sha })).rejects.toThrow(
+        "Validation evidence collection failed.",
+      );
+      expect(await sandbox.readFile(join(directory, ".git/filter-ran"))).toBeNull();
+    },
+  );
+
   it("reads the actual checkpoint configuration and tree despite Git replacement refs", async () => {
     const { sandbox, sha, directory, git } = await fixture([command("unit", "printf original")]);
     await writeFile(
@@ -199,6 +247,45 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
     expect(captured.records.map((record) => record.status)).toEqual(["failed", "failed", "error"]);
     expect(captured.records[0].exitCode).toBe(7);
     expect(captured.records[1].missingRequiredReports).toEqual(["missing/results"]);
+  });
+
+  it("settles a timeout even when a detached descendant keeps its output pipes open", async () => {
+    const pidDirectory = await mkdtemp(join(tmpdir(), "wallie-evidence-descendant-"));
+    directories.push(pidDirectory);
+    const pidPath = join(pidDirectory, "pid");
+    const script = `
+      const fs = require('node:fs');
+      const {spawn} = require('node:child_process');
+      const child = spawn(process.execPath, ['-e','setTimeout(()=>{},30000)'], {detached:true,stdio:'inherit'});
+      fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+      child.unref();
+      setTimeout(()=>{},30000);
+    `;
+    const { sandbox, sha } = await fixture([
+      { ...command("detached", `node -e ${shellQuote(script)}`, [report]), timeoutSeconds: 1 },
+    ]);
+    const started = performance.now();
+    try {
+      const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+      expect(performance.now() - started).toBeLessThan(10_000);
+      expect(captured.records[0]).toMatchObject({
+        status: "error",
+        exitCode: null,
+        missingRequiredReports: ["detached/results"],
+      });
+      expect(captured.assets).toEqual([]);
+    } finally {
+      // A setsid descendant escapes the command's process group. In production
+      // the provider sandbox teardown owns it; this local adapter must reap it.
+      const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+      if (Number.isSafeInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* Already exited. */
+        }
+      }
+    }
   });
 
   it("invalidates earlier success when a later command edits tracked source", async () => {

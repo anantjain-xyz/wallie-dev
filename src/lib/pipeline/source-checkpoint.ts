@@ -33,6 +33,55 @@ export class UnsafeRuntimeCheckpointError extends Error {
   }
 }
 
+export class UnsupportedSourceTransformError extends Error {
+  constructor() {
+    super("Source checkpoints do not support Git content filters or normalization attributes.");
+    this.name = "UnsupportedSourceTransformError";
+  }
+}
+
+/**
+ * check-attr only reads attribute declarations: it never invokes a clean/smudge
+ * filter. Inspect HEAD, index and nonignored paths against both index and worktree
+ * attributes (including info/global attributes) before any content-aware Git
+ * command could replace the actual bytes with a normalized representation.
+ */
+export const RAW_SOURCE_ATTRIBUTES_ASSERTION = String.raw`
+function assertRawSourceAttributes(gitConfig = ['-c','core.fsmonitor=false','-c','core.ignoreStat=false','-c','core.trustctime=true','-c','core.checkStat=default','-c','core.untrackedCache=false','-c','core.autocrlf=false','-c','core.eol=lf']) {
+  const { spawnSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+  function git(args, input, env) {
+    const result = spawnSync('git',[...gitConfig,...args],{input,env,maxBuffer:16777216});
+    if(result.error || result.status !== 0) throw new Error('Source attributes unavailable');
+    return result.stdout;
+  }
+  const paths = Buffer.concat([
+    git(['ls-files','--cached','--others','--exclude-standard','-z']),
+    git(['ls-tree','-r','--name-only','-z','HEAD'])
+  ]);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(),'wallie-source-attributes-'));
+  try {
+    // A fresh verification index initially reads HEAD attributes, even if the
+    // real index stages their removal and the worktree file is absent. Inspect
+    // that third source too, before any fresh-index add can invoke a filter.
+    const headEnv = {...process.env,GIT_INDEX_FILE:path.join(directory,'index')};
+    git(['read-tree','HEAD'],undefined,headEnv);
+    for(const mode of [{args:[]},{args:['--cached']},{args:['--cached'],env:headEnv}]) {
+      // --all omits absent attributes but retains literal values named
+      // "unspecified" or "unset", which named queries cannot distinguish from
+      // their special states. Reject every declaration conservatively.
+      const fields = git(['check-attr',...mode.args,'-z','--stdin','--all'],paths,mode.env).toString('utf8').split('\0');
+      if(fields.pop() !== '' || fields.length % 3 !== 0) throw new Error('Source attributes unavailable');
+      for(let index=2;index<fields.length;index+=3) {
+        if(['filter','text','eol','ident','working-tree-encoding','crlf'].includes(fields[index-1])) throw new Error('Source transforms unsupported');
+      }
+    }
+  } finally { fs.rmSync(directory,{recursive:true,force:true}); }
+}
+`;
+
 /**
  * Read exact Git objects, including symlink targets, rather than following paths
  * in the working tree. Match only caller-supplied runtime material; this is not
@@ -141,7 +190,8 @@ export async function captureSourceCheckpoint(input: {
     // Repository configuration must not let a cached stat or filesystem-monitor
     // answer hide source changes. Special index flags need an explicit failure
     // rather than clearing them and silently changing the agent's checkout.
-    'git() { command git -c core.fsmonitor=false -c core.ignoreStat=false -c core.trustctime=true -c core.checkStat=default -c core.untrackedCache=false "$@"; }',
+    'git() { command git -c core.fsmonitor=false -c core.ignoreStat=false -c core.trustctime=true -c core.checkStat=default -c core.untrackedCache=false -c core.autocrlf=false -c core.eol=lf "$@"; }',
+    `assert_raw_source_attributes() { node -e ${shellQuote(`${RAW_SOURCE_ATTRIBUTES_ASSERTION}\ntry { assertRawSourceAttributes(); } catch { process.exitCode=47; }`)} 2>/dev/null; }`,
     "assert_plain_index() {",
     "  git ls-files -v -z | while IFS= read -r -d '' entry; do",
     '    case "$entry" in [a-z]*|S*) exit 41 ;; esac',
@@ -157,6 +207,7 @@ export async function captureSourceCheckpoint(input: {
     '  git update-index --really-refresh >/dev/null 2>&1 || [ "$?" -eq 1 ]',
     "}",
     "assert_plain_index",
+    "assert_raw_source_attributes",
     "refresh_index",
     `trap ${shellQuote(`rm -rf ${shellQuote(directory)}`)} EXIT`,
     // Slash-delimited matching reserves a whole runtime directory, even when
@@ -188,10 +239,11 @@ export async function captureSourceCheckpoint(input: {
     "if ! git diff --cached --quiet; then git -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -qm 'Preserve Wallie stage source'; fi",
     // A superproject bundle cannot preserve dirty submodule worktrees.
     "assert_plain_index",
+    "assert_raw_source_attributes",
     "refresh_index",
     "if [ -n \"$(git status --porcelain --untracked-files=normal --ignore-submodules=none)\" ]; then echo 'Source checkout still contains uncommitted changes' >&2; exit 41; fi",
     "head=$(git rev-parse --verify 'HEAD^{commit}')",
-    `if [ "$head" = ${shellQuote(input.baseSha)} ]; then assert_plain_index; printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
+    `if [ "$head" = ${shellQuote(input.baseSha)} ]; then assert_plain_index; assert_raw_source_attributes; printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
     // A clean gitlink can still point to a commit available only in a local
     // submodule. Check each new commit, including reverted intermediate edits.
     `git rev-list "$head" ${shellQuote(`^${input.baseSha}`)} | while read -r commit; do`,
@@ -216,6 +268,7 @@ export async function captureSourceCheckpoint(input: {
     `if [ "$size" -gt ${MAX_SOURCE_CHECKPOINT_BYTES} ]; then echo 'Source checkpoint exceeds 4 MiB' >&2; exit 42; fi`,
     `if [ "$(git rev-parse --verify 'HEAD^{commit}')" != "$head" ]; then exit 41; fi`,
     "assert_plain_index",
+    "assert_raw_source_attributes",
     "refresh_index",
     'if [ -n "$(git status --porcelain --untracked-files=normal --ignore-submodules=none)" ]; then exit 41; fi',
     'printf \'BUNDLE\\n%s\\n%s\\n\' "$head" "$size"',
@@ -258,6 +311,7 @@ export async function captureSourceCheckpoint(input: {
     if (code === 43) throw new UnsupportedLfsCheckpointError();
     if (code === 44) throw new UnsupportedSubmoduleCheckpointError();
     if (code === 45) throw new UnsafeRuntimeCheckpointError();
+    if (code === 47) throw new UnsupportedSourceTransformError();
     throw new Error(
       code === 42
         ? "Source checkpoint exceeds 4 MiB."

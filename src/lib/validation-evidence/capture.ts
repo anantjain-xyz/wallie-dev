@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 
+import { RAW_SOURCE_ATTRIBUTES_ASSERTION } from "@/lib/pipeline/source-checkpoint";
 import { redactSecrets } from "@/lib/sandbox/command";
 import type { SandboxHandle } from "@/lib/sandbox/types";
 import {
@@ -24,13 +25,15 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const gitConfig = ['-c','core.fsmonitor=false','-c','core.ignoreStat=false','-c','core.trustctime=true','-c','core.checkStat=default','-c','core.untrackedCache=false'];
+${RAW_SOURCE_ATTRIBUTES_ASSERTION}
+const gitConfig = ['-c','core.fsmonitor=false','-c','core.ignoreStat=false','-c','core.trustctime=true','-c','core.checkStat=default','-c','core.untrackedCache=false','-c','core.autocrlf=false','-c','core.eol=lf'];
 function git(args) {
   const result = spawnSync('git', [...gitConfig,...args], { encoding:'utf8', maxBuffer:65536 });
   if (result.error || result.status !== 0) throw new Error('Git probe failed');
   return result.stdout.trim();
 }
 try {
+  assertRawSourceAttributes(gitConfig);
   const commitSha = git(['rev-parse','--verify','HEAD^{commit}']);
   const treeSha = git(['rev-parse','--verify','HEAD^{tree}']);
   const tracked = spawnSync('git',[...gitConfig,'ls-files','-v','-z'],{encoding:'utf8',maxBuffer:4194304});
@@ -104,7 +107,10 @@ const kill = () => { try { process.kill(-child.pid,'SIGKILL'); } catch {} };
 for(const signal of ['SIGTERM','SIGINT']) process.once(signal,()=>{
   kill(); fs.rmSync(directory,{recursive:true,force:true}); process.exit(1);
 });
-timer=setTimeout(()=>{timedOut=true;kill();},command.timeoutSeconds*1000);
+// 'close' waits for inherited pipes, including pipes held by a descendant
+// that started another process group. Settle the receipt at the deadline
+// independently of that event, then release our readers and process handle.
+timer=setTimeout(()=>{timedOut=true;finish(null,true);},command.timeoutSeconds*1000);
 function report(spec) {
   if(spec.kind === 'screenshot') return null;
   try {
@@ -132,9 +138,12 @@ function report(spec) {
 let settled=false;
 function finish(code,error) {
   if(settled)return;settled=true;clearTimeout(timer);kill();
+  child.stdout.destroy(); child.stderr.destroy(); child.unref();
   try {
-    const reports=command.reports.map(spec=>({key:spec.key,bytes:report(spec)}));
-    process.stdout.write(JSON.stringify({exitCode:code,error:!!error||timedOut,truncated,log:log.toString('base64'),reports}));
+    const reports=command.reports.map(spec=>({key:spec.key,bytes:timedOut ? null : report(spec)}));
+    // Cancellation may cut a credential in the middle. The collector discards
+    // truncated logs, so treat timeout output as truncated as well.
+    process.stdout.write(JSON.stringify({exitCode:code,error:!!error||timedOut,truncated:truncated||timedOut,log:timedOut ? '' : log.toString('base64'),reports}));
   } finally {fs.rmSync(directory,{recursive:true,force:true});}
 }
 child.once('error',()=>finish(null,true));
