@@ -226,6 +226,57 @@ describe("OpenCodeRunner", () => {
     expect(JSON.stringify(call.opts)).not.toContain(credential.secret);
   });
 
+  it("includes cache reads and writes in normalized input usage", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data:
+          `${JSON.stringify({ type: "step_finish", part: { tokens: { input: 10, output: 4, cache: { read: 800, write: 100 } } } })}\n` +
+          JSON.stringify({
+            type: "step_finish",
+            part: { tokens: { input: 7, output: 3, cache: { read: 0, write: 100 } } },
+          }),
+        stream: "stdout",
+      },
+    ]);
+
+    const runner = new OpenCodeRunner({ credential, model: "opencode/gpt-5.6-sol" });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "OpenCode session completed",
+        usage: { inputTokens: 1_017, outputTokens: 7, provenance: "measured" },
+      },
+    ]);
+  });
+
+  it("marks aggregate cache/token overflow unavailable", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data:
+          `${JSON.stringify({ type: "step_finish", part: { tokens: { input: Number.MAX_SAFE_INTEGER, output: 1, cache: { read: 0, write: 0 } } } })}\n` +
+          JSON.stringify({ type: "step_finish", part: { tokens: { input: 1, output: 1 } } }),
+        stream: "stdout",
+      },
+    ]);
+
+    const runner = new OpenCodeRunner({ credential, model: "opencode/gpt-5.6-sol" });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toMatchObject({ type: "completion", taskComplete: true });
+    expect(events[0]).not.toHaveProperty("usage");
+  });
+
   it("aggregates multi-step provider costs, including an explicit zero", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [
@@ -676,6 +727,9 @@ describe("parseOpenCodeLine", () => {
     { tokens: { input: Number.NaN, output: 1 } },
     { tokens: { input: 1, output: Number.POSITIVE_INFINITY } },
     { tokens: { input: "1", output: 1 } },
+    { tokens: { input: 1, output: 1, cache: { read: -1, write: 0 } } },
+    { tokens: { input: 1, output: 1, cache: { read: 0, write: 1.5 } } },
+    { tokens: { input: 1, output: 1, cache: { read: Number.MAX_SAFE_INTEGER, write: 1 } } },
   ])("marks malformed or partial OpenCode token telemetry invalid: %j", (part) => {
     expect(parseOpenCodeLine(JSON.stringify({ type: "step_finish", part }))).toEqual({
       events: [],

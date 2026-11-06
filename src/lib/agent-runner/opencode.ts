@@ -5,7 +5,7 @@ import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
-import { normalizeMeasuredUsage } from "./usage";
+import { isTokenCount, normalizeMeasuredUsage } from "./usage";
 
 export type OpenCodeRunnerAuth = {
   /** User-supplied OpenCode Zen API key, if connected. */
@@ -130,6 +130,9 @@ export class OpenCodeRunner implements AgentRunner {
       if (parsed.usage) {
         usage.inputTokens += parsed.usage.inputTokens;
         usage.outputTokens += parsed.usage.outputTokens;
+        if (!isTokenCount(usage.inputTokens) || !isTokenCount(usage.outputTokens)) {
+          usageInvalid = true;
+        }
         hasUsage = true;
         if (parsed.usage.costUsd === undefined) hasCompleteCost = false;
         else costUsd += parsed.usage.costUsd;
@@ -310,9 +313,20 @@ export function parseOpenCodeLine(
   if (type === "step_finish") {
     const tokensPart = part ?? value;
     const tokens = isRecord(tokensPart.tokens) ? tokensPart.tokens : null;
-    const usage = tokens
-      ? normalizeMeasuredUsage(tokens.input, tokens.output, tokensPart.cost)
-      : undefined;
+    const cache = tokens && isRecord(tokens.cache) ? tokens.cache : null;
+    const cacheRead = cache?.read ?? 0;
+    const cacheWrite = cache?.write ?? 0;
+    if (
+      !tokens ||
+      !isTokenCount(tokens.input) ||
+      !isTokenCount(cacheRead) ||
+      !isTokenCount(cacheWrite)
+    ) {
+      return { events: [], sessionId, usageInvalid: true };
+    }
+    const inputTokens = tokens.input + cacheRead + cacheWrite;
+    if (!isTokenCount(inputTokens)) return { events: [], sessionId, usageInvalid: true };
+    const usage = normalizeMeasuredUsage(inputTokens, tokens.output, tokensPart.cost);
     if (!usage) return { events: [], sessionId, usageInvalid: true };
     return { events: [], sessionId, usage };
   }
