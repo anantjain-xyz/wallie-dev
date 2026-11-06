@@ -473,10 +473,16 @@ Go to <https://github.com/settings/apps> -> **New GitHub App** (or your org's eq
 - **Permissions -> Repository**
   - Contents: **Read and write** (clone/push stage branches and repository-onboarding commits)
   - Pull requests: **Read and write** (open/update setup and session-stage PRs and track their state)
+  - Checks: **Read-only** (read current check runs and their source Apps)
+  - Commit statuses: **Read-only** (read current commit status contexts)
+  - Actions: **Read-only** (verify the workflow event behind GitHub Actions checks)
+  - Administration: **Read-only** (inspect applicable classic branch protection)
   - Metadata: **Read-only** (mandatory; GitHub enables it automatically)
 - **Permissions -> Organization**: Members: **Read-only** (verify that the connecting GitHub user owns the organization). Existing installations must approve this permission change.
-- **Subscribe to events**: `Pull request`. The `installation` and `installation_repositories` events are delivered automatically by GitHub and are handled at `/api/github/webhooks`.
+- **Subscribe to events**: `Check run`, `Check suite`, `Status`, `Pull request`, `Pull request review`, `Pull request review comment`, `Pull request review thread`, and `Push`. The `installation` and `installation_repositories` events are delivered automatically by GitHub and are handled at `/api/github/webhooks`.
 - **Where can this GitHub App be installed?** Only on this account (for local dev).
+
+Existing installations must approve new repository permissions before PR verification can use them. Missing access is recorded explicitly; it never implies that checks or repository rules passed. See [PR verification and the read-only permission audit](docs/GITHUB-PR-VERIFICATION.md). Updating these instructions does not change an installed App or production settings.
 
 After creation:
 

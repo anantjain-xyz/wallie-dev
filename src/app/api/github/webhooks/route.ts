@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import {
   installationEventSchema,
   pullRequestEventSchema,
+  githubDeliveryIdSchema,
+  isGitHubVerificationEvent,
+  verificationEventPayloadSchemas,
 } from "@/features/github/webhook-payloads";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
@@ -10,6 +13,7 @@ import {
   handleGitHubInstallationEvent,
   handleGitHubInstallationRepositoriesEvent,
   handleGitHubPullRequestEvent,
+  handleGitHubVerificationEvent,
   verifyGitHubWebhookRequest,
 } from "@/features/github/webhooks";
 
@@ -56,6 +60,17 @@ export async function POST(request: Request) {
     payload = JSON.parse(rawBody);
   } catch {
     return invalidPayload();
+  }
+
+  if (isGitHubVerificationEvent(eventName)) {
+    const signal = verificationEventPayloadSchemas[eventName].safeParse(payload);
+    const delivery = githubDeliveryIdSchema.safeParse(request.headers.get("x-github-delivery"));
+    if (!signal.success || !delivery.success) return invalidPayload();
+    // Validate the full PR lifecycle payload before enqueuing anything. Other
+    // events consume only their scoped identity; their conclusions are ignored.
+    if (eventName === "pull_request" && !pullRequestEventSchema.safeParse(payload).success)
+      return invalidPayload();
+    await handleGitHubVerificationEvent(signal.data, delivery.data);
   }
 
   switch (eventName) {

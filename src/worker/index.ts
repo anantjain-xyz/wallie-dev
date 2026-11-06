@@ -6,6 +6,7 @@ import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publishe
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
+import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 import { parseWorkerConfig } from "./config";
 import { startWorkerControlServer } from "./control";
@@ -120,6 +121,7 @@ async function main() {
         timerTasks.run("reconciliation", async () => {
           await drainCheckpointPublications(admin);
           await drainCanonicalPullRequests(admin);
+          await reconcileGitHubPrVerification(admin);
           await drainSourceDeliveries(admin);
           await drainCheckpointCleanup(admin);
           const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([

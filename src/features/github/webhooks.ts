@@ -11,6 +11,7 @@ import {
   pullRequestEventSchema,
   type InstallationEventPayload,
   type PullRequestEventPayload,
+  type GitHubVerificationSignal,
 } from "./webhook-payloads";
 
 const TRACKED_PR_ACTIONS = new Set([
@@ -50,6 +51,25 @@ export async function verifyGitHubWebhookRequest(
   input: Record<string, string | undefined> = process.env,
 ) {
   return verify(resolveGitHubWebhookSecret(input), payload, signature);
+}
+
+export async function handleGitHubVerificationEvent(
+  signal: GitHubVerificationSignal,
+  deliveryId: string,
+  input: Record<string, string | undefined> = process.env,
+) {
+  if (!signal.installationId) return;
+  if (!signal.prNumbers?.length && !signal.headSha && !signal.baseBranch) return;
+  const admin = createSupabaseAdminClient(input);
+  const { error } = await admin.rpc("enqueue_github_pr_refresh_event", {
+    p_installation_id: signal.installationId,
+    p_github_repository_id: signal.repositoryId,
+    p_delivery_id: deliveryId,
+    ...(signal.prNumbers?.length ? { p_pr_numbers: signal.prNumbers } : {}),
+    ...(signal.headSha ? { p_head_sha: signal.headSha } : {}),
+    ...(signal.baseBranch ? { p_base_branch: signal.baseBranch } : {}),
+  });
+  if (error) throw error;
 }
 
 export async function handleGitHubInstallationEvent(

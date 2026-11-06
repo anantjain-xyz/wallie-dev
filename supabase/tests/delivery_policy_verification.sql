@@ -116,6 +116,11 @@ create temp table verification_receipt as select public.begin_session_pr_sync_ob
 select ok((select public.finish_session_pr_sync(id,claim_id,desired_sha,desired_fence_sha,505,
  'https://github.com/'||(select repository_full_name from public.session_pr_epochs where id=epoch_id)||'/pull/505',
  'open',false,desired_sha,now(),(select id from verification_receipt)) from verification_operation),'canonical fixture synchronizes accepted code');
+-- OP-506 requires a current authoritative GitHub collection before readiness.
+select public.enqueue_session_pr_refresh('b1b2c3d4-0001-4000-8000-000000000001',(select session_id from code_fixture));
+create temp table github_claim as select public.claim_github_pr_refresh('b1b2c3d4-0001-4000-8000-000000000001') as value;
+select public.finish_github_pr_refresh((select session_id from code_fixture),(select (value->>'claim_token')::uuid from github_claim),
+ repeat('b',40),repeat('a',40),'{"githubAccess":"available"}');
 create temp table code_observation as select observation.* from public.session_pr_epochs e
  cross join lateral public.record_pr_verification_observation(
  'b1b2c3d4-0001-4000-8000-000000000001',(select session_id from code_fixture),(select id from first_policy),
@@ -218,7 +223,7 @@ set local request.jwt.claim.role='authenticated';
 set local request.jwt.claim.sub='a1b2c3d4-0001-4000-8000-000000000001';
 select is((select count(*) from public.delivery_policy_revisions where pipeline_id=(select id from fixture_pipeline)),2::bigint,
  'active workspace members can inspect versioned policy history');
-select is((select count(*) from public.session_pr_verification_observations where session_id=(select session_id from code_fixture)),3::bigint,
+select is((select count(*) from public.session_pr_verification_observations where session_id=(select session_id from code_fixture)),4::bigint,
  'active workspace members can inspect their verification evidence');
 select is(pg_temp.pr_failure_state($$insert into public.session_pr_verification_results(workspace_id,session_id,observation_id,state,blockers)
  values('b1b2c3d4-0001-4000-8000-000000000001',(select session_id from code_fixture),(select id from code_observation),'ready','[]')$$),'42501',

@@ -6,6 +6,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { reconcileLinearState } from "@/worker/reconciler";
 import { reapOrphanSandboxes } from "@/worker/sandbox-reaper";
 import { sweepStalledRuns } from "@/worker/stall-detector";
+import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -25,6 +26,11 @@ export type MaintenanceTickResponse = {
     checked: number;
     rateLimited: boolean;
   };
+  githubVerification: {
+    checked: number;
+    refreshed: number;
+    failed: number;
+  };
 };
 
 export async function runMaintenanceTick(input: {
@@ -36,9 +42,10 @@ export async function runMaintenanceTick(input: {
     reapOrphanSandboxes(input.admin),
   ]);
 
-  const reconciliation = await reconcileLinearState(input.admin, {
-    workspaceId: input.workspaceId,
-  });
+  const [reconciliation, githubVerification] = await Promise.all([
+    reconcileLinearState(input.admin, { workspaceId: input.workspaceId }),
+    reconcileGitHubPrVerification(input.admin, { workspaceId: input.workspaceId }),
+  ]);
   return {
     cleanup: {
       activeProviderSandboxCount: reaped.activeProviderCount,
@@ -49,5 +56,6 @@ export async function runMaintenanceTick(input: {
       terminalErroredJobIds: stalled.stalledJobIds,
     },
     reconciliation,
+    githubVerification,
   };
 }
