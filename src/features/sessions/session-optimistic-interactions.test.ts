@@ -19,6 +19,9 @@ vi.mock("@/features/sessions/detail/use-approval-review", () => ({
     refresh: vi.fn(),
   }),
 }));
+vi.mock("@/features/sessions/detail/use-review-evidence", () => ({
+  useReviewEvidence: () => ({ value: null, error: null, loading: false, refresh: vi.fn() }),
+}));
 
 vi.mock("@/lib/supabase/realtime-subscription", () => ({
   subscribeAuthenticatedChannel: (

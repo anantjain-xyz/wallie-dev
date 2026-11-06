@@ -48,6 +48,7 @@ import { SessionDetailHeader } from "./session-detail-header";
 import { SessionStageWorkspace } from "./session-stage-workspace";
 import { SessionActivityPresentationProvider } from "./session-activity-presentation";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
+import { SessionReviewEvidence } from "@/features/sessions/detail/session-review-evidence";
 import {
   SessionReviewBar,
   type SessionFeedbackSubmission,
@@ -1251,6 +1252,15 @@ function SessionDetailContent({
             : "No output was recorded for this stage."
         }
         artifact={artifactViewer}
+        evidence={
+          stageFocus === "run" ? null : (
+            <SessionReviewEvidence
+              historical={!selectedStageIsCurrent || viewingHistoricalArtifact}
+              initialNow={renderNow}
+              sessionId={session.id}
+            />
+          )
+        }
         reviewControls={
           <SessionReviewBar
             attached

@@ -81,6 +81,50 @@ export const githubObservationPayloadSchema = z.object({
 
 export type GitHubObservationPayload = z.infer<typeof githubObservationPayloadSchema>;
 
+const requiredCheckDetailSchema = z.object({
+  context: z.string().min(1).max(200),
+  appId: z.number().int().safe().nullable(),
+  source: z.enum(["policy", "ruleset", "branch_protection"]),
+});
+
+const branchRulesDetailSchema = z
+  .object({
+    minimumApprovals: z.number().int().nonnegative(),
+    codeOwnersRequired: z.boolean(),
+    requireResolvedThreads: z.boolean(),
+    strictChecks: z.boolean(),
+    unsupportedRules: z.array(z.string().max(200)).max(500),
+  })
+  .passthrough();
+
+const reviewEvidenceDetailSchema = z
+  .object({
+    decision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]).nullable(),
+    currentHeadApprovals: z.number().int().nonnegative(),
+    unresolvedThreads: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(200),
+            isResolved: z.boolean(),
+            isOutdated: z.boolean(),
+          })
+          .passthrough(),
+      )
+      .max(500),
+    mergeStateStatus: z.string().max(100),
+  })
+  .passthrough();
+
+/** The collector also stores bounded, normalized detail used only for review display. */
+export const githubObservationDetailPayloadSchema = githubObservationPayloadSchema.extend({
+  requiredChecks: z.array(requiredCheckDetailSchema).max(500).optional(),
+  branchRules: branchRulesDetailSchema.optional(),
+  reviewEvidence: reviewEvidenceDetailSchema.optional(),
+});
+
+export type GitHubObservationDetailPayload = z.infer<typeof githubObservationDetailPayloadSchema>;
+
 /** Stored OP-507 harness receipts are re-validated before any can support Ready. */
 const storedEvidenceRecordSchema = z.object({
   key: z.string().min(1).max(200),
@@ -369,6 +413,53 @@ type SessionPolicyRow = {
   requirements: DeliveryRequirements;
 };
 
+type LoadedPrReadinessInput = {
+  policy: SessionPolicyRow;
+  input: PrReadinessEvaluatorInput;
+  session: { archived_at: string | null };
+  observationRow: {
+    id: string;
+    source: string;
+    payload: Json;
+    observed_at: string;
+  } | null;
+  observationDetail: GitHubObservationDetailPayload | null;
+  refreshQueue: {
+    status: string | null;
+    last_error_code: string | null;
+    updated_at: string | null;
+  } | null;
+  epoch: {
+    id: string;
+    pr_number: number | null;
+    pr_url: string | null;
+  } | null;
+  repository: {
+    id: string;
+    full_name: string;
+    html_url: string;
+    repo_id: number;
+    is_archived: boolean;
+    github_installation_id: string;
+  } | null;
+  installation: { id: string; suspended: boolean } | null;
+  evidenceRow: {
+    run_id: string;
+    commit_sha: string;
+    validation_tree_sha: string;
+    records: Json;
+    created_at: string;
+  } | null;
+  evidenceAssets: Array<{
+    id: string;
+    evidence_key: string;
+    kind: string;
+    required: boolean;
+    size_bytes: number;
+  }>;
+  accessibleAssetKeys: ReadonlySet<string>;
+};
+
 async function loadSessionPolicy(
   admin: AdminClient,
   sessionId: string,
@@ -407,7 +498,7 @@ async function loadSessionPolicy(
 async function loadEvaluatorInput(
   admin: AdminClient,
   sessionId: string,
-): Promise<{ policy: SessionPolicyRow; input: PrReadinessEvaluatorInput } | null> {
+): Promise<LoadedPrReadinessInput | null> {
   const policy = await loadSessionPolicy(admin, sessionId);
   if (!policy) return null;
 
@@ -433,7 +524,7 @@ async function loadEvaluatorInput(
       .maybeSingle(),
     admin
       .from("session_pr_refresh_queue")
-      .select("status, last_observation_id")
+      .select("status, last_observation_id, last_error_code, updated_at")
       .eq("session_id", sessionId)
       .maybeSingle(),
     admin
@@ -450,7 +541,7 @@ async function loadEvaluatorInput(
     syncResult.data?.current_epoch_id
       ? admin
           .from("session_pr_epochs")
-          .select("id, pr_number")
+          .select("id, pr_number, pr_url, repository_id")
           .eq("id", syncResult.data.current_epoch_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null as null }),
@@ -478,7 +569,7 @@ async function loadEvaluatorInput(
   const evidenceResult = evidenceRunId
     ? await admin
         .from("session_validation_evidence")
-        .select("run_id, commit_sha, validation_tree_sha, records")
+        .select("run_id, commit_sha, validation_tree_sha, records, created_at")
         .eq("run_id", evidenceRunId)
         .maybeSingle()
     : { data: null, error: null as null };
@@ -488,14 +579,17 @@ async function loadEvaluatorInput(
     ? storedEvidenceRecordsSchema.safeParse(evidenceRow.records)
     : null;
   const accessibleAssetKeys = new Set<string>();
+  let evidenceAssets: LoadedPrReadinessInput["evidenceAssets"] = [];
   if (evidenceRunId && parsedRecords?.success) {
     const { data: assets, error: assetError } = await admin
       .from("session_validation_assets")
-      .select("evidence_key")
+      .select("id, evidence_key, kind, required, size_bytes")
       .eq("run_id", evidenceRunId)
+      .order("id", { ascending: true })
       .limit(1000);
     if (assetError) throw new Error("Validation evidence assets are unavailable.");
-    for (const asset of assets ?? []) accessibleAssetKeys.add(asset.evidence_key);
+    evidenceAssets = (assets ?? []) as LoadedPrReadinessInput["evidenceAssets"];
+    for (const asset of evidenceAssets) accessibleAssetKeys.add(asset.evidence_key);
   }
 
   const githubObservation =
@@ -503,30 +597,41 @@ async function loadEvaluatorInput(
   const githubPayload = githubObservation
     ? githubObservationPayloadSchema.safeParse(githubObservation.payload)
     : null;
+  const githubDetailPayload = githubObservation
+    ? githubObservationDetailPayloadSchema.safeParse(githubObservation.payload)
+    : null;
+
   // Repository/installation availability for the consumed observation, mirroring
   // the currentness view. A missing repository row is unavailable, not neutral.
-  let repository: { archived: boolean; installationSuspended: boolean } | null = null;
-  if (githubObservation?.repository_id) {
-    const { data: repoRow, error: repoError } = await admin
-      .from("github_repositories")
-      .select("id, is_archived, github_installation_id")
-      .eq("id", githubObservation.repository_id)
+  const repositoryId = githubObservation?.repository_id ?? epochResult.data?.repository_id ?? null;
+  const repositoryResult = repositoryId
+    ? await admin
+        .from("github_repositories")
+        .select(
+          "id, full_name, html_url, repo_id, is_archived, github_installation_id, workspace_id",
+        )
+        .eq("id", repositoryId)
+        .maybeSingle()
+    : { data: null, error: null as null };
+  if (repositoryResult.error) throw new Error("PR delivery repository is unavailable.");
+  const repositoryRow = repositoryResult.data ?? null;
+  let installationRow: { id: string; suspended: boolean } | null = null;
+  if (repositoryRow?.github_installation_id) {
+    const { data: installation, error: installationError } = await admin
+      .from("github_installations")
+      .select("id, suspended")
+      .eq("id", repositoryRow.github_installation_id)
       .maybeSingle();
-    if (repoError) throw new Error("PR delivery repository is unavailable.");
-    if (repoRow) {
-      let installationSuspended = false;
-      if (repoRow.github_installation_id) {
-        const { data: installationRow, error: installationError } = await admin
-          .from("github_installations")
-          .select("id, suspended")
-          .eq("id", repoRow.github_installation_id)
-          .maybeSingle();
-        if (installationError) throw new Error("PR delivery installation is unavailable.");
-        installationSuspended = installationRow?.suspended ?? true;
-      }
-      repository = { archived: repoRow.is_archived ?? false, installationSuspended };
-    }
+    if (installationError) throw new Error("PR delivery installation is unavailable.");
+    installationRow = installation ?? null;
   }
+  const repository =
+    repositoryRow && repositoryRow.workspace_id === policy.workspace_id
+      ? {
+          archived: repositoryRow.is_archived ?? false,
+          installationSuspended: installationRow ? installationRow.suspended : true,
+        }
+      : null;
 
   return {
     policy,
@@ -558,7 +663,10 @@ async function loadEvaluatorInput(
         ? { runId: checkpointResult.data.run_id, outputSha: checkpointResult.data.output_sha }
         : null,
       epoch: epochResult.data
-        ? { id: epochResult.data.id, prNumber: epochResult.data.pr_number ?? 0 }
+        ? {
+            id: epochResult.data.id,
+            prNumber: epochResult.data.pr_number ?? 0,
+          }
         : null,
       syncStatus: syncResult.data?.status ?? null,
       policyRevisionId: policy.policy_revision_id,
@@ -574,6 +682,52 @@ async function loadEvaluatorInput(
           : null,
       blockingFeedbackCount: blockingResult.count ?? 0,
     },
+    session: { archived_at: session.archived_at ?? null },
+    observationRow: githubObservation
+      ? {
+          id: githubObservation.id,
+          source: githubObservation.source,
+          payload: githubObservation.payload,
+          observed_at: githubObservation.observed_at,
+        }
+      : null,
+    observationDetail: githubDetailPayload?.success ? githubDetailPayload.data : null,
+    refreshQueue: queueResult.data
+      ? {
+          status: queueResult.data.status ?? null,
+          last_error_code: queueResult.data.last_error_code ?? null,
+          updated_at: queueResult.data.updated_at ?? null,
+        }
+      : null,
+    epoch: epochResult.data
+      ? {
+          id: epochResult.data.id,
+          pr_number: epochResult.data.pr_number ?? null,
+          pr_url: epochResult.data.pr_url ?? null,
+        }
+      : null,
+    repository: repositoryRow
+      ? {
+          id: repositoryRow.id,
+          full_name: repositoryRow.full_name,
+          html_url: repositoryRow.html_url,
+          repo_id: repositoryRow.repo_id,
+          is_archived: repositoryRow.is_archived ?? false,
+          github_installation_id: repositoryRow.github_installation_id,
+        }
+      : null,
+    installation: installationRow,
+    evidenceRow: evidenceRow
+      ? {
+          run_id: evidenceRow.run_id,
+          commit_sha: evidenceRow.commit_sha,
+          validation_tree_sha: evidenceRow.validation_tree_sha,
+          records: evidenceRow.records,
+          created_at: evidenceRow.created_at,
+        }
+      : null,
+    evidenceAssets,
+    accessibleAssetKeys,
   };
 }
 
@@ -671,6 +825,272 @@ async function currentStageIsFinal(admin: AdminClient, sessionId: string): Promi
   const current = stages.find((stage) => stage.id === session.current_stage_id);
   if (!current) return false;
   return stages.every((stage) => stage.position <= current.position);
+}
+
+export type PrReadinessCheckStatus =
+  | "passed"
+  | "pending"
+  | "failed"
+  | "missing"
+  | "stale"
+  | "unknown";
+
+export type PrReadinessCheckDetail = {
+  context: string;
+  appId: number | null;
+  sources: Array<"policy" | "ruleset" | "branch_protection">;
+  status: PrReadinessCheckStatus;
+};
+
+export type PrReadinessEvidenceAssetDetail = {
+  id: string;
+  key: string;
+  kind: "report" | "screenshot" | "preview" | "log";
+  required: boolean;
+  sizeBytes: number;
+  downloadUrl: string;
+};
+
+export type PrReadinessDetails = {
+  requirements: DeliveryRequirements;
+  policyRevisionId: string;
+  finalStage: boolean;
+  approvalGated: boolean;
+  evaluation: PrReadinessEvaluation;
+  pr: {
+    repositoryFullName: string | null;
+    repositoryUrl: string | null;
+    number: number | null;
+    url: string | null;
+    state: "open" | "closed" | "merged" | null;
+    draft: boolean | null;
+    headSha: string | null;
+    baseSha: string | null;
+    observedAt: string | null;
+  } | null;
+  checks: PrReadinessCheckDetail[];
+  review: {
+    decision: string | null;
+    currentHeadApprovals: number;
+    minimumApprovals: number;
+    codeOwnersRequired: boolean;
+    requireResolvedThreads: boolean;
+    unresolvedThreads: number;
+    mergeStateStatus: string | null;
+    protection: "verified" | "unknown";
+  } | null;
+  evidence: {
+    runId: string | null;
+    commitSha: string | null;
+    validationTreeSha: string | null;
+    createdAt: string | null;
+    required: Array<{
+      key: string;
+      status: "passed" | "missing" | "stale" | "failed" | "unavailable";
+    }>;
+    records: StoredEvidenceRecord[];
+    assets: PrReadinessEvidenceAssetDetail[];
+  } | null;
+  artifactBlockingCount: number;
+  refresh: {
+    status: "current" | "pending" | "claimed" | "error" | null;
+    lastErrorCode: string | null;
+    updatedAt: string | null;
+    canRefresh: boolean;
+  };
+  sourceObservationId: string | null;
+};
+
+function safeHttpsUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+const CHECK_BLOCKER_STATUS: Array<{
+  code: string;
+  status: PrReadinessCheckStatus;
+}> = [
+  { code: "github_required_check_failed", status: "failed" },
+  { code: "github_required_status_failed", status: "failed" },
+  { code: "github_actions_event_ineligible", status: "failed" },
+  { code: "github_required_check_missing", status: "missing" },
+  { code: "github_required_check_stale", status: "stale" },
+  { code: "github_required_status_stale", status: "stale" },
+  { code: "github_required_check_pending", status: "pending" },
+  { code: "github_required_status_pending", status: "pending" },
+  { code: "github_required_check_source_unknown", status: "unknown" },
+  { code: "github_required_status_source_unknown", status: "unknown" },
+  { code: "github_actions_provenance_unknown", status: "unknown" },
+];
+
+const CHECK_STATUS_RANK: Record<PrReadinessCheckStatus, number> = {
+  passed: 0,
+  pending: 1,
+  unknown: 2,
+  stale: 3,
+  missing: 4,
+  failed: 5,
+};
+
+function checkStatusFromBlockers(
+  blockers: PrReadinessBlocker[],
+  context: string,
+  checksDimension: PrReadinessDimensionOutcome,
+): PrReadinessCheckStatus {
+  const matching = blockers.filter((blocker) => blocker.requirement === context);
+  let status: PrReadinessCheckStatus =
+    matching.length || checksDimension === "passed" ? "passed" : "unknown";
+  for (const blocker of matching) {
+    const mapped = CHECK_BLOCKER_STATUS.find((entry) => entry.code === blocker.code)?.status;
+    if (mapped && CHECK_STATUS_RANK[mapped] > CHECK_STATUS_RANK[status]) status = mapped;
+  }
+  return status;
+}
+
+function summarizeChecks(
+  detail: GitHubObservationDetailPayload | null,
+  requirements: DeliveryRequirements,
+  evaluation: PrReadinessEvaluation,
+): PrReadinessCheckDetail[] {
+  const raw =
+    detail?.requiredChecks ??
+    requirements.requiredChecks.map((context) => ({
+      context,
+      appId: null,
+      source: "policy" as const,
+    }));
+  const byContext = new Map<string, PrReadinessCheckDetail>();
+  for (const check of raw) {
+    const existing = byContext.get(check.context);
+    if (existing) {
+      if (!existing.sources.includes(check.source)) existing.sources.push(check.source);
+      if (existing.appId !== check.appId) existing.appId = null;
+      continue;
+    }
+    byContext.set(check.context, {
+      context: check.context,
+      appId: check.appId,
+      sources: [check.source],
+      status: checkStatusFromBlockers(
+        evaluation.blockers,
+        check.context,
+        evaluation.dimensions.checks,
+      ),
+    });
+  }
+  return [...byContext.values()].slice(0, 100);
+}
+
+/**
+ * Live display detail for the review surface. It reuses the exact evaluator
+ * input, so the panel never derives a different readiness state than the gate.
+ */
+export async function loadSessionPrReadinessDetails(
+  admin: AdminClient,
+  sessionId: string,
+): Promise<PrReadinessDetails | null> {
+  const loaded = await loadEvaluatorInput(admin, sessionId);
+  if (!loaded) return null;
+  const evaluation = evaluatePrReadiness(loaded.input);
+  const finalStage =
+    loaded.policy.requirements.deliveryMode === "code" &&
+    (await currentStageIsFinal(admin, sessionId));
+  const requirements = loaded.policy.requirements;
+  const detail = loaded.observationDetail;
+  const observation = loaded.input.github?.observation ?? null;
+  const prNumber = observation?.prNumber ?? loaded.epoch?.pr_number ?? null;
+  const repositoryFullName =
+    loaded.repository?.full_name ?? observation?.repositoryFullName ?? null;
+  const pr =
+    repositoryFullName || loaded.repository || loaded.epoch?.pr_url || prNumber
+      ? {
+          repositoryFullName,
+          repositoryUrl: safeHttpsUrl(loaded.repository?.html_url),
+          number: prNumber,
+          url: safeHttpsUrl(loaded.epoch?.pr_url),
+          state: detail?.pr.state ?? null,
+          draft: detail?.pr.draft ?? null,
+          headSha: observation?.headSha ?? null,
+          baseSha: observation?.baseSha ?? null,
+          observedAt: observation?.observedAt ?? null,
+        }
+      : null;
+  const review = detail?.reviewEvidence
+    ? {
+        decision: detail.reviewEvidence.decision,
+        currentHeadApprovals: detail.reviewEvidence.currentHeadApprovals,
+        minimumApprovals: detail.branchRules?.minimumApprovals ?? requirements.minimumApprovals,
+        codeOwnersRequired:
+          detail.branchRules?.codeOwnersRequired ?? requirements.requireCodeOwnerReview,
+        requireResolvedThreads:
+          detail.branchRules?.requireResolvedThreads ?? requirements.requireResolvedThreads,
+        unresolvedThreads: detail.reviewEvidence.unresolvedThreads.filter(
+          (thread) => !thread.isResolved,
+        ).length,
+        mergeStateStatus: detail.reviewEvidence.mergeStateStatus,
+        protection: detail.protection,
+      }
+    : null;
+  const parsedRecords = loaded.evidenceRow
+    ? storedEvidenceRecordsSchema.safeParse(loaded.evidenceRow.records)
+    : null;
+  const records = parsedRecords?.success ? parsedRecords.data : [];
+  const requiredEvidence = evaluateValidationEvidence({
+    requiredKeys: requirements.requiredEvidence,
+    commitSha: loaded.input.checkpoint?.outputSha ?? "",
+    treeSha: loaded.evidenceRow?.validation_tree_sha ?? "",
+    records,
+    accessibleAssetKeys: loaded.accessibleAssetKeys,
+  });
+  const evidence = {
+    runId: loaded.evidenceRow?.run_id ?? null,
+    commitSha: loaded.evidenceRow?.commit_sha ?? null,
+    validationTreeSha: loaded.evidenceRow?.validation_tree_sha ?? null,
+    createdAt: loaded.evidenceRow?.created_at ?? null,
+    required: requiredEvidence,
+    records,
+    assets: loaded.evidenceAssets.map((asset) => ({
+      id: asset.id,
+      key: asset.evidence_key,
+      kind: asset.kind as PrReadinessEvidenceAssetDetail["kind"],
+      required: asset.required,
+      sizeBytes: asset.size_bytes,
+      downloadUrl: `/api/sessions/${sessionId}/validation-evidence/assets/${asset.id}`,
+    })),
+  };
+  return {
+    requirements,
+    policyRevisionId: loaded.policy.policy_revision_id,
+    finalStage,
+    approvalGated:
+      finalStage &&
+      requirements.deliveryMode === "code" &&
+      requirements.requireArtifactApprovalForDelivery,
+    evaluation,
+    pr,
+    checks: summarizeChecks(detail, requirements, evaluation),
+    review,
+    evidence,
+    artifactBlockingCount: loaded.input.blockingFeedbackCount,
+    refresh: {
+      status: (loaded.refreshQueue?.status ?? null) as PrReadinessDetails["refresh"]["status"],
+      lastErrorCode: loaded.refreshQueue?.last_error_code ?? null,
+      updatedAt: loaded.refreshQueue?.updated_at ?? null,
+      canRefresh:
+        requirements.deliveryMode === "code" &&
+        Boolean(loaded.epoch?.pr_number) &&
+        Boolean(loaded.repository) &&
+        !loaded.session.archived_at &&
+        !loaded.repository?.is_archived &&
+        Boolean(loaded.installation && !loaded.installation.suspended),
+    },
+    sourceObservationId: loaded.observationRow?.id ?? null,
+  };
 }
 
 export type SessionPrReadinessOutcome = {

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "fixture": "authenticated local session detail with route-mocked readiness and diff responses",
+  "scope": "Browser proof for the review evidence surface: Ready, blocked/historical, API failure recovery, refresh pending, large/binary/truncated diffs, and desktop/390px layout. Server truth-table and source loading are covered by unit tests.",
+  "viewportProof": [
+    { "width": 1440, "height": 1000 },
+    { "width": 390, "height": 844, "horizontalOverflow": false }
+  ],
+  "ready": {
+    "stateLabel": "Ready",
+    "prLink": "anantjain-xyz/wallie-dev#592",
+    "approvals": "1 of 1 required",
+    "evidence": "tests/report download link",
+    "approveEnabled": true
+  },
+  "blockedHistorical": {
+    "blockers": [
+      "Required check CI failed",
+      "Unresolved GitHub review threads remain",
+      "Validation evidence tests is missing",
+      "Open blocking artifact feedback remains"
+    ],
+    "sourceLinks": ["Open GitHub checks", "Review evidence", "Open Comments"],
+    "historicalLabel": true,
+    "approveEnabled": false,
+    "diffLimits": ["first 100 files", "binary or too large", "truncated file patch"]
+  },
+  "recovery": {
+    "readinessFailure": "delivery evidence unavailable alert rendered",
+    "retry": "retry recovered to Ready",
+    "refreshPending": "queued status rendered after POST /pr-verification/refresh"
+  },
+  "screenshots": ["op509-ready-desktop.png", "op509-blocked-desktop.png", "op509-ready-mobile.png"]
+}

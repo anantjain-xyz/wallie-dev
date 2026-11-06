@@ -6,6 +6,7 @@ import type { Tables } from "@/lib/supabase/database.types";
 import {
   evaluatePrReadiness,
   evaluateSessionPrReadiness,
+  loadSessionPrReadinessDetails,
   reconcilePrReadiness,
   storedEvidenceRecordsSchema,
   type GitHubObservationPayload,
@@ -499,10 +500,32 @@ const githubObservationRow: Tables<"session_pr_verification_observations"> = {
   created_at: "2026-11-06T00:00:00Z",
 };
 
+const richGithubPayload = {
+  ...githubPayload(),
+  requiredChecks: [{ context: "CI", appId: null, source: "policy" }],
+  branchRules: {
+    minimumApprovals: 1,
+    codeOwnersRequired: false,
+    requireResolvedThreads: true,
+    strictChecks: false,
+    unsupportedRules: [],
+  },
+  reviewEvidence: {
+    decision: "APPROVED",
+    currentHeadApprovals: 1,
+    unresolvedThreads: [],
+    mergeStateStatus: "CLEAN",
+  },
+};
+
 const repositoryRow = {
   id: "repo-1",
+  full_name: "acme/app",
+  html_url: "https://github.com/acme/app",
+  repo_id: 123,
   is_archived: false,
   github_installation_id: "inst-1",
+  workspace_id: "ws-1",
 };
 
 function serviceTables(overrides: Record<string, unknown> = {}) {
@@ -523,7 +546,12 @@ function serviceTables(overrides: Record<string, unknown> = {}) {
       last_observation_id: "obs-github",
     }),
     artifact_review_threads: countableTable(0),
-    session_pr_epochs: queryableTable({ id: "epoch-1", pr_number: 505 }),
+    session_pr_epochs: queryableTable({
+      id: "epoch-1",
+      pr_number: 505,
+      pr_url: "https://github.com/acme/app/pull/505",
+      repository_id: "repo-1",
+    }),
     session_git_checkpoints: queryableTable({ run_id: "run-1", output_sha: shaB }),
     session_pr_verification_observations: queryableTable(githubObservationRow),
     github_repositories: queryableTable(repositoryRow),
@@ -534,7 +562,15 @@ function serviceTables(overrides: Record<string, unknown> = {}) {
       validation_tree_sha: shaC,
       records: evaluatorInput().evidence!.records,
     }),
-    session_validation_assets: queryableTable([{ evidence_key: "tests/report" }]),
+    session_validation_assets: queryableTable([
+      {
+        id: "asset-1",
+        evidence_key: "tests/report",
+        kind: "report",
+        required: true,
+        size_bytes: 128,
+      },
+    ]),
     session_selected_stages: queryableTable([{ stage_id: "stage-1" }, { stage_id: "stage-2" }]),
     pipeline_stages: queryableTable([
       { id: "stage-1", position: 1 },
@@ -636,6 +672,115 @@ describe("session readiness service", () => {
     const outcome = await evaluateSessionPrReadiness(admin as never, "sess-1", { record: true });
     expect(outcome?.evaluation.state).toBe("unknown");
     expect(outcome?.evaluation.blockers).toContainEqual({ code: "github_repository_archived" });
+  });
+});
+
+describe("review readiness details", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("exposes the exact source observation, checks, reviews, evidence, and refresh state", async () => {
+    const admin = buildServiceAdminClient(
+      serviceTables({
+        session_pr_verification_observations: queryableTable({
+          ...githubObservationRow,
+          payload: richGithubPayload as never,
+        }),
+      }),
+      vi.fn(),
+    );
+    const details = await loadSessionPrReadinessDetails(admin as never, "sess-1");
+    expect(details?.evaluation.state).toBe("ready");
+    expect(details?.finalStage).toBe(true);
+    expect(details?.approvalGated).toBe(true);
+    expect(details?.sourceObservationId).toBe("obs-github");
+    expect(details?.pr).toMatchObject({
+      repositoryFullName: "acme/app",
+      number: 505,
+      url: "https://github.com/acme/app/pull/505",
+      headSha: shaB,
+      baseSha,
+      state: "open",
+    });
+    expect(details?.checks).toEqual([
+      { context: "CI", appId: null, sources: ["policy"], status: "passed" },
+    ]);
+    expect(details?.review).toMatchObject({
+      decision: "APPROVED",
+      currentHeadApprovals: 1,
+      minimumApprovals: 1,
+      unresolvedThreads: 0,
+    });
+    expect(details?.evidence?.required).toEqual([{ key: "tests", status: "passed" }]);
+    expect(details?.evidence?.assets[0]).toMatchObject({
+      key: "tests/report",
+      kind: "report",
+      downloadUrl: "/api/sessions/sess-1/validation-evidence/assets/asset-1",
+    });
+    expect(details?.refresh).toMatchObject({ status: "current", canRefresh: true });
+  });
+
+  it("labels a changed head as blocked and keeps the observed head visible", async () => {
+    const admin = buildServiceAdminClient(
+      serviceTables({
+        session_pr_verification_observations: queryableTable({
+          ...githubObservationRow,
+          head_sha: shaC,
+          payload: {
+            ...richGithubPayload,
+            pr: { ...richGithubPayload.pr, headSha: shaC },
+          } as never,
+        }),
+      }),
+      vi.fn(),
+    );
+    const details = await loadSessionPrReadinessDetails(admin as never, "sess-1");
+    expect(details?.evaluation.state).toBe("blocked");
+    expect(details?.evaluation.blockers).toContainEqual({
+      code: "pr_head_checkpoint_mismatch",
+    });
+    expect(details?.pr?.headSha).toBe(shaC);
+  });
+
+  it("reports failed required checks and missing evidence without inventing success", async () => {
+    const admin = buildServiceAdminClient(
+      serviceTables({
+        session_pr_verification_observations: queryableTable({
+          ...githubObservationRow,
+          payload: {
+            ...richGithubPayload,
+            checks: "blocked",
+            blockers: [
+              { code: "github_required_check_failed", requirement: "CI" },
+              { code: "github_required_check_pending", requirement: "ci-extra" },
+            ],
+            requiredChecks: [
+              { context: "CI", appId: null, source: "policy" },
+              { context: "ci-extra", appId: null, source: "ruleset" },
+            ],
+          } as never,
+        }),
+        session_validation_evidence: queryableTable(null),
+      }),
+      vi.fn(),
+    );
+    const details = await loadSessionPrReadinessDetails(admin as never, "sess-1");
+    expect(details?.evaluation.state).toBe("blocked");
+    expect(details?.checks).toEqual([
+      { context: "CI", appId: null, sources: ["policy"], status: "failed" },
+      { context: "ci-extra", appId: null, sources: ["ruleset"], status: "pending" },
+    ]);
+    expect(details?.evidence?.required).toEqual([{ key: "tests", status: "missing" }]);
+    expect(details?.evidence?.records).toEqual([]);
+  });
+
+  it("returns null when the pipeline has no delivery policy", async () => {
+    const admin = buildServiceAdminClient(
+      serviceTables({ delivery_policies: queryableTable(null) }),
+      vi.fn(),
+    );
+    expect(await loadSessionPrReadinessDetails(admin as never, "sess-1")).toBeNull();
   });
 });
 

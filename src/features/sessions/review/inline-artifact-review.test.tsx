@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InlineArtifactReview } from "./inline-artifact-review";
+import { OPEN_REVIEW_COMMENTS_EVENT } from "./open-comments";
 
 vi.mock("next/dynamic", () => ({
   default:
@@ -68,6 +69,11 @@ describe("inline artifact review entry", () => {
     window.history.replaceState(null, "", "/?reviewThread=thread");
     subject();
     await waitFor(() => expect(screen.getByText("Saved comments")).toBeTruthy());
+  });
+  it("opens comments from the review evidence panel", async () => {
+    subject();
+    act(() => window.dispatchEvent(new Event(OPEN_REVIEW_COMMENTS_EVENT)));
+    expect(await screen.findByText("Saved comments")).toBeTruthy();
   });
   it("removes all authoring entry points when the session archives", async () => {
     const user = userEvent.setup();

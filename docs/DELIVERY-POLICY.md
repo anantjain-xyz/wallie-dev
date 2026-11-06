@@ -157,7 +157,9 @@ closed.
 
 No automatic merge exists anywhere in this flow. `merged` and `closed` appear
 only from authoritative GitHub observations, and manual successor PRs remain
-the only path after a close or merge.
+the only path after a close or merge. Reviewers inspect the live decision,
+blocker sources, validation receipts, and a bounded canonical diff in the
+[session review evidence surface](REVIEW-EVIDENCE.md).
 
 ## Persistence and authorization
 

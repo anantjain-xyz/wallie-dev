@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import { OPEN_REVIEW_COMMENTS_EVENT } from "./open-comments";
 import { artifactSourceBlocks, selectedArtifactSourceAnchor } from "./selection";
 import type { ArtifactSourceAnchor } from "./source-anchor";
 
@@ -46,6 +47,9 @@ export function InlineArtifactReview({
     if (new URLSearchParams(window.location.search).has("reviewThread")) {
       queueMicrotask(() => setPanelState("open"));
     }
+    const openComments = () => setPanelState("open");
+    window.addEventListener(OPEN_REVIEW_COMMENTS_EVENT, openComments);
+    return () => window.removeEventListener(OPEN_REVIEW_COMMENTS_EVENT, openComments);
   }, []);
 
   function captureSelection() {
@@ -64,6 +68,7 @@ export function InlineArtifactReview({
         <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3">
           <button
             ref={opener}
+            id="artifact-review-open"
             type="button"
             aria-expanded={open}
             aria-controls="artifact-review-panel"
