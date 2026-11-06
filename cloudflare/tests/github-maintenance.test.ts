@@ -3,6 +3,8 @@ import { introspectWorkflowInstance } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
+import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
+import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import type { Env } from "../index";
@@ -11,6 +13,7 @@ vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
 vi.mock("@/features/github/pr-verification-service", () => ({
   reconcileGitHubPrVerification: vi.fn(),
 }));
+vi.mock("@/lib/pipeline/pr-readiness", () => ({ reconcilePrReadiness: vi.fn() }));
 vi.mock("@/lib/pipeline/canonical-pr-publisher", () => ({ drainCanonicalPullRequests: vi.fn() }));
 vi.mock("@/lib/pipeline/checkpoint-publication", () => ({ drainCheckpointPublications: vi.fn() }));
 vi.mock("@/lib/pipeline/source-delivery", () => ({ drainSourceDeliveries: vi.fn() }));
@@ -25,9 +28,14 @@ vi.mock("@/lib/workspaces/deletion", () => ({ resumePendingWorkspaceDeletions: v
 
 beforeEach(() => vi.resetAllMocks());
 
-it.each([false, true])(
-  "runs bounded GitHub reconciliation in native maintenance and preserves later cleanup after failure=%s",
-  async (failure) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "runs verification then readiness and preserves cleanup (GitHub fails=%s, readiness fails=%s)",
+  async (githubFailure, readinessFailure) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
     const query = {
@@ -42,7 +50,7 @@ it.each([false, true])(
     };
     const admin = { from: () => query };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
-    if (failure)
+    if (githubFailure)
       vi.mocked(reconcileGitHubPrVerification).mockRejectedValue(
         new Error("temporarily unavailable"),
       );
@@ -50,6 +58,14 @@ it.each([false, true])(
       vi.mocked(reconcileGitHubPrVerification).mockResolvedValue({
         checked: 1,
         refreshed: 1,
+        failed: 0,
+      });
+    if (readinessFailure)
+      vi.mocked(reconcilePrReadiness).mockRejectedValue(new Error("temporarily unavailable"));
+    else
+      vi.mocked(reconcilePrReadiness).mockResolvedValue({
+        evaluated: 1,
+        recorded: 1,
         failed: 0,
       });
     const inspection = await introspectWorkflowInstance(bindings.MAINTENANCE, id);
@@ -61,7 +77,18 @@ it.each([false, true])(
       expect(vi.mocked(drainCanonicalPullRequests).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(reconcileGitHubPrVerification).mock.invocationCallOrder[0],
       );
+      expect(reconcilePrReadiness).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(vi.mocked(reconcileGitHubPrVerification).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(reconcilePrReadiness).mock.invocationCallOrder[0],
+      );
+      expect(sweepStalledRuns).toHaveBeenCalledExactlyOnceWith(admin, 900_000);
+      expect(vi.mocked(reconcilePrReadiness).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0],
+      );
       expect(cleanupExpiredSessionAttachments).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
+      );
     } finally {
       await inspection.dispose();
     }
