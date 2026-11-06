@@ -128,7 +128,7 @@ export async function initializeCheckpointRepository(input: {
   });
   const [, code] = await Promise.all([process.output(), process.exitCode]);
   request.signal?.throwIfAborted();
-  if (code !== 0) throw new SandboxCheckpointRecoveryError("checkpoint_unavailable");
+  if (code !== 0) throw new SandboxCheckpointRecoveryError("repository_setup_failed", code);
 }
 
 async function runSetupScript(

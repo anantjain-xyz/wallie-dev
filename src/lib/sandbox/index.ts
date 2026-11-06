@@ -284,7 +284,7 @@ function sanitizedSandboxError(
   extraSecrets: string[] = [],
 ): Error {
   if (error instanceof SandboxCheckpointRecoveryError) {
-    return new SandboxCheckpointRecoveryError(error.code);
+    return new SandboxCheckpointRecoveryError(error.code, error.exitCode);
   }
   const message = error instanceof Error ? error.message : String(error);
   const sanitized = new Error(
