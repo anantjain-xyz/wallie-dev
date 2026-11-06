@@ -1,9 +1,10 @@
 # GitHub PR verification collection
 
 OP-506 collects authoritative GitHub observations for canonical session PRs.
-It does not compute overall Ready, approve artifacts, merge PRs, or change
-production settings. OP-507 supplies execution evidence; OP-508 combines the
-observations and evidence into readiness decisions.
+It does not approve artifacts, merge PRs, or change production settings.
+OP-507 supplies execution evidence; OP-508 combines the observations and
+evidence into readiness decisions. See [DELIVERY-POLICY](DELIVERY-POLICY.md)
+for the evaluator and the final-approval delivery gate.
 
 ## GitHub App access
 

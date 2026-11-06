@@ -182,6 +182,12 @@ export async function POST(request: Request, { params }: Params) {
             "Resolve or supersede open blocking requests before approving.",
             409,
           );
+        if (result.errorCode === "PT428")
+          return errorResponse(
+            "pr_readiness",
+            "PR readiness is not current or not Ready. Refresh PR verification and approve again.",
+            409,
+          );
         return errorResponse(
           "stale_version",
           result.errorCode === "PT412"

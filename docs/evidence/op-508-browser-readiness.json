@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "fixture": "isolated-local-Supabase-with-gated-code-policy-and-real-canonical-fixture",
+  "scope": "Browser proves the server-owned delivery gate end to end: an ungated session shows a named non-Ready blocker and disables final approval, a fully verified fixture shows Ready and enables approval, and the real approval click passes the delivery gate and completes the session. Evaluator truth-table, stale-decision rejection and the approval/refresh race are proven in supabase/tests/pr_readiness_delivery_gate.sql.",
+  "policy": {
+    "deliveryMode": "code",
+    "requiredChecks": ["CI"],
+    "minimumApprovals": 1,
+    "requireResolvedThreads": true,
+    "requiredEvidence": ["tests"],
+    "freshnessSeconds": 3600,
+    "requireArtifactApprovalForDelivery": true
+  },
+  "viewportProof": [
+    { "width": 1440, "height": 1000 },
+    { "width": 390, "height": 844 }
+  ],
+  "blockedSession": {
+    "session": "seeded final-stage session awaiting review without a canonical PR",
+    "readinessLine": "PR delivery readiness: unknown (github_observation_missing). Refresh PR verification after resolving it.",
+    "approveEnabled": false
+  },
+  "readyFixture": {
+    "session": "fixture driven through the real approve/start/publish chain to its final stage with a synchronized canonical PR, one completed authoritative GitHub collection, recorded harness validation evidence for the exact accepted commit, and a current Ready readiness decision",
+    "readinessLine": "PR delivery readiness: Ready.",
+    "approveEnabled": true
+  },
+  "terminalApproval": {
+    "click": "Approve stage",
+    "result": "Session complete summary rendered",
+    "database": { "phase_status": "approved", "archived": true }
+  },
+  "screenshots": [
+    "op508-readiness-desktop.png",
+    "op508-readiness-mobile.png",
+    "op508-ready-desktop.png",
+    "op508-ready-mobile.png",
+    "op508-approved-desktop.png",
+    "op508-approved-mobile.png"
+  ]
+}

@@ -41,6 +41,7 @@ import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
+import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import {
   formatSessionAttachmentPromptData,
@@ -804,6 +805,17 @@ export async function handleApproval(input: {
     });
   } catch (error) {
     return { error: getErrorMessage(error, "Failed to prepare the next stage."), success: false };
+  }
+  // Server-owned PR readiness: evaluate and persist a decision bound to the
+  // current canonical identity right before the gated approval RPC. The
+  // client supplies no readiness input; the RPC re-validates currentness under
+  // the session lock. An evaluation failure leaves no new decision, and the
+  // gate below fails closed.
+  try {
+    await evaluateSessionPrReadiness(admin, input.sessionId, { record: true });
+  } catch {
+    // A missing evaluation cannot pass the delivery gate; approval surfaces
+    // the deterministic PT428 conflict instead.
   }
   const { data, error } = await admin.rpc("approve_session_stage", {
     approver_member_id: input.approverMemberId,

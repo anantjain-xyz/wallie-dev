@@ -8,6 +8,7 @@ export type SessionMutationErrorCode =
   | "mutation_conflict"
   | "mutation_failed"
   | "not_found"
+  | "pr_readiness"
   | "rate_limited"
   | "blocking_review"
   | "stale_version"

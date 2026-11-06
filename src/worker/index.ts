@@ -3,6 +3,7 @@ import { startCursorAuthProcessor } from "@/lib/cursor/auth-processor";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
+import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
@@ -122,6 +123,9 @@ async function main() {
           await drainCheckpointPublications(admin);
           await drainCanonicalPullRequests(admin);
           await reconcileGitHubPrVerification(admin);
+          // Best-effort readiness drain: a failed evaluation leaves the prior
+          // decision, and the approval gate still fails closed without one.
+          await reconcilePrReadiness(admin);
           await drainSourceDeliveries(admin);
           await drainCheckpointCleanup(admin);
           const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([

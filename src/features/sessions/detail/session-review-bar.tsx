@@ -20,6 +20,11 @@ import { cn } from "@/lib/utils";
 const FEEDBACK_MAX = 4_000;
 const THREAD_MAX = 20;
 
+/** Deterministic blocker label: fixed codes only, never provider text. */
+function formatDeliveryBlocker(blocker: { code: string; requirement?: string }) {
+  return blocker.requirement ? `${blocker.code}: ${blocker.requirement}` : blocker.code;
+}
+
 export type SessionReviewArtifact = { artifactId: string; stageId: string; version: number };
 export type SessionFeedbackSubmission = {
   requestId: string;
@@ -97,8 +102,14 @@ export function SessionReviewBar({
     mode.kind === "reviewable" && mode.canApprove ? sessionId : undefined,
     reviewArtifact?.artifactId,
   );
+  // Server-owned PR delivery readiness gates only a configured final approval.
+  // A missing evaluation is decided by the approval RPC, which fails closed.
+  const delivery = approvalReview.value?.delivery ?? null;
   const approvalBlocked =
-    Boolean(sessionId) && (!approvalReview.value || approvalReview.value.blockingCount > 0);
+    Boolean(sessionId) &&
+    (!approvalReview.value ||
+      approvalReview.value.blockingCount > 0 ||
+      Boolean(delivery?.required && delivery.state !== "ready"));
   const phaseActionBusy = phaseActionPending !== null;
   const displayedError = requestError ?? feedbackError;
   const artifactChanged =
@@ -412,6 +423,15 @@ export function SessionReviewBar({
                     : "No open blocking requests."
                   : "Checking blocking requests…")}
             </span>
+            {delivery?.required ? (
+              <span className="max-w-full">
+                PR delivery readiness:{" "}
+                {delivery.state === "ready"
+                  ? "Ready."
+                  : `${delivery.state}${delivery.blockers.length ? ` (${delivery.blockers.map(formatDeliveryBlocker).join(", ")})` : ""}.`}
+                {delivery.state === "ready" ? "" : " Refresh PR verification after resolving it."}
+              </span>
+            ) : null}
             <button
               type="button"
               className="min-h-11 shrink-0 text-accent underline"
