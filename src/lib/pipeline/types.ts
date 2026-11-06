@@ -6,6 +6,12 @@ export type PinnedGitInput = Tables<"session_job_git_inputs">;
 /** Accepted artifact provenance; an absent row means historical/unknown code. */
 export type GitCheckpoint = Tables<"session_git_checkpoints">;
 
+/** Delivery configuration is versioned independently of artifact approval. */
+export type DeliveryPolicyRevision = Tables<"delivery_policy_revisions">;
+export type PrVerificationObservation = Tables<"session_pr_verification_observations">;
+export type PrVerificationResult = Tables<"session_pr_verification_results">;
+export type PrReadinessStatus = Enums<"pr_readiness_state">;
+
 export type PipelinePhaseStatus = Enums<"pipeline_phase_status">;
 
 /**
