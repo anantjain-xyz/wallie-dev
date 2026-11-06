@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 
@@ -6,23 +7,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("signs a GitHub App JWT and mints a repository-scoped token in workerd", async () => {
-  const pair = await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  );
-  if (!("privateKey" in pair)) throw new Error("RSA generation did not return a key pair.");
-  const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
-  const pem = `-----BEGIN PRIVATE KEY-----\n${pkcs8
-    .toString("base64")
-    .match(/.{1,64}/g)!
-    .join("\n")}\n-----END PRIVATE KEY-----`;
+it("signs a GitHub App JWT with GitHub's PKCS#1 key format and mints a repository-scoped token in workerd", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   for (const [key, value] of Object.entries({
     GITHUB_APP_ID: "123",
     GITHUB_APP_PRIVATE_KEY: pem,

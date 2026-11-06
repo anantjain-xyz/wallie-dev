@@ -438,7 +438,7 @@ Fill in the required values. Integration variables can be left blank until you c
 | `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                                                                                           |
 | `GITHUB_APP_CLIENT_ID`                 | GitHub   | GitHub App Client ID for installation ownership authorization                                                                                              |
 | `GITHUB_APP_CLIENT_SECRET`             | GitHub   | GitHub App client secret (server only)                                                                                                                     |
-| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)                                                                             |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (PKCS#1 or PKCS#8; escape newlines as `\n` if quoted)                                                           |
 | `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                                                                                                    |
 | `VERCEL_TOKEN`                         | Dev/Ops  | Optional operator token for non-session helper sandboxes or local testing. Wallie session sandboxes use the workspace Vercel connection saved in Settings. |
 | `VERCEL_TEAM_ID`                       | Dev/Ops  | Optional Vercel team for the operator token. Workspace session sandboxes do not read this env var.                                                         |
@@ -487,7 +487,7 @@ Existing installations must approve new repository permissions before PR verific
 After creation:
 
 1. Copy **App ID** -> `GITHUB_APP_ID`, **Client ID** -> `GITHUB_APP_CLIENT_ID`, and generate a client secret -> `GITHUB_APP_CLIENT_SECRET`.
-2. Click **Generate a private key**, download the `.pem`, and put its contents in `GITHUB_APP_PRIVATE_KEY`. If you inline it into `.env.local`, replace real newlines with `\n` and quote the value.
+2. Click **Generate a private key**, download the `.pem`, and put its contents in `GITHUB_APP_PRIVATE_KEY` (PKCS#1 and PKCS#8 PEM are both accepted). If you inline it into `.env.local`, replace real newlines with `\n` and quote the value.
 3. From your workspace's GitHub settings, start **Install GitHub App**, choose the repositories, and complete the separate GitHub authorization screen. Stay signed in to the same Wallie account and browser throughout the ten-minute flow. You must be a Wallie workspace owner/admin and the GitHub personal-account owner or an active organization owner. Repository collaborators and organization members cannot connect installation-wide access.
 
 Wallie verifies ownership before saving a connection. The browser-bound flow is single-use, uses PKCE, and stores only a hash of state and an encrypted verifier; OAuth access and refresh tokens are never persisted. An installation can belong to only one workspace. Reconnecting the same installation refreshes its metadata; changing installations requires explicit disconnection first. See the [upgrade instructions](docs/SELF_HOSTING.md#github-ownership-verification-upgrade) before deploying this change to an existing database.
