@@ -1,5 +1,6 @@
 import "server-only";
 import { wakeWorker } from "@/lib/worker/wake";
+import { validateCheckpoint } from "@/lib/validation-evidence/service";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -54,6 +55,7 @@ import {
   captureSourceCheckpoint,
   readSourceBase,
   UnsupportedLfsCheckpointError,
+  UnsupportedSourceTransformError,
   UnsupportedSubmoduleCheckpointError,
   UnsafeRuntimeCheckpointError,
 } from "./source-checkpoint";
@@ -578,7 +580,7 @@ async function runStage(input: {
     // the source is durable. A dual-store outage leaves the provider TTL as the
     // recovery window, and the reaper honors this explicit retention marker.
     try {
-      const checkpoint = await captureSourceCheckpoint({
+      let checkpoint = await captureSourceCheckpoint({
         sandbox,
         baseSha: sourceBase,
         signal,
@@ -587,6 +589,20 @@ async function runStage(input: {
           ...(installationToken ? [installationToken] : []),
           ...checkpointSensitiveValues,
         ],
+      });
+      checkpoint = await validateCheckpoint({
+        admin,
+        workspaceId: session.workspace_id,
+        pipelineId: stage.pipelineId,
+        runId,
+        sandbox,
+        checkpoint,
+        secrets: [
+          prompt,
+          ...(installationToken ? [installationToken] : []),
+          ...checkpointSensitiveValues,
+        ],
+        signal,
       });
       const prepared = await prepareSourceDelivery({
         admin,
@@ -621,7 +637,9 @@ async function runStage(input: {
             ? "lfs"
             : error instanceof UnsupportedSubmoduleCheckpointError
               ? "gitlink"
-              : undefined,
+              : error instanceof UnsupportedSourceTransformError
+                ? "content-transform"
+                : undefined,
       );
     }
     throwIfAborted(signal);

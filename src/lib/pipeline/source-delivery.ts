@@ -15,7 +15,10 @@ export type SourceDelivery = Tables<"session_source_deliveries">;
 
 /** No raw source or transport error is safe to include in logs or run history. */
 export class SourcePreservationError extends Error {
-  constructor(durable = false, reason?: "lfs" | "gitlink" | "unsafe-runtime") {
+  constructor(
+    durable = false,
+    reason?: "lfs" | "gitlink" | "unsafe-runtime" | "content-transform",
+  ) {
     super(
       (reason === "unsafe-runtime"
         ? "Runtime prompt or credential material cannot be included in a code checkpoint. Remove it before retrying. "
@@ -23,7 +26,9 @@ export class SourcePreservationError extends Error {
           ? "Changed Git LFS files require external payload storage and cannot be checkpointed. "
           : reason === "gitlink"
             ? "Changed Git submodules require separate object storage and cannot be checkpointed. "
-            : "Source checkpoint could not be recorded. ") +
+            : reason === "content-transform"
+              ? "Git content filters or normalization attributes cannot be included in a verified checkpoint. Remove those transformations before retrying. "
+              : "Source checkpoint could not be recorded. ") +
         "No artifact was published. " +
         (durable
           ? "The durable checkpoint is retained for recovery."

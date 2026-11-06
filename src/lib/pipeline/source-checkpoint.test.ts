@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,7 @@ import {
   readSourceBase,
   SOURCE_CHECKPOINT_REF,
   UnsafeRuntimeCheckpointError,
+  UnsupportedSourceTransformError,
 } from "./source-checkpoint";
 
 function git(sandbox: FakeSandbox, ...args: string[]): string {
@@ -91,6 +92,167 @@ it("records no source delivery for an unchanged analysis-only checkout", async (
       baseSha,
       headSha: baseSha,
     });
+  } finally {
+    await sandbox.stop();
+  }
+});
+
+it("captures actual source objects instead of a Git replacement tree", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "original source\n");
+    commit(sandbox);
+    const baseSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "replacement source\n");
+    commit(sandbox);
+    const replacement = await readSourceBase(sandbox);
+    git(sandbox, "checkout", "--detach", baseSha);
+    git(sandbox, "replace", baseSha, replacement);
+    expect(git(sandbox, "show", "HEAD:source.txt")).toBe("replacement source");
+    expect(await captureSourceCheckpoint({ sandbox, baseSha })).toEqual({
+      kind: "unchanged",
+      baseSha,
+      headSha: baseSha,
+    });
+    expect(await sandbox.readFile(`${sandbox.repoPath}/source.txt`)).toBe("original source\n");
+  } finally {
+    await sandbox.stop();
+  }
+});
+
+it.each(["worktree", "index", "info", "HEAD", "literal-unspecified", "literal-unset"])(
+  "rejects masking content filters from %s attributes without invoking them during capture",
+  async (location) => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    try {
+      const filterLog = `${sandbox.repoPath}/.git/filter-ran`;
+      const filterName = location.startsWith("literal-")
+        ? location.slice("literal-".length)
+        : "mask";
+      git(
+        sandbox,
+        "config",
+        `filter.${filterName}.clean`,
+        'printf "called\\n" >> .git/filter-ran; sed s/modified/original/g',
+      );
+      await sandbox.writeFile(
+        `${sandbox.repoPath}/.gitattributes`,
+        `source.txt filter=${filterName}\n`,
+      );
+      await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "original\n");
+      commit(sandbox);
+      const baseSha = await readSourceBase(sandbox);
+      await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "modified\n");
+      expect(git(sandbox, "status", "--porcelain")).toBe("");
+      if (location === "index") {
+        // A worktree-only disabling edit cannot hide an active index attribute.
+        await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "");
+      } else if (location === "info") {
+        await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "");
+        git(sandbox, "add", ".gitattributes");
+        await sandbox.writeFile(
+          `${sandbox.repoPath}/.git/info/attributes`,
+          "source.txt filter=mask\n",
+        );
+      } else if (location === "HEAD") {
+        await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "");
+        git(sandbox, "add", ".gitattributes");
+        rmSync(`${sandbox.repoPath}/.gitattributes`);
+      }
+      rmSync(filterLog, { force: true });
+      await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toBeInstanceOf(
+        UnsupportedSourceTransformError,
+      );
+      expect(existsSync(filterLog)).toBe(false);
+      expect(await sandbox.readFile(`${sandbox.repoPath}/source.txt`)).toBe("modified\n");
+      expect(git(sandbox, "rev-parse", "HEAD")).toBe(baseSha);
+    } finally {
+      await sandbox.stop();
+    }
+  },
+);
+
+it("rejects normalization attributes before publishing transformed source bytes", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    const baseSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "*.txt text=auto\n");
+    await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "source with CRLF\r\n");
+    await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toBeInstanceOf(
+      UnsupportedSourceTransformError,
+    );
+    expect(await sandbox.readFile(`${sandbox.repoPath}/source.txt`)).toBe("source with CRLF\r\n");
+  } finally {
+    await sandbox.stop();
+  }
+});
+
+it.each(["--assume-unchanged", "--skip-worktree"])(
+  "rejects %s index entries instead of omitting hidden source edits",
+  async (flag) => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    try {
+      const path = "hidden-source.txt";
+      await sandbox.writeFile(`${sandbox.repoPath}/${path}`, "original source\n");
+      commit(sandbox);
+      const baseSha = await readSourceBase(sandbox);
+      git(sandbox, "update-index", flag, "--", path);
+      await sandbox.writeFile(`${sandbox.repoPath}/${path}`, "source edited after validation\n");
+      // Git's ordinary cleanliness check omits exactly the edit that must not
+      // disappear when Wallie destroys the sandbox after publishing a checkpoint.
+      expect(git(sandbox, "status", "--porcelain")).toBe("");
+      await expect(captureSourceCheckpoint({ sandbox, baseSha })).rejects.toThrow(
+        /^Could not preserve the source checkpoint\.$/,
+      );
+      expect(await sandbox.readFile(`${sandbox.repoPath}/${path}`)).toBe(
+        "source edited after validation\n",
+      );
+      expect(git(sandbox, "rev-parse", "HEAD")).toBe(baseSha);
+      expect(git(sandbox, "ls-files", "-v", "--", path).slice(0, 1)).toBe(
+        flag === "--assume-unchanged" ? "h" : "S",
+      );
+    } finally {
+      await sandbox.stop();
+    }
+  },
+);
+
+it("captures same-size source edits hidden by repository stat-trust configuration", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    const path = `${sandbox.repoPath}/same-stat-source.txt`;
+    const timestamp = new Date("2020-01-01T00:00:00Z");
+    await sandbox.writeFile(path, "old source\n");
+    utimesSync(path, timestamp, timestamp);
+    commit(sandbox);
+    const baseSha = await readSourceBase(sandbox);
+    git(sandbox, "config", "core.trustctime", "false");
+    git(sandbox, "config", "core.checkStat", "minimal");
+    await sandbox.writeFile(path, "new source\n");
+    utimesSync(path, timestamp, timestamp);
+    expect(git(sandbox, "status", "--porcelain")).toBe("");
+    const source = await captureSourceCheckpoint({ sandbox, baseSha });
+    expect(source.kind).toBe("bundle");
+    expect(git(sandbox, "show", `${source.headSha}:same-stat-source.txt`)).toBe("new source");
+  } finally {
+    await sandbox.stop();
+  }
+});
+
+it("does not invoke a repository-configured filesystem monitor during source capture", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    const baseSha = await readSourceBase(sandbox);
+    const hook = `${sandbox.repoPath}/.git/capture-fsmonitor`;
+    await sandbox.writeFile(hook, '#!/bin/sh\ntouch "$0.ran"\nprintf "token\\0"\n', {
+      mode: 0o755,
+    });
+    git(sandbox, "config", "core.fsmonitor", hook);
+    await sandbox.writeFile(`${sandbox.repoPath}/source.txt`, "preserve this source\n");
+    const source = await captureSourceCheckpoint({ sandbox, baseSha });
+    expect(source.kind).toBe("bundle");
+    expect(existsSync(`${hook}.ran`)).toBe(false);
+    expect(git(sandbox, "show", `${source.headSha}:source.txt`)).toBe("preserve this source");
   } finally {
     await sandbox.stop();
   }
