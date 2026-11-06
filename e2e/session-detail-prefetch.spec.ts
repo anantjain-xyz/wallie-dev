@@ -240,17 +240,30 @@ for (const delayedPhase of ["tree", "page"] as const) {
           });
         }, href);
       }
-      const whilePending = await link.evaluate((element) => {
-        (element as HTMLAnchorElement).click();
-        return new Promise<{ pathname: string; pushes: number }>((resolve) => {
-          window.setTimeout(() => {
-            resolve({
-              pathname: location.pathname,
-              pushes: Number(document.documentElement.dataset.sessionPushes ?? "0"),
-            });
-          }, 50);
-        });
-      });
+      await page.evaluate((destination) => {
+        document.addEventListener(
+          "click",
+          (event) => {
+            const anchor = event.target instanceof Element ? event.target.closest("a") : null;
+            if (anchor?.pathname !== destination) return;
+            window.setTimeout(() => {
+              const root = document.documentElement;
+              root.dataset.pendingSessionPathname = location.pathname;
+              root.dataset.pendingSessionPushes = root.dataset.sessionPushes ?? "0";
+              root.dataset.pendingSessionSnapshotReady = "true";
+            }, 50);
+          },
+          { capture: true, once: true },
+        );
+      }, href);
+      await link.click({ noWaitAfter: true });
+      await page.waitForFunction(
+        () => document.documentElement.dataset.pendingSessionSnapshotReady === "true",
+      );
+      const whilePending = await page.evaluate(() => ({
+        pathname: document.documentElement.dataset.pendingSessionPathname,
+        pushes: Number(document.documentElement.dataset.pendingSessionPushes),
+      }));
       expect(whilePending.pathname).toBe(`${workspacePath}/sessions`);
       expect(whilePending.pushes, "navigation must not discard an in-flight prefetch").toBe(0);
       release();
@@ -260,6 +273,9 @@ for (const delayedPhase of ["tree", "page"] as const) {
       ).toBeVisible();
       await expect(page.getByRole("navigation", { name: "Pipeline stages" })).toBeVisible();
       await expect(page.getByRole("status", { name: "Loading session" })).toBeHidden();
+      const artifact = page.locator("#artifact-rendered-panel:visible");
+      await expect(artifact.locator(".artifact-content:visible")).toHaveText(/\S/);
+      await expect(artifact).toContainText(/v\d+\s*·\s*Latest/);
       expect(await page.locator("html").getAttribute("data-session-pushes")).toBe("1");
       await page.waitForTimeout(250);
       expect(aborted, "the prefetched destination must not be aborted").toEqual([]);
@@ -281,6 +297,114 @@ for (const delayedPhase of ["tree", "page"] as const) {
     }
   });
 }
+
+test("unmarked page data retains the fallback instead of reaching the deadline", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let armed = false;
+    document.addEventListener(
+      "click",
+      (event) => {
+        const anchor = event.target instanceof Element ? event.target.closest("a") : null;
+        if (anchor && /^\/w\/acme-corp\/sessions\/\d+$/.test(anchor.pathname)) armed = true;
+      },
+      { capture: true },
+    );
+    const setTimer = window.setTimeout.bind(window);
+    Object.defineProperty(window, "setTimeout", {
+      configurable: true,
+      writable: true,
+      value(handler: TimerHandler, delay?: number, ...args: unknown[]) {
+        const body = typeof handler === "function" ? handler.toString() : "";
+        if (
+          !armed ||
+          delay !== 2_000 ||
+          typeof handler !== "function" ||
+          !body.includes("clearTimeout") ||
+          !body.includes(".disconnect()") ||
+          !body.includes("requestAnimationFrame")
+        ) {
+          return Reflect.apply(setTimer, window, [handler, delay, ...args]);
+        }
+        const root = document.documentElement;
+        root.dataset.sessionPrefetchDeadlinesScheduled = String(
+          Number(root.dataset.sessionPrefetchDeadlinesScheduled ?? "0") + 1,
+        );
+        return setTimer(() => {
+          document.documentElement.dataset.sessionPrefetchDeadlineFired = "true";
+          Reflect.apply(handler, window, args);
+        }, delay);
+      },
+    });
+  });
+  const { href, link, title } = await prepareSessionLink(page);
+  const destinationRequests: Request[] = [];
+  page.on("request", (request) => {
+    if (isSessionDetailRscRequest(request)) destinationRequests.push(request);
+  });
+  await page.route(`**${href}**`, async (route) => {
+    const request = route.request();
+    const headers = request.headers();
+    if (
+      !isSessionDetailRscRequest(request) ||
+      !headers["next-router-state-tree"] ||
+      headers["next-router-prefetch"] ||
+      headers["next-router-segment-prefetch"]
+    ) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const responseHeaders = { ...response.headers() };
+    delete responseHeaders["server-timing"];
+    await route.fulfill({ response, headers: responseHeaders });
+  });
+  const pageResponse = page.waitForResponse((response) => {
+    const request = response.request();
+    const headers = request.headers();
+    return (
+      new URL(response.url()).pathname === href &&
+      isSessionDetailRscRequest(request) &&
+      Boolean(headers["next-router-state-tree"]) &&
+      !headers["next-router-prefetch"] &&
+      !headers["next-router-segment-prefetch"]
+    );
+  });
+  await link.hover();
+  const response = await pageResponse;
+  expect(response.ok()).toBe(true);
+  expect((await response.allHeaders())["server-timing"] ?? "").not.toContain(
+    SESSION_PAGE_DATA_SERVER_TIMING,
+  );
+  await page.waitForFunction(
+    (url) =>
+      performance.getEntriesByName(url).some((entry) => {
+        const resource = entry as PerformanceResourceTiming;
+        return resource.responseEnd > 0 && resource.decodedBodySize > 0;
+      }),
+    response.url(),
+  );
+  await link.click({ noWaitAfter: true });
+  await expect(page).toHaveURL(href);
+  await expect(
+    page.locator("header").getByRole("heading", { level: 1, name: title, exact: true }),
+  ).toBeVisible();
+  const artifact = page.locator("#artifact-rendered-panel:visible");
+  await expect(artifact.locator(".artifact-content:visible")).toHaveText(/\S/);
+  await expect(artifact).toContainText(/v\d+\s*·\s*Latest/);
+  expect(await page.locator("html").getAttribute("data-session-pushes")).toBe("1");
+  expect(await page.locator("html").getAttribute("data-session-prefetch-deadlines-scheduled")).toBe(
+    "1",
+  );
+  expect(
+    await page.locator("html").getAttribute("data-session-prefetch-deadline-fired"),
+  ).toBeNull();
+  expect(
+    destinationRequests,
+    "the fallback should reuse the completed unmarked prefetch",
+  ).toHaveLength(2);
+});
 
 test("session opening recovers when the intent prefetch fails", async ({ page }) => {
   const { href, link } = await prepareSessionLink(page);
