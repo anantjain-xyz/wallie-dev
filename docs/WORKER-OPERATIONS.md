@@ -405,6 +405,11 @@ still rely on stale-heartbeat detection, retries, provider TTLs, and the reaper.
 ## Deployment and scaling
 
 - Deploy the web app and worker from compatible code and schema versions.
+- The hosted worker is automatically deployed by Cloudflare from its connected
+  repository. Routine merges do not need a separate manual worker deployment.
+  Verify the Cloudflare deployment's commit/version and effective configuration;
+  Vercel deployment and GitHub CI are not evidence of a successful worker deploy.
+  See [Production deployment](CLOUDFLARE-WORKER.md#production-deployment).
 - Give both runtimes the required shared environment; keep service-role and
   encryption values server-side.
 - For the Node daemon, use an always-on host with restart-on-exit.
