@@ -60,8 +60,6 @@ function sessionDetailPrefetchHasBody(entry: PerformanceResourceTiming) {
 }
 
 function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
-  // Validated page data skips the quiet period. Other completed responses
-  // retain the burst fallback before the final frame.
   return new Promise<void>((resolve) => {
     let quietTimer = 0;
     let settled = false;
@@ -164,8 +162,6 @@ export function SessionDetailLink({
             "/w/[workspaceSlug]/sessions/[sessionNumber]",
           );
         }
-        // An in-flight prefetch can still need data or metadata. Let its
-        // response guard settle before pushing the destination.
         if (
           !shouldReuseSessionDetailPrefetch({
             defaultPrevented: event.defaultPrevented,
