@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import {
   loadSupabaseBrowserClient,
   subscribeDeferredAuthenticatedChannel,
@@ -8,7 +9,38 @@ import {
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
 
-export type ApprovalReview = { reviewRevision: number; blockingCount: number };
+export type ApprovalReviewDelivery = {
+  required: boolean;
+  state: "unknown" | "checking" | "blocked" | "ready" | "merged" | "closed";
+  blockers: Array<{ code: string; requirement?: string }>;
+};
+
+export type ApprovalReview = {
+  reviewRevision: number;
+  blockingCount: number;
+  delivery?: ApprovalReviewDelivery | null;
+};
+
+const approvalDeliverySchema = z.object({
+  required: z.boolean(),
+  state: z.enum(["unknown", "checking", "blocked", "ready", "merged", "closed"]),
+  blockers: z
+    .array(
+      z.object({
+        code: z.string().min(1).max(200),
+        requirement: z.string().min(1).max(200).optional(),
+      }),
+    )
+    .max(64),
+});
+
+const approvalReviewSchema = z
+  .object({
+    reviewRevision: z.number().int().nonnegative(),
+    blockingCount: z.number().int().nonnegative(),
+    delivery: approvalDeliverySchema.nullable().optional(),
+  })
+  .strict();
 
 /** Approval is disabled until the reviewer sees an authoritative, bounded summary. */
 export function useApprovalReview(sessionId: string | undefined, artifactId: string | undefined) {
@@ -32,15 +64,9 @@ export function useApprovalReview(sessionId: string | undefined, artifactId: str
       const response = await fetch(`/api/sessions/${sessionId}/approval-review`, {
         cache: "no-store",
       });
-      const value = (await response.json()) as ApprovalReview;
-      if (
-        !response.ok ||
-        !Number.isSafeInteger(value.reviewRevision) ||
-        value.reviewRevision < 0 ||
-        !Number.isSafeInteger(value.blockingCount) ||
-        value.blockingCount < 0
-      )
-        throw new Error("Review state unavailable.");
+      const parsed = approvalReviewSchema.safeParse(await response.json());
+      if (!response.ok || !parsed.success) throw new Error("Review state unavailable.");
+      const value = parsed.data;
       if (request === sequence.current) setState({ key, value, error: null });
     } catch {
       if (request === sequence.current)

@@ -3710,6 +3710,24 @@ describe("handleApproval", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
+  it("propagates the deterministic PR readiness conflict from the delivery gate", async () => {
+    const { admin, rpc } = buildReviewMock({
+      rpcResult: {
+        data: null,
+        error: {
+          code: "PT428",
+          message: "PR readiness is not current or not Ready.",
+        },
+      },
+    });
+    expect(await handleApproval({ admin, ...approvalInput })).toEqual({
+      error: "PR readiness is not current or not Ready.",
+      errorCode: "PT428",
+      success: false,
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses stale or unauthorized reviews when the transaction returns no receipt", async () => {
     const { admin, rpc } = buildReviewMock({ rpcResult: { data: [], error: null } });
     expect(await handleApproval({ admin, ...approvalInput })).toMatchObject({

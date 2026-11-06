@@ -1,10 +1,9 @@
 # Versioned delivery policy and verification records
 
 OP-505 establishes the configuration and persistence contract for milestone 7.
-It does not collect GitHub state, execute validation, mark a session Ready, or
-change approval/enqueue behavior. [OP-506 collects GitHub observations](GITHUB-PR-VERIFICATION.md), OP-507
-captures execution evidence, and OP-508 evaluates readiness and delivery gates.
-Merge remains a manual action in GitHub.
+It does not collect GitHub state or execute validation by itself. [OP-506 collects GitHub observations](GITHUB-PR-VERIFICATION.md), OP-507
+captures execution evidence, and OP-508 evaluates readiness and enforces the
+final-approval delivery gate. Merge remains a manual action in GitHub.
 
 ## Configure a pipeline
 
@@ -56,8 +55,9 @@ known state.
 
 ## Policy decision table
 
-These are the semantics that collectors and the later readiness evaluator must
-honor. Persisting this policy alone does not implement the decision algorithm.
+These are the semantics that the collectors and the readiness evaluator
+honor. Persisting this policy alone does not implement the decision algorithm;
+the table below is enforced by the evaluator and gate described above.
 
 | Condition                                                                                       | Required interpretation                                                                              |
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -80,6 +80,85 @@ honor. Persisting this policy alone does not implement the decision algorithm.
 review, or land slug has special meaning here. Artifact approval is deliberately
 absent from the readiness inputs, avoiding a circular approval gate.
 
+## Readiness evaluation and the delivery gate
+
+`src/lib/pipeline/pr-readiness.ts` owns the deterministic evaluator. It reads
+only stored state — the completed GitHub observation behind
+`session_pr_refresh_queue.last_observation_id`, the accepted checkpoint and
+canonical PR epoch, the current policy revision, the session's artifact review
+revision, open blocking review threads, and the OP-507 harness receipts bound to
+the accepted commit — and derives one decision per dimension:
+
+| Dimension                    | Derived from                                                                                     | Unknown fails closed as                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| GitHub access                | the collector's attested `githubAccess` plus repository/installation availability                | `github_access_unavailable`, `github_repository_archived`, `github_installation_suspended`                   |
+| Identity / synchronization   | policy revision, PR epoch/number, sync status, checkpoint, PR head                               | `pr_epoch_changed`, `pr_head_checkpoint_mismatch`, …                                                         |
+| Observation currency         | a clean (`current`) refresh queue and the consumed observation's age within configured freshness | `github_refresh_pending`, `github_refresh_failed`, `github_observation_expired`, `github_observation_future` |
+| Required checks              | the collector's check outcome                                                                    | `github_checks_not_passed`                                                                                   |
+| GitHub reviews               | the collector's review outcome                                                                   | `github_reviews_not_passed`                                                                                  |
+| Threads                      | collector threads plus open Wallie blocking feedback                                             | `artifact_blocking_feedback_open`                                                                            |
+| Named evidence               | revalidated harness receipts for the exact accepted commit                                       | `evidence_missing`/`_stale`/`_failed`/`_unavailable`                                                         |
+| Mergeability and draft state | the collector's mergeability plus the authoritative draft flag                                   | `github_pr_draft`, `github_mergeability_not_passed`                                                          |
+
+A decision is `ready` only when every dimension is `passed`; `merged` and
+`closed` come only from the authoritative PR state; anything unknown is
+`unknown`, never success. The evaluator records its decision through the same
+service-only observation/result RPCs, bound to the exact repository, PR epoch
+and number, head/base SHA, checkpoint run, policy revision, and artifact review
+revision it consumed, with `observed_at` from the evaluation moment. The
+payload also records `sourceObservationId` — the exact completed GitHub
+observation the evaluation consumed — so a decision evaluated from a
+superseded collection is distinguishable from one bound to the latest
+completed observation. The currency checks mirror the delivery gate, so the
+review-time summary never shows Ready where the gate would reject.
+
+The worker's reconciliation drains `reconcilePrReadiness` after each GitHub
+refresh cycle. Archived sessions are excluded before the batch limit — their
+queue rows stay `current` forever with old timestamps and would permanently
+occupy the batch — and already-consumed work is skipped without occupying an
+evaluation slot, so completed history cannot starve active sessions. The
+approval path (`handleApproval`) evaluates and records once more immediately
+before the gated RPC, so the gate validates a decision bound to the current
+identity.
+
+### The final-approval gate
+
+`internal.assert_delivery_readiness_gate` runs inside `approve_session_stage`
+after its session lock, so every readiness-invalidating writer — refresh
+enqueue/finish, publication, rejection, review writers — serializes with it.
+It applies only when the session's pipeline has a current **code** policy with
+`requireArtifactApprovalForDelivery` enabled **and** the approved stage is the
+final selected stage. The gate then requires the newest `ready` decision from a
+`readiness`-source observation to still be `is_current` per
+`session_pr_verification_currentness`: same repository, canonical PR epoch and
+number, head and base SHA, accepted checkpoint, policy revision, artifact
+review revision, within configured freshness, consuming the latest completed
+GitHub observation of a clean refresh queue. The decision's recorded
+`sourceObservationId` must equal the queue's current `last_observation_id`:
+the currentness view's created-at ordering alone cannot tell that a refresh
+landed between the evaluator's read and its recording with unchanged
+head/base SHAs, so the gate binds the accepted decision to the exact
+observation it consumed. A missing or absent `sourceObservationId` fails
+closed.
+
+- No policy, an `analysis` policy, or a policy without the approval gate:
+  approval proceeds without a PR gate; `not_applicable` is the analysis
+  outcome and never a code state.
+- Missing, stale, or blocked readiness raises `PT428`; the phase-action route
+  maps it to a deterministic conflict. A stale review token still raises
+  `PT412` first.
+- Approval of a non-final stage never consults readiness; a configured final
+  approval validates the current artifact and readiness atomically in one
+  transaction.
+- The reviewer sees the server-owned readiness summary beside the blocking
+  count through `GET /api/sessions/{sessionId}/approval-review`, which adds a
+  `delivery` object derived from the same evaluator. Clients cannot submit a
+  readiness value anywhere; every decision is server-derived.
+
+No automatic merge exists anywhere in this flow. `merged` and `closed` appear
+only from authoritative GitHub observations, and manual successor PRs remain
+the only path after a close or merge.
+
 ## Persistence and authorization
 
 `delivery_policies` holds the current revision pointer;
@@ -100,19 +179,19 @@ results, and the policy API exposes no verification-write endpoint.
 A code `ready` result requires a `readiness` source and explicit trusted receipt
 fields `githubAccess: "available"`, `checks: "passed"`, `reviews: "passed"`,
 `evidence: "passed"`, and `threads: "passed"`. Missing or unknown outcomes cannot
-be stored as Ready. This is a minimal storage guard; the OP-508 evaluator must
-actually derive these outcomes from exact, current source evidence.
+be stored as Ready. This is a minimal storage guard; the evaluator derives these
+outcomes from exact, current source evidence before recording them.
 
 Authenticated reads use workspace RLS. The invoker-security
 `session_pr_verification_currentness` view reports whether a result still matches
 the stored policy, review revision, accepted checkpoint, synchronized PR head,
 configured age, and known repository/installation availability. Archiving a
 repository or suspending its installation makes prior records noncurrent.
-This is identity metadata, not permission to merge or a
-readiness evaluator: the GitHub refresh queue supplies authoritative current
-base/check/review observations, and OP-508 must combine them with evidence before
-exposing Ready. A dirty or failed refresh invalidates previous decisions; code
-decisions must reference the latest completed GitHub observation and its exact
+This is identity metadata, not permission to merge or a readiness decision:
+the GitHub refresh queue supplies authoritative current base/check/review
+observations, and the evaluator combines them with evidence before exposing
+Ready. A dirty or failed refresh invalidates previous decisions; code decisions
+must reference the latest completed GitHub observation and its exact
 head/base, policy, checkpoint, PR epoch, and review revision.
 The persisted base SHA remains part of the immutable observation identity.
 
@@ -125,5 +204,7 @@ continuity release controls and worker deployment settings are unchanged.
 Run `pnpm check` and the database regression suite with the forward migration
 applied to an isolated local Supabase stack. Database types must be generated
 from that applied schema. SQL fixtures exercise manager authorization, RLS,
-immutability, revision invalidation, canonical code identity, and analysis/legacy
-cases. Browser proof covers the configuration form at desktop and 390px widths.
+immutability, revision invalidation, canonical code identity, the evaluator
+truth table, stale-decision rejection, the approval/refresh race, and
+analysis/legacy cases. Browser proof covers the configuration form and the
+review-time readiness summary at desktop and 390px widths.
