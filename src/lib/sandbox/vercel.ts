@@ -1,8 +1,9 @@
-import { APIError, Sandbox } from "@vercel/sandbox";
+import { APIError, Sandbox, type Command } from "@vercel/sandbox";
 
 import {
   formatVercelSandboxError,
   isVercelSandboxApiError,
+  vercelSandboxErrorStatus,
   vercelSandboxFetch,
 } from "@/lib/vercel-sandbox/errors";
 
@@ -21,6 +22,8 @@ import type {
 const REPO_PATH = "/vercel/sandbox";
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const TERMINAL_SOURCE_STATUSES = new Set(["stopped", "failed", "aborted"]);
+/** Pause before re-issuing a wait whose gateway request failed. */
+const WAIT_RETRY_DELAY_MS = 2_000;
 type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
 type VercelCredentials = VercelConnection["credentials"];
 
@@ -48,6 +51,52 @@ function isConfirmedGone(error: unknown): boolean {
   return (
     error instanceof APIError && (error.response.status === 404 || error.response.status === 410)
   );
+}
+
+function isRetryableWaitFailure(error: unknown): boolean {
+  const status = vercelSandboxErrorStatus(error);
+  return status !== undefined && status >= 500 && status <= 599;
+}
+
+function waitBeforeRetry(signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, WAIT_RETRY_DELAY_MS));
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, WAIT_RETRY_DELAY_MS);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * `Command.wait()` long-polls `GET /cmd/:id?wait=true` until the command
+ * exits. The gateway in front of Vercel Sandbox eventually closes a request
+ * it has held open with a non-JSON `524`, so a healthy agent run that outlives
+ * the gateway budget would otherwise fail to report its exit code. A 5xx
+ * describes the wait request, not the command, so retry the wait until the
+ * command reports a result or the caller aborts.
+ */
+async function waitForVercelCommand(
+  command: Command,
+  secrets: Array<string | undefined>,
+  signal?: AbortSignal,
+): Promise<number> {
+  for (;;) {
+    try {
+      const finished = await command.wait(signal ? { signal } : undefined);
+      return finished.exitCode;
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : error;
+      if (!isRetryableWaitFailure(error)) rethrowVercelSandboxError(error, secrets);
+      await waitBeforeRetry(signal);
+    }
+  }
 }
 
 /**
@@ -88,16 +137,20 @@ class VercelSandboxHandle implements SandboxHandle {
     }
 
     const secrets = this.secrets;
-    const waitPromise = command.wait().then(
-      (result) => result.exitCode,
-      (error: unknown) => rethrowVercelSandboxError(error, secrets),
-    );
+    const waitPromise = waitForVercelCommand(command, secrets, opts.signal);
+    // Callers drain logs before awaiting exitCode, so a cancellation or budget
+    // rejection can land first. Handle it here as well; awaiting the original
+    // promise still observes the error, but the worker no longer treats it as
+    // an unhandled rejection and exits.
+    void waitPromise.catch(() => undefined);
 
     return {
       logs: () => ({
         async *[Symbol.asyncIterator]() {
           try {
-            for await (const entry of command.logs()) {
+            for await (const entry of command.logs(
+              opts.signal ? { signal: opts.signal } : undefined,
+            )) {
               yield { data: entry.data, stream: entry.stream };
             }
           } catch (error) {

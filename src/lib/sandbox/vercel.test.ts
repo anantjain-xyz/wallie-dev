@@ -210,6 +210,116 @@ describe("createVercelSessionSandbox", () => {
   });
 });
 
+describe("VercelSandboxHandle exec", () => {
+  function harness(wait: ReturnType<typeof vi.fn>) {
+    const runCommand = vi.fn(async (request: SandboxCommandInput) => {
+      if (request.cmd === "bash") return command();
+      return {
+        exitCode: null,
+        logs: async function* logs() {},
+        output: vi.fn(async () => ({ stderr: "", stdout: "" })),
+        wait,
+      };
+    });
+    mocked.sandboxCreate.mockResolvedValue(sandbox({ runCommand }));
+  }
+
+  it("retries a gateway timeout while waiting for the command to exit", async () => {
+    vi.useFakeTimers();
+    try {
+      const wait = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new APIError(new Response(null, { status: 524 }), {
+            message: "Can't parse JSON: SyntaxError: Unexpected token 'e'",
+            text: "error code: 524\n",
+          }),
+        )
+        .mockResolvedValueOnce({ exitCode: 0 });
+      harness(wait);
+
+      const handle = await createVercelSessionSandbox(input(), vercelConnection);
+      const proc = await handle.exec("sleep", ["120"]);
+      const exit = proc.exitCode;
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(exit).resolves.toBe(0);
+      expect(wait).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces a non-retryable wait failure without retrying", async () => {
+    const wait = vi
+      .fn()
+      .mockRejectedValue(
+        new APIError(new Response(null, { status: 403 }), { message: "Forbidden" }),
+      );
+    harness(wait);
+
+    const handle = await createVercelSessionSandbox(input(), vercelConnection);
+    const proc = await handle.exec("sleep", ["120"]);
+
+    await expect(proc.exitCode).rejects.toThrow(
+      "Vercel Sandbox request failed (403): Check the saved Vercel token, its team access, and the connected project.",
+    );
+    expect(wait).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not emit an unhandled rejection when cancelled before exitCode is awaited", async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("Run cancelled");
+    let logSignal: AbortSignal | undefined;
+    const wait = vi.fn(
+      (options?: { signal?: AbortSignal }) =>
+        new Promise<never>((_, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason ?? cancellation),
+            { once: true },
+          );
+        }),
+    );
+    mocked.sandboxCreate.mockResolvedValue(
+      sandbox({
+        runCommand: vi.fn(async (request: SandboxCommandInput) => {
+          if (request.cmd === "bash") return command();
+          return {
+            exitCode: null,
+            logs: async function* logs(options?: { signal?: AbortSignal }) {
+              logSignal = options?.signal;
+              await new Promise(() => undefined);
+            },
+            output: vi.fn(),
+            wait,
+          };
+        }),
+      }),
+    );
+
+    const handle = await createVercelSessionSandbox(input(), vercelConnection);
+    const proc = await handle.exec("sleep", ["120"], { signal: controller.signal });
+    // The agent runners drain logs to completion before awaiting exitCode.
+    const logStream = proc.logs()[Symbol.asyncIterator]();
+    void logStream.next();
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      controller.abort(cancellation);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(logSignal).toBe(controller.signal);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    await expect(proc.exitCode).rejects.toThrow("Run cancelled");
+  });
+});
+
 describe("stopVercelSandboxById", () => {
   it("passes workspace credentials to Vercel Sandbox get", async () => {
     await stopVercelSandboxById("sandbox-1", credentials);
