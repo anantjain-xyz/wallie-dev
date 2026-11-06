@@ -29,6 +29,36 @@ flowchart LR
 - Git delivery uses a short-lived utility sandbox on the workspace's selected provider. Helpers receive repository credentials only, preserve non-force recovery branches, and retain cleanup reservations until confirmed stopped.
 - The fake sandbox remains a Node/local testing facility.
 
+## Production deployment
+
+The hosted wallie.dev worker is automatically built and deployed by Cloudflare
+from its connected Git repository. Routine releases do **not** require an operator
+to run `pnpm worker:deploy` after merging. Vercel deploys the web app separately;
+a successful Vercel deployment does not establish the worker's deployment status.
+
+After merging to the production branch configured in Cloudflare:
+
+1. Check the Cloudflare build/deployment for the expected Git commit. A merge
+   triggers the configured automation; it is not proof that deployment succeeded.
+2. Confirm the active Worker version, bindings, runtime variables, and secrets.
+   Preserve the intended dispatch/auth state and the existing dispatcher and
+   Workflow bindings. Apply required compatible database migrations before the
+   new worker needs them.
+3. Inspect dispatch/maintenance logs and the relevant job/run evidence. A deployed
+   fix affects subsequent execution; deployment alone does not retry failed jobs,
+   recover unpublished sandbox work, or rewrite existing run errors.
+
+Cloudflare owns the repository connection, production branch, build/deploy
+commands, and build watch paths. Inspect those settings in Cloudflare when
+troubleshooting a missing deployment; they are not fully described by the GitHub
+Actions workflows. Ensure watch paths cover transitive worker code and configuration,
+not only `cloudflare/**` or `src/worker/**`. Repository CI remains validation,
+not the production deployment owner.
+
+The `worker:deploy` script is still available for explicit manual recovery and
+self-hosted/qualification Workers. Do not run a second manual production deploy
+just because a PR merged, or race it against Cloudflare's automatic deployment.
+
 ## Configuration
 
 Apply the forward dispatch migration before enabling the worker. Generate types
@@ -58,7 +88,6 @@ through Wrangler's secret prompts. Do not rotate the encryption key during setup
 
 ```bash
 pnpm check:cloudflare
-pnpm worker:deploy
 pnpm exec wrangler secret put SUPABASE_SECRET_KEY
 pnpm exec wrangler secret put WALLIE_ENCRYPTION_KEY
 pnpm exec wrangler secret put GITHUB_APP_PRIVATE_KEY
@@ -67,9 +96,14 @@ pnpm exec wrangler secret put WALLIE_WORKER_WAKE_SECRET
 
 Set nonsecret connection variables in `wrangler.jsonc` or deployment `--var`
 arguments. Never put secrets in that file or pass secret values on command lines.
-`keep_vars` preserves operator-supplied connection variables on later deployments.
-The checked-in configuration always deploys with dispatch disabled. Preview and
-test Workers must use separate binding names and isolated database credentials.
+`keep_vars` preserves dashboard variables that are not explicitly set in the
+Wrangler configuration; it does not override checked-in values. The checked-in
+configuration sets dispatch and auth to `false`. Ensure the effective Cloudflare
+automated deploy command/configuration preserves the qualified production values
+(e.g. an explicit deployment `--var` override), and verify them after deployment.
+Do not assume a previous one-off CLI override survives the next automatic build.
+Preview and test Workers must use separate binding names and isolated database
+credentials.
 
 For local native development, put local Supabase values and a test wake secret in
 an ignored `.dev.vars` file, then run `pnpm worker:dev`. Set
@@ -100,11 +134,17 @@ live provider parity.** Keep dispatch disabled on production until these pass:
 5. Verify source checkpoints survive sandbox loss and that delivery retries reuse the existing PR or recovery branch. Confirm helper reservations clear after cleanup.
 6. Configure the production Worker secrets and Vercel wake URL, recover old Railway work through cancellation/stall recovery, then enable dispatch for a limited production canary.
 
-Enable explicitly after qualification:
+Enable explicitly after qualification through the production deployment
+configuration, and ensure subsequent automatic deployments preserve that choice.
+For an explicitly requested manual deployment or a self-hosted qualification
+Worker, the equivalent CLI override is:
 
 ```bash
 pnpm worker:deploy --var WALLIE_WORKER_DISPATCH_ENABLED:true
 ```
+
+This is not an extra step for routine releases of the automatically deployed
+hosted worker. Changing a dispatch flag does not replace live qualification.
 
 Watch Cloudflare logs for dispatch failures, queue age, failed attempts, auth flow
 failures, and pending source delivery. Inspect `worker_dispatches`,
@@ -113,7 +153,7 @@ through privileged tooling. Never log source bundles, tokens, or login verifiers
 
 ## Rollback
 
-- Deploy with `WALLIE_WORKER_DISPATCH_ENABLED=false` to stop new claims. Existing attempts finish or recover through their captured ownership guards.
-- Select the previous Cloudflare revision for subsequent attempts. Preserve the dispatcher binding, Workflow classes, database records, checkpoints, and delivery outbox.
+- Set `WALLIE_WORKER_DISPATCH_ENABLED=false` through the controlled deployment configuration to stop new claims. Keep that setting effective on subsequent automatic builds. Existing attempts finish or recover through their captured ownership guards.
+- Select the previous Cloudflare revision for subsequent attempts and coordinate the automatic deployment source so the next build does not immediately reintroduce the bad revision. Preserve the dispatcher binding, Workflow classes, database records, checkpoints, and delivery outbox.
 - For schema changes, retain compatibility with in-flight Workflow versions. Never delete Workflow definitions or Durable Object namespaces as part of rollback.
 - Railway is retired. Generic Node/container operations remain documented in [Worker operations](WORKER-OPERATIONS.md) and [Worker container](WORKER-CONTAINER.md).
