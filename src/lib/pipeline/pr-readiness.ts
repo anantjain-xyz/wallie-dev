@@ -117,9 +117,14 @@ export type PrReadinessEvaluatorInput = {
       baseSha: string;
       checkpointRunId: string;
       artifactReviewRevision: number;
+      observedAt: string;
     };
     payload: GitHubObservationPayload;
   } | null;
+  /** Refresh-queue status for the consumed observation's session. */
+  refreshQueueStatus: "current" | "pending" | "claimed" | "error" | null;
+  /** Known repository/installation availability for the consumed observation. */
+  repository: { archived: boolean; installationSuspended: boolean } | null;
   checkpoint: { runId: string; outputSha: string } | null;
   epoch: { id: string; prNumber: number } | null;
   syncStatus: string | null;
@@ -194,10 +199,24 @@ export function evaluatePrReadiness(input: PrReadinessEvaluatorInput): PrReadine
     };
   }
 
-  // GitHub access is attested only by a completed authoritative collection.
-  const githubAccess: PrReadinessDimensionOutcome =
+  // GitHub access is attested only by a completed authoritative collection,
+  // and only while its repository and installation remain available.
+  let githubAccess: PrReadinessDimensionOutcome =
     github.githubAccess === "available" ? "passed" : "unknown";
   if (githubAccess !== "passed") add("github_access_unavailable");
+  if (!input.repository) {
+    githubAccess = "unknown";
+    add("github_repository_unavailable");
+  } else {
+    if (input.repository.archived) {
+      githubAccess = "unknown";
+      add("github_repository_archived");
+    }
+    if (input.repository.installationSuspended) {
+      githubAccess = "unknown";
+      add("github_installation_suspended");
+    }
+  }
 
   // Current checkpoint/PR synchronization: the decision binds to the exact
   // canonical PR and accepted checkpoint the session holds right now. A
@@ -226,6 +245,25 @@ export function evaluatePrReadiness(input: PrReadinessEvaluatorInput): PrReadine
     identityLower("unknown", "policy_revision_changed");
   if (githubIdentity.artifactReviewRevision !== input.reviewRevision)
     identityLower("unknown", "review_revision_changed");
+
+  // Observation currency mirrors the delivery gate's currentness view: a
+  // decision may only be Ready while the refresh queue is clean and the
+  // consumed collection is within configured freshness. The review-time
+  // display then never shows Ready when the approval gate would reject.
+  if (!input.refreshQueueStatus) identityLower("unknown", "github_refresh_missing");
+  else if (input.refreshQueueStatus === "pending")
+    identityLower("checking", "github_refresh_pending");
+  else if (input.refreshQueueStatus === "claimed")
+    identityLower("checking", "github_refresh_in_progress");
+  else if (input.refreshQueueStatus === "error") identityLower("unknown", "github_refresh_failed");
+  const observedAt = Date.parse(githubIdentity.observedAt);
+  if (!Number.isFinite(observedAt)) {
+    identityLower("unknown", "github_observation_time_unknown");
+  } else if (observedAt > Date.now() + 5_000) {
+    identityLower("unknown", "github_observation_future");
+  } else if (observedAt < Date.now() - input.requirements.freshnessSeconds * 1000) {
+    identityLower("unknown", "github_observation_expired");
+  }
   blockers.push(...identityBlockers);
 
   // Required checks: absent or pending is not success.
@@ -465,6 +503,30 @@ async function loadEvaluatorInput(
   const githubPayload = githubObservation
     ? githubObservationPayloadSchema.safeParse(githubObservation.payload)
     : null;
+  // Repository/installation availability for the consumed observation, mirroring
+  // the currentness view. A missing repository row is unavailable, not neutral.
+  let repository: { archived: boolean; installationSuspended: boolean } | null = null;
+  if (githubObservation?.repository_id) {
+    const { data: repoRow, error: repoError } = await admin
+      .from("github_repositories")
+      .select("id, is_archived, github_installation_id")
+      .eq("id", githubObservation.repository_id)
+      .maybeSingle();
+    if (repoError) throw new Error("PR delivery repository is unavailable.");
+    if (repoRow) {
+      let installationSuspended = false;
+      if (repoRow.github_installation_id) {
+        const { data: installationRow, error: installationError } = await admin
+          .from("github_installations")
+          .select("id, suspended")
+          .eq("id", repoRow.github_installation_id)
+          .maybeSingle();
+        if (installationError) throw new Error("PR delivery installation is unavailable.");
+        installationSuspended = installationRow?.suspended ?? true;
+      }
+      repository = { archived: repoRow.is_archived ?? false, installationSuspended };
+    }
+  }
 
   return {
     policy,
@@ -484,10 +546,14 @@ async function loadEvaluatorInput(
                 baseSha: githubObservation.base_sha ?? "",
                 checkpointRunId: githubObservation.checkpoint_run_id ?? "",
                 artifactReviewRevision: githubObservation.artifact_review_revision,
+                observedAt: githubObservation.observed_at,
               },
               payload: githubPayload.data,
             }
           : null,
+      refreshQueueStatus: (queueResult.data?.status ??
+        null) as PrReadinessEvaluatorInput["refreshQueueStatus"],
+      repository,
       checkpoint: checkpointResult.data
         ? { runId: checkpointResult.data.run_id, outputSha: checkpointResult.data.output_sha }
         : null,
@@ -669,9 +735,13 @@ async function shouldRecordFreshDecision(admin: AdminClient, sessionId: string):
 }
 
 /**
- * Worker-side readiness drain. Bounded batch of code-policy sessions with a
- * current GitHub observation; records a fresh decision only when the latest
- * GitHub observation is not yet consumed by a newer readiness decision.
+ * Worker-side readiness drain. Bounded batch of active sessions with a
+ * completed GitHub observation. Archived sessions are excluded before the
+ * batch limit — their queue rows stay `current` forever with old
+ * `updated_at`, so they would permanently occupy the batch and starve active
+ * sessions. Already-consumed work (the latest GitHub observation has a newer
+ * readiness decision) is skipped without occupying an evaluation slot, so
+ * completed history cannot starve active sessions either.
  */
 export async function reconcilePrReadiness(
   admin: AdminClient | undefined,
@@ -684,19 +754,29 @@ export async function reconcilePrReadiness(
   const client = admin ?? createSupabaseAdminClient(options.input);
   const limit = Math.min(Math.max(options.limit ?? 10, 1), 20);
   const result = { evaluated: 0, recorded: 0, failed: 0 };
+  // Scan a multiple of the evaluation budget so consumed rows can be skipped
+  // without shrinking the actual batch of fresh decisions below the limit.
   const { data: queueRows, error } = await client
     .from("session_pr_refresh_queue")
-    .select("session_id, workspace_id, status, last_observation_id")
+    .select(
+      "session_id, workspace_id, status, last_observation_id, session:sessions!inner(archived_at)",
+    )
     .eq("status", "current")
+    .not("last_observation_id", "is", null)
+    .is("session.archived_at", null)
     .order("updated_at", { ascending: true })
-    .limit(limit);
+    .limit(limit * 3);
   if (error) throw new Error("PR refresh queue is unavailable.");
   for (const row of queueRows ?? []) {
+    if (result.evaluated >= limit) break;
     if (options.workspaceId && row.workspace_id !== options.workspaceId) continue;
     if (!row.last_observation_id) continue;
     try {
+      // Only fresh, unconsumed work is evaluated; a skipped row never
+      // occupies the batch.
+      if (!(await shouldRecordFreshDecision(client, row.session_id))) continue;
       const outcome = await evaluateSessionPrReadiness(client, row.session_id, {
-        record: await shouldRecordFreshDecision(client, row.session_id),
+        record: true,
       });
       result.evaluated++;
       if (outcome?.recorded) result.recorded++;

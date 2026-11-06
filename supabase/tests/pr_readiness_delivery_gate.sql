@@ -116,8 +116,10 @@ begin
 end;
 $$;
 -- The trusted evaluator's persistence: bind a readiness decision to the
--- latest completed GitHub observation's exact canonical identity.
-create function pg_temp.record_readiness(target_session uuid,p_state text,p_blockers jsonb default '[]')
+-- latest completed GitHub observation's exact canonical identity. The
+-- payload records the observation the evaluator actually consumed so the
+-- delivery gate can reject decisions evaluated from superseded collections.
+create function pg_temp.record_readiness(target_session uuid,p_state text,p_blockers jsonb default '[]',p_source_observation_id uuid default null)
 returns uuid language plpgsql as $$
 declare github public.session_pr_verification_observations; inserted public.session_pr_verification_observations;
   payload jsonb;
@@ -126,9 +128,9 @@ begin
     join public.session_pr_verification_observations o on o.id=q.last_observation_id
     where q.session_id=target_session;
   payload:=case when p_state='ready' then jsonb_build_object('githubAccess','available','checks','passed',
-      'reviews','passed','evidence','passed','threads','passed')
+      'reviews','passed','evidence','passed','threads','passed','sourceObservationId',coalesce(p_source_observation_id,github.id))
     else jsonb_build_object('githubAccess','available','checks','blocked','reviews','blocked',
-      'evidence','blocked','threads','blocked') end;
+      'evidence','blocked','threads','blocked','sourceObservationId',coalesce(p_source_observation_id,github.id)) end;
   inserted:=public.record_pr_verification_observation(github.workspace_id,github.session_id,github.policy_revision_id,
     github.repository_id,github.repository_full_name,github.pr_epoch_id,github.pr_number,github.head_sha,github.base_sha,
     github.checkpoint_run_id,github.artifact_review_revision,'readiness',payload,now());
@@ -239,6 +241,27 @@ select is(pg_temp.approve_final((select session_id from blocked_fixture)),'appro
   'a current Ready decision passes the final delivery gate');
 select is((select archived_at is not null from public.sessions where id=(select session_id from blocked_fixture)),true,
   'final approval archives a session without Linear routing');
+
+-- A readiness decision consumed from a superseded observation cannot pass
+-- the gate, even though a newer completed collection with identical identity
+-- satisfies the currentness view's created_at ordering. This is the race the
+-- evaluator's payload binding closes: a refresh landing between the
+-- evaluator's read and its recording cannot slip a stale Ready through.
+create temp table consumed_fixture as select pg_temp.final_fixture('Readiness consumed observation',
+  '50500000-0000-4000-8000-000000000401') as session_id;
+create temp table consumed_first_observation as select last_observation_id
+  from public.session_pr_refresh_queue where session_id=(select session_id from consumed_fixture);
+-- A second authoritative collection with identical head/base lands next.
+select pg_temp.refresh_github((select session_id from consumed_fixture),repeat('c',40));
+-- The decision records the first (superseded) observation as its source.
+select pg_temp.record_readiness((select session_id from consumed_fixture),'ready','[]',
+  (select last_observation_id from consumed_first_observation));
+select is(pg_temp.pr_failure_state($$select pg_temp.approve_final((select session_id from consumed_fixture))$$),'PT428',
+  'a decision consumed before the latest completed collection cannot pass the gate');
+-- Rebinding to the latest completed observation restores delivery.
+select pg_temp.record_readiness((select session_id from consumed_fixture),'ready','[]');
+select is(pg_temp.approve_final((select session_id from consumed_fixture)),'approved',
+  'a decision bound to the latest completed observation passes the gate');
 
 -- A new PR head invalidates a previously current decision.
 create temp table new_head_fixture as select pg_temp.final_fixture('Readiness new PR head',

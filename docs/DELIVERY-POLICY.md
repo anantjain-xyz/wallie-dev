@@ -89,28 +89,37 @@ canonical PR epoch, the current policy revision, the session's artifact review
 revision, open blocking review threads, and the OP-507 harness receipts bound to
 the accepted commit — and derives one decision per dimension:
 
-| Dimension                    | Derived from                                                       | Unknown fails closed as                              |
-| ---------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| GitHub access                | the collector's attested `githubAccess`                            | `github_access_unavailable`                          |
-| Identity / synchronization   | policy revision, PR epoch/number, sync status, checkpoint, PR head | `pr_epoch_changed`, `pr_head_checkpoint_mismatch`, … |
-| Required checks              | the collector's check outcome                                      | `github_checks_not_passed`                           |
-| GitHub reviews               | the collector's review outcome                                     | `github_reviews_not_passed`                          |
-| Threads                      | collector threads plus open Wallie blocking feedback               | `artifact_blocking_feedback_open`                    |
-| Named evidence               | revalidated harness receipts for the exact accepted commit         | `evidence_missing`/`_stale`/`_failed`/`_unavailable` |
-| Mergeability and draft state | the collector's mergeability plus the authoritative draft flag     | `github_pr_draft`, `github_mergeability_not_passed`  |
+| Dimension                    | Derived from                                                                                     | Unknown fails closed as                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| GitHub access                | the collector's attested `githubAccess` plus repository/installation availability                | `github_access_unavailable`, `github_repository_archived`, `github_installation_suspended`                   |
+| Identity / synchronization   | policy revision, PR epoch/number, sync status, checkpoint, PR head                               | `pr_epoch_changed`, `pr_head_checkpoint_mismatch`, …                                                         |
+| Observation currency         | a clean (`current`) refresh queue and the consumed observation's age within configured freshness | `github_refresh_pending`, `github_refresh_failed`, `github_observation_expired`, `github_observation_future` |
+| Required checks              | the collector's check outcome                                                                    | `github_checks_not_passed`                                                                                   |
+| GitHub reviews               | the collector's review outcome                                                                   | `github_reviews_not_passed`                                                                                  |
+| Threads                      | collector threads plus open Wallie blocking feedback                                             | `artifact_blocking_feedback_open`                                                                            |
+| Named evidence               | revalidated harness receipts for the exact accepted commit                                       | `evidence_missing`/`_stale`/`_failed`/`_unavailable`                                                         |
+| Mergeability and draft state | the collector's mergeability plus the authoritative draft flag                                   | `github_pr_draft`, `github_mergeability_not_passed`                                                          |
 
 A decision is `ready` only when every dimension is `passed`; `merged` and
 `closed` come only from the authoritative PR state; anything unknown is
 `unknown`, never success. The evaluator records its decision through the same
 service-only observation/result RPCs, bound to the exact repository, PR epoch
 and number, head/base SHA, checkpoint run, policy revision, and artifact review
-revision it consumed, with `observed_at` from the evaluation moment.
+revision it consumed, with `observed_at` from the evaluation moment. The
+payload also records `sourceObservationId` — the exact completed GitHub
+observation the evaluation consumed — so a decision evaluated from a
+superseded collection is distinguishable from one bound to the latest
+completed observation. The currency checks mirror the delivery gate, so the
+review-time summary never shows Ready where the gate would reject.
 
 The worker's reconciliation drains `reconcilePrReadiness` after each GitHub
-refresh cycle, recording a fresh decision only when the latest GitHub
-observation is not yet consumed by a newer readiness decision. The approval
-path (`handleApproval`) evaluates and records once more immediately before the
-gated RPC, so the gate validates a decision bound to the current identity.
+refresh cycle. Archived sessions are excluded before the batch limit — their
+queue rows stay `current` forever with old timestamps and would permanently
+occupy the batch — and already-consumed work is skipped without occupying an
+evaluation slot, so completed history cannot starve active sessions. The
+approval path (`handleApproval`) evaluates and records once more immediately
+before the gated RPC, so the gate validates a decision bound to the current
+identity.
 
 ### The final-approval gate
 
@@ -124,7 +133,13 @@ final selected stage. The gate then requires the newest `ready` decision from a
 `session_pr_verification_currentness`: same repository, canonical PR epoch and
 number, head and base SHA, accepted checkpoint, policy revision, artifact
 review revision, within configured freshness, consuming the latest completed
-GitHub observation of a clean refresh queue.
+GitHub observation of a clean refresh queue. The decision's recorded
+`sourceObservationId` must equal the queue's current `last_observation_id`:
+the currentness view's created-at ordering alone cannot tell that a refresh
+landed between the evaluator's read and its recording with unchanged
+head/base SHAs, so the gate binds the accepted decision to the exact
+observation it consumed. A missing or absent `sourceObservationId` fails
+closed.
 
 - No policy, an `analysis` policy, or a policy without the approval gate:
   approval proceeds without a PR gate; `not_applicable` is the analysis

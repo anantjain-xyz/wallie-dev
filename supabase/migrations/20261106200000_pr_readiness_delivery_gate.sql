@@ -1,8 +1,9 @@
 -- Server-owned PR readiness gates final delivery approval (OP-508).
 -- Readiness stays independent of artifact approval: the evaluator records
 -- decisions bound to repository + canonical PR + head/base SHA + policy and
--- artifact-review revision, and the final approval validates a current Ready
--- decision inside its existing session lock. No automatic merge is introduced.
+-- artifact-review revision + the exact consumed GitHub observation, and the
+-- final approval validates a current Ready decision inside its existing
+-- session lock. No automatic merge is introduced.
 
 -- The delivery gate. Runs inside approve_session_stage after its session lock,
 -- so every readiness-invalidating writer (refresh enqueue/finish, publication,
@@ -35,10 +36,18 @@ begin
   -- The newest Ready decision must still be current for the exact repository,
   -- canonical PR epoch/number, head/base SHA, accepted checkpoint, policy
   -- revision and artifact-review revision it was bound to, within configured
-  -- freshness, and must consume the latest completed GitHub observation.
-  select c.id, c.observation_id, o.observed_at into decision
+  -- freshness. It must also consume the queue's latest completed GitHub
+  -- observation: the evaluator records the observation id it actually read,
+  -- so a decision evaluated from a superseded collection — a refresh that
+  -- landed between the evaluator's read and its recording, with unchanged
+  -- head/base SHAs — cannot pass here even though the currentness view's
+  -- created_at ordering is satisfied.
+  select c.id, c.observation_id, o.payload as readiness_payload,
+      q.last_observation_id as consumed_observation_id
+    into decision
     from public.session_pr_verification_currentness c
     join public.session_pr_verification_observations o on o.id=c.observation_id
+    join public.session_pr_refresh_queue q on q.session_id=c.session_id
     where c.session_id=p_session_id and c.workspace_id=p_workspace_id
       and c.state='ready' and c.is_current and o.source='readiness'
     order by c.created_at desc, c.id desc limit 1;
@@ -52,6 +61,13 @@ begin
         using errcode='PT428';
     end if;
     raise exception 'PR readiness is not Ready. Resolve the reported delivery blockers before approving.'
+      using errcode='PT428';
+  end if;
+  -- Bind the accepted decision to the exact observation it consumed. A null
+  -- or absent sourceObservationId fails closed here.
+  if (decision.readiness_payload->>'sourceObservationId')::uuid
+      is distinct from decision.consumed_observation_id then
+    raise exception 'PR readiness decision is stale. Refresh PR verification and approve again.'
       using errcode='PT428';
   end if;
 end;
