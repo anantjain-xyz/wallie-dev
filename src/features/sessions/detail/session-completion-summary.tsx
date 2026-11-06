@@ -36,7 +36,8 @@ export function SessionCompletionSummary({
             Session complete
           </h2>
           <p className="mt-1 text-sm leading-6 text-muted">
-            The final stage is approved. Explore the stage outputs and run history below.
+            The final stage is approved. Approval does not merge the pull request or deploy the
+            code; confirm the current merge state in GitHub.
           </p>
           {linkedPullRequests.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2" aria-label="Related pull requests">

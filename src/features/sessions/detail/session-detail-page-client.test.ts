@@ -285,7 +285,18 @@ describe("SessionDetailPageClient", () => {
     });
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json({ error: "Review is stale." }, { status: 409 }));
+      .mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/phase-action"))
+          return Promise.resolve(Response.json({ error: "Review is stale." }, { status: 409 }));
+        if (url.endsWith("/approval-review"))
+          return Promise.resolve(
+            Response.json({ reviewRevision: 7, blockingCount: 0, delivery: null }),
+          );
+        if (url.endsWith("/review-evidence"))
+          return Promise.resolve(Response.json({ delivery: null }));
+        return Promise.resolve(Response.json({}));
+      });
     render(
       createElement(SessionDetailPageClient, {
         activity: null,
@@ -351,7 +362,11 @@ describe("SessionDetailPageClient", () => {
     expect(screen.queryByText("Old cached output")).toBeNull();
     expect(screen.getByText(/current artifact cannot be identified safely/i)).toBeTruthy();
     expect(screen.getByText("Retry recovery enabled")).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The evidence panel reads readiness; it must not fetch a review or mutation.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      `/api/sessions/${data.session.id}/review-evidence`,
+    );
   });
 
   it("does not allow review of a different artifact with the same version", async () => {
@@ -838,7 +853,7 @@ describe("SessionDetailPageClient", () => {
     const data = makeSessionDetailData();
     data.session.phaseStatus = "approved";
     const html = renderDetail({ data });
-    expect(html).toContain("Explore the stage outputs and run history below.");
+    expect(html).toContain("Approval does not merge the pull request or deploy the code");
     expect(html).toContain("No pull request is linked to this session.");
     expect(html).not.toContain("Open pull request");
   });

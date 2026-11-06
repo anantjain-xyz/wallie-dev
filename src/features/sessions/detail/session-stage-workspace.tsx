@@ -11,6 +11,7 @@ export function SessionStageWorkspace({
   activity,
   artifact,
   emptyText,
+  evidence,
   focus,
   reviewControls,
   stageName,
@@ -19,6 +20,7 @@ export function SessionStageWorkspace({
   activity: ReactNode;
   artifact: ReactNode;
   emptyText: string;
+  evidence?: ReactNode;
   focus: SessionStageFocus;
   reviewControls: ReactNode;
   stageName: string;
@@ -38,6 +40,11 @@ export function SessionStageWorkspace({
             </div>
             <div className="min-w-0 p-4 sm:p-5">{artifact}</div>
           </>
+        ) : null}
+        {focus !== "run" && evidence ? (
+          <div className={showingArtifact ? "min-w-0 px-4 pb-5 sm:px-5" : "min-w-0"}>
+            {evidence}
+          </div>
         ) : null}
         {reviewControls}
       </section>
