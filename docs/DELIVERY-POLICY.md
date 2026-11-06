@@ -2,7 +2,7 @@
 
 OP-505 establishes the configuration and persistence contract for milestone 7.
 It does not collect GitHub state, execute validation, mark a session Ready, or
-change approval/enqueue behavior. OP-506 collects GitHub observations, OP-507
+change approval/enqueue behavior. [OP-506 collects GitHub observations](GITHUB-PR-VERIFICATION.md), OP-507
 captures execution evidence, and OP-508 evaluates readiness and delivery gates.
 Merge remains a manual action in GitHub.
 
@@ -109,8 +109,11 @@ the stored policy, review revision, accepted checkpoint, synchronized PR head,
 configured age, and known repository/installation availability. Archiving a
 repository or suspending its installation makes prior records noncurrent.
 This is identity metadata, not permission to merge or a
-readiness evaluator: OP-506 must supply authoritative current base/check/review
-observations, and OP-508 must combine them with evidence before exposing Ready.
+readiness evaluator: the GitHub refresh queue supplies authoritative current
+base/check/review observations, and OP-508 must combine them with evidence before
+exposing Ready. A dirty or failed refresh invalidates previous decisions; code
+decisions must reference the latest completed GitHub observation and its exact
+head/base, policy, checkpoint, PR epoch, and review revision.
 The persisted base SHA remains part of the immutable observation identity.
 
 History cannot be edited or deleted independently; deletion is allowed only as

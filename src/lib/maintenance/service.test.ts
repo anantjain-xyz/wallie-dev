@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   reapOrphanSandboxes: vi.fn(),
   reconcileLinearState: vi.fn(),
   sweepStalledRuns: vi.fn(),
+  reconcileGitHubPrVerification: vi.fn(),
 }));
 
 vi.mock("@/worker/reconciler", () => ({
@@ -16,6 +17,9 @@ vi.mock("@/worker/sandbox-reaper", () => ({
 
 vi.mock("@/worker/stall-detector", () => ({
   sweepStalledRuns: mocked.sweepStalledRuns,
+}));
+vi.mock("@/features/github/pr-verification-service", () => ({
+  reconcileGitHubPrVerification: mocked.reconcileGitHubPrVerification,
 }));
 
 import { runMaintenanceTick } from "./service";
@@ -38,6 +42,7 @@ function setupDefaults() {
     checked: 3,
     rateLimited: false,
   });
+  mocked.reconcileGitHubPrVerification.mockResolvedValue({ checked: 2, refreshed: 1, failed: 1 });
 }
 
 describe("runMaintenanceTick", () => {
@@ -61,6 +66,9 @@ describe("runMaintenanceTick", () => {
       workspaceId: WORKSPACE_ID,
     });
     expect(mocked.reapOrphanSandboxes).toHaveBeenCalledWith(admin);
+    expect(mocked.reconcileGitHubPrVerification).toHaveBeenCalledExactlyOnceWith(admin, {
+      workspaceId: WORKSPACE_ID,
+    });
     expect(result).toEqual({
       cleanup: {
         activeProviderSandboxCount: 2,
@@ -75,6 +83,7 @@ describe("runMaintenanceTick", () => {
         checked: 3,
         rateLimited: false,
       },
+      githubVerification: { checked: 2, refreshed: 1, failed: 1 },
     });
   });
 });

@@ -51,6 +51,7 @@ function grantAccess() {
 
 function maintenanceResult() {
   return {
+    githubVerification: { checked: 2, refreshed: 1, failed: 1 },
     cleanup: {
       activeProviderSandboxCount: 2,
       reapedSandboxIds: ["sandbox-orphan"],

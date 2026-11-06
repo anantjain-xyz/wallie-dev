@@ -2339,6 +2339,76 @@ export type Database = {
           },
         ]
       }
+      session_pr_refresh_queue: {
+        Row: {
+          attempt_count: number
+          claim_generation: number | null
+          claim_token: string | null
+          context: Json | null
+          last_error_code: string | null
+          last_observation_id: string | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          requested_generation: number
+          session_id: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          claim_generation?: number | null
+          claim_token?: string | null
+          context?: Json | null
+          last_error_code?: string | null
+          last_observation_id?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          requested_generation?: number
+          session_id: string
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          claim_generation?: number | null
+          claim_token?: string | null
+          context?: Json | null
+          last_error_code?: string | null
+          last_observation_id?: string | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          requested_generation?: number
+          session_id?: string
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_refresh_queue_last_observation_id_fkey"
+            columns: ["last_observation_id"]
+            isOneToOne: false
+            referencedRelation: "session_pr_verification_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_refresh_queue_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_refresh_queue_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_pr_sync: {
         Row: {
           current_epoch_id: string | null
@@ -4257,6 +4327,10 @@ export type Database = {
           storage_path: string
         }[]
       }
+      claim_github_pr_refresh: {
+        Args: { p_workspace_id?: string }
+        Returns: Json
+      }
       claim_next_agent_job: {
         Args: { default_concurrency_limit?: number }
         Returns: {
@@ -4526,6 +4600,21 @@ export type Database = {
         Args: { p_attempt_count: number; p_job_id: string }
         Returns: boolean
       }
+      enqueue_due_github_pr_refreshes: {
+        Args: { p_limit?: number; p_workspace_id?: string }
+        Returns: number
+      }
+      enqueue_github_pr_refresh_event: {
+        Args: {
+          p_base_branch?: string
+          p_delivery_id: string
+          p_github_repository_id: number
+          p_head_sha?: string
+          p_installation_id: number
+          p_pr_numbers?: number[]
+        }
+        Returns: number
+      }
       enqueue_session_job_with_run: {
         Args: {
           p_agent_model_name?: string
@@ -4542,6 +4631,10 @@ export type Database = {
           job_id: string
           run_id: string
         }[]
+      }
+      enqueue_session_pr_refresh: {
+        Args: { p_session_id: string; p_workspace_id: string }
+        Returns: boolean
       }
       ensure_own_profile: {
         Args: {
@@ -4616,6 +4709,17 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      finish_github_pr_refresh: {
+        Args: {
+          p_base_sha?: string
+          p_claim_token: string
+          p_error_code?: string
+          p_head_sha?: string
+          p_payload?: Json
+          p_session_id: string
+        }
+        Returns: boolean
       }
       finish_github_pull_request_observation: {
         Args: {

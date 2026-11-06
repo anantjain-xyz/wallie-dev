@@ -1,0 +1,212 @@
+{
+  "issue": "OP-506",
+  "observedAt": "2026-11-06T01:26:22.494Z",
+  "repository": "anantjain-xyz/wallie-dev",
+  "repositoryId": 1196742316,
+  "credential": "existing authorized GitHub CLI operator token",
+  "permissionAssumption": "Explicit read capability set for operator smoke; live API responses verify access. This is not an installation permission attestation.",
+  "scope": "Read-only existing PR collection; no settings, refs, repositories, PRs, or checks changed.",
+  "limitations": [
+    "Does not establish production App permissions, subscriptions, or webhook delivery.",
+    "No verification decision was written to production."
+  ],
+  "results": [
+    {
+      "prNumber": 592,
+      "headSha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+      "baseSha": "2d9c33d4a811a2ba79331d28bac5011b2e0049bb",
+      "state": "merged",
+      "draft": false,
+      "updatedAt": "2026-11-06T01:14:47Z",
+      "payload": {
+        "version": 1,
+        "githubAccess": "available",
+        "checks": "passed",
+        "reviews": "passed",
+        "threads": "passed",
+        "mergeability": "unknown",
+        "protection": "verified",
+        "blockers": [
+          {
+            "code": "github_mergeability_unknown"
+          }
+        ],
+        "pr": {
+          "number": 592,
+          "state": "merged",
+          "draft": false,
+          "headSha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+          "baseSha": "2d9c33d4a811a2ba79331d28bac5011b2e0049bb",
+          "updatedAt": "2026-11-06T01:14:47Z"
+        },
+        "requiredChecks": [
+          {
+            "context": "lint-and-format",
+            "appId": null,
+            "source": "ruleset"
+          },
+          {
+            "context": "test",
+            "appId": null,
+            "source": "ruleset"
+          },
+          {
+            "context": "route-budgets",
+            "appId": null,
+            "source": "ruleset"
+          }
+        ],
+        "branchRules": {
+          "minimumApprovals": 0,
+          "codeOwnersRequired": false,
+          "requireResolvedThreads": true,
+          "strictChecks": false,
+          "unsupportedRules": []
+        },
+        "checkEvidence": {
+          "selectedSha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+          "head": {
+            "sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+            "checkRuns": [
+              {
+                "id": 127642308794,
+                "name": "Vercel Preview Comments",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-11-06T01:05:11Z",
+                "app": {
+                  "id": 8329,
+                  "slug": "vercel"
+                },
+                "check_suite": {
+                  "id": 114190090149
+                }
+              },
+              {
+                "id": 127642020123,
+                "name": "cloudflare-worker",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-11-06T01:05:10Z",
+                "app": {
+                  "id": 15368,
+                  "slug": "github-actions"
+                },
+                "check_suite": {
+                  "id": 114190278158
+                }
+              },
+              {
+                "id": 127642020011,
+                "name": "database-tests",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-11-06T01:07:03Z",
+                "app": {
+                  "id": 15368,
+                  "slug": "github-actions"
+                },
+                "check_suite": {
+                  "id": 114190278158
+                }
+              },
+              {
+                "id": 127642019811,
+                "name": "route-budgets",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-11-06T01:05:28Z",
+                "app": {
+                  "id": 15368,
+                  "slug": "github-actions"
+                },
+                "check_suite": {
+                  "id": 114190278158
+                }
+              },
+              {
+                "id": 127642019690,
+                "name": "lint-and-format",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-11-06T01:06:07Z",
+                "app": {
+                  "id": 15368,
+                  "slug": "github-actions"
+                },
+                "check_suite": {
+                  "id": 114190278084
+                }
+              },
+              {
+                "id": 127642019575,
+                "name": "test",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-11-06T01:06:14Z",
+                "app": {
+                  "id": 15368,
+                  "slug": "github-actions"
+                },
+                "check_suite": {
+                  "id": 114190278158
+                }
+              },
+              {
+                "id": 127642018034,
+                "name": "Supabase Preview",
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "status": "completed",
+                "conclusion": "skipped",
+                "completed_at": "2026-11-06T01:04:26Z",
+                "app": {
+                  "id": 330661,
+                  "slug": "supabase"
+                },
+                "check_suite": {
+                  "id": 114190090678
+                }
+              }
+            ],
+            "statuses": [
+              {
+                "id": 58212719027,
+                "context": "Vercel",
+                "state": "success",
+                "updated_at": "2026-11-06T01:05:10Z"
+              }
+            ],
+            "workflows": [
+              {
+                "id": 42141312566,
+                "check_suite_id": 114190278158,
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "event": "pull_request"
+              },
+              {
+                "id": 42141312538,
+                "check_suite_id": 114190278084,
+                "head_sha": "a87f28ae74a412e295d7bbccf0a2aa972f082423",
+                "event": "pull_request"
+              }
+            ]
+          },
+          "merge": null
+        },
+        "reviewEvidence": {
+          "decision": null,
+          "currentHeadApprovals": 0,
+          "latestReviews": [],
+          "unresolvedThreads": [],
+          "mergeStateStatus": "UNKNOWN"
+        }
+      }
+    }
+  ]
+}

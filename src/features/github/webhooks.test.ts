@@ -25,6 +25,8 @@ import {
   handleGitHubInstallationEvent,
   handleGitHubInstallationRepositoriesEvent,
   handleGitHubPullRequestEvent,
+  handleGitHubVerificationEvent,
+  verifyGitHubWebhookRequest,
 } from "./webhooks";
 
 const env = {
@@ -301,6 +303,71 @@ describe("canonical PR webhook observations", () => {
     );
     await expect(handleGitHubPullRequestEvent(canonicalPayload(), env)).resolves.toBeUndefined();
     expect(rpc).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("GitHub verification refresh wake-ups", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const deliveryId = "50600000-0000-4000-8000-000000000001";
+  it("forwards only scoped identities and a stable delivery key to the service-only queue", async () => {
+    const { rpc } = buildPrAdmin();
+    const signal = {
+      installationId: 999,
+      repositoryId: 555,
+      prNumbers: [42, 43],
+      headSha: "a".repeat(40),
+    };
+    await handleGitHubVerificationEvent(signal, deliveryId, env);
+    await handleGitHubVerificationEvent(signal, deliveryId, env);
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledWith("enqueue_github_pr_refresh_event", {
+      p_installation_id: 999,
+      p_github_repository_id: 555,
+      p_delivery_id: deliveryId,
+      p_pr_numbers: [42, 43],
+      p_head_sha: "a".repeat(40),
+    });
+    expect(mocked.request).not.toHaveBeenCalled();
+  });
+  it("passes target-branch push identity without broadening it to the whole installation", async () => {
+    const { rpc } = buildPrAdmin();
+    await handleGitHubVerificationEvent(
+      { installationId: 999, repositoryId: 555, baseBranch: "release/v1" },
+      deliveryId,
+      env,
+    );
+    expect(rpc).toHaveBeenCalledWith("enqueue_github_pr_refresh_event", {
+      p_installation_id: 999,
+      p_github_repository_id: 555,
+      p_delivery_id: deliveryId,
+      p_base_branch: "release/v1",
+    });
+  });
+  it.each([
+    { repositoryId: 555, prNumbers: [42] },
+    { installationId: 999, repositoryId: 555 },
+  ])("ignores uninstalled and tag-only events %j", async (signal) => {
+    const { rpc } = buildPrAdmin();
+    await handleGitHubVerificationEvent(signal, deliveryId, env);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("propagates queue persistence failure so GitHub retries the delivery", async () => {
+    const { rpc } = buildPrAdmin();
+    rpc.mockResolvedValue({ data: null, error: new Error("database unavailable") });
+    await expect(
+      handleGitHubVerificationEvent(
+        { installationId: 999, repositoryId: 555, prNumbers: [42] },
+        deliveryId,
+        env,
+      ),
+    ).rejects.toThrow("database unavailable");
+  });
+  it("verifies exact bytes with a real HMAC rather than parsed payload data", async () => {
+    const { createHmac } = await import("node:crypto");
+    const raw = '{ "sha": "a" }';
+    const signature = `sha256=${createHmac("sha256", env.GITHUB_WEBHOOK_SECRET).update(raw).digest("hex")}`;
+    await expect(verifyGitHubWebhookRequest(raw, signature, env)).resolves.toBe(true);
+    await expect(verifyGitHubWebhookRequest('{"sha":"a"}', signature, env)).resolves.toBe(false);
   });
 });
 

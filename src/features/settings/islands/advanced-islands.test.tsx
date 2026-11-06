@@ -23,6 +23,7 @@ vi.mock("@/features/settings/verify-setup-section", () => ({
 }));
 
 const maintenanceResult: MaintenanceTickResponse = {
+  githubVerification: { checked: 0, refreshed: 0, failed: 0 },
   cleanup: {
     activeProviderSandboxCount: 0,
     reapedSandboxIds: [],
