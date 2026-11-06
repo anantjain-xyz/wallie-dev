@@ -24,10 +24,10 @@ Five untraced samples per input and condition, interleaved. All 20 pass the expe
 
 ## Two different waits
 
-| Branch                      | Observed behavior                                                                                                                                                                              | Implication                                                      |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Successful marked page data | In two local profiles, page reader EOF is 83.6/86.4 ms and initial client downloads finish by 83.7/87.2 ms. The remaining 79 ms timer fires at 163.1/165.6 ms; push follows at 170.4/171.1 ms. | The allowance delays navigation after those downloads finish.    |
-| Tree or unmarked response   | In the constrained profile, the tree timer fires at 168.6 ms and push follows at 175.5 ms. Page headers arrive at 183.1 ms; a third destination RSC request starts at 180.5 ms.                | The fallback can finish before the Full head is fulfilled. |
+| Branch                      | Observed behavior                                                                                                                                                                              | Implication                                                   |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Successful marked page data | In two local profiles, page reader EOF is 83.6/86.4 ms and initial client downloads finish by 83.7/87.2 ms. The remaining 79 ms timer fires at 163.1/165.6 ms; push follows at 170.4/171.1 ms. | The allowance delays navigation after those downloads finish. |
+| Tree or unmarked response   | In the constrained profile, the tree timer fires at 168.6 ms and push follows at 175.5 ms. Page headers arrive at 183.1 ms; a third destination RSC request starts at 180.5 ms.                | The fallback can finish before the Full head is fulfilled.    |
 
 The first profile also demonstrates a boundary case. Its tree timer fires before page EOF, but the page completes before the final frame/push, and no third request occurs. Timer expiration alone does not prove a cache miss.
 
