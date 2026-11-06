@@ -111,7 +111,7 @@ select is((select count(*) from public.session_pr_verification_results),0::bigin
 select ok((select next_attempt_at>clock_timestamp() and next_attempt_at<=clock_timestamp()+interval '301 seconds' from public.session_pr_refresh_queue),'periodic refresh is bounded to five minutes');
 select is(public.enqueue_github_pr_refresh_event((select installation_id from event_scope),(select repo_id from event_scope),'test-merge-status',null,repeat('e',40)),1,'status on selected test-merge SHA dirties canonical verification');
 create temp table merge_claim as select public.claim_github_pr_refresh() as value;
-select ok(public.finish_github_pr_refresh((select session_id from code_fixture),(select (value->>'claim_token')::uuid from merge_claim),repeat('b',40),repeat('a',40),'{"githubAccess":"available","checks":"passed"}'),'test-merge event converges via authoritative current collection');
+select ok(public.finish_github_pr_refresh((select session_id from code_fixture),(select (value->>'claim_token')::uuid from merge_claim),repeat('b',40),repeat('a',40),'{"githubAccess":"available","checks":"passed","checkEvidence":{"selectedSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge":{"sha":"ffffffffffffffffffffffffffffffffffffffff","checkRuns":[],"statuses":[]}}}'),'test-merge event converges via authoritative current collection');
 create temp table ready_observation as select observation.* from public.session_pr_epochs e
  cross join lateral public.record_pr_verification_observation(
  'b1b2c3d4-0001-4000-8000-000000000001',(select session_id from code_fixture),(select id from first_policy),
@@ -122,6 +122,9 @@ create temp table ready_result as select * from public.record_pr_verification_re
 select ok((select is_current from public.session_pr_verification_currentness where id=(select id from ready_result)),'readiness evaluated after latest GitHub observation may be current');
 select is(public.enqueue_github_pr_refresh_event((select installation_id from event_scope),(select repo_id from event_scope),'event-one',array[505]),0,'late duplicate does not dirty current state');
 select ok((select is_current from public.session_pr_verification_currentness where id=(select id from ready_result)),'ignored duplicate preserves currentness');
+select is(public.enqueue_github_pr_refresh_event((select installation_id from event_scope),(select repo_id from event_scope),'first-merge-status',null,repeat('f',40)),1,'first status on a previously empty nested merge candidate queues collection even when selected SHA was head');
+select ok(not (select is_current from public.session_pr_verification_currentness where id=(select id from ready_result)),'first merge status immediately invalidates prior current readiness');
+select is((select count(*) from public.github_pr_refresh_watermarks),0::bigint,'ordinary scoped events do not invalidate unrelated repository collections');
 select is(public.enqueue_github_pr_refresh_event((select installation_id from event_scope),(select repo_id from event_scope),'base-push',null,null,'main'),1,'base-branch push refreshes current canonical PR');
 select ok(not (select is_current from public.session_pr_verification_currentness where id=(select id from ready_result)),'dirty refresh immediately invalidates old readiness');
 create temp table error_claim as select public.claim_github_pr_refresh() as value;

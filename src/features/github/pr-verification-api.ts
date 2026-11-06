@@ -724,6 +724,13 @@ export async function collectPrVerification(input: {
       }
       // GitHub requires both a status and a check with the same required name.
       for (const status of matchingStatuses) {
+        // Commit statuses expose a creator, not the GitHub App identity that
+        // produced them. A matching check's App cannot attest a separate status,
+        // and creator IDs/logins must never be treated as App IDs.
+        if (required.appId !== null) {
+          lower("unknown");
+          add("github_required_status_source_unknown", required.context);
+        }
         if (status.state === "pending") {
           lower("checking");
           add("github_required_status_pending", required.context);

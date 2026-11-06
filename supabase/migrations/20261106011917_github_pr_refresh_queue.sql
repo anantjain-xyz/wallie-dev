@@ -27,6 +27,23 @@ grant select on public.session_pr_refresh_queue to authenticated,service_role;
 create policy session_pr_refresh_queue_read on public.session_pr_refresh_queue for select to authenticated
   using(workspace_id in (select internal.current_user_workspace_ids()));
 
+-- A fanout event may match more than one bounded enqueue batch. The durable
+-- repository revision makes every prior collection stale immediately; periodic
+-- reconciliation continues the remaining rows without another webhook delivery.
+-- Ordinary <=100-target events retain their narrow per-session generation fence.
+create table public.github_pr_refresh_watermarks (
+  repository_id uuid primary key references public.github_repositories(id) on delete cascade,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  revision bigint not null check(revision>0),
+  updated_at timestamptz not null default clock_timestamp()
+);
+create index github_pr_refresh_watermarks_workspace_idx on public.github_pr_refresh_watermarks(workspace_id);
+alter table public.github_pr_refresh_watermarks enable row level security;
+revoke all on public.github_pr_refresh_watermarks from public,anon,authenticated,service_role;
+grant select on public.github_pr_refresh_watermarks to authenticated,service_role;
+create policy github_pr_refresh_watermarks_read on public.github_pr_refresh_watermarks for select to authenticated
+  using(workspace_id in (select internal.current_user_workspace_ids()));
+
 create table internal.github_pr_refresh_deliveries (
   installation_id bigint not null,
   github_repository_id bigint not null,
@@ -50,7 +67,7 @@ returns jsonb language sql stable security invoker set search_path='' as $$
     'installation_id',installation.installation_id,'installation_suspended',installation.suspended,
     'repository_archived',repo.is_archived,'pr_epoch_id',e.id,'pr_number',e.pr_number,
     'branch_name',e.branch_name,'base_branch',e.base_branch,
-    'sync_generation',sync.target_generation)
+    'sync_generation',sync.target_generation,'github_event_revision',coalesce(watermark.revision,0))
   from public.sessions s
   join public.workspaces workspace on workspace.id=s.workspace_id and workspace.deletion_requested_at is null
   join public.delivery_policies p on p.pipeline_id=s.pipeline_id and p.workspace_id=s.workspace_id
@@ -64,6 +81,7 @@ returns jsonb language sql stable security invoker set search_path='' as $$
     and repo.repo_id=e.github_repository_id and lower(repo.full_name)=lower(e.repository_full_name)
   join public.github_installations installation on installation.id=repo.github_installation_id
     and installation.workspace_id=s.workspace_id
+  left join public.github_pr_refresh_watermarks watermark on watermark.repository_id=repo.id and watermark.workspace_id=s.workspace_id
   where s.id=p_session_id and s.archived_at is null and e.pr_number is not null
     and revision.requirements->>'deliveryMode'='code';
 $$;
@@ -95,7 +113,7 @@ grant execute on function public.enqueue_session_pr_refresh(uuid,uuid) to servic
 create function public.enqueue_github_pr_refresh_event(p_installation_id bigint,p_github_repository_id bigint,
   p_delivery_id text,p_pr_numbers integer[] default null,p_head_sha text default null,p_base_branch text default null)
 returns integer language plpgsql security definer set search_path='' as $$
-declare target record; queued integer:=0;
+declare target_session_id uuid; targets uuid[]; repository public.github_repositories; queued integer:=0;
 begin
   if p_installation_id is null or p_installation_id<=0 or p_github_repository_id is null or p_github_repository_id<=0
     or p_delivery_id is null or length(p_delivery_id) not between 1 and 200
@@ -105,27 +123,47 @@ begin
     or (p_base_branch is not null and not internal.is_git_branch_ref('refs/heads/'||p_base_branch))
     or (coalesce(cardinality(p_pr_numbers),0)=0 and p_head_sha is null and p_base_branch is null)
     then raise exception 'Invalid GitHub refresh event.' using errcode='22023'; end if;
-  -- Unknown installation/repository cannot dirty or deduplicate another tenant.
-  if not exists(select 1 from public.github_installations i join public.github_repositories r
+  -- Resolve one installed repository before deduplication or tenant work.
+  select r.* into repository from public.github_installations i join public.github_repositories r
     on r.github_installation_id=i.id and r.workspace_id=i.workspace_id
-    where i.installation_id=p_installation_id and r.repo_id=p_github_repository_id) then return 0; end if;
+    where i.installation_id=p_installation_id and r.repo_id=p_github_repository_id;
+  if not found then return 0; end if;
+  perform 1 from public.workspaces where id=repository.workspace_id and deletion_requested_at is null for share;
+  if not found then return 0; end if;
   insert into internal.github_pr_refresh_deliveries(installation_id,github_repository_id,delivery_id)
     values(p_installation_id,p_github_repository_id,p_delivery_id) on conflict do nothing;
   if not found then return 0; end if;
-  for target in select e.session_id,e.workspace_id
-    from public.github_installations i join public.github_repositories r on r.github_installation_id=i.id and r.workspace_id=i.workspace_id
-    join public.session_pr_epochs e on e.repository_id=r.id and e.workspace_id=r.workspace_id and e.github_repository_id=r.repo_id
-    join public.workspaces workspace on workspace.id=e.workspace_id and workspace.deletion_requested_at is null
+  -- Filter archives and code-policy/canonical prerequisites BEFORE the bounded
+  -- discovery. One extra eligible ID proves continuation is needed.
+  select array_agg(m.session_id order by m.session_id) into targets from (
+    select e.session_id from public.session_pr_epochs e
     join public.session_pr_sync sync on sync.session_id=e.session_id and sync.current_epoch_id=e.id
+      and sync.workspace_id=repository.workspace_id
+    join public.sessions s on s.id=e.session_id and s.workspace_id=repository.workspace_id and s.archived_at is null
+    join public.delivery_policies policy on policy.pipeline_id=s.pipeline_id and policy.workspace_id=s.workspace_id
+    join public.delivery_policy_revisions revision on revision.id=policy.current_revision_id
+      and revision.requirements->>'deliveryMode'='code'
     left join public.session_pr_refresh_queue refresh on refresh.session_id=e.session_id
     left join public.session_pr_verification_observations observation on observation.id=refresh.last_observation_id
-    where i.installation_id=p_installation_id and r.repo_id=p_github_repository_id
+    where e.repository_id=repository.id and e.workspace_id=repository.workspace_id
+      and e.github_repository_id=p_github_repository_id and e.pr_number is not null
       and (e.pr_number=any(p_pr_numbers) or e.pr_head_sha=p_head_sha or e.base_branch=p_base_branch or e.branch_name=p_base_branch
         or observation.payload->'checkEvidence'->>'selectedSha'=p_head_sha
-        or observation.payload->'merge'->>'sha'=p_head_sha)
-    order by e.session_id limit 100
-  loop
-    if public.enqueue_session_pr_refresh(target.workspace_id,target.session_id) then queued:=queued+1; end if;
+        or observation.payload->'checkEvidence'->'merge'->>'sha'=p_head_sha)
+      and internal.github_pr_refresh_context(e.session_id) is not null
+    order by e.session_id limit 101
+  ) m;
+  if coalesce(cardinality(targets),0)>100 then
+    -- Atomic with delivery dedupe and the initial batch. An unqueued current
+    -- row fails currentness immediately and remains a periodic mismatch until
+    -- enqueued. An in-flight receipt is fenced by its pinned context revision.
+    insert into public.github_pr_refresh_watermarks as watermark(repository_id,workspace_id,revision)
+      values(repository.id,repository.workspace_id,1)
+      on conflict(repository_id) do update set revision=watermark.revision+1,updated_at=clock_timestamp();
+  end if;
+  foreach target_session_id in array coalesce(targets,'{}'::uuid[]) loop
+    exit when queued>=100;
+    if public.enqueue_session_pr_refresh(repository.workspace_id,target_session_id) then queued:=queued+1; end if;
   end loop;
   return queued;
 end;
@@ -272,7 +310,8 @@ select r.*, coalesce(
       and github.policy_revision_id=o.policy_revision_id and github.pr_epoch_id=o.pr_epoch_id
       and github.checkpoint_run_id=o.checkpoint_run_id and github.artifact_review_revision=o.artifact_review_revision
       and github.created_at<=o.created_at
-      and (q.context->>'sync_generation')::bigint=sync.target_generation end,false) as is_current
+      and (q.context->>'sync_generation')::bigint=sync.target_generation
+      and coalesce((q.context->>'github_event_revision')::bigint,0)=coalesce(watermark.revision,0) end,false) as is_current
 from public.session_pr_verification_results r
 join public.session_pr_verification_observations o on o.id=r.observation_id
 join public.sessions s on s.id=r.session_id
@@ -286,4 +325,5 @@ left join public.session_git_checkpoints c on c.run_id=o.checkpoint_run_id
 left join public.github_repositories repo on repo.id=o.repository_id
 left join public.github_installations installation on installation.id=repo.github_installation_id
 left join public.session_pr_refresh_queue q on q.session_id=s.id
+left join public.github_pr_refresh_watermarks watermark on watermark.repository_id=repo.id and watermark.workspace_id=s.workspace_id
 left join public.session_pr_verification_observations github on github.id=q.last_observation_id;

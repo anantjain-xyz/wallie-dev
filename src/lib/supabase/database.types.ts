@@ -1008,6 +1008,42 @@ export type Database = {
           },
         ]
       }
+      github_pr_refresh_watermarks: {
+        Row: {
+          repository_id: string
+          revision: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          repository_id: string
+          revision: number
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          repository_id?: string
+          revision?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "github_pr_refresh_watermarks_repository_id_fkey"
+            columns: ["repository_id"]
+            isOneToOne: true
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "github_pr_refresh_watermarks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       github_repositories: {
         Row: {
           created_at: string

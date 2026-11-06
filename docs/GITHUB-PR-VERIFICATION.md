@@ -56,6 +56,11 @@ rate limiting, and identity changes produce explicit nonpassing outcomes.
 Only normalized evidence is retained; provider credentials and arbitrary
 provider error bodies are excluded.
 
+GitHub's legacy commit-status response cannot independently attest a source
+App. A same-name legacy status under an App-pinned requirement therefore
+remains unknown even when a check run from the expected App passed. A status
+creator's user ID or login is not an App identity.
+
 Collection does not require generic artifact approval and does not bypass it.
 See the independent [delivery policy contract](DELIVERY-POLICY.md).
 
@@ -67,6 +72,13 @@ current observation. Policy, review revision, checkpoint, canonical PR epoch,
 and repository identity are fenced again when a claim finishes. Dirty or failed
 entries invalidate historical verification currentness immediately.
 
+Webhook fanout queues at most 100 eligible active sessions. An event that exceeds
+that limit advances a durable invalidation watermark, conservatively making all
+prior observations for that repository stale immediately. The watermark remains
+in each claim's identity so periodic batches recover the remainder without
+requiring another delivery. Archived sessions do not consume the fanout limit.
+Events within the limit invalidate only their matching sessions.
+
 Periodic admission selects at most 20 due sessions per cycle (RPC maximum 100).
 The worker bounds each collection batch to three claims and 40 seconds. Claims
 have two-minute leases, so a worker crash does not permanently lose the refresh.
@@ -74,6 +86,13 @@ After success the next poll is half the configured freshness, bounded between
 30 and 300 seconds. Failures retry with exponential backoff between 30 and 900
 seconds. Delivery deduplication records are retained for seven days and pruned
 in bounded batches.
+
+An active workspace member can request a refresh with
+`POST /api/sessions/{sessionId}/pr-verification/refresh`. The server derives the
+repository, installation, and canonical PR from the authorized session; request
+bodies cannot select provider targets. A valid request returns 202 and queues
+collection. An archived session or missing code-policy/canonical-PR prerequisites
+returns 409. This API does not approve an artifact or write a readiness decision.
 
 ## Read-only permission smoke
 

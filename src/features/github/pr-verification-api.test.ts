@@ -270,6 +270,14 @@ it("requires a status and check with the same name to both pass", async () => {
   expect((await collect()).payload.checks).toBe("blocked");
 });
 
+it("allows successful same-name check and status when the requirement permits any source", async () => {
+  const { collect, routes } = setup();
+  routes.set(`/commits/${head}/statuses`, [
+    { id: 20, context: "ci", state: "success", updated_at: now },
+  ]);
+  expect((await collect()).payload.checks).toBe("passed");
+});
+
 it("rejects old-head check runs returned from the exact current-head endpoint", async () => {
   const { collect, routes } = setup();
   routes.set(`/commits/${head}/check-runs`, { check_runs: [check({ head_sha: "d".repeat(40) })] });
@@ -313,8 +321,53 @@ it("a successful legacy status cannot impersonate a source-pinned required App c
   routes.set(`/commits/${head}/statuses`, [
     { id: 1, context: "ci", state: "success", updated_at: now },
   ]);
-  expect((await collect()).payload.checks).toBe("checking");
+  expect((await collect()).payload).toMatchObject({
+    checks: "unknown",
+    blockers: expect.arrayContaining([
+      { code: "github_required_check_missing", requirement: "ci" },
+      { code: "github_required_status_source_unknown", requirement: "ci" },
+    ]),
+  });
 });
+
+it.each([
+  { source: "ruleset", creator: { id: 999, login: "unexpected-source" } },
+  { source: "ruleset", creator: { id: 123, login: "acme-ci[bot]" } },
+  { source: "branch_protection", creator: { id: 999, login: "unexpected-source" } },
+  { source: "branch_protection", creator: { id: 123, login: "acme-ci[bot]" } },
+])(
+  "does not let a matching App check attest a $source legacy status from $creator.login",
+  async ({ source, creator }) => {
+    const { collect, graphs, routes } = setup();
+    if (source === "ruleset") {
+      routes.set("/rules/branches/main", [
+        {
+          type: "required_status_checks",
+          parameters: {
+            strict_required_status_checks_policy: false,
+            required_status_checks: [{ context: "ci", integration_id: 123 }],
+          },
+        },
+      ]);
+    } else {
+      graphs[0].data.repository.pullRequest.baseRef.branchProtectionRule = { id: "classic-rule" };
+      routes.set("/branches/main/protection", {
+        required_status_checks: {
+          strict: false,
+          contexts: ["ci"],
+          checks: [{ context: "ci", app_id: 123 }],
+        },
+      });
+    }
+    routes.set(`/commits/${head}/statuses`, [
+      { id: 20, context: "ci", state: "success", updated_at: now, creator },
+    ]);
+    expect((await collect()).payload).toMatchObject({
+      checks: "unknown",
+      blockers: [{ code: "github_required_status_source_unknown", requirement: "ci" }],
+    });
+  },
+);
 
 it("verifies classic required-check App IDs and records unsupported repository policies", async () => {
   const { collect, graphs, routes } = setup();
