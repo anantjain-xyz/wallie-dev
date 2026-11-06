@@ -826,6 +826,94 @@ export type Database = {
           },
         ]
       }
+      delivery_policies: {
+        Row: {
+          current_revision_id: string
+          pipeline_id: string
+          revision: number
+          workspace_id: string
+        }
+        Insert: {
+          current_revision_id: string
+          pipeline_id: string
+          revision: number
+          workspace_id: string
+        }
+        Update: {
+          current_revision_id?: string
+          pipeline_id?: string
+          revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "delivery_policies_current_revision_id_fkey"
+            columns: ["current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "delivery_policy_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "delivery_policies_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: true
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "delivery_policies_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      delivery_policy_revisions: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          pipeline_id: string
+          requirements: Json
+          revision: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          pipeline_id: string
+          requirements: Json
+          revision: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          pipeline_id?: string
+          requirements?: Json
+          revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "delivery_policy_revisions_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "delivery_policy_revisions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       github_install_flows: {
         Row: {
           created_at: string
@@ -2332,6 +2420,158 @@ export type Database = {
           },
         ]
       }
+      session_pr_verification_observations: {
+        Row: {
+          artifact_review_revision: number
+          base_sha: string | null
+          checkpoint_run_id: string | null
+          created_at: string
+          head_sha: string | null
+          id: string
+          observed_at: string
+          payload: Json
+          policy_revision_id: string
+          pr_epoch_id: string | null
+          pr_number: number | null
+          repository_full_name: string | null
+          repository_id: string | null
+          session_id: string
+          source: string
+          workspace_id: string
+        }
+        Insert: {
+          artifact_review_revision: number
+          base_sha?: string | null
+          checkpoint_run_id?: string | null
+          created_at?: string
+          head_sha?: string | null
+          id?: string
+          observed_at: string
+          payload: Json
+          policy_revision_id: string
+          pr_epoch_id?: string | null
+          pr_number?: number | null
+          repository_full_name?: string | null
+          repository_id?: string | null
+          session_id: string
+          source: string
+          workspace_id: string
+        }
+        Update: {
+          artifact_review_revision?: number
+          base_sha?: string | null
+          checkpoint_run_id?: string | null
+          created_at?: string
+          head_sha?: string | null
+          id?: string
+          observed_at?: string
+          payload?: Json
+          policy_revision_id?: string
+          pr_epoch_id?: string | null
+          pr_number?: number | null
+          repository_full_name?: string | null
+          repository_id?: string | null
+          session_id?: string
+          source?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_verification_observations_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "artifact_feedback_outputs"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_observations_checkpoint_run_id_fkey"
+            columns: ["checkpoint_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_git_checkpoints"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_observations_policy_revision_id_fkey"
+            columns: ["policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "delivery_policy_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_observations_pr_epoch_id_fkey"
+            columns: ["pr_epoch_id"]
+            isOneToOne: false
+            referencedRelation: "session_pr_epochs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_observations_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_observations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_pr_verification_results: {
+        Row: {
+          blockers: Json
+          created_at: string
+          id: string
+          observation_id: string
+          session_id: string
+          state: Database["public"]["Enums"]["pr_readiness_state"]
+          workspace_id: string
+        }
+        Insert: {
+          blockers: Json
+          created_at?: string
+          id?: string
+          observation_id: string
+          session_id: string
+          state: Database["public"]["Enums"]["pr_readiness_state"]
+          workspace_id: string
+        }
+        Update: {
+          blockers?: Json
+          created_at?: string
+          id?: string
+          observation_id?: string
+          session_id?: string
+          state?: Database["public"]["Enums"]["pr_readiness_state"]
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_verification_results_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "session_pr_verification_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_results_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_results_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_pull_requests: {
         Row: {
           branch_name: string
@@ -3759,6 +3999,41 @@ export type Database = {
           },
         ]
       }
+      session_pr_verification_currentness: {
+        Row: {
+          blockers: Json | null
+          created_at: string | null
+          id: string | null
+          is_current: boolean | null
+          observation_id: string | null
+          session_id: string | null
+          state: Database["public"]["Enums"]["pr_readiness_state"] | null
+          workspace_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pr_verification_results_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "session_pr_verification_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_results_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pr_verification_results_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       accept_workspace_invitation: {
@@ -4751,6 +5026,70 @@ export type Database = {
         }
         Returns: boolean
       }
+      record_pr_verification_observation: {
+        Args: {
+          p_artifact_review_revision: number
+          p_base_sha: string
+          p_checkpoint_run_id: string
+          p_head_sha: string
+          p_observed_at: string
+          p_payload: Json
+          p_policy_revision_id: string
+          p_pr_epoch_id: string
+          p_pr_number: number
+          p_repository_full_name: string
+          p_repository_id: string
+          p_session_id: string
+          p_source: string
+          p_workspace_id: string
+        }
+        Returns: {
+          artifact_review_revision: number
+          base_sha: string | null
+          checkpoint_run_id: string | null
+          created_at: string
+          head_sha: string | null
+          id: string
+          observed_at: string
+          payload: Json
+          policy_revision_id: string
+          pr_epoch_id: string | null
+          pr_number: number | null
+          repository_full_name: string | null
+          repository_id: string | null
+          session_id: string
+          source: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_pr_verification_observations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      record_pr_verification_result: {
+        Args: {
+          p_blockers: Json
+          p_observation_id: string
+          p_state: Database["public"]["Enums"]["pr_readiness_state"]
+        }
+        Returns: {
+          blockers: Json
+          created_at: string
+          id: string
+          observation_id: string
+          session_id: string
+          state: Database["public"]["Enums"]["pr_readiness_state"]
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_pr_verification_results"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       record_session_pull_request: {
         Args: {
           source_is_draft: boolean
@@ -4845,6 +5184,30 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: Json
+      }
+      save_delivery_policy: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_pipeline_id: string
+          p_requirements: Json
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          id: string
+          pipeline_id: string
+          requirements: Json
+          revision: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "delivery_policy_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       save_workspace_repository_profile: {
         Args: {
@@ -5145,6 +5508,14 @@ export type Database = {
         | "awaiting_review"
         | "approved"
         | "rejected"
+      pr_readiness_state:
+        | "unknown"
+        | "checking"
+        | "blocked"
+        | "ready"
+        | "merged"
+        | "closed"
+        | "not_applicable"
       workspace_invitation_status: "pending" | "accepted" | "revoked"
     }
     CompositeTypes: {
@@ -5302,6 +5673,15 @@ export const Constants = {
         "awaiting_review",
         "approved",
         "rejected",
+      ],
+      pr_readiness_state: [
+        "unknown",
+        "checking",
+        "blocked",
+        "ready",
+        "merged",
+        "closed",
+        "not_applicable",
       ],
       workspace_invitation_status: ["pending", "accepted", "revoked"],
     },
