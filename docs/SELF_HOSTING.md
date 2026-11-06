@@ -148,7 +148,7 @@ This mirrors the [README → Create a GitHub App](../README.md#5-create-a-github
 - **Subscribe to events:** `Pull request`
 - **Where can this app be installed?** "Any account" if you want others to install it; "Only this account" for a private deployment.
 
-After creating it: copy the **App ID** → `GITHUB_APP_ID` and **Client ID** → `GITHUB_APP_CLIENT_ID`, generate a client secret → `GITHUB_APP_CLIENT_SECRET`, generate a private key and put its PEM contents in `GITHUB_APP_PRIVATE_KEY` (escape newlines as `\n` if you inline it), and redeploy both services so the new env vars take effect.
+After creating it: copy the **App ID** → `GITHUB_APP_ID` and **Client ID** → `GITHUB_APP_CLIENT_ID`, generate a client secret → `GITHUB_APP_CLIENT_SECRET`, generate a private key and put its PEM contents in `GITHUB_APP_PRIVATE_KEY` (PKCS#1 and PKCS#8 are both accepted; escape newlines as `\n` if you inline it), and redeploy both services so the new env vars take effect.
 
 ### GitHub ownership verification upgrade
 
