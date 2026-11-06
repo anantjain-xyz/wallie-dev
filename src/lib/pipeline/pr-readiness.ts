@@ -857,6 +857,7 @@ export type PrReadinessDetails = {
   finalStage: boolean;
   approvalGated: boolean;
   evaluation: PrReadinessEvaluation;
+  observationStale: boolean;
   pr: {
     repositoryFullName: string | null;
     repositoryUrl: string | null;
@@ -956,6 +957,7 @@ function summarizeChecks(
   detail: GitHubObservationDetailPayload | null,
   requirements: DeliveryRequirements,
   evaluation: PrReadinessEvaluation,
+  observationStale: boolean,
 ): PrReadinessCheckDetail[] {
   const raw =
     detail?.requiredChecks ??
@@ -976,11 +978,9 @@ function summarizeChecks(
       context: check.context,
       appId: check.appId,
       sources: [check.source],
-      status: checkStatusFromBlockers(
-        evaluation.blockers,
-        check.context,
-        evaluation.dimensions.checks,
-      ),
+      status: observationStale
+        ? "unknown"
+        : checkStatusFromBlockers(evaluation.blockers, check.context, evaluation.dimensions.checks),
     });
   }
   return [...byContext.values()].slice(0, 100);
@@ -996,16 +996,28 @@ export async function loadSessionPrReadinessDetails(
 ): Promise<PrReadinessDetails | null> {
   const loaded = await loadEvaluatorInput(admin, sessionId);
   if (!loaded) return null;
-  const evaluation = evaluatePrReadiness(loaded.input);
+  const evaluated = evaluatePrReadiness(loaded.input);
   const finalStage =
     loaded.policy.requirements.deliveryMode === "code" &&
     (await currentStageIsFinal(admin, sessionId));
   const requirements = loaded.policy.requirements;
-  const detail = loaded.observationDetail;
   const observation = loaded.input.github?.observation ?? null;
-  const prNumber = observation?.prNumber ?? loaded.epoch?.pr_number ?? null;
+  // The refresh queue retains the previous observation until a successor PR
+  // collection succeeds. Never present that predecessor's identity, state, or
+  // detail as the current canonical PR.
+  const observationMatchesEpoch = Boolean(
+    observation && loaded.epoch && observation.prEpochId === loaded.epoch.id,
+  );
+  const observationStale = Boolean(observation) && !observationMatchesEpoch;
+  // A predecessor's merged/closed state is not terminal for the successor PR.
+  const evaluation: PrReadinessEvaluation = observationStale
+    ? { ...evaluated, state: "unknown" }
+    : evaluated;
+  const currentObservation = observationMatchesEpoch ? observation : null;
+  const detail = observationMatchesEpoch ? loaded.observationDetail : null;
+  const prNumber = loaded.epoch?.pr_number ?? currentObservation?.prNumber ?? null;
   const repositoryFullName =
-    loaded.repository?.full_name ?? observation?.repositoryFullName ?? null;
+    loaded.repository?.full_name ?? currentObservation?.repositoryFullName ?? null;
   const pr =
     repositoryFullName || loaded.repository || loaded.epoch?.pr_url || prNumber
       ? {
@@ -1015,9 +1027,9 @@ export async function loadSessionPrReadinessDetails(
           url: safeHttpsUrl(loaded.epoch?.pr_url),
           state: detail?.pr.state ?? null,
           draft: detail?.pr.draft ?? null,
-          headSha: observation?.headSha ?? null,
-          baseSha: observation?.baseSha ?? null,
-          observedAt: observation?.observedAt ?? null,
+          headSha: currentObservation?.headSha ?? null,
+          baseSha: currentObservation?.baseSha ?? null,
+          observedAt: currentObservation?.observedAt ?? null,
         }
       : null;
   const review = detail?.reviewEvidence
@@ -1072,8 +1084,9 @@ export async function loadSessionPrReadinessDetails(
       requirements.deliveryMode === "code" &&
       requirements.requireArtifactApprovalForDelivery,
     evaluation,
+    observationStale,
     pr,
-    checks: summarizeChecks(detail, requirements, evaluation),
+    checks: summarizeChecks(detail, requirements, evaluation, observationStale),
     review,
     evidence,
     artifactBlockingCount: loaded.input.blockingFeedbackCount,
@@ -1089,7 +1102,7 @@ export async function loadSessionPrReadinessDetails(
         !loaded.repository?.is_archived &&
         Boolean(loaded.installation && !loaded.installation.suspended),
     },
-    sourceObservationId: loaded.observationRow?.id ?? null,
+    sourceObservationId: observationMatchesEpoch ? (loaded.observationRow?.id ?? null) : null,
   };
 }
 

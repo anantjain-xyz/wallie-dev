@@ -721,6 +721,47 @@ describe("review readiness details", () => {
     expect(details?.refresh).toMatchObject({ status: "current", canRefresh: true });
   });
 
+  it("withholds predecessor observation detail after the canonical PR epoch changes", async () => {
+    const admin = buildServiceAdminClient(
+      serviceTables({
+        session_pr_sync: queryableTable({
+          status: "synced",
+          current_epoch_id: "epoch-2",
+        }),
+        session_pr_epochs: queryableTable({
+          id: "epoch-2",
+          pr_number: 600,
+          pr_url: "https://github.com/acme/app/pull/600",
+          repository_id: "repo-1",
+        }),
+        session_pr_verification_observations: queryableTable({
+          ...githubObservationRow,
+          payload: {
+            ...richGithubPayload,
+            pr: { ...richGithubPayload.pr, state: "merged" },
+          } as never,
+        }),
+      }),
+      vi.fn(),
+    );
+    const details = await loadSessionPrReadinessDetails(admin as never, "sess-1");
+    expect(details?.observationStale).toBe(true);
+    expect(details?.evaluation.state).toBe("unknown");
+    expect(details?.evaluation.blockers).toContainEqual({ code: "pr_epoch_changed" });
+    expect(details?.pr).toMatchObject({
+      number: 600,
+      url: "https://github.com/acme/app/pull/600",
+      headSha: null,
+      baseSha: null,
+      observedAt: null,
+    });
+    expect(details?.checks).toEqual([
+      { context: "CI", appId: null, sources: ["policy"], status: "unknown" },
+    ]);
+    expect(details?.review).toBeNull();
+    expect(details?.sourceObservationId).toBeNull();
+  });
+
   it("labels a changed head as blocked and keeps the observed head visible", async () => {
     const admin = buildServiceAdminClient(
       serviceTables({

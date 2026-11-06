@@ -25,6 +25,7 @@ function readyDelivery() {
     policyRevisionId: "33333333-3333-4333-8333-333333333333",
     finalStage: true,
     approvalGated: true,
+    observationStale: false,
     evaluation: {
       state: "ready",
       blockers: [],

@@ -44,6 +44,7 @@ const delivery = {
   policyRevisionId: policyId,
   finalStage: true,
   approvalGated: true,
+  observationStale: false,
   evaluation: {
     state: "ready",
     blockers: [],

@@ -33,6 +33,7 @@ function delivery(overrides: Record<string, unknown> = {}) {
     policyRevisionId: policyId,
     finalStage: true,
     approvalGated: true,
+    observationStale: false,
     evaluation: {
       state: "ready",
       blockers: [],
@@ -217,6 +218,26 @@ describe("SessionReviewEvidence", () => {
     expect(opened).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("note")).toHaveTextContent("Historical view");
     window.removeEventListener(OPEN_REVIEW_COMMENTS_EVENT, opened);
+  });
+
+  it("flags a predecessor epoch without presenting its observation as current", async () => {
+    const current = delivery();
+    const stale = delivery({
+      observationStale: true,
+      pr: {
+        ...current.pr!,
+        headSha: null,
+        baseSha: null,
+        observedAt: null,
+      },
+      review: null,
+      checks: [],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ delivery: stale })));
+    renderPanel();
+    expect(await screen.findByText(/belongs to an earlier or unconfirmed PR epoch/)).toBeTruthy();
+    expect(screen.getByText("Not yet observed")).toBeTruthy();
+    expect(screen.getByText(/No GitHub review detail is recorded/)).toBeTruthy();
   });
 
   it("keeps a failed API read recoverable", async () => {

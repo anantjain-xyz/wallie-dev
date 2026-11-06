@@ -32,6 +32,7 @@ export const reviewEvidenceDeliverySchema = z.object({
   policyRevisionId: z.string().uuid(),
   finalStage: z.boolean(),
   approvalGated: z.boolean(),
+  observationStale: z.boolean(),
   evaluation: z.object({
     state: z.enum(["unknown", "checking", "blocked", "ready", "merged", "closed"]),
     blockers: z.array(blockerSchema).max(64),

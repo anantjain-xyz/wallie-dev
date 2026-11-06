@@ -389,6 +389,16 @@ export function SessionReviewEvidence({
           {historicalNote}
         </p>
       ) : null}
+      {delivery.observationStale ? (
+        <p
+          className="mt-3 rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning"
+          role="status"
+        >
+          The last GitHub observation belongs to an earlier or unconfirmed PR epoch. Current
+          canonical PR identity is shown without predecessor head, checks, or review detail. Refresh
+          verification to collect the current PR.
+        </p>
+      ) : null}
 
       {delivery.finalStage && !delivery.approvalGated ? (
         <p className="mt-3 text-xs text-muted">

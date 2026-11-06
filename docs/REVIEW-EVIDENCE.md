@@ -52,7 +52,12 @@ Refresh uses the existing
 shows queued/in-progress/error states, polls a bounded number of times while a
 request is pending, permits an explicit retry after failure, and never labels a
 merge or deployment from a refresh result. The UI does not write verification
-records or approval decisions.
+records or approval decisions. It reloads when review threads, the refresh
+queue, or stored observations change, and schedules its own re-read when the
+displayed observation reaches the configured freshness limit. A refresh-queue
+observation from a predecessor PR epoch is never merged with the current
+canonical PR: the panel shows the current epoch identity without the
+predecessor's head, checks, review, or terminal state.
 
 ## Bounds
 
