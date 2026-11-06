@@ -10,6 +10,7 @@ import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
+import { normalizeMeasuredUsage } from "./usage";
 
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
@@ -363,20 +364,9 @@ function textFromCodexContent(content: unknown): string | null {
   return text || null;
 }
 
-function parseCodexUsage(
-  usage: unknown,
-): { inputTokens: number; outputTokens: number } | undefined {
-  if (!isRecord(usage)) {
-    return undefined;
-  }
-
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") {
-    return undefined;
-  }
-
-  return { inputTokens, outputTokens };
+function parseCodexUsage(usage: unknown) {
+  if (!isRecord(usage)) return undefined;
+  return normalizeMeasuredUsage(usage.input_tokens, usage.output_tokens);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

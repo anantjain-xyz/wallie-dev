@@ -179,6 +179,40 @@ describe("ClaudeCodeRunner", () => {
     });
   });
 
+  it("preserves result usage when the CLI exits nonzero after a result", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [
+        {
+          data: `{"type":"result","subtype":"success","result":"done","usage":{"input_tokens":12,"output_tokens":8},"total_cost_usd":0.25}\n`,
+          stream: "stdout",
+        },
+        { data: "late failure\n", stream: "stderr" },
+      ],
+      { exitCode: 2 },
+    );
+
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
+    const events = [];
+    for await (const event of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toMatchObject({
+      type: "completion",
+      taskComplete: false,
+      usage: {
+        inputTokens: 12,
+        outputTokens: 8,
+        costUsd: 0.25,
+        provenance: "measured",
+        costProvenance: "measured",
+      },
+    });
+    expect(events[1]).toMatchObject({ type: "error" });
+  });
+
   it("emits an error event when the CLI exits non-zero", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [{ data: "boom\n", stream: "stderr" }], { exitCode: 2 });
@@ -220,6 +254,128 @@ describe("parseStreamJsonLine", () => {
         taskComplete: true,
         summary: "summary here",
         finalOutput: "summary here",
+      },
+    ]);
+  });
+
+  it("parses measured usage and provider-reported cost", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          result: "done",
+          usage: { input_tokens: 120, output_tokens: 30 },
+          total_cost_usd: 0.42,
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "done",
+        finalOutput: "done",
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          provenance: "measured",
+          costUsd: 0.42,
+          costProvenance: "measured",
+        },
+      },
+    ]);
+  });
+
+  it("accepts explicitly measured zero usage and cost", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 0, output_tokens: 0 },
+          total_cost_usd: 0,
+        }),
+      )[0],
+    ).toMatchObject({
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        provenance: "measured",
+        costUsd: 0,
+        costProvenance: "measured",
+      },
+    });
+  });
+
+  it.each([
+    { input_tokens: 1 },
+    { output_tokens: 1 },
+    { input_tokens: -1, output_tokens: 1 },
+    { input_tokens: 1, output_tokens: -1 },
+    { input_tokens: 1.5, output_tokens: 1 },
+    { input_tokens: Number.MAX_SAFE_INTEGER + 1, output_tokens: 1 },
+    { input_tokens: Number.NaN, output_tokens: 1 },
+    { input_tokens: 1, output_tokens: Number.POSITIVE_INFINITY },
+    { input_tokens: "1", output_tokens: 1 },
+  ])("omits malformed or partial Claude usage %j", (usage) => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({ type: "result", subtype: "success", usage, total_cost_usd: 0.1 }),
+      )[0],
+    ).toMatchObject({ type: "completion", taskComplete: true });
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({ type: "result", subtype: "success", usage, total_cost_usd: 0.1 }),
+      )[0],
+    ).not.toHaveProperty("usage");
+  });
+
+  it.each([-0.01, Number.NaN, Number.POSITIVE_INFINITY, "0.1", null])(
+    "omits invalid Claude cost %j while retaining valid usage",
+    (totalCostUsd) => {
+      const [event] = parseStreamJsonLine(
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 2, output_tokens: 3 },
+          total_cost_usd: totalCostUsd,
+        }),
+      );
+      expect(event).toMatchObject({
+        usage: { inputTokens: 2, outputTokens: 3, provenance: "measured" },
+      });
+      expect(event).not.toHaveProperty("usage.costUsd");
+      expect(event).not.toHaveProperty("usage.costProvenance");
+    },
+  );
+
+  it("preserves measured usage on an error result without marking the task complete", () => {
+    const events = parseStreamJsonLine(
+      JSON.stringify({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        result: "failed after work",
+        usage: { input_tokens: 9, output_tokens: 4 },
+        total_cost_usd: 0.07,
+      }),
+    );
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "Claude Code result was unsuccessful",
+        usage: {
+          inputTokens: 9,
+          outputTokens: 4,
+          provenance: "measured",
+          costUsd: 0.07,
+          costProvenance: "measured",
+        },
+      },
+      {
+        type: "error",
+        message: "Claude Code error_during_execution: failed after work",
       },
     ]);
   });
@@ -288,6 +444,49 @@ describe("Claude Code terminal outcomes", () => {
     expect(events.some((event) => event.type === "error")).toBe(true);
     expect(events.some((event) => event.type === "completion")).toBe(false);
     expect(runnerCalls(sandbox)[0].args[1]).toContain("'--max-turns' '5'");
+  });
+
+  it("streams unsuccessful result usage without treating it as task completion", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: JSON.stringify({
+          type: "result",
+          subtype: "error_max_turns",
+          is_error: true,
+          errors: ["Turn budget exhausted"],
+          usage: { input_tokens: 8, output_tokens: 2 },
+          total_cost_usd: 0.03,
+        }),
+      },
+    ]);
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "s",
+      prompt: "p",
+    }))
+      events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "Claude Code result was unsuccessful",
+        usage: {
+          inputTokens: 8,
+          outputTokens: 2,
+          provenance: "measured",
+          costUsd: 0.03,
+          costProvenance: "measured",
+        },
+      },
+      {
+        type: "error",
+        message: "Claude Code error_max_turns: Turn budget exhausted",
+      },
+    ]);
   });
 
   it.each([0, 1])("does not synthesize success without a result (exit %i)", async (exitCode) => {

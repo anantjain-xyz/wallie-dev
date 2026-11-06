@@ -19,7 +19,8 @@ export type WallieActionErrorCode =
   | "session_archived"
   | "session_not_runnable"
   | "run_not_found"
-  | "run_not_retryable";
+  | "run_not_retryable"
+  | "execution_budget_exhausted";
 
 export type WallieBlockingReason = {
   code: WallieBlockingCode;
@@ -57,6 +58,15 @@ export type WallieRunMessage = {
   messageMd: string;
 };
 
+export type WallieRunUsage = {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalCostUsd: number | null;
+  tokenProvenance: "measured" | "estimated" | "unavailable";
+  costProvenance: "measured" | "estimated" | "unavailable";
+  finalized: boolean;
+};
+
 export type WallieRun = {
   attemptCount: number;
   branchName: string | null;
@@ -82,6 +92,7 @@ export type WallieRun = {
   stageSlug: string | null;
   status: Enums<"agent_run_status">;
   updatedAt: string;
+  usage: WallieRunUsage;
 };
 
 export type WallieRunCursor = {

@@ -237,7 +237,7 @@ describe("CodexRunner", () => {
         type: "completion",
         taskComplete: true,
         summary: "Codex turn completed",
-        usage: { inputTokens: 10, outputTokens: 4 },
+        usage: { inputTokens: 10, outputTokens: 4, provenance: "measured" },
       },
       { type: "completion", taskComplete: true, summary: "Codex session completed" },
     ]);
@@ -648,7 +648,45 @@ describe("parseCodexLine", () => {
       type: "completion",
       taskComplete: true,
       summary: "Codex turn completed",
-      usage: { inputTokens: 15762, outputTokens: 34 },
+      usage: { inputTokens: 15762, outputTokens: 34, provenance: "measured" },
+    });
+  });
+
+  it.each(["turn.completed", "result"])("accepts measured zero usage for %s", (type) => {
+    expect(
+      parseCodexLine(JSON.stringify({ type, usage: { input_tokens: 0, output_tokens: 0 } })),
+    ).toMatchObject({
+      type: "completion",
+      usage: { inputTokens: 0, outputTokens: 0, provenance: "measured" },
+    });
+  });
+
+  it.each([
+    { input_tokens: 1 },
+    { output_tokens: 1 },
+    { input_tokens: -1, output_tokens: 1 },
+    { input_tokens: 1, output_tokens: -1 },
+    { input_tokens: 1.5, output_tokens: 1 },
+    { input_tokens: Number.MAX_SAFE_INTEGER + 1, output_tokens: 1 },
+    { input_tokens: Number.NaN, output_tokens: 1 },
+    { input_tokens: 1, output_tokens: Number.POSITIVE_INFINITY },
+    { input_tokens: "1", output_tokens: 1 },
+    { input_tokens: null, output_tokens: 1 },
+  ])("omits malformed or partial Codex usage %j", (usage) => {
+    expect(parseCodexLine(JSON.stringify({ type: "turn.completed", usage }))).toEqual({
+      type: "completion",
+      taskComplete: true,
+      summary: "Codex turn completed",
+    });
+  });
+
+  it("omits non-finite Codex usage decoded from JSON", () => {
+    expect(
+      parseCodexLine('{"type":"result","usage":{"input_tokens":1e400,"output_tokens":1}}'),
+    ).toEqual({
+      type: "completion",
+      taskComplete: true,
+      summary: "Codex run finished",
     });
   });
 

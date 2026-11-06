@@ -8,7 +8,8 @@ around that execution.
 For session and job transitions, see
 [Pipeline and worker lifecycle](PIPELINE-WORKER-LIFECYCLE.md). For provider
 resource ownership and cleanup, see
-[Sandbox provider contracts](SANDBOX-PROVIDER-CONTRACTS.md).
+[Sandbox provider contracts](SANDBOX-PROVIDER-CONTRACTS.md). For execution limits
+and usage/cost provenance, see [Execution budgets](EXECUTION-BUDGETS.md).
 
 ## Canonical owners
 
@@ -49,10 +50,11 @@ resource ownership and cleanup, see
 9. The runner creates a private per-invocation directory outside the checkout,
    writes the prompt and provider auth there with owner-only permissions, starts
    the CLI, and streams normalized, sanitized events.
-10. The processor persists events, concatenates text events into the artifact,
-    captures the source and immutable publication intent, verifies its retained
-    ref, then atomically accepts the checkpoint/artifact for review. Trusted
-    maintenance synchronizes one canonical PR separately.
+10. The processor persists events and fenced usage snapshots, concatenates text
+    events into the artifact, captures the source and immutable publication
+    intent, verifies its retained ref, then atomically accepts the
+    checkpoint/artifact for review. Trusted maintenance synchronizes one
+    canonical PR separately.
 11. The sandbox is stopped in `finally`, whether the run succeeds or fails.
 
 Every retry creates a fresh sandbox and restores the same generation's fixed input
@@ -233,7 +235,10 @@ These are current limitations, not desired contracts:
   route limits on templates and operating rules do not bound the combined prompt.
 - Artifact variables for valid hyphenated stage slugs are not recognized and
   remain verbatim in rendered prompts.
-- Continuation IDs and `maxTokens` are not supplied by the generic processor.
+- Continuation IDs are not supplied by the generic processor. It supplies the
+  remaining session ceiling as `maxTokens`, but no current CLI adapter has a
+  verified max-output-token option; attempts, elapsed time, and reactive usage
+  checks remain the enforcement path.
 
 Remove a limitation from this section only in the pull request that establishes
 and proves the replacement contract.

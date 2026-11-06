@@ -55,6 +55,14 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
     startedAt: "2026-05-20T20:01:00.000Z",
     status: "success",
     updatedAt: "2026-05-20T20:05:00.000Z",
+    usage: {
+      inputTokens: null,
+      outputTokens: null,
+      totalCostUsd: null,
+      tokenProvenance: "unavailable",
+      costProvenance: "unavailable",
+      finalized: true,
+    },
     ...overrides,
   };
 }

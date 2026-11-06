@@ -23,7 +23,7 @@ import {
   type WallieRealtimeConnectionState,
 } from "@/features/wallie/activity-summary";
 import { parseToolUseMessage, summarizeToolUse } from "@/features/wallie/run-message-body";
-import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
+import type { WallieRun, WallieRunMessage, WallieRunUsage } from "@/features/wallie/types";
 import { LiveConnectionNotice } from "./live-connection-notice";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +35,30 @@ function formatStageRunLabel(run: WallieRun) {
     .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
     .join(" ");
   return `${stage || "Session"} run`;
+}
+
+function formatUsageTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(value);
+}
+
+export function formatWallieRunUsage(usage: WallieRunUsage): string {
+  const parts: string[] = [];
+  if (usage.inputTokens !== null && usage.outputTokens !== null) {
+    parts.push(
+      `${formatUsageTokens(usage.inputTokens)} in / ${formatUsageTokens(usage.outputTokens)} out tokens (${usage.tokenProvenance})`,
+    );
+  } else if (usage.finalized) {
+    parts.push("tokens unavailable");
+  }
+  if (usage.totalCostUsd !== null) {
+    parts.push(`$${usage.totalCostUsd.toFixed(6)} cost (${usage.costProvenance})`);
+  } else if (usage.finalized) {
+    parts.push("cost unavailable");
+  }
+  if (parts.length === 0) return "Usage not reported yet";
+  return `Usage: ${parts.join(" · ")}`;
 }
 
 function formatRequestedBy(run: WallieRun) {
@@ -251,6 +275,7 @@ export const WallieRunCard = memo(function WallieRunCard({
             </div>
             {controls}
           </div>
+          <p className="mt-2 text-xs leading-5 text-muted">{formatWallieRunUsage(run.usage)}</p>
           {!isExpanded && run.isActive ? (
             <div className="mt-4 min-w-0 space-y-2 rounded-[6px] bg-control-muted p-3 sm:p-4">
               {latest?.kind === "tool_use" && working && !stalled ? (
@@ -293,6 +318,9 @@ export const WallieRunCard = memo(function WallieRunCard({
             ? compactActivityText(error.messageMd)
             : "This run failed. Expand activity for details."}
         </p>
+      ) : null}
+      {!prominent && isExpanded ? (
+        <p className="mt-2 pl-6 text-xs leading-5 text-muted">{formatWallieRunUsage(run.usage)}</p>
       ) : null}
       {isPrimary || isExpanded ? (
         <LiveConnectionNotice

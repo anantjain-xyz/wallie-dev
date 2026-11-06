@@ -102,8 +102,14 @@ export function mapAgentRunRow(
     Tables<"agent_runs">,
     | "branch_name"
     | "created_at"
+    | "cost_provenance"
     | "finished_at"
     | "id"
+    | "input_tokens"
+    | "output_tokens"
+    | "total_cost_usd"
+    | "token_provenance"
+    | "usage_finalized_at"
     | "last_activity_at"
     | "model_name"
     | "model_provider"
@@ -149,6 +155,14 @@ export function mapAgentRunRow(
     stageSlug: row.stage_slug,
     status: row.status,
     updatedAt: row.updated_at,
+    usage: {
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      totalCostUsd: row.total_cost_usd === null ? null : Number(row.total_cost_usd),
+      tokenProvenance: row.token_provenance as WallieRun["usage"]["tokenProvenance"],
+      costProvenance: row.cost_provenance as WallieRun["usage"]["costProvenance"],
+      finalized: row.usage_finalized_at !== null,
+    },
   };
 }
 
@@ -227,8 +241,14 @@ export function buildWallieSessionData(input: {
     Tables<"agent_runs">,
     | "branch_name"
     | "created_at"
+    | "cost_provenance"
     | "finished_at"
     | "id"
+    | "input_tokens"
+    | "output_tokens"
+    | "total_cost_usd"
+    | "token_provenance"
+    | "usage_finalized_at"
     | "last_activity_at"
     | "model_name"
     | "model_provider"

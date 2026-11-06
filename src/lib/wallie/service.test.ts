@@ -383,7 +383,9 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     agent_job_id: "job-1",
     attempt_count: null,
     branch_name: null,
+    cost_provenance: "unavailable",
     created_at: baseTimestamp,
+    execution_policy_revision_id: null,
     finished_at: null,
     id: "run-1",
     input_tokens: null,
@@ -405,8 +407,13 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     stage_slug: null,
     status: "queued",
     total_cost_usd: null,
+    token_provenance: "unavailable",
     triggered_by_member_id: "mem-1",
     updated_at: baseTimestamp,
+    usage_estimation_revision: null,
+    usage_recorded_at: null,
+    usage_finalized_at: null,
+    usage_unavailable_reason: null,
     workspace_id: "ws-1",
     ...overrides,
   };
@@ -445,7 +452,7 @@ function buildSupabaseMocks(opts: {
   phaseStatus?: string;
   enqueueCalls: Array<Record<string, unknown>>;
   enqueueError?: PostgrestError | null;
-  enqueueReceipt?: { created: boolean; job_id: string; run_id: string | null };
+  enqueueReceipt?: { created: boolean; job_id: string | null; run_id: string | null };
   receiptRun?: AgentRunRow | null;
   existingRun?: AgentRunRow | null;
   primaryRepositoryId?: string | null;
@@ -1101,6 +1108,28 @@ describe("enqueueSessionJobWithRun atomic receipt", () => {
       expect(result).toEqual({ created: false, jobId: "job-legacy", run: null });
     },
   );
+
+  it("maps an exhausted admission receipt to a typed 409 conflict", async () => {
+    const { admin } = buildSupabaseMocks({
+      agentConfig: [],
+      enqueueCalls: [],
+      enqueueReceipt: { created: false, job_id: null, run_id: null },
+    });
+
+    await expect(
+      enqueueSessionJobWithRun({
+        admin: admin!,
+        requestedByMemberId: "mem-1",
+        runType: "project",
+        session: { id: "sess-1", workspace_id: "ws-1", current_stage_id: "stage-product" },
+        triggerType: "manual_retry",
+      }),
+    ).rejects.toMatchObject({
+      name: "WallieActionError",
+      code: "execution_budget_exhausted",
+      statusCode: 409,
+    });
+  });
 
   it("propagates an atomic enqueue failure without compensating deletes or polling", async () => {
     const failure = {

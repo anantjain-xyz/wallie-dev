@@ -197,7 +197,7 @@ describe("OpenCodeRunner", () => {
         type: "completion",
         taskComplete: true,
         summary: "OpenCode session: native-42",
-        usage: { inputTokens: 17, outputTokens: 7 },
+        usage: { inputTokens: 17, outputTokens: 7, provenance: "measured" },
       },
     ]);
 
@@ -224,6 +224,154 @@ describe("OpenCodeRunner", () => {
       XDG_DATA_HOME: harnessPath(sandbox, "data"),
     });
     expect(JSON.stringify(call.opts)).not.toContain(credential.secret);
+  });
+
+  it("aggregates multi-step provider costs, including an explicit zero", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data:
+          `${JSON.stringify({ type: "step_finish", part: { cost: 0, tokens: { input: 0, output: 0 } } })}\n` +
+          JSON.stringify({
+            type: "step_finish",
+            part: { cost: 0.125, tokens: { input: 5, output: 2 } },
+          }),
+        stream: "stdout",
+      },
+    ]);
+
+    const events = [];
+    for await (const event of new OpenCodeRunner({ credential }).start({
+      prompt: "p",
+      sandbox,
+      sessionId: "s",
+    }))
+      events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "OpenCode session completed",
+        usage: {
+          inputTokens: 5,
+          outputTokens: 2,
+          provenance: "measured",
+          costUsd: 0.125,
+          costProvenance: "measured",
+        },
+      },
+    ]);
+  });
+
+  it("omits total cost when any usage-bearing step has missing or invalid cost", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data: [
+          { cost: 0.1, tokens: { input: 1, output: 1 } },
+          { tokens: { input: 2, output: 3 } },
+          { cost: -1, tokens: { input: 4, output: 5 } },
+        ]
+          .map((part) => JSON.stringify({ type: "step_finish", part }))
+          .join("\n"),
+        stream: "stdout",
+      },
+    ]);
+
+    const events = [];
+    for await (const event of new OpenCodeRunner({ credential }).start({
+      prompt: "p",
+      sandbox,
+      sessionId: "s",
+    }))
+      events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "OpenCode session completed",
+        usage: { inputTokens: 7, outputTokens: 9, provenance: "measured" },
+      },
+    ]);
+  });
+
+  it("makes the entire token total unavailable when any step is malformed", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data: [
+          { tokens: { input: 10, output: 4 } },
+          { tokens: { input: -1, output: 2 } },
+          { tokens: { input: 3 } },
+        ]
+          .map((part) => JSON.stringify({ type: "step_finish", part }))
+          .join("\n"),
+        stream: "stdout",
+      },
+    ]);
+
+    const events = [];
+    for await (const event of new OpenCodeRunner({ credential }).start({
+      prompt: "p",
+      sandbox,
+      sessionId: "s",
+    }))
+      events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "OpenCode session completed",
+      },
+    ]);
+  });
+
+  it("preserves valid usage before a later CLI failure without marking task completion", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [
+        {
+          data: JSON.stringify({
+            type: "step_finish",
+            part: { cost: 0.25, tokens: { input: 10, output: 4 } },
+          }),
+          stream: "stdout",
+        },
+        { data: "provider failed", stream: "stderr" },
+      ],
+      { exitCode: 7 },
+    );
+
+    const events = [];
+    for await (const event of new OpenCodeRunner({ credential }).start({
+      prompt: "p",
+      sandbox,
+      sessionId: "s",
+    }))
+      events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "OpenCode session ended unsuccessfully",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 4,
+          provenance: "measured",
+          costUsd: 0.25,
+          costProvenance: "measured",
+        },
+      },
+      {
+        type: "error",
+        message: "opencode CLI exited with code 7: provider failed",
+      },
+    ]);
   });
 
   it("writes the custom provider key into auth.json and redacts it", async () => {
@@ -398,6 +546,36 @@ describe("OpenCodeRunner", () => {
     expect(events).toEqual([{ type: "error", message: "bad [REDACTED]" }]);
   });
 
+  it("delivers failed-run usage before a deferred JSON error", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        data:
+          `${JSON.stringify({ type: "step_finish", part: { tokens: { input: 3, output: 2 } } })}\n` +
+          JSON.stringify({ type: "error", message: "provider stopped" }),
+        stream: "stdout",
+      },
+    ]);
+
+    const events = [];
+    for await (const event of new OpenCodeRunner({ credential }).start({
+      prompt: "p",
+      sandbox,
+      sessionId: "s",
+    }))
+      events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "OpenCode session ended unsuccessfully",
+        usage: { inputTokens: 3, outputTokens: 2, provenance: "measured" },
+      },
+      { type: "error", message: "provider stopped" },
+    ]);
+  });
+
   it("redacts credentials echoed in text and tool input events", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [
@@ -464,6 +642,65 @@ describe("parseOpenCodeLine", () => {
       sessionId: "s1",
     });
   });
+
+  it("parses measured per-step usage and cost without converting zero to absence", () => {
+    expect(
+      parseOpenCodeLine(
+        JSON.stringify({
+          type: "step_finish",
+          part: { cost: 0, tokens: { input: 0, output: 0 } },
+        }),
+      ),
+    ).toEqual({
+      events: [],
+      sessionId: undefined,
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        provenance: "measured",
+        costUsd: 0,
+        costProvenance: "measured",
+      },
+    });
+  });
+
+  it.each([
+    {},
+    { tokens: {} },
+    { tokens: { input: 1 } },
+    { tokens: { output: 1 } },
+    { tokens: { input: -1, output: 1 } },
+    { tokens: { input: 1, output: -1 } },
+    { tokens: { input: 1.5, output: 1 } },
+    { tokens: { input: Number.MAX_SAFE_INTEGER + 1, output: 1 } },
+    { tokens: { input: Number.NaN, output: 1 } },
+    { tokens: { input: 1, output: Number.POSITIVE_INFINITY } },
+    { tokens: { input: "1", output: 1 } },
+  ])("marks malformed or partial OpenCode token telemetry invalid: %j", (part) => {
+    expect(parseOpenCodeLine(JSON.stringify({ type: "step_finish", part }))).toEqual({
+      events: [],
+      sessionId: undefined,
+      usageInvalid: true,
+    });
+  });
+
+  it.each([-0.01, Number.NaN, Number.POSITIVE_INFINITY, "0.1", null])(
+    "omits invalid per-step cost %j without manufacturing zero",
+    (cost) => {
+      expect(
+        parseOpenCodeLine(
+          JSON.stringify({
+            type: "step_finish",
+            part: { cost, tokens: { input: 2, output: 3 } },
+          }),
+        ),
+      ).toEqual({
+        events: [],
+        sessionId: undefined,
+        usage: { inputTokens: 2, outputTokens: 3, provenance: "measured" },
+      });
+    },
+  );
 
   it("captures session ids from event parts and top-level error messages", () => {
     expect(

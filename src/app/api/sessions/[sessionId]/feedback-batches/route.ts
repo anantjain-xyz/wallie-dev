@@ -74,7 +74,7 @@ export async function GET(request: Request, { params }: RouteContext) {
           .order("thread_id")
           .limit(21),
         outputsQuery,
-        run(batch.run_id),
+        batch.run_id ? run(batch.run_id) : Promise.resolve(null),
       ]);
       for (const result of [snapshots, outputsResult]) if (result.error) throw result.error;
       if ((snapshots.data?.length ?? 0) > 20)

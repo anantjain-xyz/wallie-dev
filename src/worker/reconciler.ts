@@ -37,7 +37,7 @@ export async function reconcileLinearState(
   for (;;) {
     let query = admin
       .from("sessions")
-      .select("id, workspace_id, linear_issue_id, updated_at, phase_status")
+      .select("id, workspace_id, linear_issue_id, updated_at, phase_status, execution_exhausted_at")
       .not("linear_issue_id", "is", null)
       .is("archived_at", null)
       .in("phase_status", ["in_progress", "awaiting_review", "approved", "rejected"])
@@ -75,11 +75,14 @@ export async function reconcileLinearState(
           if (!observation || !session.linear_issue_id) continue;
           try {
             const classification = classifyLinearStatus(observation.statusName, routing.config);
-            const needsRun =
+            const repairRequired =
               classification.action === "rework" ||
-              classification.action === "land" ||
               (classification.action === "start_or_continue" &&
                 ["in_progress", "rejected"].includes(session.phase_status));
+            // Avoid submitting the same exhausted Linear repair every minute.
+            // Cancellation/completion observations still reconcile normally.
+            if (session.execution_exhausted_at && repairRequired) continue;
+            const needsRun = repairRequired || classification.action === "land";
             const run = needsRun ? await resolveQueuedRunConfig(admin, session) : null;
             const { data, error: routeError } = await admin.rpc("apply_linear_session_transition", {
               p_session_id: session.id,

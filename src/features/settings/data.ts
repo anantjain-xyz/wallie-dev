@@ -21,10 +21,14 @@ import type { SettingsCategory } from "@/features/settings/settings-categories";
 export type AgentConfigMap = WorkspaceOnboardingData["agentConfig"];
 
 export type WorkspaceUsageData = {
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCostUsd: number;
+  totalInputTokens: number | null;
+  totalOutputTokens: number | null;
+  totalCostUsd: number | null;
   totalRuns: number;
+  tokensUnavailable: boolean;
+  costUnavailable: boolean;
+  hasEstimatedTokens: boolean;
+  hasEstimatedCost: boolean;
 };
 
 type WorkspaceUsageRow = {
@@ -32,6 +36,10 @@ type WorkspaceUsageRow = {
   total_input_tokens: number | null;
   total_output_tokens: number | null;
   total_runs: number | null;
+  tokens_unavailable: boolean | null;
+  cost_unavailable: boolean | null;
+  has_estimated_tokens: boolean | null;
+  has_estimated_cost: boolean | null;
 };
 
 export type RateLimitDisplay = {
@@ -108,10 +116,14 @@ async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceI
 
 export function mapWorkspaceUsageRow(row: WorkspaceUsageRow | null): WorkspaceUsageData {
   return {
-    totalInputTokens: Number(row?.total_input_tokens ?? 0),
-    totalOutputTokens: Number(row?.total_output_tokens ?? 0),
-    totalCostUsd: Number(row?.total_cost_usd ?? 0),
+    totalInputTokens: row?.total_input_tokens == null ? null : Number(row.total_input_tokens),
+    totalOutputTokens: row?.total_output_tokens == null ? null : Number(row.total_output_tokens),
+    totalCostUsd: row?.total_cost_usd == null ? null : Number(row.total_cost_usd),
     totalRuns: Number(row?.total_runs ?? 0),
+    tokensUnavailable: row?.tokens_unavailable ?? true,
+    costUnavailable: row?.cost_unavailable ?? true,
+    hasEstimatedTokens: row?.has_estimated_tokens ?? false,
+    hasEstimatedCost: row?.has_estimated_cost ?? false,
   };
 }
 

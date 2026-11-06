@@ -79,6 +79,14 @@ slot and stops advertising the job; the stall sweeper handles a database outage.
 Late setup and iterator results check cancellation before starting or publishing
 work, while the database ownership guards protect replacement attempts.
 
+For policy-pinned sessions, the processor also applies the remaining summed
+execution-time budget. Its earlier deadline records `elapsed_execution` and does
+not queue another repair; inactivity stalls and the infrastructure attempt
+deadline remain separate controls. Linear reconciliation skips an already
+exhausted repair observation instead of submitting it every minute. Usage/cost
+exhaustion is recorded through the exact owned run before retry or publication.
+See [Execution budgets](EXECUTION-BUDGETS.md).
+
 Do not manually set a queued job to running. That bypasses row locks, workspace
 capacity, mutation locks, attempt accounting, and heartbeat ownership.
 

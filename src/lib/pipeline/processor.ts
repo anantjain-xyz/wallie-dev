@@ -28,7 +28,7 @@ import {
   pinSessionJobGitInput,
   resolveQueuedRunConfig,
 } from "@/lib/wallie/service";
-import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import type { AgentEvent, AgentRunner, AgentRunUsage } from "@/lib/agent-runner/types";
 import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
 import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
 import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
@@ -71,6 +71,12 @@ import {
   isGitContinuityReleasePause,
 } from "./git-continuity-release";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
+import {
+  ExecutionBudgetExhaustedError,
+  loadSessionExecutionBudget,
+  recordSessionRunUsage,
+  remainingTokenBudget,
+} from "./execution-budget";
 
 type AdminClient = SupabaseClient<Database>;
 type SessionRow = Tables<"sessions">;
@@ -180,7 +186,13 @@ async function runStage(input: {
   session: SessionRow;
   stage: PipelineStage;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, job, session, signal, stage } = input;
+  const { admin, job, session, stage } = input;
+  const supervisorSignal = input.signal;
+  let signal = input.signal;
+  let budgetController: AbortController | undefined;
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  let budgetExpired = false;
+  let forwardSupervisorAbort: (() => void) | undefined;
 
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
@@ -206,7 +218,7 @@ async function runStage(input: {
   const onAbort = () => {
     void stopSandbox();
   };
-  signal?.addEventListener("abort", onAbort, { once: true });
+  supervisorSignal?.addEventListener("abort", onAbort, { once: true });
   let github: {
     installationId: number;
     repo: { default_branch: string | null; full_name: string; id: string };
@@ -304,6 +316,35 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
+    const executionBudget = await loadSessionExecutionBudget(admin, session.id);
+    if (executionBudget?.exhaustionCode) {
+      throw new ExecutionBudgetExhaustedError(executionBudget.exhaustionCode);
+    }
+    if (executionBudget && executionBudget.remainingExecutionMs !== null) {
+      budgetController = new AbortController();
+      const controller = budgetController;
+      forwardSupervisorAbort = () => controller.abort(supervisorSignal?.reason);
+      if (supervisorSignal?.aborted) forwardSupervisorAbort();
+      else supervisorSignal?.addEventListener("abort", forwardSupervisorAbort, { once: true });
+      signal = controller.signal;
+      signal.addEventListener("abort", onAbort, { once: true });
+      const remainingMs = Math.max(0, executionBudget.remainingExecutionMs);
+      budgetTimer = setTimeout(() => {
+        budgetExpired = true;
+        const error = new ExecutionBudgetExhaustedError("elapsed_execution");
+        controller.abort(error);
+      }, remainingMs);
+    }
+    const executionDeadlineAt =
+      typeof executionBudget?.remainingExecutionMs === "number"
+        ? new Date(
+            Math.min(
+              input.deadlineAt ? Date.parse(input.deadlineAt) : Infinity,
+              Date.now() + executionBudget.remainingExecutionMs,
+            ),
+          ).toISOString()
+        : input.deadlineAt;
+
     // Every supported provider runs its CLI in a repository sandbox. Provision
     // it before resolving personal credentials so setup cannot retain a revoked key.
     if (runId) {
@@ -369,8 +410,8 @@ async function runStage(input: {
       implementation: sandboxSelection?.provider ?? "fake",
       connection: sandboxSelection?.connection,
       installationToken,
-      timeoutMs: input.deadlineAt
-        ? Math.max(1, Math.min(1_800_000, Date.parse(input.deadlineAt) - Date.now()))
+      timeoutMs: executionDeadlineAt
+        ? Math.max(1, Math.min(1_800_000, Date.parse(executionDeadlineAt) - Date.now()))
         : 1_800_000,
       ownerId: runId ?? undefined,
       repoFullName: github.repo.full_name,
@@ -432,7 +473,7 @@ async function runStage(input: {
     const sourceBase = gitInput.input_sha;
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
-    let usage: { inputTokens: number; outputTokens: number } | undefined;
+    let usage: AgentRunUsage | undefined;
 
     const materializedAttachments = await materializeSessionAttachments(
       admin,
@@ -506,7 +547,10 @@ async function runStage(input: {
       session,
     });
     for await (const event of runner.start({
-      maxTokens: undefined,
+      // No current CLI exposes a verified max-output-token option. The value is
+      // available to future adapters; unsupported providers remain bounded by
+      // the session's attempt and wall-time limits and reactive usage checks.
+      maxTokens: remainingTokenBudget(executionBudget),
       prompt,
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
@@ -517,6 +561,16 @@ async function runStage(input: {
       signal,
       sessionId: session.id,
     })) {
+      if (event.type === "completion" && event.usage) {
+        // Persist provider telemetry before any later failure can lose it. The
+        // fenced RPC also performs reactive token/spend exhaustion checks.
+        await recordSessionRunUsage(admin, {
+          attemptCount: job.attempt_count,
+          jobId: job.id,
+          runId,
+          usage: event.usage,
+        });
+      }
       if (event.type === "completion" && event.taskComplete && !retainSource) {
         // Protect the only source copy synchronously, before any completion
         // bookkeeping can fail or wait past the worker deadline.
@@ -560,6 +614,13 @@ async function runStage(input: {
     }
 
     throwIfAborted(signal);
+    await recordSessionRunUsage(admin, {
+      attemptCount: job.attempt_count,
+      finalize: true,
+      jobId: job.id,
+      runId,
+      usage,
+    });
     if (!taskComplete) throw new Error("Agent ended without a successful completion event.");
 
     const artifactMarkdown = finalOutput ?? collectedText.join("\n").trim();
@@ -616,7 +677,7 @@ async function runStage(input: {
         publication: {
           expectedArtifactVersion: session.current_artifact_version,
           artifactMarkdown,
-          deadlineAt: input.deadlineAt,
+          deadlineAt: executionDeadlineAt,
           usage,
         },
         repositoryId: github.repo.id,
@@ -651,7 +712,7 @@ async function runStage(input: {
       job,
       runId,
       session,
-      deadlineAt: input.deadlineAt,
+      deadlineAt: executionDeadlineAt,
       signal,
       stage,
     });
@@ -659,9 +720,17 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
   } catch (error) {
-    // The supervising worker owns timeout recovery. A late provider result must
-    // not enqueue retries or append output after its captured attempt expires.
-    if (signal?.aborted) return { jobId: job.id, processed: true, result: "idle", runId };
+    // The supervising worker owns its own timeout recovery. A session-budget
+    // deadline instead retires this exact attempt here, with no automatic repair.
+    if (signal?.aborted) {
+      if (budgetExpired && !supervisorSignal?.aborted) {
+        await failPipelineJob(admin, job, "Session elapsed execution budget exhausted.", {
+          runId,
+          retry: false,
+        });
+      }
+      return { jobId: job.id, processed: true, result: "idle", runId };
+    }
     // The durable intent owns retrying remote persistence. Starting another
     // agent here would abandon completed work and could race its adoption.
     if (error instanceof CheckpointPublicationPendingError) {
@@ -684,6 +753,7 @@ async function runStage(input: {
           !retainSource &&
           !(error instanceof MissingReviewableOutputError) &&
           !(error instanceof SourcePreservationError) &&
+          !(error instanceof ExecutionBudgetExhaustedError) &&
           !isSandboxConnectionSetupError(error),
       },
     );
@@ -692,6 +762,11 @@ async function runStage(input: {
     }
     return { jobId: job.id, processed: true, result, runId };
   } finally {
+    clearTimeout(budgetTimer);
+    if (forwardSupervisorAbort) {
+      supervisorSignal?.removeEventListener("abort", forwardSupervisorAbort);
+    }
+    supervisorSignal?.removeEventListener("abort", onAbort);
     signal?.removeEventListener("abort", onAbort);
     await stopSandbox();
   }

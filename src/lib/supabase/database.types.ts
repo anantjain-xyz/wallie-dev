@@ -17,6 +17,7 @@ export type Database = {
           finished_at: string | null
           git_continuity_release_revision: number | null
           id: string
+          is_repair: boolean
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -37,6 +38,7 @@ export type Database = {
           finished_at?: string | null
           git_continuity_release_revision?: number | null
           id?: string
+          is_repair?: boolean
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -57,6 +59,7 @@ export type Database = {
           finished_at?: string | null
           git_continuity_release_revision?: number | null
           id?: string
+          is_repair?: boolean
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -148,7 +151,9 @@ export type Database = {
           agent_job_id: string | null
           attempt_count: number | null
           branch_name: string | null
+          cost_provenance: string
           created_at: string
+          execution_policy_revision_id: string | null
           finished_at: string | null
           id: string
           input_tokens: number | null
@@ -169,16 +174,23 @@ export type Database = {
           stage_slug: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["agent_run_status"]
+          token_provenance: string
           total_cost_usd: number | null
           triggered_by_member_id: string | null
           updated_at: string
+          usage_estimation_revision: string | null
+          usage_finalized_at: string | null
+          usage_recorded_at: string | null
+          usage_unavailable_reason: string | null
           workspace_id: string
         }
         Insert: {
           agent_job_id?: string | null
           attempt_count?: number | null
           branch_name?: string | null
+          cost_provenance?: string
           created_at?: string
+          execution_policy_revision_id?: string | null
           finished_at?: string | null
           id?: string
           input_tokens?: number | null
@@ -199,16 +211,23 @@ export type Database = {
           stage_slug?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
+          token_provenance?: string
           total_cost_usd?: number | null
           triggered_by_member_id?: string | null
           updated_at?: string
+          usage_estimation_revision?: string | null
+          usage_finalized_at?: string | null
+          usage_recorded_at?: string | null
+          usage_unavailable_reason?: string | null
           workspace_id: string
         }
         Update: {
           agent_job_id?: string | null
           attempt_count?: number | null
           branch_name?: string | null
+          cost_provenance?: string
           created_at?: string
+          execution_policy_revision_id?: string | null
           finished_at?: string | null
           id?: string
           input_tokens?: number | null
@@ -229,9 +248,14 @@ export type Database = {
           stage_slug?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
+          token_provenance?: string
           total_cost_usd?: number | null
           triggered_by_member_id?: string | null
           updated_at?: string
+          usage_estimation_revision?: string | null
+          usage_finalized_at?: string | null
+          usage_recorded_at?: string | null
+          usage_unavailable_reason?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -240,6 +264,13 @@ export type Database = {
             columns: ["agent_job_id"]
             isOneToOne: false
             referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_runs_execution_policy_revision_id_fkey"
+            columns: ["execution_policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "execution_policy_revisions"
             referencedColumns: ["id"]
           },
           {
@@ -402,13 +433,13 @@ export type Database = {
           created_at: string
           id: string
           job_created: boolean
-          job_id: string
+          job_id: string | null
           rejection_count: number
           rendered_feedback_text: string
           request_id: string
           requested_by_member_id: string
           review_revision: number
-          run_id: string
+          run_id: string | null
           selected_thread_ids: string[]
           session_id: string
           stage_id: string
@@ -423,13 +454,13 @@ export type Database = {
           created_at?: string
           id?: string
           job_created: boolean
-          job_id: string
+          job_id?: string | null
           rejection_count: number
           rendered_feedback_text: string
           request_id: string
           requested_by_member_id: string
           review_revision: number
-          run_id: string
+          run_id?: string | null
           selected_thread_ids: string[]
           session_id: string
           stage_id: string
@@ -444,13 +475,13 @@ export type Database = {
           created_at?: string
           id?: string
           job_created?: boolean
-          job_id?: string
+          job_id?: string | null
           rejection_count?: number
           rendered_feedback_text?: string
           request_id?: string
           requested_by_member_id?: string
           review_revision?: number
-          run_id?: string
+          run_id?: string | null
           selected_thread_ids?: string[]
           session_id?: string
           stage_id?: string
@@ -907,6 +938,74 @@ export type Database = {
           },
           {
             foreignKeyName: "delivery_policy_revisions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      execution_policies: {
+        Row: {
+          current_revision_id: string
+          revision: number
+          workspace_id: string
+        }
+        Insert: {
+          current_revision_id: string
+          revision: number
+          workspace_id: string
+        }
+        Update: {
+          current_revision_id?: string
+          revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "execution_policies_current_revision_id_fkey"
+            columns: ["current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "execution_policy_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "execution_policies_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      execution_policy_revisions: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          requirements: Json
+          revision: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          requirements: Json
+          revision: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          requirements?: Json
+          revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "execution_policy_revisions_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -3061,6 +3160,11 @@ export type Database = {
           current_artifact_id: string | null
           current_artifact_version: number
           current_stage_id: string
+          execution_exhausted_at: string | null
+          execution_exhaustion_code: string | null
+          execution_exhaustion_detail: Json | null
+          execution_policy_revision_id: string | null
+          execution_repair_attempts: number
           github_repository_id: string | null
           id: string
           linear_issue_id: string | null
@@ -3084,6 +3188,11 @@ export type Database = {
           current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id: string
+          execution_exhausted_at?: string | null
+          execution_exhaustion_code?: string | null
+          execution_exhaustion_detail?: Json | null
+          execution_policy_revision_id?: string | null
+          execution_repair_attempts?: number
           github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
@@ -3107,6 +3216,11 @@ export type Database = {
           current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id?: string
+          execution_exhausted_at?: string | null
+          execution_exhaustion_code?: string | null
+          execution_exhaustion_detail?: Json | null
+          execution_policy_revision_id?: string | null
+          execution_repair_attempts?: number
           github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
@@ -3142,6 +3256,13 @@ export type Database = {
             columns: ["current_stage_id"]
             isOneToOne: false
             referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_execution_policy_revision_id_fkey"
+            columns: ["execution_policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "execution_policy_revisions"
             referencedColumns: ["id"]
           },
           {
@@ -4514,6 +4635,7 @@ export type Database = {
           finished_at: string | null
           git_continuity_release_revision: number | null
           id: string
+          is_repair: boolean
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -4975,6 +5097,24 @@ export type Database = {
         Args: { target_session_number: number; target_workspace_slug: string }
         Returns: Json
       }
+      get_session_execution_budget: {
+        Args: { p_session_id: string }
+        Returns: {
+          cost_unavailable: boolean
+          elapsed_ms: number
+          exhaustion_code: string
+          max_cost_usd: number
+          max_execution_ms: number
+          max_repair_attempts: number
+          max_total_tokens: number
+          policy_revision: number
+          remaining_execution_ms: number
+          repair_attempts_used: number
+          tokens_unavailable: boolean
+          total_cost_usd: number
+          total_tokens: number
+        }[]
+      }
       get_session_git_continuity_state: {
         Args: { p_session_id: string }
         Returns: {
@@ -5010,6 +5150,10 @@ export type Database = {
       get_workspace_usage: {
         Args: { target_workspace_id: string }
         Returns: {
+          cost_unavailable: boolean
+          has_estimated_cost: boolean
+          has_estimated_tokens: boolean
+          tokens_unavailable: boolean
           total_cost_usd: number
           total_input_tokens: number
           total_output_tokens: number
@@ -5402,6 +5546,24 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      record_session_run_usage: {
+        Args: {
+          p_attempt_count: number
+          p_cost_provenance?: string
+          p_cost_usd?: number
+          p_estimation_revision?: string
+          p_finalize?: boolean
+          p_input_tokens?: number
+          p_job_id: string
+          p_output_tokens?: number
+          p_run_id: string
+          p_token_provenance?: string
+        }
+        Returns: {
+          accepted: boolean
+          exhaustion_code: string
+        }[]
+      }
       record_session_validation_evidence: {
         Args: {
           p_assets?: Json
@@ -5512,6 +5674,28 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "delivery_policy_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_execution_policy: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_requirements: Json
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          id: string
+          requirements: Json
+          revision: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "execution_policy_revisions"
           isOneToOne: true
           isSetofReturn: false
         }

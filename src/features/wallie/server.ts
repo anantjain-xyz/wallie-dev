@@ -32,8 +32,14 @@ function toBuildableRunRow(row: AgentRunRow, attemptCount: number) {
     attemptCount,
     branch_name: row.branch_name,
     created_at: row.created_at,
+    cost_provenance: row.cost_provenance,
     finished_at: row.finished_at,
     id: row.id,
+    input_tokens: row.input_tokens,
+    output_tokens: row.output_tokens,
+    total_cost_usd: row.total_cost_usd,
+    token_provenance: row.token_provenance,
+    usage_finalized_at: row.usage_finalized_at,
     last_activity_at: row.last_activity_at,
     model_name: row.model_name,
     model_provider: row.model_provider,
@@ -196,8 +202,14 @@ export async function loadWallieSessionData(input: {
       attemptCount: run.attemptCount,
       branch_name: run.branchName,
       created_at: run.createdAt,
+      cost_provenance: run.usage.costProvenance,
       finished_at: run.finishedAt,
       id: run.id,
+      input_tokens: run.usage.inputTokens,
+      output_tokens: run.usage.outputTokens,
+      total_cost_usd: run.usage.totalCostUsd,
+      token_provenance: run.usage.tokenProvenance,
+      usage_finalized_at: run.usage.finalized ? (run.finishedAt ?? run.updatedAt) : null,
       last_activity_at: run.lastActivityAt,
       model_name: run.modelName,
       model_provider: run.modelProvider,
@@ -303,15 +315,21 @@ async function loadWallieStallTimeoutMs(
 // Authenticated users can SELECT agent_runs. Do not join agent_jobs — that
 // table is service-role only and would fail the entire activity load under RLS.
 const runSelect =
-  "id, branch_name, created_at, finished_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at";
+  "id, branch_name, created_at, cost_provenance, finished_at, input_tokens, output_tokens, total_cost_usd, token_provenance, usage_finalized_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at";
 const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";
 
 type AgentRunRow = Pick<
   Tables<"agent_runs">,
   | "branch_name"
   | "created_at"
+  | "cost_provenance"
   | "finished_at"
   | "id"
+  | "input_tokens"
+  | "output_tokens"
+  | "total_cost_usd"
+  | "token_provenance"
+  | "usage_finalized_at"
   | "last_activity_at"
   | "model_name"
   | "model_provider"

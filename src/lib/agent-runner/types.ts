@@ -23,6 +23,16 @@ export interface AgentEventToolUse {
   input: string;
 }
 
+export interface AgentRunUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Defaults to measured. */
+  provenance?: "measured" | "estimated";
+  costUsd?: number;
+  costProvenance?: "measured" | "estimated";
+  estimationRevision?: string;
+}
+
 export interface AgentEventCompletion {
   type: "completion";
   /** Whether the agent signalled it finished its task (vs. hitting turn limit). */
@@ -30,11 +40,8 @@ export interface AgentEventCompletion {
   summary: string;
   /** Explicit final deliverable, distinct from progress and bookkeeping summaries. */
   finalOutput?: string;
-  /** Token usage reported by the agent, if available. */
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-  };
+  /** Token usage and provider-reported cost, if available. */
+  usage?: AgentRunUsage;
 }
 
 export interface AgentEventError {

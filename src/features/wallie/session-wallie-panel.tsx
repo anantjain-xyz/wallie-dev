@@ -667,7 +667,7 @@ function SessionWalliePanelContent({
         const { data: row, error } = await supabase
           .from("agent_runs")
           .select(
-            "id, branch_name, created_at, finished_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, started_at, stage_id, stage_name, stage_slug, status, triggered_by_member_id, updated_at, attempt_count",
+            "id, branch_name, created_at, cost_provenance, finished_at, input_tokens, output_tokens, total_cost_usd, token_provenance, usage_finalized_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, started_at, stage_id, stage_name, stage_slug, status, triggered_by_member_id, updated_at, attempt_count",
           )
           .eq("id", id)
           .eq("workspace_id", session.workspaceId)

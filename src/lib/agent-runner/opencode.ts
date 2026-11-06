@@ -2,9 +2,10 @@ import { OPENCODE_ZEN_PROVIDER_ID, parseOpenCodeModelId } from "@/lib/agent-conf
 import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
-import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
+import { normalizeMeasuredUsage } from "./usage";
 
 export type OpenCodeRunnerAuth = {
   /** User-supplied OpenCode Zen API key, if connected. */
@@ -23,10 +24,9 @@ export interface OpenCodeRunnerOptions extends OpenCodeRunnerAuth {
 export type ParsedOpenCodeLine = {
   events: AgentEvent[];
   sessionId?: string;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-  };
+  usage?: AgentRunUsage;
+  /** A malformed step invalidates the whole run's usage, rather than a partial total. */
+  usageInvalid?: boolean;
 };
 
 /**
@@ -115,19 +115,26 @@ export class OpenCodeRunner implements AgentRunner {
     let stderrBuf = "";
     let lastSessionId: string | undefined;
     let hadError = false;
+    const deferredErrors: Extract<AgentEvent, { type: "error" }>[] = [];
     const usage = { inputTokens: 0, outputTokens: 0 };
+    let costUsd = 0;
     let hasUsage = false;
+    let usageInvalid = false;
+    let hasCompleteCost = true;
 
     const handleLine = (line: string): AgentEvent[] => {
       const parsed = parseOpenCodeLine(line, secrets);
       if (!parsed) return [];
       if (parsed.sessionId) lastSessionId = parsed.sessionId;
+      if (parsed.usageInvalid) usageInvalid = true;
       if (parsed.usage) {
         usage.inputTokens += parsed.usage.inputTokens;
         usage.outputTokens += parsed.usage.outputTokens;
         hasUsage = true;
+        if (parsed.usage.costUsd === undefined) hasCompleteCost = false;
+        else costUsd += parsed.usage.costUsd;
       }
-      return parsed.events.map((event) => {
+      const events = parsed.events.map((event) => {
         if (event.type === "error") {
           hadError = true;
           return {
@@ -155,6 +162,11 @@ export class OpenCodeRunner implements AgentRunner {
         }
         return event;
       });
+      return events.filter((event) => {
+        if (event.type !== "error") return true;
+        deferredErrors.push(event);
+        return false;
+      });
     };
 
     for await (const log of proc.logs()) {
@@ -176,7 +188,24 @@ export class OpenCodeRunner implements AgentRunner {
     }
 
     const code = await proc.exitCode;
+    const finalUsage =
+      hasUsage && !usageInvalid
+        ? normalizeMeasuredUsage(
+            usage.inputTokens,
+            usage.outputTokens,
+            hasCompleteCost ? costUsd : undefined,
+          )
+        : undefined;
     if (code !== 0) {
+      if (finalUsage) {
+        yield {
+          type: "completion",
+          taskComplete: false,
+          summary: "OpenCode session ended unsuccessfully",
+          usage: finalUsage,
+        };
+      }
+      yield* deferredErrors;
       yield {
         type: "error",
         message: redactSecrets(
@@ -187,13 +216,24 @@ export class OpenCodeRunner implements AgentRunner {
       return;
     }
 
-    if (hadError) return;
+    if (hadError) {
+      if (finalUsage) {
+        yield {
+          type: "completion",
+          taskComplete: false,
+          summary: "OpenCode session ended unsuccessfully",
+          usage: finalUsage,
+        };
+      }
+      yield* deferredErrors;
+      return;
+    }
 
     yield {
       type: "completion",
       taskComplete: true,
       summary: lastSessionId ? `OpenCode session: ${lastSessionId}` : "OpenCode session completed",
-      ...(hasUsage ? { usage } : {}),
+      ...(finalUsage ? { usage: finalUsage } : {}),
     };
   }
 }
@@ -270,15 +310,11 @@ export function parseOpenCodeLine(
   if (type === "step_finish") {
     const tokensPart = part ?? value;
     const tokens = isRecord(tokensPart.tokens) ? tokensPart.tokens : null;
-    if (!tokens) return { events: [], sessionId };
-    return {
-      events: [],
-      sessionId,
-      usage: {
-        inputTokens: finiteNumber(tokens.input),
-        outputTokens: finiteNumber(tokens.output),
-      },
-    };
+    const usage = tokens
+      ? normalizeMeasuredUsage(tokens.input, tokens.output, tokensPart.cost)
+      : undefined;
+    if (!usage) return { events: [], sessionId, usageInvalid: true };
+    return { events: [], sessionId, usage };
   }
 
   if (type === "error") {
@@ -339,10 +375,6 @@ function openCodeErrorMessage(error: unknown): string {
     return JSON.stringify(error);
   }
   return "OpenCode session failed.";
-}
-
-function finiteNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function serializeToolInput(input: unknown, secrets: Array<string | undefined>): string {
