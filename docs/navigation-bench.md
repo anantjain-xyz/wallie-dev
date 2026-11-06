@@ -78,9 +78,11 @@ Script transfers include background requests that start before readiness, even w
 
 ## Inspect required client JavaScript
 
-After `pnpm build`, run `pnpm analyze:authenticated-bundle`. Its `initialRouteJavaScript` output reports deduplicated client-entry chunks in raw and gzip bytes. Next's separate runtime chunks are excluded. The check rejects an eager create-session form on Pipeline, Sessions, or Settings, and an eager Supabase SDK on Pipeline.
+After `pnpm build`, run `pnpm analyze:authenticated-bundle`. Its `initialRouteJavaScript` output reports deduplicated client-entry chunks in raw and gzip bytes. Next's separate runtime chunks are excluded. The check rejects an eager create-session form on Pipeline, Sessions, Settings, or session detail, and an eager Supabase SDK on Pipeline or session detail.
 
 The board starts the realtime SDK after hydration. A delayed or failed SDK load still uses the existing subscription recovery and snapshot reconciliation. Run `pnpm exec playwright test e2e/pipeline-first-load.spec.ts` against the production build and local Supabase to verify that Pipeline filters work while the SDK request is blocked.
+
+Session detail also loads the SDK asynchronously for detail, activity, and approval subscriptions. Run `pnpm exec playwright test e2e/session-sdk-deferral.spec.ts` with the benchmark seed to verify review controls and activity while the SDK is blocked, authenticated recovery after release, and cleanup during navigation. The authoritative HTTP approval check still runs immediately.
 
 ## Volume
 

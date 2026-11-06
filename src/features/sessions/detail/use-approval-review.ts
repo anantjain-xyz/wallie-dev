@@ -1,14 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  loadSupabaseBrowserClient,
+  subscribeDeferredAuthenticatedChannel,
+} from "@/lib/supabase/deferred-browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
+import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
 
 export type ApprovalReview = { reviewRevision: number; blockingCount: number };
 
 /** Approval is disabled until the reviewer sees an authoritative, bounded summary. */
 export function useApprovalReview(sessionId: string | undefined, artifactId: string | undefined) {
   const config = useSupabasePublicConfig();
+  const { recovery } = useRealtimeRecovery();
   const [state, setState] = useState<{
     key: string;
     value: ApprovalReview | null;
@@ -56,26 +61,32 @@ export function useApprovalReview(sessionId: string | undefined, artifactId: str
   }, [invalidate, refresh]);
   useEffect(() => {
     if (!config || !sessionId || !artifactId) return;
-    const supabase = createSupabaseBrowserClient(config);
-    const channel = supabase
-      .channel(`approval-review:${sessionId}:${artifactId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "artifact_review_threads",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        () => void refresh(),
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") void refresh();
-      });
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [artifactId, config, refresh, sessionId]);
+    return recovery.register({
+      key: `approval-review:${sessionId}:${artifactId}`,
+      role: "session",
+      required: false,
+      refresh: () => refresh(),
+      subscribe: (onStatus, isCurrent) =>
+        subscribeDeferredAuthenticatedChannel(
+          () => loadSupabaseBrowserClient(config),
+          (supabase) =>
+            supabase.channel(`approval-review:${sessionId}:${artifactId}`).on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "artifact_review_threads",
+                filter: `session_id=eq.${sessionId}`,
+              },
+              () => {
+                if (isCurrent()) void refresh();
+              },
+            ),
+          onStatus,
+          isCurrent,
+        ),
+    });
+  }, [artifactId, config, recovery, refresh, sessionId]);
   return {
     value: state?.key === key ? state.value : null,
     error: state?.key === key ? state.error : null,

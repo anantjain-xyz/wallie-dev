@@ -23,6 +23,7 @@ import type { ToastInput } from "@/components/ui/toast";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 vi.mock("@/features/sessions/detail/use-approval-review", () => ({
   useApprovalReview: () => ({
@@ -79,7 +80,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
-  createSupabaseBrowserClient: () => ({
+  createSupabaseBrowserClient: vi.fn(() => ({
     rpc: mocked.rpc,
     channel: (name: string) => ({
       on: function on(
@@ -96,7 +97,7 @@ vi.mock("@/lib/supabase/browser", () => ({
       },
     }),
     removeChannel: vi.fn(),
-  }),
+  })),
 }));
 
 vi.mock("@/features/wallie/session-wallie-panel", () => ({
@@ -175,11 +176,18 @@ afterEach(() => {
   mocked.refresh.mockReset();
   mocked.pushToast.mockReset();
   mocked.rpc.mockReset();
+  vi.mocked(createSupabaseBrowserClient).mockClear();
   mocked.statuses.clear();
   mocked.handlers.clear();
 });
 
 describe("SessionDetailPageClient", () => {
+  it("renders the initial review without creating a browser client", () => {
+    const markup = renderDetail();
+    expect(markup).toContain("Product artifact");
+    expect(createSupabaseBrowserClient).not.toHaveBeenCalled();
+  });
+
   it("allows run-level cancellation for rejected reruns but suppresses it when archived", () => {
     function CancellationProbe() {
       const presentation = useSessionActivityPresentation();
@@ -782,6 +790,7 @@ describe("SessionDetailPageClient", () => {
         initialFormattedArtifactKey: null,
       });
     const view = render(element(data));
+    await waitFor(() => expect(mocked.handlers.has("session_pull_requests")).toBe(true));
     fireEvent.click(view.getByText("Refresh test"));
     act(() =>
       mocked.handlers.get("session_pull_requests")!({
@@ -1167,6 +1176,9 @@ it("discovers an artifact completed during a subscription outage without a route
       initialFormattedArtifactKey: null,
     }),
   );
+  await waitFor(() =>
+    expect(mocked.statuses.has(`session-detail:${initial.session.id}`)).toBe(true),
+  );
   act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
   await waitFor(() => expect(screen.getByText("Artifact saved while offline")).toBeTruthy());
   expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
@@ -1207,6 +1219,9 @@ it.each([null, { access: { hasAnyWorkspace: false } }, { access: { hasAnyWorkspa
         initialFormattedArtifactKey: null,
       }),
     );
+    await waitFor(() =>
+      expect(mocked.statuses.has(`session-detail:${initial.session.id}`)).toBe(true),
+    );
     act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
     await waitFor(() => expect(mocked.router.replace).toHaveBeenCalledWith("/w/acme/sessions"));
     view.unmount();
@@ -1245,6 +1260,8 @@ it("waits for matching stage data before enabling recovered approval permissions
       initialFormattedArtifactKey: null,
     }),
   );
+  await act(async () => {});
+  expect(mocked.statuses.has(`session-detail:${initial.session.id}`)).toBe(true);
   act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
   await act(async () => vi.advanceTimersByTimeAsync(200));
   expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();

@@ -9,11 +9,16 @@ const baseline = {
   gzipBytes: 112_346,
   rawBytes: 421_463,
 };
-const routes = ["pipeline", "sessions", "settings"];
+const routes = ["pipeline", "sessions", "settings", "sessionDetail"];
 // "pipeline" resolves to the canonical dashboard route group `(pipeline)` at the
 // workspace root, not the legacy `pipeline/` redirect page — the redirect page's
 // manifest would trivially omit the dialog and miss eager imports in PipelinePageClient.
-const routeSegments = { pipeline: "(pipeline)", sessions: "sessions", settings: "settings" };
+const routeSegments = {
+  pipeline: "(pipeline)",
+  sessions: "sessions",
+  settings: "settings",
+  sessionDetail: "sessions/[sessionNumber]",
+};
 const commonLayoutEntry = "[project]/src/app/w/[workspaceSlug]/(app)/layout";
 
 function readManifest(route) {
@@ -97,8 +102,10 @@ for (const route of routes) {
   initialRouteChunks[route] = chunks;
 }
 
-if (initialRouteChunks.pipeline.some((chunk) => chunkContents(chunk).includes("GoTrueClient"))) {
-  throw new Error("Supabase is still present in the initial Pipeline chunks.");
+for (const route of ["pipeline", "sessionDetail"]) {
+  if (initialRouteChunks[route].some((chunk) => chunkContents(chunk).includes("GoTrueClient"))) {
+    throw new Error(`Supabase is still present in the initial ${route} chunks.`);
+  }
 }
 
 const after = totalChunkSize(commonChunks);
@@ -127,6 +134,7 @@ console.log(
         ]),
       ),
       pipelineRealtime: { absentFromInitialRoute: true },
+      sessionDetailRealtime: { absentFromInitialRoute: true },
     },
     null,
     2,
