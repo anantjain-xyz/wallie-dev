@@ -27,6 +27,7 @@ import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
+import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 
 export interface Env {
   [key: string]: unknown;
@@ -277,6 +278,13 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["checkpoint publication", () => drainCheckpointPublications(admin)],
       ["canonical PR", () => drainCanonicalPullRequests(admin)],
       ["GitHub PR verification", () => reconcileGitHubPrVerification(admin)],
+      [
+        "PR readiness",
+        async () => {
+          const result = await reconcilePrReadiness(admin);
+          console.log("[cloudflare-maintenance] PR readiness", result);
+        },
+      ],
       ["stall recovery", () => sweepStalledRuns(admin, 900_000)],
       ["source delivery", () => drainSourceDeliveries(admin)],
       ["checkpoint cleanup", () => drainCheckpointCleanup(admin)],
