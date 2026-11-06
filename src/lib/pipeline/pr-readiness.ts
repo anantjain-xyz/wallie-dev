@@ -413,6 +413,13 @@ type SessionPolicyRow = {
   requirements: DeliveryRequirements;
 };
 
+export type PrReadinessArtifactBlockingTarget = {
+  threadId: string;
+  artifactId: string;
+  artifactVersion: number;
+  stageSlug: string;
+};
+
 type LoadedPrReadinessInput = {
   policy: SessionPolicyRow;
   input: PrReadinessEvaluatorInput;
@@ -458,6 +465,7 @@ type LoadedPrReadinessInput = {
     size_bytes: number;
   }>;
   accessibleAssetKeys: ReadonlySet<string>;
+  artifactBlockingTarget: PrReadinessArtifactBlockingTarget | null;
 };
 
 async function loadSessionPolicy(
@@ -529,10 +537,14 @@ async function loadEvaluatorInput(
       .maybeSingle(),
     admin
       .from("artifact_review_threads")
-      .select("id", { count: "exact", head: true })
+      .select("id, artifact_id, artifact_version, stage_slug", { count: "exact" })
+      .eq("workspace_id", policy.workspace_id)
       .eq("session_id", sessionId)
       .eq("kind", "blocking")
-      .eq("status", "open"),
+      .eq("status", "open")
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(1),
   ]);
   if (syncResult.error || headResult.error || queueResult.error || blockingResult.error)
     throw new Error("PR delivery state is unavailable.");
@@ -728,6 +740,14 @@ async function loadEvaluatorInput(
       : null,
     evidenceAssets,
     accessibleAssetKeys,
+    artifactBlockingTarget: blockingResult.data?.[0]
+      ? {
+          threadId: blockingResult.data[0].id,
+          artifactId: blockingResult.data[0].artifact_id,
+          artifactVersion: blockingResult.data[0].artifact_version,
+          stageSlug: blockingResult.data[0].stage_slug,
+        }
+      : null,
   };
 }
 
@@ -893,6 +913,7 @@ export type PrReadinessDetails = {
     assets: PrReadinessEvidenceAssetDetail[];
   } | null;
   artifactBlockingCount: number;
+  artifactBlockingTarget: PrReadinessArtifactBlockingTarget | null;
   refresh: {
     status: "current" | "pending" | "claimed" | "error" | null;
     lastErrorCode: string | null;
@@ -1090,6 +1111,7 @@ export async function loadSessionPrReadinessDetails(
     review,
     evidence,
     artifactBlockingCount: loaded.input.blockingFeedbackCount,
+    artifactBlockingTarget: loaded.artifactBlockingTarget,
     refresh: {
       status: (loaded.refreshQueue?.status ?? null) as PrReadinessDetails["refresh"]["status"],
       lastErrorCode: loaded.refreshQueue?.last_error_code ?? null,

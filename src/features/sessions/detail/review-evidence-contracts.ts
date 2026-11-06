@@ -123,6 +123,15 @@ export const reviewEvidenceDeliverySchema = z.object({
     })
     .nullable(),
   artifactBlockingCount: z.number().int().nonnegative(),
+  artifactBlockingTarget: z
+    .object({
+      threadId: z.string().uuid(),
+      artifactId: z.string().uuid(),
+      artifactVersion: z.number().int().positive(),
+      stageSlug: z.string().min(1).max(200),
+    })
+    .nullable()
+    .default(null),
   refresh: z.object({
     status: z.enum(["current", "pending", "claimed", "error"]).nullable(),
     lastErrorCode: z.string().max(100).nullable(),

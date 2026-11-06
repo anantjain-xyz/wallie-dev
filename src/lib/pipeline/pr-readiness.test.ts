@@ -459,16 +459,15 @@ function queryableTable(row: unknown) {
   };
 }
 
-function countableTable(count: number) {
-  return {
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          eq: async () => ({ count, error: null }),
-        }),
-      }),
-    }),
+function countableTable(count: number, rows: unknown[] = []) {
+  const builder = {
+    eq: vi.fn(),
+    order: vi.fn(),
+    limit: vi.fn(async () => ({ data: rows, count, error: null })),
   };
+  builder.eq.mockReturnValue(builder);
+  builder.order.mockReturnValue(builder);
+  return { select: vi.fn(() => builder) };
 }
 
 const policyRevisionRow = {
@@ -719,7 +718,53 @@ describe("review readiness details", () => {
       downloadUrl: "/api/sessions/sess-1/validation-evidence/assets/asset-1",
     });
     expect(details?.refresh).toMatchObject({ status: "current", canRefresh: true });
+    expect(details?.artifactBlockingCount).toBe(0);
+    expect(details?.artifactBlockingTarget).toBeNull();
   });
+
+  it.each(["plan", "deleted-stage"])(
+    "targets session-wide blocking feedback on a historical %s artifact",
+    async (stageSlug) => {
+      const threads = countableTable(3, [
+        {
+          id: "thread-old",
+          artifact_id: "artifact-old",
+          artifact_version: 1,
+          stage_slug: stageSlug,
+        },
+      ]);
+      const admin = buildServiceAdminClient(
+        serviceTables({ artifact_review_threads: threads }),
+        vi.fn(),
+      );
+      const details = await loadSessionPrReadinessDetails(admin as never, "sess-1");
+      expect(details?.artifactBlockingCount).toBe(3);
+      expect(details?.artifactBlockingTarget).toEqual({
+        threadId: "thread-old",
+        artifactId: "artifact-old",
+        artifactVersion: 1,
+        stageSlug,
+      });
+      expect(details?.evaluation.blockers).toContainEqual({
+        code: "artifact_blocking_feedback_open",
+      });
+      expect(threads.select).toHaveBeenCalledWith("id, artifact_id, artifact_version, stage_slug", {
+        count: "exact",
+      });
+      const query = threads.select.mock.results[0]!.value;
+      expect(query.eq.mock.calls).toEqual([
+        ["workspace_id", "ws-1"],
+        ["session_id", "sess-1"],
+        ["kind", "blocking"],
+        ["status", "open"],
+      ]);
+      expect(query.order.mock.calls).toEqual([
+        ["created_at", { ascending: true }],
+        ["id", { ascending: true }],
+      ]);
+      expect(query.limit).toHaveBeenCalledWith(1);
+    },
+  );
 
   it("withholds predecessor observation detail after the canonical PR epoch changes", async () => {
     const admin = buildServiceAdminClient(

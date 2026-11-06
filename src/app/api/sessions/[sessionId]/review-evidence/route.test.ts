@@ -122,6 +122,7 @@ const delivery = {
     ],
   },
   artifactBlockingCount: 0,
+  artifactBlockingTarget: null,
   refresh: {
     status: "current",
     lastErrorCode: null,

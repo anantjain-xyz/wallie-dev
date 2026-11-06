@@ -29,6 +29,10 @@ export type ArtifactReviewPanelProps = {
   sessionId: string;
   artifactId: string;
   artifactVersion: number;
+  initialThreadId?: string;
+  sourceSelectionRevision?: number;
+  panelId?: string;
+  syncLocation?: boolean;
   historical: boolean;
   readOnly?: boolean;
   anchor: ArtifactSourceAnchor | null;
@@ -101,6 +105,10 @@ export function ArtifactReviewPanel({
   sessionId,
   artifactId,
   artifactVersion,
+  initialThreadId: initialSelectionId,
+  sourceSelectionRevision,
+  panelId = "artifact-review-panel",
+  syncLocation = true,
   historical,
   readOnly: parentReadOnly = false,
   anchor,
@@ -114,7 +122,9 @@ export function ArtifactReviewPanel({
   const replyId = useId();
   const reasonId = useId();
   const [snapshot, setSnapshot] = useState<LoadedReviewSnapshot | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(initialThreadId);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => initialSelectionId ?? initialThreadId(),
+  );
   const [comments, setComments] = useState<ArtifactReviewComment[]>([]);
   const [commentCursor, setCommentCursor] = useState<ReviewCursor | null>(null);
   const [loading, setLoading] = useState(true);
@@ -287,7 +297,7 @@ export function ArtifactReviewPanel({
       if (selectedRef.current) void loadComments(selectedRef.current);
     }
     const channel = supabase
-      .channel(`artifact-review:${sessionId}:${artifactId}`)
+      .channel(`artifact-review:${sessionId}:${artifactId}:${panelId}`)
       .on(
         "postgres_changes",
         {
@@ -304,25 +314,49 @@ export function ArtifactReviewPanel({
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [artifactId, config, loadComments, loadThreads, sessionId]);
+  }, [artifactId, config, loadComments, loadThreads, panelId, sessionId]);
+
+  const chooseThreadId = useCallback(
+    (threadId: string) => {
+      if (inFlight.current || threadId === selectedId) return;
+      if (selectedId) threadDrafts.current.set(selectedId, { reply, editingTarget, reason });
+      const draft = threadDrafts.current.get(threadId);
+      selectedRef.current = threadId;
+      setSelectedId(threadId);
+      setComments([]);
+      setCommentCursor(null);
+      setEditingTarget(draft?.editingTarget ?? null);
+      setReply(draft?.reply ?? "");
+      setReason(draft?.reason ?? "");
+      setSaveError(null);
+      if (syncLocation) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("reviewThread", threadId);
+        url.searchParams.set("artifactId", artifactId);
+        url.searchParams.set("artifactVersion", String(artifactVersion));
+        window.history.replaceState(window.history.state, "", url);
+      }
+    },
+    [artifactId, artifactVersion, editingTarget, reason, reply, selectedId, syncLocation],
+  );
+
+  const handledSourceSelection = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (
+      !initialSelectionId ||
+      sourceSelectionRevision === undefined ||
+      handledSourceSelection.current === sourceSelectionRevision ||
+      pending
+    )
+      return;
+    chooseThreadId(initialSelectionId);
+    handledSourceSelection.current = sourceSelectionRevision;
+    // The requested blocker can be outside the first page after a Realtime reload.
+    void loadThreads();
+  }, [chooseThreadId, initialSelectionId, loadThreads, pending, sourceSelectionRevision]);
 
   function chooseThread(thread: ArtifactReviewThread) {
-    if (inFlight.current || thread.id === selectedId) return;
-    if (selectedId) threadDrafts.current.set(selectedId, { reply, editingTarget, reason });
-    const draft = threadDrafts.current.get(thread.id);
-    selectedRef.current = thread.id;
-    setSelectedId(thread.id);
-    setComments([]);
-    setCommentCursor(null);
-    setEditingTarget(draft?.editingTarget ?? null);
-    setReply(draft?.reply ?? "");
-    setReason(draft?.reason ?? "");
-    setSaveError(null);
-    const url = new URL(window.location.href);
-    url.searchParams.set("reviewThread", thread.id);
-    url.searchParams.set("artifactId", artifactId);
-    url.searchParams.set("artifactVersion", String(artifactVersion));
-    window.history.replaceState(window.history.state, "", url);
+    chooseThreadId(thread.id);
   }
 
   async function mutate<T>(
@@ -469,7 +503,7 @@ export function ArtifactReviewPanel({
   return (
     <aside
       aria-labelledby={headingId}
-      id="artifact-review-panel"
+      id={panelId}
       className="min-w-0 rounded-[6px] border border-border bg-surface p-3 sm:p-4"
     >
       <div className="flex items-center justify-between gap-2">
@@ -666,7 +700,7 @@ export function ArtifactReviewPanel({
             </h5>
             <a
               className={cn(buttonClass, "inline-flex items-center")}
-              href={`?${new URLSearchParams({ ...(typeof window === "undefined" ? {} : Object.fromEntries(new URLSearchParams(window.location.search))), artifactId, artifactVersion: String(artifactVersion), reviewThread: selectedThread.id })}`}
+              href={`?${new URLSearchParams({ ...(typeof window === "undefined" ? {} : Object.fromEntries(new URLSearchParams(window.location.search))), artifactId, artifactStage: selectedThread.stage_slug, artifactVersion: String(artifactVersion), reviewThread: selectedThread.id })}`}
             >
               Thread link
             </a>

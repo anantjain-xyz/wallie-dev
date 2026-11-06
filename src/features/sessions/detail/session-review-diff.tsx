@@ -51,23 +51,53 @@ function DiffPatch({ file }: { file: PrDiffFile }) {
   );
 }
 
-/** Lazily loads the bounded canonical GitHub diff only when a reviewer asks for it. */
-export function SessionReviewDiff({
-  historical,
-  observedHeadSha,
-  prUrl,
-  sessionId,
-}: {
+type SessionReviewDiffProps = {
   historical?: boolean;
   observedHeadSha: string | null;
+  observedBaseSha: string | null;
   prUrl: string | null;
   sessionId: string;
-}) {
+};
+
+/** Lazily loads the bounded canonical GitHub diff only when a reviewer asks for it. */
+export function SessionReviewDiff(props: SessionReviewDiffProps) {
   const [open, setOpen] = useState(false);
+  const revisionKey = [
+    props.sessionId,
+    props.prUrl,
+    props.observedHeadSha?.toLowerCase(),
+    props.observedBaseSha?.toLowerCase(),
+  ].join(":");
+
+  return (
+    <SessionReviewDiffRevision
+      key={revisionKey}
+      {...props}
+      open={open}
+      onToggle={() => setOpen((current) => !current)}
+    />
+  );
+}
+
+/** Reset cached data on an observed revision change without collapsing the diff. */
+function SessionReviewDiffRevision({
+  historical,
+  observedHeadSha,
+  observedBaseSha,
+  prUrl,
+  sessionId,
+  open,
+  onToggle,
+}: SessionReviewDiffProps & {
+  open: boolean;
+  onToggle: () => void;
+}) {
   const { value, error, loading, refresh } = usePrDiff(sessionId);
   const fullDiffUrl = prUrl ? `${prUrl}/files` : null;
-  const headMoved = Boolean(
-    value && observedHeadSha && value.headSha.toLowerCase() !== observedHeadSha.toLowerCase(),
+  const revisionMismatch = Boolean(
+    value &&
+    ((observedHeadSha && value.headSha.toLowerCase() !== observedHeadSha.toLowerCase()) ||
+      (observedBaseSha && value.baseSha.toLowerCase() !== observedBaseSha.toLowerCase())),
   );
 
   useEffect(() => {
@@ -106,7 +136,7 @@ export function SessionReviewDiff({
             aria-controls="review-evidence-diff-region"
             aria-expanded={open}
             className="min-h-11 rounded-[4px] px-3 text-xs font-medium text-accent hover:bg-control-muted"
-            onClick={() => setOpen((current) => !current)}
+            onClick={onToggle}
           >
             {open ? "Hide code changes" : "Show code changes"}
           </button>
@@ -158,16 +188,18 @@ export function SessionReviewDiff({
                 {value.state === "closed" ? <span>Closed on GitHub</span> : null}
                 {value.draft ? <span>Draft</span> : null}
               </div>
-              {headMoved ? (
+              {revisionMismatch ? (
                 <p
                   className="mt-2 rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning"
                   role="status"
                 >
-                  GitHub now reports head{" "}
-                  <code className="font-mono">{shortSha(value.headSha)}</code>, while the last
-                  verification observed{" "}
-                  <code className="font-mono">{shortSha(observedHeadSha)}</code>. Refresh delivery
-                  readiness before approving.
+                  The displayed diff has head{" "}
+                  <code className="font-mono">{shortSha(value.headSha)}</code> and base{" "}
+                  <code className="font-mono">{shortSha(value.baseSha)}</code>, while delivery
+                  verification observed head{" "}
+                  <code className="font-mono">{shortSha(observedHeadSha)}</code> and base{" "}
+                  <code className="font-mono">{shortSha(observedBaseSha)}</code>. Refresh delivery
+                  readiness before approving. Reload code changes to inspect the current revision.
                 </p>
               ) : null}
               {value.truncated ? (
