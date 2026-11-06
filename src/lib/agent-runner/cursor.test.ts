@@ -357,6 +357,24 @@ describe("parseCursorStreamJsonLine", () => {
     });
   });
 
+  it("leaves usage unavailable even if a result contains telemetry-shaped fields", () => {
+    const { event } = parseCursorStreamJsonLine(
+      JSON.stringify({
+        type: "result",
+        result: "done",
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.25,
+      }),
+    );
+    expect(event).toEqual({
+      summary: "done",
+      finalOutput: "done",
+      taskComplete: true,
+      type: "completion",
+    });
+    expect(event).not.toHaveProperty("usage");
+  });
+
   it("redacts explicit final output and never promotes fallback bookkeeping", () => {
     expect(
       parseCursorStreamJsonLine(JSON.stringify({ type: "result", result: "Final secret-token" }), [

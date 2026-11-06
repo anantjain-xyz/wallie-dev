@@ -270,10 +270,14 @@ describe("loadSettingsPageData", () => {
     const loader = await loadSettingsPageData(workspace.slug, "integrations");
 
     await expect(loader.usage).resolves.toEqual({
-      totalCostUsd: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
+      totalCostUsd: null,
+      totalInputTokens: null,
+      totalOutputTokens: null,
       totalRuns: 0,
+      tokensUnavailable: true,
+      costUnavailable: true,
+      hasEstimatedTokens: false,
+      hasEstimatedCost: false,
     });
     await expect(loader.workspaceInvitations).resolves.toEqual([]);
     expect(supabase.rpc).not.toHaveBeenCalled();
@@ -335,35 +339,40 @@ describe("loadSettingsPageData", () => {
 });
 
 describe("mapWorkspaceUsageRow", () => {
-  it("matches the previous JavaScript reduction totals", () => {
-    const successfulRuns = [
-      { input_tokens: 120, output_tokens: 30, total_cost_usd: 0.75 },
-      { input_tokens: null, output_tokens: 20, total_cost_usd: null },
-      { input_tokens: 80, output_tokens: null, total_cost_usd: 0.5 },
-    ];
-    const previousTotals = successfulRuns.reduce(
-      (totals, run) => ({
-        totalCostUsd: totals.totalCostUsd + (run.total_cost_usd ?? 0),
-        totalInputTokens: totals.totalInputTokens + (run.input_tokens ?? 0),
-        totalOutputTokens: totals.totalOutputTokens + (run.output_tokens ?? 0),
-        totalRuns: totals.totalRuns + 1,
-      }),
-      { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0, totalRuns: 0 },
-    );
-
+  it("preserves known totals and explicit provenance coverage", () => {
     expect(
       mapWorkspaceUsageRow({
         total_cost_usd: 1.25,
         total_input_tokens: 200,
         total_output_tokens: 50,
         total_runs: 3,
+        tokens_unavailable: true,
+        cost_unavailable: false,
+        has_estimated_tokens: true,
+        has_estimated_cost: false,
       }),
-    ).toEqual(previousTotals);
+    ).toEqual({
+      totalCostUsd: 1.25,
+      totalInputTokens: 200,
+      totalOutputTokens: 50,
+      totalRuns: 3,
+      tokensUnavailable: true,
+      costUnavailable: false,
+      hasEstimatedTokens: true,
+      hasEstimatedCost: false,
+    });
+  });
+
+  it("never turns missing measurements into zero", () => {
     expect(mapWorkspaceUsageRow(null)).toEqual({
-      totalCostUsd: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
+      totalCostUsd: null,
+      totalInputTokens: null,
+      totalOutputTokens: null,
       totalRuns: 0,
+      tokensUnavailable: true,
+      costUnavailable: true,
+      hasEstimatedTokens: false,
+      hasEstimatedCost: false,
     });
   });
 });

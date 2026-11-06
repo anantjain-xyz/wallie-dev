@@ -3,7 +3,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RunMessageTimeline, WallieRunCard, type WallieRunCardProps } from "./run-activity";
+import {
+  formatWallieRunUsage,
+  RunMessageTimeline,
+  WallieRunCard,
+  type WallieRunCardProps,
+} from "./run-activity";
 import type { WallieRunMessage } from "./types";
 
 afterEach(cleanup);
@@ -65,6 +70,14 @@ function cardProps(): WallieRunCardProps {
       startedAt: now,
       status: "running",
       updatedAt: now,
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        totalCostUsd: null,
+        tokenProvenance: "unavailable",
+        costProvenance: "unavailable",
+        finalized: false,
+      },
     },
   };
 }
@@ -185,5 +198,27 @@ describe("concise run activity", () => {
     expect((await screen.findByLabelText("Tool payload")).textContent).toBe(raw);
     toggle("Log");
     expect((await screen.findByLabelText("Message details")).textContent).toBe(log);
+  });
+
+  it("renders unavailable usage explicitly instead of displaying zero", () => {
+    const props = cardProps();
+    props.run.usage.finalized = true;
+    render(<WallieRunCard {...props} />);
+
+    expect(screen.getByText("Usage: tokens unavailable · cost unavailable")).toBeTruthy();
+    expect(screen.queryByText(/0 in|0 out|\$0\.000000/)).toBeNull();
+  });
+
+  it("labels measured and estimated usage provenance", () => {
+    expect(
+      formatWallieRunUsage({
+        inputTokens: 1_200,
+        outputTokens: 300,
+        totalCostUsd: 0.125,
+        tokenProvenance: "measured",
+        costProvenance: "estimated",
+        finalized: true,
+      }),
+    ).toBe("Usage: 1.2k in / 300 out tokens (measured) · $0.125000 cost (estimated)");
   });
 });

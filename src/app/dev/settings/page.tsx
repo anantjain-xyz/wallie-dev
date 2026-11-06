@@ -28,8 +28,22 @@ export default async function SettingsPreviewPage({
     ...onboarding,
     latestSandboxCapabilityCheck: null,
     rateLimits: [],
-    usage: { totalCostUsd: 12.5, totalInputTokens: 24000, totalOutputTokens: 8000, totalRuns: 12 },
-    workspace: { ...onboarding.workspace, avatarPath: null, avatarUrl: null },
+    usage: {
+      totalCostUsd: 12.5,
+      totalInputTokens: 24000,
+      totalOutputTokens: 8000,
+      totalRuns: 12,
+      tokensUnavailable: false,
+      costUnavailable: false,
+      hasEstimatedTokens: false,
+      hasEstimatedCost: false,
+    },
+    workspace: {
+      ...onboarding.workspace,
+      id: "11111111-1111-4111-8111-111111111111",
+      avatarPath: null,
+      avatarUrl: null,
+    },
     workspaceInvitations: [],
   };
   data.github.installation = {
@@ -46,6 +60,18 @@ export default async function SettingsPreviewPage({
   if (state === "empty") {
     data.github.repositories = [];
     data.github.primaryProfile = null;
+  }
+  if (state === "missing-usage") {
+    data.usage = {
+      totalCostUsd: null,
+      totalInputTokens: null,
+      totalOutputTokens: null,
+      totalRuns: 4,
+      tokensUnavailable: true,
+      costUnavailable: true,
+      hasEstimatedTokens: false,
+      hasEstimatedCost: false,
+    };
   }
 
   // Mirror the production streaming shell, including its error treatment.

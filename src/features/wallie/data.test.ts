@@ -38,6 +38,14 @@ function run(
     stageSlug: "build",
     status: "success",
     updatedAt: createdAt,
+    usage: {
+      inputTokens: null,
+      outputTokens: null,
+      totalCostUsd: null,
+      tokenProvenance: "unavailable",
+      costProvenance: "unavailable",
+      finalized: true,
+    },
     ...overrides,
   };
 }

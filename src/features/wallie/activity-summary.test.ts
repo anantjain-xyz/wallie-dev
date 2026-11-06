@@ -39,6 +39,14 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
     stageSlug: "build",
     status: "running",
     updatedAt: "2026-07-18T12:00:00.000Z",
+    usage: {
+      inputTokens: null,
+      outputTokens: null,
+      totalCostUsd: null,
+      tokenProvenance: "unavailable",
+      costProvenance: "unavailable",
+      finalized: false,
+    },
     ...overrides,
   };
 }

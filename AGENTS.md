@@ -64,6 +64,7 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 - **Tests are colocated** as `src/**/*.test.ts` (Vitest, node environment, globals enabled). `@/` aliases `src/`; the `server-only` package is stubbed via `test/server-only-stub.ts`. Set `WALLIE_SANDBOX_IMPL=fake` to use the in-process sandbox fake (`src/lib/sandbox/`).
 - **Prompt trust boundaries are typed.** The production `runStage()` path classifies control text with `trustedPromptValue()` and session/feedback/artifact data with `untrustedPromptValue()` before passing them to `renderStagePrompt()`. When extending prompts, add an explicit source classification, preserve the typed value through the rendering API, and cross into a renderer string only with `verifyPromptBoundary()`; never pass a raw string across the prompt boundary.
 - **Concurrency uses separate guards.** Queue claims, session generation claims, artifact publication, and stage approvals each enforce their own expected state. Rejection uses `reject_session_stage`, which serializes with approval via the session row lock; preserve and test every boundary when changing transitions.
+- **Execution budgets are versioned per session.** `execution_policy_revisions` pin repair/elapsed/token/spend limits at session creation. Postgres reserves repairs and records exhaustion under the existing session → job → run locks; the processor applies elapsed deadlines and exact-attempt usage accounting. Unknown usage is `unavailable`, never zero. See `docs/EXECUTION-BUDGETS.md`.
 
 ## Coordination Rules
 

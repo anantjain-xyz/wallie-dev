@@ -50,6 +50,23 @@ run IDs for cleanup outside the transaction. A stale expected run cannot cancel
 its successor attempt. Publication, failure, and completion never authorize a
 worker using artifact version alone.
 
+### Execution budget admission
+
+A policy-pinned session adds budget checks to the same ownership chain. New job
+inserts reserve repair attempts or validate normal-stage admission; automatic
+failure/requeue reserves the next repair in `fail_session_job_attempt`; and
+`start_session_job_attempt` revalidates exhaustion before binding a run. Active
+job adoption consumes no extra repair. The processor applies the remaining
+elapsed deadline and records usage through the exact-attempt
+`record_session_run_usage` RPC before publication or failure can lose it.
+
+Exhaustion is durable and prevents later execution rather than creating another
+repair job. It is independent of `phase_status`: final review/delivery can still
+finish, while nonfinal execution cannot advance. Missing finalized token/cost
+telemetry is `unavailable`, never zero or proof of compliance. See
+[Execution budgets](EXECUTION-BUDGETS.md) for policy revisions, metric semantics,
+and provider limitations.
+
 ## Cutover rollout
 
 This change requires a coordinated deployment; old and new workers must not run

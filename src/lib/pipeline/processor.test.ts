@@ -216,6 +216,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     attempt_count: 1,
     scheduled_at: null,
     git_continuity_release_revision: null,
+    is_repair: false,
     ...overrides,
   };
 }
@@ -243,6 +244,11 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     archived_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    execution_policy_revision_id: null,
+    execution_repair_attempts: 0,
+    execution_exhausted_at: null,
+    execution_exhaustion_code: null,
+    execution_exhaustion_detail: null,
     ...overrides,
   };
 }
@@ -338,6 +344,14 @@ interface MockOptions {
   onboardingRepositoryId?: string | null;
   primaryRepositoryProfile?: { github_repository_id: string } | null;
   sessionPullRequestRepositoryId?: string | null;
+  executionBudget?: {
+    exhaustion_code?: string | null;
+    max_total_tokens?: number | null;
+    remaining_execution_ms?: number | null;
+    total_tokens?: number;
+  };
+  usageExhaustionCode?: string | null;
+  usageError?: { message: string };
 }
 
 type AdminClient = SupabaseClient<Database>;
@@ -731,6 +745,29 @@ function buildAdminMock(opts: MockOptions) {
       if (payload.p_output_tokens !== undefined) run.output_tokens = payload.p_output_tokens;
       return { data: true, error: null };
     }
+    if (fn === "get_session_execution_budget") {
+      return {
+        data: [
+          {
+            policy_revision: null,
+            max_repair_attempts: 0,
+            max_execution_ms: null,
+            max_total_tokens: null,
+            max_cost_usd: null,
+            repair_attempts_used: 0,
+            elapsed_ms: 0,
+            total_tokens: 0,
+            total_cost_usd: 0,
+            tokens_unavailable: false,
+            cost_unavailable: false,
+            remaining_execution_ms: null,
+            exhaustion_code: null,
+            ...opts.executionBudget,
+          },
+        ],
+        error: null,
+      };
+    }
     const attempt = payload.p_attempt_count as number;
     const stale =
       opts.jobStatus === "canceled" ||
@@ -784,6 +821,22 @@ function buildAdminMock(opts: MockOptions) {
       updatedRuns.push(patch);
       updatedSessions.push({ phase_status: "in_progress" });
       return { data: run.id, error: null };
+    }
+    if (fn === "record_session_run_usage") {
+      if (opts.usageError) return { data: null, error: opts.usageError };
+      const usageRun = runRows.find(
+        (row) =>
+          row.id === payload.p_run_id && row.attempt_count === attempt && row.status === "running",
+      );
+      if (!usageRun) return { data: [{ accepted: false, exhaustion_code: null }], error: null };
+      if (payload.p_input_tokens !== undefined) usageRun.input_tokens = payload.p_input_tokens;
+      if (payload.p_output_tokens !== undefined) usageRun.output_tokens = payload.p_output_tokens;
+      if (payload.p_cost_usd !== undefined) usageRun.total_cost_usd = payload.p_cost_usd;
+      if (payload.p_finalize) usageRun.usage_finalized_at = new Date().toISOString();
+      return {
+        data: [{ accepted: true, exhaustion_code: opts.usageExhaustionCode ?? null }],
+        error: null,
+      };
     }
     const run = runRows.find((row) => row.id === payload.p_run_id && row.attempt_count === attempt);
     if (fn === "publish_session_job_with_source") {
@@ -1642,6 +1695,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(replacement.status).toBe("running");
     expect(rpc.mock.calls.map(([name]) => name)).toEqual([
       "start_session_job_attempt",
+      "get_session_execution_budget",
       "pin_session_job_git_input",
     ]);
     expect(sandbox.stop).toHaveBeenCalledOnce();
@@ -1773,6 +1827,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toEqual([]);
     expect(rpc.mock.calls.map(([name]) => name)).toEqual([
       "start_session_job_attempt",
+      "get_session_execution_budget",
       "pin_session_job_git_input",
     ]);
     expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
@@ -1947,7 +2002,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       }
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["start_session_job_attempt"]);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "start_session_job_attempt",
+      "get_session_execution_budget",
+    ]);
     expect(insertedMessages.some((message) => message.kind === "error")).toBe(false);
 
     // updateRunSandbox matched zero rows (run already canceled), so the
@@ -2174,9 +2232,13 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     for (const [name, args] of rpc.mock.calls) {
       expect(name).toMatch(
-        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$/,
+        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$|^get_session_execution_budget$|^record_session_run_usage$/,
       );
-      expect(args).toMatchObject({ p_job_id: "job-1", p_attempt_count: 2 });
+      if (name === "get_session_execution_budget") {
+        expect(args).toEqual({ p_session_id: "sess-1" });
+      } else {
+        expect(args).toMatchObject({ p_job_id: "job-1", p_attempt_count: 2 });
+      }
     }
     expect(runUpdateFilters.every((filters) => filters.attempt_count === 2)).toBe(true);
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
@@ -2240,6 +2302,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toEqual([]);
     expect(rpc.mock.calls.map(([name]) => name)).toEqual([
       "start_session_job_attempt",
+      "get_session_execution_budget",
       "pin_session_job_git_input",
     ]);
   });
@@ -2796,9 +2859,141 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
     expect(insertedArtifacts).toEqual([]);
-    expect(runRows[0]).not.toHaveProperty("input_tokens");
-    expect(runRows[0]).not.toHaveProperty("output_tokens");
+    expect(runRows[0]).toMatchObject({ input_tokens: 10, output_tokens: 20 });
     expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
+  });
+
+  it("passes the remaining session token ceiling to the adapter contract", async () => {
+    const { admin } = buildAdminMock({
+      session: baseSession(),
+      executionBudget: { max_total_tokens: 1_000, total_tokens: 250 },
+    });
+    const runner = makeRunner([
+      { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Done" },
+    ]);
+    mocked.createAgentRunner.mockReturnValue(runner);
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(runner.start).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 750 }));
+  });
+
+  it("pins durable publication recovery to the budget-adjusted deadline", async () => {
+    const { admin } = buildAdminMock({
+      session: baseSession(),
+      executionBudget: { remaining_execution_ms: 60_000 },
+    });
+    const workerDeadline = new Date(Date.now() + 1_800_000).toISOString();
+
+    expect(
+      (await processPipelineJob({ admin, job: baseJob(), deadlineAt: workerDeadline })).result,
+    ).toBe("success");
+    const preparation = mocked.prepareSourceDelivery.mock.calls[0]![0] as Record<string, unknown>;
+    const publicationDeadline = (preparation.publication as { deadlineAt: string }).deadlineAt;
+    expect(Date.parse(publicationDeadline)).toBeLessThan(Date.parse(workerDeadline));
+    expect(mocked.publishSessionCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ deadlineAt: publicationDeadline }),
+    );
+  });
+
+  it("persists usage and stops without publication or retry when tokens are exhausted", async () => {
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
+      session: baseSession(),
+      usageExhaustionCode: "tokens",
+    });
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Must not publish",
+          usage: { inputTokens: 90, outputTokens: 20 },
+        },
+      ]),
+    );
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(runRows[0]).toMatchObject({ input_tokens: 90, output_tokens: 20 });
+    expect(insertedArtifacts).toEqual([]);
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_retry: false }),
+    );
+  });
+
+  it("cancels execution at the remaining elapsed budget and records no retry", async () => {
+    vi.useFakeTimers();
+    let started!: () => void;
+    const runnerStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    try {
+      const { admin, rpc, updatedJobs } = buildAdminMock({
+        session: baseSession(),
+        executionBudget: { remaining_execution_ms: 50 },
+      });
+      const runner: AgentRunner = {
+        provider: "codex",
+        requiresSandbox: true,
+        start: vi.fn((startInput) => {
+          started();
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "text", text: "Working" } satisfies AgentEvent;
+              await new Promise<never>((_, reject) => {
+                const stop = () => reject(startInput.signal?.reason);
+                if (startInput.signal?.aborted) stop();
+                else startInput.signal?.addEventListener("abort", stop, { once: true });
+              });
+            },
+          };
+        }),
+      };
+      mocked.createAgentRunner.mockReturnValue(runner);
+      const processing = processPipelineJob({ admin, job: baseJob() });
+      await runnerStarted;
+      await vi.advanceTimersByTimeAsync(50);
+      expect((await processing).result).toBe("idle");
+      expect(rpc).toHaveBeenCalledWith(
+        "fail_session_job_attempt",
+        expect.objectContaining({
+          p_error: "Session elapsed execution budget exhausted.",
+          p_retry: false,
+        }),
+      );
+      expect(updatedJobs.at(-1)).toMatchObject({ status: "error" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("protects completed source before awaiting fallible usage persistence", async () => {
+    const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
+      session: baseSession(),
+      usageError: { message: "usage database unavailable" },
+    });
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Completed output",
+          usage: { inputTokens: 10, outputTokens: 20 },
+        },
+      ]),
+    );
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect(insertedArtifacts).toEqual([]);
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({ p_retry: false }),
+    );
+    expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
   });
 
   it("still attempts durable capture when the recovery-marker write is unavailable", async () => {
@@ -4150,6 +4345,28 @@ describe("handleRejection", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("raced with another update");
+  });
+
+  it("returns a durable exhaustion receipt with no new job", async () => {
+    const { admin } = buildReviewMock({
+      rpcResult: {
+        data: [rejectedSessionRow({ job_id: null, run_id: null, job_created: false })],
+        error: null,
+      },
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedArtifactId: "artifact-1",
+      expectedStageId: "stage-product",
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toMatchObject({ jobId: null, success: true });
   });
 
   it("fails before calling the RPC when the queued-run config cannot be resolved", async () => {

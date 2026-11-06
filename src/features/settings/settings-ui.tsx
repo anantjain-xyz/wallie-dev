@@ -67,22 +67,71 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
-function UsageCell({ label, value }: { label: string; value: string }) {
+function UsageCell({ label, note, value }: { label: string; note?: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 px-5 py-4">
       <span className="text-xs font-medium text-muted">{label}</span>
       <span className="text-[20px] font-semibold tracking-tight text-foreground">{value}</span>
+      {note ? <span className="text-xs text-muted">{note}</span> : null}
     </div>
   );
 }
 
+function metricNote(
+  unavailable: boolean,
+  estimated: boolean,
+  hasKnownValue: boolean,
+): string | undefined {
+  if (unavailable && !hasKnownValue) return "Provider did not report";
+  if (unavailable && estimated) return "Partial · includes estimates";
+  if (unavailable) return "Partial · some runs unavailable";
+  if (estimated) return "Includes estimates";
+  return undefined;
+}
+
 export function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
+  const input =
+    usage.totalInputTokens === null
+      ? "Unavailable"
+      : `${formatTokens(usage.totalInputTokens)}${usage.tokensUnavailable ? "+" : ""}`;
+  const output =
+    usage.totalOutputTokens === null
+      ? "Unavailable"
+      : `${formatTokens(usage.totalOutputTokens)}${usage.tokensUnavailable ? "+" : ""}`;
+  const cost =
+    usage.totalCostUsd === null
+      ? "Unavailable"
+      : `$${usage.totalCostUsd.toFixed(2)}${usage.costUnavailable ? "+" : ""}`;
   return (
     <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
       <UsageCell label="Total runs" value={String(usage.totalRuns)} />
-      <UsageCell label="Input tokens" value={formatTokens(usage.totalInputTokens)} />
-      <UsageCell label="Output tokens" value={formatTokens(usage.totalOutputTokens)} />
-      <UsageCell label="Total cost" value={`$${usage.totalCostUsd.toFixed(2)}`} />
+      <UsageCell
+        label="Input tokens"
+        note={metricNote(
+          usage.tokensUnavailable,
+          usage.hasEstimatedTokens,
+          usage.totalInputTokens !== null,
+        )}
+        value={input}
+      />
+      <UsageCell
+        label="Output tokens"
+        note={metricNote(
+          usage.tokensUnavailable,
+          usage.hasEstimatedTokens,
+          usage.totalOutputTokens !== null,
+        )}
+        value={output}
+      />
+      <UsageCell
+        label="Total cost"
+        note={metricNote(
+          usage.costUnavailable,
+          usage.hasEstimatedCost,
+          usage.totalCostUsd !== null,
+        )}
+        value={cost}
+      />
     </div>
   );
 }

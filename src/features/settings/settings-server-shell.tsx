@@ -39,6 +39,10 @@ const EMPTY_USAGE: WorkspaceUsageData = {
   totalInputTokens: 0,
   totalOutputTokens: 0,
   totalRuns: 0,
+  tokensUnavailable: false,
+  costUnavailable: false,
+  hasEstimatedTokens: false,
+  hasEstimatedCost: false,
 };
 
 function completeSettingsData(

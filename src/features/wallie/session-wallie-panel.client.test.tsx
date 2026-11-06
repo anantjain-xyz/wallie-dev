@@ -73,6 +73,14 @@ function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
     stageSlug: `stage-${index}`,
     status: "success",
     updatedAt: "2026-07-18T13:00:00.000Z",
+    usage: {
+      inputTokens: null,
+      outputTokens: null,
+      totalCostUsd: null,
+      tokenProvenance: "unavailable",
+      costProvenance: "unavailable",
+      finalized: true,
+    },
     ...overrides,
   };
 }

@@ -36,6 +36,14 @@ const run: WallieRun = {
   stageSlug: "custom",
   status: "queued",
   updatedAt: now,
+  usage: {
+    inputTokens: null,
+    outputTokens: null,
+    totalCostUsd: null,
+    tokenProvenance: "unavailable",
+    costProvenance: "unavailable",
+    finalized: false,
+  },
 };
 const snapshot = { sessionId: "session", run, connection: "live" as const, stalled: false };
 function Publisher({

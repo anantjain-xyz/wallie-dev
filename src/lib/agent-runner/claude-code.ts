@@ -9,6 +9,7 @@ import {
 import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
+import { isTokenCount, normalizeMeasuredUsage } from "./usage";
 
 export interface ClaudeCodeRunnerOptions {
   /** Pre-resolved credentials; session callers use loadCredential. */
@@ -121,7 +122,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     function* eventsForLine(line: string): Iterable<AgentEvent> {
       for (const event of parseStreamJsonLine(line)) {
         // Success is provisional until the process also exits successfully.
-        if (event.type === "completion") completion = event;
+        if (event.type === "completion" && event.taskComplete) completion = event;
         else {
           if (event.type === "error") hadError = true;
           yield event;
@@ -157,6 +158,13 @@ export class ClaudeCodeRunner implements AgentRunner {
     const code = await proc.exitCode;
     input.signal?.throwIfAborted();
     if (code !== 0) {
+      if (completion?.usage) {
+        yield {
+          ...completion,
+          taskComplete: false,
+          summary: "Claude Code reported usage before a nonzero exit",
+        };
+      }
       yield {
         type: "error",
         message: `claude CLI exited with code ${code}: ${safety.redact(stderrBuf).slice(0, 500)}`,
@@ -200,15 +208,24 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
     }
 
     if (obj.type === "result") {
+      const usage = parseClaudeResultUsage(obj);
       if (obj.is_error === true || obj.subtype !== "success") {
         const details = Array.isArray(obj.errors)
           ? obj.errors.filter((error: unknown) => typeof error === "string").join("; ")
           : "";
+        const error: AgentEvent = {
+          type: "error",
+          message: `Claude Code ${typeof obj.subtype === "string" ? obj.subtype : "unsuccessful result"}: ${details || (typeof obj.result === "string" ? obj.result : "task did not complete")}`,
+        };
+        if (!usage) return [error];
         return [
           {
-            type: "error",
-            message: `Claude Code ${typeof obj.subtype === "string" ? obj.subtype : "unsuccessful result"}: ${details || (typeof obj.result === "string" ? obj.result : "task did not complete")}`,
+            type: "completion",
+            taskComplete: false,
+            summary: "Claude Code result was unsuccessful",
+            usage,
           },
+          error,
         ];
       }
       const finalOutput = typeof obj.result === "string" ? obj.result : undefined;
@@ -218,6 +235,7 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
           taskComplete: true,
           summary: finalOutput ?? "Claude Code session completed",
           finalOutput,
+          ...(usage ? { usage } : {}),
         },
       ];
     }
@@ -233,4 +251,25 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
     }
     return [];
   }
+}
+
+function parseClaudeResultUsage(result: Record<string, unknown>) {
+  const usage = isRecord(result.usage) ? result.usage : undefined;
+  if (!usage) return undefined;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
+  const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+  if (
+    !isTokenCount(usage.input_tokens) ||
+    !isTokenCount(cacheRead) ||
+    !isTokenCount(cacheCreation)
+  ) {
+    return undefined;
+  }
+  const inputTokens = usage.input_tokens + cacheRead + cacheCreation;
+  if (!isTokenCount(inputTokens)) return undefined;
+  return normalizeMeasuredUsage(inputTokens, usage.output_tokens, result.total_cost_usd);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

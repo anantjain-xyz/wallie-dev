@@ -87,6 +87,12 @@ boundaries.
   enforced for those two tables.
 - Service-only tables revoke authenticated access and use explicit restrictive
   policies as defense in depth.
+- Execution policy revisions and current pointers are readable only through
+  workspace-membership RLS. `save_execution_policy` is service-only and rechecks
+  active manager identity plus optimistic revision. Session pins, repair
+  reservations, usage provenance, and exhaustion are service-owned lifecycle
+  state; browser roles cannot call `record_session_run_usage` or privileged
+  budget-state RPCs. See [Execution budgets](EXECUTION-BUDGETS.md).
 
 ## New public table checklist
 

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
+import { ExecutionPolicySection } from "@/features/settings/execution-policy-section";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
@@ -244,23 +245,29 @@ export function RuntimeIntegrationIsland({
         canManage={initialData.canManage}
         codexConnectFlash={codexStatus}
         extraContent={
-          <div className="space-y-4 border-t border-border pt-6">
-            <div className="min-w-0">
-              <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Secret values never come back to the client. Wallie stores encrypted values and
-                returns preview-only rows.
-              </p>
-            </div>
-            <WorkspaceSecretsPanel
+          <>
+            <ExecutionPolicySection
               canManage={initialData.canManage}
-              isLoadingSecrets={false}
-              secrets={secrets}
-              setFlashMessage={setMessage}
-              setSecrets={updateSecrets}
               workspaceId={initialData.workspace.id}
             />
-          </div>
+            <div className="space-y-4 border-t border-border pt-6">
+              <div className="min-w-0">
+                <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  Secret values never come back to the client. Wallie stores encrypted values and
+                  returns preview-only rows.
+                </p>
+              </div>
+              <WorkspaceSecretsPanel
+                canManage={initialData.canManage}
+                isLoadingSecrets={false}
+                secrets={secrets}
+                setFlashMessage={setMessage}
+                setSecrets={updateSecrets}
+                workspaceId={initialData.workspace.id}
+              />
+            </div>
+          </>
         }
         initialAgentConfig={initialData.agentConfig}
         initialClaudeCodeStatus={{

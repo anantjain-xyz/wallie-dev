@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import type { AgentRunUsage } from "@/lib/agent-runner/types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 
 import { SOURCE_CHECKPOINT_BUCKET, type SourceCheckpoint } from "./source-checkpoint";
@@ -48,7 +49,7 @@ export async function prepareSourceDelivery(input: {
     expectedArtifactVersion: number;
     artifactMarkdown: string;
     deadlineAt?: string;
-    usage?: { inputTokens: number; outputTokens: number };
+    usage?: AgentRunUsage;
   };
   repositoryId: string;
   runId: string;
