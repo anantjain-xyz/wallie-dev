@@ -90,6 +90,8 @@ export function RevisionReviewPanel({
   const [batchPage, setBatchPage] = useState<ReviewCursor | null>(null);
   const [threadPage, setThreadPage] = useState<ReviewCursor | null>(null);
   const detailSequence = useRef(0);
+  if (view === "brief" && selectedBeforeId !== null) setSelectedBeforeId(null);
+
   const previous = versions?.find((row) => row.version < version);
   const previousId =
     previous?.id &&

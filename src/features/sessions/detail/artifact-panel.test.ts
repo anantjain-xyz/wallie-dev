@@ -116,23 +116,31 @@ describe("ArtifactPanel", () => {
     const current = {
       ...latestArtifact,
       id: "latest-artifact",
+      version: 3,
       payload: "# Build\n\nRefresh the board after reconnecting.\n",
     };
     const previous = {
       ...latestArtifact,
       id: "previous-artifact",
-      version: 1,
       payload: "# Build\n\nKeep the board as-is after reconnecting.\n",
+    };
+    const oldest = {
+      ...previous,
+      id: "oldest-artifact",
+      version: 1,
+      payload: "# Build\n\nRefresh the board manually.\n",
     };
     vi.mocked(fetch).mockImplementation((input) => {
       const url = String(input);
       if (url.includes("/reviews?")) return response({ threads: [], nextCursor: null });
       if (url.includes("/feedback-batches?")) return response({ batches: [], nextCursor: null });
       if (url.includes("artifactId=previous-artifact")) return response({ artifact: previous });
+      if (url.includes("artifactId=oldest-artifact")) return response({ artifact: oldest });
       return response({
         artifacts: [
-          metadataRow({ id: current.id, version: 2 }),
-          metadataRow({ id: previous.id, version: 1 }),
+          metadataRow({ id: current.id, version: current.version }),
+          metadataRow({ id: previous.id, version: previous.version }),
+          metadataRow({ id: oldest.id, version: oldest.version }),
         ],
       });
     });
@@ -145,7 +153,7 @@ describe("ArtifactPanel", () => {
 
     expect(screen.getByRole("tab", { name: "Review brief", selected: true })).toBeTruthy();
     expect(await screen.findByText("Refresh the board after reconnecting.")).toBeTruthy();
-    expect(screen.getByText("v1 → v2")).toBeTruthy();
+    expect(screen.getByText("v2 → v3")).toBeTruthy();
     expect(fetch).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole("tab", { name: "Compare versions" }));
@@ -156,6 +164,16 @@ describe("ArtifactPanel", () => {
         .mocked(fetch)
         .mock.calls.filter(([input]) => String(input).includes("artifactId=previous-artifact")),
     ).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText("Compare version 3 with"), {
+      target: { value: oldest.id },
+    });
+    expect(await screen.findByText("Refresh the board manually.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Review brief" }));
+    expect(screen.getByText("v2 → v3")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Compare versions" }));
+    expect(screen.getByLabelText("Compare version 3 with")).toHaveProperty("value", previous.id);
+    expect(await screen.findByText("Keep the board as-is after reconnecting.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Full artifact" }));
     expect(screen.getByText("Latest formatted")).toBeTruthy();
