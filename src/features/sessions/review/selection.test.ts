@@ -3,8 +3,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
+import { artifactPassageRanges, indexArtifactText } from "./artifact-passage";
 import { artifactSourceBlocks, selectedArtifactSourceAnchor } from "./selection";
-import { validateArtifactSourceAnchor } from "./source-anchor";
+import { createArtifactSourceAnchor, validateArtifactSourceAnchor } from "./source-anchor";
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -33,6 +34,50 @@ describe("rendered artifact source selection", () => {
   });
   it("maps text inside formatting without guessing from matching text", () => {
     expect(select("A **retry** then retry", "retry")?.quote).toBe("retry");
+  });
+  it("reopens the second exact selection after an astral character", () => {
+    const source = "Repeat 🚀 café\n\nRepeat 🚀 café";
+    const anchor = select(source, "Repeat 🚀 café", 1, 10, 14)!;
+    const text = indexArtifactText(document.body);
+    const ranges = artifactPassageRanges(text, anchor);
+    expect(ranges.map((range) => range.toString())).toEqual(["café"]);
+    expect(ranges[0]?.startContainer).toBe(text[1]?.node);
+  });
+  it("projects a whole transformed block and leaves partial source syntax for Raw", () => {
+    const source = "café &amp; tea";
+    document.body.innerHTML = renderMarkdownToHtml(source, true);
+    const text = indexArtifactText(document.body);
+    const [block] = artifactSourceBlocks(source);
+    expect(artifactPassageRanges(text, block!.anchor).map((range) => range.toString())).toEqual([
+      "café & tea",
+    ]);
+    const rawAnchor = createArtifactSourceAnchor(source, 5, 10);
+    expect(artifactPassageRanges(text, rawAnchor)).toEqual([]);
+
+    const raw = document.createElement("pre");
+    raw.dataset.reviewTextStart = "0";
+    raw.dataset.reviewTextEnd = String(source.length);
+    raw.textContent = source;
+    document.body.replaceChildren(raw);
+    expect(artifactPassageRanges(indexArtifactText(document.body), rawAnchor)[0]?.toString()).toBe(
+      "&amp;",
+    );
+  });
+  it.each([
+    ["[label](https://example.com) tail", "https://example.com) tail"],
+    ["head [label](https://example.com)", "head [label](https://example.com)"],
+  ])("leaves a selection with a source-only boundary for Raw in %s", (source, quote) => {
+    document.body.innerHTML = renderMarkdownToHtml(source, true);
+    const start = source.indexOf(quote);
+    const anchor = createArtifactSourceAnchor(source, start, start + quote.length);
+    expect(artifactPassageRanges(indexArtifactText(document.body), anchor)).toEqual([]);
+  });
+  it("keeps a block selection renderable when only its trailing whitespace is omitted", () => {
+    const source = "🚀 Reconnect.\n\nNext block.";
+    document.body.innerHTML = renderMarkdownToHtml(source, true);
+    const [block] = artifactSourceBlocks(source);
+    const ranges = artifactPassageRanges(indexArtifactText(document.body), block!.anchor);
+    expect(ranges.map((range) => range.toString())).toEqual(["🚀 Reconnect."]);
   });
   it("maps an exact code block", () => {
     const source = "```ts\nconst rocket = '🚀';\n```";

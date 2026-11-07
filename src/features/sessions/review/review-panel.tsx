@@ -6,11 +6,14 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { PencilIcon } from "@/components/shared/icons/pencil-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { cn } from "@/lib/utils";
@@ -39,7 +42,20 @@ export type ArtifactReviewPanelProps = {
   onClearAnchor: () => void;
   onClose?: () => void;
   openerRef?: RefObject<HTMLElement | null>;
+  inline?: {
+    open: boolean;
+    scrollRef: RefObject<HTMLDivElement | null>;
+    request: PassageThreadRequest | null;
+    onRevealThread: (thread: ArtifactReviewThread) => void;
+    onClearPassage: () => void;
+    onThreadsChange: (snapshot: Pick<ReviewThreadListPayload, "threads" | "counts">) => void;
+    passageMessage: string | null;
+  };
 };
+
+export type PassageThreadRequest =
+  | { kind: "thread"; thread: ArtifactReviewThread }
+  | { kind: "passage"; ids: string[] };
 
 type LoadedReviewSnapshot = ReviewThreadListPayload & { knownCoverageIds: Set<string> };
 
@@ -47,6 +63,8 @@ const buttonClass =
   "min-h-11 rounded-[4px] border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-control-muted disabled:cursor-wait disabled:opacity-60";
 const fieldClass =
   "w-full rounded-[4px] border border-border bg-surface px-3 py-2 text-sm text-foreground";
+const inlineLinkClass =
+  "inline-flex min-h-11 items-center text-xs font-medium text-accent hover:underline";
 
 function pageQuery(cursor: ReviewCursor | null): string {
   const params = new URLSearchParams();
@@ -115,6 +133,7 @@ export function ArtifactReviewPanel({
   onClearAnchor,
   onClose,
   openerRef,
+  inline,
 }: ArtifactReviewPanelProps) {
   const baseUrl = `/api/sessions/${sessionId}/reviews`;
   const headingId = useId();
@@ -139,6 +158,8 @@ export function ArtifactReviewPanel({
   const editingId = editingTarget?.id ?? null;
   const [reason, setReason] = useState("");
   const [pending, setPending] = useState(false);
+  const [threadFilter, setThreadFilter] = useState<"open" | "closed">("open");
+  const [passageThreadIds, setPassageThreadIds] = useState<string[] | null>(null);
   const inFlight = useRef(false);
   const requestMemory = useRef(new Map<string, Record<string, unknown>>());
   const threadDrafts = useRef(
@@ -148,6 +169,7 @@ export function ArtifactReviewPanel({
     >(),
   );
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const selectedRef = useRef(selectedId);
   const focusReplyAfterSave = useRef(false);
@@ -159,6 +181,39 @@ export function ArtifactReviewPanel({
   selectedRef.current = selectedId;
   const selectedThread = snapshot?.threads.find((thread) => thread.id === selectedId) ?? null;
   const readOnly = parentReadOnly || (snapshot?.viewer.readOnly ?? true);
+  const inlineOpen = inline?.open;
+  const scrollRef = inline?.scrollRef;
+  const onRevealThread = inline?.onRevealThread;
+  const onClearPassage = inline?.onClearPassage;
+  const onThreadsChange = inline?.onThreadsChange;
+  const threadRequest = inline?.request;
+  const composing = Boolean(anchor && !readOnly);
+  const showThreadList = !inline || (!composing && !selectedId);
+  const readingThread = inline && selectedId && !composing;
+
+  useEffect(() => {
+    if (snapshot) onThreadsChange?.(snapshot);
+  }, [onThreadsChange, snapshot]);
+
+  useLayoutEffect(() => {
+    if (inlineOpen && scrollRef?.current) scrollRef.current.scrollTop = 0;
+  }, [anchor, inlineOpen, scrollRef, selectedId]);
+
+  useEffect(() => {
+    if (inlineOpen && !composing) headingRef.current?.focus({ preventScroll: true });
+  }, [composing, inlineOpen, selectedId]);
+
+  const lastRevealedThread = useRef<string | null>(null);
+  useEffect(() => {
+    if (!inlineOpen || !selectedThread || composing) {
+      lastRevealedThread.current = null;
+      return;
+    }
+    if (lastRevealedThread.current !== selectedThread.id) {
+      lastRevealedThread.current = selectedThread.id;
+      onRevealThread?.(selectedThread);
+    }
+  }, [composing, inlineOpen, onRevealThread, selectedThread]);
 
   const loadThreads = useCallback(
     async (cursor: ReviewCursor | null = null) => {
@@ -279,8 +334,10 @@ export function ArtifactReviewPanel({
   );
 
   useEffect(() => {
-    if (anchor && !readOnly) composerRef.current?.focus();
-  }, [anchor, readOnly]);
+    if (anchor && !readOnly && inlineOpen !== false) {
+      composerRef.current?.focus({ preventScroll: inlineOpen === true });
+    }
+  }, [anchor, inlineOpen, readOnly]);
 
   useEffect(() => {
     if (selectedThread && focusReplyAfterSave.current) {
@@ -317,10 +374,10 @@ export function ArtifactReviewPanel({
   }, [artifactId, config, loadComments, loadThreads, panelId, sessionId]);
 
   const chooseThreadId = useCallback(
-    (threadId: string) => {
+    (threadId: string | null) => {
       if (inFlight.current || threadId === selectedId) return;
       if (selectedId) threadDrafts.current.set(selectedId, { reply, editingTarget, reason });
-      const draft = threadDrafts.current.get(threadId);
+      const draft = threadId ? threadDrafts.current.get(threadId) : undefined;
       selectedRef.current = threadId;
       setSelectedId(threadId);
       setComments([]);
@@ -331,9 +388,13 @@ export function ArtifactReviewPanel({
       setSaveError(null);
       if (syncLocation) {
         const url = new URL(window.location.href);
-        url.searchParams.set("reviewThread", threadId);
-        url.searchParams.set("artifactId", artifactId);
-        url.searchParams.set("artifactVersion", String(artifactVersion));
+        if (threadId) {
+          url.searchParams.set("reviewThread", threadId);
+          url.searchParams.set("artifactId", artifactId);
+          url.searchParams.set("artifactVersion", String(artifactVersion));
+        } else {
+          url.searchParams.delete("reviewThread");
+        }
         window.history.replaceState(window.history.state, "", url);
       }
     },
@@ -355,8 +416,32 @@ export function ArtifactReviewPanel({
     void loadThreads();
   }, [chooseThreadId, initialSelectionId, loadThreads, pending, sourceSelectionRevision]);
 
+  const handledThreadRequest = useRef<PassageThreadRequest | null>(null);
+  useEffect(() => {
+    if (!threadRequest || handledThreadRequest.current === threadRequest || pending) return;
+    handledThreadRequest.current = threadRequest;
+    if (threadRequest.kind === "passage") {
+      setPassageThreadIds(threadRequest.ids);
+      chooseThreadId(null);
+      onClearPassage?.();
+    } else {
+      setPassageThreadIds(null);
+      chooseThreadId(threadRequest.thread.id);
+      if (selectedId === threadRequest.thread.id) onRevealThread?.(threadRequest.thread);
+    }
+  }, [chooseThreadId, onClearPassage, onRevealThread, pending, selectedId, threadRequest]);
+
   function chooseThread(thread: ArtifactReviewThread) {
+    if (inline && thread.id === selectedId && !pending) onRevealThread?.(thread);
     chooseThreadId(thread.id);
+  }
+
+  function showAllThreads() {
+    setPassageThreadIds(null);
+    if (selectedThread) setThreadFilter(selectedThread.status === "open" ? "open" : "closed");
+    chooseThreadId(null);
+    onClearPassage?.();
+    headingRef.current?.focus({ preventScroll: true });
   }
 
   async function mutate<T>(
@@ -439,6 +524,7 @@ export function ArtifactReviewPanel({
     if (!result) return;
     focusReplyAfterSave.current = true;
     setBody("");
+    setKind("discussion");
     onClearAnchor();
     setSnapshot((current) =>
       current ? { ...current, threads: mergeRows(current.threads, [result.thread]) } : current,
@@ -499,35 +585,92 @@ export function ArtifactReviewPanel({
     (snapshot?.viewer.canReview ||
       (selectedThread.kind === "discussion" &&
         selectedThread.author_member_id === snapshot?.viewer.memberId));
+  const compactReply = Boolean(inline && !editingId);
+  const visibleThreads = snapshot?.threads.filter((thread) => {
+    if (!inline) return true;
+    if (passageThreadIds) return passageThreadIds.includes(thread.id);
+    return (thread.status === "open") === (threadFilter === "open");
+  });
 
   return (
     <aside
       aria-labelledby={headingId}
       id={panelId}
-      className="min-w-0 rounded-[6px] border border-border bg-surface p-3 sm:p-4"
+      className={cn(
+        "min-w-0 bg-surface p-3 sm:p-4",
+        !inline && "rounded-[6px] border border-border",
+      )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold text-foreground" id={headingId}>
-          Comments <span className="text-muted">({snapshot?.counts.total ?? "…"})</span>
-        </h4>
+      <div
+        className={cn(
+          "flex items-center justify-between gap-2",
+          inline &&
+            "sticky top-0 z-10 -mx-3 -mt-3 mb-3 border-b border-border bg-surface px-3 py-2 sm:-mx-4 sm:-mt-4 sm:px-4",
+        )}
+      >
+        <div>
+          <h4
+            className={cn(
+              "text-sm font-semibold text-foreground",
+              inline && "focus:outline-none",
+              readingThread && "sr-only",
+            )}
+            id={headingId}
+            ref={headingRef}
+            tabIndex={inline ? -1 : undefined}
+          >
+            Comments <span className="text-muted">({snapshot?.counts.total ?? "…"})</span>
+          </h4>
+          {readingThread ? (
+            <div className="flex flex-wrap items-center gap-x-2">
+              <button
+                className={inlineLinkClass}
+                disabled={pending}
+                onClick={showAllThreads}
+                type="button"
+              >
+                <span aria-hidden="true" className="mr-1.5">
+                  ←
+                </span>{" "}
+                All threads
+              </button>
+              <span className="text-xs text-muted">
+                v{artifactVersion}
+                {historical ? " · Historical artifact" : ""}
+              </span>
+            </div>
+          ) : inline ? (
+            <p className="text-xs text-muted">
+              Version {artifactVersion}
+              {historical ? " · Historical artifact" : ""}
+            </p>
+          ) : null}
+        </div>
         {onClose ? (
           <button
-            className={buttonClass}
+            aria-label="Close comments"
+            className={
+              inline
+                ? "flex size-11 shrink-0 items-center justify-center rounded-[4px] border border-border text-muted hover:bg-control-muted"
+                : buttonClass
+            }
             onClick={() => {
               onClose();
-              queueMicrotask(() => openerRef?.current?.focus());
+              if (!inline) queueMicrotask(() => openerRef?.current?.focus());
             }}
             type="button"
           >
-            Close comments
+            {inline ? <XIcon className="size-4" /> : "Close comments"}
           </button>
         ) : null}
       </div>
-      <p className="mt-1 text-xs text-muted">
-        Version {artifactVersion}
-        {historical ? " · Historical artifact" : ""}
-      </p>
-      {snapshot ? (
+      {!inline ? (
+        <p className="mt-1 text-xs text-muted">
+          Version {artifactVersion}
+          {historical ? " · Historical artifact" : ""}
+        </p>
+      ) : null}
+      {snapshot && showThreadList ? (
         <p className="mt-1 text-xs text-muted">
           {snapshot.counts.open} open · {snapshot.counts.blocking} blocking requests
         </p>
@@ -567,7 +710,7 @@ export function ArtifactReviewPanel({
       ) : null}
       {anchor && !readOnly ? (
         <form
-          className="mt-4 space-y-3 border-b border-border pb-4"
+          className={cn("space-y-3", inline ? "" : "mt-4 border-b border-border pb-4")}
           onSubmit={(event) => {
             void submitThread(event);
           }}
@@ -583,7 +726,7 @@ export function ArtifactReviewPanel({
             Comment type
           </label>
           <select
-            className={cn(fieldClass, "min-h-11")}
+            className={cn(fieldClass, "min-h-11", inline && "max-lg:text-base")}
             disabled={pending}
             id={`${composerId}-kind`}
             onChange={(event) =>
@@ -594,12 +737,17 @@ export function ArtifactReviewPanel({
             <option value="discussion">Discussion</option>
             <option value="blocking">Blocking request</option>
           </select>
+          {inline && kind === "blocking" ? (
+            <p className="text-xs text-warning">
+              This request blocks approval until a reviewer closes it.
+            </p>
+          ) : null}
           <label className="block text-xs text-muted" htmlFor={composerId}>
             Comment
           </label>
           <textarea
             ref={composerRef}
-            className={fieldClass}
+            className={cn(fieldClass, inline && "max-lg:text-base")}
             disabled={pending}
             id={composerId}
             maxLength={10000}
@@ -623,6 +771,7 @@ export function ArtifactReviewPanel({
               onClick={() => {
                 onClearAnchor();
                 setBody("");
+                setKind("discussion");
                 openerRef?.current?.focus();
               }}
               type="button"
@@ -631,50 +780,98 @@ export function ArtifactReviewPanel({
             </button>
           </div>
         </form>
-      ) : !readOnly && snapshot ? (
+      ) : !inline && !readOnly && snapshot ? (
         <p className="mt-3 text-xs text-muted">
           Select artifact text or use “Comment on a block” to start a thread.
         </p>
       ) : null}
-      {snapshot?.threads.length === 0 ? (
+      {inline && showThreadList && snapshot ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {passageThreadIds ? (
+            <>
+              <button
+                className={buttonClass}
+                disabled={pending}
+                onClick={showAllThreads}
+                type="button"
+              >
+                All threads
+              </button>
+              <span className="text-xs text-muted">Threads on this passage</span>
+            </>
+          ) : (
+            (["open", "closed"] as const).map((filter) => (
+              <button
+                className={cn(
+                  buttonClass,
+                  filter === threadFilter && "border-accent bg-accent-soft text-accent",
+                )}
+                key={filter}
+                aria-pressed={filter === threadFilter}
+                onClick={() => setThreadFilter(filter)}
+                type="button"
+              >
+                {filter === "open"
+                  ? `Open ${snapshot.counts.open}`
+                  : `Closed ${snapshot.counts.total - snapshot.counts.open}`}
+              </button>
+            ))
+          )}
+        </div>
+      ) : null}
+      {showThreadList && snapshot?.threads.length === 0 ? (
         <p className="mt-4 text-xs text-muted">No comments on this artifact yet.</p>
       ) : null}
-      <ul aria-label="Artifact review threads" className="mt-4 space-y-2">
-        {snapshot?.threads.map((thread) => (
-          <li key={thread.id}>
-            <button
-              aria-current={selectedId === thread.id ? "true" : undefined}
-              disabled={pending}
-              className={cn(
-                "min-h-11 w-full rounded-[4px] border p-2 text-left",
-                selectedId === thread.id
-                  ? "border-accent bg-accent-soft"
-                  : "border-border hover:bg-control-muted",
-              )}
-              onClick={() => chooseThread(thread)}
-              type="button"
-            >
-              <span className="block text-xs font-semibold text-foreground">
-                {thread.kind === "blocking" ? "Blocking request" : "Discussion"} · {thread.status}
-              </span>
-              <span className="mt-1 line-clamp-2 block whitespace-pre-wrap break-words text-xs text-muted">
-                {threadQuote(thread)}
-              </span>
-              <span className="mt-1 block text-xs text-muted">{thread.author_label}</span>
-              <span className="mt-1 block text-xs text-muted">
-                {!snapshot.knownCoverageIds.has(thread.id)
-                  ? "Submission status unavailable"
-                  : snapshot.submittedThreadRevisions?.[thread.id] === undefined
-                    ? "Not submitted"
-                    : snapshot.submittedThreadRevisions[thread.id] < thread.revision
-                      ? "Unsent changes"
-                      : "Submitted"}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {snapshot?.nextCursor ? (
+      {inline &&
+      showThreadList &&
+      snapshot &&
+      snapshot.threads.length > 0 &&
+      !visibleThreads?.length &&
+      !loading ? (
+        <p className="mt-4 text-xs text-muted">
+          {snapshot.nextCursor
+            ? "No matching threads on this page."
+            : `No ${threadFilter} threads.`}
+        </p>
+      ) : null}
+      {showThreadList && snapshot ? (
+        <ul aria-label="Artifact review threads" className="mt-4 space-y-2">
+          {visibleThreads?.map((thread) => (
+            <li key={thread.id}>
+              <button
+                aria-current={selectedId === thread.id ? "true" : undefined}
+                disabled={pending}
+                className={cn(
+                  "min-h-11 w-full rounded-[4px] border p-2 text-left",
+                  selectedId === thread.id
+                    ? "border-accent bg-accent-soft"
+                    : "border-border hover:bg-control-muted",
+                )}
+                onClick={() => chooseThread(thread)}
+                type="button"
+              >
+                <span className="block text-xs font-semibold text-foreground">
+                  {thread.kind === "blocking" ? "Blocking request" : "Discussion"} · {thread.status}
+                </span>
+                <span className="mt-1 line-clamp-2 block whitespace-pre-wrap break-words text-xs text-muted">
+                  {threadQuote(thread)}
+                </span>
+                <span className="mt-1 block text-xs text-muted">{thread.author_label}</span>
+                <span className="mt-1 block text-xs text-muted">
+                  {!snapshot.knownCoverageIds.has(thread.id)
+                    ? "Submission status unavailable"
+                    : snapshot.submittedThreadRevisions?.[thread.id] === undefined
+                      ? "Not submitted"
+                      : snapshot.submittedThreadRevisions[thread.id] < thread.revision
+                        ? "Unsent changes"
+                        : "Submitted"}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {showThreadList && !passageThreadIds && snapshot?.nextCursor ? (
         <button
           className={cn(buttonClass, "mt-3")}
           disabled={loading || pending}
@@ -689,25 +886,58 @@ export function ArtifactReviewPanel({
       {selectedId && !selectedThread && snapshot && !snapshot.nextCursor ? (
         <p className="mt-3 text-xs text-muted">This thread is unavailable on this artifact.</p>
       ) : null}
-      {selectedThread ? (
+      {selectedThread && (!inline || !composing) ? (
         <section
           aria-label="Selected review thread"
-          className="mt-4 space-y-3 border-t border-border pt-4"
+          className={cn("space-y-3", !inline && "mt-4 border-t border-border pt-4")}
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h5 className="text-xs font-semibold text-foreground">
-              Thread · {selectedThread.status}
+          <div
+            className={cn("flex flex-wrap items-center justify-between gap-2", inline && "gap-y-0")}
+          >
+            <h5
+              className={cn(
+                "text-xs font-semibold text-foreground",
+                inline && "rounded-[4px] bg-control-muted px-1.5 py-0.5",
+                inline &&
+                  selectedThread.kind === "blocking" &&
+                  selectedThread.status === "open" &&
+                  "bg-warning-soft text-warning",
+              )}
+            >
+              {inline
+                ? selectedThread.kind === "blocking"
+                  ? "Blocking request"
+                  : "Discussion"
+                : "Thread"}{" "}
+              · {selectedThread.status}
             </h5>
+            {onRevealThread ? (
+              <button
+                className={inlineLinkClass}
+                onClick={() => onRevealThread(selectedThread)}
+                type="button"
+              >
+                Jump to passage
+              </button>
+            ) : null}
             <a
-              className={cn(buttonClass, "inline-flex items-center")}
+              className={inline ? inlineLinkClass : cn(buttonClass, "inline-flex items-center")}
               href={`?${new URLSearchParams({ ...(typeof window === "undefined" ? {} : Object.fromEntries(new URLSearchParams(window.location.search))), artifactId, artifactStage: selectedThread.stage_slug, artifactVersion: String(artifactVersion), reviewThread: selectedThread.id })}`}
             >
               Thread link
             </a>
           </div>
+          {inline?.passageMessage ? (
+            <p className="text-xs text-muted" role="status">
+              {inline.passageMessage}
+            </p>
+          ) : null}
           <blockquote
             tabIndex={0}
-            className="max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted"
+            className={cn(
+              "max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted",
+              inline && "max-h-24 border-accent bg-accent-soft p-2 text-foreground",
+            )}
           >
             {threadQuote(selectedThread)}
           </blockquote>
@@ -718,19 +948,35 @@ export function ArtifactReviewPanel({
           ) : null}
           <ol aria-label="Thread comments" className="space-y-3">
             {comments.map((comment) => (
-              <li className="min-w-0" key={comment.id}>
+              <li
+                className={cn(
+                  "min-w-0",
+                  inline && "flex flex-wrap items-center justify-between gap-x-2",
+                )}
+                key={comment.id}
+              >
                 <p className="text-xs font-semibold text-foreground">
                   {comment.author_label}
                   {comment.revision > 1 ? (
                     <span className="font-normal text-muted"> · Edited</span>
                   ) : null}
                 </p>
-                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">
+                <p
+                  className={cn(
+                    "mt-1 whitespace-pre-wrap break-words text-sm text-foreground",
+                    inline && "order-last mt-0 w-full",
+                  )}
+                >
                   {comment.body}
                 </p>
                 {!readOnly && comment.author_member_id === snapshot?.viewer.memberId ? (
                   <button
-                    className={cn(buttonClass, "mt-1")}
+                    aria-label="Edit comment"
+                    className={
+                      inline
+                        ? "flex size-11 items-center justify-center rounded-[4px] text-muted hover:bg-control-muted"
+                        : cn(buttonClass, "mt-1")
+                    }
                     disabled={pending}
                     onClick={() => {
                       setEditingTarget({ id: comment.id, revision: comment.revision });
@@ -740,7 +986,7 @@ export function ArtifactReviewPanel({
                     }}
                     type="button"
                   >
-                    Edit comment
+                    {inline ? <PencilIcon className="size-3.5" /> : "Edit comment"}
                   </button>
                 ) : null}
               </li>
@@ -759,23 +1005,29 @@ export function ArtifactReviewPanel({
           ) : null}
           {!readOnly ? (
             <form
-              className="space-y-2"
+              className={cn(
+                "space-y-2",
+                compactReply && "grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 space-y-0",
+              )}
               onSubmit={(event) => {
                 void submitReply(event);
               }}
             >
-              <label className="block text-xs text-muted" htmlFor={replyId}>
+              <label
+                className={cn("block text-xs text-muted", compactReply && "col-span-2")}
+                htmlFor={replyId}
+              >
                 {editingId ? "Edit your comment" : "Reply to thread"}
               </label>
               <textarea
                 ref={replyRef}
-                className={fieldClass}
+                className={cn(fieldClass, inline && "max-lg:text-base")}
                 disabled={pending}
                 id={replyId}
                 maxLength={10000}
                 onChange={(event) => setReply(event.target.value)}
                 required
-                rows={3}
+                rows={inline ? 2 : 3}
                 value={reply}
               />
               <div className="flex flex-wrap gap-2">
@@ -810,7 +1062,7 @@ export function ArtifactReviewPanel({
                 Reason for changing thread status
               </label>
               <textarea
-                className={fieldClass}
+                className={cn(fieldClass, inline && "max-lg:text-base")}
                 disabled={pending}
                 id={reasonId}
                 maxLength={10000}
