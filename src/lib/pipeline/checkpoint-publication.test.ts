@@ -318,6 +318,51 @@ it("keeps the prepared intent and private bundle pending when the remote is unav
   );
 });
 
+it("logs the failing publication operation and HTTP status without external error contents", async () => {
+  const { publish } = makeState();
+  const secret = "synthetic-repository-credential";
+  const error = Object.assign(new Error(`Authorization: Bearer ${secret}`), {
+    status: 403,
+    code: secret,
+    response: { status: 403, data: { privateSource: "private source contents" } },
+  });
+  error.stack = `private stack ${secret}`;
+  mocked.repository.mockRejectedValueOnce(error);
+
+  expect(await publish()).toBe("pending");
+  expect(console.warn).toHaveBeenCalledWith("[checkpoint-publication] retry scheduled", {
+    runId: "run",
+    jobId: "job",
+    attemptCount: 2,
+    publicationAttemptCount: 1,
+    operation: "resolve_repository",
+    errorCode: "operation_failed",
+    message: "Checkpoint publication operation failed.",
+    httpStatus: 403,
+  });
+  expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toMatch(
+    /synthetic-repository-credential|Authorization|private stack|private source contents/,
+  );
+});
+
+it("retains known safe publication errors and numeric Git exit status in retry diagnostics", async () => {
+  const { publish } = makeState();
+  mocked.push.mockRejectedValueOnce(
+    Object.assign(new Error("Source Git operation failed."), { code: 128 }),
+  );
+
+  expect(await publish()).toBe("pending");
+  expect(console.warn).toHaveBeenCalledWith(
+    "[checkpoint-publication] retry scheduled",
+    expect.objectContaining({
+      operation: "restore_push",
+      errorCode: "git_operation_failed",
+      message: "Source Git operation failed.",
+      exitCode: 128,
+    }),
+  );
+});
+
 it("reuses the pushed candidate after a failed adoption transaction and creates one artifact", async () => {
   const { state, admin, publish } = makeState();
   state.adoptionFailures = 1;
