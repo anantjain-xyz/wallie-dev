@@ -616,7 +616,11 @@ describe("artifact threaded review", () => {
         {panel({ openerRef, onClose: close })}
       </>,
     );
-    await user.click(screen.getByRole("button", { name: "Close comments" }));
+    const collapse = screen.getByRole("button", { name: "Collapse comments" });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+    expect(collapse).toHaveAttribute("aria-controls", "artifact-review-panel");
+    expect(collapse.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await user.click(collapse);
     await waitFor(() => expect(openerRef.current).toHaveFocus());
     expect(close).toHaveBeenCalledOnce();
   });
@@ -628,6 +632,7 @@ describe("artifact threaded review", () => {
         initialThreadId: "deep-thread",
         panelId: "review-evidence-comments",
         syncLocation: false,
+        onClose: vi.fn(),
       }),
     );
     const selected = await screen.findByRole("region", { name: "Selected review thread" });
@@ -636,6 +641,10 @@ describe("artifact threaded review", () => {
       expect.stringContaining("reviewThread=deep-thread"),
     );
     expect(document.getElementById("review-evidence-comments")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Collapse comments" })).toHaveAttribute(
+      "aria-controls",
+      "review-evidence-comments",
+    );
     expect(within(selected).getByRole("link", { name: "Thread link" })).toHaveAttribute(
       "href",
       expect.stringContaining("artifactStage=plan"),
