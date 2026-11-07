@@ -36,7 +36,9 @@ Every write requires a caller-generated request UUID. Keep the same UUID and pay
 
 ## Inline review
 
-- Open **Comments** in the artifact reader. Select text and choose **Comment on selection**, or use the keyboard-accessible **Comment on a block** picker.
+- Select text in the artifact and choose **Add comment**. To comment on a whole block, open **Comments** and use **Comment on a block**.
+- Browse open and closed threads in the desktop side panel or the mobile bottom sheet. Once comments load, markers appear beside their passages.
+- Open a thread from the list, a marker, or a shared link to jump to its saved selection. Selections that require the original Markdown open in **Raw**.
 - Threads, replies, own-comment edits and lifecycle changes persist through authenticated session review APIs. Comment bodies render as escaped plain text.
 - Realtime thread events refresh bounded thread/comment pages without a route reload. Drafts stay separate from fetched snapshots and survive failed saves and closing the panel.
 - Thread links include the artifact UUID/version. Older versions and prior stages show a historical label; archived sessions allow reading only.

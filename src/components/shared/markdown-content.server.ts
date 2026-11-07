@@ -82,7 +82,7 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
     const href = typeof node.properties.src === "string" ? node.properties.src : undefined;
     const alt = typeof node.properties.alt === "string" ? node.properties.alt.trim() : "";
     parent.children[index] = {
-      children: [{ type: "text", value: `🖼 ${alt || href || "image"}` }],
+      children: [{ type: "text", value: `🖼 ${alt || href || "image"}`, position: node.position }],
       properties: {
         className: classNames(classesByTag.a!),
         href,
@@ -110,7 +110,7 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
 
   // Prevent an empty link label after sanitization strips a dangerous href.
   if (node.tagName === "a" && textContent(node).length === 0) {
-    node.children = [{ type: "text", value: "link" }];
+    node.children = [{ type: "text", value: "link", position: node.position }];
   }
 }
 
@@ -130,9 +130,8 @@ function reviewSourcePositions(source: string) {
       if (child.type === "text" && child.value) {
         let start = child.position?.start.offset;
         let end = child.position?.end.offset;
-        // Code nodes create synthetic text children. Map only a unique exact
-        // occurrence within their positioned source; ambiguous/normalized text
-        // remains available through the keyboard block picker.
+        // Code nodes create synthetic text children. Only a unique exact match
+        // can supply offsets for selecting part of that rendered text.
         if (start === undefined && node.tagName === "code") {
           const parentStart = node.position?.start.offset;
           const parentEnd = node.position?.end.offset;
@@ -142,23 +141,29 @@ function reviewSourcePositions(source: string) {
             if (found >= 0 && raw.indexOf(child.value, found + 1) < 0) {
               start = parentStart + found;
               end = start + child.value.length;
+            } else {
+              start = parentStart;
+              end = parentEnd;
             }
           }
         }
         if (
           start !== undefined &&
           end !== undefined &&
-          source.slice(start, end) === child.value &&
+          start < end &&
           offsets.has(start) &&
           offsets.has(end)
         ) {
           node.children![index] = {
             type: "element",
             tagName: "span",
-            properties: {
-              dataReviewTextStart: offsets.get(start),
-              dataReviewTextEnd: offsets.get(end),
-            },
+            properties:
+              source.slice(start, end) === child.value
+                ? { dataReviewTextStart: offsets.get(start), dataReviewTextEnd: offsets.get(end) }
+                : {
+                    dataReviewRenderedStart: offsets.get(start),
+                    dataReviewRenderedEnd: offsets.get(end),
+                  },
             children: [child],
           };
         }

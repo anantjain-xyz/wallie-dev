@@ -1,0 +1,82 @@
+.workspace {
+  min-width: 0;
+}
+
+.reader {
+  position: relative;
+  min-width: 0;
+}
+
+.readerWithMarkers {
+  padding-inline-end: 3rem;
+}
+
+.panel {
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  background: var(--surface-sheet);
+}
+
+.selectionAction {
+  position: absolute;
+  z-index: 10;
+  inset-inline-start: clamp(0px, var(--selection-left), 100% - 9rem);
+  top: var(--selection-top);
+  transform: translateY(calc(-100% - 0.25rem));
+  white-space: nowrap;
+  box-shadow: var(--shadow-elevated);
+}
+
+@media (width >= 64rem) {
+  .workspace[data-comments-open="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .panel {
+    position: sticky;
+    top: calc(var(--shell-scroll-padding) + 0.75rem);
+    max-height: min(70dvh, calc(100dvh - var(--shell-scroll-padding) - 1.5rem));
+    border-radius: var(--content-radius);
+  }
+}
+
+@media (width < 64rem) {
+  .workspace {
+    --comments-sheet-height: min(54dvh, 54vh, calc(var(--wallie-visual-viewport-height) * 0.54));
+    --comments-sheet-bottom: var(--wallie-visual-viewport-bottom-offset);
+  }
+
+  .workspace[data-comments-open="true"] {
+    padding-block-end: var(--comments-sheet-height);
+  }
+
+  .panel {
+    position: fixed;
+    z-index: 30;
+    inset-inline: 0;
+    bottom: var(--comments-sheet-bottom);
+    height: var(--comments-sheet-height);
+    padding-block-end: env(safe-area-inset-bottom);
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+    border-radius: var(--overlay-radius) var(--overlay-radius) 0 0;
+    box-shadow: var(--shadow-elevated);
+  }
+
+  .selectionAction {
+    position: fixed;
+    z-index: 31;
+    top: auto;
+    inset-inline-start: auto;
+    inset-inline-end: max(0.75rem, env(safe-area-inset-right));
+    bottom: calc(var(--comments-sheet-bottom) + max(0.75rem, env(safe-area-inset-bottom)));
+    transform: none;
+  }
+
+  .workspace[data-comments-open="true"] .selectionAction {
+    bottom: calc(var(--comments-sheet-bottom) + var(--comments-sheet-height) + 0.5rem);
+  }
+}

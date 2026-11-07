@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -308,6 +309,7 @@ function ArtifactPanelStage({
   const urlVersion = parseArtifactVersionParam(searchParams.get(ARTIFACT_VERSION_PARAM));
   const [selectedTab, setSelectedTab] = useState<ArtifactTab | null>(null);
   const [openComments, setOpenComments] = useState(false);
+  const showRawArtifact = useCallback(() => setSelectedTab("raw"), []);
   // URL is authoritative for shared links; local state updates immediately on
   // click. Client-side URL writes use history.replaceState (not router.replace)
   // so selecting a version does not trigger an RSC reload. When the stage just
@@ -1324,6 +1326,7 @@ function ArtifactPanelStage({
               showLatestBadge={viewingIsLatest}
               historical={persistStageInUrl || !viewingIsLatest}
               openComments={openComments}
+              onShowRaw={showRawArtifact}
               readOnly={readOnly}
             />
           ) : bodyLoading ? null : isDrafting ? (
@@ -1381,6 +1384,7 @@ function ArtifactBodyView({
   showLatestBadge,
   historical,
   openComments,
+  onShowRaw,
   readOnly,
 }: {
   motionRef?: RefObject<HTMLDivElement | null>;
@@ -1394,6 +1398,7 @@ function ArtifactBodyView({
   showLatestBadge: boolean;
   historical: boolean;
   openComments: boolean;
+  onShowRaw: () => void;
   readOnly: boolean;
 }) {
   const formatted = useMemo(() => formatPayload(artifact.payload), [artifact.payload]);
@@ -1449,7 +1454,7 @@ function ArtifactBodyView({
     );
 
   return (
-    <div ref={motionRef}>
+    <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="type-annotation uppercase tracking-wide text-muted">
           v{artifact.version}
@@ -1487,12 +1492,15 @@ function ArtifactBodyView({
           source={formatted}
           historical={historical}
           initiallyOpen={openComments}
+          displayMode={displayMode}
+          onShowRaw={onShowRaw}
+          motionRef={motionRef}
           readOnly={readOnly}
         >
           {content}
         </InlineArtifactReview>
       ) : (
-        content
+        <div ref={motionRef}>{content}</div>
       )}
     </div>
   );
