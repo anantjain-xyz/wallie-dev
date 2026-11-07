@@ -1267,7 +1267,9 @@ function SessionDetailContent({
             sessionId={session.id}
             approveLabel="Approve stage"
             approveDescription={
-              phaseActionPending ? undefined : "Final-stage approval may also archive the session."
+              phaseActionPending
+                ? undefined
+                : "Approval advances or completes the session. Final-stage approval may also archive the session."
             }
             mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
             onApprove={(artifact, revision) =>
@@ -1279,6 +1281,7 @@ function SessionDetailContent({
             requestError={phaseActionError}
             reviewArtifact={reviewArtifact}
             phaseActionPending={phaseActionPending}
+            stageName={selectedStage?.name}
           />
         }
         activity={
