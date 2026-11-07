@@ -36,12 +36,14 @@ export async function ensureSourcePullRequest(input: {
       headers: {
         Authorization: `Bearer ${input.token}`,
         Accept: "application/vnd.github+json",
+        "User-Agent": "Wallie",
         "X-GitHub-Api-Version": "2022-11-28",
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (!response.ok) throw new Error("GitHub request failed.");
+    if (!response.ok)
+      throw new Error("GitHub request failed.", { cause: { status: response.status } });
     return (await response.json()) as T;
   };
   const matchesHead = (pr: PullRequest) =>

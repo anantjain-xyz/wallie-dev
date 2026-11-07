@@ -179,6 +179,7 @@ export async function loadPrDiff(input: {
         headers: {
           Authorization: `Bearer ${value.token}`,
           Accept: "application/vnd.github+json",
+          "User-Agent": "Wallie",
           "X-GitHub-Api-Version": "2022-11-28",
         },
       });

@@ -2,6 +2,11 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import {
+  PublicationOperationError,
+  publicationFailureDiagnostic,
+  withPublicationOperation,
+} from "./publication-diagnostics";
 import { readSourceDeliveryBundle, resolveSourceDeliveryRepository } from "./source-delivery";
 import { restoreAndPushSourceInSandbox } from "./source-delivery-sandbox";
 
@@ -94,16 +99,19 @@ async function assertPublicationClaim(
   publication: CheckpointPublication,
   signal: AbortSignal,
 ) {
-  signal.throwIfAborted();
-  if (!publication.claim_id) throw new Error("Checkpoint publication claim is absent.");
-  const { data, error } = await admin
-    .rpc("assert_session_checkpoint_publication_claim", {
-      p_run_id: publication.run_id,
-      p_claim_id: publication.claim_id,
-    })
-    .abortSignal(signal);
-  signal.throwIfAborted();
-  if (error || data !== true) throw new Error("Checkpoint publication claim expired.");
+  return withPublicationOperation("assert_claim", async () => {
+    signal.throwIfAborted();
+    if (!publication.claim_id) throw new Error("Checkpoint publication claim is absent.");
+    const { data, error } = await admin
+      .rpc("assert_session_checkpoint_publication_claim", {
+        p_run_id: publication.run_id,
+        p_claim_id: publication.claim_id,
+      })
+      .abortSignal(signal);
+    signal.throwIfAborted();
+    if (error || data !== true)
+      throw new Error("Checkpoint publication claim expired.", { cause: error });
+  });
 }
 
 /** Push only an immutable candidate ref. PR synchronization remains a separate outbox. */
@@ -113,63 +121,84 @@ export async function adoptCheckpointPublication(
   signal: AbortSignal,
 ): Promise<boolean> {
   await assertPublicationClaim(admin, publication, signal);
-  const { data: source, error } = await admin
-    .from("session_source_deliveries")
-    .select("*")
-    .eq("run_id", publication.run_id)
-    .eq("workspace_id", publication.workspace_id)
-    .abortSignal(signal)
-    .single();
-  signal.throwIfAborted();
-  if (
-    error ||
-    !source ||
-    source.job_id !== publication.job_id ||
-    source.session_id !== publication.session_id ||
-    source.attempt_count !== publication.attempt_count
-  ) {
-    throw new Error("Checkpoint publication source identity changed.");
-  }
+  const source = await withPublicationOperation("load_source", async () => {
+    const { data, error } = await admin
+      .from("session_source_deliveries")
+      .select("*")
+      .eq("run_id", publication.run_id)
+      .eq("workspace_id", publication.workspace_id)
+      .abortSignal(signal)
+      .single();
+    signal.throwIfAborted();
+    if (
+      error ||
+      !data ||
+      data.job_id !== publication.job_id ||
+      data.session_id !== publication.session_id ||
+      data.attempt_count !== publication.attempt_count
+    ) {
+      throw new Error("Checkpoint publication source identity changed.", { cause: error });
+    }
+    return data;
+  });
   let remoteRef: string | undefined;
   let remoteSha: string | undefined;
   if (source.base_sha !== source.head_sha) {
     if (!publication.retained_ref?.startsWith("refs/heads/"))
-      throw new Error("Checkpoint publication ref is absent.");
-    const bytes = await readSourceDeliveryBundle(admin, source, signal);
-    const current = await resolveSourceDeliveryRepository(admin, source, signal);
+      throw new PublicationOperationError(
+        "load_source",
+        new Error("Checkpoint publication ref is absent."),
+      );
+    const bytes = await withPublicationOperation("read_bundle", () =>
+      readSourceDeliveryBundle(admin, source, signal),
+    );
+    const current = await withPublicationOperation("resolve_repository", () =>
+      resolveSourceDeliveryRepository(admin, source, signal),
+    );
     await assertPublicationClaim(admin, publication, signal);
-    const branch = await restoreAndPushSourceInSandbox(
-      {
-        baseSha: source.base_sha,
-        headSha: source.head_sha,
-        branch: publication.retained_ref.slice("refs/heads/".length),
-        exactRef: true,
-        bytes,
-        sha256: source.bundle_sha256 ?? "",
-        remoteUrl: `https://github.com/${current.delivery.repository_full_name}.git`,
-        token: current.token,
-        signal,
-        beforePush: () => assertPublicationClaim(admin, publication, signal),
-      },
-      { admin, workspaceId: source.workspace_id, runId: source.run_id },
+    const retainedBranch = publication.retained_ref.slice("refs/heads/".length);
+    const branch = await withPublicationOperation("restore_push", () =>
+      restoreAndPushSourceInSandbox(
+        {
+          baseSha: source.base_sha,
+          headSha: source.head_sha,
+          branch: retainedBranch,
+          exactRef: true,
+          bytes,
+          sha256: source.bundle_sha256 ?? "",
+          remoteUrl: `https://github.com/${current.delivery.repository_full_name}.git`,
+          token: current.token,
+          signal,
+          beforePush: () => assertPublicationClaim(admin, publication, signal),
+        },
+        { admin, workspaceId: source.workspace_id, runId: source.run_id },
+      ),
     );
     remoteRef = `refs/heads/${branch}`;
     remoteSha = source.head_sha;
     if (remoteRef !== publication.retained_ref)
-      throw new Error("Checkpoint publication ref changed.");
+      throw new PublicationOperationError(
+        "restore_push",
+        new Error("Checkpoint publication ref changed."),
+      );
   } else if (publication.retained_ref)
-    throw new Error("No-code output must reuse its input checkpoint.");
+    throw new PublicationOperationError(
+      "load_source",
+      new Error("No-code output must reuse its input checkpoint."),
+    );
   await assertPublicationClaim(admin, publication, signal);
-  const { data: adopted, error: adoptionError } = await admin
-    .rpc("adopt_session_checkpoint_publication", {
-      p_run_id: publication.run_id,
-      p_claim_id: publication.claim_id!,
-      ...(remoteRef ? { p_remote_ref: remoteRef, p_remote_sha: remoteSha } : {}),
-    })
-    .abortSignal(signal);
-  signal.throwIfAborted();
-  if (adoptionError) throw new Error("Checkpoint adoption will retry.");
-  return adopted === true;
+  return withPublicationOperation("adopt_checkpoint", async () => {
+    const { data: adopted, error: adoptionError } = await admin
+      .rpc("adopt_session_checkpoint_publication", {
+        p_run_id: publication.run_id,
+        p_claim_id: publication.claim_id!,
+        ...(remoteRef ? { p_remote_ref: remoteRef, p_remote_sha: remoteSha } : {}),
+      })
+      .abortSignal(signal);
+    signal.throwIfAborted();
+    if (adoptionError) throw new Error("Checkpoint adoption will retry.", { cause: adoptionError });
+    return adopted === true;
+  });
 }
 
 export async function drainCheckpointPublications(
@@ -188,7 +217,13 @@ export async function drainCheckpointPublications(
       ? AbortSignal.any([controller.signal, options.signal])
       : controller.signal;
     const timeout = setTimeout(
-      () => controller.abort(new Error("Checkpoint publication timed out.")),
+      () =>
+        controller.abort(
+          new PublicationOperationError(
+            "publication",
+            new Error("Checkpoint publication timed out."),
+          ),
+        ),
       options.timeoutMs ?? 60_000,
     );
     const aborted = new Promise<never>((_, reject) => {
@@ -200,32 +235,41 @@ export async function drainCheckpointPublications(
     try {
       const work = (async () => {
         signal.throwIfAborted();
-        const { data: claim, error } = await admin
-          .rpc(
-            "claim_session_checkpoint_publication",
-            options.runId ? { p_run_id: options.runId } : {},
-          )
-          .abortSignal(signal);
-        signal.throwIfAborted();
-        if (error) throw new Error("Could not claim checkpoint publication.");
+        const claim = await withPublicationOperation("claim_publication", async () => {
+          const { data, error } = await admin
+            .rpc(
+              "claim_session_checkpoint_publication",
+              options.runId ? { p_run_id: options.runId } : {},
+            )
+            .abortSignal(signal);
+          signal.throwIfAborted();
+          if (error) throw new Error("Could not claim checkpoint publication.", { cause: error });
+          return data;
+        });
         if (!claim) return false;
-        const { data, error: readError } = await admin
-          .from("session_checkpoint_publications")
-          .select("*")
-          .eq("claim_id", claim)
-          .abortSignal(signal)
-          .single();
-        signal.throwIfAborted();
-        if (readError || !data || (options.runId && data.run_id !== options.runId))
-          throw new Error("Could not load checkpoint publication.");
+        const data = await withPublicationOperation("load_publication", async () => {
+          const { data, error } = await admin
+            .from("session_checkpoint_publications")
+            .select("*")
+            .eq("claim_id", claim)
+            .abortSignal(signal)
+            .single();
+          signal.throwIfAborted();
+          if (error || !data || (options.runId && data.run_id !== options.runId))
+            throw new Error("Could not load checkpoint publication.", { cause: error });
+          return data;
+        });
         publication = data;
         if (!(await adoptCheckpointPublication(admin, data, signal)))
-          throw new Error("Checkpoint publication ownership changed.");
+          throw new PublicationOperationError(
+            "adopt_checkpoint",
+            new Error("Checkpoint publication ownership changed."),
+          );
         return true;
       })();
       if (!(await Promise.race([work, aborted]))) break;
       result.adopted++;
-    } catch {
+    } catch (error) {
       result.failed++;
       const current = publication as CheckpointPublication | null;
       if (current?.claim_id && !signal.aborted) {
@@ -245,6 +289,10 @@ export async function drainCheckpointPublications(
       }
       console.warn("[checkpoint-publication] retry scheduled", {
         runId: current?.run_id ?? options.runId ?? null,
+        jobId: current?.job_id ?? null,
+        attemptCount: current?.attempt_count ?? null,
+        publicationAttemptCount: current?.publication_attempt_count ?? null,
+        ...publicationFailureDiagnostic(error),
       });
     } finally {
       clearTimeout(timeout);

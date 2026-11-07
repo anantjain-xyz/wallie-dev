@@ -223,6 +223,7 @@ export function createCanonicalPrApi(input: {
             headers: {
               Authorization: `Bearer ${config.token}`,
               Accept: "application/vnd.github+json",
+              "User-Agent": "Wallie",
               "X-GitHub-Api-Version": "2022-11-28",
               ...(creating ? { "Content-Type": "application/json" } : {}),
             },

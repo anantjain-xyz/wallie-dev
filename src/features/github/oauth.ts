@@ -211,6 +211,7 @@ async function githubUserGet(path: string, token: string, signal: AbortSignal): 
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
+      "User-Agent": "Wallie",
       "X-GitHub-Api-Version": "2026-03-10",
     },
     signal,

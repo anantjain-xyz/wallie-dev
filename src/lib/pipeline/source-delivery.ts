@@ -174,10 +174,14 @@ export async function resolveSourceDeliveryRepository<
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
+      "User-Agent": "Wallie",
       "X-GitHub-Api-Version": "2022-11-28",
     },
   });
-  if (!response.ok) throw new Error("Source repository identity could not be verified.");
+  if (!response.ok)
+    throw new Error("Source repository identity could not be verified.", {
+      cause: { status: response.status },
+    });
   const current = (await response.json()) as { id?: number; full_name?: string };
   signal.throwIfAborted();
   if (
