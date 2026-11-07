@@ -79,12 +79,13 @@ const RevisionReviewPanel = dynamic(
   },
 );
 
-type ArtifactTab = "rendered" | "raw" | "versions" | "compare";
+type ArtifactTab = "brief" | "rendered" | "raw" | "versions" | "compare";
 type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
   sanitizedHtml?: string | null;
 };
 
 const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions", "compare"];
+const REVIEW_ARTIFACT_TABS: ArtifactTab[] = ["brief", "rendered", "compare", "raw", "versions"];
 export const ARTIFACT_ID_PARAM = "artifactId";
 export const ARTIFACT_VERSION_PARAM = "artifactVersion";
 export const ARTIFACT_STAGE_PARAM = "artifactStage";
@@ -305,7 +306,8 @@ function ArtifactPanelStage({
     ignoreUrlVersion || !loadLatest ? null : urlArtifactId,
   );
   const urlVersion = parseArtifactVersionParam(searchParams.get(ARTIFACT_VERSION_PARAM));
-  const [activeTab, setActiveTab] = useState<ArtifactTab>("rendered");
+  const [selectedTab, setSelectedTab] = useState<ArtifactTab | null>(null);
+  const [openComments, setOpenComments] = useState(false);
   // URL is authoritative for shared links; local state updates immediately on
   // click. Client-side URL writes use history.replaceState (not router.replace)
   // so selecting a version does not trigger an RSC reload. When the stage just
@@ -404,6 +406,39 @@ function ArtifactPanelStage({
   const viewingHistorical = selectedArtifactId
     ? selectedArtifactId !== latestArtifactId
     : selectedVersion !== null && (latestArtifactId !== null || selectedVersion !== latestVersion);
+  const cachedSelectedBody =
+    viewingVersion === null && !selectedArtifactId
+      ? null
+      : (bodyCache.get(
+          artifactBodyCacheKey(
+            sessionId,
+            stageSlug,
+            viewingVersion ?? 0,
+            selectedArtifactId ?? undefined,
+          ),
+        ) ?? null);
+  const visibleBody = viewingIsLatest
+    ? currentArtifactId !== undefined && latestBody?.id !== currentArtifactId
+      ? null
+      : latestBody
+    : (
+          selectedArtifactId
+            ? selectedBody?.id === selectedArtifactId
+            : selectedBody?.version === viewingVersion
+        )
+      ? selectedBody
+      : cachedSelectedBody;
+  const hasReviewBrief =
+    isAwaitingReview &&
+    !readOnly &&
+    viewingIsLatest &&
+    !viewingHistorical &&
+    visibleBody?.id &&
+    visibleBody.version > 1 &&
+    typeof visibleBody.payload === "string";
+  const tabs = hasReviewBrief ? REVIEW_ARTIFACT_TABS : ARTIFACT_TABS;
+  const defaultTab = hasReviewBrief && !searchParams.has("reviewThread") ? "brief" : "rendered";
+  const activeTab = selectedTab && tabs.includes(selectedTab) ? selectedTab : defaultTab;
 
   useEffect(() => {
     onViewingHistoricalChange?.(viewingHistorical);
@@ -1025,7 +1060,8 @@ function ArtifactPanelStage({
   ]);
 
   function selectTab(tab: ArtifactTab) {
-    setActiveTab(tab);
+    setSelectedTab(tab);
+    setOpenComments(false);
   }
 
   function selectVersion(artifact: SessionArtifactMetadata) {
@@ -1038,7 +1074,7 @@ function ArtifactPanelStage({
     setSelectedBodyError(null);
     setSelectedBodyLoading(false);
     writeArtifactVersionToUrl(isLatest ? null : version, id ?? null);
-    setActiveTab("rendered");
+    selectTab("rendered");
     // Versions buttons unmount with the tab; move focus into the reader so the
     // next Tab key continues through the artifact surface instead of document body.
     queueMicrotask(() => {
@@ -1049,40 +1085,17 @@ function ArtifactPanelStage({
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const currentIndex = ARTIFACT_TABS.indexOf(activeTab);
+    const currentIndex = tabs.indexOf(activeTab);
     let nextIndex = currentIndex;
-    if (event.key === "ArrowRight")
-      nextIndex = Math.min(ARTIFACT_TABS.length - 1, currentIndex + 1);
+    if (event.key === "ArrowRight") nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
     if (event.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
     if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = ARTIFACT_TABS.length - 1;
-    const nextTab = ARTIFACT_TABS[nextIndex] ?? "rendered";
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    const nextTab = tabs[nextIndex] ?? "rendered";
     selectTab(nextTab);
     tabRefs.current.get(nextTab)?.focus();
   }
 
-  const cachedSelectedBody =
-    viewingVersion === null && !selectedArtifactId
-      ? null
-      : (bodyCache.get(
-          artifactBodyCacheKey(
-            sessionId,
-            stageSlug,
-            viewingVersion ?? 0,
-            selectedArtifactId ?? undefined,
-          ),
-        ) ?? null);
-  const visibleBody = viewingIsLatest
-    ? currentArtifactId !== undefined && latestBody?.id !== currentArtifactId
-      ? null
-      : latestBody
-    : (
-          selectedArtifactId
-            ? selectedBody?.id === selectedArtifactId
-            : selectedBody?.version === viewingVersion
-        )
-      ? selectedBody
-      : cachedSelectedBody;
   const bodyHasContent =
     visibleBody &&
     (activeTab === "raw" ||
@@ -1127,10 +1140,11 @@ function ArtifactPanelStage({
   };
 
   const tabLabels: Record<ArtifactTab, string> = {
+    brief: "Review brief",
     raw: "Raw",
-    rendered: "Rendered",
+    rendered: hasReviewBrief ? "Full artifact" : "Rendered",
     versions: "Versions",
-    compare: "Compare",
+    compare: hasReviewBrief ? "Compare versions" : "Compare",
   };
 
   const versionHeading =
@@ -1143,22 +1157,37 @@ function ArtifactPanelStage({
       <h3 className="sr-only" id="artifact-version-heading">
         {versionHeading}
       </h3>
-      <div aria-label="Artifact views" className="mb-3 flex gap-1" role="tablist">
-        {ARTIFACT_TABS.map((tab) => (
-          <TabButton
-            key={tab}
-            active={activeTab === tab}
-            controls={`artifact-${tab}-panel`}
-            label={tabLabels[tab]}
-            onClick={() => selectTab(tab)}
-            onKeyDown={handleTabKeyDown}
-            ref={(node) => {
-              if (node) tabRefs.current.set(tab, node);
-              else tabRefs.current.delete(tab);
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div aria-label="Artifact views" className="flex flex-wrap gap-1" role="tablist">
+          {tabs.map((tab) => (
+            <TabButton
+              key={tab}
+              active={activeTab === tab}
+              controls={`artifact-${tab}-panel`}
+              label={tabLabels[tab]}
+              onClick={() => selectTab(tab)}
+              onKeyDown={handleTabKeyDown}
+              ref={(node) => {
+                if (node) tabRefs.current.set(tab, node);
+                else tabRefs.current.delete(tab);
+              }}
+              tabId={`artifact-${tab}-tab`}
+            />
+          ))}
+        </div>
+        {activeTab === "brief" ? (
+          <button
+            className="min-h-9 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted"
+            onClick={() => {
+              setSelectedTab("rendered");
+              setOpenComments(true);
+              tabRefs.current.get("rendered")?.focus();
             }}
-            tabId={`artifact-${tab}-tab`}
-          />
-        ))}
+            type="button"
+          >
+            Comments
+          </button>
+        ) : null}
       </div>
 
       {activeTab === "versions" ? (
@@ -1235,8 +1264,12 @@ function ArtifactPanelStage({
             </ul>
           ) : null}
         </div>
-      ) : activeTab === "compare" ? (
-        <div aria-labelledby="artifact-compare-tab" id="artifact-compare-panel" role="tabpanel">
+      ) : activeTab === "brief" || activeTab === "compare" ? (
+        <div
+          aria-labelledby={`artifact-${activeTab}-tab`}
+          id={`artifact-${activeTab}-panel`}
+          role="tabpanel"
+        >
           {visibleBody?.id ? (
             <RevisionReviewPanel
               key={visibleBody.id}
@@ -1245,6 +1278,7 @@ function ArtifactPanelStage({
               version={visibleBody.version}
               stageSlug={stageSlug}
               source={visibleBody.payload}
+              view={activeTab}
             />
           ) : bodyError ? (
             <FailureHint message={bodyError} onRetry={retryBody} />
@@ -1289,6 +1323,7 @@ function ArtifactPanelStage({
               sessionId={sessionId}
               showLatestBadge={viewingIsLatest}
               historical={persistStageInUrl || !viewingIsLatest}
+              openComments={openComments}
               readOnly={readOnly}
             />
           ) : bodyLoading ? null : isDrafting ? (
@@ -1345,6 +1380,7 @@ function ArtifactBodyView({
   sessionId,
   showLatestBadge,
   historical,
+  openComments,
   readOnly,
 }: {
   motionRef?: RefObject<HTMLDivElement | null>;
@@ -1357,6 +1393,7 @@ function ArtifactBodyView({
   sessionId: string;
   showLatestBadge: boolean;
   historical: boolean;
+  openComments: boolean;
   readOnly: boolean;
 }) {
   const formatted = useMemo(() => formatPayload(artifact.payload), [artifact.payload]);
@@ -1449,6 +1486,7 @@ function ArtifactBodyView({
           artifactVersion={artifact.version}
           source={formatted}
           historical={historical}
+          initiallyOpen={openComments}
           readOnly={readOnly}
         >
           {content}

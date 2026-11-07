@@ -52,7 +52,7 @@ describe("exact source diff", () => {
     ["same", "same"],
     ["a\n".repeat(600), "b\n".repeat(600)],
   ])("reconstructs both source strings", (before, after) => {
-    const diff = compareRevisionSources(before, after);
+    const { rows: diff } = compareRevisionSources(before, after);
     expect(
       diff
         .filter((row) => row.kind !== "added")

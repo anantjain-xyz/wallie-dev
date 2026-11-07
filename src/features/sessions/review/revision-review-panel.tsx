@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionArtifactMetadata } from "@/features/sessions/types";
-import { compareRevisionSources } from "./revision";
+import { compareRevisionSources, summarizeRevisionChanges } from "./revision";
 import type { FeedbackBatchDetail, FeedbackHistoryPage, ReviewRun } from "./feedback-history";
 import type { ReviewCursor, ReviewThreadListPayload } from "./types";
 import { RunActivityLink } from "./run-activity-link";
@@ -58,29 +58,31 @@ function RunIdentity({ run, label }: { run: ReviewRun; label: string }) {
   );
 }
 
-/** Loaded only when a reviewer opens Compare. Every source selection uses UUIDs. */
 export function RevisionReviewPanel({
   sessionId,
   artifactId,
   version,
   stageSlug,
   source,
+  view = "compare",
 }: {
   sessionId: string;
   artifactId: string;
   version: number;
   stageSlug: string;
   source: unknown;
+  view?: "brief" | "compare";
 }) {
   const base = `/api/sessions/${sessionId}`;
   const [history, setHistory] = useState<FeedbackHistoryPage | null>(null);
   const [threads, setThreads] = useState<ReviewThreadListPayload | null>(null);
-  const [versions, setVersions] = useState<SessionArtifactMetadata[]>([]);
-  const [beforeId, setBeforeId] = useState("");
+  const [versions, setVersions] = useState<SessionArtifactMetadata[] | null>(null);
+  const [selectedBeforeId, setSelectedBeforeId] = useState<string | null>(null);
   const [before, setBefore] = useState<{ id: string; payload: unknown } | null>(null);
   const [detail, setDetail] = useState<FeedbackBatchDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [compareError, setCompareError] = useState<string | null>(null);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [beforeError, setBeforeError] = useState<{ id: string; message: string } | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -88,6 +90,14 @@ export function RevisionReviewPanel({
   const [batchPage, setBatchPage] = useState<ReviewCursor | null>(null);
   const [threadPage, setThreadPage] = useState<ReviewCursor | null>(null);
   const detailSequence = useRef(0);
+  const previous = versions?.find((row) => row.version < version);
+  const previousId =
+    previous?.id &&
+    !versions?.some((row) => row.version === previous.version && row.id !== previous.id)
+      ? previous.id
+      : "";
+  const beforeId = (view === "compare" ? selectedBeforeId : null) ?? previousId;
+  const compareError = beforeError?.id === beforeId ? beforeError.message : null;
   useEffect(
     () => () => {
       detailSequence.current += 1;
@@ -96,6 +106,27 @@ export function RevisionReviewPanel({
   );
 
   useEffect(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) setVersionsError(null);
+    });
+    void read<{ artifacts: SessionArtifactMetadata[] }>(
+      `${base}/artifacts?stage=${encodeURIComponent(stageSlug)}`,
+      controller.signal,
+    )
+      .then(({ artifacts }) => {
+        if (!Array.isArray(artifacts)) throw new Error("Version history response was invalid.");
+        if (!controller.signal.aborted) setVersions(artifacts);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted)
+          setVersionsError(cause instanceof Error ? cause.message : "Could not load versions.");
+      });
+    return () => controller.abort();
+  }, [base, stageSlug, refresh]);
+
+  useEffect(() => {
+    if (view !== "compare") return;
     const controller = new AbortController();
     const cursorParams = (cursor: ReviewCursor | null): Record<string, string> =>
       cursor ? { cursorCreatedAt: cursor.createdAt, cursorId: cursor.id } : {};
@@ -114,12 +145,8 @@ export function RevisionReviewPanel({
         `${base}/reviews?${new URLSearchParams({ artifactId, includeUnresolved: "true", ...cursorParams(threadPage) })}`,
         controller.signal,
       ),
-      read<{ artifacts: SessionArtifactMetadata[] }>(
-        `${base}/artifacts?stage=${encodeURIComponent(stageSlug)}`,
-        controller.signal,
-      ),
     ])
-      .then(([nextHistory, nextThreads, metadata]) => {
+      .then(([nextHistory, nextThreads]) => {
         if (controller.signal.aborted) return;
         setHistory((current) => ({
           ...nextHistory,
@@ -147,11 +174,6 @@ export function RevisionReviewPanel({
               ? { ...current.mappings, ...nextThreads.mappings }
               : nextThreads.mappings,
         }));
-        setVersions(metadata.artifacts);
-        setBeforeId(
-          (current) =>
-            current || metadata.artifacts.find((row) => row.id && row.version < version)?.id || "",
-        );
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
@@ -161,7 +183,7 @@ export function RevisionReviewPanel({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [artifactId, base, stageSlug, version, refresh, batchPage, threadPage]);
+  }, [artifactId, base, refresh, batchPage, threadPage, view]);
 
   useEffect(() => {
     if (!beforeId) return;
@@ -169,7 +191,7 @@ export function RevisionReviewPanel({
     queueMicrotask(() => {
       if (!controller.signal.aborted) {
         setBefore(null);
-        setCompareError(null);
+        setBeforeError(null);
       }
     });
     void read<{ artifact: { id: string; payload: unknown } }>(
@@ -182,12 +204,15 @@ export function RevisionReviewPanel({
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
-          setCompareError(cause instanceof Error ? cause.message : "Could not load comparison.");
+          setBeforeError({
+            id: beforeId,
+            message: cause instanceof Error ? cause.message : "Could not load comparison.",
+          });
       });
     return () => controller.abort();
   }, [beforeId, base, stageSlug, refresh]);
 
-  const diff = useMemo(
+  const comparison = useMemo(
     () =>
       before?.id === beforeId && typeof before.payload === "string" && typeof source === "string"
         ? compareRevisionSources(before.payload, source)
@@ -227,6 +252,90 @@ export function RevisionReviewPanel({
     }
   }
 
+  if (view === "brief") {
+    const failure = versionsError ?? compareError;
+    const brief =
+      comparison?.kind === "line_diff" ? summarizeRevisionChanges(comparison.rows) : null;
+    let content;
+    if (failure) {
+      content = (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
+          <p>{failure}</p>
+          <button type="button" className={buttonClass} onClick={() => setRefresh((n) => n + 1)}>
+            Retry comparison
+          </button>
+        </div>
+      );
+    } else if (!versions || (beforeId && before?.id !== beforeId)) {
+      content = (
+        <p role="status" className="text-sm text-muted">
+          Loading artifact changes…
+        </p>
+      );
+    } else if (!previousId) {
+      content = (
+        <p className="text-sm text-muted">
+          {previous
+            ? "The previous revision is ambiguous. Select an artifact in Compare versions."
+            : "No earlier version is available for this artifact."}
+        </p>
+      );
+    } else if (comparison?.kind === "complete_sources") {
+      content = (
+        <p className="text-sm text-muted">
+          This revision is too large for a brief. Compare versions shows the complete sources.
+        </p>
+      );
+    } else if (!brief || brief.changes.length === 0) {
+      content = (
+        <p className="text-sm text-muted">
+          {brief ? "No Markdown source changes." : "Only Markdown artifacts can be compared."}
+        </p>
+      );
+    } else {
+      content = (
+        <>
+          <ul className="divide-y divide-border border-t border-border">
+            {brief.changes.map((change, index) => (
+              <li key={index} className="flex items-start gap-3 py-3">
+                <span
+                  className={`w-16 shrink-0 rounded-[4px] px-1.5 py-0.5 text-center text-xs font-semibold capitalize ${change.kind === "added" ? "bg-success-soft text-success" : change.kind === "removed" ? "bg-warning-soft text-warning" : "bg-accent-soft text-accent"}`}
+                >
+                  {change.kind}
+                </span>
+                <p className="min-w-0 whitespace-pre-wrap text-sm text-foreground [overflow-wrap:anywhere]">
+                  {change.excerpt || "Whitespace change"}
+                </p>
+              </li>
+            ))}
+          </ul>
+          {brief.remaining > 0 ? (
+            <p className="text-xs text-muted">
+              {brief.remaining} more {brief.remaining === 1 ? "change" : "changes"} in Compare
+              versions.
+            </p>
+          ) : null}
+        </>
+      );
+    }
+    return (
+      <section aria-label="Artifact changes" className="min-w-0 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h4 className="text-base font-semibold">What changed in v{version}</h4>
+            <p className="text-xs text-muted">Markdown source excerpts from this artifact.</p>
+          </div>
+          {previousId && previous ? (
+            <span className="rounded-[4px] bg-accent-soft px-2 py-1 text-xs font-semibold text-accent">
+              v{previous.version} → v{version}
+            </span>
+          ) : null}
+        </div>
+        {content}
+      </section>
+    );
+  }
+
   const groups = [
     { label: "Unresolved feedback", outdated: false },
     { label: "Outdated selections", outdated: true },
@@ -255,9 +364,9 @@ export function RevisionReviewPanel({
           Loading revision review…
         </p>
       ) : null}
-      {error ? (
+      {error || versionsError ? (
         <p role="alert" className="text-sm text-danger">
-          {error} Use Refresh review to retry.
+          {error ?? versionsError} Use Refresh review to retry.
         </p>
       ) : null}
       <section aria-label="Compare artifact revisions" className="min-w-0 space-y-3">
@@ -269,10 +378,10 @@ export function RevisionReviewPanel({
           id="compare-artifact-source"
           value={beforeId}
           className="min-h-11 w-full rounded-[4px] border border-border bg-surface px-2 text-xs"
-          onChange={(event) => setBeforeId(event.target.value)}
+          onChange={(event) => setSelectedBeforeId(event.target.value)}
         >
           <option value="">Choose a version</option>
-          {versions
+          {(versions ?? [])
             .filter((row) => row.id && row.id !== artifactId)
             .map((row) => (
               <option key={row.id} value={row.id}>
@@ -290,7 +399,7 @@ export function RevisionReviewPanel({
             Loading comparison…
           </p>
         ) : null}
-        {diff ? (
+        {comparison ? (
           <div
             aria-label="Source changes"
             tabIndex={0}
@@ -299,7 +408,7 @@ export function RevisionReviewPanel({
             <p className="border-b border-border p-3 text-xs text-muted">
               Exact Markdown source · Removed from selected version / Added in version {version}
             </p>
-            {diff.map((row, index) => (
+            {comparison.rows.map((row, index) => (
               <div
                 key={index}
                 className={`min-w-0 border-b border-border p-3 ${row.kind === "added" ? "bg-success-soft" : row.kind === "removed" ? "bg-warning-soft" : ""}`}

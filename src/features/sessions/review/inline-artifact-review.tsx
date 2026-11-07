@@ -24,6 +24,7 @@ export function InlineArtifactReview({
   artifactVersion,
   source,
   historical,
+  initiallyOpen = false,
   readOnly,
   children,
 }: {
@@ -32,10 +33,13 @@ export function InlineArtifactReview({
   artifactVersion: number;
   source: string;
   historical: boolean;
+  initiallyOpen?: boolean;
   readOnly: boolean;
   children: ReactNode;
 }) {
-  const [panelState, setPanelState] = useState<"unopened" | "open" | "hidden">("unopened");
+  const [panelState, setPanelState] = useState<"unopened" | "open" | "hidden">(
+    initiallyOpen ? "open" : "unopened",
+  );
   const open = panelState === "open";
   const [selection, setSelection] = useState<ArtifactSourceAnchor | null>(null);
   const [anchor, setAnchor] = useState<ArtifactSourceAnchor | null>(null);

@@ -61,6 +61,7 @@ type SessionReviewBarProps = {
   requestError?: string | null;
   reviewArtifact: SessionReviewArtifact | null;
   phaseActionPending: "approve" | "reject" | null;
+  stageName?: string;
 };
 
 export function SessionReviewBar({
@@ -74,6 +75,7 @@ export function SessionReviewBar({
   reviewArtifact,
   phaseActionPending,
   requestError,
+  stageName = "this stage",
 }: SessionReviewBarProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
@@ -458,7 +460,7 @@ export function SessionReviewBar({
         }}
       >
         <DialogContent
-          description="Select inline threads or write a note. Wallie will revise the artifact and code you reviewed."
+          description={`Select inline threads or write a note. Wallie will rerun ${stageName} with your feedback.`}
           dismissible={!phaseActionBusy}
           onKeyDown={(event) => {
             if (!isSessionSubmitShortcut(event)) return;

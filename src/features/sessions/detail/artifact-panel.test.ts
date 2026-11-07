@@ -112,6 +112,78 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(fetch).not.toHaveBeenCalled());
   });
 
+  it("opens a revised artifact on its brief with one-click access to the exact diff and comments", async () => {
+    const current = {
+      ...latestArtifact,
+      id: "latest-artifact",
+      payload: "# Build\n\nRefresh the board after reconnecting.\n",
+    };
+    const previous = {
+      ...latestArtifact,
+      id: "previous-artifact",
+      version: 1,
+      payload: "# Build\n\nKeep the board as-is after reconnecting.\n",
+    };
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("/reviews?")) return response({ threads: [], nextCursor: null });
+      if (url.includes("/feedback-batches?")) return response({ batches: [], nextCursor: null });
+      if (url.includes("artifactId=previous-artifact")) return response({ artifact: previous });
+      return response({
+        artifacts: [
+          metadataRow({ id: current.id, version: 2 }),
+          metadataRow({ id: previous.id, version: 1 }),
+        ],
+      });
+    });
+    renderPanel({
+      currentArtifactId: current.id,
+      isAwaitingReview: true,
+      latestArtifact: current,
+      initialFormattedArtifactKey: `${SESSION_ID}:build:id:latest-artifact`,
+    });
+
+    expect(screen.getByRole("tab", { name: "Review brief", selected: true })).toBeTruthy();
+    expect(await screen.findByText("Refresh the board after reconnecting.")).toBeTruthy();
+    expect(screen.getByText("v1 → v2")).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Compare versions" }));
+    expect(await screen.findByLabelText("Source changes")).toBeTruthy();
+    expect(screen.getByText("Keep the board as-is after reconnecting.")).toBeTruthy();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes("artifactId=previous-artifact")),
+    ).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Full artifact" }));
+    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Review brief" }));
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+    expect(screen.getByRole("tab", { name: "Full artifact", selected: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Comments", expanded: true })).toBeTruthy();
+    expect(screen.getByLabelText("Comment on a block")).toBeTruthy();
+  });
+
+  it("opens a shared thread in the full artifact even when a brief is available", async () => {
+    const query = "?artifactId=latest-artifact&artifactVersion=2&reviewThread=shared-thread";
+    window.history.replaceState(null, "", mockedNavigation.pathname + query);
+    mockedNavigation.searchParams = new URLSearchParams(query);
+    vi.mocked(fetch).mockImplementation(() => response({ threads: [], nextCursor: null }));
+    renderPanel({
+      currentArtifactId: "latest-artifact",
+      isAwaitingReview: true,
+      latestArtifact: { ...latestArtifact, id: "latest-artifact" },
+      initialFormattedArtifactKey: `${SESSION_ID}:build:id:latest-artifact`,
+    });
+
+    expect(screen.getByRole("tab", { name: "Full artifact", selected: true })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Comments", expanded: true })).toBeTruthy(),
+    );
+  });
+
   it("reports the immutable identity once a lazily fetched body is displayed", async () => {
     const onDisplayedArtifactChange = vi.fn();
     vi.mocked(fetch).mockImplementationOnce(() =>
