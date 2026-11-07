@@ -616,7 +616,11 @@ describe("artifact threaded review", () => {
         {panel({ openerRef, onClose: close })}
       </>,
     );
-    await user.click(screen.getByRole("button", { name: "Close comments" }));
+    const collapse = screen.getByRole("button", { name: "Collapse comments" });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+    expect(collapse).toHaveAttribute("aria-controls", "artifact-review-panel");
+    expect(collapse.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await user.click(collapse);
     await waitFor(() => expect(openerRef.current).toHaveFocus());
     expect(close).toHaveBeenCalledOnce();
   });

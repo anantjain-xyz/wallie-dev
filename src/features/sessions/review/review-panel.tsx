@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
@@ -512,14 +513,18 @@ export function ArtifactReviewPanel({
         </h4>
         {onClose ? (
           <button
-            className={buttonClass}
+            aria-label="Collapse comments"
+            title="Collapse comments"
+            aria-expanded={true}
+            aria-controls={panelId}
+            className="ui-icon-button shrink-0"
             onClick={() => {
               onClose();
               queueMicrotask(() => openerRef?.current?.focus());
             }}
             type="button"
           >
-            Close comments
+            <ChevronDownIcon className="size-3.5 rotate-180 transition-transform motion-reduce:transition-none" />
           </button>
         ) : null}
       </div>

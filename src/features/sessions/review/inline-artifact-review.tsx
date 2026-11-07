@@ -3,6 +3,8 @@
 import dynamic from "next/dynamic";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
+
 import { OPEN_REVIEW_COMMENTS_EVENT } from "./open-comments";
 import { artifactSourceBlocks, selectedArtifactSourceAnchor } from "./selection";
 import type { ArtifactSourceAnchor } from "./source-anchor";
@@ -66,17 +68,6 @@ export function InlineArtifactReview({
     <div className={open ? "grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]" : "min-w-0"}>
       <div className="min-w-0">
         <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3">
-          <button
-            ref={opener}
-            id="artifact-review-open"
-            type="button"
-            aria-expanded={open}
-            aria-controls="artifact-review-panel"
-            className="min-h-11 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted"
-            onClick={() => setPanelState((value) => (value === "open" ? "hidden" : "open"))}
-          >
-            Comments
-          </button>
           {!readOnly ? (
             <button
               type="button"
@@ -91,6 +82,21 @@ export function InlineArtifactReview({
           ) : (
             <p className="text-xs text-muted">Archived session · Comments are read-only</p>
           )}
+          {!open ? (
+            <button
+              ref={opener}
+              id="artifact-review-open"
+              type="button"
+              aria-label="Show comments"
+              title="Show comments"
+              aria-expanded={open}
+              aria-controls="artifact-review-panel"
+              className="ui-icon-button ml-auto shrink-0"
+              onClick={() => setPanelState("open")}
+            >
+              <ChevronDownIcon className="size-3.5 transition-transform motion-reduce:transition-none" />
+            </button>
+          ) : null}
         </div>
         {open && !readOnly ? (
           <div className="mb-4 space-y-2 rounded-[4px] border border-border bg-canvas p-3">
@@ -144,7 +150,7 @@ export function InlineArtifactReview({
             openerRef={opener}
             onClose={() => {
               setPanelState("hidden");
-              opener.current?.focus();
+              queueMicrotask(() => opener.current?.focus());
             }}
           />
         </div>

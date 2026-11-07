@@ -27,7 +27,7 @@ vi.mock("@/features/sessions/review/review-panel", () => ({
       data-thread-id={initialThreadId}
     >
       <button type="button" onClick={onClose}>
-        Close comments
+        Collapse comments
       </button>
     </div>
   ),
@@ -248,7 +248,7 @@ describe("SessionReviewEvidence", () => {
     expect(comments).toHaveAttribute("data-artifact-version", "2");
     expect(comments).toHaveAttribute("data-thread-id", "77777777-7777-4777-8777-777777777777");
     expect(screen.getByText(/Blocking feedback on plan/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse comments" }));
     expect(comments).not.toBeVisible();
     fireEvent.click(screen.getAllByRole("button", { name: "Open Comments" })[0]!);
     expect(comments).toBeVisible();
