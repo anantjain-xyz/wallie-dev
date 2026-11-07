@@ -269,11 +269,13 @@ describe("ArtifactPanel", () => {
     expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain(
       "artifactId=replacement-artifact",
     );
-    expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
-      id: "replacement-artifact",
-      stageSlug: "build",
-      version: 2,
-    });
+    await waitFor(() =>
+      expect(onDisplayedArtifactChange).toHaveBeenLastCalledWith({
+        id: "replacement-artifact",
+        stageSlug: "build",
+        version: 2,
+      }),
+    );
   });
 
   it("keeps duplicate version bodies, history selection, and Latest keyed by artifact ID", async () => {
