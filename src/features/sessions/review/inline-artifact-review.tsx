@@ -55,11 +55,12 @@ function passageMarkers(reader: HTMLElement, threads: ArtifactReviewThread[]): P
         typeof anchor !== "object" ||
         Array.isArray(anchor) ||
         typeof anchor.start !== "number" ||
-        typeof anchor.end !== "number"
+        typeof anchor.end !== "number" ||
+        typeof anchor.quote !== "string"
       )
         return [];
       const rect = firstPassageRect(
-        artifactPassageRanges(text, { start: anchor.start, end: anchor.end }),
+        artifactPassageRanges(text, { start: anchor.start, end: anchor.end, quote: anchor.quote }),
       );
       return rect ? [{ thread, top: Math.max(0, rect.top - top - 8) }] : [];
     })

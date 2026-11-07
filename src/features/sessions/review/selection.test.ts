@@ -63,6 +63,22 @@ describe("rendered artifact source selection", () => {
       "&amp;",
     );
   });
+  it.each([
+    ["[label](https://example.com) tail", "https://example.com) tail"],
+    ["head [label](https://example.com)", "head [label](https://example.com)"],
+  ])("leaves a selection with a source-only boundary for Raw in %s", (source, quote) => {
+    document.body.innerHTML = renderMarkdownToHtml(source, true);
+    const start = source.indexOf(quote);
+    const anchor = createArtifactSourceAnchor(source, start, start + quote.length);
+    expect(artifactPassageRanges(indexArtifactText(document.body), anchor)).toEqual([]);
+  });
+  it("keeps a block selection renderable when only its trailing whitespace is omitted", () => {
+    const source = "🚀 Reconnect.\n\nNext block.";
+    document.body.innerHTML = renderMarkdownToHtml(source, true);
+    const [block] = artifactSourceBlocks(source);
+    const ranges = artifactPassageRanges(indexArtifactText(document.body), block!.anchor);
+    expect(ranges.map((range) => range.toString())).toEqual(["🚀 Reconnect."]);
+  });
   it("maps an exact code block", () => {
     const source = "```ts\nconst rocket = '🚀';\n```";
     expect(select(source, "const rocket = '🚀';\n", 0, 6, 12)?.quote).toBe("rocket");

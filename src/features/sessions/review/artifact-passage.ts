@@ -17,9 +17,11 @@ export function indexArtifactText(reader: HTMLElement) {
 
 export function artifactPassageRanges(
   text: ReturnType<typeof indexArtifactText>,
-  anchor: Pick<ArtifactSourceAnchor, "start" | "end">,
+  anchor: Pick<ArtifactSourceAnchor, "start" | "end" | "quote">,
 ): Range[] {
   const ranges: Range[] = [];
+  let mappedStart = anchor.end;
+  let mappedEnd = anchor.start;
   for (const { start, end, node, exact } of text) {
     if (end <= anchor.start) continue;
     if (start >= anchor.end) break;
@@ -38,7 +40,18 @@ export function artifactPassageRanges(
       return [];
     }
     ranges.push(range);
+    mappedStart = Math.min(mappedStart, from);
+    mappedEnd = Math.max(mappedEnd, to);
   }
+  if (ranges.length === 0 || (mappedStart === anchor.start && mappedEnd === anchor.end)) {
+    return ranges;
+  }
+
+  // Block selections can include blank lines that Markdown does not render.
+  const points = Array.from(anchor.quote);
+  const leading = points.slice(0, mappedStart - anchor.start).join("");
+  const trailing = points.slice(mappedEnd - anchor.start).join("");
+  if (/\S/u.test(leading) || /\S/u.test(trailing)) return [];
   return ranges;
 }
 
