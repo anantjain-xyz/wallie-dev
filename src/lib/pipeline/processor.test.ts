@@ -66,6 +66,8 @@ const mocked = vi.hoisted(() => ({
   prepareSourceDelivery: vi.fn(),
   publishSessionCheckpoint: vi.fn(),
   checkoutPinnedGitInput: vi.fn().mockResolvedValue(undefined),
+  restoreRetryInput: vi.fn().mockResolvedValue(false),
+  saveRetryCheckpoint: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("@/lib/validation-evidence/service", () => ({
@@ -73,6 +75,10 @@ vi.mock("@/lib/validation-evidence/service", () => ({
 }));
 
 vi.mock("./git-input", () => ({ checkoutPinnedGitInput: mocked.checkoutPinnedGitInput }));
+vi.mock("./retry-checkpoint", () => ({
+  restoreRetryInput: mocked.restoreRetryInput,
+  saveRetryCheckpoint: mocked.saveRetryCheckpoint,
+}));
 vi.mock("./checkpoint-publication", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./checkpoint-publication")>()),
   publishSessionCheckpoint: mocked.publishSessionCheckpoint,
@@ -1768,6 +1774,94 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(legacyMutationCalls).toEqual([]);
     expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { timeoutMs: 1_800_000, checkpointMs: 1_740_000 },
+    { timeoutMs: 60_000, checkpointMs: 30_000 },
+  ])(
+    "saves private retry source before a $timeoutMs ms worker timeout",
+    async ({ timeoutMs, checkpointMs }) => {
+      vi.useFakeTimers();
+      try {
+        const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+          session: baseSession(),
+        });
+        const controller = new AbortController();
+        const deadlineAt = new Date(Date.now() + timeoutMs).toISOString();
+        const runnerStarted = Promise.withResolvers<void>();
+        mocked.createAgentRunner.mockReturnValue({
+          ...makeRunner([]),
+          start: vi.fn(async function* (input: AgentRunnerStartInput) {
+            runnerStarted.resolve();
+            input.onSensitiveValue?.("refreshed-credential");
+            input.onCheckpointSensitiveValues?.(async () => ["live-credential"]);
+            await new Promise<void>((resolve) => {
+              input.signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+          }),
+        });
+
+        const processing = processPipelineJob({
+          admin,
+          job: baseJob(),
+          deadlineAt,
+          signal: controller.signal,
+        });
+        await runnerStarted.promise;
+        await vi.advanceTimersByTimeAsync(checkpointMs - 1);
+        expect(mocked.saveRetryCheckpoint).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(mocked.saveRetryCheckpoint).toHaveBeenCalledOnce();
+        expect(mocked.saveRetryCheckpoint).toHaveBeenCalledWith(
+          expect.objectContaining({ baseSha: "a".repeat(40), deadlineAt, runId: "run-1" }),
+        );
+        expect(await mocked.saveRetryCheckpoint.mock.calls[0]?.[0].sensitiveValues()).toEqual(
+          expect.arrayContaining(["refreshed-credential", "live-credential"]),
+        );
+        expect(insertedMessages).toContainEqual(
+          expect.objectContaining({ message_md: "Saved committed source for Retry." }),
+        );
+
+        controller.abort();
+        expect((await processing).result).toBe("idle");
+        expect(insertedArtifacts).toEqual([]);
+        expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+        expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("restores manual retry source before starting the agent and publishes from the accepted base", async () => {
+    const pinnedSha = "b".repeat(40);
+    const { admin, insertedMessages } = buildAdminMock({
+      session: baseSession(),
+      priorGitInput: { input_sha: pinnedSha },
+    });
+    mocked.readSourceBase.mockResolvedValueOnce(pinnedSha);
+    mocked.restoreRetryInput.mockResolvedValueOnce(true);
+    const runner = makeRunner([
+      { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Done" },
+    ]);
+    mocked.createAgentRunner.mockReturnValue(runner);
+
+    expect(
+      (await processPipelineJob({ admin, job: baseJob({ trigger_type: "manual_retry" }) })).result,
+    ).toBe("success");
+    expect(mocked.restoreRetryInput).toHaveBeenCalledWith(
+      expect.objectContaining({ baseSha: pinnedSha, jobId: "job-1", runId: "run-1" }),
+    );
+    expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledBefore(mocked.restoreRetryInput);
+    expect(mocked.restoreRetryInput).toHaveBeenCalledBefore(vi.mocked(runner.start));
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({ message_md: "Restored committed source from the timed-out run." }),
+    );
+    expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ baseSha: pinnedSha }),
+    );
   });
 
   it("appends completion history after publication without refreshing an active run", async () => {

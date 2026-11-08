@@ -519,7 +519,8 @@ function buildSupabaseMocks(opts: {
   let queuedRun: AgentRunRow | null | undefined;
   let receiptRunId: string | null = null;
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
-    if (name !== "enqueue_session_job_with_run") throw new Error(`unexpected RPC: ${name}`);
+    if (name !== "enqueue_session_job_with_run" && name !== "enqueue_session_retry_with_checkpoint")
+      throw new Error(`unexpected RPC: ${name}`);
     opts.enqueueCalls.push(args);
     if (opts.enqueueError) return { data: null, error: opts.enqueueError };
     const receipt = opts.enqueueReceipt ?? {
@@ -703,6 +704,7 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
     // the canonical dashed form runners expect.
     expect(inserted.p_agent_model_provider).toBe("claude-code");
     expect(inserted.p_expected_stage_id).toBe("stage-product");
+    expect(inserted.p_retry_run_id).toBe("run-1");
   });
 
   it("refuses to enqueue a run for an archived session", async () => {
@@ -1054,7 +1056,7 @@ describe("retryWallieRun historical source eligibility", () => {
           expect(enqueueCalls).toHaveLength(1);
           expect(enqueueCalls[0]).toMatchObject({
             p_expected_stage_id: "stage-product",
-            p_trigger_type: "manual_retry",
+            p_retry_run_id: "run-1",
           });
         },
       );

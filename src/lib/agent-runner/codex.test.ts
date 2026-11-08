@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CodexCredential } from "@/lib/codex/contracts";
 import { shellQuote } from "@/lib/sandbox/command";
 import { FakeSandbox } from "@/lib/sandbox/fake";
-import type { AgentEvent } from "./types";
+import type { AgentEvent, AgentRunnerStartInput } from "./types";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
 import {
@@ -531,11 +531,33 @@ describe("CodexRunner", () => {
     });
 
     const events = [];
+    const onCheckpointSensitiveValues =
+      vi.fn<NonNullable<AgentRunnerStartInput["onCheckpointSensitiveValues"]>>();
     for await (const ev of runner.start({
+      onCheckpointSensitiveValues,
       prompt: "p",
       sandbox,
       sessionId: "s",
     })) {
+      if (ev.type === "completion" && ev.summary === "done") {
+        expect(store.persistChatGptAuthJson).not.toHaveBeenCalled();
+        const read = onCheckpointSensitiveValues.mock.calls[0]?.[0];
+        if (!read) throw new Error("Missing checkpoint credential reader");
+        const signal = new AbortController().signal;
+        await expect(read(signal)).resolves.toEqual([
+          refreshedAuthJson,
+          "access-token-value-refreshed",
+          "refresh-token-value-refreshed",
+        ]);
+        expect(store.persistChatGptAuthJson).not.toHaveBeenCalled();
+        const unreadable = vi
+          .spyOn(sandbox, "readFile")
+          .mockRejectedValueOnce(new Error(refreshedAuthJson));
+        await expect(read(signal)).rejects.toThrow(
+          /^Could not verify current Codex credentials for the Retry checkpoint\.$/,
+        );
+        unreadable.mockRestore();
+      }
       events.push(ev);
     }
 

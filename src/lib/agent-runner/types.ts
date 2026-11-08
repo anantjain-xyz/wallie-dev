@@ -86,6 +86,8 @@ export interface AgentRunnerStartInput {
   secrets?: Array<string | undefined>;
   /** In-memory sink for the exact credentials authorized by this invocation, including refreshed token fields. Never persist or log these values. */
   onSensitiveValue?: (value: string) => void;
+  /** Register a reader for credentials the active CLI may refresh before it exits. */
+  onCheckpointSensitiveValues?: (read: (signal: AbortSignal) => Promise<readonly string[]>) => void;
   /** Max output tokens for the agent (optional, provider-specific). */
   maxTokens?: number;
   /** Optional deadline signal used by bounded route handlers. */

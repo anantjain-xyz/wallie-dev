@@ -188,6 +188,22 @@ export class CodexRunner implements AgentRunner {
     const codexAuthFile = `${codexHome}/auth.json`;
     await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
     input.signal?.throwIfAborted();
+    input.onCheckpointSensitiveValues?.(async (signal) => {
+      signal.throwIfAborted();
+      try {
+        // Codex can refresh this file before the post-exit credential sync runs.
+        const authJson = await sandbox.readFile(codexAuthFile);
+        signal.throwIfAborted();
+        if (!authJson) throw new Error("Missing Codex auth cache.");
+        parseCodexChatGptAuthJson(authJson);
+        const values: string[] = [];
+        new AgentOutputSafety(undefined, (value) => values.push(value)).addSecret(authJson);
+        return values;
+      } catch {
+        signal.throwIfAborted();
+        throw new Error("Could not verify current Codex credentials for the Retry checkpoint.");
+      }
+    });
 
     const proc = await sandbox.exec(
       "bash",

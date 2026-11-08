@@ -2847,6 +2847,74 @@ export type Database = {
           },
         ]
       }
+      session_retry_checkpoint_jobs: {
+        Row: {
+          job_id: string
+          source_run_id: string
+        }
+        Insert: {
+          job_id: string
+          source_run_id: string
+        }
+        Update: {
+          job_id?: string
+          source_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_retry_checkpoint_jobs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_retry_checkpoint_jobs_source_run_id_fkey"
+            columns: ["source_run_id"]
+            isOneToOne: false
+            referencedRelation: "session_retry_checkpoints"
+            referencedColumns: ["source_run_id"]
+          },
+        ]
+      }
+      session_retry_checkpoints: {
+        Row: {
+          bundle_sha256: string
+          checkpoint_path: string
+          head_sha: string
+          input_sha: string
+          rejection_count: number
+          source_attempt_count: number
+          source_run_id: string
+        }
+        Insert: {
+          bundle_sha256: string
+          checkpoint_path: string
+          head_sha: string
+          input_sha: string
+          rejection_count: number
+          source_attempt_count: number
+          source_run_id: string
+        }
+        Update: {
+          bundle_sha256?: string
+          checkpoint_path?: string
+          head_sha?: string
+          input_sha?: string
+          rejection_count?: number
+          source_attempt_count?: number
+          source_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_retry_checkpoints_source_run_id_fkey"
+            columns: ["source_run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_selected_stages: {
         Row: {
           created_at: string
@@ -4932,6 +5000,23 @@ export type Database = {
         Args: { p_session_id: string; p_workspace_id: string }
         Returns: boolean
       }
+      enqueue_session_retry_with_checkpoint: {
+        Args: {
+          p_agent_model_name: string
+          p_agent_model_provider: string
+          p_expected_stage_id: string
+          p_requested_by_member_id: string
+          p_retry_run_id: string
+          p_run_type: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          job_id: string
+          run_id: string
+        }[]
+      }
       ensure_own_profile: {
         Args: {
           actor_avatar_url?: string
@@ -5145,6 +5230,17 @@ export type Database = {
           id: string
           original_filename: string
           size_bytes: number
+        }[]
+      }
+      get_session_retry_checkpoint: {
+        Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
+        Returns: {
+          bundle_sha256: string
+          checkpoint_path: string
+          head_sha: string
+          input_sha: string
+          source_attempt_count: number
+          source_run_id: string
         }[]
       }
       get_workspace_usage: {
@@ -5699,6 +5795,18 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      save_session_retry_checkpoint: {
+        Args: {
+          p_attempt_count: number
+          p_bundle_sha256: string
+          p_deadline_at: string
+          p_head_sha: string
+          p_input_sha: string
+          p_job_id: string
+          p_run_id: string
+        }
+        Returns: boolean
       }
       save_workspace_repository_profile: {
         Args: {
