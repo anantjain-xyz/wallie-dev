@@ -154,7 +154,8 @@ export function ArtifactReviewPanel({
   const [commentCursor, setCommentCursor] = useState<ReviewCursor | null>(null);
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [threadLoadError, setThreadLoadError] = useState<string | null>(null);
+  const [commentLoadError, setCommentLoadError] = useState<string | null>(null);
   const [permissionError, setPermissionError] = useState<ReviewReadOnlyReason | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -187,6 +188,7 @@ export function ArtifactReviewPanel({
   const config = useSupabasePublicConfig();
   selectedRef.current = selectedId;
   const selectedThread = snapshot?.threads.find((thread) => thread.id === selectedId) ?? null;
+  const loadError = threadLoadError ?? commentLoadError;
   const readOnlyReason =
     parentReadOnlyReason ??
     permissionError ??
@@ -286,11 +288,13 @@ export function ArtifactReviewPanel({
               ? { ...current.submittedThreadRevisions, ...next.submittedThreadRevisions }
               : next.submittedThreadRevisions,
         }));
-        setLoadError(linkedThreadError);
+        setThreadLoadError(linkedThreadError);
         setPermissionError(null);
       } catch (error) {
         if (mounted.current && sequence === threadLoadSequence.current) {
-          setLoadError(error instanceof Error ? error.message : "Could not load review threads.");
+          setThreadLoadError(
+            error instanceof Error ? error.message : "Could not load review threads.",
+          );
           setPermissionError(
             error instanceof ReviewRequestError && [401, 403].includes(error.status)
               ? "unauthorized"
@@ -323,11 +327,15 @@ export function ArtifactReviewPanel({
           return;
         setComments((current) => (cursor ? mergeRows(current, next.comments) : next.comments));
         setCommentCursor(next.nextCursor);
-        setLoadError(null);
+        setCommentLoadError(null);
         return next.comments;
       } catch (error) {
-        if (mounted.current && sequence === commentLoadSequence.current)
-          setLoadError(error instanceof Error ? error.message : "Could not load comments.");
+        if (
+          mounted.current &&
+          sequence === commentLoadSequence.current &&
+          selectedRef.current === threadId
+        )
+          setCommentLoadError(error instanceof Error ? error.message : "Could not load comments.");
       } finally {
         if (mounted.current && sequence === commentLoadSequence.current) setCommentsLoading(false);
       }
@@ -405,6 +413,7 @@ export function ArtifactReviewPanel({
       setSelectedId(threadId);
       setComments([]);
       setCommentCursor(null);
+      setCommentLoadError(null);
       setEditingTarget(draft?.editingTarget ?? null);
       setReply(draft?.reply ?? "");
       setReason(draft?.reason ?? "");
