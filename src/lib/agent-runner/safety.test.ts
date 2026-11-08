@@ -168,7 +168,7 @@ describe("runner credential boundary", () => {
         secrets: [githubSecret],
       }),
     );
-    expect(events).toContainEqual({ type: "text", text: "[REDACTED] [REDACTED]" });
+    expect(events).toContainEqual({ type: "progress", text: "[REDACTED] [REDACTED]" });
     expect(JSON.stringify(events)).not.toContain(providerSecret);
     expect(JSON.stringify(events)).not.toContain(githubSecret);
   });

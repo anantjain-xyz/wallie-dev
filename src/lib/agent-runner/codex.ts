@@ -67,6 +67,7 @@ export class CodexRunner implements AgentRunner {
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
     const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const promptFile = `${directory}/prompt.txt`;
+    const finalOutputFile = `${directory}/final-output.md`;
     const codexHome = `${directory}/codex`;
 
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
@@ -100,7 +101,7 @@ export class CodexRunner implements AgentRunner {
         input,
         currentCredential,
         store,
-        { codexHome, promptFile },
+        { codexHome, promptFile, finalOutputFile },
         safety,
       );
       return;
@@ -113,6 +114,7 @@ export class CodexRunner implements AgentRunner {
       codexHome,
       promptFile,
       sandbox.repoPath,
+      finalOutputFile,
     );
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
@@ -126,6 +128,8 @@ export class CodexRunner implements AgentRunner {
       signal: input.signal,
     });
 
+    const errors: string[] = [];
+    let lastMessage: string | undefined;
     let stdoutBuf = "";
     let stderrBuf = "";
 
@@ -141,35 +145,38 @@ export class CodexRunner implements AgentRunner {
 
       for (const line of lines) {
         const event = parseCodexLine(line);
-        if (event) yield event;
+        if (event) {
+          if (event.type === "error") errors.push(event.message);
+          else {
+            if (event.type === "progress") lastMessage = event.text;
+            yield event;
+          }
+        }
       }
     }
 
     if (stdoutBuf.trim()) {
       const event = parseCodexLine(stdoutBuf);
-      if (event) yield event;
+      if (event) {
+        if (event.type === "error") errors.push(event.message);
+        else {
+          if (event.type === "progress") lastMessage = event.text;
+          yield event;
+        }
+      }
     }
 
     const code = await proc.exitCode;
-    if (code !== 0) {
-      yield {
-        type: "error",
-        message: codexExitErrorMessage(code, safety.redact(stderrBuf)),
-      };
-    }
+    if (code !== 0) errors.push(codexExitErrorMessage(code, safety.redact(stderrBuf)));
 
-    yield {
-      type: "completion",
-      taskComplete: true,
-      summary: "Codex session completed",
-    };
+    yield* codexSessionCompletion(sandbox, finalOutputFile, errors, lastMessage);
   }
 
   private async *runWithChatGptAuth(
     input: AgentRunnerStartInput,
     credential: ChatGptCodexCredential,
     store: CodexChatGptAuthStore,
-    paths: { codexHome: string; promptFile: string },
+    paths: { codexHome: string; promptFile: string; finalOutputFile: string },
     safety: AgentOutputSafety,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
@@ -177,14 +184,14 @@ export class CodexRunner implements AgentRunner {
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
-    const { codexHome, promptFile } = paths;
+    const { codexHome, promptFile, finalOutputFile } = paths;
     const codexAuthFile = `${codexHome}/auth.json`;
     await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
     input.signal?.throwIfAborted();
 
     const proc = await sandbox.exec(
       "bash",
-      ["-lc", codexExecCommand(model, effort, promptFile, sandbox.repoPath)],
+      ["-lc", codexExecCommand(model, effort, promptFile, sandbox.repoPath, finalOutputFile)],
       {
         cwd: sandbox.repoPath,
         env: { CI: "1", CODEX_HOME: codexHome, ...WALLIE_GIT_IDENTITY_ENV },
@@ -192,6 +199,8 @@ export class CodexRunner implements AgentRunner {
       },
     );
 
+    const errors: string[] = [];
+    let lastMessage: string | undefined;
     let stdoutBuf = "";
     let stderrBuf = "";
 
@@ -207,13 +216,25 @@ export class CodexRunner implements AgentRunner {
 
       for (const line of lines) {
         const event = parseCodexLine(line);
-        if (event) yield event;
+        if (event) {
+          if (event.type === "error") errors.push(event.message);
+          else {
+            if (event.type === "progress") lastMessage = event.text;
+            yield event;
+          }
+        }
       }
     }
 
     if (stdoutBuf.trim()) {
       const event = parseCodexLine(stdoutBuf);
-      if (event) yield event;
+      if (event) {
+        if (event.type === "error") errors.push(event.message);
+        else {
+          if (event.type === "progress") lastMessage = event.text;
+          yield event;
+        }
+      }
     }
 
     const code = await proc.exitCode;
@@ -235,18 +256,9 @@ export class CodexRunner implements AgentRunner {
       });
     }
 
-    if (errorMessage) {
-      yield {
-        type: "error",
-        message: errorMessage,
-      };
-    }
+    if (errorMessage) errors.push(errorMessage);
 
-    yield {
-      type: "completion",
-      taskComplete: true,
-      summary: "Codex session completed",
-    };
+    yield* codexSessionCompletion(sandbox, finalOutputFile, errors, lastMessage);
   }
 }
 
@@ -260,7 +272,8 @@ export class CodexRunner implements AgentRunner {
  *   { type: "turn.completed", usage: {...} }
  *   { type: "result", summary: "..." }
  * Unknown JSON bookkeeping shapes are ignored; non-JSON stdout falls through
- * to raw text so we don't silently drop plain output.
+ * to progress so we do not silently drop plain output. Only the CLI's
+ * output-last-message file supplies the reviewable deliverable.
  */
 export function parseCodexLine(raw: string): AgentEvent | null {
   const trimmed = raw.trim();
@@ -270,11 +283,11 @@ export function parseCodexLine(raw: string): AgentEvent | null {
     const obj = JSON.parse(trimmed) as Record<string, unknown>;
 
     if (obj.type === "text" && typeof obj.text === "string") {
-      return { type: "text", text: obj.text };
+      return { type: "progress", text: obj.text };
     }
 
     if (obj.type === "message" && typeof obj.content === "string") {
-      return { type: "text", text: obj.content };
+      return { type: "progress", text: obj.content };
     }
 
     if (obj.type === "tool_call" && typeof obj.name === "string") {
@@ -285,6 +298,16 @@ export function parseCodexLine(raw: string): AgentEvent | null {
 
     if (obj.type === "item.completed" && isRecord(obj.item)) {
       return parseCodexItem(obj.item);
+    }
+
+    if (obj.type === "turn.failed" || obj.type === "error") {
+      const message =
+        typeof obj.message === "string"
+          ? obj.message
+          : isRecord(obj.error) && typeof obj.error.message === "string"
+            ? obj.error.message
+            : "Codex reported a failed turn.";
+      return { type: "error", message };
     }
 
     if (obj.type === "turn.completed") {
@@ -317,14 +340,14 @@ export function parseCodexLine(raw: string): AgentEvent | null {
 
     return null;
   } catch {
-    return { type: "text", text: trimmed };
+    return { type: "progress", text: trimmed };
   }
 }
 
 function parseCodexItem(item: Record<string, unknown>): AgentEvent | null {
   if (item.type === "agent_message") {
     const text = textFromCodexContent(item.text ?? item.content);
-    return text ? { type: "text", text } : null;
+    return text ? { type: "progress", text } : null;
   }
 
   if (
@@ -391,9 +414,10 @@ function codexCommandForCredential(
   codexHome: string,
   promptFile: string,
   sandboxRepoPath: string,
+  finalOutputFile: string,
 ): string {
   if (credential.type !== "codex_access_token") {
-    return codexExecCommand(model, effort, promptFile, sandboxRepoPath);
+    return codexExecCommand(model, effort, promptFile, sandboxRepoPath, finalOutputFile);
   }
 
   const loginCommand = [
@@ -402,7 +426,7 @@ function codexCommandForCredential(
       `cli_auth_credentials_store="file"`,
     )} >/dev/stderr`,
   ].join(" && ");
-  return `${loginCommand} && ${codexExecCommand(model, effort, promptFile, sandboxRepoPath)}`;
+  return `${loginCommand} && ${codexExecCommand(model, effort, promptFile, sandboxRepoPath, finalOutputFile)}`;
 }
 
 async function persistRefreshedChatGptAuthJson(input: {
@@ -430,6 +454,7 @@ export function codexExecArgs(
   model: string,
   sandboxRepoPath: string,
   effort: AgentEffort = DEFAULT_CODEX_REASONING_EFFORT,
+  finalOutputFile?: string,
 ): string[] {
   return [
     "exec",
@@ -450,6 +475,7 @@ export function codexExecArgs(
     "--cd",
     sandboxRepoPath,
     "--json",
+    ...(finalOutputFile ? ["--output-last-message", finalOutputFile] : []),
     "-",
   ];
 }
@@ -459,8 +485,54 @@ function codexExecCommand(
   effort: AgentEffort,
   promptFile: string,
   sandboxRepoPath: string,
+  finalOutputFile: string,
 ): string {
-  return `codex ${codexExecArgs(model, sandboxRepoPath, effort).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+  return `codex ${codexExecArgs(model, sandboxRepoPath, effort, finalOutputFile).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+}
+
+async function* codexSessionCompletion(
+  sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>,
+  finalOutputFile: string,
+  errors: readonly string[],
+  lastMessage: string | undefined,
+): AsyncIterable<AgentEvent> {
+  let finalOutput: string | null;
+  try {
+    finalOutput = await sandbox.readFile(finalOutputFile);
+  } catch (error) {
+    if (!errors.length) throw error;
+    yield {
+      type: "error",
+      message: [
+        ...errors,
+        `Could not read Codex final output: ${error instanceof Error ? error.message : String(error)}`,
+      ].join("\n\n"),
+    };
+    return;
+  }
+  if (errors.length) {
+    // The consumer stops on error. Retain file-only validation/blockers first,
+    // while terminal usage has already flowed through from the JSON stream.
+    if (finalOutput?.trim() && finalOutput !== lastMessage) {
+      yield { type: "progress", text: finalOutput };
+    }
+    yield { type: "error", message: errors.join("\n\n") };
+    return;
+  }
+  if (!finalOutput?.trim()) {
+    yield {
+      type: "error",
+      message:
+        "Codex completed without a final deliverable. Progress remains available in Run history.",
+    };
+    return;
+  }
+  yield {
+    type: "completion",
+    taskComplete: true,
+    summary: "Codex session completed",
+    finalOutput,
+  };
 }
 
 async function ensureCodexHome(

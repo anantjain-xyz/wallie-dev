@@ -119,12 +119,30 @@ export class ClaudeCodeRunner implements AgentRunner {
     let stderrBuf = "";
     let completion: Extract<AgentEvent, { type: "completion" }> | undefined;
     let hadError = false;
+    let bufferedUsageForwarded = false;
     function* eventsForLine(line: string): Iterable<AgentEvent> {
       for (const event of parseStreamJsonLine(line)) {
         // Success is provisional until the process also exits successfully.
-        if (event.type === "completion" && event.taskComplete) completion = event;
-        else {
-          if (event.type === "error") hadError = true;
+        if (event.type === "completion" && event.taskComplete) {
+          completion = event;
+          bufferedUsageForwarded = false;
+        } else {
+          if (event.type === "completion" && event.usage) bufferedUsageForwarded = true;
+          if (event.type === "error") {
+            hadError = true;
+            if (completion?.finalOutput?.trim()) {
+              yield { type: "progress", text: completion.finalOutput };
+            }
+            if (completion?.usage && !bufferedUsageForwarded) {
+              yield {
+                type: "completion",
+                taskComplete: false,
+                summary: "Claude Code reported usage before an unsuccessful result",
+                usage: completion.usage,
+              };
+            }
+            completion = undefined;
+          }
           yield event;
         }
       }
@@ -158,9 +176,13 @@ export class ClaudeCodeRunner implements AgentRunner {
     const code = await proc.exitCode;
     input.signal?.throwIfAborted();
     if (code !== 0) {
+      if (completion?.finalOutput?.trim()) {
+        yield { type: "progress", text: completion.finalOutput };
+      }
       if (completion?.usage) {
         yield {
-          ...completion,
+          type: "completion",
+          usage: completion.usage,
           taskComplete: false,
           summary: "Claude Code reported usage before a nonzero exit",
         };
@@ -192,7 +214,7 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
         const events: AgentEvent[] = [];
         for (const block of content) {
           if (block.type === "text" && typeof block.text === "string" && block.text) {
-            events.push({ type: "text", text: block.text });
+            events.push({ type: "progress", text: block.text });
           }
           if (block.type === "tool_use") {
             events.push({
@@ -217,8 +239,13 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
           type: "error",
           message: `Claude Code ${typeof obj.subtype === "string" ? obj.subtype : "unsuccessful result"}: ${details || (typeof obj.result === "string" ? obj.result : "task did not complete")}`,
         };
-        if (!usage) return [error];
+        const partialOutput: AgentEvent[] =
+          details && typeof obj.result === "string" && obj.result.trim()
+            ? [{ type: "progress", text: obj.result }]
+            : [];
+        if (!usage) return [...partialOutput, error];
         return [
+          ...partialOutput,
           {
             type: "completion",
             taskComplete: false,
@@ -241,13 +268,13 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
     }
 
     if (obj.type === "content_block_delta" && typeof obj.delta?.text === "string") {
-      return [{ type: "text", text: obj.delta.text }];
+      return [{ type: "progress", text: obj.delta.text }];
     }
 
     return [];
   } catch {
     if (line.length > 0) {
-      return [{ type: "text", text: line }];
+      return [{ type: "progress", text: line }];
     }
     return [];
   }

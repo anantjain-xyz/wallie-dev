@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "@/lib/agent-runner/types";
+import { CodexRunner } from "@/lib/agent-runner/codex";
 import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import {
@@ -987,7 +988,12 @@ describe("processPipelineJob (generic stage runner)", () => {
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
         { type: "text", text: "Drafted spec body" },
-        { type: "completion", taskComplete: true, summary: "Done" },
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Drafted spec body",
+        },
       ]),
     );
   });
@@ -1407,7 +1413,12 @@ describe("processPipelineJob (generic stage runner)", () => {
         makeRunner(
           [
             { type: "text", text: "Matrix reviewable artifact" },
-            { type: "completion", taskComplete: true, summary: "Complete" },
+            {
+              type: "completion",
+              taskComplete: true,
+              summary: "Complete",
+              finalOutput: "Matrix reviewable artifact",
+            },
           ],
           { provider: agent },
         ),
@@ -1550,7 +1561,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       }),
       expect.objectContaining({
         kind: "completion",
-        message_md: "Done",
+        message_md: "Drafted spec body",
       }),
       expect.objectContaining({
         kind: "completion",
@@ -2072,13 +2083,203 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
   });
 
+  it("runs a Codex stage fixture from provider stream to clean publication and complete activity history", async () => {
+    const sandbox = new FakeSandbox();
+    const progress = [
+      "I’ll inspect the existing implementation and evidence…",
+      "Tests are still running; screenshot capture follows.",
+      "Checks completed; preparing the final result.",
+    ];
+    const finalOutput =
+      "# Build deliverable\n\nImplemented final deliverable publication separately from activity.\n\n## Validation\n\n- Provider stream and publication tests passed.\n- Desktop and 390px rendered/raw views verified.\n\n## Unresolved blocker\n\nPublication credentials are unavailable in this synthetic fixture.\n";
+    sandbox.scriptExec(
+      (call) => call.cmd === "bash" && call.args[1]?.includes("codex "),
+      (call) => {
+        const finalFile = call.args[1].match(/'--output-last-message' '([^']+)'/)?.[1];
+        if (!finalFile)
+          throw new Error("Codex invocation did not request authoritative final output");
+        sandbox.files.set(finalFile, { data: Buffer.from(finalOutput) });
+        return [
+          {
+            stream: "stdout",
+            data: [
+              ...progress.map((text) =>
+                JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } }),
+              ),
+              JSON.stringify({
+                type: "item.completed",
+                item: { type: "agent_message", text: finalOutput },
+              }),
+              JSON.stringify({
+                type: "turn.completed",
+                usage: { input_tokens: 123, output_tokens: 45 },
+              }),
+            ].join("\n"),
+          },
+        ];
+      },
+    );
+    mocked.createSessionSandbox.mockResolvedValueOnce(sandbox);
+    mocked.createAgentRunner.mockReturnValueOnce(
+      new CodexRunner({
+        credential: { expiresAt: null, secret: "synthetic-key", type: "platform_api_key" },
+      }),
+    );
+    const { admin, insertedArtifacts, insertedMessages, rpc } = buildAdminMock({
+      session: baseSession({ current_artifact_version: 1 }),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(insertedArtifacts).toEqual([
+      expect.objectContaining({ artifact_json: finalOutput, version: 2 }),
+    ]);
+    expect(
+      insertedMessages.filter((message) => progress.includes(String(message.message_md))),
+    ).toEqual(
+      progress.map((message_md) => expect.objectContaining({ kind: "progress", message_md })),
+    );
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({ kind: "completion", message_md: finalOutput }),
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "record_session_run_usage",
+      expect.objectContaining({ p_input_tokens: 123, p_output_tokens: 45 }),
+    );
+    expect(mocked.publishSessionCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactMarkdown: finalOutput,
+        expectedArtifactVersion: 1,
+        runId: "run-1",
+        jobId: "job-1",
+        attemptCount: 1,
+      }),
+    );
+  });
+
+  it.each([undefined, "", "   "])(
+    "never publishes narration as a fallback for missing final output (%j)",
+    async (finalOutput) => {
+      const narration = ["Inspecting the repository…", "Tests are still running…"];
+      mocked.createAgentRunner.mockReturnValue(
+        makeRunner([
+          { type: "progress", text: narration[0] },
+          { type: "text", text: narration[1] },
+          {
+            type: "completion",
+            taskComplete: true,
+            summary: "Codex session completed",
+            finalOutput,
+            usage: { inputTokens: 123, outputTokens: 45 },
+          },
+        ]),
+      );
+      const { admin, insertedArtifacts, insertedMessages, rpc, updatedJobs } = buildAdminMock({
+        session: baseSession({ current_artifact_version: 1 }),
+      });
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+      expect(insertedArtifacts).toEqual([]);
+      expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+      expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+      expect(insertedMessages).toEqual(
+        expect.arrayContaining(
+          narration.map((message_md) => expect.objectContaining({ message_md })),
+        ),
+      );
+      expect(insertedMessages.at(-1)).toMatchObject({
+        kind: "error",
+        message_md: expect.stringContaining("no final deliverable"),
+      });
+      expect(rpc).toHaveBeenCalledWith(
+        "record_session_run_usage",
+        expect.objectContaining({ p_input_tokens: 123, p_output_tokens: 45 }),
+      );
+      expect(updatedJobs.at(-1)).toMatchObject({ status: "error" });
+    },
+  );
+
+  it("retains provider blockers and usage after an unsuccessful terminal result", async () => {
+    const blocker = "Provider stopped: publication credentials unavailable.";
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner([
+        { type: "progress", text: "Validation passed; publication is blocked." },
+        {
+          type: "completion",
+          taskComplete: false,
+          summary: "Provider stopped",
+          usage: { inputTokens: 123, outputTokens: 45 },
+        },
+        { type: "error", message: blocker },
+      ]),
+    );
+    const { admin, insertedArtifacts, insertedMessages, rpc } = buildAdminMock({
+      session: baseSession(),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(insertedArtifacts).toEqual([]);
+    expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({
+        kind: "progress",
+        message_md: "Validation passed; publication is blocked.",
+      }),
+    );
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({ kind: "error", message_md: `**Error:** ${blocker}` }),
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "record_session_run_usage",
+      expect.objectContaining({ p_input_tokens: 123, p_output_tokens: 45 }),
+    );
+  });
+
+  it("publishes final-only output in full and associates it with the exact version and checkpoint intent", async () => {
+    const finalOutput = `# Final deliverable\n\n${"Completed implementation detail.\n".repeat(1000)}\nValidation: all checks passed.\n\nBlocker: publication credentials unavailable.\n`;
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Codex session completed",
+          finalOutput,
+        },
+      ]),
+    );
+    const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+      session: baseSession({ current_artifact_version: 1 }),
+    });
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(insertedArtifacts).toEqual([
+      expect.objectContaining({ artifact_json: finalOutput, version: 2 }),
+    ]);
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        publication: expect.objectContaining({
+          artifactMarkdown: finalOutput,
+          expectedArtifactVersion: 1,
+        }),
+      }),
+    );
+    expect(mocked.publishSessionCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactMarkdown: finalOutput,
+        expectedArtifactVersion: 1,
+        jobId: "job-1",
+        runId: "run-1",
+        attemptCount: 1,
+      }),
+    );
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({ kind: "completion", message_md: finalOutput }),
+    );
+  });
+
   it.each(["Preparing sandbox and repository…", "Starting agent…"])(
     "continues execution when the startup hint cannot be recorded: %s",
     async (message) => {
       mocked.createAgentRunner.mockReturnValue(
         makeRunner([
           { type: "text", text: "Deliverable" },
-          { type: "completion", taskComplete: true, summary: "Done" },
+          { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Deliverable" },
         ]),
       );
       const { admin, insertedArtifacts } = buildAdminMock({
@@ -2118,13 +2319,13 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect.objectContaining({
         kind: "error",
         message_md:
-          "**Error:** Product did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.",
+          "**Error:** Product supplied no final deliverable, so no artifact was created. Progress and any partial output remain available in Run history.",
       }),
     ]);
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedJobs.at(-1)).toMatchObject({
       last_error:
-        "Product did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.",
+        "Product supplied no final deliverable, so no artifact was created. Progress and any partial output remain available in Run history.",
       status: "error",
     });
     expect(updatedSessions).toEqual([
@@ -3110,6 +3311,11 @@ describe("processPipelineJob (generic stage runner)", () => {
   });
 
   it("protects completed source before completion-history persistence fails", async () => {
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner([
+        { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Done" },
+      ]),
+    );
     const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
       session: baseSession(),
       messageInsertError: { message: "history unavailable" },
@@ -3273,7 +3479,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       }),
       expect.objectContaining({
         kind: "completion",
-        message_md: "Done",
+        message_md: "Drafted spec body",
       }),
       expect.objectContaining({
         kind: "error",
