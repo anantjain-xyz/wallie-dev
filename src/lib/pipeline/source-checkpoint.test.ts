@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import { expect, it, vi } from "vitest";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
 import {
+  captureCommittedSourceCheckpoint,
   captureSourceCheckpoint,
   MAX_SOURCE_CHECKPOINT_BYTES,
   readSourceBase,
@@ -29,6 +30,112 @@ function commit(sandbox: FakeSandbox): void {
   git(sandbox, "add", "--all");
   git(sandbox, "commit", "-qm", "Fixture source");
 }
+
+it("bundles a selected commit from a shallow live checkout without touching its branch, index, or worktree", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  const recovery = mkdtempSync(join(tmpdir(), "wallie-live-source-restore-"));
+  const remote = join(recovery, "remote.git");
+  const checkout = join(recovery, "checkout");
+  const remoteGit = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    await sandbox.writeFile(`${sandbox.repoPath}/base.txt`, "new shallow base\n");
+    commit(sandbox);
+    const baseSha = await readSourceBase(sandbox);
+    remoteGit(recovery, "clone", "--bare", sandbox.repoPath, remote);
+    rmSync(sandbox.repoPath, { recursive: true, force: true });
+    remoteGit(recovery, "clone", "--depth=1", `file://${remote}`, sandbox.repoPath);
+    git(sandbox, "config", "user.name", "Fixture");
+    git(sandbox, "config", "user.email", "fixture@example.com");
+    expect(git(sandbox, "rev-parse", "--is-shallow-repository")).toBe("true");
+    await sandbox.writeFile(`${sandbox.repoPath}/build.txt`, "committed build work\n");
+    commit(sandbox);
+    const headSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/build.txt`, "a later commit\n");
+    commit(sandbox);
+    const laterSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/build.txt`, "staged work\n");
+    git(sandbox, "add", "build.txt");
+    await sandbox.writeFile(`${sandbox.repoPath}/build.txt`, "unstaged work\n");
+    await sandbox.writeFile(`${sandbox.repoPath}/untracked.txt`, "untracked work\n");
+    const indexPath = join(sandbox.repoPath, ".git/index");
+    const originalIndex = readFileSync(indexPath);
+    const originalRefs = git(sandbox, "show-ref");
+
+    const source = await captureCommittedSourceCheckpoint({ sandbox, baseSha, headSha });
+
+    expect(source.kind).toBe("bundle");
+    if (source.kind !== "bundle") throw new Error("Missing bundle");
+    expect(source.headSha).toBe(headSha);
+    expect(await readSourceBase(sandbox)).toBe(laterSha);
+    expect(git(sandbox, "show-ref")).toBe(originalRefs);
+    expect(readFileSync(indexPath)).toEqual(originalIndex);
+    expect(await sandbox.readFile(`${sandbox.repoPath}/build.txt`)).toBe("unstaged work\n");
+    expect(await sandbox.readFile(`${sandbox.repoPath}/untracked.txt`)).toBe("untracked work\n");
+    await sandbox.stop();
+
+    const bundlePath = join(recovery, "source.bundle");
+    writeFileSync(bundlePath, source.bytes);
+    remoteGit(recovery, "clone", "--depth=1", `file://${remote}`, checkout);
+    remoteGit(checkout, "fetch", bundlePath, `${SOURCE_CHECKPOINT_REF}:refs/heads/recovered`);
+    expect(remoteGit(checkout, "rev-parse", "recovered")).toBe(headSha);
+    expect(remoteGit(checkout, "show", "recovered:build.txt")).toBe("committed build work");
+  } finally {
+    await sandbox.stop();
+    rmSync(recovery, { recursive: true, force: true });
+  }
+});
+
+it.each(["known credential", "reserved runtime path"])(
+  "rejects a reverted %s in the live checkpoint history",
+  async (kind) => {
+    const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+    try {
+      const baseSha = await readSourceBase(sandbox);
+      const credential = "wallie-sensitive-fixture-value";
+      const path = kind === "known credential" ? "build.txt" : "prompt.txt";
+      await sandbox.writeFile(
+        `${sandbox.repoPath}/${path}`,
+        kind === "known credential" ? credential : "private runtime file",
+      );
+      commit(sandbox);
+      git(sandbox, "revert", "--no-edit", "HEAD");
+      const headSha = await readSourceBase(sandbox);
+
+      await expect(
+        captureCommittedSourceCheckpoint({
+          sandbox,
+          baseSha,
+          headSha,
+          sensitiveValues: [credential],
+        }),
+      ).rejects.toBeInstanceOf(UnsafeRuntimeCheckpointError);
+      expect(git(sandbox, "for-each-ref", SOURCE_CHECKPOINT_REF)).toBe("");
+    } finally {
+      await sandbox.stop();
+    }
+  },
+);
+
+it("rejects attributes in the selected commit without invoking a configured filter", async () => {
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  try {
+    const baseSha = await readSourceBase(sandbox);
+    await sandbox.writeFile(`${sandbox.repoPath}/.gitattributes`, "build.txt filter=mask\n");
+    await sandbox.writeFile(`${sandbox.repoPath}/build.txt`, "build work\n");
+    commit(sandbox);
+    const headSha = await readSourceBase(sandbox);
+    rmSync(join(sandbox.repoPath, ".gitattributes"));
+    git(sandbox, "config", "filter.mask.clean", "touch .git/filter-ran && cat");
+
+    await expect(
+      captureCommittedSourceCheckpoint({ sandbox, baseSha, headSha }),
+    ).rejects.toBeInstanceOf(UnsupportedSourceTransformError);
+    expect(existsSync(join(sandbox.repoPath, ".git/filter-ran"))).toBe(false);
+  } finally {
+    await sandbox.stop();
+  }
+});
 
 it("restores committed, unstaged and untracked source after the original sandbox is destroyed", async () => {
   const sandbox = new FakeSandbox(undefined, { passthroughExec: true });

@@ -126,11 +126,15 @@ export async function uploadWorkspaceObject(
       | "session-validation-evidence";
     bytes: Buffer;
     contentType: string;
+    /** Keep the cleanup reservation until the caller's metadata transaction owns the object. */
+    deferTransfer?: boolean;
     path: string;
+    signal?: AbortSignal;
     workspaceId: string;
   },
 ) {
-  const { data: operationId, error } = await admin.rpc("begin_workspace_resource_operation", {
+  input.signal?.throwIfAborted();
+  const reserve = admin.rpc("begin_workspace_resource_operation", {
     p_kind: "upload",
     p_provider: "",
     p_recovery_after: new Date(Date.now() + 5 * 60_000).toISOString(),
@@ -138,17 +142,21 @@ export async function uploadWorkspaceObject(
     p_storage_bucket: input.bucket,
     p_workspace_id: input.workspaceId,
   });
+  const { data: operationId, error } = await (input.signal
+    ? reserve.abortSignal(input.signal)
+    : reserve);
   if (error) throw error;
   if (!operationId) throw new WorkspaceDeletingError();
+  input.signal?.throwIfAborted();
   const result = await admin.storage.from(input.bucket).upload(input.path, input.bytes, {
     cacheControl: "3600",
     contentType: input.contentType,
     upsert: false,
   });
-  if (!result.error) {
+  if (!result.error && !input.deferTransfer) {
     // Storage metadata owns the object now; its final write also has a DB
     // admission fence, so a delayed upload cannot recreate a deleted prefix.
     await settleWorkspaceResource(admin, operationId, true);
   }
-  return result;
+  return { ...result, operationId };
 }

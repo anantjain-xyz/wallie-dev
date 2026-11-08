@@ -71,6 +71,7 @@ import {
 } from "./checkpoint-publication";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { checkoutPinnedGitInput } from "./git-input";
+import { restoreRetryInput, saveRetryCheckpoint } from "./retry-checkpoint";
 import {
   deferSessionJobForGitContinuityRelease,
   isGitContinuityReleasePause,
@@ -85,6 +86,7 @@ import {
 
 type AdminClient = SupabaseClient<Database>;
 type SessionRow = Tables<"sessions">;
+const RETRY_CHECKPOINT_LEAD_MS = 60_000;
 
 interface ProcessPipelineJobResult {
   jobId: string;
@@ -188,6 +190,8 @@ async function runStage(input: {
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
   let sandboxStop: Promise<void> | undefined;
+  let retryCheckpointTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryCheckpointController: AbortController | undefined;
   let retainSource = false;
   const stopSandbox = () => {
     if (!sandbox || retainSource) return;
@@ -461,6 +465,23 @@ async function runStage(input: {
       signal,
     });
     const sourceBase = gitInput.input_sha;
+    const retryCheckpointContext = {
+      admin,
+      attemptCount: job.attempt_count,
+      baseSha: sourceBase,
+      jobId: job.id,
+      runId,
+      sandbox,
+    };
+    const resumed =
+      job.trigger_type === "manual_retry" &&
+      (await restoreRetryInput({ ...retryCheckpointContext, signal }));
+    if (resumed) {
+      await persistStartupProgress(admin, runId, job.attempt_count, session.workspace_id, {
+        type: "progress",
+        text: "Restored committed source from the timed-out run.",
+      });
+    }
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
     let usage: AgentRunUsage | undefined;
@@ -471,6 +492,29 @@ async function runStage(input: {
       sessionAttachments,
     );
     throwIfAborted(signal);
+    const workerDeadlineMs =
+      input.deadlineAt && input.deadlineAt === executionDeadlineAt
+        ? Date.parse(input.deadlineAt)
+        : undefined;
+    const checkpointAt =
+      workerDeadlineMs === undefined
+        ? undefined
+        : Math.max(
+            workerDeadlineMs - RETRY_CHECKPOINT_LEAD_MS,
+            Math.floor((Date.now() + workerDeadlineMs) / 2),
+          );
+    const checkpointInstructions = [
+      ...(resumed
+        ? [
+            "This checkout contains commits recovered from the timed-out run. Inspect them and continue the remaining work. Verify the current source before reporting results.",
+          ]
+        : []),
+      ...(checkpointAt !== undefined && checkpointAt > Date.now()
+        ? [
+            `Commit useful changes on the attempt branch before ${new Date(checkpointAt).toISOString()}. Wallie captures committed source around that time so Retry can recover it after a timeout.`,
+          ]
+        : []),
+    ];
     const prompt = renderStagePrompt(
       {
         promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
@@ -492,6 +536,12 @@ async function runStage(input: {
           github.repo.default_branch ?? "main",
         ),
         operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
+        retryCheckpointInstructions: checkpointInstructions.length
+          ? trustedPromptValue(
+              "wallie.retryCheckpointInstructions",
+              `## Retry checkpoint\n\n${checkpointInstructions.join("\n\n")}`,
+            )
+          : undefined,
         previousStages: Object.fromEntries(
           Object.entries(previousStages).map(([slug, artifact]) => [
             slug,
@@ -536,6 +586,52 @@ async function runStage(input: {
       provider,
       session,
     });
+    const sensitiveValues = () => [
+      prompt,
+      ...(installationToken ? [installationToken] : []),
+      ...checkpointSensitiveValues,
+    ];
+    let readCheckpointSensitiveValues:
+      | ((signal: AbortSignal) => Promise<readonly string[]>)
+      | undefined;
+    if (input.deadlineAt && checkpointAt !== undefined) {
+      const deadlineAt = input.deadlineAt;
+      const controller = new AbortController();
+      retryCheckpointController = controller;
+      const checkpointSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
+      retryCheckpointTimer = setTimeout(
+        () => {
+          void saveRetryCheckpoint({
+            ...retryCheckpointContext,
+            deadlineAt,
+            sensitiveValues: async () => [
+              ...((await readCheckpointSensitiveValues?.(checkpointSignal)) ?? []),
+              ...sensitiveValues(),
+            ],
+            signal: checkpointSignal,
+            workspaceId: session.workspace_id,
+          })
+            .then((saved) => {
+              if (!saved || checkpointSignal.aborted) return;
+              return persistStartupProgress(
+                admin,
+                retryCheckpointContext.runId,
+                job.attempt_count,
+                session.workspace_id,
+                { type: "progress", text: "Saved committed source for Retry." },
+              );
+            })
+            .catch(() => {
+              if (!checkpointSignal.aborted) {
+                console.warn("Could not save committed source for Retry.", { jobId: job.id });
+              }
+            });
+        },
+        Math.max(0, checkpointAt - Date.now()),
+      );
+    }
     for await (const event of runner.start({
       // No current CLI exposes a verified max-output-token option. The value is
       // available to future adapters; unsupported providers remain bounded by
@@ -545,6 +641,9 @@ async function runStage(input: {
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
       secrets: installationToken ? [installationToken] : undefined,
+      onCheckpointSensitiveValues: (read) => {
+        readCheckpointSensitiveValues = read;
+      },
       onSensitiveValue: (value) => {
         checkpointSensitiveValues.add(value);
       },
@@ -635,11 +734,7 @@ async function runStage(input: {
         sandbox,
         baseSha: sourceBase,
         signal,
-        sensitiveValues: [
-          prompt,
-          ...(installationToken ? [installationToken] : []),
-          ...checkpointSensitiveValues,
-        ],
+        sensitiveValues: sensitiveValues(),
       });
       checkpoint = await validateCheckpoint({
         admin,
@@ -648,11 +743,7 @@ async function runStage(input: {
         runId,
         sandbox,
         checkpoint,
-        secrets: [
-          prompt,
-          ...(installationToken ? [installationToken] : []),
-          ...checkpointSensitiveValues,
-        ],
+        secrets: sensitiveValues(),
         signal,
       });
       const prepared = await prepareSourceDelivery({
@@ -752,6 +843,8 @@ async function runStage(input: {
     return { jobId: job.id, processed: true, result, runId };
   } finally {
     clearTimeout(budgetTimer);
+    clearTimeout(retryCheckpointTimer);
+    retryCheckpointController?.abort();
     if (forwardSupervisorAbort) {
       supervisorSignal?.removeEventListener("abort", forwardSupervisorAbort);
     }

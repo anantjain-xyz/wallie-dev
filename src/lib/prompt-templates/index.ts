@@ -102,6 +102,7 @@ export function renderStagePrompt(
     previousStages?: Record<string, UntrustedPromptValue>;
     sessionAttachments?: UntrustedPromptValue;
     sessionAttachmentInstructions?: TrustedPromptValue;
+    retryCheckpointInstructions?: TrustedPromptValue;
     // Workspace-editable operating rules (pipelines.operating_rules_md),
     // prepended to every stage prompt. Empty/whitespace-only → no preamble.
     operatingRulesMd?: TrustedPromptValue;
@@ -127,5 +128,12 @@ export function renderStagePrompt(
       ? `${renderedStage}\n\n${attachmentInstructions}\n${attachmentData}`
       : renderedStage;
 
-  return `${renderedPrompt}\n\n${verifyPromptBoundary(ARTIFACT_EVIDENCE_POLICY)}\n\n${verifyPromptBoundary(GIT_PUBLICATION_POLICY)}`;
+  return [
+    renderedPrompt,
+    verifyPromptBoundary(ARTIFACT_EVIDENCE_POLICY),
+    verifyPromptBoundary(GIT_PUBLICATION_POLICY),
+    ...(input.retryCheckpointInstructions
+      ? [verifyPromptBoundary(input.retryCheckpointInstructions)]
+      : []),
+  ].join("\n\n");
 }

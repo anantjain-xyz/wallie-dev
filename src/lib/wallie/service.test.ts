@@ -519,7 +519,8 @@ function buildSupabaseMocks(opts: {
   let queuedRun: AgentRunRow | null | undefined;
   let receiptRunId: string | null = null;
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
-    if (name !== "enqueue_session_job_with_run") throw new Error(`unexpected RPC: ${name}`);
+    if (name !== "enqueue_session_job_with_run" && name !== "enqueue_session_retry_with_checkpoint")
+      throw new Error(`unexpected RPC: ${name}`);
     opts.enqueueCalls.push(args);
     if (opts.enqueueError) return { data: null, error: opts.enqueueError };
     const receipt = opts.enqueueReceipt ?? {
@@ -703,6 +704,7 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
     // the canonical dashed form runners expect.
     expect(inserted.p_agent_model_provider).toBe("claude-code");
     expect(inserted.p_expected_stage_id).toBe("stage-product");
+    expect(inserted.p_retry_run_id).toBe("run-1");
   });
 
   it("refuses to enqueue a run for an archived session", async () => {
@@ -1054,7 +1056,7 @@ describe("retryWallieRun historical source eligibility", () => {
           expect(enqueueCalls).toHaveLength(1);
           expect(enqueueCalls[0]).toMatchObject({
             p_expected_stage_id: "stage-product",
-            p_trigger_type: "manual_retry",
+            p_retry_run_id: "run-1",
           });
         },
       );
@@ -1140,6 +1142,73 @@ describe("retryWallieRun legacy runless job compatibility", () => {
     expect(result).toEqual({ created: false, jobId: "job-existing", run: null });
     expect(lookup).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("retryWallieRun checkpoint RPC compatibility", () => {
+  it("queues a standard Retry when the checkpoint RPC is absent from the schema cache", async () => {
+    const { admin, rpc, supabase } = buildSupabaseMocks({ agentConfig: [], enqueueCalls: [] });
+    rpc.mockResolvedValueOnce({
+      data: null,
+      error: {
+        code: "PGRST202",
+        details: "",
+        hint: "",
+        message: "Could not find the function in the schema cache",
+        name: "PostgrestError",
+      },
+    });
+
+    const result = await retryWallieRun({
+      admin,
+      runId: "run-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    expect(result).toMatchObject({ created: true, jobId: "job-queued", run: { id: "run-queued" } });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenNthCalledWith(
+      1,
+      "enqueue_session_retry_with_checkpoint",
+      expect.objectContaining({ p_retry_run_id: "run-1" }),
+    );
+    expect(rpc).toHaveBeenNthCalledWith(
+      2,
+      "enqueue_session_job_with_run",
+      expect.objectContaining({
+        p_session_id: "sess-1",
+        p_workspace_id: "ws-1",
+        p_expected_stage_id: "stage-product",
+        p_requested_by_member_id: "mem-1",
+        p_trigger_type: "manual_retry",
+      }),
+    );
+  });
+
+  it.each([
+    { failure: "a stage change", code: "55000", message: "Session stage changed." },
+    { failure: "a lost response", code: "", message: "TypeError: fetch failed" },
+  ])("propagates $failure without falling back", async ({ code, message }) => {
+    const { admin, rpc, supabase } = buildSupabaseMocks({ agentConfig: [], enqueueCalls: [] });
+    const error = { code, details: "", hint: "", message, name: "PostgrestError" };
+    rpc.mockResolvedValueOnce({ data: null, error });
+
+    await expect(
+      retryWallieRun({
+        admin,
+        runId: "run-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toEqual(error);
+
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "enqueue_session_retry_with_checkpoint",
+      expect.objectContaining({ p_retry_run_id: "run-1" }),
+    );
   });
 });
 

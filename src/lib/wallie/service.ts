@@ -127,7 +127,6 @@ export type EnqueueWallieRunResult = {
 
 export type EnqueueSessionJobWithRunInput = {
   admin: AdminClient;
-  requestedByMemberId: string | null;
   /**
    * Mode stamped on the queued run. Defaults to the mode inferred from the
    * session's effective repository — the same resolution the processor
@@ -135,8 +134,14 @@ export type EnqueueSessionJobWithRunInput = {
    */
   runType?: WallieRunMode;
   session: SessionForEnqueue;
-  triggerType: Enums<"agent_trigger_type">;
-};
+} & (
+  | {
+      requestedByMemberId: string | null;
+      triggerType: Enums<"agent_trigger_type">;
+      retryRunId?: never;
+    }
+  | { requestedByMemberId: string; triggerType: "manual_retry"; retryRunId: string }
+);
 
 export type CreateSessionWithFirstJobResult = {
   jobId: string;
@@ -580,16 +585,32 @@ export async function enqueueSessionJobWithRun(
 ): Promise<EnqueueWallieRunResult> {
   const { admin, session } = input;
   const runConfig = await resolveQueuedRunConfig(admin, session, input.runType);
-  const { data, error } = await admin.rpc("enqueue_session_job_with_run", {
+  const args = {
     p_session_id: session.id,
     p_workspace_id: session.workspace_id,
     p_expected_stage_id: session.current_stage_id,
-    p_requested_by_member_id: input.requestedByMemberId ?? undefined,
-    p_trigger_type: input.triggerType,
     p_agent_model_provider: runConfig.modelProvider,
     p_agent_model_name: runConfig.modelName,
     p_run_type: runConfig.runType,
-  });
+  };
+  const retryEnqueue =
+    input.retryRunId === undefined
+      ? null
+      : await admin.rpc("enqueue_session_retry_with_checkpoint", {
+          ...args,
+          p_requested_by_member_id: input.requestedByMemberId,
+          p_retry_run_id: input.retryRunId,
+        });
+  // A missing function means PostgREST never attempted the enqueue. Keep Retry
+  // available if the web deploy reaches production before the migration.
+  const { data, error } =
+    retryEnqueue && retryEnqueue.error?.code !== "PGRST202"
+      ? retryEnqueue
+      : await admin.rpc("enqueue_session_job_with_run", {
+          ...args,
+          p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+          p_trigger_type: input.triggerType,
+        });
   if (error) throw error;
   const queued = data?.[0];
   if (!queued) throw new Error("Wallie enqueue returned no job.");
@@ -659,6 +680,7 @@ export async function retryWallieRun(input: {
     runType: validated.runType,
     session: validated.session,
     triggerType: "manual_retry",
+    retryRunId: existingRun.id,
   });
 }
 

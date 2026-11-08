@@ -153,4 +153,22 @@ describe("workspace resource admission", () => {
     );
     expect(state.operations).toEqual([{ id: "operation-1", resourceId: null, settled: false }]);
   });
+
+  it("keeps a successful deferred upload reserved for its metadata transaction", async () => {
+    const state = client();
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const admin = { rpc: state.rpc, storage: { from: vi.fn(() => ({ upload })) } };
+    const result = await uploadWorkspaceObject(admin as never, {
+      bucket: "session-source-checkpoints",
+      bytes: Buffer.from("source"),
+      contentType: "application/octet-stream",
+      deferTransfer: true,
+      path: "workspace-1/source.bundle",
+      workspaceId: "workspace-1",
+    });
+
+    expect(result).toEqual({ error: null, operationId: "operation-1" });
+    expect(upload).toHaveBeenCalledOnce();
+    expect(state.operations).toEqual([{ id: "operation-1", resourceId: null, settled: false }]);
+  });
 });
