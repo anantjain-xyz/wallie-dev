@@ -198,6 +198,12 @@ select is((select status::text from public.agent_runs where id=(select run_id fr
 update public.session_source_deliveries set session_id=(select session_id from git_other) where run_id=(select run_id from git_other);
 select is(public.prepare_session_checkpoint_publication((select run_id from git_other),0,'Other artifact'),true,
   'valid code checkpoint prepares an immutable publication intent');
+-- Model an intent pinned to a branch before the custom ref migration.
+alter table public.session_checkpoint_publications disable trigger guard_checkpoint_publication;
+update public.session_checkpoint_publications
+set retained_ref='refs/heads/wallie/checkpoints/'||run_id::text||'/'||repeat('c',40)
+where run_id=(select run_id from git_other);
+alter table public.session_checkpoint_publications enable trigger guard_checkpoint_publication;
 create temp table git_other_publication_claim as select public.claim_session_checkpoint_publication((select run_id from git_other)) as claim_id;
 -- This fixture predates canonical PR enrollment; retain the complete
 -- historical source/lineage guards while exercising the legacy delivery path.
@@ -205,7 +211,7 @@ alter table public.session_git_heads disable trigger enqueue_session_pr_sync;
 select is(public.adopt_session_checkpoint_publication((select run_id from git_other),
   (select claim_id from git_other_publication_claim),
   'refs/heads/wallie/checkpoints/'||(select run_id::text from git_other)||'/'||repeat('c',40),repeat('c',40)),true,
-  'valid code checkpoint publishes only after exact retained remote proof');
+  'pre-migration checkpoint intent still adopts from its exact retained branch');
 alter table public.session_git_heads enable trigger enqueue_session_pr_sync;
 select ok((select c.output_kind='code' and c.input_sha=repeat('b',40) and c.output_sha=repeat('c',40)
   and c.bundle_sha256=encode(extensions.digest('source'::bytea,'sha256'),'hex')

@@ -14,7 +14,7 @@ import { RetainedCheckpointRefConflictError } from "./checkpoint-cleanup-git";
 
 const runId = "79900000-0000-4000-8000-000000000001";
 const sha = "a".repeat(40);
-const ref = `refs/heads/wallie/checkpoints/${runId}/${sha}`;
+const ref = `refs/wallie/checkpoints/${runId}/${sha}`;
 const cleanup = {
   run_id: runId,
   workspace_id: "79900000-0000-4000-8000-000000000002",
@@ -67,7 +67,10 @@ beforeEach(() => {
 it("rechecks the durable claim before exact deletion and records only absence proof", async () => {
   const f = fixture();
   await cleanRetainedCheckpoint(f.admin, cleanup, new AbortController().signal);
-  expect(mocked.git).toHaveBeenCalledWith(expect.objectContaining({ runId, headSha: sha }), {});
+  expect(mocked.git).toHaveBeenCalledWith(
+    expect.objectContaining({ runId, headSha: sha, retainedRef: ref }),
+    {},
+  );
   expect(f.rpc).toHaveBeenLastCalledWith("finish_session_checkpoint_cleanup", {
     p_run_id: runId,
     p_claim_id: cleanup.claim_id,

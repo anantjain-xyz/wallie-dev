@@ -11,7 +11,9 @@ import { SOURCE_CHECKPOINT_REF } from "./source-checkpoint";
 import { restoreAndPushSource } from "./source-delivery-git";
 import type { GitExecutor, SourceRestoreInput } from "./source-delivery-git-core";
 
-function retainedFixture() {
+const retainedNamespaces = ["refs/wallie/checkpoints", "refs/heads/wallie/checkpoints"] as const;
+
+function retainedFixture(namespace: (typeof retainedNamespaces)[number] = retainedNamespaces[0]) {
   const root = mkdtempSync(join(tmpdir(), "wallie-retained-checkpoint-"));
   const source = join(root, "source");
   const remote = join(root, "remote.git");
@@ -34,13 +36,15 @@ function retainedFixture() {
   const bundle = join(root, "source.bundle");
   repoGit("bundle", "create", bundle, SOURCE_CHECKPOINT_REF, `^${baseSha}`);
   const bytes = readFileSync(bundle);
-  const input: SourceRestoreInput = {
+  const runId = "00000000-0000-4000-8000-000000000001";
+  const ref = `${namespace}/${runId}/${headSha}`;
+  const input: Extract<SourceRestoreInput, { retainedRef: string }> = {
     baseSha,
     headSha,
     bytes,
     sha256: createHash("sha256").update(bytes).digest("hex"),
-    branch: `wallie/checkpoints/00000000-0000-4000-8000-000000000001/${headSha}`,
-    exactRef: true,
+    retainedRef: ref,
+    runId,
     remoteUrl: "https://github.com/acme/app.git",
     token: "synthetic-checkpoint-token",
     beforePush: vi.fn(async () => {}),
@@ -54,7 +58,6 @@ function retainedFixture() {
       ),
     ),
   };
-  const ref = `refs/heads/${input.branch}`;
   const remoteHead = () => git("--git-dir", remote, "rev-parse", ref);
   const refs = () => git("--git-dir", remote, "for-each-ref", "--format=%(refname)");
   const pushes = () => transport.execGit.mock.calls.filter(([args]) => args[0] === "push");
@@ -84,27 +87,34 @@ function retainedFixture() {
   };
 }
 
-it("restores the captured output under an exact retained ref after the default branch changes", async () => {
-  const f = retainedFixture();
-  try {
-    const changedDefault = f.remoteCommit(f.input.baseSha);
-    f.git("--git-dir", f.remote, "update-ref", "refs/heads/new-default", changedDefault);
-    f.git("--git-dir", f.remote, "symbolic-ref", "HEAD", "refs/heads/new-default");
-    expect(await restoreAndPushSource(f.input, f.transport)).toBe(f.input.branch);
-    expect(f.remoteHead()).toBe(f.input.headSha);
-    expect(f.git("--git-dir", f.remote, "show", `${f.ref}:output.txt`)).toBe("Captured output");
-    expect(f.pushes()[0][0]).toEqual([
-      "push",
-      `--force-with-lease=${f.ref}:`,
-      f.input.remoteUrl,
-      `${f.input.headSha}:${f.ref}`,
-    ]);
-    expect(f.transport.execGit.mock.calls.some(([args]) => args.includes("--depth=1"))).toBe(true);
-    expect(f.refs()).not.toContain("wallie/recovery/");
-  } finally {
-    f.cleanup();
-  }
-});
+it.each(retainedNamespaces)(
+  "restores captured output under %s after the default branch changes",
+  async (namespace) => {
+    const f = retainedFixture(namespace);
+    try {
+      const changedDefault = f.remoteCommit(f.input.baseSha);
+      f.git("--git-dir", f.remote, "update-ref", "refs/heads/new-default", changedDefault);
+      f.git("--git-dir", f.remote, "symbolic-ref", "HEAD", "refs/heads/new-default");
+      expect(await restoreAndPushSource(f.input, f.transport)).toBe(f.input.retainedRef);
+      expect(f.remoteHead()).toBe(f.input.headSha);
+      expect(f.git("--git-dir", f.remote, "show", `${f.ref}:output.txt`)).toBe("Captured output");
+      expect(f.pushes()[0][0]).toEqual([
+        "push",
+        `--force-with-lease=${f.ref}:`,
+        f.input.remoteUrl,
+        `${f.input.headSha}:${f.ref}`,
+      ]);
+      expect(f.transport.execGit.mock.calls.some(([args]) => args.includes("--depth=1"))).toBe(
+        true,
+      );
+      expect(f.refs().split("\n")).toEqual(
+        ["refs/heads/main", "refs/heads/new-default", f.ref].sort(),
+      );
+    } finally {
+      f.cleanup();
+    }
+  },
+);
 
 it("does not claim publication when the push fails before reaching the remote, and safely retries", async () => {
   const f = retainedFixture();
@@ -120,7 +130,7 @@ it("does not claim publication when the push fails before reaching the remote, a
     );
     expect(f.refs()).not.toContain(f.ref);
     expect(existsSync(f.transport.execGit.mock.calls[0][1].cwd)).toBe(false);
-    expect(await restoreAndPushSource(f.input, f.transport)).toBe(f.input.branch);
+    expect(await restoreAndPushSource(f.input, f.transport)).toBe(f.input.retainedRef);
     expect(f.remoteHead()).toBe(f.input.headSha);
   } finally {
     f.cleanup();
@@ -137,8 +147,8 @@ it("reconciles an ambiguous successful retained-ref push and retries without ano
         return result;
       },
     };
-    expect(await restoreAndPushSource(f.input, transport)).toBe(f.input.branch);
-    expect(await restoreAndPushSource(f.input, transport)).toBe(f.input.branch);
+    expect(await restoreAndPushSource(f.input, transport)).toBe(f.input.retainedRef);
+    expect(await restoreAndPushSource(f.input, transport)).toBe(f.input.retainedRef);
     expect(f.remoteHead()).toBe(f.input.headSha);
     expect(f.pushes()).toHaveLength(1);
     expect(f.input.beforePush).toHaveBeenCalledTimes(1);
@@ -265,7 +275,7 @@ it.each(["push", "verification"])("does not accept proof if canceled during %s",
     expect(f.remoteHead()).toBe(f.input.headSha);
     expect(existsSync(f.transport.execGit.mock.calls[0][1].cwd)).toBe(false);
     expect(await restoreAndPushSource({ ...f.input, signal: undefined }, f.transport)).toBe(
-      f.input.branch,
+      f.input.retainedRef,
     );
     expect(f.pushes()).toHaveLength(1);
   } finally {
@@ -273,15 +283,24 @@ it.each(["push", "verification"])("does not accept proof if canceled during %s",
   }
 });
 
-it("requires an exact retained branch name before starting Git", async () => {
+it("requires a retained ref with the exact checkpoint identity before starting Git", async () => {
   const f = retainedFixture();
   try {
     await expect(
-      restoreAndPushSource({ ...f.input, branch: "wallie/attempt-1" }, f.transport),
-    ).rejects.toThrow("retained checkpoint branch");
+      restoreAndPushSource({ ...f.input, retainedRef: "refs/heads/wallie/attempt-1" }, f.transport),
+    ).rejects.toThrow("retained checkpoint ref");
     await expect(
-      restoreAndPushSource({ ...f.input, branch: `${f.input.branch}-different` }, f.transport),
-    ).rejects.toThrow("retained checkpoint branch");
+      restoreAndPushSource(
+        { ...f.input, retainedRef: `${f.input.retainedRef}-different` },
+        f.transport,
+      ),
+    ).rejects.toThrow("retained checkpoint ref");
+    await expect(
+      restoreAndPushSource(
+        { ...f.input, runId: "00000000-0000-4000-8000-000000000002" },
+        f.transport,
+      ),
+    ).rejects.toThrow("retained checkpoint ref");
     expect(f.transport.execGit).not.toHaveBeenCalled();
   } finally {
     f.cleanup();
