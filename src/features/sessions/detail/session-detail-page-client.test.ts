@@ -451,7 +451,7 @@ describe("SessionDetailPageClient", () => {
           threads: [],
           nextCursor: null,
           counts: { total: 0, open: 0, blocking: 0 },
-          viewer: { memberId: "member-1", canReview: true, readOnly: false },
+          viewer: { memberId: "member-1", canReview: true, readOnlyReason: null },
         });
       return Response.json({});
     });
@@ -526,7 +526,7 @@ describe("SessionDetailPageClient", () => {
           ],
           nextCursor: null,
           counts: { total: 1, open: 1, blocking: 0 },
-          viewer: { memberId: "member-1", canReview: true, readOnly: false },
+          viewer: { memberId: "member-1", canReview: true, readOnlyReason: null },
         });
       if (String(input).includes("phase-action")) {
         calls.push(JSON.parse(String(init?.body)));
@@ -624,7 +624,7 @@ describe("SessionDetailPageClient", () => {
             threads: [],
             nextCursor: null,
             counts: { total: 0, open: 0, blocking: 0 },
-            viewer: { memberId: "member-1", canReview: true, readOnly: false },
+            viewer: { memberId: "member-1", canReview: true, readOnlyReason: null },
           });
         if (String(input).includes("phase-action"))
           return Response.json(

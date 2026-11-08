@@ -6,6 +6,9 @@ import { z } from "zod";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+import { sessionReviewReadOnlyReason } from "./comment-access";
+import type { ReviewViewer } from "./types";
+
 export const reviewSessionParamsSchema = z.object({ sessionId: z.string().uuid() });
 export const reviewThreadParamsSchema = reviewSessionParamsSchema.extend({
   threadId: z.string().uuid(),
@@ -151,7 +154,13 @@ export async function loadReviewContext(sessionId: string, write = false) {
     .maybeSingle();
   if (memberError) throw memberError;
   if (!member) throw new ReviewHttpError(403, "Active workspace membership is required.");
-  if (write && (session.archived_at || session.phase_status === "approved")) {
+  if (
+    write &&
+    sessionReviewReadOnlyReason({
+      archivedAt: session.archived_at,
+      phaseStatus: session.phase_status,
+    })
+  ) {
     throw new ReviewHttpError(409, "Closed sessions are read-only.");
   }
   return { supabase, session, member };
@@ -185,7 +194,10 @@ export async function loadReviewThread(context: ReviewContext, threadId: string)
   return thread;
 }
 
-export async function reviewViewer(context: ReviewContext, stageId: string | null) {
+export async function reviewViewer(
+  context: ReviewContext,
+  stageId: string | null,
+): Promise<ReviewViewer> {
   const { supabase, session, member } = context;
   const { data: stage, error } = stageId
     ? await supabase
@@ -200,7 +212,10 @@ export async function reviewViewer(context: ReviewContext, stageId: string | nul
   const approvers = stage?.approver_member_ids ?? [];
   return {
     memberId: member.id,
-    readOnly: Boolean(session.archived_at || session.phase_status === "approved"),
+    readOnlyReason: sessionReviewReadOnlyReason({
+      archivedAt: session.archived_at,
+      phaseStatus: session.phase_status,
+    }),
     canReview: Boolean(
       stage &&
       (stage.anyone_can_approve ||

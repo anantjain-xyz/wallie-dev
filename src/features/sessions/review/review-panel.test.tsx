@@ -119,7 +119,7 @@ beforeEach(() => {
     threads: [makeThread()],
     nextCursor: null,
     counts: { total: 1, open: 1, blocking: 0 },
-    viewer: { memberId: "member-1", canReview: false, readOnly: false },
+    viewer: { memberId: "member-1", canReview: false, readOnlyReason: null },
   };
   comments = [makeComment()];
   saves = [];
@@ -561,7 +561,7 @@ describe("artifact threaded review", () => {
 
   it("makes archived historical artifacts readable without any write controls", async () => {
     const user = userEvent.setup();
-    snapshot.viewer.readOnly = true;
+    snapshot.viewer.readOnlyReason = "archived";
     render(panel({ anchor, historical: true }));
     expect(
       await screen.findByText("This session is archived. Comments are read-only."),
@@ -576,9 +576,229 @@ describe("artifact threaded review", () => {
   it("immediately removes write controls when the live parent marks the session archived", async () => {
     const view = render(panel({ anchor }));
     expect(await screen.findByLabelText("Comment", { exact: true })).toBeVisible();
-    view.rerender(panel({ anchor, readOnly: true }));
+    view.rerender(panel({ anchor, readOnlyReason: "archived" }));
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("This session is archived. Comments are read-only.")).toBeVisible();
+  });
+
+  it("describes approved, unarchived artifacts without claiming archival", async () => {
+    const user = userEvent.setup();
+    snapshot.viewer.readOnlyReason = "approved";
+    render(panel({ anchor }));
+    expect(
+      await screen.findByText("This session is approved. Comments are read-only."),
+    ).toBeVisible();
+    expect(screen.queryByText(/This session is archived/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: /Discussion · open/ }));
+    expect(await screen.findByText("Please explain the retry policy.")).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit comment" })).toBeNull();
+    expect(saves).toHaveLength(0);
+  });
+
+  it.each([401, 403])("withholds authoring when permission lookup returns %s", async (status) => {
+    fetchMock.mockResolvedValue(Response.json({ error: "Review access denied." }, { status }));
+    render(panel({ anchor }));
+    expect(
+      await screen.findByText("You do not have permission to comment on this artifact."),
+    ).toBeVisible();
+    expect(screen.queryByText(/This session is archived/)).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save comment" })).toBeNull();
+    expect(saves).toHaveLength(0);
+  });
+
+  it("withholds authoring during permission loading and recovers after a failed lookup", async () => {
+    const user = userEvent.setup();
+    let resolve: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((done) => {
+          resolve = done;
+        }),
+    );
+    render(panel({ anchor }));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await act(async () =>
+      resolve?.(Response.json({ error: "Review unavailable." }, { status: 503 })),
+    );
+    expect(
+      await screen.findByText(
+        "Comments are unavailable until permissions can be verified. Retry loading comments.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry loading" }));
+    expect(await screen.findByLabelText("Comment", { exact: true })).toBeVisible();
+  });
+
+  it("retains a failed permission refresh retry after overlapping comments succeed", async () => {
+    const user = userEvent.setup();
+    realtime.enabled = true;
+    render(panel());
+    await selectThread(user);
+    await screen.findByText("Please explain the retry policy.");
+    await user.type(screen.getByLabelText("Reply to thread"), "Keep my exact reply draft.");
+
+    const threadRefresh = Promise.withResolvers<Response>();
+    const commentRefresh = Promise.withResolvers<Response>();
+    fetchMock
+      .mockImplementationOnce(() => threadRefresh.promise)
+      .mockImplementationOnce(() => commentRefresh.promise);
+    await act(async () => realtime.event?.());
+    await act(async () =>
+      threadRefresh.resolve(
+        Response.json({ error: "Thread refresh interrupted." }, { status: 503 }),
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Thread refresh interrupted.");
+    expect(screen.getByRole("button", { name: "Retry loading" })).toBeEnabled();
+
+    await act(async () => commentRefresh.resolve(Response.json({ comments, nextCursor: null })));
+    expect(
+      screen.getByText(
+        "Comments are unavailable until permissions can be verified. Retry loading comments.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Thread refresh interrupted.");
+    expect(screen.getByRole("button", { name: "Retry loading" })).toBeEnabled();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save reply" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit comment" })).toBeNull();
+    expect(saves).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Retry loading" }));
+    expect(await screen.findByLabelText("Reply to thread")).toHaveValue(
+      "Keep my exact reply draft.",
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: /Discussion · open/ })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(screen.getByRole("link", { name: "Thread link" })).toHaveAttribute(
+      "href",
+      "?reviewThread=thread-1&artifactId=artifact-1&artifactVersion=1&artifactStage=plan",
+    );
+    await user.click(screen.getByRole("button", { name: "Save reply" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]).toMatchObject({
+      method: "POST",
+      path: "/api/sessions/session-1/reviews/thread-1/comments",
+      body: { body: "Keep my exact reply draft." },
+    });
+  });
+
+  it("retains a failed comment refresh retry after overlapping permission refresh succeeds", async () => {
+    const user = userEvent.setup();
+    realtime.enabled = true;
+    render(panel());
+    await selectThread(user);
+    await screen.findByText("Please explain the retry policy.");
+    await user.type(
+      screen.getByLabelText("Reply to thread"),
+      "Keep my reply while comments retry.",
+    );
+
+    const threadRefresh = Promise.withResolvers<Response>();
+    const commentRefresh = Promise.withResolvers<Response>();
+    fetchMock
+      .mockImplementationOnce(() => threadRefresh.promise)
+      .mockImplementationOnce(() => commentRefresh.promise);
+    await act(async () => realtime.event?.());
+    await act(async () =>
+      commentRefresh.resolve(
+        Response.json({ error: "Comment refresh interrupted." }, { status: 503 }),
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Comment refresh interrupted.");
+    expect(screen.getByRole("button", { name: "Retry loading" })).toBeEnabled();
+
+    await act(async () => threadRefresh.resolve(Response.json(snapshot)));
+    expect(screen.getByRole("alert")).toHaveTextContent("Comment refresh interrupted.");
+    expect(screen.getByRole("button", { name: "Retry loading" })).toBeEnabled();
+    expect(screen.getByLabelText("Reply to thread")).toHaveValue(
+      "Keep my reply while comments retry.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Retry loading" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByLabelText("Reply to thread")).toHaveValue(
+      "Keep my reply while comments retry.",
+    );
+    expect(saves).toHaveLength(0);
+  });
+
+  it.each([
+    { timing: "before deselection", failBeforeDeselect: true },
+    { timing: "after deselection", failBeforeDeselect: false },
+  ])("discards obsolete comment errors completed $timing", async ({ failBeforeDeselect }) => {
+    const user = userEvent.setup();
+    realtime.enabled = true;
+    render(
+      panel({
+        inline: {
+          open: true,
+          scrollRef: createRef<HTMLDivElement>(),
+          request: null,
+          onRevealThread: vi.fn(),
+          onClearPassage: vi.fn(),
+          onThreadsChange: vi.fn(),
+          onReadOnlyReasonChange: vi.fn(),
+          passageMessage: null,
+        },
+      }),
+    );
+    await selectThread(user);
+    await screen.findByText("Please explain the retry policy.");
+    await user.type(screen.getByLabelText("Reply to thread"), "Keep this thread's draft.");
+
+    const commentRefresh = Promise.withResolvers<Response>();
+    fetchMock
+      .mockResolvedValueOnce(Response.json(snapshot))
+      .mockImplementationOnce(() => commentRefresh.promise);
+    await act(async () => realtime.event?.());
+    const failRefresh = () =>
+      commentRefresh.resolve(
+        Response.json({ error: "Old thread comments unavailable." }, { status: 503 }),
+      );
+    if (failBeforeDeselect) {
+      await act(async () => failRefresh());
+      expect(screen.getByRole("alert")).toHaveTextContent("Old thread comments unavailable.");
+    }
+    await user.click(screen.getByRole("button", { name: "All threads" }));
+    if (!failBeforeDeselect) await act(async () => failRefresh());
+
+    expect(screen.queryByRole("region", { name: "Selected review thread" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry loading" })).toBeNull();
+    await selectThread(user);
+    expect(screen.getByLabelText("Reply to thread")).toHaveValue("Keep this thread's draft.");
+    expect(saves).toHaveLength(0);
+  });
+
+  it("retains the new-comment draft and exact anchor through a live read-only transition", async () => {
+    const user = userEvent.setup();
+    const view = render(panel({ anchor }));
+    await user.type(
+      await screen.findByLabelText("Comment", { exact: true }),
+      "Keep this exact draft",
+    );
+    view.rerender(panel({ anchor, readOnlyReason: "approved" }));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText("This session is approved. Comments are read-only.")).toBeVisible();
+    view.rerender(panel({ anchor }));
+    expect(await screen.findByLabelText("Comment", { exact: true })).toHaveValue(
+      "Keep this exact draft",
+    );
+    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]?.body).toMatchObject({
+      artifactId: "artifact-1",
+      artifactVersion: 1,
+      anchor,
+      body: "Keep this exact draft",
+    });
   });
 
   it("retains an unsaved reply through a realtime update and refreshes persisted comments", async () => {

@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import { ArtifactPanel, artifactBodyCacheKey } from "@/features/sessions/detail/artifact-panel";
+import { sessionReviewReadOnlyReason } from "@/features/sessions/review/comment-access";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { StageTimeline, type StageTimelineEntry } from "@/features/sessions/detail/stage-timeline";
 import {
@@ -27,6 +29,10 @@ export function InteractionMotionPreview({ initialNow }: { initialNow: string })
 }
 
 function InteractionMotionContent({ initialNow }: { initialNow: string }) {
+  const reviewState = useSearchParams().get("reviewState");
+  const reviewFixture = ["editable", "approved", "archived"].includes(reviewState ?? "");
+  const artifactId = reviewFixture ? "11111111-1111-4111-8111-111111111111" : undefined;
+  const archivedAt = reviewState === "archived" ? "2026-11-08T12:00:00Z" : null;
   usePublishExecution({
     sessionId: "preview",
     run: undefined,
@@ -34,10 +40,14 @@ function InteractionMotionContent({ initialNow }: { initialNow: string }) {
     nowMs: Date.parse(initialNow),
     stallTimeoutMs: 60000,
   });
-  const [phaseStatus, setPhaseStatus] = useState<SessionPhaseStatus>("in_progress");
+  const [phaseStatus, setPhaseStatus] = useState<SessionPhaseStatus>(
+    reviewState === "approved" || reviewState === "archived" ? "approved" : "in_progress",
+  );
   const [version, setVersion] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState("build");
+  const source = `# Implementation complete\n\nVersion ${version} is ready for review.`;
+  const paragraphStart = source.indexOf("Version");
   const timeline: StageTimelineEntry[] = stages.map((stage) => ({
     stage,
     phaseStatus: stage.slug === "build" && phaseStatus !== "approved" ? phaseStatus : null,
@@ -46,6 +56,12 @@ function InteractionMotionContent({ initialNow }: { initialNow: string }) {
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-5 sm:p-10">
       <h1 className="text-2xl font-semibold">Session interaction preview</h1>
+      {reviewFixture ? (
+        <p className="text-sm text-muted">
+          Session fixture: {phaseStatus === "approved" ? "Approved" : "Editable"} ·{" "}
+          {archivedAt ? "Archived" : "Unarchived"}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <button className="ui-button" onClick={() => setPhaseStatus("in_progress")}>
           Running
@@ -76,7 +92,7 @@ function InteractionMotionContent({ initialNow }: { initialNow: string }) {
         stageId="build"
         stageName="Build"
         phaseStatus={phaseStatus}
-        archivedAt={null}
+        archivedAt={archivedAt}
         initialNow={initialNow}
       />
       <SessionCompletionSummary session={{ phaseStatus, pullRequests: [] }} />
@@ -84,20 +100,26 @@ function InteractionMotionContent({ initialNow }: { initialNow: string }) {
         emptyText="No artifact yet."
         initialFormattedArtifact={
           <div>
-            <h2>Implementation complete</h2>
-            <p>Version {version} is ready for review.</p>
+            <h2 data-review-text-start={2} data-review-text-end={25}>
+              Implementation complete
+            </h2>
+            <p data-review-text-start={paragraphStart} data-review-text-end={source.length}>
+              Version {version} is ready for review.
+            </p>
           </div>
         }
-        initialFormattedArtifactKey={`preview:build:${version}`}
+        initialFormattedArtifactKey={artifactBodyCacheKey("preview", "build", version, artifactId)}
         initialNow={initialNow}
         isDrafting={false}
         latestArtifact={{
+          id: artifactId,
           createdAt: initialNow,
-          payload: `# Implementation complete\n\nVersion ${version} is ready for review.`,
+          payload: source,
           stageSlug: "build",
           version,
         }}
         loadLatest={true}
+        readOnlyReason={sessionReviewReadOnlyReason({ archivedAt, phaseStatus })}
         sessionId="preview"
         stageSlug="build"
       />

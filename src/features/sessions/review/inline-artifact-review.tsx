@@ -7,6 +7,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -23,6 +24,11 @@ import {
   revealArtifactPassage,
 } from "./artifact-passage";
 import styles from "./inline-artifact-review.module.css";
+import {
+  reviewReadOnlyMessage,
+  type ReviewReadOnlyReason,
+  type ReviewSessionReadOnlyReason,
+} from "./comment-access";
 import { OPEN_REVIEW_COMMENTS_EVENT } from "./open-comments";
 import type { PassageThreadRequest } from "./review-panel";
 import { artifactSourceBlocks, selectedArtifactSourceAnchor } from "./selection";
@@ -81,7 +87,7 @@ export function InlineArtifactReview({
   source,
   historical,
   initiallyOpen = false,
-  readOnly,
+  readOnlyReason: sessionReadOnlyReason = null,
   displayMode = "rendered",
   onShowRaw,
   motionRef,
@@ -93,7 +99,7 @@ export function InlineArtifactReview({
   source: string;
   historical: boolean;
   initiallyOpen?: boolean;
-  readOnly: boolean;
+  readOnlyReason?: ReviewSessionReadOnlyReason | null;
   displayMode?: "rendered" | "raw";
   onShowRaw?: () => void;
   motionRef?: RefObject<HTMLDivElement | null>;
@@ -103,6 +109,12 @@ export function InlineArtifactReview({
     initiallyOpen ? "open" : "unopened",
   );
   const open = panelState === "open";
+  const permissionNoticeId = useId();
+  const [verifiedReadOnlyReason, setVerifiedReadOnlyReason] = useState<ReviewReadOnlyReason | null>(
+    "loading",
+  );
+  const readOnlyReason = sessionReadOnlyReason ?? verifiedReadOnlyReason;
+  const readOnly = readOnlyReason !== null;
   const [selection, setSelection] = useState<{
     anchor: ArtifactSourceAnchor;
     top: number;
@@ -158,7 +170,7 @@ export function InlineArtifactReview({
 
   const captureSelection = useCallback(() => {
     const element = reader.current;
-    if (!element || readOnly) return;
+    if (!element || (readOnlyReason !== null && readOnlyReason !== "loading")) return;
     const nativeSelection = window.getSelection();
     const selected = selectedArtifactSourceAnchor(element, source, nativeSelection);
     if (!selected || !nativeSelection) {
@@ -172,10 +184,12 @@ export function InlineArtifactReview({
       top: rect ? rect.top - bounds.top : 0,
       left: rect ? rect.left - bounds.left : 0,
     });
-  }, [readOnly, source]);
+    // Selection is also an entry point: load permissions without opening the panel.
+    setPanelState((current) => (current === "unopened" ? "hidden" : current));
+  }, [readOnlyReason, source]);
 
   useEffect(() => {
-    if (readOnly) return;
+    if (readOnlyReason !== null && readOnlyReason !== "loading") return;
     let frame = 0;
     function selectionChanged() {
       window.cancelAnimationFrame(frame);
@@ -186,7 +200,7 @@ export function InlineArtifactReview({
       document.removeEventListener("selectionchange", selectionChanged);
       window.cancelAnimationFrame(frame);
     };
-  }, [captureSelection, readOnly]);
+  }, [captureSelection, readOnlyReason]);
 
   const clearPassage = useCallback(() => {
     setPassage(null);
@@ -266,6 +280,7 @@ export function InlineArtifactReview({
   }, [displayMode, threads]);
 
   function beginComment(value: ArtifactSourceAnchor) {
+    if (readOnly) return;
     setSelection(null);
     window.getSelection()?.removeAllRanges();
     setAnchor(value);
@@ -314,11 +329,13 @@ export function InlineArtifactReview({
               </span>
             ) : null}
           </button>
-          {readOnly ? (
-            <p className="text-xs text-muted">Archived session · Comments are read-only</p>
+          {readOnlyReason && (open || selection || readOnlyReason !== "loading") ? (
+            <p id={permissionNoticeId} className="text-xs text-muted">
+              {reviewReadOnlyMessage(readOnlyReason)}
+            </p>
           ) : null}
         </div>
-        {open && !readOnly ? (
+        {open ? (
           <div className="mb-4 space-y-2 rounded-[4px] border border-border bg-canvas p-3">
             <label className="block text-xs font-medium" htmlFor="artifact-comment-block">
               Comment on a block
@@ -326,7 +343,9 @@ export function InlineArtifactReview({
             <div className="flex flex-wrap gap-2">
               <select
                 id="artifact-comment-block"
-                className="min-h-11 min-w-0 flex-1 rounded-[4px] border border-border bg-surface px-2 text-xs"
+                disabled={readOnly}
+                aria-describedby={readOnly ? permissionNoticeId : undefined}
+                className="min-h-11 min-w-0 flex-1 rounded-[4px] border border-border bg-surface px-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                 value={block}
                 onChange={(event) => setBlock(Number(event.target.value))}
               >
@@ -338,8 +357,9 @@ export function InlineArtifactReview({
               </select>
               <button
                 type="button"
-                disabled={!blocks[block]}
-                className="min-h-11 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted"
+                disabled={readOnly || !blocks[block]}
+                aria-describedby={readOnly ? permissionNoticeId : undefined}
+                className="min-h-11 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => {
                   const selected = blocks[block];
                   if (selected) beginComment(selected.anchor);
@@ -421,11 +441,13 @@ export function InlineArtifactReview({
                 );
               })
             : null}
-          {!readOnly && selection && !anchor ? (
+          {(readOnlyReason === null || readOnlyReason === "loading") && selection && !anchor ? (
             <button
               aria-label="Comment on selection"
+              disabled={readOnly}
+              aria-describedby={readOnly ? permissionNoticeId : undefined}
               className={cn(
-                "ui-button-primary inline-flex min-h-11 items-center gap-1.5 px-3 text-xs",
+                "ui-button-primary inline-flex min-h-11 items-center gap-1.5 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60",
                 styles.selectionAction,
               )}
               onClick={() => {
@@ -448,7 +470,7 @@ export function InlineArtifactReview({
             artifactId={artifactId}
             artifactVersion={artifactVersion}
             historical={historical}
-            readOnly={readOnly}
+            readOnlyReason={sessionReadOnlyReason}
             anchor={anchor}
             onClearAnchor={() => setAnchor(null)}
             openerRef={returnFocus}
@@ -460,6 +482,7 @@ export function InlineArtifactReview({
               onRevealThread: showPassage,
               onClearPassage: clearPassage,
               onThreadsChange: setLoadedThreads,
+              onReadOnlyReasonChange: setVerifiedReadOnlyReason,
               passageMessage,
             }}
           />

@@ -317,7 +317,7 @@ describe("SessionReviewBar", () => {
     return {
       reviewRevision: options.revision ?? 7,
       submittedThreadRevisions: {},
-      viewer: { memberId: "member-1", canReview: true, readOnly: false },
+      viewer: { memberId: "member-1", canReview: true, readOnlyReason: null },
       counts: { total: options.ids?.length ?? 0, open: options.ids?.length ?? 0, blocking: 0 },
       nextCursor: options.cursor ?? null,
       threads: (options.ids ?? []).map((id) => ({

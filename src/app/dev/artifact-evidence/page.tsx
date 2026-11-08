@@ -52,7 +52,7 @@ export default function ArtifactEvidencePreview() {
       </p>
       <section className="rounded-lg border border-border bg-surface p-4 sm:p-6">
         <ArtifactPanel
-          readOnly
+          readOnlyReason="approved"
           currentArtifactId={artifactId}
           emptyText="No artifact"
           initialFormattedArtifact={

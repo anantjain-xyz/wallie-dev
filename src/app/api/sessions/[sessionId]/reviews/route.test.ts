@@ -85,6 +85,7 @@ function request(method = "GET", body?: unknown, query = `artifactId=${ARTIFACT}
 type Row = Record<string, unknown>;
 function client({
   archived = false,
+  phaseStatus = "awaiting_review",
   member = true,
   artifactSession = SESSION,
   threadSession = SESSION,
@@ -96,6 +97,7 @@ function client({
   errorTable = "",
 }: {
   archived?: boolean;
+  phaseStatus?: string;
   member?: boolean;
   artifactSession?: string;
   threadSession?: string;
@@ -116,6 +118,7 @@ function client({
             pipeline_id: PIPELINE,
             artifact_review_revision: 8,
             archived_at: archived ? "2026-11-05" : null,
+            phase_status: phaseStatus,
           },
         ]
       : [],
@@ -288,6 +291,16 @@ describe("artifact review HTTP APIs", () => {
       expect(mocked.transitionArtifactReviewThread).not.toHaveBeenCalled();
     },
   );
+  it.each(writes)(
+    "freezes approved but unarchived session writes for $name",
+    async ({ handler, method, body }) => {
+      client({ phaseStatus: "approved" });
+      expect((await handler(request(method, body), context())).status).toBe(409);
+      expect(mocked.createArtifactReviewThread).not.toHaveBeenCalled();
+      expect(mocked.writeArtifactReviewComment).not.toHaveBeenCalled();
+      expect(mocked.transitionArtifactReviewThread).not.toHaveBeenCalled();
+    },
+  );
   it.each(routes)("validates path UUIDs for $name", async ({ handler, method, body }) => {
     expect((await handler(request(method, body), context("not-a-uuid"))).status).toBe(400);
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
@@ -303,7 +316,7 @@ describe("artifact review HTTP APIs", () => {
       threads: [{ id: THREAD }],
       nextCursor: null,
       counts: { total: 2, open: 2, blocking: 1 },
-      viewer: { memberId: MEMBER, canReview: true, readOnly: false },
+      viewer: { memberId: MEMBER, canReview: true, readOnlyReason: null },
     });
     expect(mocked.listArtifactReviewThreads).toHaveBeenCalledWith(supabase, {
       workspaceId: WORKSPACE,
@@ -366,11 +379,27 @@ describe("artifact review HTTP APIs", () => {
       ]),
     );
   });
-  it("allows read-only archived review history", async () => {
-    client({ archived: true });
+  it.each([
+    { archived: false, phaseStatus: "awaiting_review", reason: null },
+    { archived: false, phaseStatus: "approved", reason: "approved" },
+    { archived: true, phaseStatus: "awaiting_review", reason: "archived" },
+    { archived: true, phaseStatus: "approved", reason: "archived" },
+  ])("reports the exact read-only reason for $phaseStatus / archived=$archived", async (state) => {
+    client(state);
     const response = await GET(request(), context());
     expect(response.status).toBe(200);
-    expect((await response.json()).viewer.readOnly).toBe(true);
+    expect((await response.json()).viewer.readOnlyReason).toBe(state.reason);
+  });
+  it("allows discussion comments from members without stage approval authority", async () => {
+    client({ memberRole: "member", approvers: [OTHER] });
+    const response = await GET(request(), context());
+    expect((await response.json()).viewer).toEqual({
+      memberId: MEMBER,
+      canReview: false,
+      readOnlyReason: null,
+    });
+    expect((await POST(request("POST", createBody), context())).status).toBe(200);
+    expect(mocked.createArtifactReviewThread).toHaveBeenCalledOnce();
   });
   it("rejects an artifact from a different session before reading threads", async () => {
     client({ artifactSession: OTHER });
