@@ -106,7 +106,9 @@ describe("delivery policy settings", () => {
       ),
     );
     expect(await screen.findByText("Revision 1")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("revision saved");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Policy saved. Refresh earlier verifications.",
+    );
   });
 
   it("preserves the draft on a stale revision and requires an explicit reload before resubmitting", async () => {
