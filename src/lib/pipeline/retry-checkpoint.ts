@@ -35,6 +35,7 @@ export async function saveRetryCheckpoint(
   const { admin, sandbox, baseSha, runId, attemptCount, signal } = input;
   const headSha = await readSourceBase(sandbox, signal);
   if (headSha === baseSha) return false;
+  if ((await loadRetryCheckpoint(input)).kind === "missing-rpc") return false;
 
   // Resolve the credential set after pinning HEAD so a refresh cannot add
   // sensitive material to that commit after we take the list.
@@ -80,18 +81,33 @@ export async function saveRetryCheckpoint(
   return data === true;
 }
 
-export async function restoreRetryInput(
-  input: RetryCheckpointContext & { signal?: AbortSignal },
-): Promise<boolean> {
-  const { admin, sandbox, baseSha, signal } = input;
+async function loadRetryCheckpoint(
+  input: Pick<RetryCheckpointContext, "admin" | "attemptCount" | "jobId" | "runId"> & {
+    signal?: AbortSignal;
+  },
+) {
+  const { admin, signal } = input;
+  signal?.throwIfAborted();
   const request = admin.rpc("get_session_retry_checkpoint", {
     p_job_id: input.jobId,
     p_attempt_count: input.attemptCount,
     p_run_id: input.runId,
   });
   const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
+  // App deployments can reach production before the migration reaches PostgREST.
+  if (error?.code === "PGRST202") return { kind: "missing-rpc" } as const;
   if (error) throw new Error("Could not read the Retry checkpoint.");
-  const checkpoint = data?.[0];
+  return { kind: "available", checkpoint: data?.[0] } as const;
+}
+
+export async function restoreRetryInput(
+  input: RetryCheckpointContext & { signal?: AbortSignal },
+): Promise<boolean> {
+  const { admin, sandbox, baseSha, signal } = input;
+  const result = await loadRetryCheckpoint(input);
+  if (result.kind === "missing-rpc") return false;
+  const { checkpoint } = result;
   if (!checkpoint) return false;
   if (checkpoint.input_sha !== baseSha) {
     throw new Error("The Retry checkpoint belongs to a different source input.");

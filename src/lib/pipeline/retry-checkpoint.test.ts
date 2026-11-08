@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
-import { saveRetryCheckpoint } from "./retry-checkpoint";
+import { restoreRetryInput, saveRetryCheckpoint } from "./retry-checkpoint";
 
 const source = vi.hoisted(() => ({
   baseSha: "a".repeat(40),
@@ -22,6 +22,49 @@ vi.mock("./source-checkpoint", async (importOriginal) => ({
   }),
 }));
 
+const retryContext = {
+  attemptCount: 1,
+  baseSha: source.baseSha,
+  jobId: "job-1",
+  runId: "11111111-1111-4111-8111-111111111111",
+  workspaceId: "workspace-1",
+  sensitiveValues: async () => [],
+};
+
+it.each(["PGRST202", "42501"])(
+  "handles checkpoint lookup error %s without reserving or uploading source",
+  async (code) => {
+    const from = vi.fn();
+    const rpc = vi.fn((name: string) => {
+      if (name !== "get_session_retry_checkpoint") throw new Error(`Unexpected RPC ${name}`);
+      return {
+        abortSignal: async () => ({
+          data: null,
+          error: { code, message: "Checkpoint lookup failed" },
+        }),
+      };
+    });
+    const context = {
+      ...retryContext,
+      admin: { rpc, storage: { from } } as never,
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      sandbox: new FakeSandbox(),
+      signal: new AbortController().signal,
+    };
+
+    for (const operation of [restoreRetryInput, saveRetryCheckpoint]) {
+      if (code === "PGRST202") {
+        await expect(operation(context)).resolves.toBe(false);
+      } else {
+        await expect(operation(context)).rejects.toThrow("Could not read the Retry checkpoint.");
+      }
+    }
+
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(from).not.toHaveBeenCalled();
+  },
+);
+
 it.each(["canceled", "rejected", "lost response"] as const)(
   "leaves retry upload cleanup to its durable reservation when saving is %s",
   async (outcome) => {
@@ -32,6 +75,9 @@ it.each(["canceled", "rejected", "lost response"] as const)(
     });
     const remove = vi.fn();
     const rpc = vi.fn((name: string) => {
+      if (name === "get_session_retry_checkpoint") {
+        return { abortSignal: async () => ({ data: [], error: null }) };
+      }
       if (name === "begin_workspace_resource_operation") {
         return {
           abortSignal: async () => ({ data: "reservation-1", error: null }),
@@ -49,16 +95,11 @@ it.each(["canceled", "rejected", "lost response"] as const)(
     });
     const admin = { rpc, storage: { from: vi.fn(() => ({ remove, upload })) } };
     const save = saveRetryCheckpoint({
+      ...retryContext,
       admin: admin as never,
-      attemptCount: 1,
-      baseSha: source.baseSha,
       deadlineAt: new Date(Date.now() + 60_000).toISOString(),
-      jobId: "job-1",
-      runId: "11111111-1111-4111-8111-111111111111",
       sandbox: new FakeSandbox(),
-      sensitiveValues: async () => [],
       signal: controller.signal,
-      workspaceId: "workspace-1",
     });
 
     if (outcome === "canceled") {
@@ -74,6 +115,7 @@ it.each(["canceled", "rejected", "lost response"] as const)(
       /^workspace-1\/11111111-1111-4111-8111-111111111111-retry-1-[a-f0-9-]{36}\.bundle$/,
     );
     expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "get_session_retry_checkpoint",
       "begin_workspace_resource_operation",
       ...(outcome === "canceled" ? [] : ["save_session_retry_checkpoint"]),
     ]);

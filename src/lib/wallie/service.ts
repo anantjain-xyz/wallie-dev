@@ -593,17 +593,24 @@ export async function enqueueSessionJobWithRun(
     p_agent_model_name: runConfig.modelName,
     p_run_type: runConfig.runType,
   };
-  const { data, error } = await (input.retryRunId !== undefined
-    ? admin.rpc("enqueue_session_retry_with_checkpoint", {
-        ...args,
-        p_requested_by_member_id: input.requestedByMemberId,
-        p_retry_run_id: input.retryRunId,
-      })
-    : admin.rpc("enqueue_session_job_with_run", {
-        ...args,
-        p_requested_by_member_id: input.requestedByMemberId ?? undefined,
-        p_trigger_type: input.triggerType,
-      }));
+  const retryEnqueue =
+    input.retryRunId === undefined
+      ? null
+      : await admin.rpc("enqueue_session_retry_with_checkpoint", {
+          ...args,
+          p_requested_by_member_id: input.requestedByMemberId,
+          p_retry_run_id: input.retryRunId,
+        });
+  // A missing function means PostgREST never attempted the enqueue. Keep Retry
+  // available if the web deploy reaches production before the migration.
+  const { data, error } =
+    retryEnqueue && retryEnqueue.error?.code !== "PGRST202"
+      ? retryEnqueue
+      : await admin.rpc("enqueue_session_job_with_run", {
+          ...args,
+          p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+          p_trigger_type: input.triggerType,
+        });
   if (error) throw error;
   const queued = data?.[0];
   if (!queued) throw new Error("Wallie enqueue returned no job.");
