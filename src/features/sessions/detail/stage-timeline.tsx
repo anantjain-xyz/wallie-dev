@@ -6,11 +6,16 @@ import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import type { SessionReviewPipeline, SessionReviewSession } from "@/features/sessions/detail/data";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
+import { isWallieRunActiveStatus } from "@/features/wallie/utils";
 import { cn } from "@/lib/utils";
+import type { StageExecution } from "./stage-execution";
 
 export type StageTimelineStatus =
   | "completed"
   | "current"
+  | "queued"
+  | "starting"
+  | "waiting"
   | "upcoming"
   | "failed"
   | "not_running"
@@ -28,7 +33,7 @@ function stageIndex(pipeline: SessionReviewPipeline, stageId: string): number {
 
 export function buildStageTimeline(
   session: SessionReviewSession,
-  options?: { failedStageSlug?: string | null },
+  options?: { failedStageSlug?: string | null; currentRun?: StageExecution | null },
 ): StageTimelineEntry[] {
   const completedStageIds = new Set(
     session.phaseCompletions
@@ -50,14 +55,47 @@ export function buildStageTimeline(
       if (session.phaseStatus === "approved") {
         return { phaseStatus: null, stage, status: "completed" as const };
       }
-      if (failedStageSlug === stage.slug) {
+      if (session.phaseStatus === "awaiting_review") {
+        return { phaseStatus: session.phaseStatus, stage, status: "current" as const };
+      }
+      const run = options?.currentRun?.stageId === stage.id ? options.currentRun : null;
+      // Review readiness is authoritative. Otherwise an active rerun supersedes
+      // rejection and any failure left over from the previous attempt.
+      if (!session.archivedAt && run) {
+        if (isWallieRunActiveStatus(run.status)) {
+          return {
+            phaseStatus: session.phaseStatus,
+            stage,
+            status:
+              run.status === "queued"
+                ? ("queued" as const)
+                : run.status === "started"
+                  ? ("starting" as const)
+                  : ("current" as const),
+          };
+        }
+        const terminalIsCurrent =
+          session.phaseStatus !== "in_progress" ||
+          Date.parse(run.updatedAt) >= Date.parse(session.updatedAt);
+        if (run.status === "error" && terminalIsCurrent) {
+          return { phaseStatus: session.phaseStatus, stage, status: "failed" as const };
+        }
+        if (run.status === "canceled" && terminalIsCurrent) {
+          return { phaseStatus: session.phaseStatus, stage, status: "not_running" as const };
+        }
+      }
+      if (!run && failedStageSlug === stage.slug) {
         return { phaseStatus: session.phaseStatus, stage, status: "failed" as const };
       }
       return {
         phaseStatus: session.phaseStatus,
         stage,
         status:
-          session.phaseStatus === "rejected" ? ("not_running" as const) : ("current" as const),
+          session.phaseStatus === "rejected"
+            ? session.archivedAt
+              ? ("not_running" as const)
+              : ("waiting" as const)
+            : ("current" as const),
       };
     }
 
@@ -97,6 +135,12 @@ export function stageTimelineLabel(entry: StageTimelineEntry): string {
   switch (entry.status) {
     case "completed":
       return "Completed";
+    case "queued":
+      return "Queued";
+    case "starting":
+      return "Starting";
+    case "waiting":
+      return "Waiting for run";
     case "failed":
       return "Failed";
     case "not_running":

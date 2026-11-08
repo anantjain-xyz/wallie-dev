@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { RealtimeRecoveryProvider } from "@/features/wallie/realtime-recovery-context";
@@ -8,6 +8,7 @@ import { LiveConnectionNotice } from "@/features/wallie/live-connection-notice";
 import { TimeDisplay } from "@/components/shared/time-display";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 import type { WallieRun } from "@/features/wallie/types";
+import { newerStageExecution, type StageExecution } from "./stage-execution";
 import {
   currentOperationLabel,
   isRunActivityStalled,
@@ -19,7 +20,14 @@ type ExecutionSnapshot = {
   sessionId: string;
   run: Pick<
     WallieRun,
-    "stageId" | "status" | "createdAt" | "startedAt" | "lastActivityAt" | "updatedAt" | "isActive"
+    | "id"
+    | "stageId"
+    | "status"
+    | "createdAt"
+    | "startedAt"
+    | "lastActivityAt"
+    | "updatedAt"
+    | "isActive"
   > | null;
   connection: WallieRealtimeConnectionState;
   stalled: boolean;
@@ -29,13 +37,42 @@ type ExecutionSnapshot = {
 type PublishedExecution = ExecutionSnapshot | { unavailable: true } | null;
 const SnapshotContext = createContext<PublishedExecution>(null);
 const PublishContext = createContext<((snapshot: PublishedExecution) => void) | null>(null);
+type RetainedExecution = { sessionId: string; run: StageExecution } | null;
+const RunContext = createContext<RetainedExecution>(null);
+
+/** Read the existing history feed, retaining initial execution while activity loads. */
+export function useStageExecution(sessionId: string, initialRun: StageExecution | null) {
+  const published = useContext(RunContext);
+  const liveRun = published?.sessionId === sessionId ? published.run : null;
+  return newerStageExecution(initialRun, liveRun);
+}
 
 export function SessionExecutionProvider({ children }: { children: ReactNode }) {
-  const [snapshot, publish] = useState<PublishedExecution>(null);
+  const [{ snapshot, latest }, setExecution] = useState<{
+    snapshot: PublishedExecution;
+    latest: RetainedExecution;
+  }>({ snapshot: null, latest: null });
+  const publish = useCallback((snapshot: PublishedExecution) => {
+    setExecution((current) => ({
+      snapshot,
+      latest:
+        snapshot && "sessionId" in snapshot && snapshot.run
+          ? {
+              sessionId: snapshot.sessionId,
+              run: newerStageExecution(
+                current.latest?.sessionId === snapshot.sessionId ? current.latest.run : null,
+                snapshot.run,
+              )!,
+            }
+          : current.latest,
+    }));
+  }, []);
   return (
     <RealtimeRecoveryProvider>
       <PublishContext value={publish}>
-        <SnapshotContext value={snapshot}>{children}</SnapshotContext>
+        <RunContext value={latest}>
+          <SnapshotContext value={snapshot}>{children}</SnapshotContext>
+        </RunContext>
       </PublishContext>
     </RealtimeRecoveryProvider>
   );
@@ -72,6 +109,7 @@ export function usePublishExecution({
       sessionId,
       run: run
         ? {
+            id: run.id,
             stageId: run.stageId,
             status: run.status,
             createdAt: run.createdAt,

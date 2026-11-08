@@ -5,6 +5,14 @@ import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { loadSessionRecoverySnapshot, SessionRecoveryAccessError } from "./recovery-snapshot";
 import type { SessionDetailRpcPayload } from "./review-data";
 
+const latestRun = {
+  id: "rerun",
+  stageId: "stage-a",
+  status: "queued",
+  createdAt: "2026-09-06T12:00:00Z",
+  updatedAt: "2026-09-06T12:00:00Z",
+};
+
 const detail: SessionDetailRpcPayload = {
   activity: {
     sessionId: "session-1",
@@ -52,6 +60,7 @@ function load(capabilitiesStageId: string | undefined, status = 200) {
           canApprove: true,
           hasFailedRun: false,
           failedStageSlug: null,
+          latestRun,
         },
         { status },
       ),
@@ -73,6 +82,7 @@ describe("session recovery snapshot", () => {
     await expect(load("stage-a")).resolves.toMatchObject({
       review: { session: { currentStageId: "stage-a" } },
       canApprove: true,
+      latestRun,
     });
   });
 
