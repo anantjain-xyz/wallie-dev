@@ -289,7 +289,7 @@ describe("SessionReviewEvidence", () => {
     renderPanel();
     expect(await screen.findByText(/belongs to an earlier or unconfirmed PR epoch/)).toBeTruthy();
     expect(screen.getByText("Not yet observed")).toBeTruthy();
-    expect(screen.getByText(/No GitHub review detail is recorded/)).toBeTruthy();
+    expect(screen.getByText(/No review details recorded/)).toBeTruthy();
   });
 
   it("keeps a failed API read recoverable", async () => {

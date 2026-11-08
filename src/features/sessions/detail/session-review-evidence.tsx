@@ -150,9 +150,7 @@ function EvidenceSection({
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-xs text-muted">
-          No named validation evidence is required by this delivery policy.
-        </p>
+        <p className="mt-2 text-xs text-muted">No required validation evidence.</p>
       )}
       {evidence?.records.length ? (
         <>
@@ -183,9 +181,7 @@ function EvidenceSection({
           </ul>
         </>
       ) : (
-        <p className="mt-2 text-xs text-muted">
-          No harness receipt is recorded for the accepted commit.
-        </p>
+        <p className="mt-2 text-xs text-muted">No harness receipt for the accepted commit.</p>
       )}
       {evidence?.assets.length ? (
         <>
@@ -372,8 +368,7 @@ export function SessionReviewEvidence({
             Delivery readiness
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted">
-            Server-derived from GitHub observations and recorded validation evidence. Approval never
-            implies a merge or deployment.
+            GitHub and validation evidence. Approval doesn’t merge or deploy.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -469,7 +464,7 @@ export function SessionReviewEvidence({
         </div>
       ) : (
         <p className="mt-4 rounded-[4px] border border-success/30 bg-success-soft px-3 py-2 text-xs text-success">
-          Every configured delivery requirement is satisfied for the observed revision.
+          Delivery requirements met for this revision.
         </p>
       )}
 
@@ -568,7 +563,7 @@ export function SessionReviewEvidence({
               ))}
             </ul>
           ) : (
-            <p className="mt-2 text-xs text-muted">No named required checks are configured.</p>
+            <p className="mt-2 text-xs text-muted">No required checks.</p>
           )}
           {prChecksUrl ? (
             <a
@@ -626,9 +621,7 @@ export function SessionReviewEvidence({
               </li>
             </ul>
           ) : (
-            <p className="mt-2 text-xs text-muted">
-              No GitHub review detail is recorded for the current observation.
-            </p>
+            <p className="mt-2 text-xs text-muted">No review details recorded.</p>
           )}
           {pr?.url ? (
             <a

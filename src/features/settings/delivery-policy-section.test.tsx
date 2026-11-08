@@ -122,7 +122,9 @@ describe("delivery policy settings", () => {
     await user.clear(checks);
     await user.type(checks, "new-check");
     await user.click(screen.getByRole("button", { name: "Save new revision" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("changed while you were editing");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Policy changed. Reload before retrying.",
+    );
     expect(checks).toHaveValue("new-check");
     expect(screen.getByRole("button", { name: "Save new revision" })).toBeDisabled();
     expect(JSON.parse(fetch.mock.calls[1][1].body).expectedRevision).toBe(3);
