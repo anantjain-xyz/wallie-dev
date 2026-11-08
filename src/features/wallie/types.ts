@@ -1,5 +1,6 @@
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Enums } from "@/lib/supabase/database.types";
+import type { RunFailure } from "@/lib/pipeline/run-failure";
 
 // --- Types migrated from lib/wallie/types.ts (Phase 0.2) ---
 
@@ -74,6 +75,8 @@ export type WallieRun = {
   canRetry: boolean;
   createdAt: string;
   finishedAt: string | null;
+  /** Recorded terminal failure, independent of the lazily loaded activity log. */
+  failure?: RunFailure | null;
   id: string;
   isActive: boolean;
   isTerminal: boolean;

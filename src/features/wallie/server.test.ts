@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Enums } from "@/lib/supabase/database.types";
 
 const adminOrdinalRows: Array<{
   created_at: string;
@@ -47,7 +48,7 @@ function row(index: number, overrides: Partial<ReturnType<typeof baseRow>> = {})
   };
 }
 
-function baseRow(index: number) {
+function baseRow(index: number, status: Enums<"agent_run_status"> = "success") {
   return {
     branch_name: null as string | null,
     created_at: "2026-07-18T12:00:00.000Z",
@@ -60,13 +61,23 @@ function baseRow(index: number) {
     stage_name: "Build",
     stage_slug: "build",
     started_at: "2026-07-18T12:00:10.000Z",
-    status: "success" as const,
+    status,
     triggered_by_member_id: null,
     updated_at: "2026-07-18T12:01:00.000Z",
   };
 }
 
-function client(rows: ReturnType<typeof row>[]) {
+function client(
+  rows: ReturnType<typeof row>[],
+  failures: Array<{
+    agent_run_id: string;
+    created_at: string;
+    id: string;
+    kind: string;
+    message_md: string;
+  }> = [],
+  failureError: { message: string } | null = null,
+) {
   const query = {
     eq: vi.fn(),
     limit: vi.fn(),
@@ -82,7 +93,24 @@ function client(rows: ReturnType<typeof row>[]) {
   query.limit.mockReturnValue(query);
   query.or.mockReturnValue(query);
 
-  return { query, supabase: { from: vi.fn(() => query) } };
+  const failureQuery = {
+    eq: vi.fn(),
+    in: vi.fn(),
+    select: vi.fn(),
+    then: (resolve: (value: { data: typeof failures; error: typeof failureError }) => void) =>
+      resolve({ data: failures, error: failureError }),
+  };
+  failureQuery.select.mockReturnValue(failureQuery);
+  failureQuery.in.mockReturnValue(failureQuery);
+  failureQuery.eq.mockReturnValue(failureQuery);
+
+  return {
+    query,
+    failureQuery,
+    supabase: {
+      from: vi.fn((table: string) => (table === "agent_run_messages" ? failureQuery : query)),
+    },
+  };
 }
 
 beforeEach(() => {
@@ -91,6 +119,64 @@ beforeEach(() => {
 });
 
 describe("loadWallieRunPage", () => {
+  it("loads terminal causes for failed page rows without loading activity", async () => {
+    const { failureQuery, supabase } = client(
+      [row(3, { status: "error" }), row(2), row(1, { status: "error" })],
+      [
+        {
+          agent_run_id: uuid(3),
+          created_at: "2026-07-18T12:01:00.000Z",
+          id: "terminal-3",
+          kind: "run_failure",
+          message_md: JSON.stringify({
+            version: 1,
+            category: "configuration",
+            code: "credentials",
+            diagnostic: "API_KEY=must-not-reach-client",
+          }),
+        },
+      ],
+    );
+    const page = await loadWallieRunPage({
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+
+    expect(failureQuery.in).toHaveBeenCalledWith("agent_run_id", [uuid(3), uuid(1)]);
+    expect(failureQuery.eq).toHaveBeenCalledWith("kind", "run_failure");
+    expect(page.runs[0]?.failure).toMatchObject({
+      category: "configuration",
+      code: "credentials",
+      cause: expect.stringContaining("credentials"),
+    });
+    expect(page.runs.find((run) => run.id === uuid(1))?.failure).toBeNull();
+    expect(page.runs.every((run) => run.messages.length === 0)).toBe(true);
+    expect(JSON.stringify(page)).not.toContain("must-not-reach-client");
+  });
+
+  it("does not fetch activity metadata for successful runs", async () => {
+    const { supabase } = client([row(1)]);
+    await loadWallieRunPage({
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+    expect(supabase.from).not.toHaveBeenCalledWith("agent_run_messages");
+  });
+
+  it("surfaces a terminal-record read failure instead of claiming historical data is absent", async () => {
+    const error = { message: "terminal records unavailable" };
+    const { supabase } = client([row(1, { status: "error" })], [], error);
+    await expect(
+      loadWallieRunPage({
+        memberIndex: new Map(),
+        sessionId: uuid(999),
+        supabase: supabase as never,
+      }),
+    ).rejects.toEqual(error);
+  });
+
   it("selects and returns the recorded branch after a stage slug changes", async () => {
     const branch = "wallie/build-session-1-job-job-1-attempt-2";
     const { query, supabase } = client([row(1, { branch_name: branch, stage_slug: "renamed" })]);
