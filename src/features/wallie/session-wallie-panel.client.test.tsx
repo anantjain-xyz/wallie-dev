@@ -389,7 +389,10 @@ describe("SessionWalliePanel run history lifecycle", () => {
       if (!descriptionId) throw new Error("Retry is missing its effect description");
       const description = document.getElementById(descriptionId);
       expect(description?.textContent).toContain(
-        `Starts a new Build attempt using this run’s ${sourceMode} mode.`,
+        `Starts a new Build attempt. Requires setup for this run’s ${sourceMode} mode.`,
+      );
+      expect(description?.textContent).toContain(
+        "Execution uses code mode if a repository is linked when the attempt starts, otherwise project mode.",
       );
       expect(description?.textContent).toContain("Run run-2 (attempt 2) stays in history.");
       expect(description?.textContent).toContain("Completed stages are not rerun.");
@@ -496,7 +499,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
     expect(screen.getByText(/Check the activity and timeout settings/)).toBeTruthy();
     expect(fake.messageQueries).toEqual([]);
-    const toggle = screen.getByRole("button", { name: /Stage 1 run, attempt 1, run run-1, .*activity:/ });
+    const toggle = screen.getByRole("button", {
+      name: /Stage 1 run, attempt 1, run run-1, .*activity:/,
+    });
     fireEvent.click(toggle);
     await screen.findByText("Activity error details");
     expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();

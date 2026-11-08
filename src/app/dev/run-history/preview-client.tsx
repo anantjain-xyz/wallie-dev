@@ -141,7 +141,7 @@ export function RunHistoryPreview() {
   const [result, setResult] = useState("success");
   const [ready, setReady] = useState(false);
   const [requests, setRequests] = useState(0);
-  const data = useMemo(() => fixtureData(scenario), [scenario]);
+  const [data, setData] = useState(() => fixtureData("completed"));
   const client = useMemo(() => fixtureClient(), []);
   useEffect(() => {
     const original = window.fetch;
@@ -149,7 +149,28 @@ export function RunHistoryPreview() {
       const url = String(input);
       if (url.startsWith("/api/sessions/fixture-session-"))
         return Response.json({ runs: data.runs, nextCursor: null });
-      if (url.startsWith("/api/agent-runs/fixture-run-") && init?.method === "POST") {
+      const cancelSource = data.runs.find((run) => url === `/api/agent-runs/${run.id}/cancel`);
+      if (cancelSource && init?.method === "POST") {
+        const canceledRun: WallieRun = {
+          ...cancelSource,
+          status: "canceled",
+          isActive: false,
+          isTerminal: true,
+          canRetry: true,
+          canCancel: false,
+          finishedAt: now,
+          updatedAt: now,
+        };
+        setData((current) => ({
+          ...current,
+          runs: current.runs.map((run) => (run.id === canceledRun.id ? canceledRun : run)),
+        }));
+        return Response.json({ canceled: true, run: canceledRun });
+      }
+      if (
+        data.runs.some((run) => url === `/api/agent-runs/${run.id}/retry`) &&
+        init?.method === "POST"
+      ) {
         setRequests((value) => value + 1);
         if (result === "loading") return new Promise<Response>(() => {});
         if (result === "error")
@@ -181,7 +202,7 @@ export function RunHistoryPreview() {
       ? "approved"
       : scenario === "awaiting-review"
         ? "awaiting_review"
-        : scenario === "in-progress"
+        : scenario === "in-progress" && data.runs.some((run) => run.isActive)
           ? "in_progress"
           : "rejected";
   return (
@@ -189,7 +210,7 @@ export function RunHistoryPreview() {
       <div>
         <h1 className="text-2xl font-semibold">Run history preview</h1>
         <p className="mt-2 text-sm text-muted">
-          Local fixtures. Retry requests are mocked and create no work.
+          Local fixtures. Retry and stop requests are mocked and create no work.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-4">
@@ -202,6 +223,7 @@ export function RunHistoryPreview() {
               const next = scenarios.find((value) => value === event.target.value);
               if (next) {
                 setScenario(next);
+                setData(fixtureData(next));
                 setRequests(0);
               }
             }}
@@ -232,11 +254,13 @@ export function RunHistoryPreview() {
           ? "Session complete"
           : scenario === "awaiting-review"
             ? "Build ready for review"
-            : scenario === "in-progress"
+            : scenario === "in-progress" && data.runs.some((run) => run.isActive)
               ? "Build in progress"
-              : scenario === "archived"
-                ? "Session archived"
-                : `Build ${scenario}`}
+              : scenario === "in-progress"
+                ? "Build canceled"
+                : scenario === "archived"
+                  ? "Session archived"
+                  : `Build ${scenario}`}
       </h2>
       {ready ? (
         <SessionWalliePanel
