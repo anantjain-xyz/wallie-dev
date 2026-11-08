@@ -107,14 +107,30 @@ describe("ShellHeader", () => {
     expect(html).toContain('aria-label="Account: owner@example.com"');
   });
 
-  it("exposes navigation tabs in the top bar on mobile", () => {
+  it("exposes a named compact workspace menu alongside desktop navigation", () => {
     const html = renderShell();
 
     expect(html).toContain('aria-label="Workspace navigation"');
-    expect(html).not.toContain('aria-label="Open workspace navigation"');
+    expect(html).toContain('aria-label="Workspace navigation: Pipeline"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("data-shell-header");
     expect(html).toContain(">Pipeline</");
-    expect(html).not.toContain("grid-cols-3");
+    expect(html).toContain('href="/w/acme-corp/sessions"');
+    expect(html).toContain('href="/w/acme-corp/settings"');
+  });
+
+  it.each([
+    ["/w/acme-corp", "Pipeline"],
+    ["/w/acme-corp/sessions", "Sessions"],
+    ["/w/acme-corp/settings/profile", "Settings"],
+  ])("names the compact menu after the current destination at %s", (pathname, label) => {
+    mocked.pathname = pathname;
+
+    const html = renderShell();
+
+    expect(html).toContain(`aria-label="Workspace navigation: ${label}"`);
+    expect(html).toContain('aria-current="page"');
   });
 
   it("renders navigation without a repeated page label above main content", () => {
