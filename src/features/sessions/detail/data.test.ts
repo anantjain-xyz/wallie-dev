@@ -287,7 +287,17 @@ describe("session detail loader", () => {
     const runsQuery = {
       eq: vi.fn().mockReturnThis(),
       limit: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "rerun",
+          stage_id: "stage-land",
+          stage_slug: "land",
+          status: "queued",
+          created_at: "2026-07-12T06:00:00Z",
+          updated_at: "2026-07-12T06:00:00Z",
+        },
+        error: null,
+      }),
       order: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
     };
@@ -313,6 +323,13 @@ describe("session detail loader", () => {
     expect(result.canReview).toBe(true);
     expect(result.hasFailedRun).toBe(false);
     expect(result.failedStageSlug).toBeNull();
+    expect(result.latestRun).toEqual({
+      id: "rerun",
+      stageId: "stage-land",
+      status: "queued",
+      createdAt: "2026-07-12T06:00:00Z",
+      updatedAt: "2026-07-12T06:00:00Z",
+    });
     expect(result.repository).toEqual({
       defaultBranch: "main",
       fullName: "acme/app",

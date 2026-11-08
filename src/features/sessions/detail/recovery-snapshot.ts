@@ -3,6 +3,8 @@ import type { Database } from "@/lib/supabase/database.types";
 import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { serializeSessionReviewData, type SessionDetailRpcPayload } from "./review-data";
 
+import { parseStageExecution } from "./stage-execution";
+
 /** An authoritative access miss must leave the stale detail page. */
 export class SessionRecoveryAccessError extends Error {}
 
@@ -49,6 +51,7 @@ export async function loadSessionRecoverySnapshot({
   return {
     review: serializeSessionReviewData(payload, attachments.data ?? []),
     canApprove: capabilities.canApprove as boolean,
+    latestRun: parseStageExecution(capabilities.latestRun),
     hasFailedRun: capabilities.hasFailedRun as boolean,
     failedStageSlug:
       typeof capabilities.failedStageSlug === "string" ? capabilities.failedStageSlug : null,

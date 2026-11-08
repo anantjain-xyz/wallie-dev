@@ -25,6 +25,7 @@ import {
   withServerTiming,
 } from "@/lib/server-timing";
 import { loadSessionReviewCapabilities } from "@/features/sessions/detail/review-capabilities";
+import type { StageExecution } from "./stage-execution";
 
 /**
  * Seeded session #18 was 10,603 bytes at the detail RPC before member and
@@ -102,6 +103,7 @@ export type SessionDetailPageData = {
   canReview: boolean;
   failedStageSlug: string | null;
   hasFailedRun: boolean;
+  latestRun: StageExecution | null;
   repository: SessionReviewRepository | null;
   review: SessionReviewData;
 };
@@ -221,6 +223,7 @@ async function loadSessionDetailPageDataWithTiming(
     canReview: capabilities.canApprove,
     failedStageSlug: capabilities.failedStageSlug,
     hasFailedRun: capabilities.hasFailedRun,
+    latestRun: capabilities.latestRun,
     repository,
     review,
   };
