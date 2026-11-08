@@ -10,6 +10,7 @@ import {
   type WallieRunCardProps,
 } from "./run-activity";
 import type { WallieRunMessage } from "./types";
+import { parseRunFailure } from "@/lib/pipeline/run-failure";
 
 afterEach(cleanup);
 
@@ -108,7 +109,7 @@ describe("concise run activity", () => {
     expect(screen.getByText("Reconnecting to live updates…")).toBeTruthy();
   });
 
-  it("keeps failure diagnostics and retry available with activity collapsed", () => {
+  it("keeps the recorded cause and recovery available with activity collapsed", () => {
     const props = cardProps();
     render(
       <WallieRunCard
@@ -119,6 +120,9 @@ describe("concise run activity", () => {
           isActive: false,
           canCancel: false,
           canRetry: true,
+          failure: parseRunFailure(
+            '{"version":1,"category":"configuration","code":"sandbox_configuration"}',
+          ),
           messages: [
             {
               id: "error",
@@ -130,10 +134,98 @@ describe("concise run activity", () => {
         }}
       />,
     );
-    expect(screen.getByText("Sandbox could not start.")).toBeTruthy();
+    expect(screen.getByText(/Configuration: The sandbox connection/)).toBeTruthy();
+    expect(screen.getByText(/Check the sandbox connection and capability check/)).toBeTruthy();
+    expect(screen.queryByText("Sandbox could not start.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry Run" }));
     expect(props.onRetry).toHaveBeenCalledWith("run");
     expect(screen.queryByRole("list", { name: "Run activity" })).toBeNull();
+  });
+
+  it.each([
+    ["configuration", "credentials", "Configuration", "Reconnect"],
+    ["agent_exit", "agent_exit", "Agent exit", "Inspect the agent activity"],
+    ["timeout", "timeout", "Timeout", "timeout settings"],
+    ["budget", "budget", "Execution limit", "repair limits"],
+    ["publication", "publication", "Publication", "source recovery"],
+  ])("shows recorded %s failures before activity has loaded", (category, code, label, recovery) => {
+    const props = cardProps();
+    render(
+      <WallieRunCard
+        {...props}
+        messagesLoaded={false}
+        run={{
+          ...props.run,
+          status: "error",
+          isActive: false,
+          canCancel: false,
+          failure: parseRunFailure(JSON.stringify({ version: 1, category, code })),
+          messages: [],
+        }}
+      />,
+    );
+    expect(screen.getByText(new RegExp(`^${label}:`))).toBeTruthy();
+    expect(screen.getByText(new RegExp(recovery))).toBeTruthy();
+    expect(screen.queryByText(/Expand activity for details/)).toBeNull();
+  });
+
+  it("states that legacy causes are unavailable without promoting test output", () => {
+    const props = cardProps();
+    const view = render(
+      <WallieRunCard
+        {...props}
+        run={{
+          ...props.run,
+          status: "error",
+          isActive: false,
+          canCancel: false,
+          messages: [
+            { id: "test", kind: "error", createdAt: now, messageMd: "Unit tests failed." },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Failure cause unavailable")).toBeTruthy();
+    expect(screen.getByText(/No terminal cause was recorded/)).toBeTruthy();
+    expect(screen.queryByText("Unit tests failed.")).toBeNull();
+    view.rerender(
+      <WallieRunCard
+        {...props}
+        isExpanded
+        run={{
+          ...props.run,
+          status: "success",
+          isActive: false,
+          canCancel: false,
+          messages: [
+            { id: "test", kind: "error", createdAt: now, messageMd: "Unit tests failed." },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Completed")).toBeTruthy();
+    expect(screen.queryByText("Failure cause unavailable")).toBeNull();
+    expect(screen.getByText("Activity error details").closest("details")?.open).toBe(false);
+  });
+
+  it("redacts legacy technical diagnostics inside their disclosure", () => {
+    render(
+      <RunMessageTimeline
+        renderNow={now}
+        messages={[
+          {
+            id: "legacy",
+            kind: "error",
+            createdAt: now,
+            messageMd:
+              '**Error:** Agent exit: API_KEY="secret-value" https://user:pass@example.com?token=private-value',
+          },
+        ]}
+      />,
+    );
+    toggle("Activity error details");
+    expect(screen.getByText(/Agent exit:/).textContent).toContain("[redacted]");
+    expect(document.body.textContent).not.toMatch(/secret-value|user:pass|private-value/);
   });
 
   it("lazily reveals complete payloads without rounding large numbers or rendering markup", async () => {

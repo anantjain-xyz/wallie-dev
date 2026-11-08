@@ -1,6 +1,11 @@
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Tables } from "@/lib/supabase/database.types";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
+import { parseRunFailure } from "@/lib/pipeline/run-failure";
+import {
+  sanitizeRunFailureDiagnostic,
+  VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH,
+} from "@/lib/pipeline/failure-diagnostic";
 import {
   buildWallieBlockingReasons,
   canCancelWallieRun,
@@ -35,7 +40,12 @@ function isGenericRunnerCompletionMessage(message: Pick<WallieRunMessage, "kind"
 }
 
 function isDisplayableRunMessage(message: Pick<WallieRunMessage, "kind" | "messageMd">) {
-  return !isGenericRunnerCompletionMessage(message);
+  return message.kind !== "run_failure" && !isGenericRunnerCompletionMessage(message);
+}
+
+function recordedRunFailure(messages: readonly WallieRunMessage[]) {
+  const terminal = messages.findLast((message) => message.kind === "run_failure");
+  return terminal ? parseRunFailure(terminal.messageMd) : null;
 }
 
 export function mapAgentRunMessageRow(
@@ -45,7 +55,10 @@ export function mapAgentRunMessageRow(
     createdAt: row.created_at,
     id: row.id,
     kind: row.kind,
-    messageMd: row.message_md,
+    messageMd:
+      row.kind === "error"
+        ? sanitizeRunFailureDiagnostic(row.message_md, VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH)
+        : row.message_md,
   };
 }
 
@@ -126,7 +139,7 @@ export function mapAgentRunRow(
   >,
   memberIndex: ReadonlyMap<string, WorkspaceMember>,
   messages: WallieRunMessage[],
-  options?: { attemptCount?: number },
+  options?: { attemptCount?: number; failure?: WallieRun["failure"] },
 ): WallieRun {
   return {
     attemptCount: options?.attemptCount && options.attemptCount > 0 ? options.attemptCount : 1,
@@ -135,11 +148,14 @@ export function mapAgentRunRow(
     canRetry: false,
     createdAt: row.created_at,
     finishedAt: row.finished_at,
+    failure: options?.failure ?? recordedRunFailure(messages),
     id: row.id,
     isActive: false,
     isTerminal: false,
     lastActivityAt: row.last_activity_at ?? null,
-    messages: [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    messages: messages
+      .filter(isDisplayableRunMessage)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     modelName: row.model_name,
     modelProvider: row.model_provider,
     requestedByMember: row.triggered_by_member_id
@@ -188,6 +204,7 @@ export function mergeWallieRuns(runs: readonly WallieRun[], incomingRuns: readon
       ...incomingRun,
       attemptCount: Math.max(incomingRun.attemptCount, previousRun?.attemptCount ?? 1),
       branchName: incomingRun.branchName ?? previousRun?.branchName ?? null,
+      failure: incomingRun.failure ?? previousRun?.failure ?? null,
       messages: previousRun?.messages ?? incomingRun.messages,
       requestedByMember: incomingRun.requestedByMember ?? previousRun?.requestedByMember ?? null,
       sandboxId: incomingRun.sandboxId ?? previousRun?.sandboxId ?? null,
@@ -219,6 +236,10 @@ export function upsertWallieRunMessage(
 
     return {
       ...run,
+      failure:
+        input.message.kind === "run_failure"
+          ? (parseRunFailure(input.message.messageMd) ?? run.failure)
+          : run.failure,
       messages: nextMessages.sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     };
   });
@@ -262,15 +283,20 @@ export function buildWallieSessionData(input: {
     | "status"
     | "triggered_by_member_id"
     | "updated_at"
-  > & { attemptCount?: number })[];
+  > & { attemptCount?: number; failure?: WallieRun["failure"] })[];
   stallTimeoutMs?: number;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
   workspaceMembers?: readonly WorkspaceMember[];
 }) {
   const messagesByRunId = new Map<string, WallieRunMessage[]>();
+  const failuresByRunId = new Map<string, WallieRun["failure"]>();
 
   for (const message of input.messages) {
     const runMessage = mapAgentRunMessageRow(message);
+    if (runMessage.kind === "run_failure") {
+      const failure = parseRunFailure(runMessage.messageMd);
+      if (failure) failuresByRunId.set(message.agent_run_id, failure);
+    }
     if (!isDisplayableRunMessage(runMessage)) {
       continue;
     }
@@ -286,6 +312,7 @@ export function buildWallieSessionData(input: {
     input.runs.map((run) =>
       mapAgentRunRow(run, input.memberIndex, messagesByRunId.get(run.id) ?? [], {
         attemptCount: run.attemptCount,
+        failure: run.failure ?? failuresByRunId.get(run.id),
       }),
     ),
   );
