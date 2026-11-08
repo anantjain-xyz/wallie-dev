@@ -37,7 +37,7 @@ const knownFailures = new Map([
   ["Could not provision source delivery sandbox.", "sandbox_provision_failed"],
   ["Source checkpoint integrity verification failed.", "checkpoint_integrity_failed"],
   ["Source delivery requires a canonical GitHub repository URL.", "repository_url_invalid"],
-  ["Exact checkpoint publication requires a retained checkpoint branch.", "retained_ref_invalid"],
+  ["Exact checkpoint publication requires a retained checkpoint ref.", "retained_ref_invalid"],
   ["Invalid source bundle header.", "bundle_header_invalid"],
   ["Invalid remote source commit.", "remote_commit_invalid"],
   ["Checkpoint does not contain its recorded source commit.", "checkpoint_commit_missing"],

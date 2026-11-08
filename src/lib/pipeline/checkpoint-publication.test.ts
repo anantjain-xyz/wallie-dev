@@ -27,10 +27,13 @@ import {
 
 const baseSha = "a".repeat(40);
 const headSha = "b".repeat(40);
-const retainedRef = `refs/heads/wallie/checkpoints/run/${headSha}`;
+const runId = "00000000-0000-4000-8000-000000000001";
+const retainedRef = `refs/wallie/checkpoints/${runId}/${headSha}`;
 const bytes = Buffer.from("durable private Git bundle");
 const markdown = "# Complete output\n\nOriginal artifact body.";
 const deadlineAt = "2026-11-05T12:30:00.000Z";
+
+type RetainedSourceRestoreInput = Extract<SourceRestoreInput, { retainedRef: string }>;
 
 type Publication = CheckpointPublication & {
   status: "pending" | "claimed" | "adopted" | "stale";
@@ -56,7 +59,7 @@ function makeState(input: { noCode?: boolean; prepared?: boolean } = {}) {
   const state = {
     publication: null as Publication | null,
     source: {
-      run_id: "run",
+      run_id: runId,
       workspace_id: "workspace",
       session_id: "session",
       job_id: "job",
@@ -89,7 +92,7 @@ function makeState(input: { noCode?: boolean; prepared?: boolean } = {}) {
     state.events.push("prepare");
     if (!state.publication) {
       state.publication = {
-        run_id: "run",
+        run_id: runId,
         workspace_id: "workspace",
         session_id: "session",
         job_id: "job",
@@ -231,7 +234,7 @@ function makeState(input: { noCode?: boolean; prepared?: boolean } = {}) {
   const publish = (overrides: Partial<Parameters<typeof publishSessionCheckpoint>[0]> = {}) =>
     publishSessionCheckpoint({
       admin,
-      runId: "run",
+      runId,
       jobId: "job",
       attemptCount: 2,
       workspaceId: "workspace",
@@ -250,19 +253,19 @@ function makeState(input: { noCode?: boolean; prepared?: boolean } = {}) {
     state.events.push("repository");
     return { token: "scoped-token", delivery: state.source };
   });
-  mocked.push.mockImplementation(async (args: SourceRestoreInput) => {
+  mocked.push.mockImplementation(async (args: RetainedSourceRestoreInput) => {
     await args.beforePush?.();
     args.signal?.throwIfAborted();
     state.events.push("push");
-    state.remoteRefs.set(`refs/heads/${args.branch}`, args.headSha);
-    return args.branch;
+    state.remoteRefs.set(args.retainedRef, args.headSha);
+    return args.retainedRef;
   });
   return { state, admin, rpc, from, publish };
 }
 
 async function claimed(input: Parameters<typeof makeState>[0] = {}) {
   const result = makeState({ ...input, prepared: true });
-  await result.admin.rpc("claim_session_checkpoint_publication", { p_run_id: "run" });
+  await result.admin.rpc("claim_session_checkpoint_publication", { p_run_id: runId });
   return {
     ...result,
     publication: { ...result.state.publication! },
@@ -287,16 +290,16 @@ it("prepares the immutable original output before publishing and adopts only its
     expect.objectContaining({
       baseSha,
       headSha,
-      branch: retainedRef.slice("refs/heads/".length),
-      exactRef: true,
+      retainedRef,
+      runId,
       bytes,
       remoteUrl: "https://github.com/acme/app.git",
       token: "scoped-token",
     }),
-    expect.objectContaining({ runId: "run", workspaceId: "workspace" }),
+    expect.objectContaining({ runId, workspaceId: "workspace" }),
   );
   expect(rpc).toHaveBeenCalledWith("adopt_session_checkpoint_publication", {
-    p_run_id: "run",
+    p_run_id: runId,
     p_claim_id: "claim-1",
     p_remote_ref: retainedRef,
     p_remote_sha: headSha,
@@ -331,7 +334,7 @@ it("logs the failing publication operation and HTTP status without external erro
 
   expect(await publish()).toBe("pending");
   expect(console.warn).toHaveBeenCalledWith("[checkpoint-publication] retry scheduled", {
-    runId: "run",
+    runId,
     jobId: "job",
     attemptCount: 2,
     publicationAttemptCount: 1,
@@ -369,16 +372,16 @@ it("reuses the pushed candidate after a failed adoption transaction and creates 
   expect(await publish()).toBe("pending");
   expect(state.remoteRefs).toEqual(new Map([[retainedRef, headSha]]));
   expect(state.artifacts).toEqual([]);
-  expect(await drainCheckpointPublications(admin, { runId: "run", limit: 1 })).toEqual({
+  expect(await drainCheckpointPublications(admin, { runId, limit: 1 })).toEqual({
     adopted: 1,
     failed: 0,
   });
   expect(state.remoteRefs.size).toBe(1);
   expect(
-    mocked.push.mock.calls.map(([args]) => [args.branch, args.headSha, args.exactRef]),
+    mocked.push.mock.calls.map(([args]) => [args.retainedRef, args.headSha, args.runId]),
   ).toEqual([
-    [retainedRef.slice("refs/heads/".length), headSha, true],
-    [retainedRef.slice("refs/heads/".length), headSha, true],
+    [retainedRef, headSha, runId],
+    [retainedRef, headSha, runId],
   ]);
   expect(state.artifacts).toEqual([{ id: "artifact-1", body: markdown }]);
   expect(state.publication?.publication_attempt_count).toBe(2);
@@ -458,11 +461,11 @@ it("does not push or adopt when the claim becomes stale while resolving the repo
 
 it("rechecks ownership immediately before the external push", async () => {
   const { state, publish } = makeState();
-  mocked.push.mockImplementationOnce(async (args: SourceRestoreInput) => {
+  mocked.push.mockImplementationOnce(async (args: RetainedSourceRestoreInput) => {
     state.current = false;
     await args.beforePush?.();
-    state.remoteRefs.set(`refs/heads/${args.branch}`, args.headSha);
-    return args.branch;
+    state.remoteRefs.set(args.retainedRef, args.headSha);
+    return args.retainedRef;
   });
   expect(await publish()).toBe("stale");
   expect(state.remoteRefs.size).toBe(0);
@@ -472,15 +475,15 @@ it("rechecks ownership immediately before the external push", async () => {
 it("fences artifact adoption when cancellation arrives after the remote push", async () => {
   const { state, admin } = makeState({ prepared: true });
   const cancellation = new AbortController();
-  mocked.push.mockImplementationOnce(async (args: SourceRestoreInput) => {
+  mocked.push.mockImplementationOnce(async (args: RetainedSourceRestoreInput) => {
     await args.beforePush?.();
-    state.remoteRefs.set(`refs/heads/${args.branch}`, args.headSha);
+    state.remoteRefs.set(args.retainedRef, args.headSha);
     cancellation.abort(new Error("Session cancelled"));
-    return args.branch;
+    return args.retainedRef;
   });
   expect(
     await drainCheckpointPublications(admin, {
-      runId: "run",
+      runId,
       limit: 1,
       signal: cancellation.signal,
     }),
@@ -517,7 +520,7 @@ it("adopts no-code output with its input checkpoint and no invented remote proof
   expect(mocked.push).not.toHaveBeenCalled();
   expect(mocked.pr).not.toHaveBeenCalled();
   expect(rpc).toHaveBeenCalledWith("adopt_session_checkpoint_publication", {
-    p_run_id: "run",
+    p_run_id: runId,
     p_claim_id: "claim-1",
   });
   expect(state.publication).toMatchObject({
@@ -571,7 +574,7 @@ it("bounds a leased push even when its transport ignores abort and prevents late
   const { state, admin } = makeState({ prepared: true });
   const pushed = deferred<string>();
   const entered = deferred<void>();
-  mocked.push.mockImplementationOnce(async (args: SourceRestoreInput) => {
+  mocked.push.mockImplementationOnce(async (args: RetainedSourceRestoreInput) => {
     await args.beforePush?.();
     entered.resolve();
     return pushed.promise;
@@ -581,7 +584,7 @@ it("bounds a leased push even when its transport ignores abort and prevents late
   await vi.advanceTimersByTimeAsync(100);
   expect(await draining).toEqual({ adopted: 0, failed: 1 });
   state.remoteRefs.set(retainedRef, headSha);
-  pushed.resolve(retainedRef.slice("refs/heads/".length));
+  pushed.resolve(retainedRef);
   await vi.advanceTimersByTimeAsync(0);
   expect(state.artifacts).toEqual([]);
   expect(state.events).not.toContain("adopt");
