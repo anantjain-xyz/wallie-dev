@@ -449,7 +449,7 @@ function buildSupabaseMocks(opts: {
   agentConfig: AgentConfigRow[];
   activeRunForSession?: AgentRunRow | null;
   archivedAt?: string | null;
-  phaseStatus?: string;
+  phaseStatus?: Tables<"sessions">["phase_status"];
   enqueueCalls: Array<Record<string, unknown>>;
   enqueueError?: PostgrestError | null;
   enqueueReceipt?: { created: boolean; job_id: string | null; run_id: string | null };
@@ -1018,6 +1018,103 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
     });
 
     expect(enqueueCalls).toHaveLength(1);
+  });
+});
+
+describe("retryWallieRun historical source eligibility", () => {
+  describe.each(["in_progress", "awaiting_review", "rejected"] as const)(
+    "%s sessions",
+    (phaseStatus) => {
+      it.each(["error", "canceled", "success"] as const)(
+        "queues the current stage from a historical %s run",
+        async (status) => {
+          const enqueueCalls: Array<Record<string, unknown>> = [];
+          const { admin, supabase } = buildSupabaseMocks({
+            agentConfig: [],
+            enqueueCalls,
+            existingRun: buildAgentRunRow({
+              finished_at: baseTimestamp,
+              stage_id: "historical-stage",
+              stage_name: "Historical stage",
+              stage_slug: "historical",
+              status,
+            }),
+            phaseStatus,
+          });
+
+          const result = await retryWallieRun({
+            admin,
+            runId: "run-1",
+            requestedByMemberId: "mem-1",
+            supabase,
+            workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+          });
+
+          expect(result.created).toBe(true);
+          expect(enqueueCalls).toHaveLength(1);
+          expect(enqueueCalls[0]).toMatchObject({
+            p_expected_stage_id: "stage-product",
+            p_trigger_type: "manual_retry",
+          });
+        },
+      );
+    },
+  );
+
+  describe.each([
+    { archivedAt: null, phaseStatus: "approved", code: "session_not_runnable" },
+    {
+      archivedAt: "2026-11-08T12:00:00.000Z",
+      phaseStatus: "rejected",
+      code: "session_archived",
+    },
+  ] as const)("blocked session $code", ({ archivedAt, phaseStatus, code }) => {
+    it.each(["error", "canceled", "success"] as const)(
+      "rejects a historical %s run without enqueueing",
+      async (status) => {
+        const enqueueCalls: Array<Record<string, unknown>> = [];
+        const { admin, supabase } = buildSupabaseMocks({
+          agentConfig: [],
+          archivedAt,
+          enqueueCalls,
+          existingRun: buildAgentRunRow({ stage_id: "historical-stage", status }),
+          phaseStatus,
+        });
+
+        await expect(
+          retryWallieRun({
+            admin,
+            runId: "run-1",
+            requestedByMemberId: "mem-1",
+            supabase,
+            workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+          }),
+        ).rejects.toMatchObject({ code, statusCode: 409 });
+        expect(enqueueCalls).toHaveLength(0);
+      },
+    );
+  });
+
+  it("adopts active work instead of enqueueing another historical retry", async () => {
+    const enqueueCalls: Array<Record<string, unknown>> = [];
+    const activeRun = buildAgentRunRow({ agent_job_id: "active-job", id: "active-run" });
+    const { admin, supabase } = buildSupabaseMocks({
+      activeRunForSession: activeRun,
+      agentConfig: [],
+      enqueueCalls,
+      existingRun: buildAgentRunRow({ stage_id: "historical-stage", status: "error" }),
+    });
+
+    const result = await retryWallieRun({
+      admin,
+      runId: "run-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    expect(result).toEqual({ created: false, jobId: "active-job", run: activeRun });
+    expect(enqueueCalls).toHaveLength(0);
   });
 });
 
