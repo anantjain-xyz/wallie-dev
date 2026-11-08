@@ -7,7 +7,10 @@ import {
   SessionExecutionProvider,
   SessionExecutionSummary,
 } from "@/features/sessions/detail/execution-summary";
-import { SessionActivityPresentationProvider } from "@/features/sessions/detail/session-activity-presentation";
+import {
+  SessionActivityPresentationProvider,
+  type SessionActivityPresentation,
+} from "@/features/sessions/detail/session-activity-presentation";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import { RunActivityLink } from "@/features/sessions/review/run-activity-link";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
@@ -225,10 +228,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function panel(initialData: WallieSessionData, supabase?: SupabaseClient<Database>) {
+function panel(
+  initialData: WallieSessionData,
+  supabase?: SupabaseClient<Database>,
+  presentation?: SessionActivityPresentation,
+) {
   return render(
     <SessionWalliePanel
       initialData={initialData}
+      presentation={presentation}
       session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
       supabase={supabase}
       workspaceSlug="acme"
@@ -237,6 +245,235 @@ function panel(initialData: WallieSessionData, supabase?: SupabaseClient<Databas
 }
 
 describe("SessionWalliePanel run history lifecycle", () => {
+  it.each([
+    {
+      label: "completed",
+      phaseStatus: "approved",
+      status: "success",
+      archivedAt: null,
+      eligible: false,
+    },
+    {
+      label: "awaiting review",
+      phaseStatus: "awaiting_review",
+      status: "success",
+      archivedAt: null,
+      eligible: true,
+    },
+    { label: "failed", phaseStatus: "rejected", status: "error", archivedAt: null, eligible: true },
+    {
+      label: "canceled",
+      phaseStatus: "rejected",
+      status: "canceled",
+      archivedAt: null,
+      eligible: true,
+    },
+    {
+      label: "archived",
+      phaseStatus: "rejected",
+      status: "canceled",
+      archivedAt: "2026-11-08T20:00:00.000Z",
+      eligible: false,
+    },
+    {
+      label: "in progress",
+      phaseStatus: "in_progress",
+      status: "running",
+      archivedAt: null,
+      eligible: false,
+    },
+  ] as const)("derives historical retry eligibility for $label sessions", async (scenario) => {
+    const fake = fakeSupabase();
+    const active = scenario.status === "running";
+    const current = run(1, {
+      stageId: "build",
+      stageName: "Build",
+      attemptCount: 3,
+      status: scenario.status,
+      isActive: active,
+      isTerminal: !active,
+      canRetry: scenario.status === "error" || scenario.status === "canceled",
+      canCancel: active,
+    });
+    const historical = run(2, {
+      stageId: "plan",
+      stageName: "Plan",
+      status: "error",
+      canRetry: true,
+      attemptCount: 2,
+    });
+    const view = render(
+      <SessionWalliePanel
+        initialData={data([current, historical])}
+        initialNow="2026-07-18T13:30:00.000Z"
+        presentation={{
+          currentStage: { id: "build", name: "Build", phaseStatus: scenario.phaseStatus },
+          stopControl: undefined,
+        }}
+        session={{ archivedAt: scenario.archivedAt, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+    const article = view.container.querySelector('[data-run-id="run-2"]');
+    expect(article).not.toBeNull();
+    const history = within(article as HTMLElement);
+    expect(history.getByText("Attempt 2")).toBeTruthy();
+    expect(article?.querySelector('time[data-time-display="absolute"]')).not.toBeNull();
+    expect(history.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
+    fireEvent.click(
+      history.getByRole("button", {
+        name: "Plan run, attempt 2, run run-2, 2026-07-18 12:57 UTC, activity: Failed",
+        expanded: false,
+      }),
+    );
+    expect(Boolean(history.queryByRole("button", { name: "Retry Build stage" }))).toBe(
+      scenario.eligible,
+    );
+    if (!scenario.eligible)
+      expect(screen.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
+    if (scenario.phaseStatus === "approved")
+      expect(screen.getByText(/Historical attempts are read-only/)).toBeTruthy();
+    if (scenario.archivedAt) expect(screen.getByText(/This session is archived/)).toBeTruthy();
+    if (active) expect(screen.getByText(/Wait for it to finish before retrying/)).toBeTruthy();
+  });
+
+  it("requires current session context before offering a retry", () => {
+    const view = panel(
+      data([run(1, { status: "error", canRetry: true })]),
+      fakeSupabase().supabase,
+    );
+    expect(screen.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
+    expect(
+      view.getByText(/Refresh the session to load the current stage before retrying/),
+    ).toBeTruthy();
+  });
+
+  it.each([
+    { sessionMode: "project", sourceMode: "code", blocked: true },
+    { sessionMode: "code", sourceMode: "project", blocked: false },
+  ] as const)(
+    "checks setup for the selected $sourceMode run rather than current $sessionMode mode",
+    ({ sessionMode, sourceMode, blocked }) => {
+      const fake = fakeSupabase();
+      const view = panel(
+        data(
+          [
+            run(1, { stageId: "build", stageName: "Build" }),
+            run(2, {
+              stageId: "plan",
+              stageName: "Plan",
+              status: "canceled",
+              runType: sourceMode,
+              attemptCount: 2,
+            }),
+          ],
+          false,
+          { mode: sessionMode, repository: null },
+        ),
+        fake.supabase,
+        {
+          currentStage: { id: "build", name: "Build", phaseStatus: "awaiting_review" },
+          stopControl: undefined,
+        },
+      );
+      const source = view.container.querySelector('[data-run-id="run-2"]');
+      if (!(source instanceof HTMLElement)) throw new Error("Historical run was not rendered");
+      const history = within(source);
+      expect(screen.queryByText(/Setup needed before/)).toBeNull();
+      fireEvent.click(history.getByRole("button", { expanded: false }));
+      const retry = history.getByRole("button", { name: "Retry Build stage" });
+      expect(retry.hasAttribute("disabled")).toBe(blocked);
+      const descriptionId = retry.getAttribute("aria-describedby");
+      if (!descriptionId) throw new Error("Retry is missing its effect description");
+      const description = document.getElementById(descriptionId);
+      expect(description?.textContent).toContain(
+        `Starts a new Build attempt using this run’s ${sourceMode} mode.`,
+      );
+      expect(description?.textContent).toContain("Run run-2 (attempt 2) stays in history.");
+      expect(description?.textContent).toContain("Completed stages are not rerun.");
+      expect(description?.textContent).toContain(
+        "The current review closes when the retry starts.",
+      );
+      if (blocked) {
+        expect(description?.textContent).toContain("This run requires a linked repository.");
+      }
+    },
+  );
+
+  it("labels the current stage’s latest run separately from superseded and earlier stage attempts", () => {
+    const fake = fakeSupabase();
+    const view = panel(
+      data([
+        run(1, { stageId: "build", stageName: "Build", attemptCount: 3 }),
+        run(2, { stageId: "build", stageName: "Build", attemptCount: 2, status: "error" }),
+        run(3, { stageId: "plan", stageName: "Plan", attemptCount: 2 }),
+        run(4, { stageId: "plan", stageName: "Plan", attemptCount: 1, status: "canceled" }),
+      ]),
+      fake.supabase,
+      {
+        currentStage: { id: "build", name: "Build", phaseStatus: "approved" },
+        stopControl: undefined,
+      },
+    );
+    expect(
+      screen.getByRole("article", { name: "Latest Wallie run" }).getAttribute("data-run-id"),
+    ).toBe("run-1");
+    expect(screen.getByText("Latest Build attempt")).toBeTruthy();
+    for (const [id, label] of [
+      ["run-2", "Superseded attempt"],
+      ["run-3", "Earlier stage"],
+      ["run-4", "Superseded attempt"],
+    ]) {
+      const article = view.container.querySelector(`[data-run-id="${id}"]`);
+      if (!(article instanceof HTMLElement)) throw new Error(`Historical ${id} was not rendered`);
+      expect(within(article).getByText(label)).toBeTruthy();
+      expect(
+        article.querySelector('time[data-time-display="absolute"]')?.getAttribute("datetime"),
+      ).toBeTruthy();
+    }
+    expect(screen.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
+  });
+
+  it("locks duplicate retry submits and displays authoritative server refusal", async () => {
+    let complete: ((response: Response) => void) | undefined;
+    const pending = new Promise<Response>((resolve) => {
+      complete = resolve;
+    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return pending;
+      return Response.json({ runs: [], nextCursor: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    panel(
+      data([run(1, { status: "error", canRetry: true, stageId: "build" })]),
+      fakeSupabase().supabase,
+      {
+        currentStage: { id: "build", name: "Build", phaseStatus: "rejected" },
+        stopControl: undefined,
+      },
+    );
+    const button = screen.getByRole("button", { name: "Retry Build stage" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retrying…" }).hasAttribute("disabled")).toBe(true);
+    await act(async () =>
+      complete?.(
+        Response.json(
+          { error: "This session is complete. There is nothing left to run." },
+          { status: 409 },
+        ),
+      ),
+    );
+    expect(
+      await screen.findByText("This session is complete. There is nothing left to run."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry Build stage" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+  });
+
   it("renders and opens existing activity while the browser client is loading", async () => {
     const fake = fakeSupabase({
       "run-1": [
@@ -488,7 +725,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(view.container.querySelector('[aria-label="Current Wallie run"]')).toBeNull();
     expect(view.container.querySelector('[data-run-id="run-1"]')?.closest("details")).toBeNull();
     expect(
-      screen.getByRole("button", { name: /Plan run activity/ }).getAttribute("aria-expanded"),
+      screen
+        .getByRole("button", { name: /Plan run, attempt 1, run run-1, .*activity:/ })
+        .getAttribute("aria-expanded"),
     ).toBe("false");
     expect(fake.messageQueries).toEqual([]);
   });
@@ -741,7 +980,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
         workspaceSlug="acme"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Retry Run" }));
+    fireEvent.click(screen.getByRole("button", { name: /Retry .* stage/ }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/agent-runs/run-1/retry",
@@ -751,7 +990,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
         }),
       ),
     );
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry Run" })).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Retry .* stage/ })).toBeNull(),
+    );
   });
 
   it.each([
@@ -781,12 +1022,12 @@ describe("SessionWalliePanel run history lifecycle", () => {
         workspaceSlug="acme"
       />,
     );
-    expect(screen.queryByRole("button", { name: "Retry Run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
   });
 
   it("retries the selected paginated row and inserts the returned run without refresh", async () => {
-    const initialRun = run(1);
-    const olderRun = run(21, { canRetry: true, status: "error" });
+    const initialRun = run(1, { stageId: "build" });
+    const olderRun = run(21, { canRetry: true, status: "error", stageId: "plan" });
     const retriedRun = run(0, {
       canCancel: true,
       createdAt: "2026-07-18T13:30:00.000Z",
@@ -810,14 +1051,23 @@ describe("SessionWalliePanel run history lifecycle", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const view = panel(data([initialRun], true), fake.supabase);
+    const view = panel(data([initialRun], true), fake.supabase, {
+      currentStage: { id: "build", name: "Build", phaseStatus: "rejected" },
+      stopControl: undefined,
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
     await waitFor(() =>
       expect(view.container.querySelector('[data-run-id="run-21"]')).not.toBeNull(),
     );
     const olderArticle = view.container.querySelector('[data-run-id="run-21"]');
-    fireEvent.click(within(olderArticle as HTMLElement).getByRole("button", { name: "Retry Run" }));
+    expect(
+      within(olderArticle as HTMLElement).queryByRole("button", { name: /Retry .* stage/ }),
+    ).toBeNull();
+    fireEvent.click(within(olderArticle as HTMLElement).getByRole("button", { expanded: false }));
+    fireEvent.click(
+      within(olderArticle as HTMLElement).getByRole("button", { name: "Retry Build stage" }),
+    );
 
     await waitFor(() =>
       expect(view.container.querySelector('[data-run-id="run-retry"]')).not.toBeNull(),
@@ -850,7 +1100,10 @@ describe("SessionWalliePanel run history lifecycle", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const view = panel(data([initialRun]), fake.supabase);
+    const view = panel(data([initialRun]), fake.supabase, {
+      currentStage: { id: "stage-build", name: "Build", phaseStatus: "rejected" },
+      stopControl: undefined,
+    });
     await act(async () => idleCallback?.());
     const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
     await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
@@ -859,7 +1112,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
       ([, init]) => init?.method !== "POST",
     ).length;
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry Run" }));
+    fireEvent.click(screen.getByRole("button", { name: /Retry .* stage/ }));
 
     await waitFor(() =>
       expect(
@@ -1598,7 +1851,9 @@ describe("live update recovery regression", () => {
     ];
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(screen.getByText("Completed")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Build run activity/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Build run, attempt 1, run run-1, .*activity:/ }),
+    );
     expect(screen.getByText("Saved during the outage")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

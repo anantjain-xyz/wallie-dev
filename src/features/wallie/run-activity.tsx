@@ -5,7 +5,7 @@ import { memo, type ReactNode, useMemo, useState } from "react";
 import { useSessionRunFocus } from "@/features/sessions/detail/session-activity-presentation";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { ShimmerText } from "@/components/shared/shimmer-text";
-import { TimeDisplay } from "@/components/shared/time-display";
+import { formatUtcTimestamp, TimeDisplay } from "@/components/shared/time-display";
 import { agentRunStatusValue } from "@/components/ui/status";
 import {
   compactActivityText,
@@ -82,6 +82,7 @@ export type WallieRunCardProps = {
   connectionState: WallieRealtimeConnectionState;
   isExpanded: boolean;
   isPrimary?: boolean;
+  historyLabel?: string;
   messagesLoaded: boolean;
   messagesLoadFailed: boolean;
   nowMs: number;
@@ -91,6 +92,8 @@ export type WallieRunCardProps = {
   onReconnect?: () => void;
   renderNow: string;
   retryLocked: boolean;
+  retryStageName?: string;
+  retryDescription?: string;
   run: WallieRun;
   stallTimeoutMs: number;
 };
@@ -103,6 +106,7 @@ export const WallieRunCard = memo(function WallieRunCard({
   connectionState,
   isExpanded,
   isPrimary = false,
+  historyLabel,
   messagesLoaded,
   messagesLoadFailed,
   nowMs,
@@ -112,6 +116,8 @@ export const WallieRunCard = memo(function WallieRunCard({
   onReconnect,
   renderNow,
   retryLocked,
+  retryStageName,
+  retryDescription,
   run,
   stallTimeoutMs,
 }: WallieRunCardProps) {
@@ -164,14 +170,19 @@ export const WallieRunCard = memo(function WallieRunCard({
           {actionPending ? "Stopping…" : prominent ? "Stop run" : "Stop"}
         </button>
       ) : null}
-      {run.canRetry ? (
+      {run.canRetry && (isPrimary || isExpanded) ? (
         <button
+          aria-describedby={retryDescription ? `wallie-retry-description-${run.id}` : undefined}
           className="ui-button"
           disabled={retryLocked}
           onClick={() => void onRetry(run.id)}
           type="button"
         >
-          {actionPending ? "Retrying…" : "Retry Run"}
+          {actionPending
+            ? "Retrying…"
+            : retryStageName
+              ? `Retry ${retryStageName} stage`
+              : "Retry Run"}
         </button>
       ) : null}
     </div>
@@ -180,7 +191,7 @@ export const WallieRunCard = memo(function WallieRunCard({
     <button
       aria-controls={runDetailsId}
       aria-expanded={isExpanded}
-      aria-label={`${formatStageRunLabel(run)} activity: ${operation}`}
+      aria-label={`${formatStageRunLabel(run)}, attempt ${run.attemptCount}, run ${run.id}, ${formatUtcTimestamp(run.createdAt)}, activity: ${operation}`}
       className={cn(
         "flex min-h-9 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-[4px] py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
         prominent ? "text-xs text-muted" : "flex-1 text-sm",
@@ -204,6 +215,13 @@ export const WallieRunCard = memo(function WallieRunCard({
         <>
           {status}
           <span className="text-muted">{formatStageRunLabel(run)}</span>
+          <span className="text-muted">Attempt {run.attemptCount}</span>
+          <TimeDisplay
+            className="text-xs tabular-nums text-muted"
+            initialNow={renderNow}
+            value={run.createdAt}
+          />
+          {historyLabel ? <span className="text-xs text-muted">{historyLabel}</span> : null}
           {run.startedAt ? (
             <span className="type-annotation tabular-nums text-muted">
               ·{" "}
@@ -225,7 +243,9 @@ export const WallieRunCard = memo(function WallieRunCard({
     <article
       id={`wallie-run-${run.id}`}
       tabIndex={-1}
-      aria-label={isPrimary ? "Current Wallie run" : undefined}
+      aria-label={
+        isPrimary ? (run.isActive ? "Current Wallie run" : "Latest Wallie run") : undefined
+      }
       className={cn(
         "min-w-0",
         prominent ? "py-1" : "py-3",
@@ -234,6 +254,12 @@ export const WallieRunCard = memo(function WallieRunCard({
       data-run-id={run.id}
       data-wallie-summary={isPrimary ? "" : undefined}
     >
+      {isPrimary ? (
+        <p className="mb-2 text-xs font-medium text-muted">
+          {run.isActive ? "Current" : "Latest"} {formatStageRunLabel(run).replace(/ run$/, "")}{" "}
+          attempt
+        </p>
+      ) : null}
       {prominent ? (
         <>
           <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
@@ -246,6 +272,8 @@ export const WallieRunCard = memo(function WallieRunCard({
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-muted">
                 <span>Attempt {run.attemptCount}</span>
+                <span aria-hidden="true">·</span>
+                <TimeDisplay initialNow={renderNow} value={run.createdAt} />
                 <span aria-hidden="true">·</span>
                 <span>
                   {run.status === "queued" ? "Queued for " : "Elapsed "}
@@ -305,6 +333,12 @@ export const WallieRunCard = memo(function WallieRunCard({
           {controls}
         </div>
       )}
+
+      {run.canRetry && retryDescription && (isPrimary || isExpanded) ? (
+        <p className="mt-2 text-xs leading-5 text-muted" id={`wallie-retry-description-${run.id}`}>
+          {retryDescription}
+        </p>
+      ) : null}
 
       {run.status === "error" ? (
         <p

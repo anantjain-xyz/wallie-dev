@@ -36,6 +36,27 @@ export function canRetryWallieRun(status: Enums<"agent_run_status">, hasActiveRu
   return (status === "error" || status === "canceled") && !hasActiveRun;
 }
 
+export function getWallieSessionRunBlock(input: {
+  archivedAt: string | null;
+  phaseStatus: Enums<"pipeline_phase_status">;
+}): { code: "session_archived" | "session_not_runnable"; message: string } | null {
+  if (input.archivedAt) {
+    return {
+      code: "session_archived",
+      message: "This session is archived. Unarchive it to run Wallie.",
+    };
+  }
+
+  if (input.phaseStatus === "approved") {
+    return {
+      code: "session_not_runnable",
+      message: "This session is complete. There is nothing left to run.",
+    };
+  }
+
+  return null;
+}
+
 export function canCancelWallieRun(status: Enums<"agent_run_status">) {
   return isWallieRunActiveStatus(status);
 }

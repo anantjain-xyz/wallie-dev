@@ -2,7 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { SessionRunFocusProvider } from "@/features/sessions/detail/session-activity-presentation";
+import {
+  SessionRunFocusProvider,
+  type SessionActivityPresentation,
+} from "@/features/sessions/detail/session-activity-presentation";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import { WallieRunCard } from "@/features/wallie/run-activity";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
@@ -104,6 +107,10 @@ function renderPanel(
   initialData: WallieSessionData,
   archivedAt: string | null = null,
   focused = true,
+  presentation: SessionActivityPresentation | undefined = {
+    currentStage: { id: "stage-product", name: "Product", phaseStatus: "rejected" },
+    stopControl: undefined,
+  },
 ) {
   return renderToStaticMarkup(
     createElement(
@@ -111,6 +118,7 @@ function renderPanel(
       { value: focused },
       createElement(SessionWalliePanel, {
         initialData,
+        presentation,
         initialNow: "2026-05-20T20:10:00.000Z",
         session: { archivedAt, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
@@ -175,18 +183,17 @@ describe("SessionWalliePanel", () => {
   it("allows retry only when the run is retryable", () => {
     const html = renderPanel(data({ runs: [run({ canRetry: true, status: "error" })] }));
 
-    expect(html).toContain("Retry Run");
+    expect(html).toContain("Retry Product stage");
   });
 
-  it("disables retry and explains why when the session is archived", () => {
+  it("hides retry and explains why when the session is archived", () => {
     const html = renderPanel(
       data({ runs: [run({ canRetry: true, status: "error" })] }),
       "2026-06-07T12:00:00.000Z",
     );
 
     expect(html).toContain("This session is archived. Unarchive it to run Wallie again.");
-    // The Retry Run button still renders but must be disabled.
-    expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
+    expect(html).not.toContain("Retry Product stage");
   });
 
   it("keeps setup problems out of archived history without enabling retry", () => {
@@ -197,22 +204,27 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Setup needed before");
     expect(html).not.toContain("Open Workspace Settings");
     expect(html).toContain("This session is archived.");
-    expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
+    expect(html).not.toContain("Retry Product stage");
   });
 
   it.each([
     ["successful history", [run()], false],
     ["active work", [run({ isActive: true, isTerminal: false, status: "running" })], false],
-    ["retryable failure", [run({ canRetry: true, status: "error" })], true],
+    ["retryable failure", [run({ canRetry: true, status: "error" })], false],
     ["first run", [], true],
-  ] as const)("makes setup guidance actionable for %s", (_label, runs, expanded) => {
+  ] as const)("limits general setup guidance to the first run for %s", (_label, runs, firstRun) => {
     const html = renderPanel(data({ repository: null, runs: [...runs] }));
     const details = html.match(/<details[^>]*>\s*<summary[^>]*>Setup needed before/);
-    expect(details).not.toBeNull();
-    expect(details![0].includes('open=""')).toBe(expanded);
-    expect(html).toContain("Open Workspace Settings");
+    if (firstRun) {
+      expect(details?.[0]).toContain('open=""');
+      expect(html).toContain("Open Workspace Settings");
+    } else {
+      expect(details).toBeNull();
+      expect(html).not.toContain("Open Workspace Settings");
+    }
     if (runs[0]?.canRetry) {
-      expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
+      expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Product stage\s*<\/button>/);
+      expect(html).toContain("This run requires a linked repository.");
     }
   });
 

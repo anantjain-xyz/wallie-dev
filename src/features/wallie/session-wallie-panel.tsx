@@ -38,7 +38,12 @@ import {
   subscribeDeferredAuthenticatedChannel,
 } from "@/lib/supabase/deferred-browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
-import { buildWallieBlockingReasons } from "@/features/wallie/utils";
+import {
+  buildWallieBlockingReasons,
+  canRetryWallieRun,
+  getWallieSessionRunBlock,
+  isWallieRunActiveStatus,
+} from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { buildLegacyStageBranchName } from "@/lib/pipeline/branch-name";
 import { cn } from "@/lib/utils";
@@ -149,6 +154,7 @@ function SessionWalliePanelContent({
   const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const actionPendingRef = useRef(false);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
     () => new Set(initialData.loadedMessageRunIds),
@@ -171,8 +177,30 @@ function SessionWalliePanelContent({
   );
   sessionIdRef.current = session.id;
   const currentStageId = presentation?.currentStage.id;
+  const hasActiveRun = runs.some((run) => isWallieRunActiveStatus(run.status));
+  const sessionRunBlock = getWallieSessionRunBlock({
+    archivedAt: session.archivedAt,
+    phaseStatus: presentation?.currentStage.phaseStatus ?? "in_progress",
+  });
+  const retryUnavailableReason =
+    sessionRunBlock?.message ??
+    (!currentStageId
+      ? "Refresh the session to load the current stage before retrying."
+      : hasActiveRun
+        ? "A run is already queued or running. Wait for it to finish before retrying."
+        : null);
+  const displayRuns = useMemo(
+    () =>
+      runs.map((run) => ({
+        ...run,
+        canRetry: !retryUnavailableReason && canRetryWallieRun(run.status, hasActiveRun),
+      })),
+    [hasActiveRun, retryUnavailableReason, runs],
+  );
   const summaryRun = useMemo(() => {
-    const stageRuns = currentStageId ? runs.filter((run) => run.stageId === currentStageId) : runs;
+    const stageRuns = currentStageId
+      ? displayRuns.filter((run) => run.stageId === currentStageId)
+      : displayRuns;
     const latest = stageRuns.find((run) => run.isActive) ?? stageRuns[0] ?? null;
     // Legacy reviews with conflicting version labels need a fresh publication.
     // Retry the current stage through the existing authenticated run endpoint.
@@ -181,8 +209,7 @@ function SessionWalliePanelContent({
       currentStageId &&
       reviewIdentityUnavailable &&
       presentation?.currentStage.phaseStatus === "awaiting_review" &&
-      !session.archivedAt &&
-      !runs.some((run) => run.isActive)
+      !retryUnavailableReason
     ) {
       return { ...latest, canRetry: true };
     }
@@ -191,8 +218,8 @@ function SessionWalliePanelContent({
     currentStageId,
     presentation?.currentStage.phaseStatus,
     reviewIdentityUnavailable,
-    runs,
-    session.archivedAt,
+    displayRuns,
+    retryUnavailableReason,
   ]);
   const summaryRunId = summaryRun?.id ?? null;
   const linkedRunSequence = useRef(0);
@@ -528,24 +555,57 @@ function SessionWalliePanelContent({
   }, [getSupabase, historyRunId, loadRunMessages, realtimeReady, recovery]);
 
   const blockingReasons = buildWallieBlockingReasons({
-    hasActiveRun: runs.some((run) => run.isActive),
+    hasActiveRun,
     mode: initialData.mode,
     repository: initialData.repository,
     requiresVercelSandbox: initialData.requiresVercelSandbox,
     vercelSandboxConnection: initialData.vercelSandboxConnection,
   }).filter((reason) => reason.code !== "active_run");
 
-  // An archived session accepts no new work. The backend rejects retries/runs
-  // for archived sessions; mirror that here so the Retry button is disabled
-  // rather than failing on click.
+  const runBlockingReasons = useCallback(
+    (run: WallieRun) =>
+      buildWallieBlockingReasons({
+        hasActiveRun: false,
+        mode: run.runType,
+        repository: initialData.repository,
+        requiresVercelSandbox: initialData.requiresVercelSandbox,
+        vercelSandboxConnection: initialData.vercelSandboxConnection,
+      }),
+    [
+      initialData.repository,
+      initialData.requiresVercelSandbox,
+      initialData.vercelSandboxConnection,
+    ],
+  );
+
   const isArchived = Boolean(session.archivedAt);
   const historicalRuns = useMemo(
-    () => runs.filter((run) => run.id !== summaryRunId),
-    [runs, summaryRunId],
+    () => displayRuns.filter((run) => run.id !== summaryRunId),
+    [displayRuns, summaryRunId],
   );
+  const retryDescription = (run: WallieRun) =>
+    `Starts a new ${presentation?.currentStage.name} attempt using this run’s ${run.runType} mode. ` +
+    `Run ${run.id} (attempt ${run.attemptCount}) stays in history. Completed stages are not rerun.` +
+    (presentation?.currentStage.phaseStatus === "awaiting_review"
+      ? " The current review closes when the retry starts. The new artifact will need review."
+      : "") +
+    runBlockingReasons(run)
+      .map((reason) => ` ${reason.message}`)
+      .join("");
 
   const handleRetryRun = useCallback(
     async (runId: string) => {
+      const source =
+        summaryRun?.id === runId ? summaryRun : displayRuns.find((run) => run.id === runId);
+      if (
+        actionPendingRef.current ||
+        retryUnavailableReason ||
+        !source?.canRetry ||
+        runBlockingReasons(source).length > 0
+      ) {
+        return;
+      }
+      actionPendingRef.current = true;
       setPendingActionId(runId);
       setFlashMessage(null);
 
@@ -595,10 +655,19 @@ function SessionWalliePanelContent({
           text: error instanceof Error ? error.message : "Wallie could not retry that run.",
         });
       } finally {
+        actionPendingRef.current = false;
         setPendingActionId(null);
       }
     },
-    [memberIndex, recovery, session.workspaceId],
+    [
+      displayRuns,
+      memberIndex,
+      recovery,
+      retryUnavailableReason,
+      runBlockingReasons,
+      session.workspaceId,
+      summaryRun,
+    ],
   );
 
   const handleCancelRun = useCallback(
@@ -788,7 +857,16 @@ function SessionWalliePanelContent({
         </div>
       ) : null}
 
-      {!isArchived && blockingReasons.length > 0 ? (
+      {!isArchived && retryUnavailableReason ? (
+        <p className="text-sm leading-5 text-muted" role="status">
+          {retryUnavailableReason}
+          {sessionRunBlock?.code === "session_not_runnable"
+            ? " Historical attempts are read-only."
+            : ""}
+        </p>
+      ) : null}
+
+      {runs.length === 0 && !sessionRunBlock && blockingReasons.length > 0 ? (
         <details
           className="rounded-[6px] border border-border bg-control-muted p-4 text-sm leading-6 text-muted"
           open={runs.length === 0 || Boolean(summaryRun?.canRetry)}
@@ -841,7 +919,9 @@ function SessionWalliePanelContent({
               onRetry={handleRetryRun}
               onToggle={handleToggleRun}
               renderNow={renderNow}
-              retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+              retryLocked={pendingActionId !== null || runBlockingReasons(summaryRun).length > 0}
+              retryStageName={presentation?.currentStage.name}
+              retryDescription={retryDescription(summaryRun)}
               run={summaryRun}
               stallTimeoutMs={initialData.stallTimeoutMs}
             />
@@ -858,6 +938,10 @@ function SessionWalliePanelContent({
 
         {historicalRuns.length > 0 || nextRunCursor ? (
           <SessionRunHistory count={historicalRuns.length} hasMore={Boolean(nextRunCursor)}>
+            <p className="mb-2 text-xs leading-5 text-muted">
+              Earlier stages and superseded attempts. Expand an entry for activity and available
+              actions.
+            </p>
             <div
               className={cn("min-w-0 divide-y divide-border", focused && "border-y border-border")}
             >
@@ -876,6 +960,16 @@ function SessionWalliePanelContent({
                   cancelLocked={pendingActionId !== null}
                   connectionState={sources[`history:${run.id}`] ?? "live"}
                   isExpanded={expandedRunId === run.id}
+                  historyLabel={
+                    runs.some(
+                      (later) =>
+                        later.stageId === run.stageId &&
+                        (later.createdAt > run.createdAt ||
+                          (later.createdAt === run.createdAt && later.id > run.id)),
+                    )
+                      ? "Superseded attempt"
+                      : "Earlier stage"
+                  }
                   messagesLoaded={loadedMessageRunIds.has(run.id)}
                   messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
                   nowMs={nowMs}
@@ -884,7 +978,9 @@ function SessionWalliePanelContent({
                   onRetry={handleRetryRun}
                   onToggle={handleToggleRun}
                   renderNow={renderNow}
-                  retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+                  retryLocked={pendingActionId !== null || runBlockingReasons(run).length > 0}
+                  retryStageName={presentation?.currentStage.name}
+                  retryDescription={retryDescription(run)}
                   run={run}
                   stallTimeoutMs={initialData.stallTimeoutMs}
                 />

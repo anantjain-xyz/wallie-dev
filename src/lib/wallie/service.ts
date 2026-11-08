@@ -13,7 +13,9 @@ import {
 } from "@/lib/pipeline/cancel";
 import {
   buildWallieBlockingReasons,
+  getWallieSessionRunBlock,
   inferWallieRunMode,
+  isWallieRunTerminalStatus,
   parseWallieRunMode,
 } from "@/features/wallie/utils";
 import type {
@@ -451,24 +453,13 @@ async function validateQueuedRunRequest(input: {
     });
   }
 
-  // An archived session accepts no new work. This keeps the retry path from
-  // resurrecting work that archive just canceled.
-  if (session.archived_at) {
+  const sessionBlock = getWallieSessionRunBlock({
+    archivedAt: session.archived_at,
+    phaseStatus: session.phase_status,
+  });
+  if (sessionBlock) {
     throw new WallieActionError({
-      code: "session_archived",
-      message: "This session is archived. Unarchive it to run Wallie.",
-      statusCode: 409,
-    });
-  }
-
-  // A completed session sits in `approved` (terminal-stage approval leaves it
-  // there). The processor only claims in_progress/awaiting_review/rejected,
-  // so enqueueing here would strand a queued run the worker never finishes.
-  // Reject up front — this also covers a completed session that was unarchived.
-  if (session.phase_status === "approved") {
-    throw new WallieActionError({
-      code: "session_not_runnable",
-      message: "This session is complete. There is nothing left to run.",
+      ...sessionBlock,
       statusCode: 409,
     });
   }
@@ -638,7 +629,7 @@ export async function retryWallieRun(input: {
     });
   }
 
-  if (!["success", "error", "canceled"].includes(existingRun.status)) {
+  if (!isWallieRunTerminalStatus(existingRun.status)) {
     throw new WallieActionError({
       code: "run_not_retryable",
       message: "Only completed or failed Wallie runs can be retried.",
