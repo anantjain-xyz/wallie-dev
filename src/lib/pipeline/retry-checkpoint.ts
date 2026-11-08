@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { SandboxHandle } from "@/lib/sandbox/types";
@@ -48,11 +50,14 @@ export async function saveRetryCheckpoint(
   if (checkpoint.kind !== "bundle") return false;
   signal.throwIfAborted();
 
-  const { error: uploadError } = await uploadWorkspaceObject(admin, {
+  const path = `${input.workspaceId}/${runId}-retry-${attemptCount}-${randomUUID()}.bundle`;
+  const { error: uploadError, operationId } = await uploadWorkspaceObject(admin, {
     bucket: SOURCE_CHECKPOINT_BUCKET,
     bytes: checkpoint.bytes,
     contentType: "application/octet-stream",
-    path: `${input.workspaceId}/${runId}-retry-${attemptCount}.bundle`,
+    deferTransfer: true,
+    path,
+    signal,
     workspaceId: input.workspaceId,
   });
   if (uploadError) throw new Error("Could not store the Retry checkpoint.");
@@ -66,7 +71,9 @@ export async function saveRetryCheckpoint(
       p_input_sha: baseSha,
       p_head_sha: checkpoint.headSha,
       p_bundle_sha256: checkpoint.sha256,
+      p_checkpoint_path: path,
       p_deadline_at: input.deadlineAt,
+      p_upload_operation_id: operationId,
     })
     .abortSignal(signal);
   if (error) throw new Error("Could not record the Retry checkpoint.");

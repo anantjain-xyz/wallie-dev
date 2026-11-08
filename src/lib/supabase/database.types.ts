@@ -2851,14 +2851,17 @@ export type Database = {
         Row: {
           job_id: string
           source_run_id: string
+          workspace_id: string
         }
         Insert: {
           job_id: string
           source_run_id: string
+          workspace_id: string
         }
         Update: {
           job_id?: string
           source_run_id?: string
+          workspace_id?: string
         }
         Relationships: [
           {
@@ -2875,6 +2878,13 @@ export type Database = {
             referencedRelation: "session_retry_checkpoints"
             referencedColumns: ["source_run_id"]
           },
+          {
+            foreignKeyName: "session_retry_checkpoint_jobs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
         ]
       }
       session_retry_checkpoints: {
@@ -2886,6 +2896,7 @@ export type Database = {
           rejection_count: number
           source_attempt_count: number
           source_run_id: string
+          workspace_id: string
         }
         Insert: {
           bundle_sha256: string
@@ -2895,6 +2906,7 @@ export type Database = {
           rejection_count: number
           source_attempt_count: number
           source_run_id: string
+          workspace_id: string
         }
         Update: {
           bundle_sha256?: string
@@ -2904,6 +2916,7 @@ export type Database = {
           rejection_count?: number
           source_attempt_count?: number
           source_run_id?: string
+          workspace_id?: string
         }
         Relationships: [
           {
@@ -2911,6 +2924,13 @@ export type Database = {
             columns: ["source_run_id"]
             isOneToOne: true
             referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_retry_checkpoints_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },
         ]
@@ -5800,11 +5820,13 @@ export type Database = {
         Args: {
           p_attempt_count: number
           p_bundle_sha256: string
+          p_checkpoint_path: string
           p_deadline_at: string
           p_head_sha: string
           p_input_sha: string
           p_job_id: string
           p_run_id: string
+          p_upload_operation_id: string
         }
         Returns: boolean
       }

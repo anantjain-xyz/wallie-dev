@@ -3,6 +3,10 @@ create extension if not exists pgtap with schema extensions;
 select no_plan();
 set local request.jwt.claim.role='service_role';
 
+insert into public.workspaces(id,slug,name,created_by)
+select 'b1b2c3d4-0002-4000-8000-000000000002','retry-checkpoint-other','Retry checkpoint other workspace',created_by
+from public.workspaces where id='b1b2c3d4-0001-4000-8000-000000000001';
+
 insert into internal.workspace_issue_counters as counters(workspace_id,last_issue_number)
 select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid,coalesce(max(number),0)
 from public.sessions where workspace_id='b1b2c3d4-0001-4000-8000-000000000001'
@@ -46,35 +50,90 @@ cross join lateral public.approve_session_stage(s.id,s.workspace_id,s.current_st
   s.current_artifact_version,s.creator_member_id,'codex','gpt-5.5','project',s.artifact_review_revision) decision;
 update build set run_id=pg_temp.start_retry_checkpoint_job(job_id);
 create temp table snapshot as
-select b.*,s.workspace_id::text||'/'||b.run_id::text||'-retry-1.bundle' as path
+select b.*,s.workspace_id,s.workspace_id::text||'/'||b.run_id::text||'-retry-1-'||gen_random_uuid()::text||'.bundle' as path,
+  null::uuid as upload_operation_id
 from build b join public.sessions s on s.id=b.session_id;
 
+select throws_ok($$insert into storage.objects(bucket_id,name) select 'session-source-checkpoints',path from snapshot$$,
+  '23514','Retry checkpoint upload reservation is not active.','Storage refuses an unreserved retry bundle');
+select throws_ok($$select public.begin_workspace_resource_operation('b1b2c3d4-0002-4000-8000-000000000002',
+  'upload','',path,'session-source-checkpoints',clock_timestamp()+interval '5 minutes') from snapshot$$,
+  '23514','Retry checkpoint upload path does not match its workspace.',
+  'an upload reservation cannot own a different workspace Storage path');
+grant select,update on snapshot to service_role;
+set local role service_role;
+update snapshot set upload_operation_id=public.begin_workspace_resource_operation(
+  workspace_id,'upload','',path,'session-source-checkpoints',clock_timestamp()+interval '5 minutes');
+reset role;
+select throws_ok($$select public.begin_workspace_resource_operation(workspace_id,'upload','',path,
+  'session-source-checkpoints',clock_timestamp()+interval '5 minutes') from snapshot$$,
+  '23505','duplicate key value violates unique constraint "workspace_resource_operations_retry_upload_path_idx"',
+  'a replayed upload reservation cannot acquire a second cleanup owner for the same path');
 select is(public.save_session_retry_checkpoint(job_id,2,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes'),false,'an incorrect attempt cannot save') from snapshot;
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),false,'an incorrect attempt cannot save') from snapshot;
 select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()-interval '1 second'),false,'an expired attempt cannot save') from snapshot;
+  clock_timestamp()-interval '1 second',upload_operation_id,path),false,'an expired attempt cannot save') from snapshot;
 insert into public.worker_dispatches(job_id,attempt_count,workspace_id,workflow_id,deadline_at)
 select b.job_id,1,s.workspace_id,'retry-checkpoint-proof-'||b.job_id,clock_timestamp()-interval '1 second'
 from snapshot b join public.sessions s on s.id=b.session_id;
 select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes'),false,'the durable dispatch cutoff takes precedence over a later worker deadline') from snapshot;
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),false,
+  'the durable dispatch cutoff takes precedence over a later worker deadline') from snapshot;
 delete from public.worker_dispatches where job_id=(select job_id from snapshot);
 select throws_ok($$select public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes') from snapshot$$,'23514','Retry checkpoint is not durable.',
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path) from snapshot$$,'23514','Retry checkpoint is not durable.',
   'a checkpoint needs a durable private Storage object');
 insert into storage.objects(bucket_id,name) select 'session-source-checkpoints',path from snapshot;
+select throws_ok($$select public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
+  clock_timestamp()+interval '5 minutes',upload_operation_id,replace(path,'-retry-1-','-retry-2-')) from snapshot$$,
+  '23514','Retry checkpoint path does not match the owned attempt.','save rejects a path belonging to another attempt');
 select throws_ok($$select public.save_session_retry_checkpoint(job_id,1,run_id,repeat('d',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes') from snapshot$$,'23514','Retry checkpoint does not match the owned Git input.',
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path) from snapshot$$,
+  '23514','Retry checkpoint does not match the owned Git input.',
   'the captured bundle must use the pinned accepted input');
 select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes'),true,'save the exact owned attempt') from snapshot;
-grant select on snapshot to service_role;
+  clock_timestamp()+interval '5 minutes',gen_random_uuid(),path),false,'save requires the matching upload reservation') from snapshot;
+create temp table abandoned as select job_id,run_id,workspace_id,workspace_id::text||'/'||run_id::text||
+  '-retry-1-'||gen_random_uuid()::text||'.bundle' as path,null::uuid as upload_operation_id from snapshot;
+update abandoned set upload_operation_id=public.begin_workspace_resource_operation(
+  workspace_id,'upload','',path,'session-source-checkpoints',clock_timestamp()+interval '5 minutes');
+insert into storage.objects(bucket_id,name) select 'session-source-checkpoints',path from abandoned;
+update public.workspace_resource_operations set recovery_after=clock_timestamp()-interval '1 second'
+where id=(select upload_operation_id from abandoned);
+select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),false,
+  'an expired reservation cannot transfer even when Storage finished uploading') from abandoned;
+update public.workspace_resource_operations set settled_at=clock_timestamp()
+where id=(select upload_operation_id from abandoned) and settled_at is null and recovery_after<=clock_timestamp();
+select throws_ok($$update storage.objects set version=gen_random_uuid()::text where bucket_id='session-source-checkpoints'
+  and name=(select path from abandoned)$$,
+  '23514','Retry checkpoint upload reservation is not active.','Storage refuses a write after orphan cleanup claims the reservation');
+select throws_ok($$insert into public.session_retry_checkpoints(source_run_id,workspace_id,source_attempt_count,
+  rejection_count,input_sha,head_sha,checkpoint_path,bundle_sha256)
+  select run_id,'b1b2c3d4-0002-4000-8000-000000000002',1,0,repeat('a',40),repeat('b',40),
+    replace(path,workspace_id::text,'b1b2c3d4-0002-4000-8000-000000000002'),repeat('c',64) from snapshot$$,
+  '23514','Retry checkpoint does not match its source run workspace and attempt.',
+  'the checkpoint table itself rejects cross-tenant source links');
+select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),true,'save the exact owned attempt') from snapshot;
+select is((select workspace_id from public.session_retry_checkpoints where source_run_id=snapshot.run_id),workspace_id,
+  'the checkpoint records the source run workspace') from snapshot;
+select is((select count(*) from public.workspace_resource_operations where id=upload_operation_id),0::bigint,
+  'saving the checkpoint consumes its upload reservation') from snapshot;
+select throws_ok($$select public.begin_workspace_resource_operation(workspace_id,'upload','',path,
+  'session-source-checkpoints',clock_timestamp()+interval '5 minutes') from snapshot$$,
+  '23514','Retry checkpoint path is already retained.','a transferred checkpoint cannot be reserved for cleanup again');
+select lives_ok($$update storage.objects set last_accessed_at=clock_timestamp()
+  where bucket_id='session-source-checkpoints' and name=(select path from snapshot)$$,
+  'saved bundle metadata can still be updated after its upload reservation is consumed');
 set local role service_role;
 select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes'),true,'the service role can replay an identical checkpoint receipt') from snapshot;
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),true,
+  'the service role can replay an identical receipt after transfer') from snapshot;
 reset role;
 select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('d',40),repeat('e',64),
-  clock_timestamp()+interval '5 minutes'),false,'a conflicting capture cannot replace the immutable checkpoint') from snapshot;
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),false,
+  'a conflicting capture cannot replace the immutable checkpoint') from snapshot;
 select is((select checkpoint_run_id from public.session_git_heads where session_id=build.session_id),
   (select started from plan),'capturing Build work does not advance accepted Plan source') from build;
 select is((select count(*) from public.session_checkpoint_publications where run_id=build.run_id),0::bigint,
@@ -83,7 +142,7 @@ select is((select count(*) from public.session_checkpoint_publications where run
 select is(public.fail_stalled_session_job_attempt(job_id,1,'Worker attempt exceeded its 1800000ms deadline.',false,0,run_id),
   'error','the worker retires the exact timed-out attempt') from build;
 select is(public.save_session_retry_checkpoint(job_id,1,run_id,repeat('a',40),repeat('b',40),repeat('c',64),
-  clock_timestamp()+interval '5 minutes'),false,'the terminal attempt can no longer save') from snapshot;
+  clock_timestamp()+interval '5 minutes',upload_operation_id,path),false,'the terminal attempt can no longer save') from snapshot;
 select throws_ok($$select * from build b
   cross join lateral public.enqueue_session_retry_with_checkpoint(b.session_id,'b1b2c3d4-0002-4000-8000-000000000002',
     (select current_stage_id from public.sessions where id=b.session_id),
@@ -99,6 +158,12 @@ reset role;
 select ok(created,'manual Retry creates a new job and run') from retry;
 select is((select source_run_id from public.session_retry_checkpoint_jobs where job_id=retry.job_id),
   (select run_id from build),'manual Retry binds the selected failed run') from retry;
+select is((select workspace_id from public.session_retry_checkpoint_jobs where job_id=retry.job_id),
+  (select workspace_id from snapshot),'the retry binding records its target job workspace') from retry;
+select throws_ok($$update public.session_retry_checkpoint_jobs set workspace_id='b1b2c3d4-0002-4000-8000-000000000002'
+  where job_id=(select job_id from retry)$$,
+  '23514','Retry checkpoint binding does not match its job workspace, session, and stage.',
+  'the binding table itself rejects a workspace that does not own the target job');
 select is((select source_checkpoint_run_id from public.session_job_git_inputs where job_id=retry.job_id),
   (select started from plan),'the new job preserves the accepted Plan provenance') from retry;
 select ok(not receipt.created and receipt.job_id=retry.job_id,'duplicate Retry reuses the original binding')
@@ -132,7 +197,7 @@ select ok(not has_table_privilege('authenticated','public.session_retry_checkpoi
   and not has_table_privilege('authenticated','public.session_retry_checkpoint_jobs','select')
   and not has_function_privilege('authenticated','public.get_session_retry_checkpoint(uuid,integer,uuid)','execute')
   and not has_function_privilege('authenticated',
-    'public.save_session_retry_checkpoint(uuid,integer,uuid,text,text,text,timestamptz)','execute')
+    'public.save_session_retry_checkpoint(uuid,integer,uuid,text,text,text,timestamptz,uuid,text)','execute')
   and not has_function_privilege('authenticated',
     'public.enqueue_session_retry_with_checkpoint(uuid,uuid,uuid,uuid,uuid,text,text,text)','execute'),
   'browser roles cannot list, save, restore, or bind private retry checkpoints');

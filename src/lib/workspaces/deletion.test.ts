@@ -16,7 +16,11 @@ vi.mock("@/lib/vercel-sandbox/teardown", () => ({
   stopWorkspaceProviderSandboxes: mocked.stopWorkspaceProviderSandboxes,
 }));
 
-import { removeWorkspaceStoragePrefix, resumeWorkspaceDeletion } from "./deletion";
+import {
+  removeWorkspaceStoragePrefix,
+  resumePendingWorkspaceDeletions,
+  resumeWorkspaceDeletion,
+} from "./deletion";
 
 const workspaceId = "workspace-1";
 function operation(
@@ -46,6 +50,7 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     removeFailure: false,
     reservationDeleteFailure: false,
     lateSandboxId: null as string | null,
+    transferBeforeClaim: false,
   };
   const lists: Array<{ bucket: string; prefix: string; limit: number }> = [];
   const removals: string[][] = [];
@@ -72,11 +77,20 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
   };
   const from = (table: string) => {
     let deleting = false;
+    let update: Pick<Tables<"workspace_resource_operations">, "settled_at"> | undefined;
     const filters: Array<(row: Tables<"workspace_resource_operations">) => boolean> = [];
     const query = {
       select: () => query,
       order: () => query,
       limit: () => query,
+      not: () => query,
+      or: (condition: string) => {
+        const recoveryTime = Date.parse(condition.split("recovery_after.lte.")[1] ?? "");
+        filters.push(
+          (row) => row.settled_at !== null || Date.parse(row.recovery_after) <= recoveryTime,
+        );
+        return query;
+      },
       eq: (column: string, value: unknown) => {
         filters.push((row) => row[column as keyof typeof row] === value);
         return query;
@@ -93,18 +107,32 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
         deleting = true;
         return query;
       },
-      maybeSingle: async () => ({
-        data: state.exists
-          ? { deletion_requested_at: state.deleting ? "2026-10-10T00:00:00Z" : null }
-          : null,
-        error: null,
-      }),
+      update: (patch: Pick<Tables<"workspace_resource_operations">, "settled_at">) => {
+        update = patch;
+        return query;
+      },
+      maybeSingle: async () => {
+        if (table === "workspace_resource_operations" && update) {
+          if (state.transferBeforeClaim) state.operations = [];
+          const row = state.operations.find((entry) => filters.every((filter) => filter(entry)));
+          if (!row) return { data: null, error: null };
+          row.settled_at = update.settled_at;
+          return { data: { id: row.id }, error: null };
+        }
+        return {
+          data: state.exists
+            ? { deletion_requested_at: state.deleting ? "2026-10-10T00:00:00Z" : null }
+            : null,
+          error: null,
+        };
+      },
       then: (
         resolve: (result: {
           data: Tables<"workspace_resource_operations">[];
           error: Error | null;
         }) => unknown,
       ) => {
+        if (table === "workspaces" && !state.deleting) return resolve({ data: [], error: null });
         if (table !== "workspace_resource_operations") throw new Error(`Unexpected table ${table}`);
         if (deleting) {
           if (state.reservationDeleteFailure)
@@ -258,4 +286,30 @@ describe("durable workspace deletion", () => {
     expect(mocked.stopWorkspaceProviderSandboxes).not.toHaveBeenCalled();
     expect(f.state.exists).toBe(true);
   });
+
+  it.each(["abandoned", "transferred"] as const)(
+    "reconciles a stale retry upload reservation when the bundle was %s",
+    async (outcome) => {
+      const path = `${workspaceId}/11111111-1111-4111-8111-111111111111-retry-1-22222222-2222-4222-8222-222222222222.bundle`;
+      const bucket = "session-source-checkpoints";
+      const f = fixture([
+        operation({
+          kind: "upload",
+          provider: null,
+          resource_id: path,
+          storage_bucket: bucket,
+          recovery_after: "2020-01-01T00:00:00Z",
+        }),
+      ]);
+      f.state.deleting = false;
+      f.state.transferBeforeClaim = outcome === "transferred";
+      f.state.objects.set(bucket, new Set([path]));
+
+      await resumePendingWorkspaceDeletions(f.admin);
+
+      expect(f.state.operations).toEqual([]);
+      expect(f.state.objects.get(bucket)?.has(path)).toBe(outcome === "transferred");
+      expect(f.removals.flat()).toEqual(outcome === "transferred" ? [] : [path]);
+    },
+  );
 });
