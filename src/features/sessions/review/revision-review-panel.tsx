@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TimeDisplay } from "@/components/shared/time-display";
+import { timestampMs } from "@/components/shared/time-format";
 import type { SessionArtifactMetadata } from "@/features/sessions/types";
 import { compareRevisionSources, summarizeRevisionChanges } from "./revision";
 import type { FeedbackBatchDetail, FeedbackHistoryPage, ReviewRun } from "./feedback-history";
@@ -44,9 +46,16 @@ function RunIdentity({ run, label }: { run: ReviewRun; label: string }) {
         {label} · {run.status}
       </p>
       <p>
-        {run.model_provider} · {run.model_name} · Attempt {run.attempt_count ?? "unknown"}
+        {[run.model_provider, run.model_name].filter(Boolean).join(" · ") || "Model unavailable"}
+        {" · "}Attempt {run.attempt_count ?? "unknown"}
       </p>
-      <p className="mt-1 font-mono">{run.id}</p>
+      <details className="mt-1">
+        <summary className="min-h-11 cursor-pointer py-3 font-medium">Run details</summary>
+        <dl>
+          <dt className="text-muted">Run ID</dt>
+          <dd className="font-mono">{run.id}</dd>
+        </dl>
+      </details>
       <RunActivityLink
         className="mt-2 inline-flex min-h-11 items-center text-accent underline"
         runId={run.id}
@@ -508,7 +517,10 @@ export function RevisionReviewPanel({
           </button>
         ) : null}
       </section>
-      <section aria-label="Submitted feedback" className="space-y-3">
+      <section
+        aria-label="Submitted feedback"
+        className="min-w-0 space-y-3 [overflow-wrap:anywhere]"
+      >
         <h4 className="text-sm font-semibold">Submitted feedback</h4>
         {history?.producingRun ? (
           <>
@@ -545,9 +557,14 @@ export function RevisionReviewPanel({
                 className={`${buttonClass} w-full text-left [overflow-wrap:anywhere]`}
                 onClick={() => void showBatch(batch.id)}
               >
-                Feedback on version {batch.artifact_version} · {batch.actor_label}
+                Feedback on version {batch.artifact_version} ·{" "}
+                {batch.actor_label || "Unknown reviewer"}
                 <span className="mt-1 block text-muted">
-                  {batch.created_at} · {batch.id.slice(0, 8)}
+                  {timestampMs(batch.created_at ?? "") !== null ? (
+                    <TimeDisplay initialNow={batch.created_at} value={batch.created_at} />
+                  ) : (
+                    "Unknown time"
+                  )}
                 </span>
               </button>
             </li>
@@ -582,9 +599,24 @@ export function RevisionReviewPanel({
               Exact submitted feedback · Version {detail.batch.artifact_version}
             </h5>
             <p className="text-xs text-muted">
-              Submitted by {detail.batch.actor_label}. Later edits and replies are not part of this
-              batch.
+              Submitted by {detail.batch.actor_label || "Unknown reviewer"}. Later edits and replies
+              are not part of this batch.
             </p>
+            <details>
+              <summary className="min-h-11 cursor-pointer py-3 text-xs font-medium">
+                Feedback details
+              </summary>
+              <dl className="space-y-2 text-xs">
+                <div>
+                  <dt className="text-muted">Feedback ID</dt>
+                  <dd className="font-mono">{detail.batch.id}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Exact submitted timestamp</dt>
+                  <dd className="font-mono">{detail.batch.created_at || "Unavailable"}</dd>
+                </div>
+              </dl>
+            </details>
             <a
               className="inline-block text-xs text-accent underline"
               href={reviewArtifactLink(
