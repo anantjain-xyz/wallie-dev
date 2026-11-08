@@ -41,8 +41,8 @@ async function openFixture(page: Page, state: SessionState) {
 }
 
 async function capture(page: Page, name: string) {
-  await mkdir(".symphony/screenshots", { recursive: true });
-  await page.screenshot({ path: `.symphony/screenshots/${name}.png`, fullPage: true });
+  await mkdir(".wallie/screenshots", { recursive: true });
+  await page.screenshot({ path: `.wallie/screenshots/${name}.png`, fullPage: true });
 }
 
 async function selectPassage(page: Page, event: "keyup" | "pointerup") {
@@ -81,14 +81,12 @@ for (const width of [1440, 390]) {
         route.fulfill({ json: reviewSnapshot(state) }),
       );
       const opener = await openFixture(page, state);
-      const notice = `This session is ${state}. Comments are read-only.`;
+      const notice = `${state === "approved" ? "Approved" : "Archived"} · Comments are read-only.`;
       await expect(page.getByText("0 open · 0 blocking requests")).toBeVisible();
       await expect(page.getByText(notice, { exact: true })).toHaveCount(2);
       await expect(page.getByText(notice).first()).toBeVisible();
       if (state === "approved") {
-        await expect(
-          page.getByText("This session is archived. Comments are read-only."),
-        ).toHaveCount(0);
+        await expect(page.getByText("Archived · Comments are read-only.")).toHaveCount(0);
       }
       await expectNoAuthoring(page);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -122,15 +120,13 @@ test("editable keyboard and selection comments retain drafts and version anchors
   await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
   await composer.fill("Retain this draft across panel visibility changes.");
   await page.getByLabel("Comment type").selectOption("blocking");
-  await expect(
-    page.getByText("This request blocks approval until a reviewer closes it."),
-  ).toBeVisible();
+  await expect(page.getByText("Blocks approval until a reviewer closes it.")).toBeVisible();
   await capture(page, "06-editable-keyboard-composer");
   await composer.press("Escape");
   await expect(opener).toBeFocused();
   await opener.press("Enter");
   await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
-  await page.getByRole("button", { name: "Cancel new comment" }).click();
+  await page.getByRole("button", { name: "Discard" }).click();
   await selectPassage(page, "keyup");
   const selectionAction = page.getByRole("button", { name: "Comment on selection" });
   await expect(selectionAction).toBeVisible();
@@ -180,9 +176,7 @@ test("unauthorized viewers have no keyboard or selection authoring action", asyn
     route.fulfill({ status: 403, json: { error: "Active workspace membership is required." } }),
   );
   await openFixture(page, "editable");
-  await expect(
-    page.getByText("You do not have permission to comment on this artifact.").first(),
-  ).toBeVisible();
+  await expect(page.getByText("You don’t have permission to comment.").first()).toBeVisible();
   await expectNoAuthoring(page);
   await capture(page, "10-comment-permissions-unauthorized");
 });
@@ -306,12 +300,12 @@ for (const width of [1440, 390]) {
     refreshing = false;
     await page.getByRole("button", { name: "Retry loading" }).click();
     await expect(reply).toHaveValue("Keep my exact reply draft.");
-    await expect(page.getByRole("button", { name: "Save reply" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Reply" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Retry loading" })).toHaveCount(0);
     await page.getByRole("heading", { name: "Session interaction preview" }).click();
     await capture(page, `12-permission-refresh-recovered-${width}`);
-    await page.getByRole("button", { name: "Save reply" }).click();
+    await page.getByRole("button", { name: "Reply" }).click();
     await expect.poll(() => saves.length).toBe(1);
     expect(saves[0]).toMatchObject({ body: "Keep my exact reply draft." });
   });

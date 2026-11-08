@@ -27,7 +27,7 @@ for (const width of [1440, 390]) {
       const card = page.locator(`[data-failure-scenario="${id}"]`);
       await expect(card).toContainText(cause);
       await expect(
-        card.getByRole("button", { name: "Build run activity: Failed" }),
+        card.getByRole("button", { name: /Build run,.*activity: Failed/ }),
       ).toHaveAttribute("aria-expanded", "false");
     }
     const success = page.locator('[data-failure-scenario="success"]');
@@ -39,15 +39,15 @@ for (const width of [1440, 390]) {
       true,
     );
 
-    await mkdir(".symphony/screenshots", { recursive: true });
+    await mkdir(".wallie/screenshots", { recursive: true });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.mouse.move(0, 0);
     await page.screenshot({
-      path: `.symphony/screenshots/${width}-failure-guidance-collapsed.png`,
+      path: `.wallie/screenshots/${width}-failure-guidance-collapsed.png`,
       fullPage: true,
     });
 
-    for (const button of await page.getByRole("button", { name: /Build run activity:/ }).all()) {
+    for (const button of await page.getByRole("button", { name: /Build run,.*activity:/ }).all()) {
       await button.click();
     }
     for (const [id, cause] of explanations) {
@@ -61,7 +61,7 @@ for (const width of [1440, 390]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.mouse.move(0, 0);
     await page.screenshot({
-      path: `.symphony/screenshots/${width}-failure-guidance-activity-expanded.png`,
+      path: `.wallie/screenshots/${width}-failure-guidance-activity-expanded.png`,
       fullPage: true,
     });
 
@@ -103,7 +103,7 @@ for (const width of [1440, 390]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.mouse.move(0, 0);
     await page.screenshot({
-      path: `.symphony/screenshots/${width}-failure-guidance-expanded.png`,
+      path: `.wallie/screenshots/${width}-failure-guidance-expanded.png`,
       fullPage: true,
     });
   });

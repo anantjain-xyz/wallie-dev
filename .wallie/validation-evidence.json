@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "commands": [
+    {
+      "key": "review",
+      "command": "cp docs/evidence/short-copy-walkthrough.md \"$WALLIE_EVIDENCE_DIR/report.md\"",
+      "timeoutSeconds": 30,
+      "reports": [
+        { "key": "report", "path": "report.md", "required": true, "kind": "report" }
+      ]
+    },
+    {
+      "key": "fast-checks",
+      "command": "pnpm check:fast",
+      "timeoutSeconds": 300,
+      "reports": []
+    },
+    {
+      "key": "unit-tests",
+      "command": "pnpm test --maxWorkers=2",
+      "timeoutSeconds": 300,
+      "reports": []
+    },
+    {
+      "key": "cloudflare",
+      "command": "pnpm check:cloudflare",
+      "timeoutSeconds": 300,
+      "reports": []
+    },
+    {
+      "key": "browser",
+      "command": "CIRCLE_NODE_TOTAL=3 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=playwright-local-key NEXT_PUBLIC_APP_URL=http://localhost:3100 pnpm build && pnpm exec playwright test e2e/concise-copy.spec.ts e2e/comment-access.spec.ts e2e/sessions-ledger-hydration.spec.ts e2e/run-failure-guidance.spec.ts",
+      "timeoutSeconds": 300,
+      "reports": []
+    }
+  ]
+}
