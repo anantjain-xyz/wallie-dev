@@ -47,6 +47,90 @@ function textContent(node: HtmlNode): string {
   return (node.children ?? []).map(textContent).join("");
 }
 
+const UNAVAILABLE_EVIDENCE =
+  "This evidence was not retained with this artifact. Temporary sandbox files cannot be opened after the run.";
+
+/** A conservative prefilter; Markdown can percent- or entity-encode the scheme. */
+export function mayContainEvidenceLinks(markdown: string): boolean {
+  return /wallie-evidence:|%|&/i.test(markdown);
+}
+
+function decodeUrl(value: string): string {
+  // Nested escaping must not turn a filesystem destination into a website link.
+  for (;;) {
+    try {
+      const decoded = decodeURIComponent(value);
+      if (decoded === value) return value;
+      value = decoded;
+    } catch {
+      return value;
+    }
+  }
+}
+
+function isSandboxPath(href: string): boolean {
+  let value = decodeUrl(href).trim().replaceAll("\\", "/");
+  if (/^(?:file|sandbox):/i.test(value) || /^[a-z]:\//i.test(value)) return true;
+
+  let absolutePath = value.startsWith("/");
+  if (/^(?:https?:)?\/\//i.test(value)) {
+    try {
+      const url = new URL(value, "https://wallie.dev");
+      if (!["wallie.dev", "www.wallie.dev"].includes(url.hostname.replace(/\.$/, ""))) return false;
+      value = decodeUrl(url.pathname);
+      absolutePath = true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Resolve dot segments before checking known sandbox roots. Relative repository
+  // paths (including home/... and ../docs/...) remain ordinary document links.
+  let path: string;
+  try {
+    // A same-host pathname beginning with // is still a path, never a new host.
+    path = new URL(value.replace(/\/+/g, "/"), "https://wallie.dev/").pathname;
+  } catch {
+    return false;
+  }
+  if (/^\/vercel\/sandbox(?:\/|$)/i.test(path)) return true;
+  return (
+    absolutePath &&
+    /^\/(?:home|Users|root|tmp|private\/(?:tmp|var)|var|workspace|workspaces|mnt\/data)(?:\/|$)/i.test(
+      path,
+    )
+  );
+}
+
+/** Rewrite only server-resolved evidence identities, then sanitize the resulting URLs. */
+function resolveEvidenceLinks(links: ReadonlyMap<string, string>) {
+  function visit(node: HtmlNode) {
+    for (const child of node.children ?? []) visit(child);
+    if (node.type !== "element" || !["a", "img"].includes(node.tagName ?? "")) return;
+    const property = node.tagName === "img" ? "src" : "href";
+    const href = node.properties?.[property];
+    if (typeof href !== "string") return;
+    const decodedHref = decodeUrl(href).trim();
+    const evidence = /^wallie-evidence:/i.test(decodedHref);
+    const key = evidence ? `wallie-evidence:${decodedHref.slice("wallie-evidence:".length)}` : null;
+    if (key && links.has(key)) {
+      node.properties![property] = links.get(key);
+      return;
+    }
+    if (!evidence && !isSandboxPath(href)) return;
+    if (node.tagName === "img") {
+      const alt = node.properties?.alt;
+      node.children = [
+        { type: "text", value: `🖼 ${typeof alt === "string" && alt ? alt : "image"}` },
+      ];
+    }
+    node.tagName = "span";
+    node.properties = { title: UNAVAILABLE_EVIDENCE };
+    node.children = [...(node.children ?? []), { type: "text", value: " (Evidence unavailable)" }];
+  }
+  return (tree: unknown) => visit(tree as HtmlNode);
+}
+
 function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
   for (const [childIndex, child] of (node.children ?? []).entries()) {
     styleNode(child, node, childIndex);
@@ -60,6 +144,11 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
   if (node.tagName === "a") {
     node.properties.target = "_blank";
     node.properties.rel = ["noopener", "noreferrer", "nofollow"];
+  }
+
+  if (node.tagName === "span" && node.properties.title === UNAVAILABLE_EVIDENCE) {
+    node.properties.className = ["text-muted", "break-words"];
+    node.properties.ariaDisabled = "true";
   }
 
   if (node.tagName === "code") {
@@ -183,11 +272,16 @@ export type RenderedMarkdown = Readonly<{
 }>;
 
 /** The only parsing, GFM, sanitization, and styling pipeline for artifact Markdown. */
-export function renderMarkdown(markdown: string, reviewSource = false): RenderedMarkdown {
+export function renderMarkdown(
+  markdown: string,
+  reviewSource = false,
+  evidenceLinks: ReadonlyMap<string, string> = new Map(),
+): RenderedMarkdown {
   const processor = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkRehype)
+    .use(resolveEvidenceLinks, evidenceLinks)
     .use(rehypeSanitize)
     .use(styleMarkdownHtml);
   if (reviewSource) processor.use(reviewSourcePositions, markdown);
@@ -201,6 +295,10 @@ export function renderMarkdown(markdown: string, reviewSource = false): Rendered
 }
 
 /** Preserve the artifact API's existing full-document-fragment contract. */
-export function renderMarkdownToHtml(markdown: string, reviewSource = false): string {
-  return renderMarkdown(markdown, reviewSource).html;
+export function renderMarkdownToHtml(
+  markdown: string,
+  reviewSource = false,
+  evidenceLinks: ReadonlyMap<string, string> = new Map(),
+): string {
+  return renderMarkdown(markdown, reviewSource, evidenceLinks).html;
 }

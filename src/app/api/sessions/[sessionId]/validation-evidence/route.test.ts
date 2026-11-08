@@ -13,6 +13,8 @@ const workspaceId = "22222222-2222-4222-8222-222222222222";
 const assetId = "33333333-3333-4333-8333-333333333333";
 const runId = "44444444-4444-4444-8444-444444444444";
 const userId = "55555555-5555-4555-8555-555555555555";
+const artifactId = "66666666-6666-4666-8666-666666666666";
+const commitSha = "a".repeat(40);
 const contents = "redacted command output\n";
 const asset = {
   id: assetId,
@@ -88,10 +90,15 @@ const list = (id = sessionId) =>
   GET(new Request("https://wallie.test/evidence"), {
     params: Promise.resolve({ sessionId: id }),
   });
-const download = (ids: { sessionId?: string; assetId?: string } = {}) =>
-  downloadAsset(new Request("https://wallie.test/evidence/asset"), {
-    params: Promise.resolve({ sessionId, assetId, ...ids }),
-  });
+const download = (ids: { sessionId?: string; assetId?: string } = {}, artifact?: string) =>
+  downloadAsset(
+    new Request(
+      `https://wallie.test/evidence/asset${artifact === undefined ? "" : `?artifactId=${artifact}`}`,
+    ),
+    {
+      params: Promise.resolve({ sessionId, assetId, ...ids }),
+    },
+  );
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -109,9 +116,24 @@ beforeEach(() => {
       },
     ],
     session_validation_evidence: [
-      { run_id: runId, session_id: sessionId, workspace_id: workspaceId, records: [] },
+      {
+        run_id: runId,
+        session_id: sessionId,
+        workspace_id: workspaceId,
+        commit_sha: commitSha,
+        records: [],
+      },
     ],
     session_validation_assets: [{ ...asset }],
+    session_git_checkpoints: [
+      {
+        artifact_id: artifactId,
+        session_id: sessionId,
+        workspace_id: workspaceId,
+        run_id: runId,
+        output_sha: commitSha,
+      },
+    ],
   };
   mocks.user.mockResolvedValue({ id: userId });
   mocks.download.mockResolvedValue({ data: new Blob([contents]), error: null });
@@ -194,6 +216,81 @@ describe("validation evidence metadata", () => {
 });
 
 describe("validation evidence asset downloads", () => {
+  it("reauthorizes an exact artifact-owned evidence link before returning stored bytes", async () => {
+    const response = await download({}, artifactId);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(contents);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { table: "session_git_checkpoints", op: "eq", args: ["artifact_id", artifactId] },
+        { table: "session_git_checkpoints", op: "eq", args: ["session_id", sessionId] },
+        { table: "session_git_checkpoints", op: "eq", args: ["workspace_id", workspaceId] },
+      ]),
+    );
+  });
+
+  it.each([
+    ["session_git_checkpoints", "artifact_id", "another-artifact"],
+    ["session_git_checkpoints", "workspace_id", "another-workspace"],
+    ["session_git_checkpoints", "session_id", "another-session"],
+    ["session_validation_assets", "run_id", "another-run"],
+    ["session_validation_evidence", "run_id", "another-run"],
+    ["session_validation_evidence", "commit_sha", "b".repeat(40)],
+  ])(
+    "rejects an artifact link with mismatched %s.%s before storage access",
+    async (table, field, value) => {
+      rows[table]![0]![field] = value;
+      expect((await download({}, artifactId)).status).toBe(409);
+      expect(mocks.download).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not reveal artifact evidence to signed-out or inactive workspace members", async () => {
+    mocks.user.mockResolvedValueOnce(null);
+    expect((await download({}, artifactId)).status).toBe(401);
+    rows.workspace_members[0]!.is_active = false;
+    expect((await download({}, artifactId)).status).toBe(403);
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.table === "session_git_checkpoints")).toBe(false);
+  });
+
+  it.each(["session_git_checkpoints", "session_validation_evidence"])(
+    "does not download legacy evidence without a retained %s association",
+    async (table) => {
+      rows[table] = [];
+      const response = await download({}, artifactId);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "Evidence is unavailable for this artifact.",
+      });
+      expect(mocks.download).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["session_git_checkpoints", "session_validation_evidence"])(
+    "fails closed when the artifact's %s association cannot be read",
+    async (table) => {
+      errors[table] = { message: "private provider detail" };
+      const response = await download({}, artifactId);
+      expect(response.status).toBe(409);
+      expect(await response.text()).not.toContain("private provider detail");
+      expect(mocks.download).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not disclose a foreign-workspace asset even when the session identity matches", async () => {
+    rows.session_validation_assets[0]!.workspace_id = "another-workspace";
+    expect((await download({}, artifactId)).status).toBe(404);
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.table === "session_git_checkpoints")).toBe(false);
+  });
+
+  it("rejects a malformed artifact identity before creating a client", async () => {
+    expect((await download({}, "invalid")).status).toBe(400);
+    expect(mocks.server).not.toHaveBeenCalled();
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
   it("reauthorizes and verifies the stored bytes before returning a plain-text attachment", async () => {
     const response = await download();
     expect(response.status).toBe(200);

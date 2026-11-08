@@ -113,6 +113,24 @@ signed URLs. Objects remain accessible after sandbox teardown and follow the
 workspace deletion lifecycle. An inaccessible required asset cannot satisfy a
 delivery requirement.
 
+## Artifact evidence links
+
+Final Markdown can reference retained reports with an evidence identity:
+
+```markdown
+[Unit test report](wallie-evidence:unit-tests/unit-test-report)
+[Command log](wallie-evidence:unit-tests/log)
+```
+
+- Identities use `<command key>/<report key>` from the committed configuration. Command logs use `<command key>/log`.
+- The harness runs commands after the agent finishes. Each command generates or copies its report into its fresh `WALLIE_EVIDENCE_DIR`.
+- Rendering resolves identities through the displayed artifact's immutable checkpoint, its producing run, and a receipt for that exact output commit. It never selects the latest run or matches files by name.
+- Resolved links download private, integrity-checked assets through the authenticated session API. The download repeats the artifact association and workspace membership checks.
+- Missing identities, legacy sandbox paths such as `/vercel/sandbox/docs/evidence/comments-toggle-pr-description.md`, and mismatched checkpoints display **Evidence unavailable**. Existing artifact Markdown remains immutable.
+- External URLs, relative repository links, anchors, and safe document links retain their existing behavior. Agent-controlled images remain explicit links and never load automatically.
+
+This reuses the bounded text-report collector. It does not upload arbitrary local files or enable binary screenshot capture.
+
 ## Verification
 
 Run the focused capture, persistence, API, and SQL tests, then `pnpm check` and

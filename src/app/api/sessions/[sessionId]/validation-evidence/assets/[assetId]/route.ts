@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import { loadArtifactEvidenceRun } from "@/lib/validation-evidence/artifact-links";
 import {
   loadReviewContext,
   reviewErrorResponse,
@@ -11,12 +12,16 @@ import {
 export const preferredRegion = "home";
 type RouteContext = { params: Promise<{ sessionId: string; assetId: string }> };
 const paramsSchema = reviewSessionParamsSchema.extend({ assetId: z.string().uuid() });
+const querySchema = z.object({ artifactId: z.string().uuid().optional() });
 const MAX_ASSET_BYTES = 1024 * 1024;
 
 /** Reauthorize on each request; persisted evidence never contains a bearer URL. */
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: RouteContext) {
   try {
     const { sessionId, assetId } = paramsSchema.parse(await params);
+    const { artifactId } = querySchema.parse({
+      artifactId: new URL(request.url).searchParams.get("artifactId") ?? undefined,
+    });
     const { session, supabase } = await loadReviewContext(sessionId);
     const { data: asset, error } = await supabase
       .from("session_validation_assets")
@@ -27,6 +32,17 @@ export async function GET(_request: Request, { params }: RouteContext) {
       .maybeSingle();
     if (error) throw error;
     if (!asset) return reviewJson({ error: "Evidence asset not found." }, 404);
+    if (
+      artifactId &&
+      (await loadArtifactEvidenceRun({
+        supabase,
+        sessionId: session.id,
+        workspaceId: session.workspace_id,
+        artifactId,
+      })) !== asset.run_id
+    ) {
+      return reviewJson({ error: "Evidence is unavailable for this artifact." }, 409);
+    }
     if (
       !Number.isSafeInteger(asset.size_bytes) ||
       asset.size_bytes < 0 ||
