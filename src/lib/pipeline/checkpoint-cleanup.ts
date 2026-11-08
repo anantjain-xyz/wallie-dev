@@ -40,6 +40,7 @@ export async function cleanRetainedCheckpoint(admin: Admin, cleanup: Cleanup, si
         {
           runId: cleanup.run_id,
           headSha: cleanup.expected_sha,
+          retainedRef: cleanup.retained_ref,
           remoteUrl: `https://github.com/${cleanup.repository_full_name}.git`,
           token: repository.token,
           signal,

@@ -112,6 +112,10 @@ select is((select count(*) from public.session_artifacts where session_id=(selec
   where id=(select run_id from publication_fixtures where label='code'))),0::bigint,'failed private-only publication leaves no artifact');
 select is(public.prepare_session_checkpoint_publication((select run_id from publication_fixtures where label='code'),0,
   'Full artifact'||repeat(' markdown',10000)),true,'prepare persists the full artifact independently of PR body length');
+select is((select p.retained_ref from publication_fixtures f join public.session_checkpoint_publications p using(run_id)
+  where f.label='code'),
+  'refs/wallie/checkpoints/'||(select run_id::text from publication_fixtures where label='code')||'/'||repeat('b',40),
+  'new code publication pins an exact checkpoint ref outside the branch namespace');
 select is((select length(artifact_md) from public.session_checkpoint_publications where run_id=(select run_id from publication_fixtures where label='code')),
   length('Full artifact'||repeat(' markdown',10000)),'artifact markdown is not truncated to the PR body limit');
 select is(public.prepare_session_checkpoint_publication((select run_id from publication_fixtures where label='code'),0,
@@ -143,6 +147,10 @@ select is(public.adopt_session_checkpoint_publication((select run_id from public
 select throws_ok($$select public.adopt_session_checkpoint_publication(run_id,claim_id,'refs/heads/wrong',repeat('b',40))
   from publication_fixtures where label='code'$$,'23514','Exact retained remote checkpoint proof is required.',
   'moving or intended PR branch cannot stand in for immutable retained ref');
+select throws_ok($$select public.adopt_session_checkpoint_publication(run_id,claim_id,
+  'refs/heads/wallie/checkpoints/'||run_id::text||'/'||repeat('b',40),repeat('b',40))
+  from publication_fixtures where label='code'$$,'23514','Exact retained remote checkpoint proof is required.',
+  'the matching old branch cannot stand in for a newly pinned custom ref');
 select throws_ok($$select public.adopt_session_checkpoint_publication(f.run_id,f.claim_id,p.retained_ref,repeat('c',40))
   from publication_fixtures f join public.session_checkpoint_publications p using(run_id) where label='code'$$,
   '23514','Exact retained remote checkpoint proof is required.','different remote SHA cannot become accepted source');
@@ -262,7 +270,7 @@ insert into public.workspaces(id,name,slug) values('49600000-0001-4000-8000-0000
 select throws_ok($$insert into public.session_checkpoint_publications(run_id,workspace_id,session_id,job_id,attempt_count,
   expected_artifact_version,artifact_md,deadline_at,retained_ref)
   select r.id,'49600000-0001-4000-8000-000000000001',r.session_id,r.agent_job_id,1,0,'Foreign candidate',
-    clock_timestamp()+interval '1 minute','refs/heads/wallie/checkpoints/'||r.id::text||'/'||repeat('b',40)
+    clock_timestamp()+interval '1 minute','refs/wallie/checkpoints/'||r.id::text||'/'||repeat('b',40)
   from public.agent_runs r where r.id=(select run_id from publication_fixtures where label='scope')$$,
   '23514','Checkpoint publication does not match the current execution.','foreign workspace metadata cannot be smuggled into a private intent');
 select public.prepare_session_checkpoint_publication((select run_id from publication_fixtures where label='scope'),0,'Scoped candidate');

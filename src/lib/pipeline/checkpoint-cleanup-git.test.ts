@@ -12,7 +12,9 @@ import {
 } from "./checkpoint-cleanup-git";
 import type { GitExecutor, SourceGitWorkspace } from "./source-delivery-git-core";
 
-function fixture() {
+const retainedNamespaces = ["refs/wallie/checkpoints", "refs/heads/wallie/checkpoints"] as const;
+
+function fixture(namespace: (typeof retainedNamespaces)[number] = retainedNamespaces[0]) {
   const root = mkdtempSync(join(tmpdir(), "wallie-checkpoint-cleanup-"));
   const source = join(root, "source");
   const remote = join(root, "remote.git");
@@ -29,14 +31,16 @@ function fixture() {
   git("-C", source, "commit", "-qam", "Output");
   const headSha = git("-C", source, "rev-parse", "HEAD");
   git("clone", "--bare", source, remote);
+  const runId = "10000000-0000-4000-8000-000000000001";
+  const ref = `${namespace}/${runId}/${headSha}`;
   const input = {
-    runId: "10000000-0000-4000-8000-000000000001",
+    runId,
+    retainedRef: ref,
     headSha,
     remoteUrl: "https://github.com/acme/fixture.git",
     token: "synthetic-cleanup-token",
     beforeDelete: vi.fn(async () => {}),
   };
-  const ref = `refs/heads/wallie/checkpoints/${input.runId}/${headSha}`;
   git("--git-dir", remote, "update-ref", ref, headSha);
   const workspaces: SourceGitWorkspace[] = [];
   const dependencies = {
@@ -77,32 +81,39 @@ function fixture() {
   };
 }
 
-it("deletes only its exact retained ref with an explicit SHA lease and verifies absence", async () => {
-  const f = fixture();
-  try {
-    expect(await deleteRetainedCheckpointRefWithWorkspace(f.input, f.dependencies)).toEqual({
-      ref: f.ref,
-      absent: true,
-    });
-    expect(f.refs()).not.toContain(f.ref);
-    expect(f.refs()).toContain("refs/heads/main");
-    expect(f.pushes()[0][0]).toEqual([
-      "push",
-      `--force-with-lease=${f.ref}:${f.input.headSha}`,
-      f.input.remoteUrl,
-      `:${f.ref}`,
-    ]);
-    expect(f.input.beforeDelete).toHaveBeenCalledTimes(1);
-    expect(await deleteRetainedCheckpointRefWithWorkspace(f.input, f.dependencies)).toEqual({
-      ref: f.ref,
-      absent: true,
-    });
-    expect(f.pushes()).toHaveLength(1);
-    f.expectClean();
-  } finally {
-    f.cleanup();
-  }
-});
+it.each(retainedNamespaces)(
+  "deletes only its exact ref in %s with an explicit SHA lease",
+  async (namespace) => {
+    const f = fixture(namespace);
+    try {
+      const siblingNamespace = retainedNamespaces.find((other) => other !== namespace);
+      const siblingRef = `${siblingNamespace}/${f.input.runId}/${f.input.headSha}`;
+      f.git("--git-dir", f.remote, "update-ref", siblingRef, f.input.headSha);
+      expect(await deleteRetainedCheckpointRefWithWorkspace(f.input, f.dependencies)).toEqual({
+        ref: f.ref,
+        absent: true,
+      });
+      expect(f.refs()).not.toContain(f.ref);
+      expect(f.refs()).toContain("refs/heads/main");
+      expect(f.refs()).toContain(siblingRef);
+      expect(f.pushes()[0][0]).toEqual([
+        "push",
+        `--force-with-lease=${f.ref}:${f.input.headSha}`,
+        f.input.remoteUrl,
+        `:${f.ref}`,
+      ]);
+      expect(f.input.beforeDelete).toHaveBeenCalledTimes(1);
+      expect(await deleteRetainedCheckpointRefWithWorkspace(f.input, f.dependencies)).toEqual({
+        ref: f.ref,
+        absent: true,
+      });
+      expect(f.pushes()).toHaveLength(1);
+      f.expectClean();
+    } finally {
+      f.cleanup();
+    }
+  },
+);
 
 it.each(["before-read", "before-push"])("preserves a rewritten retained ref %s", async (when) => {
   const f = fixture();
@@ -231,6 +242,9 @@ it("rejects arbitrary namespaces and credential-bearing URLs before creating a w
       { runId: "../../main" },
       { runId: "wallie/sessions/session/epoch" },
       { headSha: "HEAD" },
+      { retainedRef: "refs/heads/main" },
+      { retainedRef: `refs/wallie/fences/${f.input.runId}` },
+      { runId: "10000000-0000-4000-8000-000000000002" },
       { remoteUrl: "https://secret@github.com/acme/fixture.git" },
     ])
       await expect(

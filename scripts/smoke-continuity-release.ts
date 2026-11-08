@@ -714,7 +714,7 @@ async function main() {
       },
       deployment: {
         sourceGitDeploymentsDisabled: true,
-        fenceCheckAttemptPossible: true,
+        bookkeepingRefsOutsideHeads: true,
         manualDeploymentPerformed: false,
         projectSettingsChanged: false,
       },

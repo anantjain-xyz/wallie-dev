@@ -144,7 +144,8 @@ export async function adoptCheckpointPublication(
   let remoteRef: string | undefined;
   let remoteSha: string | undefined;
   if (source.base_sha !== source.head_sha) {
-    if (!publication.retained_ref?.startsWith("refs/heads/"))
+    const retainedRef = publication.retained_ref;
+    if (!retainedRef)
       throw new PublicationOperationError(
         "load_source",
         new Error("Checkpoint publication ref is absent."),
@@ -156,14 +157,13 @@ export async function adoptCheckpointPublication(
       resolveSourceDeliveryRepository(admin, source, signal),
     );
     await assertPublicationClaim(admin, publication, signal);
-    const retainedBranch = publication.retained_ref.slice("refs/heads/".length);
-    const branch = await withPublicationOperation("restore_push", () =>
+    remoteRef = await withPublicationOperation("restore_push", () =>
       restoreAndPushSourceInSandbox(
         {
           baseSha: source.base_sha,
           headSha: source.head_sha,
-          branch: retainedBranch,
-          exactRef: true,
+          retainedRef,
+          runId: source.run_id,
           bytes,
           sha256: source.bundle_sha256 ?? "",
           remoteUrl: `https://github.com/${current.delivery.repository_full_name}.git`,
@@ -174,9 +174,8 @@ export async function adoptCheckpointPublication(
         { admin, workspaceId: source.workspace_id, runId: source.run_id },
       ),
     );
-    remoteRef = `refs/heads/${branch}`;
     remoteSha = source.head_sha;
-    if (remoteRef !== publication.retained_ref)
+    if (remoteRef !== retainedRef)
       throw new PublicationOperationError(
         "restore_push",
         new Error("Checkpoint publication ref changed."),

@@ -218,10 +218,10 @@ or expired lease. A separately verified accepted ref for the same SHA remains a
 valid restore source. The conservative tombstone also blocks a new raw-SHA root
 from ordinary `main` when that SHA was retired, even if `main` now contains it;
 use a new reachable commit or an explicitly verified retained source, rather than
-expecting a new session alone to bypass retirement. The worker derives only
-`refs/heads/wallie/checkpoints/<run>/<recorded-sha>`, compares the exact remote SHA,
-uses an explicit delete lease and confirms absence. No broad branch scan or
-ancestry-based garbage collection is used.
+expecting a new session alone to bypass retirement. The worker uses the pinned
+`refs/wallie/checkpoints/<run>/<recorded-sha>` ref or its historical
+`refs/heads/wallie/checkpoints/...` form. It compares the exact remote SHA, deletes
+with an explicit lease, and confirms absence.
 
 Monitor `session_checkpoint_cleanup` for due, claimed, deleted and blocked intents.
 Restore the exact repository/installation connection before retrying a disconnected
@@ -248,10 +248,9 @@ bindings. Each run creates its own test base/drift branches and a clearly labele
 smoke PR targeting that base, never `main`. Guarded pushes cannot delete or update
 unrelated refs, and existing refs/PRs are checked afterward. Test history is
 retained; do not delete repositories or refs as automatic cleanup. Fixture source
-contains `vercel.json` disabling automatic deployment. Empty operation-fence commits
-cannot carry that file, so the connected integration may still post checks or
-attempt a preview; the test performs no deployment/promotion command and changes
-no Vercel project settings. Operator credentials stay in process memory/environment. It uses
+uses `vercel.json` to disable automatic deployment for its test branches. Fence and
+checkpoint refs use `refs/wallie/*`. The test leaves Vercel project settings in place.
+Operator credentials stay in process memory/environment. It uses
 deterministic source edits and manual trusted transport orchestration, not an LLM
 or the deployed daemon. Fresh child processes restore persisted inputs and a
 prepared publication after the original sandbox has stopped. Retain its safe
