@@ -101,6 +101,9 @@ function buildSupabaseMock({
       ...row,
     })),
     agent_runs: runRows.map((row) => ({ session_id: SESSION_ID, stage_id: STAGE_ID, ...row })),
+    session_git_checkpoints: [],
+    session_validation_evidence: [],
+    session_validation_assets: [],
   };
   const errorsByTable: Record<string, { message: string } | null> = {
     session_selected_stages: stageError,
@@ -175,6 +178,7 @@ function buildSupabaseMock({
     filters,
     tableFilters,
     selects,
+    rowsByTable,
   };
 }
 
@@ -415,6 +419,126 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     expect(payload.artifact.sanitizedHtml).not.toContain("<script");
     expect(payload.artifact.sanitizedHtml).not.toContain("javascript:");
     expect(supabase.filters).toContainEqual(["version", 1]);
+  });
+
+  const EVIDENCE_ARTIFACT_ID = "55555555-5555-4555-8555-555555555555";
+  const EVIDENCE_RUN_ID = "66666666-6666-4666-8666-666666666666";
+  const EVIDENCE_ASSET_ID = "77777777-7777-4777-8777-777777777777";
+  const EVIDENCE_COMMIT = "a".repeat(40);
+  const EVIDENCE_MARKDOWN =
+    "[Review evidence](wallie-evidence:checks/report)\n\n[PR description and evidence](/vercel/sandbox/docs/evidence/comments-toggle-pr-description.md)";
+
+  function artifactEvidenceMock(markdown = EVIDENCE_MARKDOWN) {
+    const supabase = buildSupabaseMock({
+      artifactRows: [
+        {
+          id: EVIDENCE_ARTIFACT_ID,
+          stage_slug: "build",
+          version: 1,
+          created_at: "2026-06-07T10:00:00.000Z",
+          artifact_json: markdown,
+        },
+        {
+          id: "88888888-8888-4888-8888-888888888888",
+          stage_slug: "build",
+          version: 2,
+          created_at: "2026-06-07T11:00:00.000Z",
+          artifact_json: "Newer output with the same evidence key",
+        },
+      ],
+    });
+    supabase.rowsByTable.session_git_checkpoints = [
+      {
+        artifact_id: EVIDENCE_ARTIFACT_ID,
+        run_id: EVIDENCE_RUN_ID,
+        session_id: SESSION_ID,
+        workspace_id: WORKSPACE_ID,
+        output_sha: EVIDENCE_COMMIT,
+      },
+    ];
+    supabase.rowsByTable.session_validation_evidence = [
+      {
+        run_id: EVIDENCE_RUN_ID,
+        session_id: SESSION_ID,
+        workspace_id: WORKSPACE_ID,
+        commit_sha: EVIDENCE_COMMIT,
+      },
+    ];
+    supabase.rowsByTable.session_validation_assets = [
+      {
+        id: EVIDENCE_ASSET_ID,
+        evidence_key: "checks/report",
+        run_id: EVIDENCE_RUN_ID,
+        session_id: SESSION_ID,
+        workspace_id: WORKSPACE_ID,
+      },
+      {
+        id: "newer-asset",
+        evidence_key: "checks/report",
+        run_id: "newer-run",
+        session_id: SESSION_ID,
+        workspace_id: WORKSPACE_ID,
+      },
+    ];
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+    return supabase;
+  }
+
+  it.each(["wallie-evidence:", "wallie%2Devidence:"])(
+    "renders retained evidence for the exact historical artifact with alias %s and disables its sandbox-local link",
+    async (scheme) => {
+      const markdown = EVIDENCE_MARKDOWN.replace("wallie-evidence:", scheme);
+      const supabase = artifactEvidenceMock(markdown);
+      const result = await GET(
+        request(`stage=build&artifactId=${EVIDENCE_ARTIFACT_ID}`),
+        routeContext(),
+      );
+      expect(result.status).toBe(200);
+      const { artifact } = await result.json();
+      expect(artifact.id).toBe(EVIDENCE_ARTIFACT_ID);
+      expect(artifact.payload).toBe(markdown);
+      expect(artifact.sanitizedHtml).toContain(
+        `href="/api/sessions/${SESSION_ID}/validation-evidence/assets/${EVIDENCE_ASSET_ID}?artifactId=${EVIDENCE_ARTIFACT_ID}"`,
+      );
+      expect(artifact.sanitizedHtml).not.toContain("newer-asset");
+      expect(artifact.sanitizedHtml).not.toContain('href="/vercel/sandbox');
+      expect(artifact.sanitizedHtml).toContain("Evidence unavailable");
+      expect(supabase.tableFilters).toContainEqual([
+        "session_git_checkpoints",
+        "artifact_id",
+        EVIDENCE_ARTIFACT_ID,
+      ]);
+    },
+  );
+
+  it("renders unresolved legacy evidence as unavailable while preserving immutable Markdown", async () => {
+    const supabase = artifactEvidenceMock();
+    supabase.rowsByTable.session_git_checkpoints = [];
+    const result = await GET(request("stage=build&version=1"), routeContext());
+    expect(result.status).toBe(200);
+    const { artifact } = await result.json();
+    expect(artifact.payload).toBe(EVIDENCE_MARKDOWN);
+    expect(artifact.sanitizedHtml.match(/Evidence unavailable/g)).toHaveLength(2);
+    expect(artifact.sanitizedHtml).not.toContain("href=");
+    expect(supabase.tableFilters.some(([table]) => table === "session_validation_assets")).toBe(
+      false,
+    );
+  });
+
+  it("does not resolve an artifact alias through a different run's receipt or assets", async () => {
+    const supabase = artifactEvidenceMock();
+    supabase.rowsByTable.session_validation_evidence[0]!.run_id = "newer-run";
+    const result = await GET(
+      request(`stage=build&artifactId=${EVIDENCE_ARTIFACT_ID}`),
+      routeContext(),
+    );
+    expect(result.status).toBe(200);
+    const { artifact } = await result.json();
+    expect(artifact.sanitizedHtml.match(/Evidence unavailable/g)).toHaveLength(2);
+    expect(artifact.sanitizedHtml).not.toContain("href=");
+    expect(supabase.tableFilters.some(([table]) => table === "session_validation_assets")).toBe(
+      false,
+    );
   });
 
   it.each(["latest=true", "version=1"])(

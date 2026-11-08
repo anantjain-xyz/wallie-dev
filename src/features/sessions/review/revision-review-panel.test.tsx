@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { formatLocalizedTimestamp } from "@/components/shared/time-format";
 import { RevisionReviewPanel } from "./revision-review-panel";
 
 afterEach(() => {
@@ -130,6 +132,123 @@ function setup(overrides?: (url: string) => Promise<unknown> | undefined) {
   );
 }
 describe("revision review workspace", () => {
+  it("uses readable dates and preserves exact feedback and run provenance behind accessible details", async () => {
+    const user = userEvent.setup();
+    const submittedAt = "2026-11-07T11:24:50.15687+05:30";
+    const batchId = "06326ce1-34ab-4d3a-87e4-487a43d82213";
+    const runId = "16c8c3a6-4e65-42af-8496-0a1a87214dd1";
+    const run = { ...detail.initialRun, id: runId, status: "completed" };
+    setup((url) =>
+      url.includes("batchId=")
+        ? Promise.resolve({
+            ...detail,
+            batch: { ...detail.batch, id: batchId, created_at: submittedAt },
+          })
+        : url.includes("feedback-batches")
+          ? Promise.resolve({
+              ...history,
+              batches: [{ ...history.batches[0], id: batchId, created_at: submittedAt }],
+              producingRun: run,
+            })
+          : undefined,
+    );
+
+    const feedback = await screen.findByRole("button", { name: /Feedback on version 1/ });
+    const time = feedback.querySelector("time");
+    expect(time).toHaveAttribute("dateTime", submittedAt);
+    await waitFor(() => expect(time).toHaveTextContent(formatLocalizedTimestamp(submittedAt)));
+    expect(time).toHaveAccessibleName(formatLocalizedTimestamp(submittedAt));
+    expect(feedback).not.toHaveTextContent(submittedAt);
+    expect(feedback).not.toHaveTextContent(batchId.slice(0, 8));
+    expect(screen.getByText("Producing run · completed")).toBeVisible();
+    expect(screen.getByText("codex · test · Attempt 1")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Producing run activity" })).toHaveAttribute(
+      "href",
+      `#wallie-run-${runId}`,
+    );
+    expect(screen.getByRole("link", { name: "Producing run for version 2" })).toHaveAttribute(
+      "href",
+      `#wallie-run-${runId}`,
+    );
+    expect(screen.getByText(runId)).not.toBeVisible();
+    const runDetails = screen.getByText("Run details", { selector: "summary" });
+    await user.click(runDetails);
+    expect(screen.getByText(runId)).toBeVisible();
+
+    await user.click(feedback);
+    const snapshot = within(
+      await screen.findByRole("region", { name: "Exact submitted feedback" }),
+    );
+    expect(snapshot.getByText(batchId)).not.toBeVisible();
+    expect(snapshot.getByText(submittedAt)).not.toBeVisible();
+    const feedbackDetails = snapshot.getByText("Feedback details", { selector: "summary" });
+    await user.click(feedbackDetails);
+    expect(snapshot.getByText("Feedback ID")).toBeVisible();
+    expect(snapshot.getByText(batchId)).toBeVisible();
+    expect(snapshot.getByText("Exact submitted timestamp")).toBeVisible();
+    expect(snapshot.getByText(submittedAt)).toBeVisible();
+    expect(snapshot.getByRole("link", { name: "Reviewed artifact" })).toHaveAttribute(
+      "href",
+      "?artifactId=old&artifactVersion=1&artifactStage=build",
+    );
+    expect(snapshot.getByRole("link", { name: "Initial revision run activity" })).toHaveAttribute(
+      "href",
+      "#wallie-run-run-1",
+    );
+    expect(snapshot.getByText("Saved agent input")).toBeInTheDocument();
+    expect(snapshot.getByText(/Submitted by Reviewer A/)).toBeVisible();
+    expect(snapshot.getByText("<script>saved comment</script>")).toBeVisible();
+  });
+
+  it("keeps long author labels intact and uses fallbacks for missing or invalid metadata", async () => {
+    const user = userEvent.setup();
+    const longAuthor = `Reviewer ${"LongUnbrokenName".repeat(20)}`;
+    setup((url) =>
+      url.includes("batchId=")
+        ? Promise.resolve({
+            ...detail,
+            batch: { ...detail.batch, actor_label: null, created_at: null },
+            initialRun: null,
+          })
+        : url.includes("feedback-batches")
+          ? Promise.resolve({
+              ...history,
+              batches: [
+                { ...history.batches[0], actor_label: longAuthor, created_at: "invalid-date" },
+                { ...history.batches[1], actor_label: null, created_at: null },
+              ],
+              producingRun: {
+                ...detail.initialRun,
+                model_provider: null,
+                model_name: null,
+                attempt_count: null,
+              },
+            })
+          : undefined,
+    );
+
+    const longLabel = await screen.findByRole("button", { name: /Feedback on version 1/ });
+    expect(longLabel).toHaveTextContent(longAuthor);
+    expect(longLabel).toHaveAccessibleName(expect.stringContaining(longAuthor));
+    expect(within(longLabel).getByText("Unknown time")).toBeVisible();
+    expect(longLabel.querySelector("time")).toBeNull();
+    const missingMetadata = screen.getByRole("button", {
+      name: /Feedback on version 2 · Unknown reviewer/,
+    });
+    expect(within(missingMetadata).getByText("Unknown time")).toBeVisible();
+    expect(missingMetadata.querySelector("time")).toBeNull();
+    expect(screen.getByText("Model unavailable · Attempt unknown")).toBeVisible();
+
+    await user.click(missingMetadata);
+    const snapshot = within(
+      await screen.findByRole("region", { name: "Exact submitted feedback" }),
+    );
+    expect(snapshot.getByText(/Submitted by Unknown reviewer/)).toBeVisible();
+    expect(snapshot.getByText("Initial run unavailable.")).toBeVisible();
+    await user.click(snapshot.getByText("Feedback details", { selector: "summary" }));
+    expect(snapshot.getByText("Unavailable")).toBeVisible();
+  });
+
   it("compares exact sources and keeps original blocking requests in keyboard-accessible groups", async () => {
     setup();
     expect(await screen.findByText("+ Added")).toBeVisible();

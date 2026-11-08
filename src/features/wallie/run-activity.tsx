@@ -26,6 +26,10 @@ import { parseToolUseMessage, summarizeToolUse } from "@/features/wallie/run-mes
 import type { WallieRun, WallieRunMessage, WallieRunUsage } from "@/features/wallie/types";
 import { LiveConnectionNotice } from "./live-connection-notice";
 import { cn } from "@/lib/utils";
+import {
+  sanitizeRunFailureDiagnostic,
+  VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH,
+} from "@/lib/pipeline/failure-diagnostic";
 
 function formatStageRunLabel(run: WallieRun) {
   if (run.stageName) return `${run.stageName} run`;
@@ -139,8 +143,6 @@ export const WallieRunCard = memo(function WallieRunCard({
     (message) => ["text", "progress", "status"].includes(message.kind) && message.messageMd.trim(),
   );
   const latest = run.messages.at(-1);
-  const error =
-    run.status === "error" ? run.messages.findLast((message) => message.kind === "error") : null;
 
   const status = (
     <span
@@ -341,17 +343,23 @@ export const WallieRunCard = memo(function WallieRunCard({
       ) : null}
 
       {run.status === "error" ? (
-        <p
+        <div
           className={cn(
             "mt-3 break-words rounded-[6px] text-sm text-danger [overflow-wrap:anywhere]",
             prominent ? "bg-danger-soft p-3" : "pl-6",
           )}
           role="status"
         >
-          {error
-            ? compactActivityText(error.messageMd)
-            : "This run failed. Expand activity for details."}
-        </p>
+          <p className="font-medium">
+            {run.failure
+              ? `${run.failure.categoryLabel}: ${run.failure.cause}`
+              : "Failure cause unavailable"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted">
+            {run.failure?.recovery ??
+              "No terminal cause was recorded for this historical run. Review the available activity or ask a workspace admin to investigate before retrying."}
+          </p>
+        </div>
       ) : null}
       {!prominent && isExpanded ? (
         <p className="mt-2 pl-6 text-xs leading-5 text-muted">{formatWallieRunUsage(run.usage)}</p>
@@ -505,9 +513,17 @@ const ActivityMessage = memo(function ActivityMessage({
   }
   if (message.kind === "error") {
     return (
-      <p className="whitespace-pre-wrap break-words py-2 text-sm text-danger [overflow-wrap:anywhere]">
-        {message.messageMd.replace(/^\*\*Error:\*\*\s*/, "")}
-      </p>
+      <details className="min-w-0 text-sm">
+        <summary className="cursor-pointer py-2 text-muted focus-visible:outline-accent">
+          Activity error details
+        </summary>
+        <p className="whitespace-pre-wrap break-words py-2 text-sm [overflow-wrap:anywhere]">
+          {sanitizeRunFailureDiagnostic(
+            message.messageMd.replace(/^\*\*Error:\*\*\s*/, ""),
+            VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH,
+          )}
+        </p>
+      </details>
     );
   }
   return (
@@ -550,7 +566,10 @@ export function RunMessageTimeline({
   messages: WallieRunMessage[];
   renderNow: string;
 }) {
-  const groups = useMemo(() => groupActivityMessages(messages), [messages]);
+  const groups = useMemo(
+    () => groupActivityMessages(messages.filter((message) => message.kind !== "run_failure")),
+    [messages],
+  );
   return (
     <ol aria-label="Run activity" className="min-w-0">
       {groups.map((group) => (

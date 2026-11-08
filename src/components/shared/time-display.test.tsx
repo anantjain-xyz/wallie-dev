@@ -87,6 +87,26 @@ describe("TimeDisplay", () => {
     ).toContain("3:30 AM PDT");
   });
 
+  it("hydrates an offset absolute timestamp with a stable UTC fallback before localizing", async () => {
+    const offsetTimestamp = "2026-11-07T11:24:50.15687+05:30";
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const serverHtml = renderToString(
+      <TimeDisplay initialNow={offsetTimestamp} value={offsetTimestamp} />,
+    );
+    expect(serverHtml).toContain("2026-11-07 05:54 UTC");
+    const container = document.createElement("div");
+    container.innerHTML = serverHtml;
+    document.body.append(container);
+
+    await act(async () => {
+      hydrateRoot(container, <TimeDisplay initialNow={offsetTimestamp} value={offsetTimestamp} />);
+    });
+
+    expect(container.textContent).toBe(formatLocalizedTimestamp(offsetTimestamp));
+    expect(container.querySelector("time")?.getAttribute("datetime")).toBe(offsetTimestamp);
+    expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/hydration|did not match/i);
+  });
+
   it("schedules inactive labels at their next semantic boundary", () => {
     const nowMs = Date.parse(initialNow);
     expect(nextRelativeUpdateDelay(timestamp, nowMs)).toBe(30_000);

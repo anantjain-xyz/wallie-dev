@@ -15,6 +15,7 @@ type DialogContentProps = Omit<
   ComponentProps<typeof DialogPrimitive.Content>,
   "aria-describedby" | "aria-labelledby" | "title"
 > & {
+  bodyClassName?: string;
   description?: ReactNode;
   dismissible?: boolean;
   hideCloseButton?: boolean;
@@ -22,6 +23,7 @@ type DialogContentProps = Omit<
 };
 
 export function DialogContent({
+  bodyClassName,
   children,
   className,
   description,
@@ -57,7 +59,7 @@ export function DialogContent({
         ref={setModalContainer}
       >
         <ModalOverlayContainerProvider container={modalContainer}>
-          <header className="space-y-1.5 pr-8">
+          <header className="shrink-0 space-y-1.5 pr-8">
             <DialogPrimitive.Title className="text-base font-semibold text-foreground">
               {title}
             </DialogPrimitive.Title>
@@ -67,7 +69,7 @@ export function DialogContent({
               </DialogPrimitive.Description>
             ) : null}
           </header>
-          <div className="mt-5">{children}</div>
+          <div className={cn("mt-5", bodyClassName)}>{children}</div>
           {!hideCloseButton && dismissible ? (
             <DialogPrimitive.Close aria-label="Close dialog" className="ui-dialog-close">
               <XIcon />

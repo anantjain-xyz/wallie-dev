@@ -480,6 +480,7 @@ export function SelectContent({
     if (!open) return;
     const listbox = listboxRef.current;
     if (!trigger || !listbox || !container) return;
+    const scrollBoundary = trigger.closest<HTMLElement>("[data-select-scroll-boundary]");
 
     function place() {
       if (!trigger || !listbox || !container) return;
@@ -487,10 +488,26 @@ export function SelectContent({
       const origin = portalFixedContainingBlock(container);
       const gutter = 8;
       const sideOffset = 6;
-      const spaceBelow = window.innerHeight - rect.bottom - sideOffset - gutter;
-      const spaceAbove = rect.top - sideOffset - gutter;
+      const boundaryRect = scrollBoundary?.getBoundingClientRect();
+      const viewport = boundaryRect ? window.visualViewport : null;
+      const viewportTop = viewport?.offsetTop ?? 0;
+      const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight);
+      const boundaryTop = boundaryRect ? Math.max(boundaryRect.top, viewportTop) + gutter : gutter;
+      const boundaryBottom = boundaryRect
+        ? Math.min(boundaryRect.bottom, viewportBottom) - gutter
+        : window.innerHeight - gutter;
+      const boundaryHeight = Math.max(0, boundaryBottom - boundaryTop);
+      const spaceBelow = boundaryBottom - rect.bottom - sideOffset;
+      const spaceAbove = rect.top - sideOffset - boundaryTop;
       const placeAbove = spaceBelow < 160 && spaceAbove > spaceBelow;
-      const availableHeight = Math.max(placeAbove ? spaceAbove : spaceBelow, 96);
+      const overlayTrigger =
+        Boolean(boundaryRect) &&
+        (rect.top < boundaryTop ||
+          rect.bottom > boundaryBottom ||
+          Math.max(spaceAbove, spaceBelow) < Math.min(96, boundaryHeight));
+      const availableHeight = overlayTrigger
+        ? boundaryHeight
+        : Math.max(placeAbove ? spaceAbove : spaceBelow, boundaryRect ? 0 : 96);
       const availableWidth = Math.max(window.innerWidth - rect.left - gutter, rect.width);
 
       listbox.style.setProperty("--radix-select-trigger-width", `${rect.width}px`);
@@ -498,20 +515,32 @@ export function SelectContent({
       listbox.style.setProperty("--radix-select-content-available-height", `${availableHeight}px`);
       listbox.style.setProperty(
         "--radix-select-content-transform-origin",
-        placeAbove ? "bottom left" : "top left",
+        placeAbove && !overlayTrigger ? "bottom left" : "top left",
       );
       setPosition({
-        bottom: placeAbove ? origin.bottom - rect.top + sideOffset : undefined,
+        bottom: placeAbove && !overlayTrigger ? origin.bottom - rect.top + sideOffset : undefined,
         left: rect.left - origin.left,
         position: "fixed",
-        top: placeAbove ? undefined : rect.bottom + sideOffset - origin.top,
+        top: overlayTrigger
+          ? boundaryTop - origin.top
+          : placeAbove
+            ? undefined
+            : rect.bottom + sideOffset - origin.top,
       });
     }
 
     place();
+    const resizeObserver = scrollBoundary ? new ResizeObserver(place) : null;
+    if (scrollBoundary) resizeObserver?.observe(scrollBoundary);
+    const viewport = scrollBoundary ? window.visualViewport : null;
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
+      resizeObserver?.disconnect();
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };

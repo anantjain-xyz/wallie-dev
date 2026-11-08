@@ -37,7 +37,7 @@ describe("CursorRunner", () => {
     }
 
     expect(events).toEqual([
-      { text: "working", type: "text" },
+      { text: "working", type: "progress" },
       { summary: "done", finalOutput: "done", taskComplete: true, type: "completion" },
     ]);
     expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Implement this");
@@ -47,6 +47,108 @@ describe("CursorRunner", () => {
       CI: "1",
       CURSOR_API_KEY: "cursor-key",
     });
+  });
+
+  it.each([
+    { progress: [] },
+    { progress: ["Inspecting the implementation", "Tests are still running"] },
+  ])("separates progress from the complete final deliverable (%j)", async ({ progress }) => {
+    const finalOutput = `\n# Delivered\n\n${"Validation passed. ".repeat(1_000)}\n\nBlocker: publication requires credentials.  \n\n`;
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: [
+          ...progress.map((text) => ({ type: "assistant", text })),
+          { type: "result", subtype: "success", result: finalOutput },
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n"),
+      },
+    ]);
+    const events = [];
+    for await (const event of new CursorRunner({ credential }).start({
+      sandbox,
+      sessionId: "final-output",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events).toEqual([
+      ...progress.map((text) => ({ type: "progress", text })),
+      { type: "completion", taskComplete: true, summary: finalOutput, finalOutput },
+    ]);
+  });
+
+  it.each([
+    {
+      result: { type: "result", subtype: "error", is_error: true, result: "Provider stopped" },
+      exitCode: 0,
+    },
+    { result: { type: "result", subtype: "success", result: "Delivered" }, exitCode: 7 },
+    { result: undefined, exitCode: 0 },
+  ])(
+    "does not report successful completion after missing/error results (%j)",
+    async ({ result, exitCode }) => {
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec(
+        "bash",
+        [
+          {
+            stream: "stdout",
+            data: [
+              { type: "assistant", text: "Tests are still running" },
+              ...(result ? [result] : []),
+            ]
+              .map((record) => JSON.stringify(record))
+              .join("\n"),
+          },
+        ],
+        { exitCode },
+      );
+      const events = [];
+      for await (const event of new CursorRunner({ credential }).start({
+        sandbox,
+        sessionId: "failed-final",
+        prompt: "p",
+      }))
+        events.push(event);
+      expect(events[0]).toEqual({ type: "progress", text: "Tests are still running" });
+      expect(events.some((event) => event.type === "completion" && event.taskComplete)).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "error" });
+      if (result?.result === "Delivered") {
+        expect(events).toContainEqual({ type: "progress", text: "Delivered" });
+      }
+    },
+  );
+
+  it("preserves a buffered final result in activity when a later result reports an error", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: [
+          {
+            type: "result",
+            subtype: "success",
+            result: "Validation passed. Blocker: release pending.",
+          },
+          { type: "result", subtype: "error", result: "Provider failed after response" },
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n"),
+      },
+    ]);
+    const events = [];
+    for await (const event of new CursorRunner({ credential }).start({
+      sandbox,
+      sessionId: "late-error",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events).toEqual([
+      { type: "progress", text: "Validation passed. Blocker: release pending." },
+      { type: "error", message: "Provider failed after response" },
+    ]);
   });
 
   it.each([{}, { credential: { ...credential, secret: "" } }])(
@@ -343,7 +445,7 @@ describe("parseCursorStreamJsonLine", () => {
       parseCursorStreamJsonLine(
         '{"type":"assistant","session_id":"s","message":{"content":[{"type":"text","text":"hello"}]}}',
       ),
-    ).toEqual({ event: { text: "hello", type: "text" }, sessionId: "s" });
+    ).toEqual({ event: { text: "hello", type: "progress" }, sessionId: "s" });
     expect(
       parseCursorStreamJsonLine(
         '{"type":"tool_call","subtype":"started","tool_call":{"name":"shell","args":{"cmd":"ls"}}}',

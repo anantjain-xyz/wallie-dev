@@ -7,6 +7,7 @@ import {
   type SessionActivityPresentation,
 } from "@/features/sessions/detail/session-activity-presentation";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
+import { parseRunFailure } from "@/lib/pipeline/run-failure";
 import { WallieRunCard } from "@/features/wallie/run-activity";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
@@ -421,7 +422,7 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("No messages recorded yet.");
   });
 
-  it("keeps cached failures visible even in collapsed previous runs", () => {
+  it("keeps recorded failures visible even in collapsed previous runs", () => {
     const html = renderPanel(
       data({
         runs: [
@@ -429,6 +430,13 @@ describe("SessionWalliePanel", () => {
           run({
             canRetry: true,
             id: "run-error",
+            failure: parseRunFailure(
+              JSON.stringify({
+                version: 1,
+                category: "configuration",
+                code: "sandbox_configuration",
+              }),
+            ),
             messages: [
               {
                 createdAt: "2026-05-20T20:05:00.000Z",
@@ -443,7 +451,13 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).toContain("Vercel Sandbox credentials are required.");
+    expect(html).toContain(
+      "The sandbox connection is missing, invalid, or needs a fresh capability check.",
+    );
+    expect(html).toContain(
+      "Check the sandbox connection and capability check in workspace Settings before trying again.",
+    );
+    expect(html).not.toContain("Vercel Sandbox credentials are required.");
   });
 
   it("falls back to a human-readable requester label when member names are blank", () => {

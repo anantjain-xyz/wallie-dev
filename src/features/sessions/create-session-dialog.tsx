@@ -662,7 +662,8 @@ function CreateSessionDialogBody({
       }}
     >
       <DialogContent
-        className="max-w-xl"
+        bodyClassName="flex min-h-0 flex-col"
+        className="flex max-w-xl flex-col overflow-hidden"
         description="Describe the work or link a Linear issue, then choose where Wallie should run."
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
@@ -673,184 +674,207 @@ function CreateSessionDialogBody({
           }
         }}
       >
-        <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
-          {errorMessage ? (
-            <div
-              aria-live="polite"
-              id="create-session-error"
-              role="status"
-              ref={errorRef}
-              tabIndex={-1}
-              className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
-            >
-              {errorMessage}
-            </div>
-          ) : null}
-          <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
-                Prompt
-              </label>
-              <textarea
-                id="session-prompt"
-                disabled={isSubmitting || unconfirmed}
-                aria-describedby={
-                  ["session-prompt-description", errorMessage ? "create-session-error" : null]
-                    .filter(Boolean)
-                    .join(" ") || undefined
-                }
-                autoComplete="off"
-                autoFocus={!errorMessage}
-                name="prompt"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onPaste={(event) => {
-                  const files = Array.from(event.clipboardData.items)
-                    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-                    .map((item) => item.getAsFile())
-                    .filter((file): file is File => file !== null);
-                  if (files.length > 0) handleImageFiles(files);
-                }}
-                className="ui-textarea min-h-32 leading-6"
-                placeholder="What should Wallie build?"
-              />
-              <p className="type-annotation text-muted" id="session-prompt-description">
-                Required only when no Linear issue is linked.
-              </p>
-              <SessionImageAttachments
-                disabled={isSubmitting || unconfirmed}
-                images={imageDrafts}
-                maxImages={maxSessionAttachments}
-                onFiles={handleImageFiles}
-                onRemove={(clientId) => void handleRemoveImage(clientId)}
-                onRetry={handleRetryImage}
-              />
-              {attachmentMessage ? (
-                <p className="text-xs text-warning" role="status">
-                  {attachmentMessage}
+        <form
+          className="flex min-h-0 flex-col"
+          onKeyDown={handleFormKeyDown}
+          onSubmit={handleSubmit}
+        >
+          <div
+            className="space-y-5 overflow-y-auto overscroll-contain px-1 pb-5"
+            data-select-scroll-boundary
+            onFocusCapture={(event) => {
+              const body = event.currentTarget;
+              if (!body.contains(event.target)) return;
+              const bodyRect = body.getBoundingClientRect();
+              const focusedRect = event.target.getBoundingClientRect();
+              const topDelta = focusedRect.top - bodyRect.top;
+              if (topDelta < 0 || focusedRect.height > bodyRect.height) {
+                body.scrollTop += topDelta;
+              } else if (focusedRect.bottom > bodyRect.bottom) {
+                body.scrollTop += Math.min(focusedRect.bottom - bodyRect.bottom, topDelta);
+              }
+            }}
+          >
+            {errorMessage ? (
+              <div
+                aria-live="polite"
+                id="create-session-error"
+                role="status"
+                ref={errorRef}
+                tabIndex={-1}
+                className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+              >
+                {errorMessage}
+              </div>
+            ) : null}
+            <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
+                  Prompt
+                </label>
+                <textarea
+                  id="session-prompt"
+                  disabled={isSubmitting || unconfirmed}
+                  aria-describedby={
+                    ["session-prompt-description", errorMessage ? "create-session-error" : null]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
+                  autoComplete="off"
+                  autoFocus={!errorMessage}
+                  name="prompt"
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.items)
+                      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                      .map((item) => item.getAsFile())
+                      .filter((file): file is File => file !== null);
+                    if (files.length > 0) handleImageFiles(files);
+                  }}
+                  className="ui-textarea min-h-32 leading-6"
+                  placeholder="What should Wallie build?"
+                />
+                <p className="type-annotation text-muted" id="session-prompt-description">
+                  Required only when no Linear issue is linked.
                 </p>
-              ) : null}
-            </div>
+                <SessionImageAttachments
+                  disabled={isSubmitting || unconfirmed}
+                  images={imageDrafts}
+                  maxImages={maxSessionAttachments}
+                  onFiles={handleImageFiles}
+                  onRemove={(clientId) => void handleRemoveImage(clientId)}
+                  onRetry={handleRetryImage}
+                />
+                {attachmentMessage ? (
+                  <p className="text-xs text-warning" role="status">
+                    {attachmentMessage}
+                  </p>
+                ) : null}
+              </div>
 
-            <div className="flex items-center gap-3" aria-hidden="true">
-              <span className="h-px flex-1 bg-border" />
-              <span className="type-annotation text-muted">or</span>
-              <span className="h-px flex-1 bg-border" />
+              <div className="flex items-center gap-3" aria-hidden="true">
+                <span className="h-px flex-1 bg-border" />
+                <span className="type-annotation text-muted">or</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
+                  Linear issue URL
+                </label>
+                <input
+                  id="session-linear"
+                  disabled={isSubmitting || unconfirmed}
+                  aria-describedby={
+                    [
+                      "session-linear-description",
+                      linearError ? "session-linear-error" : null,
+                      errorMessage ? "create-session-error" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
+                  autoComplete="off"
+                  name="linearUrl"
+                  value={linearUrl}
+                  onChange={(event) => handleLinearChange(event.target.value)}
+                  onBlur={handleLinearBlur}
+                  className="ui-input"
+                  placeholder="https://linear.app/acme/issue/TEAM-123"
+                  type="url"
+                />
+                <p className="type-annotation text-muted" id="session-linear-description">
+                  Wallie uses the issue title and, when the prompt is empty, its description.
+                </p>
+                {linearError ? (
+                  <p className="text-xs text-danger" id="session-linear-error" role="alert">
+                    {linearError}
+                  </p>
+                ) : null}
+              </div>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
-                Linear issue URL
+              <label className="text-sm font-semibold text-foreground" htmlFor="session-title">
+                Title <span className="type-annotation font-normal text-muted">(optional)</span>
               </label>
               <input
-                id="session-linear"
-                disabled={isSubmitting || unconfirmed}
-                aria-describedby={
-                  [
-                    "session-linear-description",
-                    linearError ? "session-linear-error" : null,
-                    errorMessage ? "create-session-error" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" ") || undefined
-                }
+                id="session-title"
                 autoComplete="off"
-                name="linearUrl"
-                value={linearUrl}
-                onChange={(event) => handleLinearChange(event.target.value)}
-                onBlur={handleLinearBlur}
+                name="title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
                 className="ui-input"
-                placeholder="https://linear.app/acme/issue/TEAM-123"
-                type="url"
+                disabled={hasLinearIssue || isSubmitting || unconfirmed}
+                placeholder={
+                  hasLinearIssue ? "From the linked Linear issue" : "Generated from the prompt"
+                }
               />
-              <p className="type-annotation text-muted" id="session-linear-description">
-                Wallie uses the issue title and, when the prompt is empty, its description.
-              </p>
-              {linearError ? (
-                <p className="text-xs text-danger" id="session-linear-error" role="alert">
-                  {linearError}
-                </p>
+              {hasLinearIssue ? (
+                <p className="type-annotation text-muted">Linear issue titles take precedence.</p>
               ) : null}
             </div>
-          </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-foreground" htmlFor="session-title">
-              Title <span className="type-annotation font-normal text-muted">(optional)</span>
-            </label>
-            <input
-              id="session-title"
-              autoComplete="off"
-              name="title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              className="ui-input"
-              disabled={hasLinearIssue || isSubmitting || unconfirmed}
-              placeholder={
-                hasLinearIssue ? "From the linked Linear issue" : "Generated from the prompt"
-              }
+            <RepositoryField
+              disabled={isSubmitting || unconfirmed}
+              cacheKey={repositoryCacheKey}
+              onValueChange={setGithubRepositoryId}
+              options={repositorySelectOptions}
+              selectedGithubRepositoryId={selectedGithubRepositoryId}
+              snapshot={repositorySnapshot}
             />
-            {hasLinearIssue ? (
-              <p className="type-annotation text-muted">Linear issue titles take precedence.</p>
+
+            {repositorySnapshot.data ? (
+              <MultiSelectField
+                description="Choose the pipeline stages this session should run."
+                disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
+                emptyMessage="No pipeline stages are configured."
+                error={
+                  stageOptions.length === 0
+                    ? "Workspace pipeline has no stages."
+                    : selectedStageIds.length === 0
+                      ? "Select at least one stage."
+                      : undefined
+                }
+                id="session-stages"
+                label="Stages"
+                onValuesChange={(values) => {
+                  const selected = new Set(values);
+                  setExcludedStageIds(
+                    stageOptions
+                      .filter((stage) => !selected.has(stage.id))
+                      .map((stage) => stage.id),
+                  );
+                }}
+                options={stageOptions.map((stage) => ({
+                  description: stage.description || undefined,
+                  label: stage.name,
+                  value: stage.id,
+                }))}
+                summary={
+                  selectedStageIds.length === stageOptions.length
+                    ? `All ${stageOptions.length} stages.`
+                    : `${selectedStageIds.length} of ${stageOptions.length} stages.`
+                }
+                values={selectedStageIds}
+              />
+            ) : repositorySnapshot.isLoading ? (
+              <div
+                aria-busy="true"
+                aria-live="polite"
+                className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
+                role="status"
+              >
+                Loading stages…
+              </div>
             ) : null}
+
+            <p className="text-xs text-muted">
+              Closing keeps your draft while you stay in this workspace. Reloading clears it.
+            </p>
           </div>
-
-          <RepositoryField
-            disabled={isSubmitting || unconfirmed}
-            cacheKey={repositoryCacheKey}
-            onValueChange={setGithubRepositoryId}
-            options={repositorySelectOptions}
-            selectedGithubRepositoryId={selectedGithubRepositoryId}
-            snapshot={repositorySnapshot}
-          />
-
-          {repositorySnapshot.data ? (
-            <MultiSelectField
-              description="Choose the pipeline stages this session should run."
-              disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
-              emptyMessage="No pipeline stages are configured."
-              error={
-                stageOptions.length === 0
-                  ? "Workspace pipeline has no stages."
-                  : selectedStageIds.length === 0
-                    ? "Select at least one stage."
-                    : undefined
-              }
-              id="session-stages"
-              label="Stages"
-              onValuesChange={(values) => {
-                const selected = new Set(values);
-                setExcludedStageIds(
-                  stageOptions.filter((stage) => !selected.has(stage.id)).map((stage) => stage.id),
-                );
-              }}
-              options={stageOptions.map((stage) => ({
-                description: stage.description || undefined,
-                label: stage.name,
-                value: stage.id,
-              }))}
-              summary={
-                selectedStageIds.length === stageOptions.length
-                  ? `All ${stageOptions.length} stages.`
-                  : `${selectedStageIds.length} of ${stageOptions.length} stages.`
-              }
-              values={selectedStageIds}
-            />
-          ) : repositorySnapshot.isLoading ? (
-            <div
-              aria-busy="true"
-              aria-live="polite"
-              className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
-              role="status"
-            >
-              Loading stages…
-            </div>
-          ) : null}
-
-          <p className="text-xs text-muted">
-            Closing keeps your draft while you stay in this workspace. Reloading clears it.
-          </p>
-          <div className="flex flex-wrap items-center justify-end gap-3">
+          <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
             <button
               type="button"
               disabled={isSubmitting || unconfirmed || hasActiveAttachmentOperation}
@@ -895,7 +919,7 @@ function CreateSessionDialogBody({
                 pendingLabel="Starting…"
               />
             </button>
-          </div>
+          </footer>
         </form>
       </DialogContent>
     </Dialog>

@@ -17,6 +17,7 @@ import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseRunFailure } from "@/lib/pipeline/run-failure";
 
 const deferredClient = vi.hoisted(() => ({
   load: vi.fn<() => Promise<SupabaseClient<Database>>>(),
@@ -472,6 +473,85 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByRole("button", { name: "Retry Build stage" }).hasAttribute("disabled")).toBe(
       false,
     );
+  });
+
+  it("keeps the recorded cause visible while loading and collapsing agent test output", async () => {
+    const failed = run(1, {
+      status: "error",
+      failure: parseRunFailure('{"version":1,"category":"timeout","code":"timeout"}'),
+    });
+    const fake = fakeSupabase({
+      "run-1": [
+        {
+          agent_run_id: "run-1",
+          created_at: "2026-07-18T12:59:00.000Z",
+          id: "test-error",
+          kind: "error",
+          message_md: "Unit tests failed. API_KEY=private-test-key",
+        },
+      ],
+    });
+    panel(data([failed]), fake.supabase);
+
+    expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
+    expect(screen.getByText(/Check the activity and timeout settings/)).toBeTruthy();
+    expect(fake.messageQueries).toEqual([]);
+    const toggle = screen.getByRole("button", { name: /Stage 1 run, attempt 1, run run-1, .*activity:/ });
+    fireEvent.click(toggle);
+    await screen.findByText("Activity error details");
+    expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
+    expect(screen.getByText("Activity error details").closest("details")?.open).toBe(false);
+    expect(screen.getByText(/Unit tests failed\./).textContent).toContain("[redacted]");
+    expect(document.body.textContent).not.toContain("private-test-key");
+
+    fireEvent.click(toggle);
+    expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
+    expect(screen.queryByText("Activity error details")).toBeNull();
+    expect(screen.queryByText("Failure cause unavailable")).toBeNull();
+  });
+
+  it("learns terminal failure metadata live without treating agent errors as its cause", async () => {
+    const failed = run(1, { status: "error" });
+    const fake = fakeSupabase();
+    panel(data([failed]), fake.supabase);
+    await act(async () => idleCallback?.());
+    const channel = fake.channels.find((entry) =>
+      entry.name.startsWith("wallie-summary-messages:"),
+    );
+    expect(channel).toBeDefined();
+    expect(screen.getByText("Failure cause unavailable")).toBeTruthy();
+
+    await act(async () => {
+      channel?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          agent_run_id: failed.id,
+          created_at: "2026-07-18T13:00:00.000Z",
+          id: "agent-error",
+          kind: "error",
+          message_md: "Tests failed during execution",
+        },
+      });
+    });
+    expect(screen.getByText("Failure cause unavailable")).toBeTruthy();
+    await act(async () => {
+      channel?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          agent_run_id: failed.id,
+          created_at: "2026-07-18T13:00:01.000Z",
+          id: "terminal-failure",
+          kind: "run_failure",
+          message_md:
+            '{"version":1,"category":"publication","code":"publication","secret":"private-value"}',
+        },
+      });
+    });
+    expect(screen.getByText(/^Publication: Wallie could not preserve/)).toBeTruthy();
+    expect(screen.getByText(/Check retained source recovery/)).toBeTruthy();
+    expect(screen.queryByText("Failure cause unavailable")).toBeNull();
+    expect(document.body.textContent).not.toContain("private-value");
+    expect(screen.queryByText("Tests failed during execution")).toBeNull();
   });
 
   it("renders and opens existing activity while the browser client is loading", async () => {

@@ -135,10 +135,21 @@ export async function loadWallieRunPage(input: {
 
   const rows = (data ?? []) as AgentRunRow[];
   const pageRows = rows.slice(0, WALLIE_RUN_PAGE_SIZE);
+  const failedRunIds = pageRows.filter((run) => run.status === "error").map((run) => run.id);
+  // One fenced terminal record per run. Activity remains lazy and bounded independently.
+  const failures = failedRunIds.length
+    ? await input.supabase
+        .from("agent_run_messages")
+        .select("agent_run_id, created_at, id, kind, message_md")
+        .in("agent_run_id", failedRunIds)
+        .eq("kind", "run_failure")
+    : { data: [], error: null };
+  if (failures.error) throw failures.error;
   const runs = buildWallieSessionData({
     sessionGithubRepositoryId: null,
     memberIndex: input.memberIndex,
-    messages: [],
+    messages: failures.data ?? [],
+    loadedMessageRunIds: [],
     repository: null,
     requiresVercelSandbox: false,
     runs: pageRows.map((row) => toBuildableRunRow(row, attemptOrdinals.get(row.id) ?? 1)),
@@ -204,6 +215,7 @@ export async function loadWallieSessionData(input: {
       created_at: run.createdAt,
       cost_provenance: run.usage.costProvenance,
       finished_at: run.finishedAt,
+      failure: run.failure,
       id: run.id,
       input_tokens: run.usage.inputTokens,
       output_tokens: run.usage.outputTokens,
