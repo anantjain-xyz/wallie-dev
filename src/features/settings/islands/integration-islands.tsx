@@ -62,17 +62,17 @@ export function GithubIntegrationIsland({
       case "config_missing":
         return {
           kind: "error",
-          text: "GitHub install completed, but Wallie is missing server config needed to finish the sync.",
+          text: "GitHub installed. Missing server configuration prevents sync.",
         };
       case "invalid_state":
         return {
           kind: "error",
-          text: "GitHub installation state expired or could not be verified. Start the install flow again from settings.",
+          text: "GitHub installation expired or unverified. Restart installation in Settings.",
         };
       case "failed":
         return {
           kind: "error",
-          text: "GitHub installation callback failed. Try the install flow again after checking server config.",
+          text: "GitHub installation failed. Check server configuration and retry.",
         };
       default:
         return null;
@@ -344,7 +344,7 @@ export function RuntimeIntegrationIsland({
           sandboxData.setupHealth.vercelSandboxConnection.connected
         }
         setFlashMessage={setMessage}
-        tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
+        tagline="Manage agents, provider access, and secrets."
         title="Agent"
         workspaceId={initialData.workspace.id}
       />

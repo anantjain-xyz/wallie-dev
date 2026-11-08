@@ -164,7 +164,7 @@ export function AgentConfigSection({
   sandboxConnectionLabel,
   sandboxConnectionReady,
   setFlashMessage,
-  tagline = "Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution.",
+  tagline = "Configure agents for all workspace sessions.",
   title = "Coding agent",
   workspaceId,
 }: AgentConfigSectionProps) {

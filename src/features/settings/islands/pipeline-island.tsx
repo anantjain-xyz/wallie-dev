@@ -35,7 +35,7 @@ export function PipelineIsland({ data }: { data: SettingsPageData }) {
       statusBadge={
         pipelineDirty ? <Status label="Unsaved changes" value="needs_attention" /> : null
       }
-      tagline="Stages run in order; each stage prompt is sent to the agent, and an approver reviews the output before the session advances. Archiving affects future sessions only; existing sessions retain their selected stages."
+      tagline="Each stage runs, then awaits approval. Archiving affects future sessions; existing sessions keep their stages."
       title="Pipeline"
     >
       <PipelineEditor

@@ -305,14 +305,12 @@ export function SessionReviewEvidence({
         method: "POST",
       });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      if (!response.ok) throw new Error(payload?.error ?? "GitHub refresh could not be queued.");
+      if (!response.ok) throw new Error(payload?.error ?? "Couldn’t queue verification.");
       setPolling(true);
       await refresh();
     } catch (cause) {
       setRefreshError(
-        cause instanceof Error
-          ? cause.message
-          : "GitHub refresh could not be queued. Retry to verify again.",
+        cause instanceof Error ? cause.message : "Couldn’t queue verification. Retry.",
       );
     } finally {
       setRefreshPending(false);
@@ -357,9 +355,9 @@ export function SessionReviewEvidence({
   const prChecksUrl = pr?.url ? `${pr.url}/checks` : null;
   const terminal = delivery.evaluation.state === "merged" || delivery.evaluation.state === "closed";
   const historicalNote = historical
-    ? "Historical view: readiness and code changes describe the current canonical pull request, not the older artifact selection shown above."
+    ? "Readiness and changes reflect the current PR, not this historical artifact."
     : !delivery.finalStage
-      ? "This is not the final delivery stage. Readiness is advisory here; final approval applies the delivery gate."
+      ? "Readiness is advisory until final-stage approval."
       : null;
 
   return (
@@ -482,19 +480,16 @@ export function SessionReviewEvidence({
       ) : null}
       {error && value ? (
         <p className="mt-3 text-xs text-warning" role="status">
-          Could not refresh the latest delivery state. Showing the last loaded evidence.
+          Couldn’t refresh. Showing saved evidence.
         </p>
       ) : null}
       {queueRefreshing ? (
         <p className="mt-3 text-xs text-muted" role="status">
-          {delivery.refresh.status === "pending"
-            ? "GitHub verification refresh is queued."
-            : "GitHub verification refresh is running."}{" "}
-          This panel updates when a new observation lands.
+          {delivery.refresh.status === "pending" ? "Verification queued." : "Verifying…"}
         </p>
       ) : polling ? (
         <p className="mt-3 text-xs text-muted" role="status">
-          Waiting for a new GitHub verification observation…
+          Waiting for verification…
         </p>
       ) : null}
       {delivery.refresh.status === "error" ? (

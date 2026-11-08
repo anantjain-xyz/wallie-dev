@@ -135,8 +135,7 @@ function ExecutionPolicyControls({
         setConflict(true);
         return Response.json(
           {
-            error:
-              "This policy changed while you were editing. Reload the saved policy before trying again.",
+            error: "Policy changed. Reload before retrying.",
           },
           { status: 409 },
         );

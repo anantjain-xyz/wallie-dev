@@ -284,7 +284,7 @@ export function SandboxProviderSection({
   return (
     <Section
       anchorId="sandbox"
-      tagline="Choose where Wallie executes agents. Connections are retained when you switch; jobs never fall back to another provider."
+      tagline="Choose where agents run. Switching keeps connections; jobs use only the selected provider."
       title="Sandbox"
     >
       <div className="space-y-5">

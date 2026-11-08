@@ -277,9 +277,7 @@ describe("revision review workspace", () => {
     expect(within(batch).getByText("<script>saved comment</script>")).toBeVisible();
     expect(batch.querySelector("script")).toBeNull();
     expect(within(batch).getByText(/Initial revision run · failed/)).toBeVisible();
-    expect(
-      within(batch).getByText(/Failed or canceled runs keep this feedback intact/),
-    ).toBeVisible();
+    expect(within(batch).getByText(/Feedback kept/)).toBeVisible();
     expect(within(batch).getByText("Saved agent input")).toBeInTheDocument();
   });
   it("ignores stale batch selections arriving out of order", async () => {

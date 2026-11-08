@@ -212,16 +212,16 @@ export default function VerifyStep({
         </div>
         <p className="mt-2 text-[13px] leading-6 text-muted">
           {isStarting || isPolling
-            ? "We’re checking that your repository, agent, and sandbox work together."
+            ? "Checking repository, agent, and sandbox."
             : blockers.length > 0
-              ? "Finish the items below, then verify your setup."
+              ? "Resolve these items, then verify."
               : ready
-                ? "Your repository, agent, and sandbox passed verification."
+                ? "Repository, agent, and sandbox verified."
                 : failed
                   ? verification.detail
                   : stale
-                    ? "Verify again to check your current repository, agent, and sandbox."
-                    : "Run one final check to make sure your repository, agent, and sandbox work together."}
+                    ? "Setup changed. Verify again."
+                    : "Verify repository, agent, and sandbox."}
         </p>
         {!data.canManage && (data.onboarding.status !== "completed" || !ready) ? (
           <p className="mt-2 text-[13px] leading-6 text-muted">

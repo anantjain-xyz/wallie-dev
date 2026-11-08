@@ -47,7 +47,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   return (
     <Section
       anchorId="verify"
-      tagline="Confirm setup health before Wallie starts running sessions against this workspace."
+      tagline="Check connections before running sessions."
       title="Verify setup"
     >
       <div className="space-y-8">

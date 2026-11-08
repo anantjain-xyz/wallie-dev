@@ -155,7 +155,7 @@ export function PipelineEditor({
     setArchivedStages((current) => current.filter((_, currentIndex) => currentIndex !== index));
     setStages((current) => [...current, archived.stage]);
     announce(
-      `${stageDisplayName(archived.stage, stages.length)} restored at position ${stages.length + 1}. Save the pipeline to apply this change.`,
+      `${stageDisplayName(archived.stage, stages.length)} restored at position ${stages.length + 1}. Save to apply.`,
     );
   }
 
@@ -168,7 +168,7 @@ export function PipelineEditor({
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to save pipeline. Your edits are preserved — try again.");
+      setError(body?.error ?? "Couldn’t save pipeline. Edits kept.");
       finishInteraction("save_settings", "error");
       return;
     }
@@ -245,8 +245,8 @@ export function PipelineEditor({
         finishInteraction("save_settings", "error");
         setError(
           caught instanceof Error
-            ? `${caught.message} Your edits are preserved — try again.`
-            : "Failed to save pipeline. Your edits are preserved — try again.",
+            ? `${caught.message} Edits kept. Retry.`
+            : "Couldn’t save pipeline. Edits kept.",
         );
       } finally {
         saveInFlightRef.current = false;

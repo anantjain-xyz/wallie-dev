@@ -97,7 +97,7 @@ export function WorkspaceAvatarSection({
   return (
     <Section
       anchorId="workspace"
-      tagline="Workspace identity is shown across navigation, notifications, and PR descriptions."
+      tagline="Shown in navigation, notifications, and PRs."
       title="Workspace"
     >
       <div className="flex flex-wrap items-center gap-4">

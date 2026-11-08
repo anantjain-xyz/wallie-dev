@@ -456,12 +456,12 @@ function CreateSessionDialogBody({
     }
 
     if (!repositorySnapshot.data) {
-      setErrorMessage("Wait for repositories to finish loading before starting a session.");
+      setErrorMessage("Wait for repositories to load.");
       return;
     }
 
     if (repositorySnapshot.isStale) {
-      setErrorMessage("Refresh session options before starting a session.");
+      setErrorMessage("Refresh session options first.");
       return;
     }
 
@@ -481,7 +481,7 @@ function CreateSessionDialogBody({
     }
 
     if (hasBlockingAttachments) {
-      setErrorMessage("Wait for every image upload to finish or remove failed images.");
+      setErrorMessage("Wait for uploads or remove failed images.");
       return;
     }
 
@@ -608,16 +608,14 @@ function CreateSessionDialogBody({
         error.code === "session_attachments_changed" &&
         refreshExpiredImages(true)
       ) {
-        setErrorMessage(
-          "Session images expired or changed. Refreshing them now; start the session once they are ready.",
-        );
+        setErrorMessage("Images expired or changed. Refreshing; start once ready.");
       } else {
         setErrorMessage(
           rejected
             ? error instanceof Error
               ? error.message
               : "Failed to create session."
-            : "We couldn’t confirm whether the session was created. Your draft is saved. Retry creation to check the original request.",
+            : "Creation unconfirmed. Draft saved. Retry to check the original request.",
         );
       }
       setIsSubmitting(false);
@@ -998,7 +996,7 @@ export function RepositoryField({
           className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
           role="status"
         >
-          No repositories are available. This session will start without one.
+          No repositories available. Starting without one.
         </div>
       )}
 

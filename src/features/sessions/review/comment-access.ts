@@ -19,15 +19,15 @@ export function sessionReviewReadOnlyReason({
 export function reviewReadOnlyMessage(reason: ReviewReadOnlyReason): string {
   switch (reason) {
     case "archived":
-      return "This session is archived. Comments are read-only.";
+      return "Archived · Comments are read-only.";
     case "approved":
-      return "This session is approved. Comments are read-only.";
+      return "Approved · Comments are read-only.";
     case "unauthorized":
-      return "You do not have permission to comment on this artifact.";
+      return "You don’t have permission to comment.";
     case "loading":
       return "Checking comment permissions…";
     case "unavailable":
-      return "Comments are unavailable until permissions can be verified. Retry loading comments.";
+      return "Couldn’t verify comment permissions. Retry loading.";
     default: {
       const exhaustive: never = reason;
       return exhaustive;
