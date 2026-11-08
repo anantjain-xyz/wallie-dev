@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
+import {
+  mayContainEvidenceLinks,
+  renderMarkdownToHtml,
+} from "@/components/shared/markdown-content.server";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loadArtifactEvidenceLinks } from "@/lib/validation-evidence/artifact-links";
 
 export const preferredRegion = "home";
 
@@ -199,13 +203,22 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const payload = artifactRow.artifact_json;
+    const evidenceLinks =
+      typeof payload === "string" && mayContainEvidenceLinks(payload)
+        ? await loadArtifactEvidenceLinks({
+            supabase,
+            sessionId: sessionRow.id,
+            workspaceId: sessionRow.workspace_id,
+            artifactId: artifactRow.id,
+          })
+        : undefined;
     return NextResponse.json({
       artifact: {
         createdAt: artifactRow.created_at,
         id: artifactRow.id,
         payload,
         sanitizedHtml:
-          typeof payload === "string" ? await renderMarkdownToHtml(payload, true) : null,
+          typeof payload === "string" ? renderMarkdownToHtml(payload, true, evidenceLinks) : null,
         stageSlug: selectedStage.slug,
         version: artifactRow.version,
       },
