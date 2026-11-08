@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "commands": [
+    {
+      "key": "review",
+      "command": "pnpm test src/features/sessions/detail/stage-timeline.test.ts src/features/sessions/detail/stage-execution.test.ts src/features/sessions/detail/execution-summary.test.tsx src/features/sessions/detail/session-detail-page-client.test.ts src/features/sessions/detail/data.test.ts src/features/sessions/detail/recovery-snapshot.test.ts --reporter=json --outputFile=\"$WALLIE_EVIDENCE_DIR/review.json\"",
+      "timeoutSeconds": 120,
+      "reports": [
+        {
+          "key": "report",
+          "path": "review.json",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    },
+    {
+      "key": "fast-check",
+      "command": "pnpm check:fast",
+      "timeoutSeconds": 300,
+      "reports": []
+    },
+    {
+      "key": "unit-suite",
+      "command": "pnpm test --maxWorkers=2",
+      "timeoutSeconds": 300,
+      "reports": []
+    },
+    {
+      "key": "cloudflare",
+      "command": "pnpm check:cloudflare",
+      "timeoutSeconds": 300,
+      "reports": []
+    },
+    {
+      "key": "browser",
+      "command": "pnpm build && PLAYWRIGHT_JSON_OUTPUT_FILE=\"$WALLIE_EVIDENCE_DIR/browser.json\" pnpm exec playwright test e2e/stage-startup.spec.ts --reporter=json",
+      "timeoutSeconds": 300,
+      "reports": [
+        {
+          "key": "report",
+          "path": "browser.json",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    }
+  ]
+}
