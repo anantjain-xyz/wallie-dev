@@ -5,6 +5,7 @@ import {
   useMemo,
   useOptimistic,
   useRef,
+  useState,
   useTransition,
   type KeyboardEvent,
 } from "react";
@@ -79,11 +80,31 @@ export function SessionsCommandBar({
   const [isPending, startTransition] = useTransition();
   const [optimisticQuery, setOptimisticQuery] = useOptimistic(queryState);
   const latestQueryRef = useRef(queryState);
-  const submittedSearchRef = useRef<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [search, setSearch] = useState<{
+    appliedQuery: string;
+    draft: string;
+    submitted: string | null;
+  }>({ appliedQuery: queryState.query, draft: queryState.query, submitted: null });
+
+  if (search.appliedQuery !== queryState.query) {
+    setSearch({
+      appliedQuery: queryState.query,
+      // A response must not overwrite edits made after its submission.
+      draft:
+        search.submitted === queryState.query.trim() && search.draft.trim() !== search.submitted
+          ? search.draft
+          : queryState.query,
+      submitted: null,
+    });
+  }
 
   const basePath = workspaceSessionsPath(workspaceSlug);
-  const clearEnabled = hasActiveFilters(optimisticQuery);
+  const clearEnabled = hasActiveFilters(optimisticQuery) || search.draft.length > 0;
+  const searchUnapplied = search.draft.trim() !== optimisticQuery.query.trim();
+  const appliedSearchSummary = queryState.query.trim()
+    ? `Showing results for “${queryState.query.trim()}”.`
+    : "Showing sessions without a search filter.";
 
   useEffect(() => {
     if (!isPending) latestQueryRef.current = queryState;
@@ -106,13 +127,6 @@ export function SessionsCommandBar({
     const href = buildSessionsListHref(basePath, queryState, search);
     window.history.replaceState(null, "", href);
   }, [basePath, queryState]);
-
-  useEffect(() => {
-    const input = searchInputRef.current;
-    if (input && (document.activeElement !== input || input.value === submittedSearchRef.current)) {
-      input.value = queryState.query;
-    }
-  }, [queryState.query]);
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const current = latestQueryRef.current;
@@ -139,15 +153,23 @@ export function SessionsCommandBar({
 
   function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const value = searchInputRef.current?.value ?? "";
-    submittedSearchRef.current = value;
+    const value = search.draft.trim();
+    if (isPending || value === latestQueryRef.current.query.trim()) return;
+    setSearch({ ...search, submitted: value });
     updateQueryState({ query: value });
   }
 
+  function handleClearSearch() {
+    const needsNavigation = Boolean(latestQueryRef.current.query.trim());
+    setSearch({ ...search, draft: "", submitted: needsNavigation ? "" : null });
+    if (needsNavigation) updateQueryState({ query: "" });
+    searchInputRef.current?.focus();
+  }
+
   function handleClear() {
-    if (searchInputRef.current) searchInputRef.current.value = "";
-    submittedSearchRef.current = "";
-    updateQueryState({ ...DEFAULT_QUERY_STATE });
+    const needsNavigation = hasActiveFilters(latestQueryRef.current);
+    setSearch({ ...search, draft: "", submitted: needsNavigation ? "" : null });
+    if (needsNavigation) updateQueryState({ ...DEFAULT_QUERY_STATE });
     searchInputRef.current?.focus();
   }
 
@@ -256,18 +278,32 @@ export function SessionsCommandBar({
       >
         <form
           onSubmit={handleSearchSubmit}
-          className={cn("flex min-w-0 flex-1 items-center", FILTER_SEARCH_CLASS)}
+          className={cn("flex min-w-0 flex-1 items-center gap-1.5", FILTER_SEARCH_CLASS)}
           aria-label="Search sessions"
         >
           <FilterSearch
             ref={searchInputRef}
             id="sessions-search"
             className="h-9 min-h-9 text-sm md:h-9 md:text-[13px]"
-            defaultValue={queryState.query}
+            value={search.draft}
+            onChange={(event) => setSearch({ ...search, draft: event.target.value })}
             aria-label="Search prompts, titles, or Linear IDs"
-            description="Search prompts, titles, session numbers, or Linear IDs. Press Enter to search."
+            description="Search prompts, titles, session numbers, or Linear IDs. Press Enter or click Search to apply."
           />
-          <button type="submit" className="sr-only">
+          {search.draft || optimisticQuery.query ? (
+            <button
+              type="button"
+              className="ui-button h-9 min-h-9 shrink-0 px-2 text-sm md:text-[13px]"
+              onClick={handleClearSearch}
+            >
+              Clear search
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            className="ui-button h-9 min-h-9 shrink-0 px-3 text-sm md:text-[13px]"
+            disabled={isPending || search.draft.trim() === queryState.query.trim()}
+          >
             Search
           </button>
         </form>
@@ -332,8 +368,21 @@ export function SessionsCommandBar({
           ) : null}
         </div>
       </div>
-      <div role="status" aria-live="polite" className="mt-1 min-h-4 text-xs text-muted">
-        {isPending ? "Updating sessions…" : null}
+      <div
+        role="status"
+        aria-label="Sessions search status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="mt-1 text-xs text-muted [overflow-wrap:anywhere]"
+      >
+        {isPending ? <span>Updating sessions… </span> : null}
+        {searchUnapplied ? (
+          <span className="font-medium text-foreground">
+            Search not applied.{" "}
+            {isPending ? "Wait for this update to finish." : "Press Enter or click Search."}{" "}
+          </span>
+        ) : null}
+        <span>{appliedSearchSummary}</span>
       </div>
     </CommandBar>
   );
