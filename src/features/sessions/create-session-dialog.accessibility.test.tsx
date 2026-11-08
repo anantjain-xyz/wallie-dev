@@ -513,58 +513,236 @@ describe("CreateSessionDialog accessibility", () => {
     expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   });
 
-  it("starts a valid session with Command+Enter and leaves bare Enter to the prompt", async () => {
-    const user = userEvent.setup();
-    const workspaceId = "00000000-0000-4000-8000-000000000001";
-    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
-      defaultGithubRepositoryId: null,
-      pipelineId: "00000000-0000-4000-8000-000000000010",
-      repositoryOptions: [],
-      stageOptions: [
-        {
-          description: "Plan the work",
-          id: "00000000-0000-4000-8000-000000000011",
-          name: "Plan",
-          position: 1,
-        },
-      ],
-    });
-    clientMocks.createSessionFromClient.mockResolvedValue({
-      canonicalUrl: "/w/acme/sessions/42",
-      number: 42,
-    });
+  it.each([
+    { modifier: "Meta", name: "Command" },
+    { modifier: "Control", name: "Control" },
+  ])(
+    "starts a valid session with $name+Enter and leaves bare Enter to the prompt",
+    async ({ modifier }) => {
+      const user = userEvent.setup();
+      const workspaceId = "00000000-0000-4000-8000-000000000001";
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        defaultGithubRepositoryId: null,
+        pipelineId: "00000000-0000-4000-8000-000000000010",
+        repositoryOptions: [],
+        stageOptions: [
+          {
+            description: "Plan the work",
+            id: "00000000-0000-4000-8000-000000000011",
+            name: "Plan",
+            position: 1,
+          },
+        ],
+      });
+      clientMocks.createSessionFromClient.mockResolvedValue({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
 
-    render(
-      <OverlayProvider>
-        <CreateSessionDialog
-          onClose={vi.fn()}
-          open
-          userId="00000000-0000-4000-8000-000000000002"
-          workspaceId={workspaceId}
-          workspaceSlug="acme"
-        />
-      </OverlayProvider>,
-    );
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            onClose={vi.fn()}
+            open
+            userId="00000000-0000-4000-8000-000000000002"
+            workspaceId={workspaceId}
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+
+      const prompt = await screen.findByLabelText("Prompt");
+      await user.type(prompt, "Build the dashboard{Enter}with keyboard support");
+      expect(prompt).toHaveValue("Build the dashboard\nwith keyboard support");
+      expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Start session" })).toHaveAttribute(
+        "aria-keyshortcuts",
+        "Meta+Enter Control+Enter",
+      );
+
+      await user.keyboard(`{${modifier}>}{Enter}{/${modifier}}`);
+
+      await waitFor(() =>
+        expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+          expect.objectContaining({
+            promptMd: "Build the dashboard\nwith keyboard support",
+            workspaceId,
+          }),
+        ),
+      );
+    },
+  );
+
+  it("tabs through the expanded form and footer actions in both directions without leaving the dialog", async () => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    render(<DraftHarness />);
 
     const prompt = await screen.findByLabelText("Prompt");
-    await user.type(prompt, "Build the dashboard{Enter}with keyboard support");
-    expect(prompt).toHaveValue("Build the dashboard\nwith keyboard support");
+    await user.type(prompt, "Build the dashboard");
+    const stages = await screen.findByRole("button", { name: "Stages All 1 stages." });
+    const formFields = [
+      screen.getByLabelText("Add images"),
+      screen.getByLabelText("Linear issue URL"),
+      screen.getByLabelText("Title (optional)"),
+      screen.getByRole("combobox", { name: "Repository" }),
+      stages,
+    ];
+    for (const field of formFields) {
+      await user.tab();
+      expect(field).toHaveFocus();
+    }
+
+    await user.keyboard("{Enter}");
+    expect(stages).toHaveAttribute("aria-expanded", "true");
+    const dialog = screen.getByRole("dialog", { name: "Start a new session" });
+    const remainingControls = [
+      screen.getByRole("checkbox", { name: "Plan (Plan the work)" }),
+      screen.getByRole("button", { name: "Discard draft" }),
+      screen.getByRole("button", { name: "Close" }),
+      screen.getByRole("button", { name: "Start session" }),
+      screen.getByRole("button", { name: "Close dialog" }),
+      prompt,
+    ];
+    for (const control of remainingControls) {
+      await user.tab();
+      expect(control).toHaveFocus();
+      expect(dialog).toContainElement(control);
+    }
+    for (const control of [...remainingControls.slice(0, -1)].reverse()) {
+      await user.tab({ shift: true });
+      expect(control).toHaveFocus();
+    }
+    await user.tab({ shift: true });
+    expect(stages).toHaveFocus();
     expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Start session" })).toHaveAttribute(
-      "aria-keyshortcuts",
-      "Meta+Enter Control+Enter",
-    );
+  });
 
-    await user.keyboard("{Meta>}{Enter}{/Meta}");
+  it.each([
+    { name: "clipped", bodyHeight: 400, scrollTop: 213 },
+    { name: "taller than the available body", bodyHeight: 80, scrollTop: 0 },
+  ])("reveals the $name prompt when focus wraps without scrolling the dialog", async (viewport) => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    render(<DraftHarness />);
 
-    await waitFor(() =>
-      expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
-        expect.objectContaining({
-          promptMd: "Build the dashboard\nwith keyboard support",
-          workspaceId,
-        }),
-      ),
-    );
+    const prompt = await screen.findByLabelText("Prompt");
+    const dialog = screen.getByRole("dialog", { name: "Start a new session" });
+    const body = prompt.closest("form")?.firstElementChild;
+    if (!(body instanceof HTMLElement)) throw new Error("Session form body is missing.");
+
+    body.scrollTop = viewport.scrollTop;
+    const bodyRect = vi
+      .spyOn(body, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 135, 400, viewport.bodyHeight));
+    const promptRect = vi
+      .spyOn(prompt, "getBoundingClientRect")
+      .mockImplementation(() => new DOMRect(0, 176 - body.scrollTop, 400, 128));
+    try {
+      act(() => screen.getByRole("button", { name: "Close dialog" }).focus());
+      await user.tab();
+
+      expect(prompt).toHaveFocus();
+      expect(body.scrollTop).toBe(41);
+      expect(prompt.getBoundingClientRect().top).toBe(body.getBoundingClientRect().top);
+      expect(dialog.scrollTop).toBe(0);
+    } finally {
+      bodyRect.mockRestore();
+      promptRect.mockRestore();
+    }
+  });
+
+  it("keeps the form scroll position when keyboard focus moves through portaled repository options", async () => {
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: "repo-1",
+      pipelineId: "pipeline-1",
+      repositoryOptions: [
+        { id: "repo-1", fullName: "acme/app" },
+        { id: "repo-2", fullName: "acme/service" },
+      ],
+      stageOptions: [{ id: "stage-1", name: "Plan", position: 1, description: "Plan the work" }],
+    });
+    const user = userEvent.setup();
+    render(<DraftHarness />);
+
+    const repository = await screen.findByRole("combobox", { name: "Repository" });
+    await user.click(repository);
+    const option = await screen.findByRole("option", { name: "acme/service" });
+    const body = repository.closest("form")?.firstElementChild;
+    if (!(body instanceof HTMLElement)) throw new Error("Session form body is missing.");
+    expect(body).not.toContainElement(option);
+
+    body.scrollTop = 200;
+    const bodyRect = vi
+      .spyOn(body, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 100, 400, 200));
+    const optionRect = vi
+      .spyOn(option, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 500, 400, 24));
+    try {
+      await user.keyboard("{ArrowDown}");
+
+      expect(option).toHaveFocus();
+      expect(body.scrollTop).toBe(200);
+    } finally {
+      bodyRect.mockRestore();
+      optionRect.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: "below", bodyHeight: 300, triggerTop: 170, availableHeight: 226 },
+    { name: "above", bodyHeight: 300, triggerTop: 370, availableHeight: 206 },
+    {
+      name: "over the trigger in a tiny body",
+      bodyHeight: 100,
+      triggerTop: 180,
+      availableHeight: 84,
+    },
+    {
+      name: "inside the body when its focused trigger moves below it",
+      bodyHeight: 100,
+      triggerTop: 312.5,
+      availableHeight: 84,
+    },
+  ])("keeps repository options $name clear of the dialog footer", async (viewport) => {
+    prepareDraftOptions();
+    const user = userEvent.setup();
+    render(<DraftHarness />);
+
+    const repository = await screen.findByRole("combobox", { name: "Repository" });
+    const dialog = screen.getByRole("dialog", { name: "Start a new session" });
+    const body = repository.closest("form")?.firstElementChild;
+    if (!(body instanceof HTMLElement)) throw new Error("Session form body is missing.");
+    dialog.style.transform = "translateX(-50%)";
+    const dialogRect = vi
+      .spyOn(dialog, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 50, 400, 500));
+    const bodyRect = vi
+      .spyOn(body, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 150, 400, viewport.bodyHeight));
+    const triggerRect = vi
+      .spyOn(repository, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, viewport.triggerTop, 400, 40));
+    try {
+      await user.click(repository);
+
+      const listbox = await screen.findByRole("listbox", { name: "Repository" });
+      expect(screen.getByRole("option", { name: "acme/app" })).toHaveFocus();
+      const availableHeight = Number.parseFloat(
+        listbox.style.getPropertyValue("--radix-select-content-available-height"),
+      );
+      expect(availableHeight).toBe(viewport.availableHeight);
+      const popupTop = listbox.style.top
+        ? Number.parseFloat(listbox.style.top) + 50
+        : 550 - Number.parseFloat(listbox.style.bottom) - availableHeight;
+      expect(popupTop).toBeGreaterThanOrEqual(150);
+      expect(popupTop + availableHeight).toBeLessThanOrEqual(150 + viewport.bodyHeight);
+    } finally {
+      dialogRect.mockRestore();
+      bodyRect.mockRestore();
+      triggerRect.mockRestore();
+    }
   });
 
   it("blocks keyboard submission while cached repository options are stale", async () => {
