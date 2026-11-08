@@ -20,8 +20,16 @@ import {
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
 import { RouteEntrance, WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   shouldShowOnboardingResumeCta,
@@ -224,6 +232,33 @@ export function ShellHeader({
   const router = useRouter();
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
+  const headerRef = useRef<HTMLElement>(null);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const root = document.documentElement;
+    const measure = () => {
+      root.style.setProperty(
+        "--shell-scroll-padding",
+        `${header.getBoundingClientRect().height}px`,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    const desktop = window.matchMedia("(min-width: 64rem)");
+    const closeCompactMenu = () => {
+      if (desktop.matches) setWorkspaceMenuOpen(false);
+    };
+    desktop.addEventListener("change", closeCompactMenu);
+    return () => {
+      observer.disconnect();
+      desktop.removeEventListener("change", closeCompactMenu);
+      root.style.removeProperty("--shell-scroll-padding");
+    };
+  }, []);
 
   // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
   // that auto-opens the dialog regardless of which page in the workspace the
@@ -304,6 +339,7 @@ export function ShellHeader({
   }
 
   const pipelineHref = workspaceBasePath(workspace.slug);
+  const activeNavItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
 
   function handleNavClick(event: MouseEvent<HTMLAnchorElement>, item: WorkspaceNavItem) {
     if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
@@ -384,19 +420,58 @@ export function ShellHeader({
           <header
             className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
             data-shell-header=""
+            ref={headerRef}
           >
-            {/* Mobile / tablet: workspace, nav, and actions share one compact row. */}
-            <div className="flex h-12 min-w-0 items-center gap-1.5 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] lg:hidden">
-              <p className="max-w-[28%] shrink-0 truncate text-[13px] font-semibold text-foreground">
+            {/* Compact navigation can wrap above the actions when text is enlarged. */}
+            <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-x-1.5 py-0.5 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] lg:hidden">
+              <p className="min-w-0 max-w-[28%] flex-1 truncate text-[13px] font-semibold text-foreground">
                 {workspace.name}
               </p>
-              <WorkspaceNavigation
-                pathname={pathname}
-                className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
-              >
-                {renderNavLinks()}
-              </WorkspaceNavigation>
-              <div className="flex shrink-0 items-center gap-1">
+              <nav aria-label="Workspace navigation" className="max-w-full shrink-0">
+                <DropdownMenu open={workspaceMenuOpen} onOpenChange={setWorkspaceMenuOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={`Workspace navigation: ${activeNavItem?.label ?? "Pages"}`}
+                      className="ui-shell-nav-link ui-shell-nav-link-active min-h-11 max-w-full gap-1.5 whitespace-normal px-2"
+                    >
+                      {activeNavItem?.label ?? "Pages"}
+                      <ChevronDownIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    label="Workspace pages"
+                    className="w-48 min-w-0 max-w-[calc(100vw-1rem)]"
+                    onCloseAutoFocus={(event) => {
+                      if (!window.matchMedia("(min-width: 64rem)").matches) return;
+                      event.preventDefault();
+                      headerRef.current
+                        ?.querySelector<HTMLAnchorElement>(
+                          '.ui-shell-nav-link[aria-current="page"]',
+                        )
+                        ?.focus();
+                    }}
+                  >
+                    {navItems.map((item) => {
+                      const active = isActiveNavItem(pathname, workspace.slug, item);
+                      return (
+                        <DropdownMenuItem key={item.href} asChild className="min-h-11">
+                          <Link
+                            href={item.href}
+                            prefetch={!active && pathname === pipelineHref ? true : undefined}
+                            aria-current={active ? "page" : undefined}
+                            onClick={(event) => handleNavClick(event, item)}
+                          >
+                            {item.label}
+                            {active ? <CheckIcon className="ml-auto h-3.5 w-3.5" /> : null}
+                          </Link>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </nav>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
                 {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
                 <ThemeToggle />
                 <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} mobileHeader />
