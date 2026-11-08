@@ -228,7 +228,6 @@ async function runStage(input: {
     attemptCount: job.attempt_count,
   });
   let installationToken: string | undefined;
-  const collectedText: string[] = [];
   let finalOutput: string | undefined;
   let taskComplete = false;
   let runFailureMessageRecorded = false;
@@ -599,14 +598,13 @@ async function runStage(input: {
       if (event.type === "error") {
         runFailureMessageRecorded = true;
       }
-      if (event.type === "text") {
-        collectedText.push(event.text);
-      } else if (event.type === "completion") {
-        if (!event.taskComplete) throw new Error("Agent stopped before completing the task.");
-        taskComplete = true;
+      if (event.type === "completion") {
+        // Failed terminal results can carry usage before a following provider
+        // error. Drain the stream so its blocker and partial output reach history.
+        taskComplete = event.taskComplete;
         if (event.usage) usage = event.usage;
         if (event.taskComplete && event.finalOutput?.trim()) {
-          finalOutput = event.finalOutput.trim();
+          finalOutput = event.finalOutput;
         }
       } else if (event.type === "error") {
         throw new Error(event.message);
@@ -623,9 +621,9 @@ async function runStage(input: {
     });
     if (!taskComplete) throw new Error("Agent ended without a successful completion event.");
 
-    const artifactMarkdown = finalOutput ?? collectedText.join("\n").trim();
+    const artifactMarkdown = finalOutput;
     if (!artifactMarkdown) {
-      const message = `${stage.name} did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.`;
+      const message = `${stage.name} supplied no final deliverable, so no artifact was created. Progress and any partial output remain available in Run history.`;
 
       if (runId) {
         await persistEvent(admin, runId, job.attempt_count, session.workspace_id, {
@@ -1242,11 +1240,11 @@ async function persistEvent(
       messageMd = `**Tool:** ${event.tool}\n\n\`\`\`\n${event.input}\n\`\`\``;
       break;
     case "completion":
-      if (isGenericRunnerCompletionSummary(event.summary)) {
+      if (!event.finalOutput?.trim() && isGenericRunnerCompletionSummary(event.summary)) {
         return touchRunActivity(admin, runId, attemptCount);
       }
       kind = "completion";
-      messageMd = event.summary;
+      messageMd = event.finalOutput?.trim() ? event.finalOutput : event.summary;
       break;
     case "error":
       kind = "error";
