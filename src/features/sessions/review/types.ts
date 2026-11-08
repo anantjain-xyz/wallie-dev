@@ -1,10 +1,15 @@
 import type { Tables } from "@/lib/supabase/database.types";
+import type { ReviewSessionReadOnlyReason } from "./comment-access";
 import type { AnchorMapping } from "./revision";
 
 export type ArtifactReviewThread = Tables<"artifact_review_threads">;
 export type ArtifactReviewComment = Tables<"artifact_review_comments">;
 export type ReviewCursor = { createdAt: string; id: string };
-export type ReviewViewer = { memberId: string; canReview: boolean; readOnly: boolean };
+export type ReviewViewer = {
+  memberId: string;
+  canReview: boolean;
+  readOnlyReason: ReviewSessionReadOnlyReason | null;
+};
 export type ReviewThreadListPayload = {
   reviewRevision: number;
   submittedThreadRevisions: Record<string, number>;

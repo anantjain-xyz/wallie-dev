@@ -26,6 +26,7 @@ import type {
 } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
 import { InlineArtifactReview } from "@/features/sessions/review/inline-artifact-review";
+import type { ReviewSessionReadOnlyReason } from "@/features/sessions/review/comment-access";
 
 export type DisplayedArtifactIdentity = Pick<
   SessionArtifactSummary,
@@ -33,7 +34,7 @@ export type DisplayedArtifactIdentity = Pick<
 >;
 
 type ArtifactPanelProps = {
-  readOnly?: boolean;
+  readOnlyReason?: ReviewSessionReadOnlyReason | null;
   /** Exact current-stage authority; null must not reuse a cached latest artifact. */
   currentArtifactId?: string | null;
   /**
@@ -284,7 +285,7 @@ function ArtifactPanelStage({
   pendingAuthorRefreshByStage,
   persistStageInUrl = false,
   rejectionCount,
-  readOnly = false,
+  readOnlyReason = null,
   seenRejectionCountByStage,
   sessionId,
   stageSlug,
@@ -432,7 +433,7 @@ function ArtifactPanelStage({
       : cachedSelectedBody;
   const hasReviewBrief =
     isAwaitingReview &&
-    !readOnly &&
+    !readOnlyReason &&
     viewingIsLatest &&
     !viewingHistorical &&
     visibleBody?.id &&
@@ -1327,7 +1328,7 @@ function ArtifactPanelStage({
               historical={persistStageInUrl || !viewingIsLatest}
               openComments={openComments}
               onShowRaw={showRawArtifact}
-              readOnly={readOnly}
+              readOnlyReason={readOnlyReason}
             />
           ) : bodyLoading ? null : isDrafting ? (
             <ProgressHint text="Waiting for this stage’s artifact. Follow progress in Runs below." />
@@ -1385,7 +1386,7 @@ function ArtifactBodyView({
   historical,
   openComments,
   onShowRaw,
-  readOnly,
+  readOnlyReason,
 }: {
   motionRef?: RefObject<HTMLDivElement | null>;
   artifact: CachedArtifactBody;
@@ -1399,7 +1400,7 @@ function ArtifactBodyView({
   historical: boolean;
   openComments: boolean;
   onShowRaw: () => void;
-  readOnly: boolean;
+  readOnlyReason: ReviewSessionReadOnlyReason | null;
 }) {
   const formatted = useMemo(() => formatPayload(artifact.payload), [artifact.payload]);
   const isMarkdown = typeof artifact.payload === "string";
@@ -1495,7 +1496,7 @@ function ArtifactBodyView({
           displayMode={displayMode}
           onShowRaw={onShowRaw}
           motionRef={motionRef}
-          readOnly={readOnly}
+          readOnlyReason={readOnlyReason}
         >
           {content}
         </InlineArtifactReview>

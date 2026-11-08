@@ -79,6 +79,7 @@ import {
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
+import { sessionReviewReadOnlyReason } from "@/features/sessions/review/comment-access";
 import { publishArtifactFeedbackSubmission } from "@/features/sessions/review/submission-events";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
@@ -1192,7 +1193,7 @@ function SessionDetailContent({
       onViewingHistoricalChange={setViewingHistoricalArtifact}
       onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}
-      readOnly={Boolean(session.archivedAt)}
+      readOnlyReason={sessionReviewReadOnlyReason(session)}
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
       sessionId={session.id}
       stageSlug={selectedStageSlug}

@@ -19,6 +19,11 @@ import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { cn } from "@/lib/utils";
 
 import type { ArtifactSourceAnchor } from "./source-anchor";
+import {
+  reviewReadOnlyMessage,
+  type ReviewReadOnlyReason,
+  type ReviewSessionReadOnlyReason,
+} from "./comment-access";
 import { subscribeArtifactFeedbackSubmissions } from "./submission-events";
 import type {
   ArtifactReviewComment,
@@ -37,7 +42,7 @@ export type ArtifactReviewPanelProps = {
   panelId?: string;
   syncLocation?: boolean;
   historical: boolean;
-  readOnly?: boolean;
+  readOnlyReason?: ReviewSessionReadOnlyReason | null;
   anchor: ArtifactSourceAnchor | null;
   onClearAnchor: () => void;
   onClose?: () => void;
@@ -49,6 +54,7 @@ export type ArtifactReviewPanelProps = {
     onRevealThread: (thread: ArtifactReviewThread) => void;
     onClearPassage: () => void;
     onThreadsChange: (snapshot: Pick<ReviewThreadListPayload, "threads" | "counts">) => void;
+    onReadOnlyReasonChange: (reason: ReviewReadOnlyReason | null) => void;
     passageMessage: string | null;
   };
 };
@@ -128,7 +134,7 @@ export function ArtifactReviewPanel({
   panelId = "artifact-review-panel",
   syncLocation = true,
   historical,
-  readOnly: parentReadOnly = false,
+  readOnlyReason: parentReadOnlyReason = null,
   anchor,
   onClearAnchor,
   onClose,
@@ -149,6 +155,7 @@ export function ArtifactReviewPanel({
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<ReviewReadOnlyReason | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [body, setBody] = useState("");
@@ -180,12 +187,17 @@ export function ArtifactReviewPanel({
   const config = useSupabasePublicConfig();
   selectedRef.current = selectedId;
   const selectedThread = snapshot?.threads.find((thread) => thread.id === selectedId) ?? null;
-  const readOnly = parentReadOnly || (snapshot?.viewer.readOnly ?? true);
+  const readOnlyReason =
+    parentReadOnlyReason ??
+    permissionError ??
+    (snapshot ? snapshot.viewer.readOnlyReason : "loading");
+  const readOnly = readOnlyReason !== null;
   const inlineOpen = inline?.open;
   const scrollRef = inline?.scrollRef;
   const onRevealThread = inline?.onRevealThread;
   const onClearPassage = inline?.onClearPassage;
   const onThreadsChange = inline?.onThreadsChange;
+  const onReadOnlyReasonChange = inline?.onReadOnlyReasonChange;
   const threadRequest = inline?.request;
   const composing = Boolean(anchor && !readOnly);
   const showThreadList = !inline || (!composing && !selectedId);
@@ -194,6 +206,10 @@ export function ArtifactReviewPanel({
   useEffect(() => {
     if (snapshot) onThreadsChange?.(snapshot);
   }, [onThreadsChange, snapshot]);
+
+  useLayoutEffect(() => {
+    onReadOnlyReasonChange?.(readOnlyReason);
+  }, [onReadOnlyReasonChange, readOnlyReason]);
 
   useLayoutEffect(() => {
     if (inlineOpen && scrollRef?.current) scrollRef.current.scrollTop = 0;
@@ -271,9 +287,16 @@ export function ArtifactReviewPanel({
               : next.submittedThreadRevisions,
         }));
         setLoadError(linkedThreadError);
+        setPermissionError(null);
       } catch (error) {
-        if (mounted.current && sequence === threadLoadSequence.current)
+        if (mounted.current && sequence === threadLoadSequence.current) {
           setLoadError(error instanceof Error ? error.message : "Could not load review threads.");
+          setPermissionError(
+            error instanceof ReviewRequestError && [401, 403].includes(error.status)
+              ? "unauthorized"
+              : "unavailable",
+          );
+        }
       } finally {
         if (mounted.current && sequence === threadLoadSequence.current) {
           if (!cursor) fullThreadRefreshInFlight.current = false;
@@ -675,9 +698,9 @@ export function ArtifactReviewPanel({
           {snapshot.counts.open} open · {snapshot.counts.blocking} blocking requests
         </p>
       ) : null}
-      {readOnly && snapshot ? (
+      {readOnlyReason ? (
         <p className="mt-3 rounded-[4px] bg-control-muted p-2 text-xs text-muted">
-          This session is archived. Comments are read-only.
+          {reviewReadOnlyMessage(readOnlyReason)}
         </p>
       ) : null}
       <p aria-live="polite" className="sr-only" role="status">
