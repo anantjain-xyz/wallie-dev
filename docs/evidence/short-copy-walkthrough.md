@@ -42,7 +42,9 @@ stale copy assertions and browser selectors, which were corrected. One build and
 one concurrently running check process exited 137 under the sandbox's 4 GiB memory
 limit. Next.js detected 64 CPUs and initially spawned 63 page-data workers. The
 production build passed with `CIRCLE_NODE_TOTAL=3` (two Next.js workers). CPU affinity
-bounds Vitest workers for the full check; no validation steps are skipped.
+was used for earlier runs. The final run explicitly limits Vitest to four workers;
+no validation steps are skipped. Earlier full runs were stopped after stale-copy
+assertions failed; those assertions were corrected before the final run.
 
 | Command                                                                                                                                                                              | Outcome                                                                   |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
@@ -50,7 +52,8 @@ bounds Vitest workers for the full check; no validation steps are skipped.
 | `pnpm dev` + Playwright reproduction                                                                                                                                                 | Confirmed the original search and draft copy at both widths before edits. |
 | `CIRCLE_NODE_TOTAL=3 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=playwright-local-key NEXT_PUBLIC_APP_URL=http://localhost:3100 pnpm build` | Passed after bounding Next.js workers.                                    |
 | `pnpm exec playwright test e2e/concise-copy.spec.ts e2e/comment-access.spec.ts e2e/sessions-ledger-hydration.spec.ts e2e/run-failure-guidance.spec.ts`                               | 27 passed, 48.1 seconds (final production build).                         |
-| `taskset -c 0,1,2,3 pnpm check`                                                                                                                                                      | Final run in progress; outcome recorded before completion.                |
+| `VITEST_MAX_WORKERS=4 pnpm check`                                                                                                                                                    | Final run in progress; outcome recorded before completion.                |
+| `pnpm check:cloudflare`                                                                                                                                                              | Passed: native typecheck, 42 tests across 8 files, and Wrangler dry run.  |
 | Evidence configuration schema and report-copy command                                                                                                                                | Parsed successfully; report copied into a fresh evidence directory.       |
 
 ## Browser walkthrough and proof
@@ -70,7 +73,8 @@ and detailed recovery guidance. Ledger tests cover the real row tree, links, act
 menus, and mobile layout. Existing ledger selectors were updated to measure the clipping
 wrapper rather than the minimum-touch-height title link; run-activity selectors
 now include the existing attempt/run identity. Screenshots are generated outside
-the source diff.
+the source diff. The final browser run produced 50 full-page captures in addition
+to the four before-change captures.
 
 ## Limits and cleanup
 
