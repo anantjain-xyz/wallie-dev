@@ -69,7 +69,7 @@ describe("ClaudeCodeRunner", () => {
     }
 
     expect(events).toEqual([
-      { type: "text", text: "working" },
+      { type: "progress", text: "working" },
       { type: "completion", taskComplete: true, summary: "done", finalOutput: "done" },
     ]);
 
@@ -98,6 +98,153 @@ describe("ClaudeCodeRunner", () => {
       GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
       GIT_COMMITTER_NAME: "wallie-dev[bot]",
     });
+  });
+
+  it.each([
+    { progress: [] },
+    { progress: ["Inspecting the implementation", "Tests are still running"] },
+  ])(
+    "keeps narration in activity and preserves the entire final result (%j)",
+    async ({ progress }) => {
+      const finalOutput = `\n# Delivered\n\n${"Validation passed. ".repeat(1_000)}\n\nBlocker: publication requires credentials.  \n\n`;
+      const sandbox = new FakeSandbox();
+      const records = [
+        ...progress.map((text) => ({
+          type: "assistant",
+          message: { content: [{ type: "text", text }] },
+        })),
+        {
+          type: "result",
+          subtype: "success",
+          result: finalOutput,
+          usage: { input_tokens: 12, output_tokens: 34 },
+        },
+      ];
+      sandbox.scriptExec("bash", [
+        { stream: "stdout", data: records.map((record) => JSON.stringify(record)).join("\n") },
+      ]);
+      const events = [];
+      for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+        sandbox,
+        sessionId: "final-output",
+        prompt: "p",
+      }))
+        events.push(event);
+
+      expect(events).toEqual([
+        ...progress.map((text) => ({ type: "progress", text })),
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: finalOutput,
+          finalOutput,
+          usage: { inputTokens: 12, outputTokens: 34, provenance: "measured" },
+        },
+      ]);
+    },
+  );
+
+  it("does not promote assistant narration when a successful result has no final message", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: [
+          { type: "assistant", message: { content: [{ type: "text", text: "Still working" }] } },
+          { type: "result", subtype: "success", usage: { input_tokens: 12, output_tokens: 3 } },
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n"),
+      },
+    ]);
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "missing-final",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events[0]).toEqual({ type: "progress", text: "Still working" });
+    expect(events[1]).toMatchObject({
+      type: "completion",
+      usage: { inputTokens: 12, outputTokens: 3, provenance: "measured" },
+    });
+    expect(events[1]?.type === "completion" && events[1].finalOutput).toBeUndefined();
+  });
+
+  it("preserves substantive partial output alongside a terminal error", async () => {
+    const sandbox = new FakeSandbox();
+    const partialOutput = "Validation passed. Blocker: publication requires credentials.";
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: JSON.stringify({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          result: partialOutput,
+          errors: ["Provider failed after response"],
+        }),
+      },
+    ]);
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "partial-output",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events).toEqual([
+      { type: "progress", text: partialOutput },
+      {
+        type: "error",
+        message: "Claude Code error_during_execution: Provider failed after response",
+      },
+    ]);
+  });
+
+  it("preserves a buffered final result in activity when a later result reports an error", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      {
+        stream: "stdout",
+        data: [
+          {
+            type: "result",
+            subtype: "success",
+            result: "Validation passed. Blocker: release pending.",
+            usage: { input_tokens: 12, output_tokens: 8 },
+          },
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            errors: ["Provider failed after response"],
+          },
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n"),
+      },
+    ]);
+    const events = [];
+    for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+      sandbox,
+      sessionId: "late-error",
+      prompt: "p",
+    }))
+      events.push(event);
+    expect(events).toEqual([
+      { type: "progress", text: "Validation passed. Blocker: release pending." },
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "Claude Code reported usage before an unsuccessful result",
+        usage: { inputTokens: 12, outputTokens: 8, provenance: "measured" },
+      },
+      {
+        type: "error",
+        message: "Claude Code error_during_execution: Provider failed after response",
+      },
+    ]);
   });
 
   it("does not load or inject credentials while a prompt write is pending", async () => {
@@ -199,7 +346,8 @@ describe("ClaudeCodeRunner", () => {
       events.push(event);
     }
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]).toEqual({ type: "progress", text: "done" });
+    expect(events[1]).toMatchObject({
       type: "completion",
       taskComplete: false,
       usage: {
@@ -210,7 +358,7 @@ describe("ClaudeCodeRunner", () => {
         costProvenance: "measured",
       },
     });
-    expect(events[1]).toMatchObject({ type: "error" });
+    expect(events[2]).toMatchObject({ type: "error" });
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {
@@ -234,7 +382,7 @@ describe("parseStreamJsonLine", () => {
       parseStreamJsonLine(
         `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
       ),
-    ).toEqual([{ type: "text", text: "hi" }]);
+    ).toEqual([{ type: "progress", text: "hi" }]);
   });
 
   it("parses an assistant tool_use block", () => {
@@ -426,11 +574,13 @@ describe("parseStreamJsonLine", () => {
   it("parses a content_block_delta", () => {
     expect(
       parseStreamJsonLine(`{"type":"content_block_delta","delta":{"text":"partial"}}`),
-    ).toEqual([{ type: "text", text: "partial" }]);
+    ).toEqual([{ type: "progress", text: "partial" }]);
   });
 
   it("falls back to raw text for non-JSON", () => {
-    expect(parseStreamJsonLine("plain output")).toEqual([{ type: "text", text: "plain output" }]);
+    expect(parseStreamJsonLine("plain output")).toEqual([
+      { type: "progress", text: "plain output" },
+    ]);
   });
 
   it("preserves interleaved text and parallel tool blocks in a response", () => {
@@ -449,10 +599,10 @@ describe("parseStreamJsonLine", () => {
         }),
       ),
     ).toEqual([
-      { type: "text", text: "Inspecting" },
+      { type: "progress", text: "Inspecting" },
       { type: "tool_use", tool: "Read", input: '{"file":"a.ts"}' },
       { type: "tool_use", tool: "Read", input: '{"file":"b.ts"}' },
-      { type: "text", text: "All done" },
+      { type: "progress", text: "All done" },
     ]);
   });
 });
@@ -565,6 +715,9 @@ describe("Claude Code terminal outcomes", () => {
       prompt: "p",
     }))
       events.push(event);
-    expect(events).toEqual([expect.objectContaining({ type: "error" })]);
+    expect(events).toEqual([
+      { type: "progress", text: "deliverable" },
+      expect.objectContaining({ type: "error" }),
+    ]);
   });
 });

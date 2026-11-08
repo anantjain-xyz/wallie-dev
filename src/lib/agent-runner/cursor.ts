@@ -75,8 +75,22 @@ export class CursorRunner implements AgentRunner {
     const secrets = [credential.secret, ...(input.secrets ?? [])];
     let stdout = "";
     let stderr = "";
-    let sessionId: string | undefined;
-    let sawCompletion = false;
+    let completion: Extract<AgentEvent, { type: "completion" }> | undefined;
+    let hadError = false;
+    function* eventsForLine(line: string): Iterable<AgentEvent> {
+      const { event } = parseCursorStreamJsonLine(line, secrets);
+      if (event?.type === "completion") completion = event;
+      else if (event) {
+        if (event.type === "error") {
+          hadError = true;
+          if (completion?.finalOutput?.trim()) {
+            yield { type: "progress", text: completion.finalOutput };
+          }
+          completion = undefined;
+        }
+        yield event;
+      }
+    }
     for await (const log of proc.logs()) {
       if (log.stream === "stderr") {
         stderr += log.data;
@@ -86,21 +100,18 @@ export class CursorRunner implements AgentRunner {
       const lines = stdout.split("\n");
       stdout = lines.pop() ?? "";
       for (const line of lines) {
-        const parsed = parseCursorStreamJsonLine(line, secrets);
-        if (parsed.sessionId) sessionId = parsed.sessionId;
-        if (parsed.event?.type === "completion") sawCompletion = true;
-        if (parsed.event) yield parsed.event;
+        yield* eventsForLine(line);
       }
     }
     if (stdout.trim()) {
-      const parsed = parseCursorStreamJsonLine(stdout, secrets);
-      if (parsed.sessionId) sessionId = parsed.sessionId;
-      if (parsed.event?.type === "completion") sawCompletion = true;
-      if (parsed.event) yield parsed.event;
+      yield* eventsForLine(stdout);
     }
 
     const code = await proc.exitCode;
     if (code !== 0) {
+      if (completion?.finalOutput?.trim()) {
+        yield { type: "progress", text: completion.finalOutput };
+      }
       const redactedStderr = redactSecrets(stderr.trim(), secrets);
       const reason = `Cursor CLI exited with code ${code}: ${redactedStderr.slice(0, 500)}`;
       if (isCursorAuthenticationError(stderr)) {
@@ -109,13 +120,9 @@ export class CursorRunner implements AgentRunner {
       yield { message: reason, type: "error" };
       return;
     }
-    if (!sawCompletion) {
-      yield {
-        summary: sessionId ? `Cursor session: ${sessionId}` : "Cursor session completed",
-        taskComplete: true,
-        type: "completion",
-      };
-    }
+    if (hadError) return;
+    if (completion) yield completion;
+    else yield { type: "error", message: "Cursor ended without a result." };
   }
 }
 
@@ -134,7 +141,7 @@ export function parseCursorStreamJsonLine(
     if (value.type === "assistant") {
       const text = extractText(value.message ?? value.text);
       return {
-        event: text ? { text: redactSecrets(text, secrets), type: "text" } : null,
+        event: text ? { text: redactSecrets(text, secrets), type: "progress" } : null,
         sessionId,
       };
     }
@@ -142,10 +149,22 @@ export function parseCursorStreamJsonLine(
       return { event: parseCursorToolCallEvent(value, secrets), sessionId };
     }
     if (value.type === "result") {
-      const finalOutput = redactSecrets(extractText(value.result), secrets).trim();
+      if (value.is_error === true || (value.subtype && value.subtype !== "success")) {
+        return {
+          event: {
+            type: "error",
+            message: redactSecrets(
+              extractText(value.result ?? value.summary) || "Cursor result was unsuccessful",
+              secrets,
+            ),
+          },
+          sessionId,
+        };
+      }
+      const finalOutput = redactSecrets(extractText(value.result), secrets);
       return {
         event: {
-          ...(finalOutput ? { finalOutput } : {}),
+          ...(finalOutput.trim() ? { finalOutput } : {}),
           summary: redactSecrets(
             extractText(value.result ?? value.summary) || "Cursor session completed",
             secrets,
@@ -158,7 +177,7 @@ export function parseCursorStreamJsonLine(
     }
     return { event: null, sessionId };
   } catch {
-    return { event: { text: redactSecrets(trimmed, secrets), type: "text" } };
+    return { event: { text: redactSecrets(trimmed, secrets), type: "progress" } };
   }
 }
 

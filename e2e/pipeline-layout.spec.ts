@@ -140,21 +140,130 @@ test("mobile scroll targets clear both header rows", async ({ page }) => {
   expect(gap).toBeGreaterThanOrEqual(-1);
 });
 
-test("mobile navigation can scroll enlarged labels into view", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 800 });
-  await page.goto("/dev/pipeline-layout");
-  const nav = page
-    .getByRole("navigation", { name: "Workspace navigation" })
-    .filter({ visible: true });
-  await nav.locator("a").evaluateAll((links) => {
-    links.forEach((link) => {
-      (link as HTMLElement).style.fontSize = "26px";
-    });
+for (const width of [320, 390, 768]) {
+  test(`compact workspace navigation keeps every destination reachable at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/dev/pipeline-layout");
+    const header = page.locator("[data-shell-header]");
+    const trigger = header.getByRole("button", { name: "Workspace navigation: Pipeline" });
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    for (const control of [
+      trigger,
+      header.getByRole("button", { name: "New session", exact: true }),
+      header.getByRole("button", { name: /Switch to (light|dark) mode/ }),
+      header.getByRole("button", { name: /^Account:/ }),
+    ]) {
+      await expect(control).toBeInViewport({ ratio: 1 });
+      await control.click({ trial: true });
+    }
+
+    await trigger.click();
+    const menu = page.getByRole("menu", { name: "Workspace pages" });
+    await expect(menu).toBeVisible();
+    for (const [name, href] of [
+      ["Pipeline", "/w/proof"],
+      ["Sessions", "/w/proof/sessions"],
+      ["Settings", "/w/proof/settings"],
+    ]) {
+      const destination = menu.getByRole("menuitem", { name, exact: true });
+      await expect(destination).toHaveAttribute("href", href);
+      await expect(destination).toBeInViewport({ ratio: 1 });
+      expect(await destination.evaluate((item) => item.scrollWidth <= item.clientWidth)).toBe(true);
+      await expect
+        .poll(() => destination.evaluate((item) => item.getBoundingClientRect().height))
+        .toBeGreaterThanOrEqual(44);
+      await destination.click({ trial: true });
+    }
+    await expect(menu.getByRole("menuitem", { name: "Pipeline", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
   });
-  const settings = nav.getByRole("link", { name: "Settings" });
-  await settings.evaluate((link) => link.scrollIntoView({ inline: "end", block: "nearest" }));
-  await expect(settings).toBeInViewport({ ratio: 1 });
-  expect(await nav.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+}
+
+test("compact navigation supports keyboard access and enlarged labels without clipping", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/dev/pipeline-layout?empty=1");
+  await page.addStyleTag({
+    content:
+      'html { font-size: 200%; } [data-shell-header] button, [role="menuitem"] { font-size: 26px; }',
+  });
+  const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
+  await expect(trigger).toBeInViewport({ ratio: 1 });
+  await trigger.focus();
+  await trigger.press("ArrowDown");
+  const menu = page.getByRole("menu", { name: "Workspace pages" });
+  const pipeline = menu.getByRole("menuitem", { name: "Pipeline", exact: true });
+  const sessions = menu.getByRole("menuitem", { name: "Sessions", exact: true });
+  const settings = menu.getByRole("menuitem", { name: "Settings", exact: true });
+  await expect(pipeline).toBeFocused();
+  await pipeline.press("ArrowDown");
+  await expect(sessions).toBeFocused();
+  await sessions.press("End");
+  await expect(settings).toBeFocused();
+  for (const destination of [pipeline, sessions, settings]) {
+    await expect(destination).toBeInViewport({ ratio: 1 });
+    expect(await destination.evaluate((item) => item.scrollWidth <= item.clientWidth)).toBe(true);
+  }
+  await settings.press("Home");
+  await expect(pipeline).toBeFocused();
+  await pipeline.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  const header = page.locator("[data-shell-header]");
+  for (const control of [
+    trigger,
+    header.getByRole("button", { name: "New session", exact: true }),
+    header.getByRole("button", { name: /Switch to (light|dark) mode/ }),
+    header.getByRole("button", { name: /^Account:/ }),
+  ]) {
+    await expect(control).toBeInViewport({ ratio: 1 });
+    await control.click({ trial: true });
+  }
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const header = document.querySelector<HTMLElement>("[data-shell-header]")!;
+        return Math.abs(
+          Number.parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) -
+            header.getBoundingClientRect().height,
+        );
+      }),
+    )
+    .toBeLessThan(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
+
+test("resizing an open compact menu to desktop restores focus to the active tab", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/dev/pipeline-layout");
+  const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
+  await trigger.press("ArrowDown");
+  const menu = page.getByRole("menu", { name: "Workspace pages" });
+  await expect(menu.getByRole("menuitem", { name: "Pipeline", exact: true })).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(menu).toBeHidden();
+  await expect(
+    page.getByRole("navigation", { name: "Workspace navigation" }).getByRole("link", {
+      name: "Pipeline",
+      exact: true,
+    }),
+  ).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
 });
 
 test("short desktop pipelines fill the space below the desktop header", async ({ page }) => {

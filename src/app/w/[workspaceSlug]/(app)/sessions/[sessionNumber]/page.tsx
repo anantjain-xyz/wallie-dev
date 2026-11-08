@@ -1,13 +1,18 @@
 import { Suspense } from "react";
 
 import { MarkdownContent } from "@/components/shared/markdown-content";
-import { renderMarkdown } from "@/components/shared/markdown-content.server";
+import {
+  mayContainEvidenceLinks,
+  renderMarkdown,
+} from "@/components/shared/markdown-content.server";
 import {
   SessionActivity,
   SessionActivityFallback,
 } from "@/features/sessions/detail/session-activity";
 import { loadSessionDetailPageData } from "@/features/sessions/detail/data";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loadArtifactEvidenceLinks } from "@/lib/validation-evidence/artifact-links";
 
 type SessionDetailPageProps = {
   params: Promise<{
@@ -27,9 +32,21 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
   const initialFormattedArtifactKey = latestArtifact
     ? `${data.review.session.id}:${latestArtifact.stageSlug}:${latestArtifact.id ? `id:${latestArtifact.id}` : latestArtifact.version}`
     : null;
+  const evidenceLinks =
+    latestArtifact?.id &&
+    typeof latestArtifact.payload === "string" &&
+    mayContainEvidenceLinks(latestArtifact.payload)
+      ? await loadArtifactEvidenceLinks({
+          supabase: await createSupabaseServerClient(),
+          ...data.activityContext,
+          artifactId: latestArtifact.id,
+        })
+      : undefined;
   const initialFormattedArtifact =
     latestArtifact && typeof latestArtifact.payload === "string" ? (
-      <MarkdownContent html={renderMarkdown(latestArtifact.payload, true).bodyHtml} />
+      <MarkdownContent
+        html={renderMarkdown(latestArtifact.payload, true, evidenceLinks).bodyHtml}
+      />
     ) : null;
 
   return (

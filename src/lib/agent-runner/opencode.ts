@@ -24,6 +24,9 @@ export interface OpenCodeRunnerOptions extends OpenCodeRunnerAuth {
 export type ParsedOpenCodeLine = {
   events: AgentEvent[];
   sessionId?: string;
+  messageId?: string;
+  textPartId?: string;
+  step?: { kind: "start" } | { kind: "finish"; reason: string };
   usage?: AgentRunUsage;
   /** A malformed step invalidates the whole run's usage, rather than a partial total. */
   usageInvalid?: boolean;
@@ -121,11 +124,30 @@ export class OpenCodeRunner implements AgentRunner {
     let hasUsage = false;
     let usageInvalid = false;
     let hasCompleteCost = true;
+    const messageText = new Map<string, Map<string, string>>();
+    let lastStep: { messageId: string | undefined; reason: string | undefined } | undefined;
 
     const handleLine = (line: string): AgentEvent[] => {
       const parsed = parseOpenCodeLine(line, secrets);
       if (!parsed) return [];
       if (parsed.sessionId) lastSessionId = parsed.sessionId;
+      if (parsed.step) {
+        lastStep = {
+          messageId: parsed.messageId,
+          reason: parsed.step.kind === "finish" ? parsed.step.reason : undefined,
+        };
+      }
+      if (parsed.messageId && parsed.textPartId) {
+        for (const event of parsed.events) {
+          if (event.type !== "progress") continue;
+          let parts = messageText.get(parsed.messageId);
+          if (!parts) {
+            parts = new Map();
+            messageText.set(parsed.messageId, parts);
+          }
+          parts.set(parsed.textPartId, event.text);
+        }
+      }
       if (parsed.usageInvalid) usageInvalid = true;
       if (parsed.usage) {
         usage.inputTokens += parsed.usage.inputTokens;
@@ -145,7 +167,7 @@ export class OpenCodeRunner implements AgentRunner {
             message: redactSecrets(event.message, secrets),
           };
         }
-        if (event.type === "text") {
+        if (event.type === "text" || event.type === "progress") {
           return {
             ...event,
             text: redactSecrets(event.text, secrets),
@@ -232,10 +254,19 @@ export class OpenCodeRunner implements AgentRunner {
       return;
     }
 
+    // OpenCode's JSON stream has no run-level result. Only text belonging to
+    // the last completed stop step is a final deliverable; tool-step narration
+    // and streams missing that boundary remain activity only.
+    const finalParts =
+      lastStep?.reason === "stop" && lastStep.messageId
+        ? messageText.get(lastStep.messageId)
+        : undefined;
+    const finalOutput = finalParts ? [...finalParts.values()].join("\n") : undefined;
     yield {
       type: "completion",
       taskComplete: true,
       summary: lastSessionId ? `OpenCode session: ${lastSessionId}` : "OpenCode session completed",
+      ...(finalOutput?.trim() ? { finalOutput } : {}),
       ...(finalUsage ? { usage: finalUsage } : {}),
     };
   }
@@ -279,6 +310,7 @@ export function parseOpenCodeLine(
             ? part.sessionId
             : undefined;
   const type = typeof value.type === "string" ? value.type : "";
+  const messageId = part && typeof part.messageID === "string" ? part.messageID : undefined;
 
   const text =
     part && typeof part.text === "string"
@@ -287,7 +319,16 @@ export function parseOpenCodeLine(
         ? value.text
         : null;
   if (type === "text" && text && text.trim()) {
-    return { events: [{ type: "text", text }], sessionId };
+    return {
+      events: [{ type: "progress", text }],
+      sessionId,
+      ...(messageId ? { messageId } : {}),
+      ...(part && typeof part.id === "string" ? { textPartId: part.id } : {}),
+    };
+  }
+
+  if (type === "step_start") {
+    return { events: [], sessionId, messageId, step: { kind: "start" } };
   }
 
   if (type === "tool_use") {
@@ -312,6 +353,13 @@ export function parseOpenCodeLine(
 
   if (type === "step_finish") {
     const tokensPart = part ?? value;
+    const step = {
+      messageId,
+      step: {
+        kind: "finish",
+        reason: typeof tokensPart.reason === "string" ? tokensPart.reason : "",
+      },
+    } satisfies Pick<ParsedOpenCodeLine, "messageId" | "step">;
     const tokens = isRecord(tokensPart.tokens) ? tokensPart.tokens : null;
     const cache = tokens && isRecord(tokens.cache) ? tokens.cache : null;
     const cacheRead = cache?.read ?? 0;
@@ -322,13 +370,13 @@ export function parseOpenCodeLine(
       !isTokenCount(cacheRead) ||
       !isTokenCount(cacheWrite)
     ) {
-      return { events: [], sessionId, usageInvalid: true };
+      return { events: [], sessionId, ...step, usageInvalid: true };
     }
     const inputTokens = tokens.input + cacheRead + cacheWrite;
-    if (!isTokenCount(inputTokens)) return { events: [], sessionId, usageInvalid: true };
+    if (!isTokenCount(inputTokens)) return { events: [], sessionId, ...step, usageInvalid: true };
     const usage = normalizeMeasuredUsage(inputTokens, tokens.output, tokensPart.cost);
-    if (!usage) return { events: [], sessionId, usageInvalid: true };
-    return { events: [], sessionId, usage };
+    if (!usage) return { events: [], sessionId, ...step, usageInvalid: true };
+    return { events: [], sessionId, ...step, usage };
   }
 
   if (type === "error") {

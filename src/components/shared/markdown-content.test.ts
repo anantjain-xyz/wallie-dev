@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
+import {
+  mayContainEvidenceLinks,
+  renderMarkdownToHtml,
+} from "@/components/shared/markdown-content.server";
 
 function render(markdown: string): string {
   return renderMarkdownToHtml(markdown);
@@ -96,4 +99,139 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain('href="https://attacker.example/track.png"');
     expect(html).toContain("alt text");
   });
+});
+
+describe("artifact evidence links", () => {
+  it.each([
+    "/vercel/sandbox/docs/evidence/comments-toggle-pr-description.md",
+    "https://www.wallie.dev/vercel/sandbox/docs/evidence/comments-toggle-pr-description.md",
+    "//wallie.dev/vercel/sandbox/docs/evidence/comments-toggle-pr-description.md",
+    "https://wallie.dev/%2Ftmp/evidence.md",
+    "https://wallie.dev//vercel/sandbox/docs/evidence.md",
+    "https://wallie.dev//vercel//sandbox/docs/evidence.md",
+    "./vercel/sandbox/review.md",
+    "../../vercel/sandbox/review.md",
+    "/other/../vercel/sandbox/review.md",
+    "/vercel%252Fsandbox/review.md",
+    "/vercel/sandbox%2Freview.md",
+    "/tmp/review.md",
+    "/home/agent/review.md",
+    "/Users/agent/review.md",
+    "/workspace/review.md",
+    "/mnt/data/review.md",
+    "file:///vercel/sandbox/review.md",
+    "sandbox:/mnt/data/review.md",
+    "C:/sandbox/review.md",
+  ])("shows unavailable evidence instead of a website link for %s", (destination) => {
+    const html = render(`[PR description and evidence](${destination})`);
+
+    expect(html).toContain("PR description and evidence (Evidence unavailable)");
+    expect(html).toContain("Temporary sandbox files cannot be opened after the run.");
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toContain("<a");
+    expect(html).not.toContain("href=");
+  });
+
+  it.each([
+    "https://example.com/vercel/sandbox/review.md",
+    "https://example.com//vercel/sandbox/review.md",
+    "https://example.com/%2Ftmp/evidence.md",
+    "https://github.com/owner/repository/blob/abc123/docs/review.md",
+    "docs/evidence/review.md",
+    "./docs/review.md",
+    "../docs/review.md",
+    "home/review.md",
+    "/docs/review.md",
+    "#validation",
+    "mailto:reviewer@example.com",
+  ])("preserves safe external, repository, anchor, and document links: %s", (destination) => {
+    const html = render(`[Review](${destination})`);
+
+    expect(html).toContain(`href="${destination}"`);
+    expect(html).not.toContain("Evidence unavailable");
+  });
+
+  it.each([
+    "wallie-evidence:checks/report",
+    "WALLIE-EVIDENCE:checks/report",
+    "wallie%2Devidence:checks/report",
+    "wallie&#x2D;evidence:checks/report",
+  ])(
+    "resolves a durable evidence identity only through the supplied artifact mapping: %s",
+    (alias) => {
+      const destination =
+        "/api/sessions/session-id/validation-evidence/assets/asset-id?artifactId=artifact-id";
+      const html = renderMarkdownToHtml(
+        `[Review report](${alias})`,
+        false,
+        new Map([["wallie-evidence:checks/report", destination]]),
+      );
+
+      expect(html).toContain(`href="${destination}"`);
+      expect(html).toContain("Review report");
+      expect(html).not.toContain("Evidence unavailable");
+      expect(html).not.toContain("wallie-evidence:");
+    },
+  );
+
+  it("shows unavailable evidence when no retained identity matches", () => {
+    const html = renderMarkdownToHtml(
+      "[Review report](wallie-evidence:checks/report)",
+      false,
+      new Map([["wallie-evidence:other/report", "/api/sessions/other/assets/other"]]),
+    );
+
+    expect(html).toContain("Review report (Evidence unavailable)");
+    expect(html).not.toContain("<a");
+    expect(html).not.toContain("/api/sessions/other");
+  });
+
+  it("keeps local images unavailable and durable images click-only", () => {
+    const destination =
+      "/api/sessions/session-id/validation-evidence/assets/asset-id?artifactId=artifact-id";
+    const html = renderMarkdownToHtml(
+      "![Legacy screenshot](/vercel/sandbox/screen.png)\n\n![Retained screenshot](wallie-evidence:checks/screen)",
+      false,
+      new Map([["wallie-evidence:checks/screen", destination]]),
+    );
+
+    expect(html).toContain("🖼 Legacy screenshot (Evidence unavailable)");
+    expect(html).toContain(`href="${destination}"`);
+    expect(html).toContain("🖼 Retained screenshot");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("/vercel/sandbox");
+    expect(html).not.toContain("preload");
+  });
+
+  it("sanitizes resolved destinations and preserves source coordinates on the original label", () => {
+    const html = renderMarkdownToHtml(
+      "[Review report](wallie-evidence:checks/report)",
+      true,
+      new Map([["wallie-evidence:checks/report", "javascript:alert(1)"]]),
+    );
+
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("href=");
+    expect(html).toContain('data-review-text-start="1"');
+    expect(html).toContain('data-review-text-end="14"');
+    expect(html).toContain("Review report");
+  });
+});
+
+describe("mayContainEvidenceLinks", () => {
+  it.each([
+    "[Review report](wallie-evidence:checks/report)",
+    "[Review report](WALLIE-EVIDENCE:checks/report)",
+    "[Review report](wallie%2Devidence:checks/report)",
+    "[Review report](wallie&#x2D;evidence:checks/report)",
+  ])("does not skip a scheme the renderer resolves: %s", (markdown) => {
+    expect(mayContainEvidenceLinks(markdown)).toBe(true);
+  });
+
+  it.each(["A plain artifact", "[Docs](https://example.com/docs)", "[Local](../docs/review.md)"])(
+    "skips evidence loading for ordinary Markdown: %s",
+    (markdown) => {
+      expect(mayContainEvidenceLinks(markdown)).toBe(false);
+    },
+  );
 });

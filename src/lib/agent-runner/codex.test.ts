@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CodexCredential } from "@/lib/codex/contracts";
 import { shellQuote } from "@/lib/sandbox/command";
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import type { AgentEvent } from "./types";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
 import {
@@ -17,6 +18,41 @@ function expectExternalSandboxMode(command: string) {
   expect(command).toContain(shellQuote(CODEX_EXTERNAL_SANDBOX_FLAG));
   expect(command).toContain(`'--sandbox' '${CODEX_SANDBOX_MODE}'`);
   expect(command).toContain("'--cd' '/vercel/sandbox'");
+}
+
+function scriptCodexRun(
+  sandbox: FakeSandbox,
+  messages: string[],
+  finalOutput: string | null,
+  exitCode = 0,
+  errorMessage?: string,
+) {
+  sandbox.scriptExec(
+    (call) => call.args[1]?.includes("codex 'exec'") ?? false,
+    () => {
+      if (finalOutput !== null) {
+        sandbox.files.set(harnessPath(sandbox, "final-output.md"), {
+          data: Buffer.from(finalOutput),
+        });
+      }
+      const stream = [
+        ...messages.map((text) => ({
+          type: "item.completed",
+          item: { type: "agent_message", text },
+        })),
+        ...(errorMessage ? [{ type: "turn.failed", error: { message: errorMessage } }] : []),
+        { type: "turn.completed", usage: { input_tokens: 21, output_tokens: 13 } },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n");
+      // Include split transport chunks and a final line without a newline.
+      return [
+        { data: stream.slice(0, 17), stream: "stdout" },
+        { data: stream.slice(17), stream: "stdout" },
+      ];
+    },
+    { exitCode },
+  );
 }
 
 describe("CodexRunner", () => {
@@ -35,6 +71,122 @@ describe("CodexRunner", () => {
       userId: "user-1",
     },
   ] satisfies CodexCredential[];
+
+  describe.each(launchCredentials)("$type deliverables", (credential) => {
+    async function collect(
+      messages: string[],
+      finalOutput: string | null,
+      exitCode = 0,
+      errorMessage?: string,
+    ) {
+      const sandbox = new FakeSandbox();
+      scriptCodexRun(sandbox, messages, finalOutput, exitCode, errorMessage);
+      const runner = new CodexRunner({
+        credential,
+        chatGptAuthStore: {
+          loadChatGptAuth: vi.fn().mockResolvedValue(credential),
+          markChatGptAuthReconnectRequired: vi.fn(),
+          persistChatGptAuthJson: vi.fn(),
+        },
+      });
+      const events: AgentEvent[] = [];
+      for await (const event of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+        events.push(event);
+      }
+      const cli = runnerCalls(sandbox).find((call) => call.args[1]?.includes("codex 'exec'"));
+      expect(cli?.args[1]).toContain(
+        `'--output-last-message' '${harnessPath(sandbox, "final-output.md")}'`,
+      );
+      return events;
+    }
+
+    it("keeps progress in activity and publishes the complete final file only", async () => {
+      const finalOutput = `# Delivered\n\nValidation: all checks passed.\n${"Evidence. ".repeat(2000)}\nBlocker: publication needs repository access.\n`;
+      const messages = ["Inspecting implementation", "Tests are still running", finalOutput];
+      const events = await collect(messages, finalOutput);
+      expect(events.filter((event) => event.type === "progress")).toEqual(
+        messages.map((text) => ({ type: "progress", text })),
+      );
+      expect(events.at(-1)).toEqual({
+        type: "completion",
+        taskComplete: true,
+        summary: "Codex session completed",
+        finalOutput,
+      });
+      expect(events).toContainEqual({
+        type: "completion",
+        taskComplete: true,
+        summary: "Codex turn completed",
+        usage: { inputTokens: 21, outputTokens: 13, provenance: "measured" },
+      });
+    });
+
+    it("publishes final-only output", async () => {
+      const events = await collect(["Final deliverable"], "Final deliverable");
+      expect(events.at(-1)).toMatchObject({ finalOutput: "Final deliverable" });
+    });
+
+    it("publishes the final file even when stdout contains only telemetry", async () => {
+      const finalOutput = "\n# Complete\n\nValidation passed.\nBlocker: deployment credentials.\n";
+      const events = await collect([], finalOutput);
+      expect(events.filter((event) => event.type === "progress")).toEqual([]);
+      expect(events.at(-1)).toEqual({
+        type: "completion",
+        taskComplete: true,
+        summary: "Codex session completed",
+        finalOutput,
+      });
+    });
+
+    it.each([null, "", " \n\t"])("fails explicitly when the final file is %j", async (output) => {
+      const events = await collect(["Still running checks"], output);
+      expect(events.at(-1)).toMatchObject({
+        type: "error",
+        message: expect.stringContaining("without a final deliverable"),
+      });
+      expect(events.some((event) => event.type === "completion" && event.finalOutput)).toBe(false);
+      expect(events).toContainEqual({ type: "progress", text: "Still running checks" });
+    });
+
+    it("retains usage and activity but does not publish a final file after CLI failure", async () => {
+      const events = await collect(["Validation failed"], "Partial result", 1);
+      expect(events.at(-1)).toMatchObject({ type: "error" });
+      expect(events.some((event) => event.type === "completion" && event.finalOutput)).toBe(false);
+      expect(events).toContainEqual({ type: "progress", text: "Validation failed" });
+      expect(events).toContainEqual(expect.objectContaining({ usage: expect.any(Object) }));
+    });
+
+    it.each([
+      { exitCode: 1, errorMessage: undefined },
+      { exitCode: 0, errorMessage: "Output limit exceeded" },
+    ])("retains file-only final output before reporting failure (%j)", async (failure) => {
+      const finalOutput = "Validation passed.\nBlocker: publication credentials unavailable.\n";
+      const events = await collect([], finalOutput, failure.exitCode, failure.errorMessage);
+      const errorIndex = events.findIndex((event) => event.type === "error");
+      expect(events.slice(0, errorIndex)).toContainEqual({
+        type: "progress",
+        text: finalOutput,
+      });
+      expect(events.slice(0, errorIndex)).toContainEqual(
+        expect.objectContaining({ usage: expect.any(Object) }),
+      );
+      expect(events.some((event) => event.type === "completion" && event.finalOutput)).toBe(false);
+    });
+
+    it("does not duplicate the final message already retained in failed activity", async () => {
+      const finalOutput = "Validation passed; publication is blocked.";
+      const events = await collect([finalOutput], finalOutput, 1);
+      expect(events.filter((event) => event.type === "progress")).toEqual([
+        { type: "progress", text: finalOutput },
+      ]);
+    });
+
+    it("does not publish after a provider error even when the process exits zero", async () => {
+      const events = await collect(["Checking"], "Partial result", 0, "Output limit exceeded");
+      expect(events.at(-1)).toEqual({ type: "error", message: "Output limit exceeded" });
+      expect(events.some((event) => event.type === "completion" && event.finalOutput)).toBe(false);
+    });
+  });
 
   it.each(
     launchCredentials.flatMap((credential) =>
@@ -195,6 +347,10 @@ describe("CodexRunner", () => {
 
   it("logs in with a Codex access token before running exec", async () => {
     const sandbox = new FakeSandbox();
+    const readFile = sandbox.readFile.bind(sandbox);
+    vi.spyOn(sandbox, "readFile").mockImplementation((path) =>
+      path.endsWith("/final-output.md") ? Promise.resolve("Drafted product spec") : readFile(path),
+    );
     sandbox.scriptExec(
       (c) => c.cmd === "bash",
       [
@@ -230,8 +386,8 @@ describe("CodexRunner", () => {
     }
 
     expect(events).toEqual([
-      { type: "text", text: "thinking..." },
-      { type: "text", text: "Drafted product spec" },
+      { type: "progress", text: "thinking..." },
+      { type: "progress", text: "Drafted product spec" },
       { type: "tool_use", tool: "read_file", input: '{"path":"a.ts"}' },
       {
         type: "completion",
@@ -239,7 +395,12 @@ describe("CodexRunner", () => {
         summary: "Codex turn completed",
         usage: { inputTokens: 10, outputTokens: 4, provenance: "measured" },
       },
-      { type: "completion", taskComplete: true, summary: "Codex session completed" },
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "Codex session completed",
+        finalOutput: "Drafted product spec",
+      },
     ]);
 
     expect(await sandbox.readFile(harnessPath(sandbox, "codex/auth.json"))).toBeNull();
@@ -606,14 +767,14 @@ describe("CodexRunner", () => {
 describe("parseCodexLine", () => {
   it("parses text events", () => {
     expect(parseCodexLine('{"type":"text","text":"hello"}')).toEqual({
-      type: "text",
+      type: "progress",
       text: "hello",
     });
   });
 
-  it("parses assistant messages as text", () => {
+  it("parses assistant messages as progress", () => {
     expect(parseCodexLine('{"type":"message","role":"assistant","content":"hi"}')).toEqual({
-      type: "text",
+      type: "progress",
       text: "hi",
     });
   });
@@ -628,13 +789,13 @@ describe("parseCodexLine", () => {
     });
   });
 
-  it("parses current Codex item.completed agent messages as text", () => {
+  it("parses current Codex item.completed agent messages as progress", () => {
     expect(
       parseCodexLine(
         '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"artifact-output"}}',
       ),
     ).toEqual({
-      type: "text",
+      type: "progress",
       text: "artifact-output",
     });
   });
@@ -649,6 +810,16 @@ describe("parseCodexLine", () => {
       taskComplete: true,
       summary: "Codex turn completed",
       usage: { inputTokens: 15762, outputTokens: 34, provenance: "measured" },
+    });
+  });
+
+  it.each([
+    { type: "turn.failed", error: { message: "Output limit exceeded" } },
+    { type: "error", message: "Output limit exceeded" },
+  ])("preserves provider errors from $type", (event) => {
+    expect(parseCodexLine(JSON.stringify(event))).toEqual({
+      type: "error",
+      message: "Output limit exceeded",
     });
   });
 
@@ -698,9 +869,9 @@ describe("parseCodexLine", () => {
     });
   });
 
-  it("falls back to raw text for unknown JSON shapes", () => {
+  it("preserves non-JSON stdout as progress", () => {
     expect(parseCodexLine("plain output line")).toEqual({
-      type: "text",
+      type: "progress",
       text: "plain output line",
     });
   });

@@ -144,6 +144,21 @@ Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
                     new job re-runs the same stage
 ```
 
+### Final deliverables and activity
+
+Artifacts contain only the provider's final deliverable. Progress, tool events, partial output, and the final response remain in Run history.
+
+| Provider    | Final deliverable boundary                                 |
+| ----------- | ---------------------------------------------------------- |
+| Codex       | `codex exec --output-last-message` file                    |
+| Claude Code | Successful terminal `result.result`                        |
+| Cursor      | Successful terminal `result.result`                        |
+| OpenCode    | Text parts for the last completed step with `reason: stop` |
+
+If the final deliverable is missing or blank, the stage fails without creating an artifact. Run history retains available output and the failure reason. Provider errors also prevent publication. Usage accounting remains independent of artifact content.
+
+Publication keeps the final deliverable tied to its original run, attempt, artifact version, and source checkpoint. Existing artifacts remain unchanged.
+
 ### Five Hub Files
 
 If you read only five files to understand Wallie, read these:

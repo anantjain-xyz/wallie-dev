@@ -8,6 +8,145 @@ import { OpenCodeRunner, parseOpenCodeLine } from "./opencode";
 const credential = { secret: "zen-secret-key-1234567890" };
 
 describe("OpenCodeRunner", () => {
+  it.each([
+    { progress: [] },
+    { progress: ["Inspecting the implementation", "Tests are still running"] },
+  ])(
+    "publishes every text part in the final stop step and retains prior activity (%j)",
+    async ({ progress }) => {
+      const finalParts = [
+        `\n# Delivered\n\n${"Validation passed. ".repeat(1_000)}`,
+        "Blocker: publication requires credentials.  \n\n",
+      ];
+      const records = [
+        ...progress.flatMap((text, index) => [
+          { type: "step_start", part: { messageID: `progress-${index}` } },
+          { type: "text", part: { id: `text-${index}`, messageID: `progress-${index}`, text } },
+          {
+            type: "step_finish",
+            part: {
+              messageID: `progress-${index}`,
+              reason: "tool-calls",
+              tokens: { input: 10, output: 4 },
+            },
+          },
+        ]),
+        { type: "step_start", part: { messageID: "final" } },
+        ...finalParts.map((text, index) => ({
+          type: "text",
+          part: { id: `final-${index}`, messageID: "final", text },
+        })),
+        // Repeated part updates must not duplicate the final response.
+        { type: "text", part: { id: "final-1", messageID: "final", text: finalParts[1] } },
+        {
+          type: "step_finish",
+          part: { messageID: "final", reason: "stop", tokens: { input: 10, output: 4 } },
+        },
+      ];
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec("bash", [
+        { stream: "stdout", data: records.map((record) => JSON.stringify(record)).join("\n") },
+      ]);
+      const events = [];
+      for await (const event of new OpenCodeRunner({ credential }).start({
+        sandbox,
+        sessionId: "final-output",
+        prompt: "p",
+      }))
+        events.push(event);
+
+      expect(events.filter((event) => event.type === "progress")).toEqual([
+        ...progress.map((text) => ({ type: "progress", text })),
+        ...[...finalParts, finalParts[1]].map((text) => ({ type: "progress", text })),
+      ]);
+      expect(events.at(-1)).toEqual({
+        type: "completion",
+        taskComplete: true,
+        summary: "OpenCode session completed",
+        finalOutput: finalParts.join("\n"),
+        usage: {
+          inputTokens: 10 * (progress.length + 1),
+          outputTokens: 4 * (progress.length + 1),
+          provenance: "measured",
+        },
+      });
+    },
+  );
+
+  it.each([
+    { reason: "tool-calls", messageID: "message", hasText: true, beginsAnotherStep: false },
+    { reason: "stop", messageID: undefined, hasText: true, beginsAnotherStep: false },
+    { reason: "stop", messageID: "message", hasText: false, beginsAnotherStep: false },
+    { reason: "stop", messageID: "message", hasText: true, beginsAnotherStep: true },
+  ])(
+    "does not promote partial or unidentified output to a final deliverable (%j)",
+    async ({ reason, messageID, hasText, beginsAnotherStep }) => {
+      const sandbox = new FakeSandbox();
+      const records = [
+        ...(hasText
+          ? [{ type: "text", part: { id: "text", messageID, text: "Tests are still running" } }]
+          : []),
+        { type: "step_finish", part: { messageID, reason, tokens: { input: 3, output: 2 } } },
+        ...(beginsAnotherStep ? [{ type: "step_start", part: { messageID: "next" } }] : []),
+      ];
+      sandbox.scriptExec("bash", [
+        { stream: "stdout", data: records.map((record) => JSON.stringify(record)).join("\n") },
+      ]);
+      const events = [];
+      for await (const event of new OpenCodeRunner({ credential }).start({
+        sandbox,
+        sessionId: "missing-final",
+        prompt: "p",
+      }))
+        events.push(event);
+      expect(events.at(-1)).toMatchObject({
+        type: "completion",
+        usage: { inputTokens: 3, outputTokens: 2 },
+      });
+      expect(events.at(-1)).not.toHaveProperty("finalOutput");
+      if (hasText) expect(events[0]).toEqual({ type: "progress", text: "Tests are still running" });
+    },
+  );
+
+  it.each([0, 7])(
+    "retains usage and activity when an error follows final text (exit %i)",
+    async (exitCode) => {
+      const sandbox = new FakeSandbox();
+      const records = [
+        {
+          type: "text",
+          part: { id: "text", messageID: "final", text: "Delivered; blocker remains" },
+        },
+        {
+          type: "step_finish",
+          part: { messageID: "final", reason: "stop", tokens: { input: 3, output: 2 } },
+        },
+        { type: "error", message: "Provider stopped" },
+      ];
+      sandbox.scriptExec(
+        "bash",
+        [{ stream: "stdout", data: records.map((record) => JSON.stringify(record)).join("\n") }],
+        { exitCode },
+      );
+      const events = [];
+      for await (const event of new OpenCodeRunner({ credential }).start({
+        sandbox,
+        sessionId: "error-final",
+        prompt: "p",
+      }))
+        events.push(event);
+      expect(events[0]).toEqual({ type: "progress", text: "Delivered; blocker remains" });
+      expect(events[1]).toMatchObject({
+        type: "completion",
+        taskComplete: false,
+        usage: { inputTokens: 3, outputTokens: 2 },
+      });
+      expect(events[1]).not.toHaveProperty("finalOutput");
+      expect(events.some((event) => event.type === "completion" && event.taskComplete)).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "error" });
+    },
+  );
+
   it("requires a matching credential for the configured model provider", async () => {
     expect(() => new OpenCodeRunner({ credential: { secret: "" } })).toThrow(
       /OpenCode Zen API key/,
@@ -152,7 +291,7 @@ describe("OpenCodeRunner", () => {
     expect(runnerCalls(sandbox)).toHaveLength(1);
     expect(JSON.stringify(runnerCalls(sandbox))).not.toContain(freshZenSecret);
     expect(JSON.stringify(runnerCalls(sandbox))).not.toContain(freshProviderSecret);
-    expect(events).toContainEqual({ type: "text", text: "[REDACTED] [REDACTED]" });
+    expect(events).toContainEqual({ type: "progress", text: "[REDACTED] [REDACTED]" });
     expect(JSON.stringify(events)).not.toContain(freshZenSecret);
     expect(JSON.stringify(events)).not.toContain(freshProviderSecret);
   });
@@ -191,7 +330,7 @@ describe("OpenCodeRunner", () => {
     }
 
     expect(events).toEqual([
-      { type: "text", text: "working" },
+      { type: "progress", text: "working" },
       { type: "tool_use", tool: "bash", input: `{"command":"ls"}` },
       {
         type: "completion",
@@ -449,7 +588,7 @@ describe("OpenCodeRunner", () => {
       events.push(event);
     }
 
-    expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
+    expect(events).toContainEqual({ type: "progress", text: "[REDACTED]" });
     expect(JSON.stringify(events)).not.toContain(providerSecret);
 
     const authPath = harnessPath(sandbox, "data/opencode/auth.json");
@@ -644,7 +783,7 @@ describe("OpenCodeRunner", () => {
       events.push(event);
     }
 
-    expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
+    expect(events).toContainEqual({ type: "progress", text: "[REDACTED]" });
     expect(events).toContainEqual({
       type: "tool_use",
       tool: "echo",
@@ -673,7 +812,7 @@ describe("OpenCodeRunner", () => {
       events.push(event);
     }
 
-    expect(events).toContainEqual({ type: "text", text: "[REDACTED]" });
+    expect(events).toContainEqual({ type: "progress", text: "[REDACTED]" });
   });
 });
 
@@ -705,6 +844,8 @@ describe("parseOpenCodeLine", () => {
     ).toEqual({
       events: [],
       sessionId: undefined,
+      messageId: undefined,
+      step: { kind: "finish", reason: "" },
       usage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -734,6 +875,8 @@ describe("parseOpenCodeLine", () => {
     expect(parseOpenCodeLine(JSON.stringify({ type: "step_finish", part }))).toEqual({
       events: [],
       sessionId: undefined,
+      messageId: undefined,
+      step: { kind: "finish", reason: "" },
       usageInvalid: true,
     });
   });
@@ -751,6 +894,8 @@ describe("parseOpenCodeLine", () => {
       ).toEqual({
         events: [],
         sessionId: undefined,
+        messageId: undefined,
+        step: { kind: "finish", reason: "" },
         usage: { inputTokens: 2, outputTokens: 3, provenance: "measured" },
       });
     },
@@ -760,7 +905,7 @@ describe("parseOpenCodeLine", () => {
     expect(
       parseOpenCodeLine(`{"type":"text","part":{"sessionID":"part-session","text":"hello"}}`),
     ).toEqual({
-      events: [{ type: "text", text: "hello" }],
+      events: [{ type: "progress", text: "hello" }],
       sessionId: "part-session",
     });
     expect(parseOpenCodeLine(`{"type":"error","message":"failed"}`)).toEqual({

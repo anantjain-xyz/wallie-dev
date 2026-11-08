@@ -14,6 +14,7 @@ import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 export interface AgentEventText {
   type: "text";
+  /** Streamed activity retained in Run history; never used as an artifact fallback. */
   text: string;
 }
 
@@ -38,7 +39,11 @@ export interface AgentEventCompletion {
   /** Whether the agent signalled it finished its task (vs. hitting turn limit). */
   taskComplete: boolean;
   summary: string;
-  /** Explicit final deliverable, distinct from progress and bookkeeping summaries. */
+  /**
+   * Complete final deliverable from the provider's authoritative output boundary.
+   * Only this field is eligible for artifact publication. Missing or blank output
+   * fails the stage with activity preserved; summary/text/progress are not fallbacks.
+   */
   finalOutput?: string;
   /** Token usage and provider-reported cost, if available. */
   usage?: AgentRunUsage;

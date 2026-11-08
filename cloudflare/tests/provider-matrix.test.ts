@@ -8,28 +8,53 @@ import { prepareSessionSandbox } from "@/lib/sandbox/setup";
 const pairs = AGENT_PROVIDERS.flatMap((agent) =>
   SANDBOX_PROVIDER_IDS.map((provider) => ({ agent, provider })),
 );
+const progressMessages = [
+  "Inspecting the implementation synthetic-gh-token",
+  "Tests are still running synthetic-gh-token",
+];
+const finalDeliverable =
+  "# Delivered\n\nValidation: all checks passed.\n\nBlocker: release awaits review. synthetic-gh-token\n";
 const messages = {
   codex: [
-    { type: "text", text: "Reviewable output synthetic-gh-token" },
+    ...progressMessages.map((text, index) => ({
+      type: "item.completed",
+      item: { id: `progress-${index}`, type: "agent_message", text },
+    })),
     { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } },
   ],
   "claude-code": [
-    {
+    ...progressMessages.map((text) => ({
       type: "assistant",
-      message: { content: [{ type: "text", text: "Reviewable output synthetic-gh-token" }] },
-    },
-    { type: "result", subtype: "success", result: "Reviewable output", is_error: false },
+      message: { content: [{ type: "text", text }] },
+    })),
+    { type: "result", subtype: "success", result: finalDeliverable, is_error: false },
   ],
   cursor: [
-    {
+    ...progressMessages.map((text) => ({
       type: "assistant",
-      message: { content: [{ type: "text", text: "Reviewable output synthetic-gh-token" }] },
-    },
-    { type: "result", result: "Reviewable output" },
+      message: { content: [{ type: "text", text }] },
+    })),
+    { type: "result", subtype: "success", result: finalDeliverable, is_error: false },
   ],
   opencode: [
-    { type: "text", part: { text: "Reviewable output synthetic-gh-token" } },
-    { type: "step_finish", part: { tokens: { input: 1, output: 2 }, reason: "stop" } },
+    ...progressMessages.flatMap((text, index) => [
+      { type: "step_start", part: { messageID: `progress-${index}` } },
+      { type: "text", part: { id: `text-${index}`, messageID: `progress-${index}`, text } },
+      {
+        type: "step_finish",
+        part: {
+          messageID: `progress-${index}`,
+          tokens: { input: 1, output: 2 },
+          reason: "tool-calls",
+        },
+      },
+    ]),
+    { type: "step_start", part: { messageID: "final" } },
+    { type: "text", part: { id: "final-text", messageID: "final", text: finalDeliverable } },
+    {
+      type: "step_finish",
+      part: { messageID: "final", tokens: { input: 1, output: 2 }, reason: "stop" },
+    },
   ],
 };
 
@@ -43,13 +68,20 @@ describe("all agent/sandbox combinations under workerd", () => {
       writeFile: vi.fn(async (path, bytes) => {
         files.set(path, bytes.toString());
       }),
-      readFile: vi.fn(async () => null),
+      readFile: vi.fn(async (path) => files.get(path) ?? null),
       stop: vi.fn(async () => undefined),
       exec: vi.fn(async (cmd, args) => {
         const output =
           prepared && cmd === "bash" && !args[1]?.startsWith("mkdir -p ")
             ? messages[agent].map((message) => JSON.stringify(message)).join("\n") + "\n"
             : "";
+        if (output && agent === "codex") {
+          const promptFile = [...files.keys()].find((path) => path.endsWith("/prompt.txt"));
+          if (!promptFile) throw new Error("Codex must write its prompt before launch");
+          const finalOutputFile = promptFile.replace(/prompt\.txt$/, "final-output.md");
+          expect(args[1]).toContain(`'--output-last-message' '${finalOutputFile}'`);
+          files.set(finalOutputFile, finalDeliverable);
+        }
         return {
           logs: async function* () {
             if (output) {
@@ -113,10 +145,35 @@ describe("all agent/sandbox combinations under workerd", () => {
     } finally {
       await sandbox.stop();
     }
-    expect(
-      events.some((event) => event.type === "text" && event.text.includes("Reviewable output")),
-    ).toBe(true);
-    expect(events.some((event) => event.type === "completion" && event.taskComplete)).toBe(true);
+    const redactedFinal = finalDeliverable.replaceAll("synthetic-gh-token", "[REDACTED]");
+    expect(events.filter((event) => event.type === "progress").map((event) => event.text)).toEqual([
+      ...progressMessages.map((text) => text.replaceAll("synthetic-gh-token", "[REDACTED]")),
+      ...(agent === "opencode" ? [redactedFinal] : []),
+    ]);
+    const deliverables = events.filter(
+      (event) => event.type === "completion" && event.finalOutput !== undefined,
+    );
+    expect(deliverables).toEqual([
+      expect.objectContaining({
+        type: "completion",
+        taskComplete: true,
+        finalOutput: redactedFinal,
+      }),
+    ]);
+    expect(JSON.stringify(deliverables)).not.toContain("Tests are still running");
+    expect(JSON.stringify(deliverables)).not.toContain("Inspecting the implementation");
+    if (agent === "codex" || agent === "opencode") {
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "completion",
+          usage: {
+            inputTokens: agent === "codex" ? 1 : 3,
+            outputTokens: agent === "codex" ? 2 : 6,
+            provenance: "measured",
+          },
+        }),
+      );
+    }
     expect(events.some((event) => event.type === "error")).toBe(false);
     expect(JSON.stringify(events)).not.toContain("synthetic-gh-token");
     expect([...files.keys()].every((path) => path.startsWith("/tmp/wallie-"))).toBe(true);
