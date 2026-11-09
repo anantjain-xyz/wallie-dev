@@ -163,7 +163,7 @@ export async function readValidationIdentity(
   return value;
 }
 
-export function redactValidationText(value: string, secrets: readonly string[] = []): string {
+function redactCredentialValues(value: string, secrets: readonly string[]): string {
   return redactSecrets(value, [...secrets])
     .replace(
       /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -172,11 +172,35 @@ export function redactValidationText(value: string, secrets: readonly string[] =
     .replace(
       /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})\b/g,
       "[REDACTED]",
-    )
-    .replace(
-      /(\b(?:authorization\s*:\s*(?:bearer\s+)?|[\w-]*(?:token|secret|password|api[_-]?key|credential)[\w-]*["']?\s*[:=]\s*))["']?[^\r\n,;]+/gi,
-      "$1[REDACTED]",
     );
+}
+
+export function redactValidationText(value: string, secrets: readonly string[] = []): string {
+  return redactCredentialValues(value, secrets).replace(
+    /(\b(?:authorization\s*:\s*(?:bearer\s+)?|[\w-]*(?:token|secret|password|api[_-]?key|credential)[\w-]*["']?\s*[:=]\s*))["']?[^\r\n,;]+/gi,
+    "$1[REDACTED]",
+  );
+}
+
+const ENV_REFERENCE = String.raw`\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})`;
+const CREDENTIAL_REFERENCE_ASSIGNMENT = new RegExp(
+  String.raw`\b[\w-]*(?:token|secret|password|api[_-]?key|credential)[\w-]*\s*=\s*(?:"${ENV_REFERENCE}"|'${ENV_REFERENCE}'|${ENV_REFERENCE})(?=$|[\s;&|()<>])`,
+  "gi",
+);
+const AUTHORIZATION_REFERENCE = new RegExp(
+  String.raw`(["'])authorization\s*:\s*(?:bearer\s+)?${ENV_REFERENCE}\1(?=$|[\s;&|()<>])`,
+  "gi",
+);
+
+/** Only literal variable references are exempt; output always uses full redaction. */
+export function redactValidationCommand(value: string, secrets: readonly string[] = []): string {
+  if (redactCredentialValues(value, secrets) !== value) return redactValidationText(value, secrets);
+  const literals = value
+    .replace(CREDENTIAL_REFERENCE_ASSIGNMENT, "")
+    .replace(AUTHORIZATION_REFERENCE, "");
+  return redactValidationText(literals, secrets) === literals
+    ? value
+    : redactValidationText(value, secrets);
 }
 
 function safeText(bytes: Buffer, secrets: readonly string[]): Buffer | null {
@@ -235,7 +259,7 @@ export async function captureValidationEvidence(input: {
     const startedAt = new Date().toISOString();
     const record: ValidationEvidenceRecord = {
       key: command.key,
-      command: redactValidationText(command.command, secrets).slice(0, 4096),
+      command: redactValidationCommand(command.command, secrets).slice(0, 4096),
       provenance: "harness",
       status: "error",
       exitCode: null,

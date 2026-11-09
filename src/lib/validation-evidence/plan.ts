@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SandboxHandle } from "@/lib/sandbox/types";
-import { readValidationIdentity, redactValidationText } from "./capture";
+import { readValidationIdentity, redactValidationCommand, redactValidationText } from "./capture";
 import { validationPlanSchema, type ValidationPlan } from "./contracts";
 
 const MAX_PLAN_BYTES = 64 * 1024;
@@ -73,8 +73,15 @@ export async function readValidationPlan(input: {
   }
   const parsed = validationPlanSchema.safeParse(value);
   if (!parsed.success) throw new Error("Validation plan is invalid.");
-  const serialized = JSON.stringify(parsed.data);
-  if (redactValidationText(serialized, input.secrets) !== serialized)
+  const metadata = JSON.stringify(
+    parsed.data.commands.map(({ key, reports }) => ({ key, reports })),
+  );
+  if (
+    redactValidationText(metadata, input.secrets) !== metadata ||
+    parsed.data.commands.some(
+      ({ command }) => redactValidationCommand(command, input.secrets) !== command,
+    )
+  )
     throw new Error("Validation plan contains sensitive material.");
   return parsed.data;
 }

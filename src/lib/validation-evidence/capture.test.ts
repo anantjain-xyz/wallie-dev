@@ -23,7 +23,7 @@ afterEach(async () => {
   );
 });
 
-async function fixture(commands?: unknown[]) {
+async function fixture(commands?: unknown[], env?: Record<string, string>) {
   const directory = await mkdtemp(join(tmpdir(), "wallie-evidence-unit-"));
   directories.push(directory);
   const git = (...args: string[]) => {
@@ -51,7 +51,7 @@ async function fixture(commands?: unknown[]) {
     exec: async (command, args, opts) => {
       const child = spawn(command, args, {
         cwd: opts?.cwd ?? directory,
-        env: { ...process.env, ...opts?.env },
+        env: { ...process.env, ...env, ...opts?.env },
         signal: opts?.signal,
       });
       let stdout = "";
@@ -102,6 +102,91 @@ const command = (key: string, script: string, reports: unknown[] = []) => ({
 const report = { key: "results", path: "results.txt", kind: "report", required: true };
 
 describe("trusted validation capture", { timeout: 20_000 }, () => {
+  it("persists and executes credential references unchanged while redacting their output", async () => {
+    const secret = "synthetic-credential-123456789";
+    const script = `
+      console.log(process.env.API_KEY);
+      require('node:fs').writeFileSync(process.env.WALLIE_EVIDENCE_DIR + '/results.txt', process.env.API_KEY);
+    `;
+    const validationCommand = `API_KEY="$WALLIE_TEST_KEY" node -e ${shellQuote(script)}`;
+    const { sandbox, sha, git, plan } = await fixture(
+      [command("unit", validationCommand, [report])],
+      { WALLIE_TEST_KEY: secret },
+    );
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    await sandbox.writeFile(path, JSON.stringify(plan));
+    const treeSha = git("rev-parse", "HEAD^{tree}");
+    const rpc = vi.fn(async () => ({
+      data: { run_id: runId, commit_sha: sha, validation_tree_sha: treeSha, plan },
+      error: null,
+    }));
+    const pinned = await pinValidationPlan({
+      admin: { rpc } as never,
+      sandbox,
+      runId,
+      commitSha: sha,
+      secrets: [secret],
+    });
+    const captured = await captureValidationEvidence({
+      sandbox,
+      commitSha: sha,
+      plan: pinned,
+      secrets: [secret],
+    });
+    expect(rpc).toHaveBeenCalledWith("pin_session_validation_plan", {
+      p_run_id: runId,
+      p_commit_sha: sha,
+      p_validation_tree_sha: treeSha,
+      p_plan: plan,
+    });
+    expect(captured.records[0]).toMatchObject({
+      command: validationCommand,
+      status: "passed",
+      commitSha: sha,
+      treeSha,
+      reportKeys: ["unit/results"],
+    });
+    expect(captured.assets.map((asset) => asset.bytes.toString().trim())).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+    ]);
+  });
+
+  it.each([
+    'API_KEY="$API_KEY" pnpm test',
+    "GITHUB_TOKEN=$GITHUB_TOKEN pnpm test",
+    "TOKEN=\"${TOKEN}\" PASSWORD='$PASSWORD' pnpm test",
+    'curl -H "Authorization: Bearer $TOKEN" https://example.test',
+    "curl -H 'Authorization: ${TOKEN}' https://example.test",
+  ])("accepts literal credential references in the plan: %s", async (script) => {
+    const { sandbox, plan } = await fixture([command("unit", script)]);
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    await sandbox.writeFile(path, JSON.stringify(plan));
+    expect(await readValidationPlan({ sandbox, runId, secrets: [] })).toEqual(plan);
+  });
+
+  it.each([
+    "TOKEN=literal-credential pnpm test",
+    'TOKEN="$TOKEN" PASSWORD=literal-credential pnpm test',
+    'TOKEN="$TOKEN"literal-credential pnpm test',
+    "TOKEN=${TOKEN:-literal-credential} pnpm test",
+    'curl -H "Authorization: Bearer literal-credential" https://example.test',
+    'TOKEN="$TOKEN" echo ghp_fixturecredential123456789',
+  ])("rejects literal credentials mixed with references in the plan: %s", async (script) => {
+    const { sandbox, plan } = await fixture([command("unit", script)]);
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    await sandbox.writeFile(path, JSON.stringify(plan));
+    await expect(readValidationPlan({ sandbox, runId, secrets: [] })).rejects.toThrow(
+      "Validation plan contains sensitive material.",
+    );
+  });
+
   it("executes the frozen run plan even if its temporary file changes after persistence", async () => {
     const { sandbox, sha, git } = await fixture();
     const runId = randomUUID();
@@ -529,12 +614,14 @@ describe("evidence contracts and redaction", () => {
       encodeURIComponent(secret),
       JSON.stringify(secret).slice(1, -1),
       "TOKEN=unknown-token-value",
+      'API_KEY="$API_KEY"',
       "Authorization: Bearer another-token",
       "-----BEGIN RSA PRIVATE KEY-----\nprivate material\n-----END RSA PRIVATE KEY-----",
     ].join("\n");
     const redacted = redactValidationText(text, [secret]);
     expect(redacted).not.toContain(secret);
     expect(redacted).not.toContain("unknown-token-value");
+    expect(redacted).not.toContain("$API_KEY");
     expect(redacted).not.toContain("another-token");
     expect(redacted).not.toContain("private material");
   });
