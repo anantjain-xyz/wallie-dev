@@ -161,7 +161,7 @@ export function LinearKeyControls({
           {allowDelete ? (
             <DestructiveConfirmationDialog
               actionLabel="Remove Linear API key"
-              description="Removing the Linear API key stops Wallie from reading Linear issues in this workspace until a new key is saved."
+              description="Linear issue access stops until a new key is saved."
               errorMessage={deleteError}
               onConfirm={() => void handleDeleteLinearKey()}
               onOpenChange={(open) => {

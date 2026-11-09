@@ -42,7 +42,7 @@ export function LinearConfigurationSection({
     <Section
       anchorId="linear"
       statusBadge={canManage ? statusBadge : null}
-      tagline="Add Linear credentials and route Linear workflow states to Wallie pipeline stages."
+      tagline="Connect Linear and map workflow states to stages."
       title="Linear"
     >
       <div className="space-y-8">

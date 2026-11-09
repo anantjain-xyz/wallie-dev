@@ -95,10 +95,10 @@ async function reviewRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const payload = await response.json().catch(() => null);
   if (!response.ok)
     throw new ReviewRequestError(
-      payload?.error ?? "Could not save review. Your draft is retained.",
+      payload?.error ?? (init?.method ? "Couldn’t save." : "Couldn’t load comments."),
       response.status,
     );
-  if (!payload) throw new Error("Review response was empty. Please retry.");
+  if (!payload) throw new Error("Empty response. Retry.");
   return payload as T;
 }
 
@@ -499,8 +499,7 @@ export function ArtifactReviewPanel({
       requestMemory.current.delete(fingerprint);
       return result;
     } catch (error) {
-      let message =
-        error instanceof Error ? error.message : "Could not save review. Your draft is retained.";
+      let message = error instanceof Error ? error.message : "Couldn’t save.";
       if (error instanceof ReviewRequestError && error.status >= 400 && error.status < 500) {
         // The server rejected this intent. Keep the prose but refresh its CAS
         // revision before a fresh request. Network/5xx retries keep their key.
@@ -521,12 +520,10 @@ export function ArtifactReviewPanel({
             );
             refreshedTarget = exact.comments.find((comment) => comment.id === payload.commentId);
             if (!refreshedTarget)
-              message =
-                "This comment is unavailable. Your edit is retained; cancel it to choose another comment.";
+              message = "Comment unavailable. Discard this edit to choose another.";
           } catch {
             refreshedTarget = undefined;
-            message =
-              "Could not refresh this comment. Your edit is retained. Retry the save to refresh it again.";
+            message = "Couldn’t refresh comment. Save again to retry.";
           }
         }
         if (refreshedTarget && mounted.current) {
@@ -562,7 +559,7 @@ export function ArtifactReviewPanel({
       current ? { ...current, threads: mergeRows(current.threads, [result.thread]) } : current,
     );
     chooseThread(result.thread);
-    setAnnouncement("Comment saved. No agent execution was started.");
+    setAnnouncement("Comment saved.");
     void loadThreads();
     queueMicrotask(() => replyRef.current?.focus());
   }
@@ -737,7 +734,7 @@ export function ArtifactReviewPanel({
       ) : null}
       {saveError ? (
         <p className="mt-3 text-xs text-danger" role="alert">
-          {saveError} Your draft is retained. Retry the same save.
+          {saveError} Draft kept.
         </p>
       ) : null}
       {anchor && !readOnly ? (
@@ -747,7 +744,7 @@ export function ArtifactReviewPanel({
             void submitThread(event);
           }}
         >
-          <p className="text-xs font-semibold text-foreground">New comment on selected text</p>
+          <p className="text-xs font-semibold text-foreground">New comment</p>
           <blockquote
             tabIndex={0}
             className="max-h-36 overflow-auto whitespace-pre-wrap break-words border-l-2 border-accent pl-2 text-xs text-muted"
@@ -770,9 +767,7 @@ export function ArtifactReviewPanel({
             <option value="blocking">Blocking request</option>
           </select>
           {inline && kind === "blocking" ? (
-            <p className="text-xs text-warning">
-              This request blocks approval until a reviewer closes it.
-            </p>
+            <p className="text-xs text-warning">Blocks approval until a reviewer closes it.</p>
           ) : null}
           <label className="block text-xs text-muted" htmlFor={composerId}>
             Comment
@@ -795,7 +790,7 @@ export function ArtifactReviewPanel({
               disabled={pending || !body.trim()}
               type="submit"
             >
-              <ActionButtonLabel idle="Save comment" pending={pending} pendingLabel="Saving…" />
+              <ActionButtonLabel idle="Save" pending={pending} pendingLabel="Saving…" />
             </button>
             <button
               className={buttonClass}
@@ -808,7 +803,7 @@ export function ArtifactReviewPanel({
               }}
               type="button"
             >
-              Cancel new comment
+              Discard
             </button>
           </div>
         </form>
@@ -853,7 +848,7 @@ export function ArtifactReviewPanel({
       ) : null}
       {showThreadList && snapshot?.threads.length === 0 ? (
         <p className="mt-4 text-xs text-muted">
-          No comments on this artifact yet.
+          No comments yet.
           {!readOnly ? " Select artifact text and choose Add comment to start a thread." : ""}
         </p>
       ) : null}
@@ -919,7 +914,7 @@ export function ArtifactReviewPanel({
         </button>
       ) : null}
       {selectedId && !selectedThread && snapshot && !snapshot.nextCursor ? (
-        <p className="mt-3 text-xs text-muted">This thread is unavailable on this artifact.</p>
+        <p className="mt-3 text-xs text-muted">Thread unavailable for this artifact.</p>
       ) : null}
       {selectedThread && (!inline || !composing) ? (
         <section
@@ -1072,7 +1067,7 @@ export function ArtifactReviewPanel({
                   disabled={pending || !reply.trim()}
                   type="submit"
                 >
-                  {pending ? "Saving…" : editingId ? "Save edit" : "Save reply"}
+                  {pending ? "Saving…" : editingId ? "Save" : "Reply"}
                 </button>
                 {editingId ? (
                   <button
@@ -1085,7 +1080,7 @@ export function ArtifactReviewPanel({
                     }}
                     type="button"
                   >
-                    Cancel edit
+                    Discard
                   </button>
                 ) : null}
               </div>

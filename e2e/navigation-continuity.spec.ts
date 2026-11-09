@@ -201,7 +201,7 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
     "aria-pressed",
     "true",
   );
-  await expect(page.getByText("Updating sessions…", { exact: true })).toBeVisible();
+  await expect(page.getByText("Updating…", { exact: true })).toBeVisible();
   await expect(page.getByRole("table", { name: "Sessions", exact: true })).toHaveText(initialRows!);
   await page.getByRole("combobox", { name: "Sort sessions" }).click();
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
@@ -223,7 +223,7 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
   await page.screenshot({ path: ".wallie/screenshots/filter-updating.png", fullPage: true });
   gate.release();
   await expect(page).toHaveURL(/q=SSO/);
-  await expect(page.getByText("Updating sessions…", { exact: true })).toBeHidden();
+  await expect(page.getByText("Updating…", { exact: true })).toBeHidden();
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("SSO draft still being edited");
   expect(await page.evaluate(() => window.wallieEntrances.length)).toBe(0);

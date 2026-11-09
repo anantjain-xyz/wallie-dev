@@ -39,7 +39,7 @@ export async function readResponseJson<T>(response: Response) {
   }
 
   if (!payload) {
-    throw new Error("Request returned an empty response.");
+    throw new Error("Empty response. Retry.");
   }
 
   return payload;

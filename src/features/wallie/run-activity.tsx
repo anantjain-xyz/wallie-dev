@@ -61,7 +61,7 @@ export function formatWallieRunUsage(usage: WallieRunUsage): string {
   } else if (usage.finalized) {
     parts.push("cost unavailable");
   }
-  if (parts.length === 0) return "Usage not reported yet";
+  if (parts.length === 0) return "Usage not reported";
   return `Usage: ${parts.join(" · ")}`;
 }
 
@@ -357,7 +357,7 @@ export const WallieRunCard = memo(function WallieRunCard({
           </p>
           <p className="mt-1 text-xs leading-5 text-muted">
             {run.failure?.recovery ??
-              "No terminal cause was recorded for this historical run. Review the available activity or ask a workspace admin to investigate before retrying."}
+              "Cause not recorded. Review activity or ask a workspace admin before retrying."}
           </p>
         </div>
       ) : null}

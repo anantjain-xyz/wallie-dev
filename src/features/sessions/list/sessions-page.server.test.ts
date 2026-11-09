@@ -86,7 +86,7 @@ describe("Sessions ledger server render", () => {
         }),
       ),
     );
-    expect(archivedOnlyDefault).toContain("No sessions match these filters");
+    expect(archivedOnlyDefault).toContain("No matching sessions");
     expect(archivedOnlyDefault).not.toContain("No sessions yet");
 
     const one = renderToStaticMarkup(

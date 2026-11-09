@@ -124,14 +124,11 @@ describe("inline artifact review entry", () => {
     expect(await screen.findByText("Saved comments")).toBeTruthy();
   });
   it.each([
-    ["approved", "This session is approved. Comments are read-only."],
-    ["archived", "This session is archived. Comments are read-only."],
-    ["unauthorized", "You do not have permission to comment on this artifact."],
+    ["approved", "Approved · Comments are read-only."],
+    ["archived", "Archived · Comments are read-only."],
+    ["unauthorized", "You don’t have permission to comment."],
     ["loading", "Checking comment permissions…"],
-    [
-      "unavailable",
-      "Comments are unavailable until permissions can be verified. Retry loading comments.",
-    ],
+    ["unavailable", "Couldn’t verify comment permissions. Retry loading."],
   ] satisfies [ReviewReadOnlyReason, string][])(
     "disables keyboard and selection authoring for %s permissions",
     async (reason, message) => {

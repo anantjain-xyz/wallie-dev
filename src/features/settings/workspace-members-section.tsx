@@ -356,11 +356,7 @@ export function WorkspaceMembersSection({
   }
 
   return (
-    <Section
-      anchorId="members"
-      tagline="Invite workspace collaborators and review the people who can access this workspace."
-      title="Members"
-    >
+    <Section anchorId="members" tagline="Manage members and invitations." title="Members">
       <div className="space-y-6">
         {canManage ? (
           <div className="flex justify-end">
@@ -379,7 +375,7 @@ export function WorkspaceMembersSection({
                 </button>
               </DialogTrigger>
               <DialogContent
-                description="Send an invitation and choose the workspace access this person should receive."
+                description="Choose access and invite a teammate."
                 dismissible={busyAction !== "create"}
                 title="Invite a workspace member"
               >

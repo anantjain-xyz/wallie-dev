@@ -186,7 +186,7 @@ describe("concise run activity", () => {
       />,
     );
     expect(screen.getByText("Failure cause unavailable")).toBeTruthy();
-    expect(screen.getByText(/No terminal cause was recorded/)).toBeTruthy();
+    expect(screen.getByText(/Cause not recorded/)).toBeTruthy();
     expect(screen.queryByText("Unit tests failed.")).toBeNull();
     view.rerender(
       <WallieRunCard

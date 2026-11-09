@@ -27,8 +27,8 @@ export function PageFailure({
       </h1>
       <p className="mt-3 text-base leading-7 text-muted">
         {notFound
-          ? "The link may be out of date, or you may not have access to this page."
-          : "Try loading it again. If the problem continues, return to your workspace and try another page."}
+          ? "Link may be outdated or access restricted."
+          : "Retry or return to your workspace."}
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         {reset ? (

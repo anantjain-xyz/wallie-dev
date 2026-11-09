@@ -467,7 +467,7 @@ describe("optimistic session interactions", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
     fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
-    expect(screen.getByText("No sessions match these filters")).toBeTruthy();
+    expect(screen.getByText("No matching sessions")).toBeTruthy();
     expect(screen.getByText("Archiving session #1…", { exact: true })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 

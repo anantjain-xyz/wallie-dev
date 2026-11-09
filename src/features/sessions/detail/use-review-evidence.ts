@@ -40,7 +40,7 @@ export function useReviewEvidence(sessionId: string | undefined) {
       if (request === sequence.current)
         setState((current) => ({
           ...current,
-          error: "Delivery evidence is unavailable. Retry to confirm readiness.",
+          error: "Evidence unavailable. Retry to confirm readiness.",
           loading: false,
         }));
       return null;

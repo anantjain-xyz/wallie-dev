@@ -186,7 +186,7 @@ describe("RepositoryField", () => {
     );
 
     expect(html).toContain('role="status"');
-    expect(html).toContain("No repositories are available");
+    expect(html).toContain("No repositories available");
   });
 
   it("keeps stale options visible with an announced refresh state", () => {

@@ -131,14 +131,12 @@ for (const width of [1440, 390]) {
         route.fulfill({ json: reviewSnapshot(state) }),
       );
       const opener = await openFixture(page, state);
-      const notice = `This session is ${state}. Comments are read-only.`;
+      const notice = `${state === "approved" ? "Approved" : "Archived"} · Comments are read-only.`;
       await expect(page.getByText("0 open · 0 blocking requests")).toBeVisible();
       await expect(page.getByText(notice, { exact: true })).toHaveCount(2);
       await expect(page.getByText(notice).first()).toBeVisible();
       if (state === "approved") {
-        await expect(
-          page.getByText("This session is archived. Comments are read-only."),
-        ).toHaveCount(0);
+        await expect(page.getByText("Archived · Comments are read-only.")).toHaveCount(0);
       }
       await expectNoAuthoring(page);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -174,16 +172,14 @@ for (const width of [1440, 390]) {
     await capture(page, `focused-composer-${width}`);
     await composer.fill("Retain this draft across panel visibility changes.");
     await page.getByLabel("Comment type").selectOption("blocking");
-    await expect(
-      page.getByText("This request blocks approval until a reviewer closes it."),
-    ).toBeVisible();
+    await expect(page.getByText("Blocks approval until a reviewer closes it.")).toBeVisible();
     await composer.press("Escape");
     await expect(opener).toBeFocused();
     await opener.press("Enter");
     await expect(composer).toBeFocused();
     await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
     await expect(page.getByLabel("Comment type")).toHaveValue("blocking");
-    await page.getByRole("button", { name: "Cancel new comment" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
     await selectPassage(page, "keyup");
     await expect(action).toBeEnabled();
     await action.focus();
@@ -192,58 +188,62 @@ for (const width of [1440, 390]) {
     await expect(composer).toBeFocused();
     await expect(composer).toHaveValue("");
     await expect(page.getByLabel("Comment type")).toHaveValue("discussion");
-    await page.getByRole("button", { name: "Cancel new comment" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
     await capture(page, `empty-comments-${width}`);
   });
 }
 
-test("comment permissions stay unavailable while loading and recover after a failed lookup", async ({
-  page,
-}) => {
-  let release: () => void = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
+for (const width of [1440, 390]) {
+  test(`comment permissions stay unavailable while loading and recover after a failed lookup at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let fail = true;
+    await page.route("**/api/sessions/preview/reviews?*", async (route) => {
+      await gate;
+      await route.fulfill(
+        fail
+          ? { status: 503, json: { error: "Review service temporarily unavailable." } }
+          : { json: reviewSnapshot("editable") },
+      );
+    });
+    try {
+      await openFixture(page, "editable");
+      await expect(page.getByText("Checking comment permissions…").first()).toBeVisible();
+      await expectNoAuthoring(page, true);
+      await capture(page, `08-comment-permissions-loading-${width}`);
+      release();
+      await expect(
+        page.getByRole("alert").filter({ hasText: "Review service temporarily unavailable." }),
+      ).toBeVisible();
+      await expectNoAuthoring(page);
+      await capture(page, `09-comment-permissions-unavailable-${width}`);
+      fail = false;
+      await page.getByRole("button", { name: "Retry loading" }).click();
+      await selectPassage(page, "pointerup");
+      await expect(page.getByRole("button", { name: "Comment on selection" })).toBeEnabled();
+    } finally {
+      release();
+    }
   });
-  let fail = true;
-  await page.route("**/api/sessions/preview/reviews?*", async (route) => {
-    await gate;
-    await route.fulfill(
-      fail
-        ? { status: 503, json: { error: "Review service temporarily unavailable." } }
-        : { json: reviewSnapshot("editable") },
-    );
-  });
-  try {
-    await openFixture(page, "editable");
-    await expect(page.getByText("Checking comment permissions…").first()).toBeVisible();
-    await expectNoAuthoring(page, true);
-    await capture(page, "08-comment-permissions-loading");
-    release();
-    await expect(
-      page.getByRole("alert").filter({ hasText: "Review service temporarily unavailable." }),
-    ).toBeVisible();
-    await expectNoAuthoring(page);
-    await capture(page, "09-comment-permissions-unavailable");
-    fail = false;
-    await page.getByRole("button", { name: "Retry loading" }).click();
-    await selectPassage(page, "pointerup");
-    await expect(page.getByRole("button", { name: "Comment on selection" })).toBeEnabled();
-  } finally {
-    release();
-  }
-});
 
-test("unauthorized viewers have no keyboard or selection authoring action", async ({ page }) => {
-  await page.route("**/api/sessions/preview/reviews?*", (route) =>
-    route.fulfill({ status: 403, json: { error: "Active workspace membership is required." } }),
-  );
-  await openFixture(page, "editable");
-  await expect(
-    page.getByText("You do not have permission to comment on this artifact.").first(),
-  ).toBeVisible();
-  await expectNoAuthoring(page);
-  await capture(page, "10-comment-permissions-unauthorized");
-});
+  test(`unauthorized viewers have no keyboard or selection authoring action at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route("**/api/sessions/preview/reviews?*", (route) =>
+      route.fulfill({ status: 403, json: { error: "Active workspace membership is required." } }),
+    );
+    await openFixture(page, "editable");
+    await expect(page.getByText("You don’t have permission to comment.").first()).toBeVisible();
+    await expectNoAuthoring(page);
+    await capture(page, `10-comment-permissions-unauthorized-${width}`);
+  });
+}
 
 const artifactId = "11111111-1111-4111-8111-111111111111";
 const threadId = "22222222-2222-4222-8222-222222222222";
@@ -364,11 +364,11 @@ for (const width of [1440, 390]) {
     refreshing = false;
     await page.getByRole("button", { name: "Retry loading" }).click();
     await expect(reply).toHaveValue("Keep my exact reply draft.");
-    await expect(page.getByRole("button", { name: "Save reply" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Reply" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Retry loading" })).toHaveCount(0);
     await page.getByRole("heading", { name: "Session interaction preview" }).click();
     await capture(page, `12-permission-refresh-recovered-${width}`);
-    await page.getByRole("button", { name: "Save reply" }).click();
+    await page.getByRole("button", { name: "Reply" }).click();
     await expect.poll(() => saves.length).toBe(1);
     expect(saves[0]).toMatchObject({ body: "Keep my exact reply draft." });
   });
@@ -434,7 +434,7 @@ for (const width of [1440, 390]) {
     await expect(page.locator("blockquote")).toHaveText(paragraph);
     await composer.fill(body);
     await capture(page, `full-artifact-composer-${width}`);
-    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(
       page.getByRole("alert").filter({ hasText: "Save acknowledgement interrupted." }),
     ).toBeVisible();
@@ -444,7 +444,7 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Comments", exact: true }).click();
     await expect(composer).toBeFocused();
     await expect(composer).toHaveValue(body);
-    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText(body, { exact: true })).toBeVisible();
     expect(saves).toHaveLength(2);
     expect(saves[1]).toEqual(saves[0]);
@@ -543,7 +543,7 @@ test("native pointer and keyboard selection can activate the comment action", as
   await expect(action).toBeEnabled();
   await action.click();
   await expect(page.locator("blockquote")).toHaveText("Version");
-  await page.getByRole("button", { name: "Cancel new comment" }).click();
+  await page.getByRole("button", { name: "Discard" }).click();
   // Start from the focusable, read-only artifact region without creating a DOM range.
   await page.getByRole("button", { name: "Comments", exact: true }).focus();
   await page.keyboard.press("Tab");
@@ -592,7 +592,7 @@ for (const mode of ["rendered", "raw"]) {
     await expect(composer).toBeFocused();
     await expect(page.locator("blockquote")).toHaveText(quote);
     await composer.fill("Review this exact code.");
-    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect.poll(() => saved).toBeDefined();
     const from = richReviewSource.indexOf(quote);
     expect(saved).toMatchObject({

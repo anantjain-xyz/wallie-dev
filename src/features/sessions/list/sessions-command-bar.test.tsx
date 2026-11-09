@@ -16,10 +16,19 @@ import {
 import type { SessionListQueryState } from "@/features/sessions/types";
 
 const mocked = vi.hoisted(() => ({
+  pending: false,
   push: vi.fn(),
   refresh: vi.fn(),
   replace: vi.fn(),
 }));
+
+vi.mock("react", async (importOriginal) => {
+  const react = await importOriginal<typeof import("react")>();
+  return {
+    ...react,
+    useTransition: () => [mocked.pending, react.startTransition],
+  };
+});
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -71,6 +80,7 @@ describe("SessionsCommandBar sticky filters", () => {
     window.localStorage.clear();
     setListUrl();
     document.cookie = `${sessionListPreferencesCookieName("acme")}=; Path=/w/acme; Max-Age=0`;
+    mocked.pending = false;
     mocked.push.mockReset();
     mocked.refresh.mockReset();
     mocked.replace.mockReset();
@@ -259,10 +269,10 @@ describe("SessionsCommandBar sticky filters", () => {
 
     expect(screen.getByRole("button", { name: "Search" })).toBeEnabled();
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Search not applied. Press Enter or click Search.",
+      "Press Enter to search.",
     );
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Showing sessions without a search filter.",
+      /^Press Enter to search\.$/,
     );
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -297,10 +307,10 @@ describe("SessionsCommandBar sticky filters", () => {
 
       rerenderQueryState({ ...filters, query: "auth", cursor: null });
       expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-        "Showing results for “auth”.",
+        "Results for “auth”",
       );
       expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-        "Search not applied",
+        "Press Enter to search.",
       );
       expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
       await user.click(search);
@@ -308,6 +318,31 @@ describe("SessionsCommandBar sticky filters", () => {
       expect(mocked.push).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("announces pending searches and later edits without stacking the old result summary", async () => {
+    const user = userEvent.setup();
+    const initial = { ...defaultQueryState, query: "old" };
+    const { rerenderQueryState } = renderCommandBar(initial);
+    const search = screen.getByRole("searchbox");
+    await user.clear(search);
+    await user.type(search, "auth{Enter}");
+
+    mocked.pending = true;
+    rerenderQueryState(initial);
+    const status = screen.getByRole("status", { name: "Sessions search status" });
+    expect(status).toHaveTextContent("Searching…");
+    expect(status).not.toHaveTextContent("Results for");
+    expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
+    await user.type(search, "entication");
+    expect(status).toHaveTextContent("New edits not searched.");
+    expect(status).not.toHaveTextContent("Press Enter");
+
+    mocked.pending = false;
+    rerenderQueryState({ ...initial, query: "auth" });
+    expect(search).toHaveValue("authentication");
+    expect(status).toHaveTextContent("Press Enter to search. Results for “auth”");
+    expect(mocked.push).toHaveBeenCalledTimes(1);
+  });
 
   it("treats surrounding whitespace as the applied query without another request", async () => {
     const user = userEvent.setup();
@@ -321,7 +356,7 @@ describe("SessionsCommandBar sticky filters", () => {
 
     expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
     expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-      "Search not applied",
+      "Press Enter to search.",
     );
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -339,7 +374,7 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(search).toHaveValue("");
     expect(search).toHaveFocus();
     expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-      "Search not applied",
+      "Press Enter to search.",
     );
     expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("combobox", { name: "Filter by stage" })).toHaveTextContent("Build");
@@ -380,10 +415,10 @@ describe("SessionsCommandBar sticky filters", () => {
 
     await user.clear(search);
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Search not applied",
+      "Press Enter to search.",
     );
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Showing results for “auth”.",
+      "Results for “auth”",
     );
     expect(mocked.push).not.toHaveBeenCalled();
 
@@ -422,10 +457,10 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(search).toHaveValue("old");
     expect(search).toHaveFocus();
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Showing results for “old”.",
+      "Results for “old”",
     );
     expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-      "Search not applied",
+      "Press Enter to search.",
     );
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -447,10 +482,10 @@ describe("SessionsCommandBar sticky filters", () => {
 
       expect(search).toHaveValue("history");
       expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-        "Showing results for “history”.",
+        "Results for “history”",
       );
       expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-        "Search not applied",
+        "Press Enter to search.",
       );
       expect(mocked.push).not.toHaveBeenCalled();
     },
@@ -468,10 +503,10 @@ describe("SessionsCommandBar sticky filters", () => {
 
     expect(search).toHaveValue("history");
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Showing results for “history”.",
+      "Results for “history”",
     );
     expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-      "Search not applied",
+      "Press Enter to search.",
     );
     expect(mocked.push).toHaveBeenCalledTimes(1);
   });
@@ -488,10 +523,10 @@ describe("SessionsCommandBar sticky filters", () => {
 
     expect(search).toHaveValue("authentication");
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Search not applied",
+      "Press Enter to search.",
     );
     expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-      "Showing results for “auth”.",
+      "Results for “auth”",
     );
     expect(mocked.push).toHaveBeenCalledTimes(1);
   });
