@@ -1,7 +1,31 @@
 import { createArtifactSourceAnchor, type ArtifactSourceAnchor } from "./source-anchor";
 
+/** Resolve element boundaries produced by select-all, triple-click and keyboard selection. */
+function textBoundary(node: Node, offset: number, edge: "start" | "end") {
+  if (node.nodeType === Node.TEXT_NODE) return { node, offset };
+  if (offset < 0 || offset > node.childNodes.length) return null;
+  const before = edge === "end" ? offset > 0 : offset === node.childNodes.length;
+  let child = node.childNodes[before ? offset - 1 : offset];
+  if (!child) return null;
+  while (child.childNodes.length) {
+    child = (before ? child.lastChild : child.firstChild)!;
+  }
+  return child.nodeType === Node.TEXT_NODE
+    ? { node: child, offset: before ? child.textContent!.length : 0 }
+    : null;
+}
+
 /** Map a DOM boundary to a server-annotated exact source text node. */
-function sourcePoint(root: HTMLElement, node: Node, offset: number): number | null {
+function sourcePoint(
+  root: HTMLElement,
+  boundaryNode: Node,
+  boundaryOffset: number,
+  edge: "start" | "end",
+): number | null {
+  if (!root.contains(boundaryNode)) return null;
+  const boundary = textBoundary(boundaryNode, boundaryOffset, edge);
+  if (!boundary) return null;
+  const { node, offset } = boundary;
   const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
   const span = element?.closest<HTMLElement>("[data-review-text-start]");
   if (!span || !root.contains(span)) return null;
@@ -30,56 +54,12 @@ export function selectedArtifactSourceAnchor(
 ): ArtifactSourceAnchor | null {
   if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
   const range = selection.getRangeAt(0);
-  const start = sourcePoint(root, range.startContainer, range.startOffset);
-  const end = sourcePoint(root, range.endContainer, range.endOffset);
+  const start = sourcePoint(root, range.startContainer, range.startOffset, "start");
+  const end = sourcePoint(root, range.endContainer, range.endOffset, "end");
   if (start === null || end === null) return null;
   try {
     return createArtifactSourceAnchor(source, start, end);
   } catch {
     return null;
   }
-}
-
-export type ArtifactSourceBlock = { label: string; anchor: ArtifactSourceAnchor };
-
-/** Keyboard fallback uses the original source, including fenced code and CRLF. */
-export function artifactSourceBlocks(source: string): ArtifactSourceBlock[] {
-  const points = Array.from(source);
-  const blocks: ArtifactSourceBlock[] = [];
-  let start = 0;
-  let cursor = 0;
-  let fence: string | null = null;
-  function add(end: number) {
-    // Bound even an unusually large paragraph/code block to the anchor contract.
-    for (let at = start; at < end; at += 10000) {
-      const finish = Math.min(end, at + 10000);
-      const quote = points.slice(at, finish).join("");
-      if (!quote.trim()) continue;
-      blocks.push({
-        label: `${blocks.length + 1}. ${quote.replace(/\s+/gu, " ").slice(0, 80)}`,
-        anchor: {
-          coordinateSystem: "unicode_code_points",
-          start: at,
-          end: finish,
-          quote,
-          prefix: points.slice(Math.max(0, at - 32), at).join(""),
-          suffix: points.slice(finish, finish + 32).join(""),
-        },
-      });
-    }
-    start = end;
-  }
-  for (const line of source.match(/[^\n]*(?:\n|$)/gu) ?? []) {
-    if (!line) continue;
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/u)?.[1];
-    const wasFenced = fence !== null;
-    if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
-    }
-    cursor += Array.from(line).length;
-    if (!wasFenced && !fence && !line.trim()) add(cursor);
-  }
-  add(points.length);
-  return blocks;
 }

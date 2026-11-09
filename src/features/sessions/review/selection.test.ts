@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
 import { artifactPassageRanges, indexArtifactText } from "./artifact-passage";
-import { artifactSourceBlocks, selectedArtifactSourceAnchor } from "./selection";
+import { selectedArtifactSourceAnchor } from "./selection";
 import { createArtifactSourceAnchor, validateArtifactSourceAnchor } from "./source-anchor";
 
 beforeEach(() => {
@@ -47,8 +47,8 @@ describe("rendered artifact source selection", () => {
     const source = "café &amp; tea";
     document.body.innerHTML = renderMarkdownToHtml(source, true);
     const text = indexArtifactText(document.body);
-    const [block] = artifactSourceBlocks(source);
-    expect(artifactPassageRanges(text, block!.anchor).map((range) => range.toString())).toEqual([
+    const wholeAnchor = createArtifactSourceAnchor(source, 0, Array.from(source).length);
+    expect(artifactPassageRanges(text, wholeAnchor).map((range) => range.toString())).toEqual([
       "café & tea",
     ]);
     const rawAnchor = createArtifactSourceAnchor(source, 5, 10);
@@ -75,8 +75,12 @@ describe("rendered artifact source selection", () => {
   it("keeps a block selection renderable when only its trailing whitespace is omitted", () => {
     const source = "🚀 Reconnect.\n\nNext block.";
     document.body.innerHTML = renderMarkdownToHtml(source, true);
-    const [block] = artifactSourceBlocks(source);
-    const ranges = artifactPassageRanges(indexArtifactText(document.body), block!.anchor);
+    const paragraphAnchor = createArtifactSourceAnchor(
+      source,
+      0,
+      Array.from("🚀 Reconnect.\n\n").length,
+    );
+    const ranges = artifactPassageRanges(indexArtifactText(document.body), paragraphAnchor);
     expect(ranges.map((range) => range.toString())).toEqual(["🚀 Reconnect."]);
   });
   it("maps an exact code block", () => {
@@ -86,6 +90,34 @@ describe("rendered artifact source selection", () => {
   it("does not invent coordinates for decoded entities", () => {
     document.body.innerHTML = renderMarkdownToHtml("café &amp; tea", true);
     expect(document.querySelector("[data-review-text-start]")).toBeNull();
+  });
+  it("maps paragraph element boundaries across formatted text nodes", () => {
+    const source = "A **retry** then `code` 🚀.";
+    document.body.innerHTML = renderMarkdownToHtml(source, true);
+    const paragraph = document.querySelector("p")!;
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    window.getSelection()!.addRange(range);
+    expect(selectedArtifactSourceAnchor(document.body, source)).toEqual(
+      createArtifactSourceAnchor(source, 0, Array.from(source).length),
+    );
+  });
+  it("maps Raw element boundaries and preserves CRLF and Unicode", () => {
+    const source = "# 🚀\r\n\r\nRepeat é\r\nRepeat é";
+    const pre = document.createElement("pre");
+    pre.dataset.reviewTextStart = "0";
+    pre.dataset.reviewTextEnd = String(Array.from(source).length);
+    pre.textContent = source;
+    document.body.append(pre);
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    window.getSelection()!.addRange(range);
+    expect(selectedArtifactSourceAnchor(document.body, source)).toEqual(
+      createArtifactSourceAnchor(source, 0, Array.from(source).length),
+    );
+  });
+  it("rejects oversized selections instead of truncating their coordinates", () => {
+    expect(select("x".repeat(10001), "x".repeat(10001))).toBeNull();
   });
   it("rejects a UTF-16 boundary inside an astral character", () => {
     expect(select("A🚀B", "A🚀B", 0, 1, 2)).toBeNull();
@@ -101,27 +133,5 @@ describe("rendered artifact source selection", () => {
     );
     expect(html).not.toContain('data-review-text-start="0"');
     expect(html).not.toContain("onclick");
-  });
-});
-
-describe("keyboard source blocks", () => {
-  it("preserves CRLF and blank lines inside fenced code", () => {
-    const source = "# Heading\r\n\r\n```ts\r\none\r\n\r\ntwo\r\n```\r\n\r\nLast";
-    const blocks = artifactSourceBlocks(source);
-    expect(blocks).toHaveLength(3);
-    expect(blocks[1]!.anchor.quote).toContain("one\r\n\r\ntwo");
-    expect(blocks.every((block) => validateArtifactSourceAnchor(source, block.anchor))).toBe(true);
-  });
-  it("splits a large code block into bounded valid anchors", () => {
-    const source = "```\n" + "🚀".repeat(12000) + "\n```";
-    const blocks = artifactSourceBlocks(source);
-    expect(blocks).toHaveLength(2);
-    expect(
-      blocks.every(
-        (block) =>
-          Array.from(block.anchor.quote).length <= 10000 &&
-          validateArtifactSourceAnchor(source, block.anchor),
-      ),
-    ).toBe(true);
   });
 });

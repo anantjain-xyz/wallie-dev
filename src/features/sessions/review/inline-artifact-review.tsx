@@ -9,7 +9,6 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -31,7 +30,7 @@ import {
 } from "./comment-access";
 import { OPEN_REVIEW_COMMENTS_EVENT } from "./open-comments";
 import type { PassageThreadRequest } from "./review-panel";
-import { artifactSourceBlocks, selectedArtifactSourceAnchor } from "./selection";
+import { selectedArtifactSourceAnchor } from "./selection";
 import { type ArtifactSourceAnchor, validateArtifactSourceAnchor } from "./source-anchor";
 import type { ArtifactReviewThread, ReviewThreadListPayload } from "./types";
 
@@ -131,7 +130,8 @@ export function InlineArtifactReview({
     mode: typeof displayMode;
     rects: ReturnType<typeof artifactPassageRects>;
   } | null>(null);
-  const [block, setBlock] = useState(0);
+  const [selectionIssue, setSelectionIssue] = useState<string | null>(null);
+  const selectionAction = useRef<HTMLButtonElement>(null);
   const reader = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -158,7 +158,6 @@ export function InlineArtifactReview({
   const selectionStyle: (CSSProperties & Record<`--${string}`, string>) | undefined = selection
     ? { "--selection-top": `${selection.top}px`, "--selection-left": `${selection.left}px` }
     : undefined;
-  const blocks = useMemo(() => (open ? artifactSourceBlocks(source) : []), [open, source]);
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has("reviewThread")) {
       queueMicrotask(() => setPanelState("open"));
@@ -169,14 +168,25 @@ export function InlineArtifactReview({
   }, []);
 
   const captureSelection = useCallback(() => {
+    // Focusing the action may collapse the native selection. Keep the captured
+    // source coordinates until activation or focus leaves the action.
+    if (document.activeElement === selectionAction.current) return;
     const element = reader.current;
     if (!element || (readOnlyReason !== null && readOnlyReason !== "loading")) return;
     const nativeSelection = window.getSelection();
     const selected = selectedArtifactSourceAnchor(element, source, nativeSelection);
     if (!selected || !nativeSelection) {
       setSelection(null);
+      const range = nativeSelection?.rangeCount === 1 ? nativeSelection.getRangeAt(0) : null;
+      if (range && !range.collapsed && range.intersectsNode(element)) {
+        setSelectionIssue(
+          "This selection cannot be commented on. Select up to 10,000 characters with both ends inside the artifact. Try Raw for Markdown syntax or transformed text.",
+        );
+        setPanelState((current) => (current === "unopened" ? "hidden" : current));
+      }
       return;
     }
+    setSelectionIssue(null);
     const bounds = element.getBoundingClientRect();
     const rect = firstPassageRect([nativeSelection.getRangeAt(0)]);
     setSelection({
@@ -196,6 +206,9 @@ export function InlineArtifactReview({
       frame = window.requestAnimationFrame(captureSelection);
     }
     document.addEventListener("selectionchange", selectionChanged);
+    // Permission recovery and mode changes can happen after the browser's last
+    // selection event. Revisit the current range when capture becomes available.
+    selectionChanged();
     return () => {
       document.removeEventListener("selectionchange", selectionChanged);
       window.cancelAnimationFrame(frame);
@@ -329,53 +342,59 @@ export function InlineArtifactReview({
               </span>
             ) : null}
           </button>
-          {readOnlyReason && (open || selection || readOnlyReason !== "loading") ? (
+          {readOnlyReason &&
+          (open || selection || selectionIssue || readOnlyReason !== "loading") ? (
             <p id={permissionNoticeId} className="text-xs text-muted">
               {reviewReadOnlyMessage(readOnlyReason)}
             </p>
           ) : null}
         </div>
-        {open ? (
-          <div className="mb-4 space-y-2 rounded-[4px] border border-border bg-canvas p-3">
-            <label className="block text-xs font-medium" htmlFor="artifact-comment-block">
-              Comment on a block
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <select
-                id="artifact-comment-block"
-                disabled={readOnly}
-                aria-describedby={readOnly ? permissionNoticeId : undefined}
-                className="min-h-11 min-w-0 flex-1 rounded-[4px] border border-border bg-surface px-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-                value={block}
-                onChange={(event) => setBlock(Number(event.target.value))}
-              >
-                {blocks.map((value, index) => (
-                  <option key={value.anchor.start} value={index}>
-                    {value.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={readOnly || !blocks[block]}
-                aria-describedby={readOnly ? permissionNoticeId : undefined}
-                className="min-h-11 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => {
-                  const selected = blocks[block];
-                  if (selected) beginComment(selected.anchor);
-                }}
-              >
-                Add comment
+        {selectionIssue && !readOnly ? (
+          <p role="status" className="mb-3 text-xs text-muted">
+            {selectionIssue}{" "}
+            {displayMode === "rendered" && onShowRaw ? (
+              <button type="button" className="min-h-11 text-accent underline" onClick={onShowRaw}>
+                Open Raw
               </button>
-            </div>
-            <p className="text-xs text-muted">
-              Choose a block with the keyboard, or select text in the artifact.
-            </p>
-          </div>
+            ) : null}
+          </p>
         ) : null}
         <div
           className={cn(styles.reader, threads?.length && styles.readerWithMarkers)}
+          role="region"
+          aria-label="Artifact text"
+          tabIndex={0}
           ref={setReader}
+          onKeyDown={(event) => {
+            // Read-only text has no caret by default. Let keyboard users start
+            // and extend a native selection from the focused artifact region.
+            if (
+              event.target !== event.currentTarget ||
+              !event.shiftKey ||
+              !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+            )
+              return;
+            const native = window.getSelection();
+            if (!native || typeof native.modify !== "function") return;
+            if (!native.anchorNode || !event.currentTarget.contains(native.anchorNode)) {
+              const text = event.currentTarget.querySelector(
+                "[data-review-text-start], [data-review-rendered-start]",
+              )?.firstChild;
+              if (!text) return;
+              native.collapse(text, 0);
+            }
+            event.preventDefault();
+            native.modify(
+              "extend",
+              event.key === "ArrowLeft" || event.key === "ArrowUp" ? "backward" : "forward",
+              event.ctrlKey || event.metaKey
+                ? "word"
+                : event.key === "ArrowUp" || event.key === "ArrowDown"
+                  ? "line"
+                  : "character",
+            );
+            captureSelection();
+          }}
           onPointerUp={captureSelection}
           onKeyUp={captureSelection}
         >
@@ -443,6 +462,7 @@ export function InlineArtifactReview({
             : null}
           {(readOnlyReason === null || readOnlyReason === "loading") && selection && !anchor ? (
             <button
+              ref={selectionAction}
               aria-label="Comment on selection"
               disabled={readOnly}
               aria-describedby={readOnly ? permissionNoticeId : undefined}
@@ -455,6 +475,9 @@ export function InlineArtifactReview({
                 beginComment(selection.anchor);
               }}
               onPointerDown={(event) => event.preventDefault()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onKeyUp={(event) => event.stopPropagation()}
+              onBlur={captureSelection}
               style={selectionStyle}
               type="button"
             >

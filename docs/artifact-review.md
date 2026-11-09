@@ -36,7 +36,7 @@ Every write requires a caller-generated request UUID. Keep the same UUID and pay
 
 ## Inline review
 
-- Select text in the artifact and choose **Add comment**. To comment on a whole block, open **Comments** and use **Comment on a block**.
+- Select any text in **Full artifact** (or **Rendered**) or **Raw** and choose **Add comment**. The comments panel opens with the exact source passage quoted and the Comment textbox focused. Keyboard users can focus the **Artifact text** region and select text with Shift + Arrow, Tab to **Comment on selection**, and press Enter. Unsupported or oversized selections show guidance to select a smaller passage or use Raw.
 - Browse open and closed threads in the desktop side panel or the mobile bottom sheet. Once comments load, markers appear beside their passages.
 - Open a thread from the list, a marker, or a shared link to jump to its saved selection. Selections that require the original Markdown open in **Raw**.
 - Threads, replies, own-comment edits and lifecycle changes persist through authenticated session review APIs. Comment bodies render as escaped plain text.

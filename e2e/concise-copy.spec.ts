@@ -82,8 +82,15 @@ for (const width of [1440, 390]) {
     await page.goto("/dev/interaction-motion?reviewState=editable");
     const opener = page.getByRole("button", { name: "Comments", exact: true });
     await opener.click();
-    await page.getByLabel("Comment on a block").selectOption("1");
-    await page.getByRole("button", { name: "Add comment", exact: true }).click();
+    const passage = page.locator(".artifact-content p");
+    await passage.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    });
+    await passage.dispatchEvent("pointerup");
+    await page.getByRole("button", { name: "Comment on selection" }).click();
     const composer = page.getByRole("textbox", { name: "Comment", exact: true });
     await expect(composer).toBeFocused();
     await composer.fill(comment.body);
@@ -116,8 +123,14 @@ for (const width of [1440, 390]) {
     await expect(opener).toBeFocused();
     // Discard a fresh draft too; selection composition is covered by comment-access.
     await opener.click();
-    await page.getByLabel("Comment on a block").selectOption("1");
-    await page.getByRole("button", { name: "Add comment", exact: true }).click();
+    await passage.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    });
+    await passage.dispatchEvent("pointerup");
+    await page.getByRole("button", { name: "Comment on selection" }).click();
     await composer.fill("Discard this draft.");
     await page.getByRole("button", { name: "Discard", exact: true }).click();
     await expect(composer).toHaveCount(0);
