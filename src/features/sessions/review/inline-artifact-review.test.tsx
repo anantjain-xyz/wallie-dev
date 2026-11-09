@@ -68,21 +68,39 @@ beforeEach(() => {
 });
 
 describe("inline artifact review entry", () => {
-  it("offers keyboard block commenting and restores focus on close", async () => {
+  it("removes the block picker and restores focus on close", async () => {
     const user = userEvent.setup();
     subject();
     const opener = screen.getByRole("button", { name: "Comments" });
     opener.focus();
     await user.keyboard("{Enter}");
-    const block = screen.getByLabelText("Comment on a block");
-    block.focus();
-    await user.selectOptions(block, "1");
-    await user.tab();
-    expect(screen.getByRole("button", { name: "Add comment" })).toHaveFocus();
+    expect(screen.queryByLabelText("Comment on a block")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Add comment$/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Close comments" }));
+    expect(opener).toHaveFocus();
+  });
+  it("keeps the captured anchor when keyboard focus clears the native selection", async () => {
+    const user = userEvent.setup();
+    subject();
+    selectText("keyUp");
+    const action = screen.getByRole("button", { name: "Comment on selection" });
+    action.focus();
+    window.getSelection()?.removeAllRanges();
+    fireEvent(document, new Event("selectionchange"));
+    fireEvent.keyUp(action, { key: "Tab" });
+    expect(action).toHaveFocus();
     await user.keyboard("{Enter}");
-    expect(screen.getByText("Retain changes.", { selector: "aside p" })).toBeTruthy();
-    await user.keyboard("{Escape}");
-    expect(document.activeElement).toBe(opener);
+    expect(screen.getByText("Retain", { selector: "aside p" })).toBeVisible();
+  });
+  it("does not recapture a cleared native selection from the action's pointerup", async () => {
+    subject();
+    selectText();
+    const action = screen.getByRole("button", { name: "Comment on selection" });
+    fireEvent.pointerDown(action);
+    window.getSelection()?.removeAllRanges();
+    fireEvent.pointerUp(action);
+    fireEvent.click(action);
+    expect(screen.getByText("Retain", { selector: "aside p" })).toBeVisible();
   });
   it.each(["pointerUp", "keyUp"] as const)(
     "captures %s selected text before focus moves to the action",
@@ -121,10 +139,7 @@ describe("inline artifact review entry", () => {
       permission.reason = reason;
       subject();
       await user.click(screen.getByRole("button", { name: "Comments" }));
-      const add = screen.getByRole("button", { name: "Add comment" });
-      expect(add).toBeDisabled();
-      expect(screen.getByLabelText("Comment on a block")).toBeDisabled();
-      expect(add).toHaveAccessibleDescription(message);
+      expect(screen.getByText(message)).toBeVisible();
       selectText();
       selectText("keyUp");
       if (reason === "loading") {
@@ -132,7 +147,6 @@ describe("inline artifact review entry", () => {
       } else {
         expect(screen.queryByRole("button", { name: "Comment on selection" })).toBeNull();
       }
-      await user.click(add);
       expect(screen.getByText("Saved comments")).toBeVisible();
       if (reason !== "archived") expect(screen.queryByText(/This session is archived/)).toBeNull();
       await user.click(screen.getByRole("button", { name: "Close comments" }));
@@ -151,7 +165,6 @@ describe("inline artifact review entry", () => {
       </InlineArtifactReview>,
     );
     expect(screen.queryByRole("button", { name: "Comment on selection" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Add comment" })).toBeDisabled();
     expect(screen.getByText("Read only")).toBeTruthy();
   });
   it("verifies selection permissions before enabling the lazily loaded comment action", async () => {

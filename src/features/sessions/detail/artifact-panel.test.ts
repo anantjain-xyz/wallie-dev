@@ -181,7 +181,7 @@ describe("ArtifactPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Comments" }));
     expect(screen.getByRole("tab", { name: "Full artifact", selected: true })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Comments", expanded: true })).toBeTruthy();
-    expect(screen.getByLabelText("Comment on a block")).toBeTruthy();
+    expect(screen.queryByLabelText("Comment on a block")).toBeNull();
   });
 
   it("opens a shared thread in the full artifact even when a brief is available", async () => {

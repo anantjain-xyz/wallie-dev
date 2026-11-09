@@ -814,7 +814,7 @@ export function ArtifactReviewPanel({
         </form>
       ) : !inline && !readOnly && snapshot ? (
         <p className="mt-3 text-xs text-muted">
-          Select artifact text or use “Comment on a block” to start a thread.
+          Select artifact text and choose “Add comment” to start a thread.
         </p>
       ) : null}
       {inline && showThreadList && snapshot ? (
@@ -852,7 +852,10 @@ export function ArtifactReviewPanel({
         </div>
       ) : null}
       {showThreadList && snapshot?.threads.length === 0 ? (
-        <p className="mt-4 text-xs text-muted">No comments on this artifact yet.</p>
+        <p className="mt-4 text-xs text-muted">
+          No comments on this artifact yet.
+          {!readOnly ? " Select artifact text and choose Add comment to start a thread." : ""}
+        </p>
       ) : null}
       {inline &&
       showThreadList &&
