@@ -99,87 +99,93 @@ for (const width of [1440, 390]) {
   }
 }
 
-test("editable keyboard and selection comments retain drafts and version anchors", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.route("**/api/sessions/preview/reviews?*", (route) =>
-    route.fulfill({ json: reviewSnapshot("editable") }),
-  );
-  const opener = await openFixture(page, "editable");
-  const block = page.getByLabel("Comment on a block");
-  await expect(block).toBeEnabled();
-  await capture(page, "05-editable-blocks-desktop");
-  await block.selectOption("1");
-  await block.focus();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeFocused();
-  await page.keyboard.press("Enter");
-  const composer = page.getByRole("textbox", { name: "Comment", exact: true });
-  await expect(composer).toBeFocused();
-  await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
-  await composer.fill("Retain this draft across panel visibility changes.");
-  await page.getByLabel("Comment type").selectOption("blocking");
-  await expect(page.getByText("Blocks approval until a reviewer closes it.")).toBeVisible();
-  await capture(page, "06-editable-keyboard-composer");
-  await composer.press("Escape");
-  await expect(opener).toBeFocused();
-  await opener.press("Enter");
-  await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
-  await page.getByRole("button", { name: "Discard" }).click();
-  await selectPassage(page, "keyup");
-  const selectionAction = page.getByRole("button", { name: "Comment on selection" });
-  await expect(selectionAction).toBeVisible();
-  await selectionAction.click();
-  await expect(composer).toBeFocused();
-  await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
-  await capture(page, "07-editable-selection-composer");
-});
-
-test("comment permissions stay unavailable while loading and recover after a failed lookup", async ({
-  page,
-}) => {
-  let release: () => void = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let fail = true;
-  await page.route("**/api/sessions/preview/reviews?*", async (route) => {
-    await gate;
-    await route.fulfill(
-      fail
-        ? { status: 503, json: { error: "Review service temporarily unavailable." } }
-        : { json: reviewSnapshot("editable") },
+for (const width of [1440, 390]) {
+  test(`editable keyboard and selection comments retain drafts and version anchors at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route("**/api/sessions/preview/reviews?*", (route) =>
+      route.fulfill({ json: reviewSnapshot("editable") }),
     );
+    const opener = await openFixture(page, "editable");
+    const block = page.getByLabel("Comment on a block");
+    await expect(block).toBeEnabled();
+    await capture(page, `05-editable-blocks-${width}`);
+    await block.selectOption("1");
+    await block.focus();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeFocused();
+    await page.keyboard.press("Enter");
+    const composer = page.getByRole("textbox", { name: "Comment", exact: true });
+    await expect(composer).toBeFocused();
+    await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
+    await composer.fill("Retain this draft across panel visibility changes.");
+    await page.getByLabel("Comment type").selectOption("blocking");
+    await expect(page.getByText("Blocks approval until a reviewer closes it.")).toBeVisible();
+    await capture(page, `06-editable-keyboard-composer-${width}`);
+    await composer.press("Escape");
+    await expect(opener).toBeFocused();
+    await opener.press("Enter");
+    await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
+    await page.getByRole("button", { name: "Discard" }).click();
+    await selectPassage(page, "keyup");
+    const selectionAction = page.getByRole("button", { name: "Comment on selection" });
+    await expect(selectionAction).toBeVisible();
+    await selectionAction.click();
+    await expect(composer).toBeFocused();
+    await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
+    await capture(page, `07-editable-selection-composer-${width}`);
   });
-  try {
-    await openFixture(page, "editable");
-    await expect(page.getByText("Checking comment permissions…").first()).toBeVisible();
-    await expectNoAuthoring(page, true);
-    await capture(page, "08-comment-permissions-loading");
-    release();
-    await expect(
-      page.getByRole("alert").filter({ hasText: "Review service temporarily unavailable." }),
-    ).toBeVisible();
-    await expectNoAuthoring(page);
-    await capture(page, "09-comment-permissions-unavailable");
-    fail = false;
-    await page.getByRole("button", { name: "Retry loading" }).click();
-    await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeEnabled();
-  } finally {
-    release();
-  }
-});
 
-test("unauthorized viewers have no keyboard or selection authoring action", async ({ page }) => {
-  await page.route("**/api/sessions/preview/reviews?*", (route) =>
-    route.fulfill({ status: 403, json: { error: "Active workspace membership is required." } }),
-  );
-  await openFixture(page, "editable");
-  await expect(page.getByText("You don’t have permission to comment.").first()).toBeVisible();
-  await expectNoAuthoring(page);
-  await capture(page, "10-comment-permissions-unauthorized");
-});
+  test(`comment permissions stay unavailable while loading and recover after a failed lookup at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let fail = true;
+    await page.route("**/api/sessions/preview/reviews?*", async (route) => {
+      await gate;
+      await route.fulfill(
+        fail
+          ? { status: 503, json: { error: "Review service temporarily unavailable." } }
+          : { json: reviewSnapshot("editable") },
+      );
+    });
+    try {
+      await openFixture(page, "editable");
+      await expect(page.getByText("Checking comment permissions…").first()).toBeVisible();
+      await expectNoAuthoring(page, true);
+      await capture(page, `08-comment-permissions-loading-${width}`);
+      release();
+      await expect(
+        page.getByRole("alert").filter({ hasText: "Review service temporarily unavailable." }),
+      ).toBeVisible();
+      await expectNoAuthoring(page);
+      await capture(page, `09-comment-permissions-unavailable-${width}`);
+      fail = false;
+      await page.getByRole("button", { name: "Retry loading" }).click();
+      await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeEnabled();
+    } finally {
+      release();
+    }
+  });
+
+  test(`unauthorized viewers have no keyboard or selection authoring action at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route("**/api/sessions/preview/reviews?*", (route) =>
+      route.fulfill({ status: 403, json: { error: "Active workspace membership is required." } }),
+    );
+    await openFixture(page, "editable");
+    await expect(page.getByText("You don’t have permission to comment.").first()).toBeVisible();
+    await expectNoAuthoring(page);
+    await capture(page, `10-comment-permissions-unauthorized-${width}`);
+  });
+}
 
 const artifactId = "11111111-1111-4111-8111-111111111111";
 const threadId = "22222222-2222-4222-8222-222222222222";

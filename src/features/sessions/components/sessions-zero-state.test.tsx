@@ -20,7 +20,7 @@ describe("SessionsZeroState", () => {
     const html = renderZeroState("first-run");
 
     expect(html).toContain("No sessions yet");
-    expect(html).toContain("Describe a task");
+    expect(html).toContain("Start with a task or Linear issue.");
     expect(html).not.toContain("archived");
   });
 
@@ -28,7 +28,7 @@ describe("SessionsZeroState", () => {
     const html = renderZeroState("archived");
 
     expect(html).toContain("No active sessions");
-    expect(html).toContain("All sessions have been archived");
+    expect(html).toContain("All sessions archived.");
     expect(html).not.toContain("No sessions yet");
   });
 });

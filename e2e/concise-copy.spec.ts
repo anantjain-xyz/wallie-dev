@@ -114,7 +114,7 @@ for (const width of [1440, 390]) {
     await capture(page, info, "comment-saved");
     await page.getByRole("button", { name: "Close comments" }).click();
     await expect(opener).toBeFocused();
-    // Discard a fresh draft too, then compose on an exact text selection.
+    // Discard a fresh draft too; selection composition is covered by comment-access.
     await opener.click();
     await page.getByLabel("Comment on a block").selectOption("1");
     await page.getByRole("button", { name: "Add comment", exact: true }).click();
