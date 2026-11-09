@@ -138,8 +138,10 @@ select is(public.claim_session_source_delivery(),null::uuid,
   'legacy attempt-PR outbox cannot publish sessions owned by canonical synchronization');
 create temp table first_operation as select claimed.* from pg_temp.pr_claim((select session_id from canonical)) claimed;
 select ok((select epoch.epoch_number=1 and epoch.pr_number is null and not epoch.create_attempted
+  and epoch.branch_name='wallie/sessions/'||epoch.session_id::text||'/'||epoch.id::text
+  and epoch.fence_branch='refs/wallie/fences/'||epoch.id::text
   from first_operation operation join public.session_pr_epochs epoch on epoch.id=operation.epoch_id),
-  'first publisher allocates one canonical epoch before remote I/O');
+  'first publisher pins one PR branch and one custom fence ref before remote I/O');
 select ok((select operation.desired_sha=repeat('b',40) and operation.source_ref=checkpoint.output_ref
   and operation.checkpoint_run_id=sync.desired_checkpoint_run_id and operation.target_generation=sync.target_generation
   and operation.expected_head_sha is null and operation.expected_fence_sha is null
@@ -163,6 +165,8 @@ select is(pg_temp.pr_failure_state($$update public.session_pr_operations set des
   where id=(select id from first_operation)$$),'23514','even privileged SQL cannot retarget an authorized operation');
 select is(pg_temp.pr_failure_state($$update public.session_pr_operations set fence_commit_body=fence_commit_body||'extra'
   where id=(select id from first_operation)$$),'23514','operation Git fence body cannot change across retries');
+select is(pg_temp.pr_failure_state($$update public.session_pr_epochs set fence_branch='wallie/session-fences/'||id::text
+  where id=(select epoch_id from first_operation)$$),'23514','an existing PR epoch cannot switch fence namespaces');
 select is((select public.arm_session_pr_creation(epoch_id,id,claim_id) from first_operation),true,
   'first current operation can durably arm one ambiguous PR creation request');
 select is((select public.arm_session_pr_creation(epoch_id,id,claim_id) from first_operation),false,
@@ -463,6 +467,7 @@ select is(public.authorize_session_pr_successor(
   (select id from successor_epoch),'lost successor response returns the same human-authorized epoch');
 select ok((select fresh.epoch_number=old.epoch_number+1 and fresh.id<>old.id
   and fresh.branch_name<>old.branch_name and fresh.fence_branch<>old.fence_branch
+  and fresh.fence_branch='refs/wallie/fences/'||fresh.id::text
   and fresh.pr_number is null and not fresh.create_attempted and old.pr_number=101 and old.pr_state='closed'
   and sync.current_epoch_id=fresh.id and sync.status='pending'
   from successor_epoch receipt join public.session_pr_epochs fresh on fresh.id=receipt.id
@@ -492,6 +497,22 @@ select is(pg_temp.pr_failure_state($$select public.authorize_session_pr_successo
   (select session_id from canonical),(select epoch_id from first_operation),(select id from successor_request))$$),'42501',
   'retry receipt cannot revive successor authorization after human access is revoked');
 update public.workspace_members set is_active=true where id='c1b2c3d4-0001-4000-8000-000000000001';
+
+-- An existing epoch may still have a branch-backed fence while it is open.
+create temp table branch_fence_session as select pg_temp.pr_fixture('Existing branch-backed fence') as session_id;
+create temp table branch_fence_operation as
+select claimed.* from pg_temp.pr_claim((select session_id from branch_fence_session)) claimed;
+alter table public.session_pr_epochs disable trigger guard_session_pr_epochs;
+update public.session_pr_epochs set fence_branch='wallie/session-fences/'||id::text
+where id=(select epoch_id from branch_fence_operation);
+alter table public.session_pr_epochs enable trigger guard_session_pr_epochs;
+select is((select public.arm_session_pr_creation(epoch_id,id,claim_id) from branch_fence_operation),true,
+  'a pending operation can continue with a pre-migration fence branch');
+select is((select pg_temp.pr_finish(id,claim_id,205) from branch_fence_operation),true,
+  'a pre-migration epoch accepts the receipt for its original fence');
+select is((select fence_branch from public.session_pr_epochs where id=(select epoch_id from branch_fence_operation)),
+  'wallie/session-fences/'||(select epoch_id::text from branch_fence_operation),
+  'completing an old operation preserves its fence target');
 
 select ok(has_table_privilege('service_role','public.session_pr_sync','SELECT')
   and has_table_privilege('service_role','public.session_pr_epochs','SELECT')

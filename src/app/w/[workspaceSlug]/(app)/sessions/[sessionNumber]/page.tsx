@@ -64,6 +64,7 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
       canReview={data.canReview}
       failedStageSlug={data.failedStageSlug}
       hasFailedRun={data.hasFailedRun}
+      latestRun={data.latestRun}
       initialData={data.review}
       initialNow={initialNow}
       initialFormattedArtifact={initialFormattedArtifact}

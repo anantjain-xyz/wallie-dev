@@ -106,7 +106,9 @@ export async function publishCanonicalPullRequest(
           desiredSha: operation.desired_sha,
           sourceRef: operation.source_ref,
           branchName: epoch.branch_name,
-          fenceBranch: epoch.fence_branch,
+          fenceRef: epoch.fence_branch.startsWith("refs/")
+            ? epoch.fence_branch
+            : `refs/heads/${epoch.fence_branch}`,
           expectedHeadSha: operation.expected_head_sha,
           expectedFenceSha: operation.expected_fence_sha,
           desiredFenceSha: operation.desired_fence_sha,

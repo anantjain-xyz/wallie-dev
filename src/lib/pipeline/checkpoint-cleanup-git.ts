@@ -1,9 +1,9 @@
 import "server-only";
 
+import { isWallieCheckpointRef } from "@/lib/checkpoint-ref";
 import type { GitExecutor, SourceGitWorkspace } from "./source-delivery-git-core";
 
 const SHA = /^[a-f0-9]{40}$/;
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const FAILURE = "Could not verify retained checkpoint removal.";
 
 export class RetainedCheckpointRefConflictError extends Error {
@@ -18,6 +18,7 @@ export async function deleteRetainedCheckpointRefWithWorkspace(
   input: {
     runId: string;
     headSha: string;
+    retainedRef: string;
     remoteUrl: string;
     token: string;
     signal?: AbortSignal;
@@ -25,11 +26,11 @@ export async function deleteRetainedCheckpointRefWithWorkspace(
   },
   dependencies: { execGit: GitExecutor; createWorkspace: () => Promise<SourceGitWorkspace> },
 ): Promise<{ ref: string; absent: true }> {
-  if (!UUID.test(input.runId) || !SHA.test(input.headSha))
+  const ref = input.retainedRef;
+  if (!isWallieCheckpointRef(ref, input.headSha, input.runId))
     throw new Error("Invalid retained checkpoint cleanup identity.");
   if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(input.remoteUrl))
     throw new Error("Checkpoint cleanup requires a canonical GitHub repository URL.");
-  const ref = `refs/heads/wallie/checkpoints/${input.runId}/${input.headSha}`;
   const signal = AbortSignal.any([
     AbortSignal.timeout(60_000),
     ...(input.signal ? [input.signal] : []),
@@ -62,7 +63,7 @@ export async function deleteRetainedCheckpointRefWithWorkspace(
       return result;
     };
     const remoteHead = async () => {
-      const { stdout } = await git(["ls-remote", "--heads", input.remoteUrl, ref]);
+      const { stdout } = await git(["ls-remote", "--refs", input.remoteUrl, ref]);
       const lines = stdout.trim().split("\n").filter(Boolean);
       if (!lines.length) return null;
       if (lines.length !== 1) throw new Error(FAILURE);

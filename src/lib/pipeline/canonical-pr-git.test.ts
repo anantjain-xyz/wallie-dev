@@ -17,6 +17,7 @@ import type { GitExecutor, SourceGitWorkspace } from "./source-delivery-git-core
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const SESSION = "10000000-0000-4000-8000-000000000001";
 const EPOCH = "20000000-0000-4000-8000-000000000001";
+const RUN = "40000000-0000-4000-8000-000000000001";
 const operation = (n: number) => `30000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 const ERROR = "Could not promote the canonical session refs.";
 
@@ -38,7 +39,7 @@ function fenceSha(operationId: string, parent: string | null) {
     .digest("hex");
 }
 
-function fixture() {
+function fixture(refKind: "custom" | "legacy" = "custom") {
   const root = mkdtempSync(join(tmpdir(), "wallie-canonical-git-"));
   const source = join(root, "source");
   const remote = join(root, "remote.git");
@@ -59,8 +60,17 @@ function fixture() {
   const b = repoGit("rev-parse", "HEAD");
   repoGit("branch", "checkpoint-b");
   git("clone", "--bare", source, remote);
+  const checkpointRef = (sha: string) =>
+    refKind === "custom"
+      ? `refs/wallie/checkpoints/${RUN}/${sha}`
+      : `refs/heads/checkpoint-${sha === a ? "a" : "b"}`;
+  git("--git-dir", remote, "update-ref", checkpointRef(a), a);
+  git("--git-dir", remote, "update-ref", checkpointRef(b), b);
   const headRef = `refs/heads/wallie/sessions/${SESSION}/${EPOCH}`;
-  const fenceRef = `refs/heads/wallie/session-fences/${EPOCH}`;
+  const fenceRef =
+    refKind === "custom"
+      ? `refs/wallie/fences/${EPOCH}`
+      : `refs/heads/wallie/session-fences/${EPOCH}`;
   const remoteUrl = "https://github.com/acme/app.git";
   const workspaces: SourceGitWorkspace[] = [];
   const dependencies = {
@@ -89,9 +99,9 @@ function fixture() {
   ): CanonicalPromotionInput => ({
     operationId: operation(n),
     desiredSha: sha,
-    sourceRef: `refs/heads/checkpoint-${sha === a ? "a" : "b"}`,
+    sourceRef: checkpointRef(sha),
     branchName: headRef.slice("refs/heads/".length),
-    fenceBranch: fenceRef.slice("refs/heads/".length),
+    fenceRef,
     expectedHeadSha: expected?.headSha ?? null,
     expectedFenceSha: expected?.fenceSha ?? null,
     desiredFenceSha: fenceSha(operation(n), expected?.fenceSha ?? null),
@@ -100,7 +110,7 @@ function fixture() {
     beforePush: vi.fn(async () => {}),
   });
   const pair = () => {
-    const result = git("--git-dir", remote, "show-ref", "--heads");
+    const result = git("--git-dir", remote, "show-ref");
     const refs = result.split("\n").map((line) => line.split(" "));
     return {
       headSha: refs.find(([, ref]) => ref === headRef)?.[0] ?? null,
@@ -128,32 +138,40 @@ function fixture() {
   };
 }
 
-it("atomically publishes exact source and an independently verified deterministic fence", async () => {
-  const f = fixture();
-  try {
-    const input = f.input();
-    const result = await promoteCanonicalRefsWithWorkspace(input, f.dependencies);
-    expect(result).toEqual({ headSha: f.a, fenceSha: input.desiredFenceSha });
-    expect(f.pair()).toEqual(result);
-    expect(f.git("--git-dir", f.remote, "show", `${f.headRef}:output.txt`)).toBe("Source A");
-    expect(f.git("--git-dir", f.remote, "cat-file", "commit", result.fenceSha)).toBe(
-      fenceObject(input.operationId, null).trim(),
-    );
-    expect(f.pushes()[0][0]).toEqual([
-      "push",
-      "--atomic",
-      `--force-with-lease=${f.headRef}:`,
-      `--force-with-lease=${f.fenceRef}:`,
-      input.remoteUrl,
-      `${f.a}:${f.headRef}`,
-      `${input.desiredFenceSha}:${f.fenceRef}`,
-    ]);
-    expect(input.beforePush).toHaveBeenCalledTimes(1);
-    f.expectClean();
-  } finally {
-    f.cleanup();
-  }
-});
+it.each(["custom", "legacy"] as const)(
+  "atomically publishes exact source and a deterministic %s fence",
+  async (refKind) => {
+    const f = fixture(refKind);
+    try {
+      const input = f.input();
+      const result = await promoteCanonicalRefsWithWorkspace(input, f.dependencies);
+      expect(result).toEqual({ headSha: f.a, fenceSha: input.desiredFenceSha });
+      expect(f.pair()).toEqual(result);
+      expect(f.git("--git-dir", f.remote, "show", `${f.headRef}:output.txt`)).toBe("Source A");
+      expect(f.git("--git-dir", f.remote, "cat-file", "commit", result.fenceSha)).toBe(
+        fenceObject(input.operationId, null).trim(),
+      );
+      expect(
+        f
+          .git("--git-dir", f.remote, "for-each-ref", "--format=%(refname)", "refs/heads/wallie")
+          .split("\n"),
+      ).toEqual(refKind === "custom" ? [f.headRef] : [f.fenceRef, f.headRef]);
+      expect(f.pushes()[0][0]).toEqual([
+        "push",
+        "--atomic",
+        `--force-with-lease=${f.headRef}:`,
+        `--force-with-lease=${f.fenceRef}:`,
+        input.remoteUrl,
+        `${f.a}:${f.headRef}`,
+        `${input.desiredFenceSha}:${f.fenceRef}`,
+      ]);
+      expect(input.beforePush).toHaveBeenCalledTimes(1);
+      f.expectClean();
+    } finally {
+      f.cleanup();
+    }
+  },
+);
 
 it("retries a completed operation without changing either ref or checking ownership again", async () => {
   const f = fixture();
@@ -191,15 +209,26 @@ it("rejects an ABA-delayed operation after source returns to the same commit", a
   try {
     const first = await promoteCanonicalRefsWithWorkspace(f.input(), f.dependencies);
     const delayed = f.input(4, f.b, first);
-    const second = await promoteCanonicalRefsWithWorkspace(f.input(2, f.b, first), f.dependencies);
-    const third = await promoteCanonicalRefsWithWorkspace(f.input(3, f.a, second), f.dependencies);
-    expect(third.headSha).toBe(first.headSha);
-    expect(third.fenceSha).not.toBe(first.fenceSha);
+    delayed.beforePush = async () => {
+      const second = await promoteCanonicalRefsWithWorkspace(
+        f.input(2, f.b, first),
+        f.dependencies,
+      );
+      const third = await promoteCanonicalRefsWithWorkspace(
+        f.input(3, f.a, second),
+        f.dependencies,
+      );
+      expect(third.headSha).toBe(first.headSha);
+      expect(third.fenceSha).not.toBe(first.fenceSha);
+    };
     await expect(promoteCanonicalRefsWithWorkspace(delayed, f.dependencies)).rejects.toBeInstanceOf(
       CanonicalRefConflictError,
     );
-    expect(f.pair()).toEqual(third);
-    expect(f.pushes()).toHaveLength(3);
+    expect(f.pair()).toEqual({
+      headSha: f.a,
+      fenceSha: fenceSha(operation(3), fenceSha(operation(2), first.fenceSha)),
+    });
+    expect(f.pushes()).toHaveLength(4);
     f.expectClean();
   } finally {
     f.cleanup();
@@ -294,6 +323,7 @@ it("fails without a sequential fallback when the remote does not support atomic 
 it("reconciles a lost successful push response and never republishes its fence", async () => {
   const f = fixture();
   try {
+    const first = await promoteCanonicalRefsWithWorkspace(f.input(), f.dependencies);
     const dependencies = {
       ...f.dependencies,
       execGit: async (...args: Parameters<GitExecutor>) => {
@@ -302,11 +332,11 @@ it("reconciles a lost successful push response and never republishes its fence",
         return result;
       },
     };
-    const input = f.input();
+    const input = f.input(2, f.b, first);
     const expected = { headSha: input.desiredSha, fenceSha: input.desiredFenceSha };
     expect(await promoteCanonicalRefsWithWorkspace(input, dependencies)).toEqual(expected);
     expect(await promoteCanonicalRefsWithWorkspace(input, dependencies)).toEqual(expected);
-    expect(f.pushes()).toHaveLength(1);
+    expect(f.pushes()).toHaveLength(2);
     expect(f.pair()).toEqual(expected);
     f.expectClean();
   } finally {
@@ -370,7 +400,7 @@ it.each(["source", "fence"])(
     const f = fixture();
     try {
       const input = f.input();
-      if (changed === "source") input.sourceRef = "refs/heads/main";
+      if (changed === "source") f.git("--git-dir", f.remote, "update-ref", input.sourceRef, f.b);
       else input.desiredFenceSha = "a".repeat(40);
       await expect(promoteCanonicalRefsWithWorkspace(input, f.dependencies)).rejects.toThrow(ERROR);
       expect(f.pair()).toEqual({ headSha: null, fenceSha: null });
@@ -441,7 +471,10 @@ it("validates branch identities and canonical remote URL before creating a works
     for (const invalid of [
       { operationId: "not-a-uuid" },
       { branchName: "wallie/sessions/unrelated" },
-      { fenceBranch: `wallie/session-fences/${SESSION}` },
+      { fenceRef: `refs/wallie/fences/${SESSION}` },
+      { fenceRef: `refs/heads/wallie/session-fences/${SESSION}` },
+      { sourceRef: `refs/wallie/checkpoints/${RUN}/${f.b}` },
+      { sourceRef: `refs/wallie/fences/${EPOCH}` },
       { sourceRef: "refs/tags/source" },
       { remoteUrl: "https://credential@github.com/acme/app.git" },
     ]) {

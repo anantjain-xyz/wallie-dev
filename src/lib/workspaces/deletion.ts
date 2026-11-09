@@ -87,6 +87,26 @@ async function cleanupResourceReservations(
         continue;
       }
       if (operation.kind === "upload" && operation.resource_id && operation.storage_bucket) {
+        if (
+          operation.storage_bucket === "session-source-checkpoints" &&
+          /\/[a-f0-9-]{36}-retry-\d+-[a-f0-9-]{36}\.bundle$/.test(operation.resource_id)
+        ) {
+          // The checkpoint transaction can consume this reservation after the
+          // initial scan. Claim it before touching Storage to serialize with
+          // that transfer and fence delayed uploads.
+          const now = new Date().toISOString();
+          const { data: claimed, error: claimError } = await admin
+            .from("workspace_resource_operations")
+            .update({ settled_at: now })
+            .eq("id", operation.id)
+            .eq("workspace_id", workspaceId)
+            .eq("resource_id", operation.resource_id)
+            .or(`settled_at.not.is.null,recovery_after.lte.${now}`)
+            .select("id")
+            .maybeSingle();
+          if (claimError) throw claimError;
+          if (!claimed) continue;
+        }
         const { error: removeError } = await admin.storage
           .from(operation.storage_bucket)
           .remove([operation.resource_id]);

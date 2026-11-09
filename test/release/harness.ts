@@ -177,7 +177,7 @@ export async function configureTransport(input: {
       if (args[0] === "push") {
         if (
           state.blockedCheckpointPush &&
-          args.some((arg) => arg.includes(":refs/heads/wallie/checkpoints/"))
+          args.some((arg) => arg.includes(":refs/wallie/checkpoints/"))
         )
           throw new Error("Controlled checkpoint transport outage.");
         if (

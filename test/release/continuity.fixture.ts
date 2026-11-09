@@ -715,6 +715,10 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       revisedCode.trim(),
     );
     expect(await git(remote, "rev-parse", "refs/heads/main")).toBe(movedMain);
+    expect(await git(remote, "for-each-ref", "--format=%(refname)", "refs/heads")).toBe(
+      `refs/heads/main\nrefs/heads/${firstEpoch.branch_name}`,
+    );
+    expect(firstEpoch.fence_branch).toBe(`refs/wallie/fences/${firstEpoch.id}`);
     expect(transport.createCount).toBe(1);
     expect((await session()).phase_status).toBe("awaiting_review");
     const terminal = await session();
@@ -754,6 +758,12 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       revisedCheckpoint.output_sha,
     ]);
     expect(lineage.every((row) => row.initial_base_sha === baseSha)).toBe(true);
+    for (const row of lineage) {
+      if (row.output_kind !== "code") continue;
+      const ref = `refs/wallie/checkpoints/${row.run_id}/${row.output_sha}`;
+      expect(row.output_ref).toBe(ref);
+      expect(await git(remote, "rev-parse", ref)).toBe(row.output_sha);
+    }
     const artifacts = await checked(
       admin
         .from("session_artifacts")
@@ -785,7 +795,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         number: firstEpoch.pr_number,
         branch: firstEpoch.branch_name,
         headSha: canonicalBeforeLateWorker,
-        fenceSha: await git(remote, "rev-parse", `refs/heads/${firstEpoch.fence_branch}`),
+        fenceSha: await git(remote, "rev-parse", firstEpoch.fence_branch),
       },
       restart: {
         parentPid: process.pid,

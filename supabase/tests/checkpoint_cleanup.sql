@@ -96,6 +96,7 @@ update gc_cases set claim_id=public.claim_session_checkpoint_cleanup(run_id) whe
 select ok((select claim_id is not null from gc_cases where label='absence'),
   'expired unadopted output can be claimed independently of new-execution release admission');
 select ok((select c.retained_ref=p.retained_ref and c.expected_sha=d.head_sha
+  and c.retained_ref='refs/wallie/checkpoints/'||c.run_id::text||'/'||c.expected_sha
   and c.repository_id=i.repository_id and c.github_repository_id=repository.repo_id
   and c.job_id=p.job_id and c.attempt_count=p.attempt_count
   and c.eligible_after=p.deadline_at+interval '7 days' and c.eligible_after<clock_timestamp()
@@ -135,6 +136,18 @@ select is(pg_temp.gc_failure_state($$update public.session_checkpoint_cleanup se
   where run_id=(select run_id from gc_cases where label='absence')$$),'23514','accepted cleanup absence time is immutable');
 select is(pg_temp.gc_failure_state($$update public.session_checkpoint_cleanup set expected_sha=repeat('f',40)
   where run_id=(select run_id from gc_cases where label='absence')$$),'23514','cleanup retries cannot retarget the immutable source SHA');
+
+insert into gc_cases(label,run_id) values('branch-candidate',pg_temp.gc_prepare('Cleanup historical branch candidate'));
+alter table public.session_checkpoint_publications disable trigger guard_checkpoint_publication;
+update public.session_checkpoint_publications p
+set retained_ref='refs/heads/wallie/checkpoints/'||p.run_id::text||'/'||d.head_sha
+from public.session_source_deliveries d
+where d.run_id=p.run_id and p.run_id=(select run_id from gc_cases where label='branch-candidate');
+alter table public.session_checkpoint_publications enable trigger guard_checkpoint_publication;
+update gc_cases set claim_id=public.claim_session_checkpoint_cleanup(run_id) where label='branch-candidate';
+select ok((select f.claim_id is not null and c.retained_ref='refs/heads/wallie/checkpoints/'||c.run_id::text||'/'||c.expected_sha
+  from gc_cases f join public.session_checkpoint_cleanup c using(run_id) where label='branch-candidate'),
+  'cleanup preserves the exact branch target of a pre-migration checkpoint intent');
 
 insert into gc_cases(label,run_id) values('lease',pg_temp.gc_prepare('Cleanup stale lease'));
 update gc_cases set claim_id=public.claim_session_checkpoint_cleanup(run_id) where label='lease';
@@ -269,6 +282,13 @@ select ok((select o.status='terminal' and internal.checkpoint_cleanup_ref_is_pro
 -- Git object. Permanent candidate tombstones must not become a global SHA ban.
 insert into gc_cases(label,run_id) select 'safe-other',pg_temp.gc_prepare('Independent accepted retained ref',expected_sha,interval '20 minutes')
 from public.session_checkpoint_cleanup where run_id=(select run_id from gc_cases where label='lease');
+-- A historical retained branch can be the explicitly selected initial base.
+alter table public.session_checkpoint_publications disable trigger guard_checkpoint_publication;
+update public.session_checkpoint_publications p
+set retained_ref='refs/heads/wallie/checkpoints/'||p.run_id::text||'/'||d.head_sha
+from public.session_source_deliveries d
+where d.run_id=p.run_id and p.run_id=(select run_id from gc_cases where label='safe-other');
+alter table public.session_checkpoint_publications enable trigger guard_checkpoint_publication;
 update gc_cases set claim_id=public.claim_session_checkpoint_publication(run_id) where label='safe-other';
 select is((select public.adopt_session_checkpoint_publication(f.run_id,f.claim_id,p.retained_ref,d.head_sha)
   from gc_cases f join public.session_checkpoint_publications p using(run_id)

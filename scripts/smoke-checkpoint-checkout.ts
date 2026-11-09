@@ -14,7 +14,7 @@ async function main() {
   const [repository, ref, sha] = process.argv.slice(2);
   if (!repository || !ref || !sha) {
     throw new Error(
-      "Usage: smoke-checkpoint-checkout.ts <owner/repo> <refs/heads/retained-ref> <expected-sha>",
+      "Usage: smoke-checkpoint-checkout.ts <owner/repo> <full-retained-ref> <expected-sha>",
     );
   }
   const { VERCEL_TOKEN: token, VERCEL_TEAM_ID: teamId, VERCEL_PROJECT_ID: projectId } = process.env;

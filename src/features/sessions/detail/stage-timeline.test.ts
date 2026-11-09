@@ -12,6 +12,15 @@ import {
   stageTimelineLabel,
 } from "@/features/sessions/detail/stage-timeline";
 import type { SessionReviewSession } from "@/features/sessions/detail/data";
+import type { StageExecution } from "./stage-execution";
+
+const execution: StageExecution = {
+  id: "run-1",
+  stageId: "stage-2",
+  status: "queued",
+  createdAt: "2026-06-07T12:01:00.000Z",
+  updatedAt: "2026-06-07T12:01:00.000Z",
+};
 
 afterEach(cleanup);
 
@@ -46,18 +55,131 @@ function makeSession(overrides: Partial<SessionReviewSession> = {}): SessionRevi
 }
 
 describe("buildStageTimeline", () => {
+  it("ignores a historical failure while the session is starting a newer execution", () => {
+    const timeline = buildStageTimeline(
+      makeSession({ phaseStatus: "in_progress", updatedAt: "2026-06-07T12:02:00Z" }),
+      {
+        currentRun: { ...execution, status: "error" },
+        failedStageSlug: "build",
+      },
+    );
+    expect(timeline[1]?.status).toBe("current");
+  });
+
+  it.each([
+    ["queued", "Queued"],
+    ["started", "Starting"],
+    ["running", "In progress"],
+  ] as const)("keeps the displayed ordinal for %s custom-stage reruns", (status, label) => {
+    const session = makeSession({ phaseStatus: "rejected" });
+    session.pipeline.stages[1] = {
+      ...session.pipeline.stages[1]!,
+      name: "Custom review",
+      slug: "custom-review",
+      position: 40,
+    };
+    render(
+      createElement(StageTimeline, {
+        onSelect: vi.fn(),
+        selectedStageSlug: "custom-review",
+        timeline: buildStageTimeline(session, {
+          failedStageSlug: "custom-review",
+          currentRun: { ...execution, status },
+        }),
+      }),
+    );
+    const button = screen.getByRole("button", { name: `Custom review: ${label}` });
+    const marker = button.querySelector('[aria-hidden="true"]');
+    expect(marker?.textContent).toBe("2");
+    expect(marker?.className).not.toMatch(/warning|danger/);
+    expect(button.getAttribute("aria-current")).toBe("step");
+  });
+
+  it.each([
+    ["error", "Failed"],
+    ["canceled", "Not running"],
+  ] as const)("preserves the confirmed %s indicator", (status, label) => {
+    const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }), {
+      currentRun: { ...execution, status },
+    });
+    render(
+      createElement(StageTimeline, { onSelect: vi.fn(), selectedStageSlug: "build", timeline }),
+    );
+    expect(
+      screen.getByRole("button", { name: `Build: ${label}` }).querySelector('[aria-hidden="true"]')
+        ?.textContent,
+    ).toBe("!");
+  });
+
+  it("ignores active runs for another stage and keeps review and completion authoritative", () => {
+    expect(
+      buildStageTimeline(makeSession({ phaseStatus: "rejected" }), {
+        currentRun: { ...execution, stageId: "stage-1" },
+      })[1]?.status,
+    ).toBe("waiting");
+    expect(
+      buildStageTimeline(makeSession(), {
+        currentRun: execution,
+        failedStageSlug: "build",
+      })[1]?.status,
+    ).toBe("current");
+    expect(
+      buildStageTimeline(makeSession({ phaseStatus: "approved" }), {
+        currentRun: execution,
+      })[1]?.status,
+    ).toBe("completed");
+    expect(
+      buildStageTimeline(
+        makeSession({ phaseStatus: "rejected", archivedAt: execution.createdAt }),
+        {
+          currentRun: execution,
+        },
+      )[1]?.status,
+    ).toBe("not_running");
+  });
+
+  it("keeps the numbered marker for a queued rerun before the rejected phase updates", () => {
+    const options = {
+      failedStageSlug: "build",
+      currentRun: {
+        id: "rerun",
+        stageId: "stage-2",
+        status: "queued" as const,
+        createdAt: "2026-06-07T12:01:00.000Z",
+        updatedAt: "2026-06-07T12:01:00.000Z",
+      },
+    };
+    const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }), options);
+    render(
+      createElement(StageTimeline, { onSelect: vi.fn(), selectedStageSlug: "build", timeline }),
+    );
+    const current = screen.getByRole("button", { name: "Build: Queued" });
+    expect(current.querySelector('[aria-hidden="true"]')?.textContent).toBe("2");
+    expect(current.getAttribute("aria-current")).toBe("step");
+  });
+
   it("marks completed, current, and upcoming stages", () => {
     const timeline = buildStageTimeline(makeSession());
     expect(timeline.map((entry) => entry.status)).toEqual(["completed", "current", "upcoming"]);
   });
 
-  it("uses neutral wording for rejected or stopped stages", () => {
+  it("keeps rejected stages neutral until execution is known", () => {
     const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }));
-    expect(timeline[1]?.status).toBe("not_running");
+    expect(timeline[1]?.status).toBe("waiting");
+    render(
+      createElement(StageTimeline, { onSelect: vi.fn(), selectedStageSlug: "build", timeline }),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Build: Waiting for run" })
+        .querySelector('[aria-hidden="true"]')?.textContent,
+    ).toBe("2");
   });
 
   it("marks failed when a failed stage slug is provided", () => {
-    const timeline = buildStageTimeline(makeSession(), { failedStageSlug: "build" });
+    const timeline = buildStageTimeline(makeSession({ phaseStatus: "rejected" }), {
+      failedStageSlug: "build",
+    });
     expect(timeline[1]?.status).toBe("failed");
   });
 });
@@ -144,10 +266,18 @@ describe("StageTimeline", () => {
 
   it("shows failure and stopped states as text as well as visual indicators", () => {
     expect(
-      stageTimelineLabel(buildStageTimeline(makeSession(), { failedStageSlug: "build" })[1]!),
+      stageTimelineLabel(
+        buildStageTimeline(makeSession({ phaseStatus: "rejected" }), {
+          failedStageSlug: "build",
+        })[1]!,
+      ),
     ).toBe("Failed");
     expect(
-      stageTimelineLabel(buildStageTimeline(makeSession({ phaseStatus: "rejected" }))[1]!),
+      stageTimelineLabel(
+        buildStageTimeline(makeSession({ phaseStatus: "rejected" }), {
+          currentRun: { ...execution, status: "canceled" },
+        })[1]!,
+      ),
     ).toBe("Not running");
     expect(
       stageTimelineLabel(buildStageTimeline(makeSession({ phaseStatus: "in_progress" }))[1]!),

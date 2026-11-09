@@ -9,7 +9,8 @@ export type TrustedPromptSource =
   | "stage.slug"
   | "wallie.titleInstructions"
   | "wallie.artifactEvidencePolicy"
-  | "wallie.buildGitPublicationPolicy";
+  | "wallie.buildGitPublicationPolicy"
+  | "wallie.retryCheckpointInstructions";
 
 export type UntrustedPromptSource =
   | "attempt.feedback"

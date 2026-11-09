@@ -1,5 +1,6 @@
 import "server-only";
 
+import { isWallieCheckpointRef } from "@/lib/checkpoint-ref";
 import type { GitExecutor, SourceGitWorkspace } from "./source-delivery-git-core";
 
 const SHA = /^[a-f0-9]{40}$/;
@@ -15,7 +16,7 @@ export interface CanonicalPromotionInput {
   /** Exact remote ref supplying the pinned source commit. */
   sourceRef: string;
   branchName: string;
-  fenceBranch: string;
+  fenceRef: string;
   expectedHeadSha: string | null;
   expectedFenceSha: string | null;
   desiredFenceSha: string;
@@ -37,16 +38,18 @@ export async function promoteCanonicalRefsWithWorkspace(
   input: CanonicalPromotionInput,
   dependencies: { execGit: GitExecutor; createWorkspace: () => Promise<SourceGitWorkspace> },
 ): Promise<{ headSha: string; fenceSha: string }> {
-  const branch = CANONICAL_BRANCH.exec(input.branchName);
+  const epochId = CANONICAL_BRANCH.exec(input.branchName)?.[2];
   if (
     !UUID_PATTERN.test(input.operationId) ||
     !SHA.test(input.desiredSha) ||
     !SHA.test(input.desiredFenceSha) ||
     (input.expectedHeadSha !== null && !SHA.test(input.expectedHeadSha)) ||
     (input.expectedFenceSha !== null && !SHA.test(input.expectedFenceSha)) ||
-    !branch ||
-    input.fenceBranch !== `wallie/session-fences/${branch[2]}` ||
-    !input.sourceRef.startsWith("refs/heads/")
+    !epochId ||
+    (input.fenceRef !== `refs/wallie/fences/${epochId}` &&
+      input.fenceRef !== `refs/heads/wallie/session-fences/${epochId}`) ||
+    (!input.sourceRef.startsWith("refs/heads/") &&
+      !isWallieCheckpointRef(input.sourceRef, input.desiredSha))
   ) {
     throw new Error("Invalid canonical session publication inputs.");
   }
@@ -58,7 +61,7 @@ export async function promoteCanonicalRefsWithWorkspace(
     ...(input.signal ? [input.signal] : []),
   ]);
   const headRef = `refs/heads/${input.branchName}`;
-  const fenceRef = `refs/heads/${input.fenceBranch}`;
+  const { fenceRef } = input;
   const desired = { headSha: input.desiredSha, fenceSha: input.desiredFenceSha };
   const expected = { headSha: input.expectedHeadSha, fenceSha: input.expectedFenceSha };
   const samePair = (
@@ -99,7 +102,7 @@ export async function promoteCanonicalRefsWithWorkspace(
       return result;
     };
     const remotePair = async () => {
-      const { stdout } = await git(["ls-remote", "--heads", input.remoteUrl, headRef, fenceRef]);
+      const { stdout } = await git(["ls-remote", "--refs", input.remoteUrl, headRef, fenceRef]);
       const refs = new Map<string, string>();
       for (const line of stdout.trim().split("\n")) {
         if (!line) continue;

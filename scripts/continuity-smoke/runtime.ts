@@ -384,7 +384,7 @@ export function assertOwnedPush(args: string[], allowedRefs: string[]) {
   const refspecs = args.filter((arg) => !arg.startsWith("--") && arg.includes(":refs/"));
   assert.ok(refspecs.length > 0);
   for (const spec of refspecs) {
-    assert.match(spec, /^[a-f0-9]{40}:refs\/heads\//);
+    assert.match(spec, /^[a-f0-9]{40}:refs\/(?:heads|wallie\/(?:checkpoints|fences))\//);
     assert.ok(allowedRefs.includes(spec.slice(spec.indexOf(":") + 1)));
   }
   assert.ok(!args.includes("--delete") && !args.includes("--mirror") && !args.includes("--all"));
@@ -628,14 +628,11 @@ export async function publishPrepared(context: Context, manifest: Manifest, evid
   };
   await assertClaim();
   if (source.base_sha !== source.head_sha) {
-    assert.ok(publication.retained_ref?.startsWith("refs/heads/"));
-    assert.equal(
-      publication.retained_ref,
-      `refs/heads/wallie/checkpoints/${evidence.runId}/${source.head_sha}`,
-    );
+    const retainedRef = `refs/wallie/checkpoints/${evidence.runId}/${source.head_sha}`;
+    assert.equal(publication.retained_ref, retainedRef);
     assert.ok(source.bundle_base64);
     const bytes = Buffer.from(source.bundle_base64, "base64");
-    const branch = await withGitUtility(
+    const pushedRef = await withGitUtility(
       context,
       manifest,
       evidence.runId,
@@ -645,8 +642,8 @@ export async function publishPrepared(context: Context, manifest: Manifest, evid
           {
             baseSha: source.base_sha,
             headSha: source.head_sha,
-            branch: publication.retained_ref!.slice("refs/heads/".length),
-            exactRef: true,
+            retainedRef,
+            runId: evidence.runId,
             bytes,
             sha256: source.bundle_sha256!,
             remoteUrl: `https://github.com/${manifest.repository}.git`,
@@ -656,9 +653,9 @@ export async function publishPrepared(context: Context, manifest: Manifest, evid
           },
           dependencies,
         ),
-      [publication.retained_ref!],
+      [retainedRef],
     );
-    assert.equal(`refs/heads/${branch}`, publication.retained_ref);
+    assert.equal(pushedRef, retainedRef);
   }
   await assertClaim();
   assert.equal(
@@ -712,7 +709,8 @@ export async function synchronizeCanonical(
   assert.equal(operation.session_id, manifest.sessionId);
   assert.equal(epoch.session_id, manifest.sessionId);
   assert.equal(epoch.branch_name, `wallie/sessions/${manifest.sessionId}/${epoch.id}`);
-  assert.equal(epoch.fence_branch, `wallie/session-fences/${epoch.id}`);
+  const fenceRef = `refs/wallie/fences/${epoch.id}`;
+  assert.equal(epoch.fence_branch, fenceRef);
   const admission = await required(
     context.control
       .from("session_pr_operations")
@@ -756,7 +754,7 @@ export async function synchronizeCanonical(
           desiredSha: operation.desired_sha,
           sourceRef: operation.source_ref,
           branchName: epoch.branch_name,
-          fenceBranch: epoch.fence_branch,
+          fenceRef,
           expectedHeadSha: operation.expected_head_sha,
           expectedFenceSha: operation.expected_fence_sha,
           desiredFenceSha: operation.desired_fence_sha,
@@ -770,7 +768,7 @@ export async function synchronizeCanonical(
         },
         dependencies,
       ),
-    [`refs/heads/${epoch.branch_name}`, `refs/heads/${epoch.fence_branch}`],
+    [`refs/heads/${epoch.branch_name}`, fenceRef],
   );
   await assertClaim();
   pr ??= await api.find();
@@ -790,7 +788,7 @@ export async function synchronizeCanonical(
       pr = await api.create({
         draft: true,
         title: `[SMOKE ONLY — DO NOT MERGE] OP-499 continuity ${manifest.fixtureRunId}`,
-        body: `SMOKE ONLY — DO NOT MERGE.\n\nIsolated deterministic OP-499 fixture in the user-approved wallie-dev repository. This PR targets only this run's fixture base branch (${manifest.baseBranch}), never main.\n\nRun: ${manifest.fixtureRunId}\nSession: ${manifest.sessionId}\n\nNo production promotion or manual deployment is performed. Fixture source contains vercel.json disabling Git deployments; empty-tree protocol fence commits may still trigger a provider check attempt.`,
+        body: `SMOKE ONLY — DO NOT MERGE.\n\nIsolated deterministic OP-499 fixture in the user-approved wallie-dev repository. This PR targets only this run's fixture base branch (${manifest.baseBranch}), never main.\n\nRun: ${manifest.fixtureRunId}\nSession: ${manifest.sessionId}\n\nFixture source disables Git deployments through vercel.json. Wallie stores fences and checkpoints under refs/wallie/*.`,
       });
     } catch {
       pr = await api.find();

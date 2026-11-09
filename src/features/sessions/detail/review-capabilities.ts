@@ -1,11 +1,13 @@
 import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { StageExecution } from "./stage-execution";
 
 export type SessionReviewCapabilities = {
   canApprove: boolean;
   failedStageSlug: string | null;
   hasFailedRun: boolean;
+  latestRun: StageExecution | null;
 };
 
 export async function resolveCanApprove({
@@ -54,22 +56,27 @@ export async function resolveLatestRunFailure({
 }: {
   sessionId: string;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
-}): Promise<{ failedStageSlug: string | null; hasFailedRun: boolean }> {
+}): Promise<Pick<SessionReviewCapabilities, "failedStageSlug" | "hasFailedRun" | "latestRun">> {
   const { data: latestRun } = await supabase
     .from("agent_runs")
-    .select("stage_slug, status")
+    .select("id, stage_id, stage_slug, status, created_at, updated_at")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!latestRun || latestRun.status !== "error") {
-    return { failedStageSlug: null, hasFailedRun: false };
-  }
-
   return {
-    failedStageSlug: latestRun.stage_slug ?? null,
-    hasFailedRun: true,
+    failedStageSlug: latestRun?.status === "error" ? (latestRun.stage_slug ?? null) : null,
+    hasFailedRun: latestRun?.status === "error",
+    latestRun: latestRun
+      ? {
+          id: latestRun.id,
+          stageId: latestRun.stage_id,
+          status: latestRun.status,
+          createdAt: latestRun.created_at,
+          updatedAt: latestRun.updated_at,
+        }
+      : null,
   };
 }
 
@@ -95,5 +102,6 @@ export async function loadSessionReviewCapabilities({
     canApprove,
     failedStageSlug: failure.failedStageSlug,
     hasFailedRun: failure.hasFailedRun,
+    latestRun: failure.latestRun,
   };
 }

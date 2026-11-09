@@ -1297,3 +1297,49 @@ it("waits for matching stage data before enabling recovered approval permissions
   expect(screen.getByText("Build artifact")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
 });
+
+it("renders queued startup before activity loads and retains it across a stale page refresh", () => {
+  const data = makeSessionDetailData();
+  data.session.phaseStatus = "rejected";
+  const run = {
+    id: "rerun",
+    stageId: "stage-1",
+    status: "queued" as const,
+    createdAt: "2026-06-07T12:01:00.000Z",
+    updatedAt: "2026-06-07T12:01:00.000Z",
+  };
+  const props = {
+    activity: null,
+    initialData: data,
+    latestRun: run,
+    failedStageSlug: "product",
+    hasFailedRun: true,
+    initialFormattedArtifact: null,
+    initialFormattedArtifactKey: null,
+  };
+  // Server HTML is already correct before effects or the deferred activity mount.
+  const html = renderToStaticMarkup(createElement(SessionDetailPageClient, props));
+  expect(html).toContain('aria-label="Product: Queued"');
+  expect(html).not.toContain('aria-label="Product: Failed"');
+  const view = render(createElement(SessionDetailPageClient, props));
+  const assertQueued = () => {
+    const button = screen.getByRole("button", { name: "Product: Queued" });
+    expect(button).toHaveAttribute("aria-current", "step");
+    expect(button.querySelector('[aria-hidden="true"]')).toHaveTextContent("1");
+  };
+  assertQueued();
+  view.rerender(
+    createElement(SessionDetailPageClient, {
+      ...props,
+      initialData: { ...data, session: { ...data.session } },
+      latestRun: {
+        ...run,
+        id: "old-error",
+        status: "error",
+        createdAt: data.session.createdAt,
+        updatedAt: data.session.updatedAt,
+      },
+    }),
+  );
+  assertQueued();
+});

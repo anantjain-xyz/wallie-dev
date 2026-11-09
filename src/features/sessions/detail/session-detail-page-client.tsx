@@ -19,7 +19,10 @@ import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Tooltip } from "@/components/ui/tooltip";
-import { SessionExecutionProvider } from "@/features/sessions/detail/execution-summary";
+import {
+  SessionExecutionProvider,
+  useStageExecution,
+} from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
   archiveSessionFromClient,
@@ -92,6 +95,8 @@ import { workspaceSessionsPath } from "@/lib/routes";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
+import { newerStageExecution, parseStageExecution, type StageExecution } from "./stage-execution";
+
 type AcceptedFeedbackReceipt = {
   feedbackBatchId: string;
   revisionJobId: string;
@@ -117,6 +122,7 @@ type SessionDetailPageClientProps = {
   canReview?: boolean;
   failedStageSlug?: string | null;
   hasFailedRun?: boolean;
+  latestRun?: StageExecution | null;
   initialData: SessionReviewData;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
@@ -191,6 +197,7 @@ function SessionDetailContent({
   canReview = true,
   failedStageSlug: initialFailedStageSlug = null,
   hasFailedRun: initialHasFailedRun = false,
+  latestRun: initialLatestRun = null,
   initialData,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
@@ -221,6 +228,8 @@ function SessionDetailContent({
   const [canApprove, setCanApprove] = useState(canReview);
   const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
   const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
+  const [latestRun, setLatestRun] = useState(initialLatestRun);
+  const currentRun = useStageExecution(session.id, latestRun);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [phaseActionError, setPhaseActionError] = useState<string | null>(null);
   const [stopPending, setStopPending] = useState(false);
@@ -285,8 +294,8 @@ function SessionDetailContent({
   }, [actionPending, postMutationRefreshRequested, refreshPending, refreshSession]);
 
   const stageTimeline = useMemo(
-    () => buildStageTimeline(session, { failedStageSlug }),
-    [failedStageSlug, session],
+    () => buildStageTimeline(session, { failedStageSlug, currentRun }),
+    [failedStageSlug, currentRun, session],
   );
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
@@ -411,6 +420,7 @@ function SessionDetailContent({
       if (initialData.session.phaseStatus === recovered.phaseStatus) {
         setHasFailedRun(initialHasFailedRun);
         setFailedStageSlug(initialFailedStageSlug);
+        setLatestRun((current) => newerStageExecution(current, initialLatestRun));
       }
     }
     setSelectedStageSlug((currentSlug) => {
@@ -427,6 +437,7 @@ function SessionDetailContent({
     initialData.session,
     initialFailedStageSlug,
     initialHasFailedRun,
+    initialLatestRun,
     phaseActionPending,
     stopPending,
   ]);
@@ -464,6 +475,7 @@ function SessionDetailContent({
           canApprove?: boolean;
           failedStageSlug?: string | null;
           hasFailedRun?: boolean;
+          latestRun?: unknown;
         } | null;
         if (!response.ok || !body || cancelled) return;
         if (body.stageId !== session.currentStageId) {
@@ -472,6 +484,9 @@ function SessionDetailContent({
           return;
         }
         if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
+        setLatestRun((current) =>
+          newerStageExecution(current, parseStageExecution(body.latestRun)),
+        );
         // Generating / awaiting_review clear failure UI immediately (sibling effect).
         // Ignore a stale error run so refetch-on-phaseStatus cannot resurrect it.
         if (phaseStatusAtFetch === "in_progress" || phaseStatusAtFetch === "awaiting_review") {
@@ -587,6 +602,7 @@ function SessionDetailContent({
         setCanApprove(result.canApprove);
         setHasFailedRun(result.hasFailedRun);
         setFailedStageSlug(result.failedStageSlug);
+        setLatestRun((current) => newerStageExecution(current, result.latestRun));
       }
       setSelectedStageSlug((slug) =>
         recovered.pipeline.stages.some((stage) => stage.slug === slug) &&
