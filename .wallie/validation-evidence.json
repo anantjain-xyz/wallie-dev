@@ -28,13 +28,13 @@
       ]
     },
     {
-      "key": "fast-checks",
+      "key": "fast-check",
       "command": "pnpm check:fast",
       "timeoutSeconds": 300,
       "reports": []
     },
     {
-      "key": "unit-tests",
+      "key": "unit-suite",
       "command": "pnpm test --maxWorkers=2",
       "timeoutSeconds": 300,
       "reports": []

@@ -1,8 +1,54 @@
 # Short error and info copy: review record
 
-This report records the original walkthrough and the November 9 retry. It is a
+This report records the original walkthrough and the November 9 retries. It is a
 historical account, not a substitute for Wallie's command receipts. The evidence configuration
 copies this UTF-8 report into the command's fresh `WALLIE_EVIDENCE_DIR`.
+
+## Merge-conflict retry: November 9, 2026
+
+Reproduced the reported conflict by merging `origin/main` at `a15f480` into the
+existing attempt branch. Only `.wallie/validation-evidence.json` conflicted
+(add/add); all application, test, migration, and generated-type changes merged
+automatically. Commit `b2f8c0c` records the merge and resolution. No application
+copy or behavior needed further changes for this retry.
+
+The combined configuration retains this change's `review/report` walkthrough,
+main's focused stage tests as `stage-review/report`, and both browser suites in
+one build/run with a required `browser/report` JSON report. Main's `fast-check`,
+`unit-suite`, and `cloudflare` command identities are preserved without duplicate
+checks. All six command definitions pass the production configuration schema.
+
+Reproduced the original search and comment-draft copy again in `pnpm dev` using
+the two unchanged upstream components, then restored the implementation exactly
+and repeated both interactions. At 1440px and 390px, the old search showed both
+the long unapplied-search hint and unfiltered summary; the updated search showed
+only `Press Enter to search.`. The draft buttons changed from `Save comment` /
+`Cancel new comment` to `Save` / `Discard`. Eight fresh full-page before/after
+screenshots were captured. Git confirmed both components were restored unchanged.
+
+Fresh validation after merging:
+
+| Command / check                                                    | Result                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITEST_MAX_WORKERS=2 taskset -c 0,1 pnpm check`                   | Passed: validation contract, format, lint, TypeScript, privileged imports; 383 unit-test files passed, 5,674 tests passed, two existing credential-gated tests skipped; Cloudflare typecheck, 42 runtime tests, and Wrangler dry run passed. |
+| Configured `stage-review` command, with a fresh evidence directory | 92 tests passed; valid UTF-8 JSON report generated (30,034 bytes).                                                                                                                                                                           |
+| Configured `browser` command, with a fresh evidence directory      | Production build passed; 34 Playwright tests passed in 42.0 seconds across concise-copy, comment-access, sessions-ledger-hydration, run-failure-guidance, and stage-startup suites; valid JSON report generated (43,109 bytes).              |
+| Configuration schema and configured `review` command               | Six unique commands parsed; walkthrough copied byte-for-byte into a fresh evidence directory.                                                                                                                                                |
+
+This retry generated 100 full-page screenshots: the eight before/after captures,
+the 76 existing copy/comment/run-failure captures, and 16 stage-startup captures.
+Visually inspected the mobile draft and typed search and the desktop save error.
+All screenshots remain ignored proof artifacts outside the source diff; the
+text-only evidence collector cannot retain their binaries or embed them in a PR.
+
+The authenticated `/w/{workspaceSlug}/sessions` walkthrough remains unavailable:
+the local Supabase health request failed with connection refused on port 54321,
+Docker is absent, and no authenticated workspace session is available. It requires
+an isolated seeded Supabase stack and test credentials. Search submission,
+in-flight edits, clearing, query summaries, and request counts remain covered by
+the interaction unit tests. No real runs or external test data were created.
+No GitHub or tracker writes were made; publication remains with Wallie's trusted
+publisher. No linked Linear issue was supplied.
 
 ## Interaction-state inventory
 
