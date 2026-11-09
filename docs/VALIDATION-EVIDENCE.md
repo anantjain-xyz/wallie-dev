@@ -6,11 +6,12 @@ becomes observed execution evidence. The harness owns the command identity,
 process exit status, execution timestamps, commit and validation tree, and the
 private report manifest. PR readiness is evaluated separately in OP-508.
 
-## Repository configuration
+## Run validation plans
 
-Commit `.wallie/validation-evidence.json` with the code being validated. The
-harness reads this exact committed file rather than a working copy or agent
-output. Version 1 uses this shape:
+Validation plans belong to individual runs and stay out of Git. Before starting
+the agent, Wallie creates `/tmp/wallie-validation-plan-<run-id>.json` with an empty
+plan and includes its exact path in the prompt. The agent writes the commands
+for that attempt there. Version 1 uses this shape:
 
 ```json
 {
@@ -42,8 +43,22 @@ report. Reports declare their purpose (`report`, `screenshot`, or `preview`) and
 whether they are required. Required evidence names in delivery policies identify
 the recorded evidence; configuration alone does not establish success.
 
-This repository tracks the configuration file while ignoring other `.wallie`
-runtime output. Commands execute repository code with the sandbox's normal
+After the agent finishes, Wallie validates the plan and saves an immutable
+`session_validation_plans` row before executing any command. The row is scoped
+to the workspace, session, job and exact run attempt, with the captured commit
+SHA and validation tree. Only the current worker can pin it; an identical retry
+returns the original row, while a changed plan or checkpoint is rejected.
+Execution uses the saved plan. Known credentials in a plan are rejected before
+persistence; reference credentials through the command environment.
+
+| Data                             | Location                                                         |
+| -------------------------------- | ---------------------------------------------------------------- |
+| Shared validation commands       | Repository scripts such as `pnpm check`                          |
+| Commands selected for an attempt | Immutable plan on that run                                       |
+| Observed execution and reports   | Private evidence on that run, bound to its exact commit and tree |
+
+Parallel sessions and rejected-stage retries receive separate plan files and
+rows. They never inherit a previous run's plan. Commands execute repository code with the sandbox's normal
 capabilities. They should be noninteractive validation commands that leave the
 source checkout unchanged. An observed zero exit status establishes execution
 of that command; it does not prove that the repository's tests are exhaustive.
@@ -79,8 +94,20 @@ checkpoint SHA and validation tree before accepting evidence. Failed and stale
 records remain available to explain what happened.
 
 Analysis-only delivery skips command execution. Wallie does not invent a test
-run for a prose-only artifact. A missing or invalid configuration never becomes
-a passing receipt for a policy requirement.
+run for a prose-only artifact. A missing, invalid, or unsaved plan never becomes
+a passing receipt for a policy requirement. Plan or evidence failures still
+preserve the source checkpoint for review and recovery.
+
+### Migration from the committed manifest
+
+- Apply the run-plan database migration before deploying the updated worker.
+- `.wallie/validation-evidence.json` is obsolete. The worker never reads it, even
+  if it is still tracked. Remove any previously tracked copy once and keep
+  `.wallie/` ignored; agents must not update it for individual sessions.
+- Existing evidence remains readable. Workers already running during deployment
+  can still finish their receipts. New workers require a saved run plan before
+  execution; receipts for a run with a plan must match its commands and reports.
+- Required evidence names and exact-commit readiness checks are unchanged.
 
 ## Private, bounded assets
 

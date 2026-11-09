@@ -1,13 +1,20 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxHandle } from "@/lib/sandbox/types";
 import { shellQuote } from "@/lib/sandbox/command";
 import { captureValidationEvidence, redactValidationText } from "./capture";
-import { validationEvidenceConfigSchema } from "./contracts";
+import { validationPlanSchema } from "./contracts";
+import {
+  pinValidationPlan,
+  prepareValidationPlan,
+  readValidationPlan,
+  validationPlanPath,
+} from "./plan";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -16,7 +23,7 @@ afterEach(async () => {
   );
 });
 
-async function fixture(commands?: unknown[]) {
+async function fixture(commands?: unknown[], env?: Record<string, string>) {
   const directory = await mkdtemp(join(tmpdir(), "wallie-evidence-unit-"));
   directories.push(directory);
   const git = (...args: string[]) => {
@@ -26,14 +33,7 @@ async function fixture(commands?: unknown[]) {
   };
   git("init", "-q");
   await writeFile(join(directory, "source.txt"), "original\n");
-  if (commands !== undefined) {
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(join(directory, ".wallie"));
-    await writeFile(
-      join(directory, ".wallie/validation-evidence.json"),
-      JSON.stringify({ version: 1, commands }),
-    );
-  }
+  const plan = validationPlanSchema.parse({ version: 1, commands: commands ?? [] });
   git("add", ".");
   git(
     "-c",
@@ -51,7 +51,7 @@ async function fixture(commands?: unknown[]) {
     exec: async (command, args, opts) => {
       const child = spawn(command, args, {
         cwd: opts?.cwd ?? directory,
-        env: { ...process.env, ...opts?.env },
+        env: { ...process.env, ...env, ...opts?.env },
         signal: opts?.signal,
       });
       let stdout = "";
@@ -90,7 +90,7 @@ async function fixture(commands?: unknown[]) {
     },
     stop: async () => {},
   };
-  return { sandbox, sha, directory, git };
+  return { sandbox, sha, directory, git, plan };
 }
 
 const command = (key: string, script: string, reports: unknown[] = []) => ({
@@ -102,10 +102,229 @@ const command = (key: string, script: string, reports: unknown[] = []) => ({
 const report = { key: "results", path: "results.txt", kind: "report", required: true };
 
 describe("trusted validation capture", { timeout: 20_000 }, () => {
+  it("persists and executes credential references unchanged while redacting their output", async () => {
+    const secret = "synthetic-credential-123456789";
+    const script = `
+      console.log(process.env.API_KEY);
+      require('node:fs').writeFileSync(process.env.WALLIE_EVIDENCE_DIR + '/results.txt', process.env.API_KEY);
+    `;
+    const validationCommand = `API_KEY="$WALLIE_TEST_KEY" node -e ${shellQuote(script)}`;
+    const { sandbox, sha, git, plan } = await fixture(
+      [command("unit", validationCommand, [report])],
+      { WALLIE_TEST_KEY: secret },
+    );
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    await sandbox.writeFile(path, JSON.stringify(plan));
+    const treeSha = git("rev-parse", "HEAD^{tree}");
+    const rpc = vi.fn(async () => ({
+      data: { run_id: runId, commit_sha: sha, validation_tree_sha: treeSha, plan },
+      error: null,
+    }));
+    const pinned = await pinValidationPlan({
+      admin: { rpc } as never,
+      sandbox,
+      runId,
+      commitSha: sha,
+      secrets: [secret],
+    });
+    const captured = await captureValidationEvidence({
+      sandbox,
+      commitSha: sha,
+      plan: pinned,
+      secrets: [secret],
+    });
+    expect(rpc).toHaveBeenCalledWith("pin_session_validation_plan", {
+      p_run_id: runId,
+      p_commit_sha: sha,
+      p_validation_tree_sha: treeSha,
+      p_plan: plan,
+    });
+    expect(captured.records[0]).toMatchObject({
+      command: validationCommand,
+      status: "passed",
+      commitSha: sha,
+      treeSha,
+      reportKeys: ["unit/results"],
+    });
+    expect(captured.assets.map((asset) => asset.bytes.toString().trim())).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+    ]);
+  });
+
+  it.each([
+    'API_KEY="$API_KEY" pnpm test',
+    "GITHUB_TOKEN=$GITHUB_TOKEN pnpm test",
+    "TOKEN=\"${TOKEN}\" PASSWORD='$PASSWORD' pnpm test",
+    'curl -H "Authorization: Bearer $TOKEN" https://example.test',
+    "curl -H 'Authorization: ${TOKEN}' https://example.test",
+  ])("accepts literal credential references in the plan: %s", async (script) => {
+    const { sandbox, plan } = await fixture([command("unit", script)]);
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    await sandbox.writeFile(path, JSON.stringify(plan));
+    expect(await readValidationPlan({ sandbox, runId, secrets: [] })).toEqual(plan);
+  });
+
+  it.each([
+    "TOKEN=literal-credential pnpm test",
+    'TOKEN="$TOKEN" PASSWORD=literal-credential pnpm test',
+    'TOKEN="$TOKEN"literal-credential pnpm test',
+    "TOKEN=${TOKEN:-literal-credential} pnpm test",
+    'curl -H "Authorization: Bearer literal-credential" https://example.test',
+    'TOKEN="$TOKEN" echo ghp_fixturecredential123456789',
+  ])("rejects literal credentials mixed with references in the plan: %s", async (script) => {
+    const { sandbox, plan } = await fixture([command("unit", script)]);
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    await sandbox.writeFile(path, JSON.stringify(plan));
+    await expect(readValidationPlan({ sandbox, runId, secrets: [] })).rejects.toThrow(
+      "Validation plan contains sensitive material.",
+    );
+  });
+
+  it("executes the frozen run plan even if its temporary file changes after persistence", async () => {
+    const { sandbox, sha, git } = await fixture();
+    const runId = randomUUID();
+    const path = validationPlanPath(runId);
+    directories.push(path);
+    const original = { version: 1, commands: [command("tests", "printf frozen")] };
+    await sandbox.writeFile(path, JSON.stringify(original));
+    const rpc = vi.fn(async () => {
+      await sandbox.writeFile(
+        path,
+        JSON.stringify({ version: 1, commands: [command("tests", "exit 1")] }),
+      );
+      return {
+        data: {
+          run_id: runId,
+          commit_sha: sha,
+          validation_tree_sha: git("rev-parse", "HEAD^{tree}"),
+          plan: original,
+        },
+        error: null,
+      };
+    });
+    const plan = await pinValidationPlan({
+      admin: { rpc } as never,
+      sandbox,
+      runId,
+      commitSha: sha,
+      secrets: [],
+    });
+    const captured = await captureValidationEvidence({ sandbox, commitSha: sha, plan });
+    expect(rpc).toHaveBeenCalledWith("pin_session_validation_plan", {
+      p_run_id: runId,
+      p_commit_sha: sha,
+      p_validation_tree_sha: captured.treeSha,
+      p_plan: original,
+    });
+    expect(captured.records[0]).toMatchObject({
+      command: "printf frozen",
+      status: "passed",
+      commitSha: sha,
+    });
+    expect(captured.assets[0].bytes.toString()).toBe("frozen");
+    expect(git("status", "--porcelain")).toBe("");
+  });
+  it("isolates parallel run plans without adding files to either source checkpoint", async () => {
+    const { sandbox, sha, directory, git } = await fixture();
+    const runs = [randomUUID(), randomUUID()];
+    for (const runId of runs) directories.push(validationPlanPath(runId));
+    await Promise.all(
+      runs.map(async (runId, index) => {
+        await prepareValidationPlan(sandbox, runId);
+        await sandbox.writeFile(
+          validationPlanPath(runId),
+          JSON.stringify({ version: 1, commands: [command("tests", `printf run-${index}`)] }),
+        );
+      }),
+    );
+    await mkdir(join(directory, ".wallie"));
+    await writeFile(
+      join(directory, ".wallie/validation-evidence.json"),
+      JSON.stringify({ version: 1, commands: [command("legacy", "exit 1")] }),
+    );
+    git("add", ".");
+    git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit",
+      "-qm",
+      "Legacy manifest is ignored",
+    );
+    const commitSha = git("rev-parse", "HEAD");
+    expect(commitSha).not.toBe(sha);
+    const evidence = await Promise.all(
+      runs.map(async (runId) =>
+        captureValidationEvidence({
+          sandbox,
+          commitSha,
+          plan: await readValidationPlan({ sandbox, runId, secrets: [] }),
+        }),
+      ),
+    );
+    expect(evidence.map((result) => result.assets[0].bytes.toString())).toEqual(["run-0", "run-1"]);
+    expect(
+      evidence.every(
+        (result) =>
+          result.records[0].commitSha === commitSha && result.records[0].status === "passed",
+      ),
+    ).toBe(true);
+    expect(git("status", "--porcelain")).toBe("");
+    expect(git("rev-parse", "HEAD")).toBe(commitSha);
+    expect(git("ls-files")).not.toContain("wallie-validation-plan-");
+  });
+
+  it.each(["missing", "symlink", "oversized", "invalid", "credential"])(
+    "rejects a %s run plan before execution",
+    async (kind) => {
+      const { sandbox, directory } = await fixture();
+      const runId = randomUUID();
+      const path = validationPlanPath(runId);
+      directories.push(path);
+      if (kind === "symlink") await symlink(join(directory, "source.txt"), path);
+      if (kind === "oversized") await writeFile(path, " ".repeat(65537));
+      if (kind === "invalid") await writeFile(path, '{"version":1,"commands":[],"passed":true}');
+      if (kind === "credential")
+        await writeFile(
+          path,
+          JSON.stringify({
+            version: 1,
+            commands: [command("tests", "echo private-fixture-credential")],
+          }),
+        );
+      await expect(
+        readValidationPlan({ sandbox, runId, secrets: ["private-fixture-credential"] }),
+      ).rejects.toThrow(/Validation plan/);
+    },
+  );
+
+  it("starts a retry with an empty plan instead of inheriting an earlier run", async () => {
+    const { sandbox } = await fixture();
+    const previous = randomUUID();
+    const retry = randomUUID();
+    directories.push(validationPlanPath(previous), validationPlanPath(retry));
+    await sandbox.writeFile(
+      validationPlanPath(previous),
+      JSON.stringify({ version: 1, commands: [command("tests", "false")] }),
+    );
+    await prepareValidationPlan(sandbox, retry);
+    expect(await readValidationPlan({ sandbox, runId: retry, secrets: [] })).toEqual({
+      version: 1,
+      commands: [],
+    });
+  });
   it.each(["worktree", "index", "info", "HEAD", "literal-unspecified", "literal-unset"])(
     "rejects masking content filters from %s attributes before validation or Git filtering",
     async (location) => {
-      const { sandbox, directory, git } = await fixture([
+      const { sandbox, plan, directory, git } = await fixture([
         command("unit", 'test "$(cat source.txt)" = modified'),
       ]);
       const filterName = location.startsWith("literal-")
@@ -142,20 +361,19 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
         await rm(join(directory, ".gitattributes"));
       }
       await rm(join(directory, ".git/filter-ran"), { force: true });
-      await expect(captureValidationEvidence({ sandbox, commitSha: sha })).rejects.toThrow(
+      await expect(captureValidationEvidence({ sandbox, plan, commitSha: sha })).rejects.toThrow(
         "Validation evidence collection failed.",
       );
       expect(await sandbox.readFile(join(directory, ".git/filter-ran"))).toBeNull();
     },
   );
 
-  it("reads the actual checkpoint configuration and tree despite Git replacement refs", async () => {
-    const { sandbox, sha, directory, git } = await fixture([command("unit", "printf original")]);
-    await writeFile(
-      join(directory, ".wallie/validation-evidence.json"),
-      JSON.stringify({ version: 1, commands: [command("unit", "printf replacement")] }),
-    );
-    git("add", ".wallie/validation-evidence.json");
+  it("uses the run plan and actual checkpoint despite Git replacement refs", async () => {
+    const { sandbox, plan, sha, directory, git } = await fixture([
+      command("unit", "printf original"),
+    ]);
+    await writeFile(join(directory, "source.txt"), "replacement");
+    git("add", "source.txt");
     git(
       "-c",
       "user.name=Fixture",
@@ -168,8 +386,8 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
     const replacement = git("rev-parse", "HEAD");
     git("checkout", "--detach", sha);
     git("replace", sha, replacement);
-    expect(git("show", "HEAD:.wallie/validation-evidence.json")).toContain("printf replacement");
-    const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+    expect(git("show", "HEAD:source.txt")).toBe("replacement");
+    const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
     expect(captured.records[0]).toMatchObject({
       command: "printf original",
       status: "passed",
@@ -180,7 +398,9 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
   });
 
   it("rejects same-size source edits concealed by repository stat-trust settings", async () => {
-    const { sandbox, sha, directory, git } = await fixture([command("unit", "printf passed")]);
+    const { sandbox, plan, sha, directory, git } = await fixture([
+      command("unit", "printf passed"),
+    ]);
     const path = join(directory, "source.txt");
     const timestamp = new Date("2020-01-01T00:00:00Z");
     await utimes(path, timestamp, timestamp);
@@ -190,14 +410,14 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
     await writeFile(path, "changed!\n");
     await utimes(path, timestamp, timestamp);
     expect(git("status", "--porcelain")).toBe("");
-    await expect(captureValidationEvidence({ sandbox, commitSha: sha })).rejects.toThrow(
+    await expect(captureValidationEvidence({ sandbox, plan, commitSha: sha })).rejects.toThrow(
       "Validation checkpoint changed before execution.",
     );
   });
 
-  it("does not turn absent configuration or prose into execution", async () => {
-    const { sandbox, sha } = await fixture();
-    const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+  it("does not invent execution for an empty plan", async () => {
+    const { sandbox, plan, sha } = await fixture();
+    const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
     expect(captured.records).toEqual([]);
     expect(captured.assets).toEqual([]);
     expect(captured.treeSha).toMatch(/^[a-f0-9]{40}$/);
@@ -205,7 +425,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
 
   it("records real execution, exact git identity and redacted durable text", async () => {
     const secret = "synthetic-credential-123456789";
-    const { sandbox, sha } = await fixture([
+    const { sandbox, plan, sha } = await fixture([
       command(
         "unit",
         `printf 'success ${secret}' ; printf 'report ${secret}' > "$WALLIE_EVIDENCE_DIR/results.txt"`,
@@ -214,6 +434,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
     ]);
     const captured = await captureValidationEvidence({
       sandbox,
+      plan,
       commitSha: sha,
       secrets: [secret],
     });
@@ -238,12 +459,12 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
   });
 
   it("never passes failed commands, missing reports or timed out execution", async () => {
-    const { sandbox, sha } = await fixture([
+    const { sandbox, plan, sha } = await fixture([
       command("failure", "exit 7"),
       command("missing", "true", [report]),
       { ...command("timeout", "sleep 10"), timeoutSeconds: 1 },
     ]);
-    const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+    const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
     expect(captured.records.map((record) => record.status)).toEqual(["failed", "failed", "error"]);
     expect(captured.records[0].exitCode).toBe(7);
     expect(captured.records[1].missingRequiredReports).toEqual(["missing/results"]);
@@ -261,12 +482,12 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
       child.unref();
       setTimeout(()=>{},30000);
     `;
-    const { sandbox, sha } = await fixture([
+    const { sandbox, plan, sha } = await fixture([
       { ...command("detached", `node -e ${shellQuote(script)}`, [report]), timeoutSeconds: 1 },
     ]);
     const started = performance.now();
     try {
-      const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+      const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
       expect(performance.now() - started).toBeLessThan(10_000);
       expect(captured.records[0]).toMatchObject({
         status: "error",
@@ -289,42 +510,44 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
   });
 
   it("invalidates earlier success when a later command edits tracked source", async () => {
-    const { sandbox, sha } = await fixture([
+    const { sandbox, plan, sha } = await fixture([
       command("before", "test -f source.txt"),
       command("edit", "printf changed >> source.txt"),
     ]);
-    const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+    const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
     expect(captured.records.map((record) => record.status)).toEqual(["stale", "stale"]);
   });
 
   it("invalidates evidence for new untracked files or a later commit", async () => {
-    const { sandbox, sha } = await fixture([command("new", "printf changed > new-source.txt")]);
-    expect((await captureValidationEvidence({ sandbox, commitSha: sha })).records[0].status).toBe(
-      "stale",
-    );
+    const { sandbox, plan, sha } = await fixture([
+      command("new", "printf changed > new-source.txt"),
+    ]);
+    expect(
+      (await captureValidationEvidence({ sandbox, plan, commitSha: sha })).records[0].status,
+    ).toBe("stale");
   });
 
   it.each(["--assume-unchanged", "--skip-worktree"])(
     "rejects source edits hidden by %s",
     async (flag) => {
-      const { sandbox, sha } = await fixture([
+      const { sandbox, plan, sha } = await fixture([
         command("before", "test -f source.txt"),
         command("hidden", `git update-index ${flag} source.txt; printf changed >> source.txt`),
       ]);
-      const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+      const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
       expect(captured.records.map((record) => record.status)).toEqual(["stale", "stale"]);
     },
   );
 
   it("rejects a different checkpoint before executing commands", async () => {
-    const { sandbox } = await fixture([command("marker", "touch should-not-run")]);
-    await expect(captureValidationEvidence({ sandbox, commitSha: "a".repeat(40) })).rejects.toThrow(
-      "Validation checkpoint changed before execution.",
-    );
+    const { sandbox, plan } = await fixture([command("marker", "touch should-not-run")]);
+    await expect(
+      captureValidationEvidence({ sandbox, plan, commitSha: "a".repeat(40) }),
+    ).rejects.toThrow("Validation checkpoint changed before execution.");
   });
 
   it("does not replay reports from previous commands and rejects symlinks/binary screenshots", async () => {
-    const { sandbox, sha } = await fixture([
+    const { sandbox, plan, sha } = await fixture([
       command("first", 'printf report > "$WALLIE_EVIDENCE_DIR/results.txt"', [report]),
       command("replay", "true", [report]),
       command("symlink", 'ln -s /etc/passwd "$WALLIE_EVIDENCE_DIR/results.txt"', [report]),
@@ -333,7 +556,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
         { ...report, kind: "screenshot" },
       ]),
     ]);
-    const captured = await captureValidationEvidence({ sandbox, commitSha: sha });
+    const captured = await captureValidationEvidence({ sandbox, plan, commitSha: sha });
     expect(captured.records.map((record) => record.status)).toEqual([
       "passed",
       "failed",
@@ -346,7 +569,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
 
   it("distinguishes optional assets and rejects oversized output", async () => {
     const secret = "synthetic-credential-123456789";
-    const { sandbox, sha } = await fixture([
+    const { sandbox, plan, sha } = await fixture([
       command("optional", "true", [{ ...report, required: false }]),
       command(
         "excess",
@@ -355,6 +578,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
     ]);
     const captured = await captureValidationEvidence({
       sandbox,
+      plan,
       commitSha: sha,
       secrets: [secret],
     });
@@ -367,20 +591,19 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
 describe("evidence contracts and redaction", () => {
   it("rejects duplicate identities, path traversal and unknown configuration", () => {
     expect(
-      validationEvidenceConfigSchema.safeParse({
+      validationPlanSchema.safeParse({
         version: 1,
         commands: [command("x", "true"), command("x", "true")],
       }).success,
     ).toBe(false);
     expect(
-      validationEvidenceConfigSchema.safeParse({
+      validationPlanSchema.safeParse({
         version: 1,
         commands: [command("x", "true", [{ ...report, path: "../secret" }])],
       }).success,
     ).toBe(false);
     expect(
-      validationEvidenceConfigSchema.safeParse({ version: 1, commands: [], assertions: "passed" })
-        .success,
+      validationPlanSchema.safeParse({ version: 1, commands: [], assertions: "passed" }).success,
     ).toBe(false);
   });
 
@@ -391,12 +614,14 @@ describe("evidence contracts and redaction", () => {
       encodeURIComponent(secret),
       JSON.stringify(secret).slice(1, -1),
       "TOKEN=unknown-token-value",
+      'API_KEY="$API_KEY"',
       "Authorization: Bearer another-token",
       "-----BEGIN RSA PRIVATE KEY-----\nprivate material\n-----END RSA PRIVATE KEY-----",
     ].join("\n");
     const redacted = redactValidationText(text, [secret]);
     expect(redacted).not.toContain(secret);
     expect(redacted).not.toContain("unknown-token-value");
+    expect(redacted).not.toContain("$API_KEY");
     expect(redacted).not.toContain("another-token");
     expect(redacted).not.toContain("private material");
   });

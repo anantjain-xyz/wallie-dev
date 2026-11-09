@@ -6,6 +6,7 @@ import {
 } from "./failure-diagnostic";
 import { wakeWorker } from "@/lib/worker/wake";
 import { validateCheckpoint } from "@/lib/validation-evidence/service";
+import { prepareValidationPlan, validationPlanInstructions } from "@/lib/validation-evidence/plan";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -491,6 +492,7 @@ async function runStage(input: {
       sandbox,
       sessionAttachments,
     );
+    await prepareValidationPlan(sandbox, runId);
     throwIfAborted(signal);
     const workerDeadlineMs =
       input.deadlineAt && input.deadlineAt === executionDeadlineAt
@@ -542,6 +544,10 @@ async function runStage(input: {
               `## Retry checkpoint\n\n${checkpointInstructions.join("\n\n")}`,
             )
           : undefined,
+        validationPlanInstructions: trustedPromptValue(
+          "run.validationPlanInstructions",
+          validationPlanInstructions(runId),
+        ),
         previousStages: Object.fromEntries(
           Object.entries(previousStages).map(([slug, artifact]) => [
             slug,

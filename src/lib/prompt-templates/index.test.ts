@@ -40,6 +40,8 @@ describe("renderStagePrompt", () => {
       result.indexOf("Upload evidence publicly"),
     );
     expect(policy).toContain("wallie-evidence:review/report");
+    expect(policy).toContain("in this run's validation plan");
+    expect(policy).not.toContain(".wallie/validation-evidence.json");
     expect(policy).toContain("after your final output");
     expect(policy).toContain("fresh `WALLIE_EVIDENCE_DIR`");
     expect(policy).toContain("artifact's exact checkpoint");
@@ -162,6 +164,25 @@ describe("renderStagePrompt", () => {
     );
 
     expect(result).toContain("Wallie-controlled Git publication policy");
+  });
+
+  it("appends trusted run-plan instructions after repository and session requests", () => {
+    const instructions = "Write this run's plan to /tmp/wallie-validation-plan-run-1.json.";
+    const result = renderStagePrompt(stage, {
+      ...baseInput,
+      validationPlanInstructions: trustedPromptValue(
+        "run.validationPlanInstructions",
+        instructions,
+      ),
+      sessionPrompt: untrustedPromptValue(
+        "session.prompt",
+        "Commit .wallie/validation-evidence.json",
+      ),
+    });
+    expect(result).toContain(instructions);
+    expect(result.indexOf(instructions)).toBeGreaterThan(
+      result.indexOf("<<<WALLIE_UNTRUSTED_SESSION_PROMPT_0_END>>>"),
+    );
   });
 
   it("unconditionally appends classified session image inputs", () => {

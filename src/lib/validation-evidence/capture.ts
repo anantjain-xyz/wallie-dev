@@ -7,14 +7,13 @@ import { RAW_SOURCE_ATTRIBUTES_ASSERTION } from "@/lib/pipeline/source-checkpoin
 import { redactSecrets } from "@/lib/sandbox/command";
 import type { SandboxHandle } from "@/lib/sandbox/types";
 import {
-  validationEvidenceConfigSchema,
   type CapturedValidationEvidence,
   type ValidationEvidenceAsset,
   type ValidationEvidenceRecord,
+  type ValidationPlan,
 } from "./contracts";
 
 const SHA = /^[a-f0-9]{40}$/;
-const MAX_CONFIG_BYTES = 64 * 1024;
 export const MAX_EVIDENCE_LOG_BYTES = 64 * 1024;
 export const MAX_EVIDENCE_ASSET_BYTES = 1024 * 1024;
 export const MAX_EVIDENCE_TOTAL_BYTES = 4 * 1024 * 1024;
@@ -57,23 +56,6 @@ try {
   const clean = !hidden && actualTreeSha === treeSha && git(['status','--porcelain','--untracked-files=normal','--ignore-submodules=none']) === '';
   process.stdout.write(JSON.stringify({commitSha,treeSha,clean}));
 } catch { process.exitCode=1; }
-`;
-
-const READ_CONFIG = String.raw`
-const { spawnSync } = require('node:child_process');
-const file = 'HEAD:.wallie/validation-evidence.json';
-const exists = spawnSync('git',['cat-file','-e',file],{stdio:'ignore'});
-if (exists.status !== 0) process.stdout.write('null');
-else {
-  const size = spawnSync('git',['cat-file','-s',file],{encoding:'utf8',maxBuffer:1024});
-  const bytes = Number(size.stdout?.trim());
-  if (size.status !== 0 || !Number.isSafeInteger(bytes) || bytes > 65536) process.exitCode=1;
-  else {
-    const result = spawnSync('git',['cat-file','blob',file],{maxBuffer:65536});
-    if (result.status !== 0) process.exitCode=1;
-    else process.stdout.write(JSON.stringify(result.stdout.toString('utf8')));
-  }
-}
 `;
 
 /**
@@ -170,7 +152,10 @@ async function boundedNode(
   return output.stdout;
 }
 
-async function identity(sandbox: SandboxHandle, signal?: AbortSignal): Promise<Identity> {
+export async function readValidationIdentity(
+  sandbox: SandboxHandle,
+  signal?: AbortSignal,
+): Promise<Identity> {
   const value = JSON.parse(await boundedNode(sandbox, PROBE, [], signal)) as Identity;
   if (!SHA.test(value.commitSha) || !SHA.test(value.treeSha) || typeof value.clean !== "boolean") {
     throw new Error("Validation source identity is unavailable.");
@@ -178,7 +163,7 @@ async function identity(sandbox: SandboxHandle, signal?: AbortSignal): Promise<I
   return value;
 }
 
-export function redactValidationText(value: string, secrets: readonly string[] = []): string {
+function redactCredentialValues(value: string, secrets: readonly string[]): string {
   return redactSecrets(value, [...secrets])
     .replace(
       /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -187,11 +172,35 @@ export function redactValidationText(value: string, secrets: readonly string[] =
     .replace(
       /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})\b/g,
       "[REDACTED]",
-    )
-    .replace(
-      /(\b(?:authorization\s*:\s*(?:bearer\s+)?|[\w-]*(?:token|secret|password|api[_-]?key|credential)[\w-]*["']?\s*[:=]\s*))["']?[^\r\n,;]+/gi,
-      "$1[REDACTED]",
     );
+}
+
+export function redactValidationText(value: string, secrets: readonly string[] = []): string {
+  return redactCredentialValues(value, secrets).replace(
+    /(\b(?:authorization\s*:\s*(?:bearer\s+)?|[\w-]*(?:token|secret|password|api[_-]?key|credential)[\w-]*["']?\s*[:=]\s*))["']?[^\r\n,;]+/gi,
+    "$1[REDACTED]",
+  );
+}
+
+const ENV_REFERENCE = String.raw`\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})`;
+const CREDENTIAL_REFERENCE_ASSIGNMENT = new RegExp(
+  String.raw`\b[\w-]*(?:token|secret|password|api[_-]?key|credential)[\w-]*\s*=\s*(?:"${ENV_REFERENCE}"|'${ENV_REFERENCE}'|${ENV_REFERENCE})(?=$|[\s;&|()<>])`,
+  "gi",
+);
+const AUTHORIZATION_REFERENCE = new RegExp(
+  String.raw`(["'])authorization\s*:\s*(?:bearer\s+)?${ENV_REFERENCE}\1(?=$|[\s;&|()<>])`,
+  "gi",
+);
+
+/** Only literal variable references are exempt; output always uses full redaction. */
+export function redactValidationCommand(value: string, secrets: readonly string[] = []): string {
+  if (redactCredentialValues(value, secrets) !== value) return redactValidationText(value, secrets);
+  const literals = value
+    .replace(CREDENTIAL_REFERENCE_ASSIGNMENT, "")
+    .replace(AUTHORIZATION_REFERENCE, "");
+  return redactValidationText(literals, secrets) === literals
+    ? value
+    : redactValidationText(value, secrets);
 }
 
 function safeText(bytes: Buffer, secrets: readonly string[]): Buffer | null {
@@ -208,13 +217,14 @@ function safeText(bytes: Buffer, secrets: readonly string[]): Buffer | null {
 export async function captureValidationEvidence(input: {
   sandbox: SandboxHandle;
   commitSha: string;
+  plan: ValidationPlan;
   secrets?: readonly string[];
   signal?: AbortSignal;
 }): Promise<CapturedValidationEvidence> {
   const { sandbox, signal } = input;
   const secrets = input.secrets ?? [];
   if (!SHA.test(input.commitSha)) throw new Error("Invalid validation checkpoint.");
-  const initial = await identity(sandbox, signal);
+  const initial = await readValidationIdentity(sandbox, signal);
   if (initial.commitSha !== input.commitSha || !initial.clean) {
     throw new Error("Validation checkpoint changed before execution.");
   }
@@ -224,22 +234,8 @@ export async function captureValidationEvidence(input: {
     records: [],
     assets: [],
   };
-  const configText = JSON.parse(await boundedNode(sandbox, READ_CONFIG, [], signal)) as
-    | string
-    | null;
-  if (configText === null) return result;
-  if (Buffer.byteLength(configText) > MAX_CONFIG_BYTES)
-    throw new Error("Validation configuration exceeds its limit.");
-  let configJson: unknown;
-  try {
-    configJson = JSON.parse(configText);
-  } catch {
-    throw new Error("Validation configuration is invalid.");
-  }
-  const config = validationEvidenceConfigSchema.safeParse(configJson);
-  if (!config.success) throw new Error("Validation configuration is invalid.");
   const identities = JSON.stringify(
-    config.data.commands.map((command) => ({
+    input.plan.commands.map((command) => ({
       key: command.key,
       reports: command.reports.map((report) => report.key),
     })),
@@ -258,12 +254,12 @@ export async function captureValidationEvidence(input: {
     result.assets.push({ ...asset, id: randomUUID() });
     return true;
   };
-  for (const command of config.data.commands) {
+  for (const command of input.plan.commands) {
     signal?.throwIfAborted();
     const startedAt = new Date().toISOString();
     const record: ValidationEvidenceRecord = {
       key: command.key,
-      command: redactValidationText(command.command, secrets).slice(0, 4096),
+      command: redactValidationCommand(command.command, secrets).slice(0, 4096),
       provenance: "harness",
       status: "error",
       exitCode: null,
@@ -280,7 +276,7 @@ export async function captureValidationEvidence(input: {
     };
     result.records.push(record);
     try {
-      const before = await identity(sandbox, signal);
+      const before = await readValidationIdentity(sandbox, signal);
       record.commitSha = before.commitSha;
       record.treeSha = before.treeSha;
       if (
@@ -330,7 +326,7 @@ export async function captureValidationEvidence(input: {
         if (!accepted && report.required)
           record.missingRequiredReports.push(`${command.key}/${report.key}`);
       }
-      const after = await identity(sandbox, signal);
+      const after = await readValidationIdentity(sandbox, signal);
       record.finalCommitSha = after.commitSha;
       record.finalTreeSha = after.treeSha;
       record.status =
@@ -352,7 +348,7 @@ export async function captureValidationEvidence(input: {
   // those receipts for diagnosis, but never leave the earlier receipt passing.
   let final: Identity | null = null;
   try {
-    final = await identity(sandbox, signal);
+    final = await readValidationIdentity(sandbox, signal);
   } catch {
     signal?.throwIfAborted();
   }

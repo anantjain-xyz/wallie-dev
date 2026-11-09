@@ -23,8 +23,8 @@ const reportSchema = z
   })
   .strict();
 
-/** Read from the exact committed checkpoint, never an agent's assertion. */
-export const validationEvidenceConfigSchema = z
+/** Execution instructions frozen on one run, never an assertion that checks passed. */
+export const validationPlanSchema = z
   .object({
     version: z.literal(1),
     commands: z
@@ -60,7 +60,7 @@ export const validationEvidenceConfigSchema = z
     }
   });
 
-export type ValidationEvidenceConfig = z.infer<typeof validationEvidenceConfigSchema>;
+export type ValidationPlan = z.infer<typeof validationPlanSchema>;
 export type ValidationEvidenceRecord = {
   key: string;
   command: string;

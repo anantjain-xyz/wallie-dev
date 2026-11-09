@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ upload: vi.fn(), capture: vi.fn(), checkpoint: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  upload: vi.fn(),
+  capture: vi.fn(),
+  checkpoint: vi.fn(),
+  pinPlan: vi.fn(),
+}));
 vi.mock("@/lib/workspaces/resource-operations", () => ({ uploadWorkspaceObject: mocks.upload }));
 vi.mock("./capture", () => ({ captureValidationEvidence: mocks.capture }));
+vi.mock("./plan", () => ({ pinValidationPlan: mocks.pinPlan }));
 vi.mock("@/lib/pipeline/source-checkpoint", () => ({ captureSourceCheckpoint: mocks.checkpoint }));
 import {
   persistValidationEvidence,
@@ -56,9 +62,49 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.upload.mockResolvedValue({ error: null });
   mocks.capture.mockResolvedValue(evidence());
+  mocks.pinPlan.mockResolvedValue({ version: 1, commands: [] });
   mocks.checkpoint.mockResolvedValue({ kind: "unchanged", baseSha: sha, headSha: sha });
 });
 describe("durable validation evidence", () => {
+  it("executes the plan saved for this run and exact checkpoint", async () => {
+    const plan = {
+      version: 1,
+      commands: [{ key: "unit", command: "pnpm test", timeoutSeconds: 300, reports: [] }],
+    };
+    mocks.pinPlan.mockResolvedValue(plan);
+    const admin = adminMock();
+    await validateCheckpoint({
+      admin: admin as never,
+      workspaceId: "ws",
+      pipelineId: "pipeline",
+      runId: "run",
+      sandbox: {} as never,
+      checkpoint: { kind: "unchanged", baseSha: sha, headSha: sha },
+      secrets: [],
+    });
+    expect(mocks.pinPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run", commitSha: sha }),
+    );
+    expect(mocks.capture).toHaveBeenCalledWith(expect.objectContaining({ plan, commitSha: sha }));
+  });
+  it("preserves source without running commands if the plan cannot be frozen", async () => {
+    mocks.pinPlan.mockRejectedValue(new Error("plan conflict"));
+    const admin = adminMock();
+    const checkpoint = { kind: "unchanged" as const, baseSha: sha, headSha: sha };
+    expect(
+      await validateCheckpoint({
+        admin: admin as never,
+        workspaceId: "ws",
+        pipelineId: "pipeline",
+        runId: "run",
+        sandbox: {} as never,
+        checkpoint,
+        secrets: [],
+      }),
+    ).toEqual(checkpoint);
+    expect(mocks.capture).not.toHaveBeenCalled();
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
   it("uploads redacted bytes with immutable workspace identity and hashes the persisted bytes", async () => {
     const admin = adminMock();
     await persistValidationEvidence({

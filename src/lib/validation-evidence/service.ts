@@ -7,6 +7,7 @@ import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 import type { captureValidationEvidence } from "./capture";
+import { pinValidationPlan } from "./plan";
 
 export const VALIDATION_EVIDENCE_BUCKET = "session-validation-evidence";
 type CapturedEvidence = Awaited<ReturnType<typeof captureValidationEvidence>>;
@@ -136,9 +137,11 @@ export async function validateCheckpoint(input: {
   try {
     if (!(await shouldCaptureValidationEvidence(input.admin, input.workspaceId, input.pipelineId)))
       return input.checkpoint;
+    const plan = await pinValidationPlan({ ...input, commitSha: input.checkpoint.headSha });
     evidence = await captureValidationEvidence({
       sandbox: input.sandbox,
       commitSha: input.checkpoint.headSha,
+      plan,
       secrets: input.secrets,
       signal: input.signal,
     });

@@ -13,8 +13,8 @@ const ARTIFACT_EVIDENCE_POLICY = trustedPromptValue(
   "wallie.artifactEvidencePolicy",
   `## Durable artifact evidence
 
-- Link retained validation reports from your final Markdown with \`[Review evidence](wallie-evidence:review/report)\`, where \`review\` is the command key and \`report\` is its report key in the committed \`.wallie/validation-evidence.json\`. Command logs use \`wallie-evidence:<command-key>/log\`.
-- Wallie executes configured commands after your final output. Configure the command to generate or copy its UTF-8 report into the fresh \`WALLIE_EVIDENCE_DIR\` provided for that command. Reports declare a path relative to that directory. Leave the configuration and any needed source files in the checkout for Wallie's trusted publisher to capture.
+- Link retained validation reports from your final Markdown with \`[Review evidence](wallie-evidence:review/report)\`, where \`review\` is the command key and \`report\` is its report key in this run's validation plan. Command logs use \`wallie-evidence:<command-key>/log\`.
+- Wallie executes configured commands after your final output. Configure the command to generate or copy its UTF-8 report into the fresh \`WALLIE_EVIDENCE_DIR\` provided for that command. Reports declare a path relative to that directory. Write the plan to the run-specific path supplied below, outside the checkout. Leave any needed source files in the checkout for Wallie's trusted publisher to capture.
 - Wallie resolves these identities only to private assets retained for this artifact's exact checkpoint. A missing report or mismatched checkpoint displays Evidence unavailable. Your Markdown does not establish that validation passed.
 - Never link temporary filesystem paths such as \`/vercel/sandbox/...\`, \`/tmp/...\`, or \`file://...\` as review evidence. These files disappear with the sandbox. Binary screenshots and previews are not captured by this text-report mechanism. Do not publish private evidence publicly or perform GitHub writes to create evidence links.`,
 );
@@ -103,6 +103,7 @@ export function renderStagePrompt(
     sessionAttachments?: UntrustedPromptValue;
     sessionAttachmentInstructions?: TrustedPromptValue;
     retryCheckpointInstructions?: TrustedPromptValue;
+    validationPlanInstructions?: TrustedPromptValue;
     // Workspace-editable operating rules (pipelines.operating_rules_md),
     // prepended to every stage prompt. Empty/whitespace-only → no preamble.
     operatingRulesMd?: TrustedPromptValue;
@@ -134,6 +135,9 @@ export function renderStagePrompt(
     verifyPromptBoundary(GIT_PUBLICATION_POLICY),
     ...(input.retryCheckpointInstructions
       ? [verifyPromptBoundary(input.retryCheckpointInstructions)]
+      : []),
+    ...(input.validationPlanInstructions
+      ? [verifyPromptBoundary(input.validationPlanInstructions)]
       : []),
   ].join("\n\n");
 }
