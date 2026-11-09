@@ -1,3 +1,4 @@
+import { richReviewSource } from "../src/app/dev/interaction-motion/review-fixtures";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
@@ -10,6 +11,52 @@ import type {
 } from "../src/features/sessions/review/types";
 
 type SessionState = "editable" | "approved" | "archived";
+
+test("selection opens the real composer before Comments has ever opened", async ({ page }) => {
+  await page.route("**/api/sessions/preview/reviews?*", (route) =>
+    route.fulfill({ json: reviewSnapshot("editable") }),
+  );
+  await page.goto("/dev/interaction-motion?reviewState=editable");
+  await expect(page.getByRole("button", { name: "Comments", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await selectPassage(page, "pointerup");
+  const action = page.getByRole("button", { name: "Comment on selection" });
+  await expect(action).toBeEnabled();
+  await action.click();
+  await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toBeFocused();
+  await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
+});
+
+test("keyboard users can focus the selection action after the native selection clears", async ({
+  page,
+}) => {
+  await page.route("**/api/sessions/preview/reviews?*", (route) =>
+    route.fulfill({ json: reviewSnapshot("editable") }),
+  );
+  await page.goto("/dev/interaction-motion?reviewState=editable");
+  await selectPassage(page, "keyup");
+  const action = page.getByRole("button", { name: "Comment on selection" });
+  await expect(action).toBeEnabled();
+  await action.focus();
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await expect(action).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toBeFocused();
+});
+
+test("whole paragraphs with rendered source spans offer a selection action", async ({ page }) => {
+  await page.route("**/api/sessions/preview/reviews?*", (route) =>
+    route.fulfill({ json: reviewSnapshot("editable") }),
+  );
+  await page.goto("/dev/interaction-motion?reviewState=editable");
+  await selectPassage(page, "pointerup");
+  const action = page.getByRole("button", { name: "Comment on selection" });
+  await expect(action).toBeEnabled();
+  await action.click();
+  await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toBeFocused();
+});
 
 function reviewSnapshot(state: SessionState) {
   return {
@@ -41,12 +88,15 @@ async function openFixture(page: Page, state: SessionState) {
 }
 
 async function capture(page: Page, name: string) {
-  await mkdir(".symphony/screenshots", { recursive: true });
-  await page.screenshot({ path: `.symphony/screenshots/${name}.png`, fullPage: true });
+  await mkdir(".wallie/screenshots", { recursive: true });
+  await page.screenshot({ path: `.wallie/screenshots/${name}.png`, fullPage: true });
 }
 
 async function selectPassage(page: Page, event: "keyup" | "pointerup") {
-  const passage = page.locator("p[data-review-text-start]");
+  const passage = page
+    .locator("p")
+    .filter({ has: page.locator("[data-review-text-start]") })
+    .first();
   await passage.evaluate((element) => {
     const range = document.createRange();
     range.selectNodeContents(element);
@@ -101,44 +151,51 @@ for (const width of [1440, 390]) {
   }
 }
 
-test("editable keyboard and selection comments retain drafts and version anchors", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.route("**/api/sessions/preview/reviews?*", (route) =>
-    route.fulfill({ json: reviewSnapshot("editable") }),
-  );
-  const opener = await openFixture(page, "editable");
-  const block = page.getByLabel("Comment on a block");
-  await expect(block).toBeEnabled();
-  await capture(page, "05-editable-blocks-desktop");
-  await block.selectOption("1");
-  await block.focus();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeFocused();
-  await page.keyboard.press("Enter");
-  const composer = page.getByRole("textbox", { name: "Comment", exact: true });
-  await expect(composer).toBeFocused();
-  await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
-  await composer.fill("Retain this draft across panel visibility changes.");
-  await page.getByLabel("Comment type").selectOption("blocking");
-  await expect(
-    page.getByText("This request blocks approval until a reviewer closes it."),
-  ).toBeVisible();
-  await capture(page, "06-editable-keyboard-composer");
-  await composer.press("Escape");
-  await expect(opener).toBeFocused();
-  await opener.press("Enter");
-  await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
-  await page.getByRole("button", { name: "Cancel new comment" }).click();
-  await selectPassage(page, "keyup");
-  const selectionAction = page.getByRole("button", { name: "Comment on selection" });
-  await expect(selectionAction).toBeVisible();
-  await selectionAction.click();
-  await expect(composer).toBeFocused();
-  await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
-  await capture(page, "07-editable-selection-composer");
-});
+for (const width of [1440, 390]) {
+  test(`selection comments retain drafts across panel visibility changes at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route("**/api/sessions/preview/reviews?*", (route) =>
+      route.fulfill({ json: reviewSnapshot("editable") }),
+    );
+    await page.goto("/dev/interaction-motion?reviewState=editable");
+    const opener = page.getByRole("button", { name: "Comments", exact: true });
+    await expect(opener).toHaveAttribute("aria-expanded", "false");
+    await selectPassage(page, "pointerup");
+    const action = page.getByRole("button", { name: "Comment on selection" });
+    await expect(action).toBeEnabled();
+    await capture(page, `selection-action-${width}`);
+    await action.click();
+    const composer = page.getByRole("textbox", { name: "Comment", exact: true });
+    await expect(composer).toBeFocused();
+    await expect(page.getByLabel("Comment on a block")).toHaveCount(0);
+    await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
+    await capture(page, `focused-composer-${width}`);
+    await composer.fill("Retain this draft across panel visibility changes.");
+    await page.getByLabel("Comment type").selectOption("blocking");
+    await expect(
+      page.getByText("This request blocks approval until a reviewer closes it."),
+    ).toBeVisible();
+    await composer.press("Escape");
+    await expect(opener).toBeFocused();
+    await opener.press("Enter");
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
+    await expect(page.getByLabel("Comment type")).toHaveValue("blocking");
+    await page.getByRole("button", { name: "Cancel new comment" }).click();
+    await selectPassage(page, "keyup");
+    await expect(action).toBeEnabled();
+    await action.focus();
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await action.press("Enter");
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue("");
+    await expect(page.getByLabel("Comment type")).toHaveValue("discussion");
+    await page.getByRole("button", { name: "Cancel new comment" }).click();
+    await capture(page, `empty-comments-${width}`);
+  });
+}
 
 test("comment permissions stay unavailable while loading and recover after a failed lookup", async ({
   page,
@@ -169,7 +226,8 @@ test("comment permissions stay unavailable while loading and recover after a fai
     await capture(page, "09-comment-permissions-unavailable");
     fail = false;
     await page.getByRole("button", { name: "Retry loading" }).click();
-    await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeEnabled();
+    await selectPassage(page, "pointerup");
+    await expect(page.getByRole("button", { name: "Comment on selection" })).toBeEnabled();
   } finally {
     release();
   }
@@ -299,7 +357,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByText("Loading thread…", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Retry loading" })).toBeVisible();
     await expect(page.getByText("Permission refresh interrupted.", { exact: false })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toHaveCount(0);
     await expect(reply).toHaveCount(0);
     await page.getByRole("heading", { name: "Session interaction preview" }).click();
     await capture(page, `11-permission-refresh-retry-${width}`);
@@ -307,12 +365,244 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Retry loading" }).click();
     await expect(reply).toHaveValue("Keep my exact reply draft.");
     await expect(page.getByRole("button", { name: "Save reply" })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Add comment", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Retry loading" })).toHaveCount(0);
     await page.getByRole("heading", { name: "Session interaction preview" }).click();
     await capture(page, `12-permission-refresh-recovered-${width}`);
     await page.getByRole("button", { name: "Save reply" }).click();
     await expect.poll(() => saves.length).toBe(1);
     expect(saves[0]).toMatchObject({ body: "Keep my exact reply draft." });
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`Full artifact selection saves one exact thread after an uncertain retry at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const paragraph = "Repeat 🚀 café é **retry** and `code`.";
+    const offset = richReviewSource.lastIndexOf(paragraph);
+    const expectedAnchor = createArtifactSourceAnchor(
+      richReviewSource,
+      Array.from(richReviewSource.slice(0, offset)).length,
+      Array.from(richReviewSource.slice(0, offset + paragraph.length)).length,
+    );
+    const saves: Record<string, unknown>[] = [];
+    let saved: ArtifactReviewThread | null = null;
+    const body = "Keep this exact second passage attached after refresh.";
+    await page.route(apiPattern, async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      if (request.method() === "POST") {
+        const payload = request.postDataJSON();
+        saves.push(payload);
+        saved ??= { ...thread, artifact_version: 2, anchor: expectedAnchor };
+        return saves.length === 1
+          ? route.fulfill({ status: 503, json: { error: "Save acknowledgement interrupted." } })
+          : route.fulfill({ json: { thread: saved } });
+      }
+      if (path.endsWith("/comments"))
+        return route.fulfill({ json: { comments: [{ ...comment, body }], nextCursor: null } });
+      if (path.endsWith(threadId)) return route.fulfill({ json: { thread: saved } });
+      return route.fulfill({
+        json: {
+          ...snapshot(),
+          threads: saved ? [saved] : [],
+          counts: { total: saved ? 1 : 0, open: saved ? 1 : 0, blocking: 0 },
+        },
+      });
+    });
+    await page.goto("/dev/interaction-motion?reviewState=editable&reviewVersion=2&reviewText=rich");
+    await page.getByRole("tab", { name: "Full artifact" }).click();
+    await expect(page.getByRole("button", { name: "Comments", exact: true })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    const selected = page.locator(".artifact-content p").nth(1);
+    await selected.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    });
+    await selected.dispatchEvent("pointerup");
+    const action = page.getByRole("button", { name: "Comment on selection" });
+    await expect(action).toBeEnabled();
+    await capture(page, `full-artifact-selection-${width}`);
+    await action.click();
+    const composer = page.getByRole("textbox", { name: "Comment", exact: true });
+    await expect(composer).toBeFocused();
+    await expect(page.locator("blockquote")).toHaveText(paragraph);
+    await composer.fill(body);
+    await capture(page, `full-artifact-composer-${width}`);
+    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Save acknowledgement interrupted." }),
+    ).toBeVisible();
+    await expect(composer).toHaveValue(body);
+    await capture(page, `failed-save-draft-${width}`);
+    await page.getByRole("button", { name: "Close comments" }).click();
+    await page.getByRole("button", { name: "Comments", exact: true }).click();
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue(body);
+    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await expect(page.getByText(body, { exact: true })).toBeVisible();
+    expect(saves).toHaveLength(2);
+    expect(saves[1]).toEqual(saves[0]);
+    expect(saves[0]).toMatchObject({
+      artifactId,
+      artifactVersion: 2,
+      anchor: expectedAnchor,
+      body,
+    });
+    expect(new Set(saves.map((save) => save.requestId)).size).toBe(1);
+    await capture(page, `saved-thread-${width}`);
+    await page.reload();
+    await expect(page.getByText(body, { exact: true })).toBeVisible();
+    await expect(page.locator("blockquote")).toHaveText(paragraph);
+    await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toHaveCount(0);
+    await capture(page, `saved-thread-after-refresh-${width}`);
+  });
+}
+
+for (const kind of ["transformed", "oversized"]) {
+  test(`${kind} selections explain how to recover instead of silently failing`, async ({
+    page,
+  }) => {
+    await page.route("**/api/sessions/preview/reviews?*", (route) =>
+      route.fulfill({ json: reviewSnapshot("editable") }),
+    );
+    await page.goto(`/dev/interaction-motion?reviewState=editable&reviewText=${kind}`);
+    const paragraph = page.locator(".artifact-content p");
+    await paragraph.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    });
+    await paragraph.dispatchEvent("pointerup");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Select up to 10,000 characters" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Comment on selection" })).toHaveCount(0);
+    await capture(page, `unsupported-selection-${kind}`);
+    await page.getByRole("button", { name: "Open Raw", exact: true }).click();
+    await expect(page.getByRole("tab", { name: "Raw", selected: true })).toBeVisible();
+    const raw = page.locator("pre[data-review-text-start]");
+    await raw.evaluate((element) => {
+      const range = document.createRange();
+      range.setStart(element.firstChild!, 0);
+      range.setEnd(element.firstChild!, 4);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    });
+    await raw.dispatchEvent("keyup", { key: "Shift" });
+    const action = page.getByRole("button", { name: "Comment on selection" });
+    await expect(action).toBeEnabled();
+    await action.click();
+    await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toBeFocused();
+    await expect(page.locator("blockquote")).toHaveText(kind === "transformed" ? "café" : "xxxx");
+  });
+}
+
+test("an unopened selection waits for verified permissions without losing its passage", async ({
+  page,
+}) => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/sessions/preview/reviews?*", async (route) => {
+    await gate;
+    await route.fulfill({ json: reviewSnapshot("editable") });
+  });
+  try {
+    await page.goto("/dev/interaction-motion?reviewState=editable");
+    await selectPassage(page, "pointerup");
+    const action = page.getByRole("button", { name: "Comment on selection" });
+    await expect(action).toBeDisabled();
+    await expect(action).toHaveAccessibleDescription("Checking comment permissions…");
+    await capture(page, "unopened-selection-permission-loading");
+    release();
+    await expect(action).toBeEnabled();
+    await action.click();
+    await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toBeFocused();
+    await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
+  } finally {
+    release();
+  }
+});
+
+test("native pointer and keyboard selection can activate the comment action", async ({ page }) => {
+  await page.route("**/api/sessions/preview/reviews?*", (route) =>
+    route.fulfill({ json: reviewSnapshot("editable") }),
+  );
+  await page.goto("/dev/interaction-motion?reviewState=editable");
+  const text = page.locator(".artifact-content p span");
+  await text.dblclick({ position: { x: 10, y: 10 } });
+  const action = page.getByRole("button", { name: "Comment on selection" });
+  await expect(action).toBeEnabled();
+  await action.click();
+  await expect(page.locator("blockquote")).toHaveText("Version");
+  await page.getByRole("button", { name: "Cancel new comment" }).click();
+  // Start from the focusable, read-only artifact region without creating a DOM range.
+  await page.getByRole("button", { name: "Comments", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("region", { name: "Artifact text", exact: true })).toBeFocused();
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(action).toBeEnabled();
+  await page.keyboard.press("Tab");
+  await expect(action).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("textbox", { name: "Comment", exact: true })).toBeFocused();
+  await expect(page.locator("blockquote")).toHaveText("Im");
+});
+
+for (const mode of ["rendered", "raw"]) {
+  test(`${mode} code selection keeps exact Unicode source coordinates`, async ({ page }) => {
+    let saved: Record<string, unknown> | undefined;
+    await page.route(apiPattern, (route) => {
+      if (route.request().method() === "POST") {
+        saved = route.request().postDataJSON();
+        return route.fulfill({ status: 503, json: { error: "Fixture captured the save." } });
+      }
+      return route.fulfill({ json: reviewSnapshot("editable") });
+    });
+    await page.goto("/dev/interaction-motion?reviewState=editable&reviewText=rich");
+    if (mode === "raw") await page.getByRole("tab", { name: "Raw", exact: true }).click();
+    const text =
+      mode === "raw"
+        ? page.locator("pre[data-review-text-start]")
+        : page.locator("pre code [data-review-text-start]");
+    const quote = "rocket = '🚀'";
+    await text.evaluate((element, selected) => {
+      const node = element.firstChild!;
+      const from = node.textContent!.indexOf(selected);
+      const range = document.createRange();
+      range.setStart(node, from);
+      range.setEnd(node, from + selected.length);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    }, quote);
+    await text.dispatchEvent("pointerup");
+    const action = page.getByRole("button", { name: "Comment on selection" });
+    await expect(action).toBeEnabled();
+    await action.click();
+    const composer = page.getByRole("textbox", { name: "Comment", exact: true });
+    await expect(composer).toBeFocused();
+    await expect(page.locator("blockquote")).toHaveText(quote);
+    await composer.fill("Review this exact code.");
+    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await expect.poll(() => saved).toBeDefined();
+    const from = richReviewSource.indexOf(quote);
+    expect(saved).toMatchObject({
+      artifactId,
+      artifactVersion: 1,
+      anchor: createArtifactSourceAnchor(
+        richReviewSource,
+        Array.from(richReviewSource.slice(0, from)).length,
+        Array.from(richReviewSource.slice(0, from + quote.length)).length,
+      ),
+    });
   });
 }

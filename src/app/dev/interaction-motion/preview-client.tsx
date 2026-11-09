@@ -19,16 +19,30 @@ const stages = [
   { description: "Build", id: "build", name: "Build", position: 1, slug: "build" },
 ];
 
+type ReviewFixtureArtifact = { source: string; html: string; version: number };
+
 /** Exercise real UI components without launching runs or changing workspace data. */
-export function InteractionMotionPreview({ initialNow }: { initialNow: string }) {
+export function InteractionMotionPreview({
+  initialNow,
+  reviewArtifact,
+}: {
+  initialNow: string;
+  reviewArtifact: ReviewFixtureArtifact;
+}) {
   return (
     <SessionExecutionProvider>
-      <InteractionMotionContent initialNow={initialNow} />
+      <InteractionMotionContent initialNow={initialNow} reviewArtifact={reviewArtifact} />
     </SessionExecutionProvider>
   );
 }
 
-function InteractionMotionContent({ initialNow }: { initialNow: string }) {
+function InteractionMotionContent({
+  initialNow,
+  reviewArtifact,
+}: {
+  initialNow: string;
+  reviewArtifact: ReviewFixtureArtifact;
+}) {
   const reviewState = useSearchParams().get("reviewState");
   const reviewFixture = ["editable", "approved", "archived"].includes(reviewState ?? "");
   const artifactId = reviewFixture ? "11111111-1111-4111-8111-111111111111" : undefined;
@@ -41,12 +55,19 @@ function InteractionMotionContent({ initialNow }: { initialNow: string }) {
     stallTimeoutMs: 60000,
   });
   const [phaseStatus, setPhaseStatus] = useState<SessionPhaseStatus>(
-    reviewState === "approved" || reviewState === "archived" ? "approved" : "in_progress",
+    reviewState === "approved" || reviewState === "archived"
+      ? "approved"
+      : reviewFixture
+        ? "awaiting_review"
+        : "in_progress",
   );
-  const [version, setVersion] = useState(1);
+  const [version, setVersion] = useState(reviewArtifact.version);
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState("build");
-  const source = `# Implementation complete\n\nVersion ${version} is ready for review.`;
+  const source =
+    version === reviewArtifact.version
+      ? reviewArtifact.source
+      : `# Implementation complete\n\nVersion ${version} is ready for review.`;
   const paragraphStart = source.indexOf("Version");
   const timeline: StageTimelineEntry[] = stages.map((stage) => ({
     stage,
@@ -99,18 +120,23 @@ function InteractionMotionContent({ initialNow }: { initialNow: string }) {
       <ArtifactPanel
         emptyText="No artifact yet."
         initialFormattedArtifact={
-          <div>
-            <h2 data-review-text-start={2} data-review-text-end={25}>
-              Implementation complete
-            </h2>
-            <p data-review-text-start={paragraphStart} data-review-text-end={source.length}>
-              Version {version} is ready for review.
-            </p>
-          </div>
+          version === reviewArtifact.version ? (
+            <div dangerouslySetInnerHTML={{ __html: reviewArtifact.html }} />
+          ) : (
+            <div>
+              <h2 data-review-text-start={2} data-review-text-end={25}>
+                Implementation complete
+              </h2>
+              <p data-review-text-start={paragraphStart} data-review-text-end={source.length}>
+                Version {version} is ready for review.
+              </p>
+            </div>
+          )
         }
         initialFormattedArtifactKey={artifactBodyCacheKey("preview", "build", version, artifactId)}
         initialNow={initialNow}
         isDrafting={false}
+        isAwaitingReview={phaseStatus === "awaiting_review"}
         latestArtifact={{
           id: artifactId,
           createdAt: initialNow,

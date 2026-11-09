@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "commands": [
+    {
+      "key": "review",
+      "command": "pnpm test src/features/sessions/review src/features/sessions/detail/artifact-panel.test.ts --maxWorkers=2 --reporter=json --outputFile=\"$WALLIE_EVIDENCE_DIR/review.json\"",
+      "timeoutSeconds": 120,
+      "reports": [
+        {
+          "key": "report",
+          "path": "review.json",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    },
+    {
+      "key": "browser",
+      "command": "CIRCLE_NODE_TOTAL=2 pnpm build && PLAYWRIGHT_JSON_OUTPUT_FILE=\"$WALLIE_EVIDENCE_DIR/browser.json\" pnpm exec playwright test e2e/comment-access.spec.ts --reporter=json",
+      "timeoutSeconds": 300,
+      "reports": [
+        {
+          "key": "report",
+          "path": "browser.json",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    },
+    {
+      "key": "check-fast",
+      "command": "pnpm check:fast > \"$WALLIE_EVIDENCE_DIR/check-fast.txt\" 2>&1",
+      "timeoutSeconds": 300,
+      "reports": [
+        {
+          "key": "report",
+          "path": "check-fast.txt",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    },
+    {
+      "key": "tests",
+      "command": "pnpm test --maxWorkers=3 > \"$WALLIE_EVIDENCE_DIR/tests.txt\" 2>&1",
+      "timeoutSeconds": 300,
+      "reports": [
+        {
+          "key": "report",
+          "path": "tests.txt",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    },
+    {
+      "key": "cloudflare",
+      "command": "pnpm check:cloudflare > \"$WALLIE_EVIDENCE_DIR/cloudflare.txt\" 2>&1",
+      "timeoutSeconds": 180,
+      "reports": [
+        {
+          "key": "report",
+          "path": "cloudflare.txt",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    }
+  ]
+}
