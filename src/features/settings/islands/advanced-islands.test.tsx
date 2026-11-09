@@ -52,9 +52,7 @@ describe("MaintenanceIsland", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
 
     const result = await screen.findByRole("status");
-    expect(result).toHaveTextContent(
-      "Maintenance complete. No stuck work was found; queued jobs remain with the worker.",
-    );
+    expect(result).toHaveTextContent("Maintenance complete. No stuck work.");
     expect(screen.queryByText("Processing")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Maintenance" })).not.toBeInTheDocument();
     expect(

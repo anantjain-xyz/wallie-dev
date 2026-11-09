@@ -93,7 +93,7 @@ describe("SessionReviewBar", () => {
     expect(onReject).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
     expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
-      "A different artifact is now shown",
+      "Artifact changed",
     );
     expect(feedback).toHaveValue("Feedback for the original artifact.");
   });
@@ -431,7 +431,7 @@ describe("SessionReviewBar", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Load more threads" }));
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
-      "This review changed",
+      "Review changed",
     );
     expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
     expect(onReject).not.toHaveBeenCalled();

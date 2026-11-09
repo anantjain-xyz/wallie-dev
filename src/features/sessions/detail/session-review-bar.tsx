@@ -152,9 +152,7 @@ export function SessionReviewBar({
     } catch (cause) {
       if (sequence === previewSequence.current)
         setFeedbackError(
-          cause instanceof Error
-            ? cause.message
-            : "Could not preview feedback. Your draft is retained.",
+          cause instanceof Error ? cause.message : "Couldn’t preview feedback. Draft kept.",
         );
     } finally {
       if (sequence === previewSequence.current) setPreviewLoading(false);
@@ -203,9 +201,7 @@ export function SessionReviewBar({
         if (controller.signal.aborted || sequence !== reviewLoadSequence.current) return;
         if (cursor && reviewRevisionRef.current !== payload.reviewRevision) {
           setReviewChanged(true);
-          setReviewError(
-            "This review changed while comments were loading. Refresh comments and select the threads again. Your note is retained.",
-          );
+          setReviewError("Review changed. Refresh comments and reselect threads. Note kept.");
           return;
         }
         reviewRevisionRef.current = payload.reviewRevision;
@@ -295,7 +291,7 @@ export function SessionReviewBar({
       sessionId &&
       (reviewLoading || reviewChanged || reviewError || reviewRevisionRef.current === null)
     ) {
-      setFeedbackError("Refresh inline comments before submitting. Your note is retained.");
+      setFeedbackError("Refresh comments before submitting. Note kept.");
       return;
     }
     if (!trimmed && selectedThreadIds.length === 0) {
@@ -345,9 +341,7 @@ export function SessionReviewBar({
       }
       // On failure, keep the dialog open and preserve the draft.
     } catch {
-      setFeedbackError(
-        "Could not confirm the submission. Your draft is retained. Retry the same submission.",
-      );
+      setFeedbackError("Submission unconfirmed. Draft kept. Retry this submission.");
     } finally {
       rejectInFlightRef.current = false;
     }
@@ -475,8 +469,7 @@ export function SessionReviewBar({
         >
           {artifactChanged ? (
             <p className="mb-4 text-sm text-danger" role="alert">
-              A different artifact is now shown. Your draft is retained. Close this dialog and
-              review the latest output before submitting.
+              Artifact changed. Draft kept. Close and review the latest output before submitting.
             </p>
           ) : null}
           {sessionId ? (

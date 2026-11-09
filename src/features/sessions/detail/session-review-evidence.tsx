@@ -150,9 +150,7 @@ function EvidenceSection({
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-xs text-muted">
-          No named validation evidence is required by this delivery policy.
-        </p>
+        <p className="mt-2 text-xs text-muted">No required validation evidence.</p>
       )}
       {evidence?.records.length ? (
         <>
@@ -183,9 +181,7 @@ function EvidenceSection({
           </ul>
         </>
       ) : (
-        <p className="mt-2 text-xs text-muted">
-          No harness receipt is recorded for the accepted commit.
-        </p>
+        <p className="mt-2 text-xs text-muted">No harness receipt for the accepted commit.</p>
       )}
       {evidence?.assets.length ? (
         <>
@@ -305,14 +301,12 @@ export function SessionReviewEvidence({
         method: "POST",
       });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      if (!response.ok) throw new Error(payload?.error ?? "GitHub refresh could not be queued.");
+      if (!response.ok) throw new Error(payload?.error ?? "Couldn’t queue verification.");
       setPolling(true);
       await refresh();
     } catch (cause) {
       setRefreshError(
-        cause instanceof Error
-          ? cause.message
-          : "GitHub refresh could not be queued. Retry to verify again.",
+        cause instanceof Error ? cause.message : "Couldn’t queue verification. Retry.",
       );
     } finally {
       setRefreshPending(false);
@@ -357,9 +351,9 @@ export function SessionReviewEvidence({
   const prChecksUrl = pr?.url ? `${pr.url}/checks` : null;
   const terminal = delivery.evaluation.state === "merged" || delivery.evaluation.state === "closed";
   const historicalNote = historical
-    ? "Historical view: readiness and code changes describe the current canonical pull request, not the older artifact selection shown above."
+    ? "Readiness and changes reflect the current PR, not this historical artifact."
     : !delivery.finalStage
-      ? "This is not the final delivery stage. Readiness is advisory here; final approval applies the delivery gate."
+      ? "Readiness is advisory until final-stage approval."
       : null;
 
   return (
@@ -374,8 +368,7 @@ export function SessionReviewEvidence({
             Delivery readiness
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted">
-            Server-derived from GitHub observations and recorded validation evidence. Approval never
-            implies a merge or deployment.
+            GitHub and validation evidence. Approval doesn’t merge or deploy.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -471,7 +464,7 @@ export function SessionReviewEvidence({
         </div>
       ) : (
         <p className="mt-4 rounded-[4px] border border-success/30 bg-success-soft px-3 py-2 text-xs text-success">
-          Every configured delivery requirement is satisfied for the observed revision.
+          Delivery requirements met for this revision.
         </p>
       )}
 
@@ -482,19 +475,16 @@ export function SessionReviewEvidence({
       ) : null}
       {error && value ? (
         <p className="mt-3 text-xs text-warning" role="status">
-          Could not refresh the latest delivery state. Showing the last loaded evidence.
+          Couldn’t refresh. Showing saved evidence.
         </p>
       ) : null}
       {queueRefreshing ? (
         <p className="mt-3 text-xs text-muted" role="status">
-          {delivery.refresh.status === "pending"
-            ? "GitHub verification refresh is queued."
-            : "GitHub verification refresh is running."}{" "}
-          This panel updates when a new observation lands.
+          {delivery.refresh.status === "pending" ? "Verification queued." : "Verifying…"}
         </p>
       ) : polling ? (
         <p className="mt-3 text-xs text-muted" role="status">
-          Waiting for a new GitHub verification observation…
+          Waiting for verification…
         </p>
       ) : null}
       {delivery.refresh.status === "error" ? (
@@ -573,7 +563,7 @@ export function SessionReviewEvidence({
               ))}
             </ul>
           ) : (
-            <p className="mt-2 text-xs text-muted">No named required checks are configured.</p>
+            <p className="mt-2 text-xs text-muted">No required checks.</p>
           )}
           {prChecksUrl ? (
             <a
@@ -631,9 +621,7 @@ export function SessionReviewEvidence({
               </li>
             </ul>
           ) : (
-            <p className="mt-2 text-xs text-muted">
-              No GitHub review detail is recorded for the current observation.
-            </p>
+            <p className="mt-2 text-xs text-muted">No review details recorded.</p>
           )}
           {pr?.url ? (
             <a

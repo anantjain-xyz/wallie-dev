@@ -288,7 +288,7 @@ export function RevisionReviewPanel({
         <p className="text-sm text-muted">
           {previous
             ? "The previous revision is ambiguous. Select an artifact in Compare versions."
-            : "No earlier version is available for this artifact."}
+            : "No earlier version."}
         </p>
       );
     } else if (comparison?.kind === "complete_sources") {
@@ -504,7 +504,7 @@ export function RevisionReviewPanel({
           </section>
         ))}
         {threads && !threads.threads.some((thread) => thread.status === "open") ? (
-          <p className="text-xs text-muted">No unresolved feedback in this page.</p>
+          <p className="text-xs text-muted">No unresolved feedback on this page.</p>
         ) : null}
         {threads?.nextCursor ? (
           <button
@@ -547,7 +547,7 @@ export function RevisionReviewPanel({
           </button>
         ) : null}
         {history?.batches.length === 0 ? (
-          <p className="text-xs text-muted">No feedback batches submitted for this stage.</p>
+          <p className="text-xs text-muted">No submitted feedback.</p>
         ) : null}
         <ul className="space-y-2">
           {history?.batches.map((batch) => (
@@ -582,7 +582,7 @@ export function RevisionReviewPanel({
         ) : null}
         {detailLoading ? (
           <p role="status" className="text-xs text-muted">
-            Loading exact submitted feedback…
+            Loading submitted feedback…
           </p>
         ) : null}
         {detailError ? (
@@ -699,8 +699,8 @@ export function RevisionReviewPanel({
               </ul>
             ) : (
               <p className="text-xs text-muted">
-                No accepted output yet. Failed or canceled runs keep this feedback intact; use Retry
-                Run, or explicitly select these threads in Request changes on the next review.
+                No accepted output. Feedback kept. Use Retry Run or reselect these threads in the
+                next review.
               </p>
             )}
             {detail.outputNextCursor ? (

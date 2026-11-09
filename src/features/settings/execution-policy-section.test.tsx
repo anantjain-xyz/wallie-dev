@@ -156,7 +156,9 @@ describe("execution policy settings", () => {
     const repairs = await screen.findByRole("spinbutton", { name: /^Maximum repair attempts/ });
     fireEvent.change(repairs, { target: { value: "7" } });
     await user.click(screen.getByRole("button", { name: "Save new revision" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("changed while you were editing");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Policy changed. Reload before retrying.",
+    );
     expect(repairs).toHaveValue(7);
     expect(screen.getByRole("button", { name: "Save new revision" })).toBeDisabled();
     expect(JSON.parse(fetch.mock.calls[1][1].body).expectedRevision).toBe(3);

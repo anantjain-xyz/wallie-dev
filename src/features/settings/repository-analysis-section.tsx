@@ -326,7 +326,7 @@ export function RepositoryAnalysisSection({
   return (
     <Section
       anchorId="repository"
-      tagline="Prepare each synced repository for Wallie by installing skills and saving repository profiles."
+      tagline="Install skills and save repository profiles."
       title="Repositories"
     >
       <div className="space-y-5">

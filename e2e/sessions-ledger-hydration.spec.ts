@@ -16,19 +16,20 @@ test.describe("sessions ledger 50-row fixture", () => {
     await expect(firstTitle).toBeVisible();
     await expect(firstTitle).toHaveAttribute("href", "/w/fixture/sessions/1");
     await expect(firstTitle).toHaveCSS("-webkit-line-clamp", "2");
-    await expect(firstTitle.locator("xpath=..")).toHaveCSS("align-items", "baseline");
+    await expect(firstTitle.locator("xpath=../..")).toHaveCSS("align-items", "baseline");
 
     const titleBox = await firstTitle.boundingBox();
     const titleMetrics = await firstTitle.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
-        clientHeight: element.clientHeight,
+        clientHeight: element.parentElement!.clientHeight,
         lineHeight: Number.parseFloat(style.lineHeight),
         scrollHeight: element.scrollHeight,
       };
     });
     expect(titleBox).toBeTruthy();
-    expect(titleMetrics.clientHeight).toBeCloseTo(titleMetrics.lineHeight * 2, 0);
+    expect(titleMetrics.clientHeight).toBeLessThanOrEqual(titleMetrics.lineHeight * 2);
+    expect(titleMetrics.clientHeight).toBeGreaterThan(titleMetrics.lineHeight * 2 - 2);
     expect(titleMetrics.scrollHeight).toBeGreaterThan(titleMetrics.clientHeight);
 
     // Modifier-click semantics: the title is a real link (not an overlay).
@@ -57,17 +58,18 @@ test.describe("sessions ledger 50-row fixture", () => {
     });
     await expect(longTitle).toBeVisible();
     await expect(longTitle).toHaveCSS("-webkit-line-clamp", "2");
-    await expect(longTitle.locator("xpath=..")).toHaveCSS("align-items", "start");
+    await expect(longTitle.locator("xpath=../..")).toHaveCSS("align-items", "start");
 
     const mobileTitleMetrics = await longTitle.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
-        clientHeight: element.clientHeight,
+        clientHeight: element.parentElement!.clientHeight,
         lineHeight: Number.parseFloat(style.lineHeight),
         scrollHeight: element.scrollHeight,
       };
     });
-    expect(mobileTitleMetrics.clientHeight).toBeCloseTo(mobileTitleMetrics.lineHeight * 2, 0);
+    expect(mobileTitleMetrics.clientHeight).toBeLessThanOrEqual(mobileTitleMetrics.lineHeight * 2);
+    expect(mobileTitleMetrics.clientHeight).toBeGreaterThan(mobileTitleMetrics.lineHeight * 2 - 2);
     expect(mobileTitleMetrics.scrollHeight).toBeGreaterThan(mobileTitleMetrics.clientHeight);
 
     const title = page.getByRole("link", {

@@ -45,8 +45,7 @@ export function DangerZoneSection({
       const payload = await readResponseJson<DeleteWorkspaceResponse>(response);
       if (!payload.deleted || !payload.redirectTo) {
         setDialogError(
-          payload.message ??
-            "Deletion is in progress. Cleanup will continue automatically; you can retry to check its status.",
+          payload.message ?? "Deleting… Cleanup continues automatically. Retry to check status.",
         );
         setBusy(false);
         return;

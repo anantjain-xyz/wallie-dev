@@ -3,7 +3,20 @@
   "commands": [
     {
       "key": "review",
-      "command": "pnpm test src/features/sessions/detail/stage-timeline.test.ts src/features/sessions/detail/stage-execution.test.ts src/features/sessions/detail/execution-summary.test.tsx src/features/sessions/detail/session-detail-page-client.test.ts src/features/sessions/detail/data.test.ts src/features/sessions/detail/recovery-snapshot.test.ts --reporter=json --outputFile=\"$WALLIE_EVIDENCE_DIR/review.json\"",
+      "command": "cp docs/evidence/short-copy-walkthrough.md \"$WALLIE_EVIDENCE_DIR/report.md\"",
+      "timeoutSeconds": 30,
+      "reports": [
+        {
+          "key": "report",
+          "path": "report.md",
+          "required": true,
+          "kind": "report"
+        }
+      ]
+    },
+    {
+      "key": "stage-review",
+      "command": "pnpm test --maxWorkers=2 src/features/sessions/detail/stage-timeline.test.ts src/features/sessions/detail/stage-execution.test.ts src/features/sessions/detail/execution-summary.test.tsx src/features/sessions/detail/session-detail-page-client.test.ts src/features/sessions/detail/data.test.ts src/features/sessions/detail/recovery-snapshot.test.ts --reporter=json --outputFile=\"$WALLIE_EVIDENCE_DIR/review.json\"",
       "timeoutSeconds": 120,
       "reports": [
         {
@@ -34,7 +47,7 @@
     },
     {
       "key": "browser",
-      "command": "pnpm build && PLAYWRIGHT_JSON_OUTPUT_FILE=\"$WALLIE_EVIDENCE_DIR/browser.json\" pnpm exec playwright test e2e/stage-startup.spec.ts --reporter=json",
+      "command": "CIRCLE_NODE_TOTAL=3 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=playwright-local-key NEXT_PUBLIC_APP_URL=http://localhost:3100 pnpm build && PLAYWRIGHT_JSON_OUTPUT_FILE=\"$WALLIE_EVIDENCE_DIR/browser.json\" pnpm exec playwright test e2e/concise-copy.spec.ts e2e/comment-access.spec.ts e2e/sessions-ledger-hydration.spec.ts e2e/run-failure-guidance.spec.ts e2e/stage-startup.spec.ts --reporter=list,json",
       "timeoutSeconds": 300,
       "reports": [
         {

@@ -45,11 +45,11 @@ export function SessionsZeroState({
       <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
         {hasArchivedSessions
           ? shouldResumeSetup
-            ? "All sessions have been archived. Finish workspace setup before starting another session."
-            : "All sessions have been archived. Start a new session to move more work through your pipeline."
+            ? "All sessions archived. Finish setup to start another."
+            : "All sessions archived."
           : shouldResumeSetup
-            ? "Finish workspace setup before starting the first session."
-            : "Describe a task and Wallie drives it through your pipeline, one approval at a time. You can also attach a Linear issue."}
+            ? "Finish setup to start a session."
+            : "Start with a task or Linear issue."}
       </p>
       <div className="mt-5">
         {shouldResumeSetup ? (

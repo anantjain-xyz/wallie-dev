@@ -791,9 +791,7 @@ describe("CreateSessionDialog accessibility", () => {
 
     expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
     expect(
-      screen
-        .getByText("Refresh session options before starting a session.")
-        .closest('[role="status"]'),
+      screen.getByText("Refresh session options first.").closest('[role="status"]'),
     ).toBeVisible();
   });
 });
@@ -969,7 +967,7 @@ describe("optimistic session creation", () => {
     render(<OptimisticDraftHarness />);
     await fillImageDraft(user);
     await user.click(screen.getByRole("button", { name: "Start session" }));
-    await screen.findByText(/We couldn’t confirm whether/);
+    await screen.findByText(/Creation unconfirmed/);
     expect(screen.getByLabelText("Prompt")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Discard draft" })).toBeDisabled();
     const original = clientMocks.createSessionFromClient.mock.calls[0]![0];
@@ -1044,7 +1042,7 @@ describe("optimistic session creation", () => {
       const view = render(<OptimisticDraftHarness />);
       await fillImageDraft(user);
       await user.click(screen.getByRole("button", { name: "Start session" }));
-      if (state === "unconfirmed") await screen.findByText(/We couldn’t confirm whether/);
+      if (state === "unconfirmed") await screen.findByText(/Creation unconfirmed/);
       view.unmount();
       if (state === "pending")
         await act(async () => finish({ canonicalUrl: "/w/acme/sessions/42", number: 42 }));
@@ -1202,7 +1200,7 @@ it("renews files after an authoritative attachment conflict without duplicating 
     sizeBytes: 8,
   });
   await user.click(screen.getByRole("button", { name: "Start session" }));
-  await screen.findByText(/Session images expired or changed/);
+  await screen.findByText(/Images expired or changed/);
   await waitFor(() =>
     expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledTimes(2),
   );

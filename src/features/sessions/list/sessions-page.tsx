@@ -24,10 +24,8 @@ const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
 function FilterEmptyState() {
   return (
     <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
-      <p className="text-[14px] font-semibold text-foreground">No sessions match these filters</p>
-      <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
-        Adjust session scope, stage, sort, or search to see more sessions.
-      </p>
+      <p className="text-[14px] font-semibold text-foreground">No matching sessions</p>
+      <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">Adjust filters.</p>
     </div>
   );
 }

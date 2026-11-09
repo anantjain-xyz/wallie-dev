@@ -278,7 +278,7 @@ test("readiness API failure is recoverable and refresh pending is visible", asyn
     }),
   );
   await page.getByRole("button", { name: "Refresh verification" }).click();
-  await expect(page.getByText(/GitHub verification refresh is queued/)).toBeVisible();
+  await expect(page.getByText(/Verification queued/)).toBeVisible();
 });
 
 test("390px layout keeps the readiness panel and diff controls usable", async ({

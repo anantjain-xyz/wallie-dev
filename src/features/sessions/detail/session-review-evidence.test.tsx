@@ -252,7 +252,7 @@ describe("SessionReviewEvidence", () => {
     expect(comments).not.toBeVisible();
     fireEvent.click(screen.getAllByRole("button", { name: "Open Comments" })[0]!);
     expect(comments).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent("Historical view");
+    expect(screen.getByRole("note")).toHaveTextContent("historical artifact");
   });
 
   it("explains when a blocking source is unavailable instead of opening unrelated comments", async () => {
@@ -289,7 +289,7 @@ describe("SessionReviewEvidence", () => {
     renderPanel();
     expect(await screen.findByText(/belongs to an earlier or unconfirmed PR epoch/)).toBeTruthy();
     expect(screen.getByText("Not yet observed")).toBeTruthy();
-    expect(screen.getByText(/No GitHub review detail is recorded/)).toBeTruthy();
+    expect(screen.getByText(/No review details recorded/)).toBeTruthy();
   });
 
   it("keeps a failed API read recoverable", async () => {
@@ -299,7 +299,7 @@ describe("SessionReviewEvidence", () => {
       .mockResolvedValueOnce(jsonResponse({ delivery: delivery() }));
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Delivery evidence is unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Evidence unavailable");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("heading", { name: "Delivery readiness" })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -336,6 +336,6 @@ describe("SessionReviewEvidence", () => {
         method: "POST",
       }),
     );
-    expect(await screen.findByText(/GitHub verification refresh is queued/)).toBeTruthy();
+    expect(await screen.findByText(/Verification queued/)).toBeTruthy();
   });
 });

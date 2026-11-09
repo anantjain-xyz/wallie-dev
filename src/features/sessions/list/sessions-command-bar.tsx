@@ -103,8 +103,8 @@ export function SessionsCommandBar({
   const clearEnabled = hasActiveFilters(optimisticQuery) || search.draft.length > 0;
   const searchUnapplied = search.draft.trim() !== optimisticQuery.query.trim();
   const appliedSearchSummary = queryState.query.trim()
-    ? `Showing results for “${queryState.query.trim()}”.`
-    : "Showing sessions without a search filter.";
+    ? `Results for “${queryState.query.trim()}”`
+    : "";
 
   useEffect(() => {
     if (!isPending) latestQueryRef.current = queryState;
@@ -288,7 +288,7 @@ export function SessionsCommandBar({
             value={search.draft}
             onChange={(event) => setSearch({ ...search, draft: event.target.value })}
             aria-label="Search prompts, titles, or Linear IDs"
-            description="Search prompts, titles, session numbers, or Linear IDs. Press Enter or click Search to apply."
+            description="Search prompts, titles, session numbers, or Linear IDs."
           />
           {search.draft || optimisticQuery.query ? (
             <button
@@ -375,14 +375,13 @@ export function SessionsCommandBar({
         aria-atomic="true"
         className="mt-1 text-xs text-muted [overflow-wrap:anywhere]"
       >
-        {isPending ? <span>Updating sessions… </span> : null}
+        {isPending ? <span>{search.submitted !== null ? "Searching…" : "Updating…"} </span> : null}
         {searchUnapplied ? (
           <span className="font-medium text-foreground">
-            Search not applied.{" "}
-            {isPending ? "Wait for this update to finish." : "Press Enter or click Search."}{" "}
+            {isPending ? "New edits not searched." : "Press Enter to search."}{" "}
           </span>
         ) : null}
-        <span>{appliedSearchSummary}</span>
+        {!isPending ? <span>{appliedSearchSummary}</span> : null}
       </div>
     </CommandBar>
   );

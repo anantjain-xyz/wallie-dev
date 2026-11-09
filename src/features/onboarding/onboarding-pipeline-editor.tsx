@@ -124,7 +124,7 @@ export function OnboardingPipelineEditor({
 
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "Failed to save pipeline. Your edits are preserved — try again.");
+        setError(body?.error ?? "Couldn’t save pipeline. Edits kept.");
         return;
       }
 
@@ -139,8 +139,8 @@ export function OnboardingPipelineEditor({
     } catch (caught) {
       setError(
         caught instanceof Error
-          ? `${caught.message} Your edits are preserved — try again.`
-          : "Failed to save pipeline. Your edits are preserved — try again.",
+          ? `${caught.message} Edits kept. Retry.`
+          : "Couldn’t save pipeline. Edits kept.",
       );
     } finally {
       setIsSaving(false);

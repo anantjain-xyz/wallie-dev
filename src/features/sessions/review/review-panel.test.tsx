@@ -339,10 +339,10 @@ describe("artifact threaded review", () => {
     const composer = await screen.findByLabelText("Comment", { exact: true });
     await waitFor(() => expect(composer).toHaveFocus());
     await user.type(composer, "Keep this feedback if the network fails.");
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("draft is retained");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Draft kept.");
     expect(composer).toHaveValue("Keep this feedback if the network fails.");
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(clearAnchor).toHaveBeenCalledOnce());
     expect(saves).toHaveLength(2);
     expect(saves[1]!.body).toEqual(saves[0]!.body);
@@ -356,9 +356,9 @@ describe("artifact threaded review", () => {
     networkFailures = 1;
     render(panel({ anchor }));
     await user.type(await screen.findByLabelText("Comment", { exact: true }), "Network retry");
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(clearAnchor).toHaveBeenCalledOnce());
     expect(saves[1]!.body).toEqual(saves[0]!.body);
   });
@@ -373,11 +373,11 @@ describe("artifact threaded review", () => {
     const editor = screen.getByLabelText("Edit your comment");
     await user.clear(editor);
     await user.type(editor, "Keep my edited prose");
-    await user.click(screen.getByRole("button", { name: "Save edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save edit" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
     expect(editor).toHaveValue("Keep my edited prose");
-    await user.click(screen.getByRole("button", { name: "Save edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     expect(saves[0]!.body.expectedRevision).toBe(1);
     expect(saves[1]!.body.expectedRevision).toBe(2);
@@ -391,10 +391,10 @@ describe("artifact threaded review", () => {
     render(panel({ anchor }));
     const composer = await screen.findByLabelText("Comment", { exact: true });
     await user.type(composer, "Original feedback");
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
     await user.type(composer, " with clarification");
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(clearAnchor).toHaveBeenCalledOnce());
     expect(saves[1]!.body.requestId).not.toBe(saves[0]!.body.requestId);
   });
@@ -419,7 +419,7 @@ describe("artifact threaded review", () => {
     expect(editor).toHaveFocus();
     await user.clear(editor);
     await user.type(editor, "Updated comment");
-    await user.click(screen.getByRole("button", { name: "Save edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]).toMatchObject({
       method: "PATCH",
@@ -465,7 +465,7 @@ describe("artifact threaded review", () => {
     await act(async () => realtime.event?.());
     await waitFor(() => expect(screen.queryByText("Comment on the later page")).toBeNull());
     expect(editor).toHaveValue("An edit that must remain an edit");
-    await user.click(screen.getByRole("button", { name: "Save edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]).toMatchObject({
       method: "PATCH",
@@ -519,12 +519,12 @@ describe("artifact threaded review", () => {
     const editor = screen.getByLabelText("Edit your comment");
     await user.clear(editor);
     await user.type(editor, "My preserved page-two edit");
-    await user.click(screen.getByRole("button", { name: "Save edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save edit" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
     expect(editor).toHaveValue("My preserved page-two edit");
     expect(await screen.findByText("Concurrent edit on page two")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Save edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     expect(saves[0]).toMatchObject({
       method: "PATCH",
@@ -547,7 +547,7 @@ describe("artifact threaded review", () => {
       await screen.findByLabelText("Comment", { exact: true }),
       "Start another thread",
     );
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(screen.getByRole("link", { name: "Thread link" })).toHaveAttribute(
         "href",
@@ -563,9 +563,7 @@ describe("artifact threaded review", () => {
     const user = userEvent.setup();
     snapshot.viewer.readOnlyReason = "archived";
     render(panel({ anchor, historical: true }));
-    expect(
-      await screen.findByText("This session is archived. Comments are read-only."),
-    ).toBeVisible();
+    expect(await screen.findByText("Archived · Comments are read-only.")).toBeVisible();
     expect(screen.getByText("Version 1 · Historical artifact")).toBeVisible();
     await user.click(await screen.findByRole("button", { name: /Discussion · open/ }));
     expect(await screen.findByText("Please explain the retry policy.")).toBeVisible();
@@ -578,16 +576,14 @@ describe("artifact threaded review", () => {
     expect(await screen.findByLabelText("Comment", { exact: true })).toBeVisible();
     view.rerender(panel({ anchor, readOnlyReason: "archived" }));
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("This session is archived. Comments are read-only.")).toBeVisible();
+    expect(screen.getByText("Archived · Comments are read-only.")).toBeVisible();
   });
 
   it("describes approved, unarchived artifacts without claiming archival", async () => {
     const user = userEvent.setup();
     snapshot.viewer.readOnlyReason = "approved";
     render(panel({ anchor }));
-    expect(
-      await screen.findByText("This session is approved. Comments are read-only."),
-    ).toBeVisible();
+    expect(await screen.findByText("Approved · Comments are read-only.")).toBeVisible();
     expect(screen.queryByText(/This session is archived/)).toBeNull();
     await user.click(await screen.findByRole("button", { name: /Discussion · open/ }));
     expect(await screen.findByText("Please explain the retry policy.")).toBeVisible();
@@ -599,12 +595,10 @@ describe("artifact threaded review", () => {
   it.each([401, 403])("withholds authoring when permission lookup returns %s", async (status) => {
     fetchMock.mockResolvedValue(Response.json({ error: "Review access denied." }, { status }));
     render(panel({ anchor }));
-    expect(
-      await screen.findByText("You do not have permission to comment on this artifact."),
-    ).toBeVisible();
+    expect(await screen.findByText("You don’t have permission to comment.")).toBeVisible();
     expect(screen.queryByText(/This session is archived/)).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Save comment" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(saves).toHaveLength(0);
   });
 
@@ -623,9 +617,7 @@ describe("artifact threaded review", () => {
       resolve?.(Response.json({ error: "Review unavailable." }, { status: 503 })),
     );
     expect(
-      await screen.findByText(
-        "Comments are unavailable until permissions can be verified. Retry loading comments.",
-      ),
+      await screen.findByText("Couldn’t verify comment permissions. Retry loading."),
     ).toBeVisible();
     expect(screen.queryByRole("textbox")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Retry loading" }));
@@ -655,15 +647,11 @@ describe("artifact threaded review", () => {
     expect(screen.getByRole("button", { name: "Retry loading" })).toBeEnabled();
 
     await act(async () => commentRefresh.resolve(Response.json({ comments, nextCursor: null })));
-    expect(
-      screen.getByText(
-        "Comments are unavailable until permissions can be verified. Retry loading comments.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText("Couldn’t verify comment permissions. Retry loading.")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("Thread refresh interrupted.");
     expect(screen.getByRole("button", { name: "Retry loading" })).toBeEnabled();
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Save reply" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit comment" })).toBeNull();
     expect(saves).toHaveLength(0);
 
@@ -680,7 +668,7 @@ describe("artifact threaded review", () => {
       "href",
       "?reviewThread=thread-1&artifactId=artifact-1&artifactVersion=1&artifactStage=plan",
     );
-    await user.click(screen.getByRole("button", { name: "Save reply" }));
+    await user.click(screen.getByRole("button", { name: "Reply" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]).toMatchObject({
       method: "POST",
@@ -786,12 +774,12 @@ describe("artifact threaded review", () => {
     );
     view.rerender(panel({ anchor, readOnlyReason: "approved" }));
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("This session is approved. Comments are read-only.")).toBeVisible();
+    expect(screen.getByText("Approved · Comments are read-only.")).toBeVisible();
     view.rerender(panel({ anchor }));
     expect(await screen.findByLabelText("Comment", { exact: true })).toHaveValue(
       "Keep this exact draft",
     );
-    await user.click(screen.getByRole("button", { name: "Save comment" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]?.body).toMatchObject({
       artifactId: "artifact-1",
