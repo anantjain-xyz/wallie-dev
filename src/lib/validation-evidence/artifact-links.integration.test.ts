@@ -18,6 +18,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import type { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 import { loadArtifactEvidenceLinks } from "./artifact-links";
 import { captureValidationEvidence } from "./capture";
+import { validationPlanSchema } from "./contracts";
 import { persistValidationEvidence } from "./service";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
@@ -127,27 +128,24 @@ it("opens newly captured private artifact evidence after the entire source check
   directories.push(root);
   const source = join(root, "sandbox");
   const storage = join(root, "private-storage");
-  await mkdir(join(source, ".wallie"), { recursive: true });
+  await mkdir(source, { recursive: true });
   await writeFile(join(source, "source.txt"), "original\n");
   const script = [
     "const fs = require('node:fs');",
     "require('node:assert/strict').equal(fs.readFileSync('source.txt','utf8'),'original\\n');",
     "fs.writeFileSync(process.env.WALLIE_EVIDENCE_DIR+'/review.md','# Review evidence\\n\\nSource assertions passed. fixture-secret-value\\n');",
   ].join("");
-  await writeFile(
-    join(source, ".wallie/validation-evidence.json"),
-    JSON.stringify({
-      version: 1,
-      commands: [
-        {
-          key: "review",
-          command: `node -e ${shellQuote(script)}`,
-          timeoutSeconds: 10,
-          reports: [{ key: "report", path: "review.md", required: true, kind: "report" }],
-        },
-      ],
-    }),
-  );
+  const plan = validationPlanSchema.parse({
+    version: 1,
+    commands: [
+      {
+        key: "review",
+        command: `node -e ${shellQuote(script)}`,
+        timeoutSeconds: 10,
+        reports: [{ key: "report", path: "review.md", required: true, kind: "report" }],
+      },
+    ],
+  });
   const git = (...args: string[]) => {
     const result = spawnSync("git", args, { cwd: source, encoding: "utf8" });
     if (result.status !== 0) throw new Error(result.stderr);
@@ -168,6 +166,7 @@ it("opens newly captured private artifact evidence after the entire source check
   const evidence = await captureValidationEvidence({
     sandbox: localSandbox(source),
     commitSha,
+    plan,
     secrets: ["fixture-secret-value"],
   });
   expect(evidence.records).toEqual([expect.objectContaining({ status: "passed", commitSha })]);

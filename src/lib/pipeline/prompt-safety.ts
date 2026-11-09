@@ -4,6 +4,7 @@ const PROMPT_VALUE_TOKEN: unique symbol = Symbol("wallie.prompt-value");
 
 export type TrustedPromptSource =
   | "pipeline.operatingRules"
+  | "run.validationPlanInstructions"
   | "session.attachmentInstructions"
   | "stage.promptTemplate"
   | "stage.slug"

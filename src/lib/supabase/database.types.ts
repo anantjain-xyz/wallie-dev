@@ -3239,6 +3239,74 @@ export type Database = {
           },
         ]
       }
+      session_validation_plans: {
+        Row: {
+          attempt_count: number
+          commit_sha: string
+          created_at: string
+          job_id: string
+          plan: Json
+          repository_id: string
+          run_id: string
+          session_id: string
+          validation_tree_sha: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count: number
+          commit_sha: string
+          created_at?: string
+          job_id: string
+          plan: Json
+          repository_id: string
+          run_id: string
+          session_id: string
+          validation_tree_sha: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          commit_sha?: string
+          created_at?: string
+          job_id?: string
+          plan?: Json
+          repository_id?: string
+          run_id?: string
+          session_id?: string
+          validation_tree_sha?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_validation_plans_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_plans_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_plans_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_validation_plans_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sessions: {
         Row: {
           archived_at: string | null
@@ -5496,6 +5564,32 @@ export type Database = {
           to: "session_job_git_inputs"
           isOneToOne: false
           isSetofReturn: true
+        }
+      }
+      pin_session_validation_plan: {
+        Args: {
+          p_commit_sha: string
+          p_plan: Json
+          p_run_id: string
+          p_validation_tree_sha: string
+        }
+        Returns: {
+          attempt_count: number
+          commit_sha: string
+          created_at: string
+          job_id: string
+          plan: Json
+          repository_id: string
+          run_id: string
+          session_id: string
+          validation_tree_sha: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_validation_plans"
+          isOneToOne: true
+          isSetofReturn: false
         }
       }
       prepare_session_checkpoint_publication: {

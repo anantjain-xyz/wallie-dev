@@ -14,6 +14,7 @@ import { captureSourceCheckpoint } from "../src/lib/pipeline/source-checkpoint";
 import { shellQuote } from "../src/lib/sandbox/command";
 import type { SandboxHandle } from "../src/lib/sandbox/types";
 import { captureValidationEvidence } from "../src/lib/validation-evidence/capture";
+import { validationPlanSchema } from "../src/lib/validation-evidence/contracts";
 
 const exec = promisify(execFile);
 const SECRET = "synthetic-evidence-smoke-secret-507";
@@ -113,7 +114,6 @@ async function main() {
     );
     worktreeCreated = true;
     branchCreated = true;
-    await mkdir(join(checkout, ".wallie"), { recursive: true });
     await writeFile(join(checkout, FIXTURE), "verified source\n");
     const passingScript = [
       'const fs = require("node:fs");',
@@ -127,28 +127,24 @@ async function main() {
       'console.log("tests passed before the later code edit");',
       `fs.appendFileSync(${JSON.stringify(FIXTURE)}, "later code edit\\n");`,
     ].join("\n");
-    await writeFile(
-      join(checkout, ".wallie/validation-evidence.json"),
-      JSON.stringify({
-        version: 1,
-        commands: [
-          {
-            key: "smoke-pass",
-            command: `node -e ${shellQuote(passingScript)}`,
-            timeoutSeconds: 10,
-            reports: [{ key: "tests", path: "tests.txt", required: true, kind: "report" }],
-          },
-          {
-            key: "smoke-later-edit",
-            command: `node -e ${shellQuote(laterEditScript)}`,
-            timeoutSeconds: 10,
-            reports: [],
-          },
-        ],
-      }),
-    );
+    const plan = validationPlanSchema.parse({
+      version: 1,
+      commands: [
+        {
+          key: "smoke-pass",
+          command: `node -e ${shellQuote(passingScript)}`,
+          timeoutSeconds: 10,
+          reports: [{ key: "tests", path: "tests.txt", required: true, kind: "report" }],
+        },
+        {
+          key: "smoke-later-edit",
+          command: `node -e ${shellQuote(laterEditScript)}`,
+          timeoutSeconds: 10,
+          reports: [],
+        },
+      ],
+    });
     await git("add", "--", FIXTURE);
-    await git("add", "-f", "--", ".wallie/validation-evidence.json");
     await git(
       "-c",
       "user.name=Wallie evidence smoke",
@@ -166,6 +162,7 @@ async function main() {
     const evidence = await captureValidationEvidence({
       sandbox,
       commitSha,
+      plan,
       secrets: [SECRET],
       signal: AbortSignal.timeout(60_000),
     });

@@ -1413,7 +1413,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       const stop = vi.fn().mockResolvedValue(undefined);
       mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
         await input.onSandboxCreated({ provider, sandboxId: "matrix-sandbox" });
-        return { id: "matrix-sandbox", repoPath: "/repo", stop };
+        return { id: "matrix-sandbox", repoPath: "/repo", stop, writeFile: vi.fn() };
       });
       mocked.createAgentRunner.mockReturnValueOnce(
         makeRunner(
@@ -1520,6 +1520,11 @@ describe("processPipelineJob (generic stage runner)", () => {
           source: "pipeline.operatingRules",
           trust: "trusted",
           value: "Keep changes scoped to the approved plan.",
+        }),
+        validationPlanInstructions: expect.objectContaining({
+          source: "run.validationPlanInstructions",
+          trust: "trusted",
+          value: expect.stringContaining("/tmp/wallie-validation-plan-run-1.json"),
         }),
         previousStages: {
           plan: expect.objectContaining({
@@ -2663,7 +2668,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       if (failure === "sandbox shutdown") {
         mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
           await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
-          return { stop: vi.fn().mockRejectedValue(new Error("shutdown unavailable")) };
+          return {
+            stop: vi.fn().mockRejectedValue(new Error("shutdown unavailable")),
+            writeFile: vi.fn(),
+          };
         });
       }
       expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
@@ -2862,6 +2870,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.createAgentRunner).toHaveBeenCalledOnce();
     expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual([
+      '{"version":1,"commands":[]}',
       "rendered prompt",
     ]);
     expect(
