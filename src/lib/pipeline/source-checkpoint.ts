@@ -47,7 +47,7 @@ export class UnsupportedSourceTransformError extends Error {
  * command could replace the actual bytes with a normalized representation.
  */
 export const RAW_SOURCE_ATTRIBUTES_ASSERTION = String.raw`
-function assertRawSourceAttributes(gitConfig = ['-c','core.fsmonitor=false','-c','core.ignoreStat=false','-c','core.trustctime=true','-c','core.checkStat=default','-c','core.untrackedCache=false','-c','core.autocrlf=false','-c','core.eol=lf']) {
+function assertRawSourceAttributes(gitConfig = ['-c','core.fsmonitor=false','-c','core.ignoreStat=false','-c','core.trustctime=true','-c','core.checkStat=default','-c','core.untrackedCache=false','-c','core.autocrlf=false','-c','core.eol=lf'], cachedOnly = false) {
   const { spawnSync } = require('node:child_process');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -56,6 +56,21 @@ function assertRawSourceAttributes(gitConfig = ['-c','core.fsmonitor=false','-c'
     const result = spawnSync('git',[...gitConfig,...args],{input,env,maxBuffer:16777216});
     if(result.error || result.status !== 0) throw new Error('Source attributes unavailable');
     return result.stdout;
+  }
+  function assertNoTransforms(output) {
+    // --all omits absent attributes but retains literal values named
+    // "unspecified" or "unset", which named queries cannot distinguish from
+    // their special states. Reject every declaration conservatively.
+    const fields = output.toString('utf8').split('\0');
+    if(fields.pop() !== '' || fields.length % 3 !== 0) throw new Error('Source attributes unavailable');
+    for(let index=2;index<fields.length;index+=3) {
+      if(['filter','text','eol','ident','working-tree-encoding','crlf'].includes(fields[index-1])) throw new Error('Source transforms unsupported');
+    }
+  }
+  if (cachedOnly) {
+    const paths = git(['ls-files','--cached','-z']);
+    assertNoTransforms(git(['check-attr','--cached','-z','--stdin','--all'],paths));
+    return;
   }
   const paths = Buffer.concat([
     git(['ls-files','--cached','--others','--exclude-standard','-z']),
@@ -69,14 +84,7 @@ function assertRawSourceAttributes(gitConfig = ['-c','core.fsmonitor=false','-c'
     const headEnv = {...process.env,GIT_INDEX_FILE:path.join(directory,'index')};
     git(['read-tree','HEAD'],undefined,headEnv);
     for(const mode of [{args:[]},{args:['--cached']},{args:['--cached'],env:headEnv}]) {
-      // --all omits absent attributes but retains literal values named
-      // "unspecified" or "unset", which named queries cannot distinguish from
-      // their special states. Reject every declaration conservatively.
-      const fields = git(['check-attr',...mode.args,'-z','--stdin','--all'],paths,mode.env).toString('utf8').split('\0');
-      if(fields.pop() !== '' || fields.length % 3 !== 0) throw new Error('Source attributes unavailable');
-      for(let index=2;index<fields.length;index+=3) {
-        if(['filter','text','eol','ident','working-tree-encoding','crlf'].includes(fields[index-1])) throw new Error('Source transforms unsupported');
-      }
+      assertNoTransforms(git(['check-attr',...mode.args,'-z','--stdin','--all'],paths,mode.env));
     }
   } finally { fs.rmSync(directory,{recursive:true,force:true}); }
 }
@@ -144,6 +152,14 @@ export type SourceCheckpoint =
   | { kind: "unchanged"; baseSha: string; headSha: string }
   | { kind: "bundle"; baseSha: string; headSha: string; bytes: Buffer; sha256: string };
 
+type CaptureSourceCheckpointInput = {
+  sandbox: SandboxHandle;
+  baseSha: string;
+  signal?: AbortSignal;
+  /** Exact current prompts/credentials to reject, including encoded variants. Values shorter than 8 characters are ignored. */
+  sensitiveValues?: readonly string[];
+};
+
 /** Capture the checkout's base before the agent changes branches or commits. */
 export async function readSourceBase(
   sandbox: SandboxHandle,
@@ -169,15 +185,30 @@ export async function readSourceBase(
  * silently omitting work. Harness files themselves live outside this checkout.
  * Disabling hooks keeps capture from invoking repository-controlled scripts.
  */
-export async function captureSourceCheckpoint(input: {
-  sandbox: SandboxHandle;
-  baseSha: string;
-  signal?: AbortSignal;
-  /** Exact current prompts/credentials to reject, including encoded variants. Values shorter than 8 characters are ignored. */
-  sensitiveValues?: readonly string[];
-}): Promise<SourceCheckpoint> {
+export function captureSourceCheckpoint(
+  input: CaptureSourceCheckpointInput,
+): Promise<SourceCheckpoint> {
+  return captureCheckpoint(input, { kind: "working-tree" });
+}
+
+/** Read a fixed commit from a live checkout while the agent still owns its index and worktree. */
+export function captureCommittedSourceCheckpoint(
+  input: CaptureSourceCheckpointInput & { headSha: string },
+): Promise<SourceCheckpoint> {
+  return captureCheckpoint(input, { kind: "committed", headSha: input.headSha });
+}
+
+async function captureCheckpoint(
+  input: CaptureSourceCheckpointInput,
+  mode: { kind: "committed"; headSha: string } | { kind: "working-tree" },
+): Promise<SourceCheckpoint> {
   if (!COMMIT_SHA.test(input.baseSha)) throw new Error("Invalid source base commit.");
   input.signal?.throwIfAborted();
+  if (mode.kind === "committed") {
+    if (!COMMIT_SHA.test(mode.headSha)) throw new Error("Invalid source checkpoint commit.");
+    if (mode.headSha === input.baseSha)
+      return { kind: "unchanged", baseSha: input.baseSha, headSha: mode.headSha };
+  }
   const directory = `/tmp/wallie-source-${randomUUID()}`;
   const bundle = `${directory}/source.bundle`;
   const candidates = `${directory}/paths`;
@@ -185,13 +216,14 @@ export async function captureSourceCheckpoint(input: {
   const sensitiveValues = input.sensitiveValues?.filter((value) => value.length >= 8) ?? [];
   const checkSensitive = (mode: "index" | "history") =>
     `node -e ${shellQuote(CHECK_SENSITIVE_OBJECTS)} ${shellQuote(sensitiveFile)} ${mode} 2>/dev/null`;
-  const script = [
-    "set -euo pipefail",
+  const assertRawAttributes = (cachedOnly: boolean) =>
+    `node -e ${shellQuote(`${RAW_SOURCE_ATTRIBUTES_ASSERTION}\ntry { assertRawSourceAttributes(undefined, ${cachedOnly}); } catch { process.exitCode=47; }`)} 2>/dev/null`;
+  const worktreeSetup = [
     // Repository configuration must not let a cached stat or filesystem-monitor
     // answer hide source changes. Special index flags need an explicit failure
     // rather than clearing them and silently changing the agent's checkout.
     'git() { command git -c core.fsmonitor=false -c core.ignoreStat=false -c core.trustctime=true -c core.checkStat=default -c core.untrackedCache=false -c core.autocrlf=false -c core.eol=lf "$@"; }',
-    `assert_raw_source_attributes() { node -e ${shellQuote(`${RAW_SOURCE_ATTRIBUTES_ASSERTION}\ntry { assertRawSourceAttributes(); } catch { process.exitCode=47; }`)} 2>/dev/null; }`,
+    `assert_raw_source_attributes() { ${assertRawAttributes(false)}; }`,
     "assert_plain_index() {",
     "  git ls-files -v -z | while IFS= read -r -d '' entry; do",
     '    case "$entry" in [a-z]*|S*) exit 41 ;; esac',
@@ -209,16 +241,6 @@ export async function captureSourceCheckpoint(input: {
     "assert_plain_index",
     "assert_raw_source_attributes",
     "refresh_index",
-    `trap ${shellQuote(`rm -rf ${shellQuote(directory)}`)} EXIT`,
-    // Slash-delimited matching reserves a whole runtime directory, even when
-    // copied below a source directory. No path is printed on rejection.
-    "reserved_runtime_path() {",
-    '  case "/$1/" in',
-    "    */.wallie-runner*/*|*/wallie-codex-*/*|*/wallie-claude-code-*/*|*/wallie-cursor-*/*|*/wallie-opencode-*/*|*/.codex/*|*/.claude/*|*/.cursor/*|*/.config/opencode/*|*/.local/share/opencode/*|*/.git-credentials/*|*/.env/*|*/.env.local/*|*/.env.*.local/*) return 0 ;;",
-    "  esac",
-    '  case "$1" in prompt.txt|auth.json|codex/auth.json|data/opencode/auth.json) return 0 ;; esac',
-    "  return 1",
-    "}",
     // Inspect before staging, so a rejected reserved file does not modify the
     // index. Include both index and worktree changes, plus nonignored source.
     `git diff --name-only --no-renames -z > ${shellQuote(candidates)}`,
@@ -242,8 +264,44 @@ export async function captureSourceCheckpoint(input: {
     "assert_raw_source_attributes",
     "refresh_index",
     "if [ -n \"$(git status --porcelain --untracked-files=normal --ignore-submodules=none)\" ]; then echo 'Source checkout still contains uncommitted changes' >&2; exit 41; fi",
-    "head=$(git rev-parse --verify 'HEAD^{commit}')",
-    `if [ "$head" = ${shellQuote(input.baseSha)} ]; then assert_plain_index; assert_raw_source_attributes; printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
+  ];
+  const setup =
+    mode.kind === "committed"
+      ? [
+          `head=${shellQuote(mode.headSha)}`,
+          "objects=$(git rev-parse --git-path objects)",
+          'objects=$(CDPATH= cd -- "$objects" && pwd -P)',
+          "shallow=$(git rev-parse --git-path shallow)",
+          // Borrow immutable objects but write the bundle's advertised ref in our
+          // own Git directory. Agent commits can advance the checkout independently.
+          `export GIT_DIR=${shellQuote(`${directory}/repository.git`)}`,
+          "unset GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_WORK_TREE GIT_COMMON_DIR GIT_SHALLOW_FILE",
+          "export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_DEFAULT_HASH=sha1",
+          "git init --quiet --bare --template=",
+          'printf \'%s\\n\' "$objects" > "$GIT_DIR/objects/info/alternates"',
+          'if [ -f "$shallow" ]; then cp "$shallow" "$GIT_DIR/shallow"; fi',
+          `git merge-base --is-ancestor ${shellQuote(input.baseSha)} "$head" || exit 41`,
+          'git read-tree "$head"',
+          assertRawAttributes(true),
+        ]
+      : [
+          ...worktreeSetup,
+          "head=$(git rev-parse --verify 'HEAD^{commit}')",
+          `if [ "$head" = ${shellQuote(input.baseSha)} ]; then assert_plain_index; assert_raw_source_attributes; printf 'UNCHANGED\\n%s\\n' "$head"; exit 0; fi`,
+        ];
+  const script = [
+    "set -euo pipefail",
+    `trap ${shellQuote(`rm -rf ${shellQuote(directory)}`)} EXIT`,
+    // Slash-delimited matching reserves a whole runtime directory, even when
+    // copied below a source directory. No path is printed on rejection.
+    "reserved_runtime_path() {",
+    '  case "/$1/" in',
+    "    */.wallie-runner*/*|*/wallie-codex-*/*|*/wallie-claude-code-*/*|*/wallie-cursor-*/*|*/wallie-opencode-*/*|*/.codex/*|*/.claude/*|*/.cursor/*|*/.config/opencode/*|*/.local/share/opencode/*|*/.git-credentials/*|*/.env/*|*/.env.local/*|*/.env.*.local/*) return 0 ;;",
+    "  esac",
+    '  case "$1" in prompt.txt|auth.json|codex/auth.json|data/opencode/auth.json) return 0 ;; esac',
+    "  return 1",
+    "}",
+    ...setup,
     // A clean gitlink can still point to a commit available only in a local
     // submodule. Check each new commit, including reverted intermediate edits.
     `git rev-list "$head" ${shellQuote(`^${input.baseSha}`)} | while read -r commit; do`,
@@ -266,16 +324,20 @@ export async function captureSourceCheckpoint(input: {
     `git bundle create ${shellQuote(bundle)} ${shellQuote(SOURCE_CHECKPOINT_REF)} ${shellQuote(`^${input.baseSha}`)}`,
     `size=$(wc -c < ${shellQuote(bundle)})`,
     `if [ "$size" -gt ${MAX_SOURCE_CHECKPOINT_BYTES} ]; then echo 'Source checkpoint exceeds 4 MiB' >&2; exit 42; fi`,
-    `if [ "$(git rev-parse --verify 'HEAD^{commit}')" != "$head" ]; then exit 41; fi`,
-    "assert_plain_index",
-    "assert_raw_source_attributes",
-    "refresh_index",
-    'if [ -n "$(git status --porcelain --untracked-files=normal --ignore-submodules=none)" ]; then exit 41; fi',
+    ...(mode.kind === "working-tree"
+      ? [
+          `if [ "$(git rev-parse --verify 'HEAD^{commit}')" != "$head" ]; then exit 41; fi`,
+          "assert_plain_index",
+          "assert_raw_source_attributes",
+          "refresh_index",
+          'if [ -n "$(git status --porcelain --untracked-files=normal --ignore-submodules=none)" ]; then exit 41; fi',
+        ]
+      : []),
     'printf \'BUNDLE\\n%s\\n%s\\n\' "$head" "$size"',
     `base64 < ${shellQuote(bundle)}`,
   ].join("\n");
   let output: { stdout: string; stderr: string };
-  let code: number;
+  let code: number | undefined;
   try {
     const mkdir = await input.sandbox.exec("mkdir", ["-m", "700", directory], {
       cwd: "/tmp",
@@ -287,11 +349,19 @@ export async function captureSourceCheckpoint(input: {
       await input.sandbox.writeFile(sensitiveFile, JSON.stringify(sensitiveValues), {
         mode: 0o600,
       });
-    const proc = await input.sandbox.exec("bash", ["-lc", script], {
-      cwd: input.sandbox.repoPath,
-      env: { ...WALLIE_GIT_IDENTITY_ENV, GIT_NO_REPLACE_OBJECTS: "1" },
-      signal: input.signal,
-    });
+    const proc = await input.sandbox.exec(
+      "bash",
+      mode.kind === "committed" ? ["--noprofile", "--norc", "-c", script] : ["-lc", script],
+      {
+        cwd: input.sandbox.repoPath,
+        env: {
+          ...WALLIE_GIT_IDENTITY_ENV,
+          GIT_NO_REPLACE_OBJECTS: "1",
+          ...(mode.kind === "committed" ? { BASH_ENV: "/dev/null" } : {}),
+        },
+        signal: input.signal,
+      },
+    );
     [output, code] = await Promise.all([proc.output(), proc.exitCode]);
   } catch {
     input.signal?.throwIfAborted();
@@ -301,10 +371,12 @@ export async function captureSourceCheckpoint(input: {
   } finally {
     // Also covers write/transport failures before the shell installs its trap.
     // Cleanup must still run if the execution signal has been aborted.
-    await input.sandbox
-      .exec("rm", ["-rf", directory], { cwd: "/tmp" })
-      .then((proc) => proc.exitCode)
-      .catch(() => undefined);
+    if (mode.kind === "working-tree" || code !== 0) {
+      await input.sandbox
+        .exec("rm", ["-rf", directory], { cwd: "/tmp", signal: AbortSignal.timeout(5_000) })
+        .then((proc) => proc.exitCode)
+        .catch(() => undefined);
+    }
   }
   input.signal?.throwIfAborted();
   if (code !== 0) {
@@ -338,6 +410,20 @@ export async function captureSourceCheckpoint(input: {
     !bytes.subarray(0, 32).toString("utf8").startsWith("# v2 git bundle\n")
   ) {
     throw new Error("Source checkpoint returned invalid bundle contents.");
+  }
+  if (mode.kind === "committed") {
+    const headerEnd = bytes.indexOf("\n\n");
+    const header = bytes.subarray(0, headerEnd).toString("utf8").split("\n");
+    if (
+      headerEnd < 0 ||
+      headerEnd > 65_536 ||
+      headSha !== mode.headSha ||
+      header.length !== 3 ||
+      !header[1]?.startsWith(`-${input.baseSha} `) ||
+      header[2] !== `${headSha} ${SOURCE_CHECKPOINT_REF}`
+    ) {
+      throw new Error("Committed checkpoint could not be restored from its pinned base.");
+    }
   }
   return {
     kind: "bundle",

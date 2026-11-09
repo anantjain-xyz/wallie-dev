@@ -1,3 +1,4 @@
+import { isWallieCheckpointRef } from "@/lib/checkpoint-ref";
 import { shellQuote } from "./command";
 import type { SandboxHandle } from "./types";
 
@@ -40,7 +41,8 @@ export function assertValidSandboxCheckpoint(checkpoint: SandboxCheckpoint): voi
   if (
     !/^[a-f0-9]{40}$/.test(checkpoint.sha) ||
     (checkpoint.ref !== undefined &&
-      !/^refs\/(heads|tags)\/[^\s\x00-\x1f\x7f]+$/.test(checkpoint.ref))
+      !/^refs\/(heads|tags)\/[^\s\x00-\x1f\x7f]+$/.test(checkpoint.ref) &&
+      !isWallieCheckpointRef(checkpoint.ref, checkpoint.sha))
   ) {
     throw new SandboxCheckpointRecoveryError("invalid_input");
   }

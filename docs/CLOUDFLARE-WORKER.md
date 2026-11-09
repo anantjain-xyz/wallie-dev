@@ -116,6 +116,7 @@ remains available through `pnpm worker`.
 - Database claims enforce workspace and global capacity. Each claim and its dispatch record commit in one transaction.
 - Dispatch retries reuse the same Workflow ID. Execution has a separate one-shot database fence; a replay cannot launch a duplicate agent.
 - The absolute attempt deadline starts at claim and is at most 30 minutes. The bounded supervisor stops advertising the attempt on expiry; publication still checks ownership and deadline in the database.
+- About one minute before the 30-minute deadline, the worker tries to save a private Git checkpoint of the attempt's committed changes. After a worker timeout, **Retry** restores that checkpoint in a fresh sandbox when the stage and accepted Git input match.
 - Each executing Workflow sends ten-second heartbeats. Dispatcher and maintenance activity never advertise job ownership.
 - Scheduled maintenance recovers stalls, delivers durable source, reconciles Linear, reaps sandboxes, cleans attachments, and resumes workspace deletion. One maintenance Workflow runs at a time.
 - Cursor flows retain a fifteen-second renewable lease and a four-flow concurrency cap. Superseded or canceled claims cannot publish credentials.

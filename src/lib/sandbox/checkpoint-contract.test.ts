@@ -198,6 +198,20 @@ describe("exact checkpoint acquisition contract", () => {
     },
   );
 
+  it("restores a custom checkpoint ref and refuses it after the commit changes", async () => {
+    const ref = `refs/wallie/checkpoints/00000000-0000-4000-8000-000000000001/${expectedSha}`;
+    git(remote.repoPath, "update-ref", ref, expectedSha);
+    const sandbox = await acquire("fake", {
+      mode: { kind: "checkpoint", sha: expectedSha, ref },
+    });
+    expect(git(sandbox.repoPath, "rev-parse", "HEAD")).toBe(expectedSha);
+
+    git(remote.repoPath, "update-ref", ref, laterSha);
+    await expect(
+      acquire("fake", { mode: { kind: "checkpoint", sha: expectedSha, ref } }),
+    ).rejects.toMatchObject({ code: "sha_mismatch" });
+  });
+
   it.each(implementations)(
     "%s restores an annotated retained tag at its commit",
     async (implementation) => {

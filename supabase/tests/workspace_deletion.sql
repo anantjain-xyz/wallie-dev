@@ -12,6 +12,8 @@ insert into public.workspace_members(id, workspace_id, user_id, kind, role) valu
     'a1b2c3d4-0001-4000-8000-000000000001', 'human', 'owner');
 insert into public.workspace_e2b_sandbox_connections(workspace_id, encrypted_api_key)
   values('de100000-0000-4000-8000-000000000001', 'encrypted-fixture');
+insert into public.workspace_vercel_sandbox_connections(workspace_id, encrypted_token, team_id, project_id)
+  values('de100000-0000-4000-8000-000000000001', 'vercel-fixture', 'team-fixture', 'project-fixture');
 insert into storage.objects(bucket_id, name)
   values ('workspace-avatars', 'de100000-0000-4000-8000-000000000001/retained.png');
 set local role service_role;
@@ -25,20 +27,43 @@ select throws_ok($$select public.begin_workspace_deletion('de100000-0000-4000-80
   'de100000-0000-4000-8000-000000000002', 'Wrong name')$$, '22023',
   'Type the workspace name exactly to confirm deletion.', 'confirmation is checked while holding the workspace lock');
 
-create temp table old_connection as select connection_revision from public.workspace_e2b_sandbox_connections
+create temp table old_connection as select connection_revision from public.workspace_vercel_sandbox_connections
   where workspace_id='de100000-0000-4000-8000-000000000001';
-update public.workspace_e2b_sandbox_connections set encrypted_api_key='rotated-fixture'
+update public.workspace_vercel_sandbox_connections set encrypted_token='rotated-fixture'
   where workspace_id='de100000-0000-4000-8000-000000000001';
 select throws_ok($$select public.begin_workspace_resource_operation(
-  'de100000-0000-4000-8000-000000000001','sandbox','e2b','','',now()+interval '1 hour',
+  'de100000-0000-4000-8000-000000000001','sandbox','vercel','','',now()+interval '1 hour',
   (select connection_revision from old_connection))$$, 'P0011',
   'Sandbox connection changed. Refresh and try again.', 'a preloaded stale connection cannot acquire a sandbox');
 create temp table deletion_operation as select public.begin_workspace_resource_operation(
-  'de100000-0000-4000-8000-000000000001', 'sandbox', 'e2b', '', '', now()+interval '1 hour',
-  (select connection_revision from public.workspace_e2b_sandbox_connections where workspace_id='de100000-0000-4000-8000-000000000001')) as id;
-select throws_ok($$update public.workspace_e2b_sandbox_connections set encrypted_api_key='replacement'
+  'de100000-0000-4000-8000-000000000001', 'sandbox', 'vercel', '', '', now()+interval '1 hour',
+  (select connection_revision from public.workspace_vercel_sandbox_connections where workspace_id='de100000-0000-4000-8000-000000000001')) as id;
+select throws_ok($$update public.workspace_vercel_sandbox_connections set encrypted_token='replacement'
   where workspace_id='de100000-0000-4000-8000-000000000001'$$, 'P0010',
   'Sandbox acquisition cleanup is still pending.', 'unsettled acquisitions retain their provider credentials');
+select throws_ok($$delete from public.workspace_vercel_sandbox_connections
+  where workspace_id='de100000-0000-4000-8000-000000000001'$$, 'P0010',
+  'Sandbox acquisition cleanup is still pending.', 'an unsettled acquisition prevents disconnecting its own provider');
+select lives_ok($$insert into public.workspace_daytona_sandbox_connections(workspace_id, encrypted_api_key)
+  values('de100000-0000-4000-8000-000000000001', 'daytona-fixture')
+  on conflict(workspace_id) do update set encrypted_api_key=excluded.encrypted_api_key$$,
+  'a Vercel acquisition permits connecting Daytona');
+select is((select encrypted_api_key from public.workspace_daytona_sandbox_connections
+  where workspace_id='de100000-0000-4000-8000-000000000001'), 'daytona-fixture',
+  'the unrelated provider connection persists');
+select lives_ok($$insert into public.workspace_e2b_sandbox_connections(workspace_id, encrypted_api_key)
+  values('de100000-0000-4000-8000-000000000001', 'e2b-replacement')
+  on conflict(workspace_id) do update set encrypted_api_key=excluded.encrypted_api_key$$,
+  'a Vercel acquisition permits replacing E2B credentials');
+select is((select encrypted_api_key from public.workspace_e2b_sandbox_connections
+  where workspace_id='de100000-0000-4000-8000-000000000001'), 'e2b-replacement',
+  'the unrelated provider replacement persists');
+select lives_ok($$delete from public.workspace_e2b_sandbox_connections
+  where workspace_id='de100000-0000-4000-8000-000000000001'$$,
+  'a Vercel acquisition permits disconnecting E2B');
+select is((select count(*) from public.workspace_e2b_sandbox_connections
+  where workspace_id='de100000-0000-4000-8000-000000000001'), 0::bigint,
+  'the unrelated provider is disconnected');
 create temp table deletion_fence as select public.begin_workspace_deletion(
   'de100000-0000-4000-8000-000000000001', 'de100000-0000-4000-8000-000000000002', ' Deletion fixture ') as requested_at;
 select is(public.begin_workspace_deletion('de100000-0000-4000-8000-000000000001',
@@ -53,9 +78,13 @@ select throws_ok($$select public.begin_workspace_resource_operation('de100000-00
 select throws_ok($$insert into storage.objects(bucket_id,name) values
   ('session-attachments','de100000-0000-4000-8000-000000000001/late.png')$$,
   'P0010', 'Workspace deletion is in progress.', 'a delayed Storage request cannot publish after fencing');
-select throws_ok($$delete from public.workspace_e2b_sandbox_connections
+select throws_ok($$delete from public.workspace_vercel_sandbox_connections
   where workspace_id='de100000-0000-4000-8000-000000000001'$$,
   'P0010', 'Workspace deletion is in progress.', 'provider credentials survive failed cleanup');
+select throws_ok($$insert into public.workspace_daytona_sandbox_connections(workspace_id, encrypted_api_key)
+  values('de100000-0000-4000-8000-000000000001', 'daytona-replacement')
+  on conflict(workspace_id) do update set encrypted_api_key=excluded.encrypted_api_key$$,
+  'P0010', 'Workspace deletion is in progress.', 'deletion prevents saving even an unrelated provider');
 select throws_ok($$insert into public.sandbox_capability_checks(workspace_id,status)
   values('de100000-0000-4000-8000-000000000001','running')$$,
   'P0010', 'Workspace deletion is in progress.', 'a new probe cannot be admitted');
@@ -86,7 +115,7 @@ select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001
 delete from storage.objects where name='de100000-0000-4000-8000-000000000001/retained.png';
 select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001'), true,
   'hard deletion succeeds after all durable obligations are removed');
-select is((select count(*) from public.workspace_e2b_sandbox_connections
+select is((select count(*) from public.workspace_vercel_sandbox_connections
   where workspace_id='de100000-0000-4000-8000-000000000001'), 0::bigint, 'credentials cascade only after cleanup');
 select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001'), true,
   'finalization remains idempotent after deletion');

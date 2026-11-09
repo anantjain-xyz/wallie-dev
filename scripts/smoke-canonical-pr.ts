@@ -232,7 +232,7 @@ async function main() {
     const sessionId = randomUUID();
     const epochId = randomUUID();
     const branchName = `wallie/sessions/${sessionId}/${epochId}`;
-    const fenceBranch = `wallie/session-fences/${epochId}`;
+    const fenceRef = `refs/heads/wallie/session-fences/${epochId}`;
     const apiFor = (branch: string) =>
       createCanonicalPrApi({
         repositoryFullName: repository,
@@ -248,7 +248,7 @@ async function main() {
       sourceRef: string,
       expected: { headSha: string; fenceSha: string } | null,
       branch = branchName,
-      fence = fenceBranch,
+      fence = fenceRef,
     ): CanonicalPromotionInput => {
       const operationId = randomUUID();
       return {
@@ -256,7 +256,7 @@ async function main() {
         desiredSha,
         sourceRef,
         branchName: branch,
-        fenceBranch: fence,
+        fenceRef: fence,
         expectedHeadSha: expected?.headSha ?? null,
         expectedFenceSha: expected?.fenceSha ?? null,
         desiredFenceSha: fenceSha(operationId, expected?.fenceSha ?? null),
@@ -265,14 +265,13 @@ async function main() {
         signal,
       };
     };
-    const remotePair = async (branch = branchName, fence = fenceBranch) => {
+    const remotePair = async (branch = branchName, fence = fenceRef) => {
       const headRef = `refs/heads/${branch}`;
-      const fenceRef = `refs/heads/${fence}`;
-      const output = await git(["ls-remote", "--heads", remoteUrl, headRef, fenceRef]);
+      const output = await git(["ls-remote", "--refs", remoteUrl, headRef, fence]);
       const refs = output.split("\n").map((line) => line.split(/\s+/));
       return {
         headSha: refs.find(([, ref]) => ref === headRef)?.[0] ?? null,
-        fenceSha: refs.find(([, ref]) => ref === fenceRef)?.[0] ?? null,
+        fenceSha: refs.find(([, ref]) => ref === fence)?.[0] ?? null,
       };
     };
     const pullRequestsFor = (branch: string) =>
@@ -358,7 +357,7 @@ async function main() {
     phase = "explicit-successor-epoch";
     const successorEpoch = randomUUID();
     const successorBranch = `wallie/sessions/${sessionId}/${successorEpoch}`;
-    const successorFence = `wallie/session-fences/${successorEpoch}`;
+    const successorFence = `refs/heads/wallie/session-fences/${successorEpoch}`;
     const successorApi = apiFor(successorBranch);
     assert.equal(await successorApi.find(), null);
     const successorOperation = operationInput(

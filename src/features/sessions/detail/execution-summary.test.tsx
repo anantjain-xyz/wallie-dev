@@ -7,6 +7,7 @@ import {
   SessionExecutionSummary,
   usePublishExecution,
   usePublishExecutionUnavailable,
+  useStageExecution,
 } from "./execution-summary";
 import type { WallieRun } from "@/features/wallie/types";
 
@@ -236,4 +237,64 @@ it("skips the initial run publication and activity refreshes but animates subseq
     if (descriptor) Object.defineProperty(HTMLElement.prototype, "animate", descriptor);
     else Reflect.deleteProperty(HTMLElement.prototype, "animate");
   }
+});
+
+it("shares execution with the timeline without regressing to delayed history or another session", () => {
+  const queued = {
+    ...run,
+    id: "rerun",
+    createdAt: "2026-09-04T12:01:00Z",
+    updatedAt: "2026-09-04T12:01:00Z",
+  };
+  function Reader({ sessionId = "session" }: { sessionId?: string }) {
+    return <output>{useStageExecution(sessionId, queued)?.status}</output>;
+  }
+  const view = render(
+    <SessionExecutionProvider>
+      <Reader />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("queued");
+  view.rerender(
+    <SessionExecutionProvider>
+      <Publisher value={{ ...run, status: "error" }} />
+      <Reader />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("queued");
+  view.rerender(
+    <SessionExecutionProvider>
+      <Publisher value={{ ...queued, status: "started", updatedAt: "2026-09-04T12:02:00Z" }} />
+      <Reader />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("started");
+  view.rerender(
+    <SessionExecutionProvider>
+      <Publisher value={{ ...queued, status: "running", updatedAt: "2026-09-04T12:03:00Z" }} />
+      <Reader />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("running");
+  view.rerender(
+    <SessionExecutionProvider>
+      <Publisher value={{ ...queued, status: "error", updatedAt: "2026-09-04T12:04:00Z" }} />
+      <Reader />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("error");
+  view.rerender(
+    <SessionExecutionProvider>
+      <Unavailable />
+      <Reader />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("error");
+  view.rerender(
+    <SessionExecutionProvider>
+      <Publisher value={{ ...queued, status: "error", updatedAt: "2026-09-04T12:04:00Z" }} />
+      <Reader sessionId="other-session" />
+    </SessionExecutionProvider>,
+  );
+  expect(screen.getByRole("status").textContent).toBe("queued");
 });

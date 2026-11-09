@@ -48,8 +48,8 @@ const desiredFence = "d".repeat(40);
 const repositoryName = "acme/app";
 const token = "synthetic-private-publisher-token";
 const branchName = `wallie/sessions/${sessionId}/${epochId}`;
-const fenceBranch = `wallie/session-fences/${epochId}`;
-const sourceRef = `refs/heads/wallie/checkpoints/${runId}/${desiredHead}`;
+const fenceRef = `refs/wallie/fences/${epochId}`;
+const sourceRef = `refs/wallie/checkpoints/${runId}/${desiredHead}`;
 
 function response(data: unknown, error?: string): Response {
   return { data, error: error ? { message: error } : null };
@@ -123,7 +123,7 @@ function makeState(input: { pinned?: boolean; terminal?: "closed" | "merged" } =
     github_repository_id: 777,
     base_branch: "main",
     branch_name: branchName,
-    fence_branch: fenceBranch,
+    fence_branch: fenceRef,
     pr_number: input.pinned ? 17 : null,
     pr_url: input.pinned ? `https://github.com/${repositoryName}/pull/17` : null,
     pr_state: input.pinned ? "open" : null,
@@ -363,6 +363,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps an existing epoch on its original branch-backed fence", async () => {
+  const { state, publish, dependencies } = makeState({ pinned: true });
+  state.epoch.fence_branch = `wallie/session-fences/${epochId}`;
+  await publish();
+  expect(mocked.promote).toHaveBeenCalledWith(
+    expect.objectContaining({ fenceRef: `refs/heads/wallie/session-fences/${epochId}` }),
+    dependencies,
+  );
+});
+
 it("updates only the pinned PR by GET and scopes every remote and receipt to the same operation", async () => {
   const { state, admin, rpc, dependencies } = makeState({ pinned: true });
   expect(await drainCanonicalPullRequests(admin, { sessionId, limit: 1 })).toEqual({
@@ -400,7 +410,7 @@ it("updates only the pinned PR by GET and scopes every remote and receipt to the
       desiredSha: desiredHead,
       sourceRef,
       branchName,
-      fenceBranch,
+      fenceRef,
       expectedHeadSha: expectedHead,
       expectedFenceSha: expectedFence,
       desiredFenceSha: desiredFence,
