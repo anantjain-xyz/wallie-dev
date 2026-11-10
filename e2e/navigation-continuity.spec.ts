@@ -184,30 +184,45 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
   page,
 }) => {
   await signIn(page);
-  const gate = deferred();
+  const filtersGate = deferred();
+  const searchGate = deferred();
   const queries: URL[] = [];
   await page.route("**/w/acme-corp/sessions?*", async (route) => {
     if (route.request().headers().rsc === "1") {
-      queries.push(new URL(route.request().url()));
-      await gate.promise;
+      const url = new URL(route.request().url());
+      queries.push(url);
+      await (url.searchParams.has("q") ? searchGate.promise : filtersGate.promise);
     }
     await route.continue();
   });
-  const initialRows = await page
-    .getByRole("table", { name: "Sessions", exact: true })
-    .textContent();
-  await page.getByRole("button", { name: "Archived", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Archived", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(page.getByText("Updating…", { exact: true })).toBeVisible();
-  await expect(page.getByRole("table", { name: "Sessions", exact: true })).toHaveText(initialRows!);
-  await page.getByRole("combobox", { name: "Sort sessions" }).click();
+  const table = page.getByRole("table", { name: "Sessions", exact: true });
+  const initialRows = await table.innerText();
+  const archived = page.getByRole("radio", { name: "Archived 1", exact: true });
+  const sort = page.getByRole("combobox", { name: "Sort sessions", exact: true });
+  const status = page.getByRole("status", { name: "Sessions search status", exact: true });
+  await archived.click();
+  await expect(archived).toHaveAttribute("aria-checked", "true");
+  await expect(status).toHaveText("Updating…");
+  await expect(table).toHaveText(initialRows, { useInnerText: true });
+  await sort.click();
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
-  await page.getByRole("option", { name: "Oldest updated" }).click();
+  await page.getByRole("option", { name: "Oldest updated", exact: true }).click();
+  await expect(sort).toHaveText("Oldest updated");
+  await expect(table).toHaveText(initialRows, { useInnerText: true });
+  await expect
+    .poll(() =>
+      queries.some(
+        (url) =>
+          url.searchParams.get("scope") === "archived" && url.searchParams.get("sort") === "oldest",
+      ),
+    )
+    .toBe(true);
+  filtersGate.release();
+  await expect(page).toHaveURL(/scope=archived&sort=oldest/);
+
   const search = page.getByRole("searchbox");
   await search.fill("SSO");
+  await expect(page.getByRole("button", { name: "Search", exact: true })).toBeEnabled();
   await search.press("Enter");
   await expect
     .poll(() =>
@@ -220,10 +235,11 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
     )
     .toBe(true);
   await search.fill("SSO draft still being edited");
+  await expect(status).toHaveText("Searching… New edits not searched.");
   await page.screenshot({ path: ".wallie/screenshots/filter-updating.png", fullPage: true });
-  gate.release();
+  searchGate.release();
   await expect(page).toHaveURL(/q=SSO/);
-  await expect(page.getByText("Updating…", { exact: true })).toBeHidden();
+  await expect(status).toHaveText("Press Enter to search. Results for “SSO”");
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("SSO draft still being edited");
   expect(await page.evaluate(() => window.wallieEntrances.length)).toBe(0);

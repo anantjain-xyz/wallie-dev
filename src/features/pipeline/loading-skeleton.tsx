@@ -30,7 +30,7 @@ function PipelineLaneSkeleton({ index, mobileVisible }: { index: number; mobileV
           <SkeletonBlock className="h-[23px] w-24" />
           <SkeletonBlock className="h-3 w-5" />
         </div>
-        <div className="mt-1">
+        <div className={pipelineLayout.laneSummary}>
           <SkeletonBlock className="h-4 w-8/12" />
         </div>
       </header>
