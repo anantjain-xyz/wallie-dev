@@ -13,4 +13,6 @@ export const pipelineLayout = {
   lane: "w-full flex-col border-t border-border/70 pt-3 pipeline-wide:min-h-[calc(100vh-230px)] pipeline-wide:border-l pipeline-wide:border-t-0 pipeline-wide:px-3 pipeline-wide:pt-0 pipeline-wide:first:border-l-0 pipeline-wide:first:pl-0 pipeline-wide:last:pr-0",
   laneHeader:
     "z-10 -mx-1 mb-3 border-b border-border/60 bg-sheet/95 px-1 pb-3 backdrop-blur-sm pipeline-wide:sticky pipeline-wide:top-0",
+  // Narrow lanes can wrap the status counts onto a second line.
+  laneSummary: "mt-1 max-[23rem]:min-h-8",
 } as const;

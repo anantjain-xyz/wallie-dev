@@ -55,8 +55,9 @@ for (const viewport of [
       expect(loading.horizontalOverflow).toBeLessThanOrEqual(1);
 
       await page.goto("/dev/pipeline-layout");
-      await expect(page.getByRole("combobox", { name: "Filter by status" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "All statuses", exact: true })).toBeHidden();
+      const status = page.getByRole("combobox", { name: "Filter by status", exact: true });
+      await expect(status).toBeVisible();
+      await expect(status).toHaveText("All statuses");
       const loaded = await layoutGeometry(page);
       expect(loaded.boardOverflow).toBe("visible");
       expect(loaded.visibleLanes).toBe(1);
@@ -97,8 +98,13 @@ for (const viewport of [
       expect(geometry.visibleLanes).toBe(2);
       expect(geometry.horizontalOverflow).toBeLessThanOrEqual(1);
     }
-    await expect(page.getByRole("combobox", { name: "Filter by status" })).toBeHidden();
-    await expect(page.getByRole("button", { name: "All statuses", exact: true })).toBeVisible();
+    const status = page.getByRole("combobox", { name: "Filter by status", exact: true });
+    await expect(status).toBeVisible();
+    await status.click();
+    await expect(page.getByRole("option", { name: "All statuses", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 }
 
@@ -271,7 +277,8 @@ test("short desktop pipelines fill the space below the desktop header", async ({
   for (const path of ["/dev/pipeline-layout?loading=1", "/dev/pipeline-layout"]) {
     await page.goto(path);
     const minHeight = await page
-      .locator("main > div")
+      .getByRole("main")
+      .locator(":scope > .contents > div:has(.pipeline-board)")
       .evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
     expect(minHeight).toBe(432);
   }

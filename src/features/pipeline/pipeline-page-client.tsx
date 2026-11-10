@@ -941,7 +941,9 @@ const PipelineLane = memo(
                 {lane.pipeline.name}
               </p>
             ) : null}
-            <p className="mt-1 type-annotation leading-4 text-muted">{stateSummary}</p>
+            <p className={cn(pipelineLayout.laneSummary, "type-annotation leading-4 text-muted")}>
+              {stateSummary}
+            </p>
           </div>
         </header>
 

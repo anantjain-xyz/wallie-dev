@@ -96,24 +96,32 @@ test("desktop uses the document scroller and keeps overlays above sticky chrome"
   expect(dialogBounds.zIndex).toBeGreaterThan(menuPosition[3]);
 });
 
-test("back-forward restoration and settings anchors use document positions", async ({ page }) => {
+test("back navigation and settings anchors use document positions", async ({ page }) => {
   await page.setViewportSize({ height: 600, width: 1024 });
   const settingsPath = workspacePath + "/settings";
   await signIn(page, settingsPath);
-  await page.evaluate(() => window.scrollTo(0, 900));
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(700);
-  const savedPosition = await page.evaluate(() => window.scrollY);
+  const pipelineSection = page.locator("#pipeline");
+  await expect(pipelineSection).toBeVisible();
 
-  await page.getByRole("link", { name: "Sessions" }).click();
+  const savedPosition = 900;
+  await page.evaluate((y) => window.scrollTo(0, y), savedPosition);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(savedPosition);
+
+  const sessionsLink = page.getByRole("link", { name: "Sessions", exact: true });
+  await expect(sessionsLink).toBeInViewport({ ratio: 1 });
+  const center = await sessionsLink.evaluate((link) => {
+    const { x, y, width, height } = link.getBoundingClientRect();
+    return { x: x + width / 2, y: y + height / 2 };
+  });
+  // Playwright's locator click scrolls the sticky link even when it is already visible.
+  await page.mouse.click(center.x, center.y);
   await expect(page).toHaveURL(workspacePath + "/sessions");
   await page.goBack();
   await expect(page).toHaveURL(settingsPath);
-  await expect
-    .poll(() => page.evaluate(() => window.scrollY))
-    .toBeGreaterThanOrEqual(savedPosition - 80);
+  await expect(pipelineSection).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(savedPosition);
 
   await page.goto(settingsPath + "#pipeline");
-  const pipelineSection = page.locator("#pipeline");
   await expect(pipelineSection).toBeVisible();
   await expect
     .poll(async () => {
@@ -185,9 +193,13 @@ test("200% reflow and 320px mobile widths do not create horizontal page overflow
 
   await page.setViewportSize({ height: 640, width: 320 });
   await page.goto(workspacePath);
-  await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Pipeline", exact: true, level: 1 }),
+  ).toBeVisible();
   await expectNoPageOverflow(page);
   await page.goto(workspacePath + "/settings");
-  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true, level: 1 }),
+  ).toBeVisible();
   await expectNoPageOverflow(page);
 });
