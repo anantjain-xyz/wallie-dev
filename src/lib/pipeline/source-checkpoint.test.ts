@@ -77,7 +77,14 @@ it("bundles a selected commit from a shallow live checkout without touching its 
     const bundlePath = join(recovery, "source.bundle");
     writeFileSync(bundlePath, source.bytes);
     remoteGit(recovery, "clone", "--depth=1", `file://${remote}`, checkout);
-    remoteGit(checkout, "fetch", bundlePath, `${SOURCE_CHECKPOINT_REF}:refs/heads/recovered`);
+    // A detached repack can race cleanup of this temporary checkout.
+    remoteGit(
+      checkout,
+      "fetch",
+      "--no-auto-maintenance",
+      bundlePath,
+      `${SOURCE_CHECKPOINT_REF}:refs/heads/recovered`,
+    );
     expect(remoteGit(checkout, "rev-parse", "recovered")).toBe(headSha);
     expect(remoteGit(checkout, "show", "recovered:build.txt")).toBe("committed build work");
   } finally {
