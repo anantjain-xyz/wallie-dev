@@ -30,7 +30,10 @@ export default async function HomePage() {
     return <LandingPage />;
   }
 
-  await ensureProfileForUser(supabase, user);
+  const [, homePath] = await Promise.all([
+    ensureProfileForUser(supabase, user),
+    resolveAuthenticatedHomePath(supabase),
+  ]);
 
-  redirect(await resolveAuthenticatedHomePath(supabase));
+  redirect(homePath);
 }

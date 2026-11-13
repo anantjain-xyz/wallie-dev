@@ -93,4 +93,59 @@ describe("/ page", () => {
 
     expect(mocked.ensureProfileForUser).toHaveBeenCalledWith({}, user);
   });
+
+  it("runs ensureProfileForUser and resolveAuthenticatedHomePath concurrently before redirecting", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "publishable-key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    mocked.cookies.mockResolvedValue({
+      getAll: vi.fn(() => [{ name: "sb-example-auth-token" }]),
+    });
+    const user = {
+      email: "owner@example.com",
+      id: "user-1",
+      user_metadata: {},
+    };
+    mocked.getSupabaseUserOrNull.mockResolvedValue(user);
+
+    let resolveEnsureProfile!: () => void;
+    let resolveHomePath!: (path: string) => void;
+    let ensureSettled = false;
+    let resolveInvokedWhileEnsurePending = false;
+
+    mocked.ensureProfileForUser.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveEnsureProfile = () => {
+            ensureSettled = true;
+            resolve();
+          };
+        }),
+    );
+    mocked.resolveAuthenticatedHomePath.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveInvokedWhileEnsurePending = !ensureSettled;
+          resolveHomePath = resolve;
+        }),
+    );
+
+    const pagePromise = HomePage();
+
+    await vi.waitFor(() => {
+      expect(mocked.ensureProfileForUser).toHaveBeenCalledTimes(1);
+      expect(mocked.resolveAuthenticatedHomePath).toHaveBeenCalledTimes(1);
+    });
+
+    expect(resolveInvokedWhileEnsurePending).toBe(true);
+    expect(mocked.redirect).not.toHaveBeenCalled();
+
+    resolveHomePath("/w/acme");
+    await Promise.resolve();
+    expect(mocked.redirect).not.toHaveBeenCalled();
+
+    resolveEnsureProfile();
+    await expect(pagePromise).rejects.toThrow("redirect:/w/acme");
+    expect(mocked.ensureProfileForUser).toHaveBeenCalledWith({}, user);
+    expect(mocked.resolveAuthenticatedHomePath).toHaveBeenCalledWith({});
+  });
 });

@@ -22,9 +22,10 @@ export default async function WorkspaceOnboardingPage() {
     redirect(loginPath(onboardingWorkspacePath()));
   }
 
-  await ensureProfileForUser(supabase, user);
-
-  const landingPath = await resolveAuthenticatedHomePath(supabase);
+  const [, landingPath] = await Promise.all([
+    ensureProfileForUser(supabase, user),
+    resolveAuthenticatedHomePath(supabase),
+  ]);
 
   if (landingPath !== onboardingWorkspacePath()) {
     redirect(landingPath);
