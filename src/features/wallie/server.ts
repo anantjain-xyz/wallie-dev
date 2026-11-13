@@ -56,6 +56,42 @@ function toBuildableRunRow(row: AgentRunRow, attemptCount: number) {
   };
 }
 
+export type OrdinalRunRow = {
+  created_at: string;
+  id: string;
+  stage_id: string | null;
+};
+
+/**
+ * Assign 1-based per-stage attempt ordinals from chronological run history.
+ * Keys by immutable `stage_id` so slug renames do not reset attempt ordinals.
+ */
+export function computeAttemptOrdinalsFromRows(rows: OrdinalRunRow[]): Map<string, number> {
+  const sorted = [...rows].sort((a, b) => {
+    if (a.created_at !== b.created_at) {
+      return a.created_at < b.created_at ? -1 : 1;
+    }
+    if (a.id !== b.id) {
+      return a.id < b.id ? -1 : 1;
+    }
+    return 0;
+  });
+
+  const ordinals = new Map<string, number>();
+  const perStage = new Map<string, number>();
+
+  for (const row of sorted) {
+    // Key by immutable stage_id so slug renames (rewrite_default_pipeline) do
+    // not reset attempt ordinals mid-history.
+    const stageKey = row.stage_id ?? "__session__";
+    const next = (perStage.get(stageKey) ?? 0) + 1;
+    perStage.set(stageKey, next);
+    ordinals.set(row.id, next);
+  }
+
+  return ordinals;
+}
+
 /**
  * Snapshot a stable per-run attempt ordinal from chronological stage history.
  * Do not read mutable `agent_jobs.attempt_count` — that value advances on later
@@ -67,7 +103,7 @@ export async function loadAttemptOrdinalForRun(sessionId: string, runId: string)
 }
 
 async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string) {
-  const rows: Array<{ created_at: string; id: string; stage_id: string | null }> = [];
+  const rows: OrdinalRunRow[] = [];
 
   for (let offset = 0; ; offset += ATTEMPT_ORDINAL_PAGE_SIZE) {
     const { data, error } = await admin
@@ -89,19 +125,7 @@ async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string)
     }
   }
 
-  const ordinals = new Map<string, number>();
-  const perStage = new Map<string, number>();
-
-  for (const row of rows) {
-    // Key by immutable stage_id so slug renames (rewrite_default_pipeline) do
-    // not reset attempt ordinals mid-history.
-    const stageKey = row.stage_id ?? "__session__";
-    const next = (perStage.get(stageKey) ?? 0) + 1;
-    perStage.set(stageKey, next);
-    ordinals.set(row.id, next);
-  }
-
-  return ordinals;
+  return computeAttemptOrdinalsFromRows(rows);
 }
 
 export async function loadWallieRunPage(input: {
@@ -124,16 +148,31 @@ export async function loadWallieRunPage(input: {
     );
   }
 
-  const [{ data, error }, attemptOrdinals] = await Promise.all([
-    query,
-    loadAttemptOrdinalsByRunId(createSupabaseAdminClient(), input.sessionId),
-  ]);
+  let rows: AgentRunRow[];
+  let attemptOrdinals: Map<string, number>;
 
-  if (error) {
-    throw error;
+  if (input.cursor) {
+    const [{ data, error }, ordinals] = await Promise.all([
+      query,
+      loadAttemptOrdinalsByRunId(createSupabaseAdminClient(), input.sessionId),
+    ]);
+    if (error) {
+      throw error;
+    }
+    rows = (data ?? []) as AgentRunRow[];
+    attemptOrdinals = ordinals;
+  } else {
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+    rows = (data ?? []) as AgentRunRow[];
+    attemptOrdinals =
+      rows.length <= WALLIE_RUN_PAGE_SIZE
+        ? computeAttemptOrdinalsFromRows(rows)
+        : await loadAttemptOrdinalsByRunId(createSupabaseAdminClient(), input.sessionId);
   }
 
-  const rows = (data ?? []) as AgentRunRow[];
   const pageRows = rows.slice(0, WALLIE_RUN_PAGE_SIZE);
   const failedRunIds = pageRows.filter((run) => run.status === "error").map((run) => run.id);
   // One fenced terminal record per run. Activity remains lazy and bounded independently.

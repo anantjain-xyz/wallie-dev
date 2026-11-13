@@ -7,22 +7,19 @@ const adminOrdinalRows: Array<{
   stage_id: string | null;
 }> = [];
 const adminRangeCalls: Array<{ from: number; to: number }> = [];
-
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdminClient: () => ({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
+const createSupabaseAdminClientMock = vi.fn(() => ({
+  from: () => ({
+    select: () => ({
+      eq: () => ({
+        order: () => ({
           order: () => ({
-            order: () => ({
-              range: async (from: number, to: number) => {
-                adminRangeCalls.push({ from, to });
-                return {
-                  data: adminOrdinalRows.slice(from, to + 1),
-                  error: null,
-                };
-              },
-            }),
+            range: async (from: number, to: number) => {
+              adminRangeCalls.push({ from, to });
+              return {
+                data: adminOrdinalRows.slice(from, to + 1),
+                error: null,
+              };
+            },
           }),
         }),
       }),
@@ -30,8 +27,13 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: () => createSupabaseAdminClientMock(),
+}));
+
 import {
   ATTEMPT_ORDINAL_PAGE_SIZE,
+  computeAttemptOrdinalsFromRows,
   loadWallieRunPage,
   mapWallieSandboxConnectionStatus,
   WALLIE_RUN_PAGE_SIZE,
@@ -116,6 +118,31 @@ function client(
 beforeEach(() => {
   adminOrdinalRows.length = 0;
   adminRangeCalls.length = 0;
+  createSupabaseAdminClientMock.mockClear();
+});
+
+describe("computeAttemptOrdinalsFromRows", () => {
+  it("sorts a copy ascending by created_at then id and keys by stage_id or __session__", () => {
+    const input = [
+      { created_at: "2026-07-18T12:05:00.000Z", id: uuid(3), stage_id: "stage-build" },
+      { created_at: "2026-07-18T12:00:00.000Z", id: uuid(2), stage_id: "stage-build" },
+      { created_at: "2026-07-18T12:00:00.000Z", id: uuid(1), stage_id: "stage-build" },
+      { created_at: "2026-07-18T12:01:00.000Z", id: uuid(4), stage_id: null },
+      { created_at: "2026-07-18T12:02:00.000Z", id: uuid(5), stage_id: null },
+      { created_at: "2026-07-18T11:59:00.000Z", id: uuid(6), stage_id: "stage-plan" },
+    ];
+    const snapshot = input.map((entry) => entry.id);
+
+    const ordinals = computeAttemptOrdinalsFromRows(input);
+
+    expect(input.map((entry) => entry.id)).toEqual(snapshot);
+    expect(ordinals.get(uuid(6))).toBe(1);
+    expect(ordinals.get(uuid(1))).toBe(1);
+    expect(ordinals.get(uuid(2))).toBe(2);
+    expect(ordinals.get(uuid(3))).toBe(3);
+    expect(ordinals.get(uuid(4))).toBe(1);
+    expect(ordinals.get(uuid(5))).toBe(2);
+  });
 });
 
 describe("loadWallieRunPage", () => {
@@ -225,7 +252,7 @@ describe("loadWallieRunPage", () => {
     );
   });
 
-  it("keys attempt ordinals by stage_id across slug renames", async () => {
+  it("computes first-page attempt ordinals without calling createSupabaseAdminClient across stage slug renames", async () => {
     const first = row(1, {
       created_at: "2026-07-18T12:00:00.000Z",
       stage_id: "stage-stable",
@@ -237,10 +264,6 @@ describe("loadWallieRunPage", () => {
       stage_name: "Implement",
       stage_slug: "implement",
     });
-    adminOrdinalRows.push(
-      { created_at: first.created_at, id: first.id, stage_id: first.stage_id },
-      { created_at: renamed.created_at, id: renamed.id, stage_id: renamed.stage_id },
-    );
 
     const { supabase } = client([renamed, first]);
     const page = await loadWallieRunPage({
@@ -249,8 +272,102 @@ describe("loadWallieRunPage", () => {
       supabase: supabase as never,
     });
 
+    expect(createSupabaseAdminClientMock).not.toHaveBeenCalled();
+    expect(adminRangeCalls).toEqual([]);
+    expect(page.nextCursor).toBeNull();
     expect(page.runs.find((run) => run.id === first.id)?.attemptCount).toBe(1);
     expect(page.runs.find((run) => run.id === renamed.id)?.attemptCount).toBe(2);
+  });
+
+  it("skips createSupabaseAdminClient when first page has exactly WALLIE_RUN_PAGE_SIZE rows", async () => {
+    const exactPage = Array.from({ length: WALLIE_RUN_PAGE_SIZE }, (_, index) => {
+      const chronologicalIndex = WALLIE_RUN_PAGE_SIZE - index;
+      return row(chronologicalIndex, {
+        created_at: new Date(
+          Date.parse("2026-07-18T12:00:00.000Z") + chronologicalIndex * 60_000,
+        ).toISOString(),
+        stage_id: chronologicalIndex % 2 === 0 ? "stage-build" : null,
+      });
+    });
+
+    const { supabase } = client(exactPage);
+    const page = await loadWallieRunPage({
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+
+    expect(createSupabaseAdminClientMock).not.toHaveBeenCalled();
+    expect(adminRangeCalls).toEqual([]);
+    expect(page.nextCursor).toBeNull();
+    expect(page.runs).toHaveLength(WALLIE_RUN_PAGE_SIZE);
+    expect(page.runs[0]?.attemptCount).toBe(WALLIE_RUN_PAGE_SIZE / 2);
+    expect(page.runs.at(-1)?.attemptCount).toBe(1);
+  });
+
+  it("uses loadAttemptOrdinalsByRunId via createSupabaseAdminClient when first page overflows WALLIE_RUN_PAGE_SIZE", async () => {
+    const totalRuns = WALLIE_RUN_PAGE_SIZE + 5;
+    const allRuns = Array.from({ length: totalRuns }, (_, index) => {
+      const chronologicalIndex = totalRuns - index;
+      return row(chronologicalIndex, {
+        created_at: new Date(
+          Date.parse("2026-07-18T12:00:00.000Z") + chronologicalIndex * 60_000,
+        ).toISOString(),
+        stage_id: "stage-build",
+      });
+    });
+    adminOrdinalRows.push(
+      ...[...allRuns].reverse().map((entry) => ({
+        created_at: entry.created_at,
+        id: entry.id,
+        stage_id: entry.stage_id,
+      })),
+    );
+
+    const { supabase } = client(allRuns.slice(0, WALLIE_RUN_PAGE_SIZE + 1));
+    const page = await loadWallieRunPage({
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+
+    expect(createSupabaseAdminClientMock).toHaveBeenCalledTimes(1);
+    expect(adminRangeCalls).toEqual([{ from: 0, to: ATTEMPT_ORDINAL_PAGE_SIZE - 1 }]);
+    expect(page.nextCursor).not.toBeNull();
+    expect(page.runs[0]?.attemptCount).toBe(totalRuns);
+  });
+
+  it("uses loadAttemptOrdinalsByRunId via createSupabaseAdminClient when cursor is set", async () => {
+    const totalRuns = 5;
+    const allRuns = Array.from({ length: totalRuns }, (_, index) => {
+      const chronologicalIndex = totalRuns - index;
+      return row(chronologicalIndex, {
+        created_at: new Date(
+          Date.parse("2026-07-18T12:00:00.000Z") + chronologicalIndex * 60_000,
+        ).toISOString(),
+        stage_id: "stage-build",
+      });
+    });
+    adminOrdinalRows.push(
+      ...[...allRuns].reverse().map((entry) => ({
+        created_at: entry.created_at,
+        id: entry.id,
+        stage_id: entry.stage_id,
+      })),
+    );
+
+    const cursorRun = allRuns[2]!;
+    const { supabase } = client(allRuns.slice(3));
+    const page = await loadWallieRunPage({
+      cursor: { createdAt: cursorRun.created_at, id: cursorRun.id },
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+
+    expect(createSupabaseAdminClientMock).toHaveBeenCalledTimes(1);
+    expect(adminRangeCalls).toEqual([{ from: 0, to: ATTEMPT_ORDINAL_PAGE_SIZE - 1 }]);
+    expect(page.runs.map((run) => run.attemptCount)).toEqual([2, 1]);
   });
 
   it("pages attempt-ordinal history past the PostgREST max_rows cap", async () => {
@@ -274,11 +391,13 @@ describe("loadWallieRunPage", () => {
     });
     const { supabase } = client([newest]);
     const page = await loadWallieRunPage({
+      cursor: { createdAt: "2026-12-31T00:00:00.000Z", id: uuid(9999) },
       memberIndex: new Map(),
       sessionId: uuid(999),
       supabase: supabase as never,
     });
 
+    expect(createSupabaseAdminClientMock).toHaveBeenCalledTimes(1);
     expect(adminRangeCalls).toEqual([
       { from: 0, to: ATTEMPT_ORDINAL_PAGE_SIZE - 1 },
       { from: ATTEMPT_ORDINAL_PAGE_SIZE, to: ATTEMPT_ORDINAL_PAGE_SIZE * 2 - 1 },
