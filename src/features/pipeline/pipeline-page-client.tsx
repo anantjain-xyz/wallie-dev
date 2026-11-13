@@ -7,6 +7,7 @@ import {
   memo,
   startTransition,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useReducer,
@@ -120,10 +121,11 @@ export function cardMatchesPipelineFilters(
   card: PipelineDashboardCard,
   searchQuery: string,
   statusFilter: StatusFilter,
+  options?: { normalized?: boolean },
 ) {
   if (statusFilter !== "all" && pipelineDashboardCardStatus(card) !== statusFilter) return false;
 
-  const normalized = searchQuery.trim().toLowerCase();
+  const normalized = options?.normalized ? searchQuery : searchQuery.trim().toLowerCase();
   if (!normalized) return true;
 
   const haystacks = [
@@ -138,6 +140,44 @@ export function cardMatchesPipelineFilters(
   ];
 
   return haystacks.some((value) => value.toLowerCase().includes(normalized));
+}
+
+type LaneVisibleCardsCacheEntry = {
+  cardIds: string[];
+  cards: Array<PipelineDashboardCard | undefined>;
+  cardsById: Record<string, PipelineDashboardCard>;
+  normalizedSearchQuery: string;
+  statusFilter: StatusFilter;
+  visibleCards: PipelineDashboardCard[];
+};
+
+function canReuseCachedLaneVisibleCards(
+  cached: LaneVisibleCardsCacheEntry | undefined,
+  lane: PipelineBoardLane,
+  cardsById: Record<string, PipelineDashboardCard>,
+  normalizedSearchQuery: string,
+  statusFilter: StatusFilter,
+): cached is LaneVisibleCardsCacheEntry {
+  if (!cached) return false;
+  if (
+    cached.normalizedSearchQuery !== normalizedSearchQuery ||
+    cached.statusFilter !== statusFilter
+  ) {
+    return false;
+  }
+  if (cached.cardIds === lane.cardIds && cached.cardsById === cardsById) {
+    return true;
+  }
+  if (cached.cardIds.length !== lane.cardIds.length) {
+    return false;
+  }
+  for (let index = 0; index < lane.cardIds.length; index += 1) {
+    const cardId = lane.cardIds[index]!;
+    if (cached.cardIds[index] !== cardId || cached.cards[index] !== cardsById[cardId]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function summarizeLaneStatuses(
@@ -206,6 +246,8 @@ function PipelinePageContent({
   const [loadingLaneKey, setLoadingLaneKey] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [hasObservedSession, setHasObservedSession] = useState(false);
   const [recoveredOnboarding, setRecoveredOnboarding] = useState<{
@@ -685,9 +727,55 @@ function PipelinePageContent({
 
   const hasActiveSessions = board.lanes.some((lane) => lane.totalCount > 0);
   const hasEverHadSession = initialData.hasAnySession || hasObservedSession;
-  const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
+  const filtersActive = normalizedSearchQuery.length > 0 || statusFilter !== "all";
   const stageCount = Math.max(board.lanes.length, 1);
   const laneKeys = board.lanes.map((lane) => pipelineLaneKey(lane));
+  const visibleCardsCacheRef = useRef<Map<string, LaneVisibleCardsCacheEntry>>(new Map());
+  const visibleCardsByLane = useMemo(() => {
+    const nextCache = new Map<string, LaneVisibleCardsCacheEntry>();
+    for (const lane of board.lanes) {
+      const key = pipelineLaneKey(lane);
+      const cached = visibleCardsCacheRef.current.get(key);
+      if (
+        canReuseCachedLaneVisibleCards(
+          cached,
+          lane,
+          board.cardsById,
+          normalizedSearchQuery,
+          statusFilter,
+        )
+      ) {
+        nextCache.set(key, {
+          ...cached,
+          cardIds: lane.cardIds,
+          cardsById: board.cardsById,
+        });
+        continue;
+      }
+
+      const cards = lane.cardIds.map((cardId) => board.cardsById[cardId]);
+      const visibleCards = cards.filter(
+        (card): card is PipelineDashboardCard =>
+          Boolean(card) &&
+          cardMatchesPipelineFilters(card, normalizedSearchQuery, statusFilter, {
+            normalized: true,
+          }),
+      );
+      nextCache.set(key, {
+        cardIds: lane.cardIds,
+        cards,
+        cardsById: board.cardsById,
+        normalizedSearchQuery,
+        statusFilter,
+        visibleCards,
+      });
+    }
+    return nextCache;
+  }, [board.cardsById, board.lanes, normalizedSearchQuery, statusFilter]);
+
+  useEffect(() => {
+    visibleCardsCacheRef.current = visibleCardsByLane;
+  }, [visibleCardsByLane]);
 
   function handleStageTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -805,10 +893,7 @@ function PipelinePageContent({
             >
               {board.lanes.map((lane) => {
                 const key = pipelineLaneKey(lane);
-                const visibleCards = lane.cardIds
-                  .map((cardId) => board.cardsById[cardId])
-                  .filter((card): card is PipelineDashboardCard => Boolean(card))
-                  .filter((card) => cardMatchesPipelineFilters(card, searchQuery, statusFilter));
+                const visibleCards = visibleCardsByLane.get(key)?.visibleCards ?? [];
 
                 return (
                   <PipelineLane
