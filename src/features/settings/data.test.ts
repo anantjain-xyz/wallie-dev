@@ -106,16 +106,33 @@ function buildSupabase(input: {
     role: "admin" | "member" | "owner";
   } | null;
   usageResult: Promise<{ data: unknown; error: unknown }>;
+  workspaceMembersResult?: Promise<{ data: unknown[] | null; error: { message: string } | null }>;
 }) {
   const usageMaybeSingle = vi.fn(() => input.usageResult);
+  const workspaceMembersOrder = vi.fn(() => input.workspaceMembersResult);
+  const workspaceMembersEq = vi.fn(() => ({
+    eq: workspaceMembersEq,
+    order: workspaceMembersOrder,
+  }));
+  const workspaceMembersSelect = vi.fn(() => ({ eq: workspaceMembersEq }));
   const supabase = {
     from: vi.fn((table: string) => {
+      if (table === "workspace_members" && input.workspaceMembersResult) {
+        return { select: workspaceMembersSelect };
+      }
       throw new Error(`Unexpected duplicate Settings query: ${table}`);
     }),
     rpc: vi.fn(() => ({ maybeSingle: usageMaybeSingle })),
   };
 
-  return { currentMember: input.member, supabase, usageMaybeSingle };
+  return {
+    currentMember: input.member,
+    supabase,
+    usageMaybeSingle,
+    workspaceMembersEq,
+    workspaceMembersOrder,
+    workspaceMembersSelect,
+  };
 }
 
 function buildAdmin(invitationResult: Promise<{ data: unknown[]; error: unknown }>) {
@@ -280,9 +297,177 @@ describe("loadSettingsPageData", () => {
       hasEstimatedCost: false,
     });
     await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    expect(mocked.createWorkspaceOnboardingSnapshot).toHaveBeenCalledTimes(1);
     expect(supabase.rpc).not.toHaveBeenCalled();
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
     await Promise.all([loader.initialData, loader.setupData]);
+  });
+
+  it("skips onboarding snapshot and returns static rateLimits for the advanced category", async () => {
+    const { currentMember, supabase } = buildSupabase({
+      member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
+      usageResult: Promise.resolve({
+        data: {
+          total_cost_usd: 2.5,
+          total_input_tokens: 500,
+          total_output_tokens: 100,
+          total_runs: 4,
+          tokens_unavailable: false,
+          cost_unavailable: false,
+          has_estimated_tokens: false,
+          has_estimated_cost: false,
+        },
+        error: null,
+      }),
+    });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
+
+    const loader = await loadSettingsPageData("acme", "advanced");
+
+    expect(mocked.loadAuthenticatedWorkspaceContext).toHaveBeenCalledWith("acme");
+    expect(mocked.createWorkspaceOnboardingSnapshot).not.toHaveBeenCalled();
+    expect(supabase.from).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(supabase.rpc).toHaveBeenCalledWith("get_workspace_usage", {
+      target_workspace_id: workspace.id,
+    });
+
+    await expect(loader.initialData).resolves.toEqual({
+      canManage: true,
+      currentMember: { id: "member-1", role: "owner" },
+      github: {
+        installation: null,
+        missingAppKeys: [],
+        missingWebhookKeys: [],
+        primaryProfile: null,
+        repositories: [],
+      },
+      workspace: {
+        avatarPath: workspace.avatar_path,
+        avatarUrl: "https://cdn.example.com/workspace/avatar.png",
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+      },
+    });
+    await expect(loader.setupData).resolves.toMatchObject({
+      rateLimits: [{ description: "Paid calls", endpoint: "agent", max: 4, windowMs: 60_000 }],
+      workspaceMembers: [],
+    });
+    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.usage).resolves.toMatchObject({
+      totalCostUsd: 2.5,
+      totalInputTokens: 500,
+      totalOutputTokens: 100,
+      totalRuns: 4,
+    });
+  });
+
+  it("skips onboarding snapshot and queries only workspace_members for the workspace category", async () => {
+    const {
+      currentMember,
+      supabase,
+      workspaceMembersEq,
+      workspaceMembersOrder,
+      workspaceMembersSelect,
+    } = buildSupabase({
+      member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
+      usageResult: Promise.resolve({ data: null, error: null }),
+      workspaceMembersResult: Promise.resolve({
+        data: [
+          {
+            avatar_url: "https://cdn.example.com/ada.png",
+            email: "ada@example.com",
+            full_name: "Ada Lovelace",
+            id: "member-1",
+            role: "owner",
+          },
+        ],
+        error: null,
+      }),
+    });
+    const admin = buildAdmin(Promise.resolve({ data: [], error: null }));
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    const loader = await loadSettingsPageData("acme", "workspace");
+
+    expect(mocked.loadAuthenticatedWorkspaceContext).toHaveBeenCalledWith("acme");
+    expect(mocked.createWorkspaceOnboardingSnapshot).not.toHaveBeenCalled();
+    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(supabase.from).toHaveBeenCalledWith("workspace_members");
+    expect(workspaceMembersSelect).toHaveBeenCalledWith("id, full_name, email, avatar_url, role");
+    expect(workspaceMembersEq).toHaveBeenNthCalledWith(1, "workspace_id", workspace.id);
+    expect(workspaceMembersEq).toHaveBeenNthCalledWith(2, "kind", "human");
+    expect(workspaceMembersEq).toHaveBeenNthCalledWith(3, "is_active", true);
+    expect(workspaceMembersOrder).toHaveBeenCalledWith("full_name", { ascending: true });
+    expect(supabase.rpc).not.toHaveBeenCalled();
+
+    await expect(loader.initialData).resolves.toEqual({
+      canManage: true,
+      currentMember: { id: "member-1", role: "owner" },
+      github: {
+        installation: null,
+        missingAppKeys: [],
+        missingWebhookKeys: [],
+        primaryProfile: null,
+        repositories: [],
+      },
+      workspace: {
+        avatarPath: workspace.avatar_path,
+        avatarUrl: "https://cdn.example.com/workspace/avatar.png",
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+      },
+    });
+    await expect(loader.setupData).resolves.toMatchObject({
+      rateLimits: [{ description: "Paid calls", endpoint: "agent", max: 4, windowMs: 60_000 }],
+      workspaceMembers: [
+        {
+          avatarUrl: "https://cdn.example.com/ada.png",
+          email: "ada@example.com",
+          fullName: "Ada Lovelace",
+          id: "member-1",
+          role: "owner",
+        },
+      ],
+    });
+    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.usage).resolves.toMatchObject({ totalRuns: 0 });
+  });
+
+  it("propagates workspace_members query errors in the workspace category", async () => {
+    const { currentMember, supabase } = buildSupabase({
+      member: { id: "member-1", is_active: true, kind: "human", role: "member" },
+      usageResult: Promise.resolve({ data: null, error: null }),
+      workspaceMembersResult: Promise.resolve({
+        data: null,
+        error: { message: "permission denied" },
+      }),
+    });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
+
+    const loader = await loadSettingsPageData("acme", "workspace");
+
+    await expect(loader.setupData).rejects.toThrow(
+      "Failed to load workspace members: permission denied",
+    );
   });
 
   it("observes below-fold failures before the above-fold section resolves", async () => {

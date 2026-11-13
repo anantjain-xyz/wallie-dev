@@ -7,6 +7,7 @@ import {
   type WorkspaceOnboardingData,
 } from "@/features/onboarding/data";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
@@ -135,6 +136,152 @@ function observeDeferredSection<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+function describeSettingsRateLimits(): RateLimitDisplay[] {
+  return describeRateLimits().map((entry) => ({
+    description: entry.description,
+    endpoint: entry.endpoint,
+    max: entry.max,
+    windowMs: entry.windowMs,
+  }));
+}
+
+function createEmptyGitHubOnboardingData(): WorkspaceOnboardingData["github"] {
+  return {
+    installation: null,
+    missingAppKeys: [],
+    missingWebhookKeys: [],
+    primaryProfile: null,
+    repositories: [],
+  };
+}
+
+function createEmptySettingsSetupData(
+  workspaceId: string,
+  workspaceMembers: WorkspaceOnboardingData["workspaceMembers"] = [],
+): SettingsSetupData {
+  return {
+    agentConfig: {},
+    latestSandboxCapabilityCheck: null,
+    linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
+    linearSecret: null,
+    onboarding: {
+      completedAt: null,
+      completedSteps: [],
+      createdAt: "",
+      currentStep: "github",
+      dismissedAt: null,
+      id: "",
+      selectedGithubRepositoryId: null,
+      skippedSteps: [],
+      status: "not_started",
+      updatedAt: "",
+      workspaceId,
+    },
+    pipeline: null,
+    rateLimits: describeSettingsRateLimits(),
+    sandboxSettings: {
+      activeProvider: "vercel",
+      connections: {
+        daytona: null,
+        e2b: null,
+        vercel: null,
+      },
+      enabledProviders: [],
+      revision: 0,
+      updatedAt: null,
+    },
+    setupHealth: {
+      agentConfig: {
+        configured: false,
+        configuredKeys: [],
+        status: "missing",
+        values: {},
+      },
+      claudeCodeConnection: {
+        checkedAt: "",
+        connected: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      codexConnection: {
+        accountEmail: null,
+        checkedAt: "",
+        connected: false,
+        credentialType: null,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      defaultPipeline: {
+        configured: false,
+        pipelineId: null,
+        stageCount: 0,
+        status: "missing",
+      },
+      githubInstallation: {
+        connected: false,
+        installationId: null,
+        status: "missing",
+        suspended: null,
+        targetName: null,
+        updatedAt: null,
+      },
+      latestSandboxCapabilityCheck: null,
+      linearKey: {
+        configured: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      linearRouting: {
+        configured: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      openCodeConnection: {
+        checkedAt: "",
+        connected: false,
+        providers: [],
+        status: "missing",
+        updatedAt: null,
+      },
+      primaryRepositoryProfile: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+      repositorySetup: {
+        configured: false,
+        repositoryId: null,
+        status: "not_set_up",
+      },
+      selectedRepository: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: null,
+        projectId: null,
+        projectName: null,
+        status: "missing",
+        teamId: null,
+        updatedAt: null,
+      },
+      workspaceSecrets: {
+        configuredKeys: [],
+      },
+    },
+    vercelSandboxConnection: null,
+    workspaceMembers,
+    workspaceSecrets: [],
+  };
+}
+
 function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): SettingsSetupData {
   return {
     agentConfig: onboardingData.agentConfig,
@@ -143,12 +290,7 @@ function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): Settings
     linearSecret: onboardingData.linearSecret,
     onboarding: onboardingData.onboarding,
     pipeline: onboardingData.pipeline,
-    rateLimits: describeRateLimits().map((entry) => ({
-      description: entry.description,
-      endpoint: entry.endpoint,
-      max: entry.max,
-      windowMs: entry.windowMs,
-    })),
+    rateLimits: describeSettingsRateLimits(),
     sandboxSettings: onboardingData.sandboxSettings,
     setupHealth: onboardingData.setupHealth,
     vercelSandboxConnection: onboardingData.vercelSandboxConnection,
@@ -177,7 +319,6 @@ export async function loadSettingsPageData(
     }
 
     const canManage = currentMember.role === "owner" || currentMember.role === "admin";
-    const onboardingSnapshot = createWorkspaceOnboardingSnapshot(authenticatedContext);
     const workspaceSummary = {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),
@@ -185,47 +326,102 @@ export async function loadSettingsPageData(
       name: workspace.name,
       slug: workspace.slug,
     };
+    const memberSummary = {
+      id: currentMember.id,
+      role: currentMember.role,
+    };
 
-    const initialData = withServerTiming(
-      "settings.section.github",
-      { workspaceId: workspace.id },
-      async (sectionTiming) => {
-        const github = await sectionTiming.segment(
-          "summary",
-          () => onboardingSnapshot.github,
-          (value) => ({
-            payloadBytes: approximatePayloadSizeBytes(value),
-            rows: value.repositories.length,
-          }),
-        );
+    let initialData: Promise<SettingsInitialData>;
+    let setupData: Promise<SettingsSetupData>;
 
-        return {
-          canManage,
-          currentMember: {
-            id: currentMember.id,
-            role: currentMember.role,
-          },
-          github,
-          workspace: workspaceSummary,
-        };
-      },
-    );
+    if (category === "advanced" || category === "workspace") {
+      initialData = Promise.resolve({
+        canManage,
+        currentMember: memberSummary,
+        github: createEmptyGitHubOnboardingData(),
+        workspace: workspaceSummary,
+      });
+      setupData =
+        category === "advanced"
+          ? Promise.resolve(createEmptySettingsSetupData(workspace.id))
+          : withServerTiming(
+              "settings.section.setup",
+              { workspaceId: workspace.id },
+              async (sectionTiming) => {
+                const { data, error } = await sectionTiming.segment(
+                  "workspace-members",
+                  () =>
+                    supabase
+                      .from("workspace_members")
+                      .select("id, full_name, email, avatar_url, role")
+                      .eq("workspace_id", workspace.id)
+                      .eq("kind", "human")
+                      .eq("is_active", true)
+                      .order("full_name", { ascending: true }),
+                  (result) => ({
+                    payloadBytes: approximatePayloadSizeBytes(result.data),
+                    rows: result.data?.length ?? 0,
+                  }),
+                );
 
-    const setupData = withServerTiming(
-      "settings.section.setup",
-      { workspaceId: workspace.id },
-      async (sectionTiming) => {
-        const data = await sectionTiming.segment(
-          "canonical-onboarding-snapshot",
-          () => onboardingSnapshot.data,
-          (value) => ({
-            payloadBytes: approximatePayloadSizeBytes(value),
-            rows: 1,
-          }),
-        );
-        return mapSettingsSetupData(data);
-      },
-    );
+                if (error) {
+                  throw new Error(`Failed to load workspace members: ${error.message}`);
+                }
+
+                const workspaceMembers: WorkspaceOnboardingData["workspaceMembers"] = (
+                  data ?? []
+                ).map((member) => ({
+                  avatarUrl: member.avatar_url,
+                  email: member.email,
+                  fullName: member.full_name,
+                  id: member.id,
+                  role: member.role,
+                }));
+
+                return createEmptySettingsSetupData(workspace.id, workspaceMembers);
+              },
+            );
+    } else {
+      const onboardingSnapshot = createWorkspaceOnboardingSnapshot(authenticatedContext);
+
+      initialData = withServerTiming(
+        "settings.section.github",
+        { workspaceId: workspace.id },
+        async (sectionTiming) => {
+          const github = await sectionTiming.segment(
+            "summary",
+            () => onboardingSnapshot.github,
+            (value) => ({
+              payloadBytes: approximatePayloadSizeBytes(value),
+              rows: value.repositories.length,
+            }),
+          );
+
+          return {
+            canManage,
+            currentMember: memberSummary,
+            github,
+            workspace: workspaceSummary,
+          };
+        },
+      );
+
+      setupData = withServerTiming(
+        "settings.section.setup",
+        { workspaceId: workspace.id },
+        async (sectionTiming) => {
+          const data = await sectionTiming.segment(
+            "canonical-onboarding-snapshot",
+            () => onboardingSnapshot.data,
+            (value) => ({
+              payloadBytes: approximatePayloadSizeBytes(value),
+              rows: 1,
+            }),
+          );
+          return mapSettingsSetupData(data);
+        },
+      );
+    }
 
     const usage =
       category && category !== "advanced"
