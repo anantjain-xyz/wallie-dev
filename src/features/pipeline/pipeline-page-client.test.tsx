@@ -19,6 +19,7 @@ const mocked = vi.hoisted(() => {
     cardLinkRenders: new Map<string, number>(),
     laneStatusRenders: [] as string[],
     suspendCard: null as Promise<void> | null,
+    suspendLaneStatusRender: null as Promise<void> | null,
     suspendedRenders: 0,
     createSupabaseBrowserClient: vi.fn(),
     refresh,
@@ -31,6 +32,10 @@ vi.mock("@/components/ui/status", async (importOriginal) => {
   return {
     ...actual,
     sessionPhaseStatusValue: (status: Parameters<typeof actual.sessionPhaseStatusValue>[0]) => {
+      if (mocked.suspendLaneStatusRender) {
+        mocked.suspendedRenders += 1;
+        throw mocked.suspendLaneStatusRender;
+      }
       mocked.laneStatusRenders.push(status);
       return actual.sessionPhaseStatusValue(status);
     },
@@ -324,6 +329,7 @@ describe("PipelinePageClient", () => {
     vi.useRealTimers();
     mocked.refresh.mockReset();
     mocked.suspendCard = null;
+    mocked.suspendLaneStatusRender = null;
   });
 
   it("creates its realtime client with server-provided public configuration", async () => {
@@ -1525,24 +1531,45 @@ describe("PipelinePageClient", () => {
   it("defers search filtering while keeping the search input and Clear button immediately responsive", async () => {
     installSupabaseMock();
     render(
-      <PipelinePageClient
-        enableRealtime={false}
-        initialData={initialData(
-          [
-            card(1, PLAN_STAGE_ID, { linearIssueId: "OP-353", title: "Alpha board" }),
-            card(2, PLAN_STAGE_ID, { title: "Beta item" }),
-          ],
-          [card(3, BUILD_STAGE_ID, { title: "Gamma task" })],
-        )}
-      />,
+      <Suspense fallback={<p>Loading board</p>}>
+        <PipelinePageClient
+          enableRealtime={false}
+          initialData={initialData(
+            [
+              card(1, PLAN_STAGE_ID, { linearIssueId: "OP-353", title: "Alpha board" }),
+              card(2, PLAN_STAGE_ID, { title: "Beta item" }),
+            ],
+            [card(3, BUILD_STAGE_ID, { title: "Gamma task" })],
+          )}
+        />
+      </Suspense>,
     );
+
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect(screen.getByText("Alpha board")).toBeTruthy();
+    expect(screen.getByText("Beta item")).toBeTruthy();
+    expect(screen.getByText("Gamma task")).toBeTruthy();
+
+    let releaseSearchRender!: () => void;
+    mocked.suspendLaneStatusRender = new Promise<void>((resolve) => {
+      releaseSearchRender = resolve;
+    });
+    mocked.suspendedRenders = 0;
 
     const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
     await userEvent.type(search, "  OP-353 ");
 
+    expect(mocked.suspendedRenders).toBeGreaterThan(0);
     expect((search as HTMLInputElement).value).toBe("  OP-353 ");
     expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
-    await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(1));
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+
+    await act(async () => {
+      mocked.suspendLaneStatusRender = null;
+      releaseSearchRender();
+    });
+
+    expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByText("Alpha board")).toBeTruthy();
     expect(screen.queryByText("Beta item")).toBeNull();
     expect(screen.queryByText("Gamma task")).toBeNull();
