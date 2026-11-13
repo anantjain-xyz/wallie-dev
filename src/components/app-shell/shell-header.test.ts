@@ -1,7 +1,10 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   CreateSessionDialogLoading,
@@ -11,47 +14,106 @@ import {
   ShellHeader,
 } from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { getWorkspaceNavItems } from "@/lib/routes";
 
 const mocked = vi.hoisted(() => ({
   pathname: "/w/acme-corp",
+  prefetch: vi.fn(),
   replace: vi.fn(),
   searchParams: new URLSearchParams(),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mocked.pathname,
-  useRouter: () => ({ replace: mocked.replace }),
+  useRouter: () => ({ prefetch: mocked.prefetch, replace: mocked.replace }),
   useSearchParams: () => mocked.searchParams,
 }));
 
 const workspace = { id: "workspace-1", name: "Acme Corp", slug: "acme-corp" };
 const navItems = getWorkspaceNavItems(workspace.slug);
 
+function createShellProps(
+  props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {},
+): Omit<Parameters<typeof ShellHeader>[0], "children"> {
+  return {
+    navItems,
+    onboarding: { currentStep: "verify", status: "completed" } as const,
+    viewerAvatarUrl: null,
+    viewerEmail: "owner@example.com",
+    viewerId: "user-1",
+    workspace,
+    workspaceAvatarUrl: null,
+    ...props,
+  };
+}
+
 function renderShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
-  return renderToStaticMarkup(
+  return renderToStaticMarkup(createElement(ShellHeader, createShellProps(props), "Page body"));
+}
+
+function mountShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+  return render(
     createElement(
-      ShellHeader,
-      {
-        navItems,
-        onboarding: { currentStep: "verify", status: "completed" } as const,
-        viewerAvatarUrl: null,
-        viewerEmail: "owner@example.com",
-        viewerId: "user-1",
-        workspace,
-        workspaceAvatarUrl: null,
-        ...props,
-      } satisfies Omit<Parameters<typeof ShellHeader>[0], "children">,
-      "Page body",
+      OverlayProvider,
+      null,
+      createElement(ShellHeader, createShellProps(props), "Page body"),
     ),
   );
 }
 
 describe("ShellHeader", () => {
-  afterEach(() => {
+  let originalMatchMediaDescriptor: PropertyDescriptor | undefined;
+  let originalResizeObserverDescriptor: PropertyDescriptor | undefined;
+
+  beforeAll(() => {
+    originalMatchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+    originalResizeObserverDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "ResizeObserver",
+    );
+
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        addEventListener: vi.fn(),
+        matches: false,
+        media: query,
+        removeEventListener: vi.fn(),
+      })),
+    });
+  });
+
+  afterEach(async () => {
+    cleanup();
+    // Radix FocusScope schedules onCloseAutoFocus in a 0ms timeout on unmount.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     mocked.pathname = "/w/acme-corp";
+    mocked.prefetch.mockClear();
     mocked.replace.mockClear();
     mocked.searchParams = new URLSearchParams();
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+    if (originalMatchMediaDescriptor) {
+      Object.defineProperty(window, "matchMedia", originalMatchMediaDescriptor);
+    } else {
+      Reflect.deleteProperty(window, "matchMedia");
+    }
+    if (originalResizeObserverDescriptor) {
+      Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserverDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "ResizeObserver");
+    }
   });
 
   it("replaces New session with Resume setup while onboarding is incomplete", () => {
@@ -142,6 +204,80 @@ describe("ShellHeader", () => {
     expect(html).toContain('id="main-content"');
     expect(html).toContain("Page body");
     expect(html).not.toContain("overflow-y-auto");
+  });
+
+  it("prefetches desktop navigation links on mouse/pen hover or focus and skips touch pointers", () => {
+    mountShell();
+
+    const sessionsLink = screen.getByRole("link", { name: "Sessions" });
+    expect(sessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
+
+    fireEvent.pointerEnter(sessionsLink, { pointerType: "touch" });
+    expect(mocked.prefetch).not.toHaveBeenCalled();
+
+    fireEvent.pointerEnter(sessionsLink, { pointerType: "mouse" });
+    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+      kind: PrefetchKind.FULL,
+    });
+
+    fireEvent.focus(sessionsLink);
+    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
+
+    const settingsLink = screen.getByRole("link", { name: "Settings" });
+    expect(settingsLink.getAttribute("href")).toBe("/w/acme-corp/settings");
+
+    fireEvent.focus(settingsLink);
+    expect(mocked.prefetch).toHaveBeenCalledTimes(2);
+    expect(mocked.prefetch).toHaveBeenNthCalledWith(2, "/w/acme-corp/settings", {
+      kind: PrefetchKind.FULL,
+    });
+
+    fireEvent.pointerEnter(settingsLink, { pointerType: "pen" });
+    expect(mocked.prefetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("prefetches compact navigation menu links on mouse hover or focus and skips touch pointers", async () => {
+    mountShell();
+
+    const menuTrigger = screen.getByRole("button", { name: "Workspace navigation: Pipeline" });
+    fireEvent.keyDown(menuTrigger, { key: "Enter" });
+
+    const menu = await screen.findByRole("menu", { name: "Workspace pages" });
+    const compactSessionsLink = within(menu).getByRole("menuitem", { name: "Sessions" });
+    expect(compactSessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
+
+    fireEvent.pointerEnter(compactSessionsLink, { pointerType: "touch" });
+    expect(mocked.prefetch).not.toHaveBeenCalled();
+
+    fireEvent.pointerEnter(compactSessionsLink, { pointerType: "mouse" });
+    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+      kind: PrefetchKind.FULL,
+    });
+
+    fireEvent.focus(compactSessionsLink);
+    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefetches the desktop workspace logo link on pen hover or focus and skips touch pointers", () => {
+    mocked.pathname = "/w/acme-corp/sessions";
+    mountShell();
+
+    const logoLink = screen.getByRole("link", { name: "Acme Corp" });
+    expect(logoLink.getAttribute("href")).toBe("/w/acme-corp");
+
+    fireEvent.pointerEnter(logoLink, { pointerType: "touch" });
+    expect(mocked.prefetch).not.toHaveBeenCalled();
+
+    fireEvent.pointerEnter(logoLink, { pointerType: "pen" });
+    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp", {
+      kind: PrefetchKind.FULL,
+    });
+
+    fireEvent.focus(logoLink);
+    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
   });
 });
 
