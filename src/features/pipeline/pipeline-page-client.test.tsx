@@ -17,11 +17,28 @@ const mocked = vi.hoisted(() => {
   const refresh = vi.fn();
   return {
     cardLinkRenders: new Map<string, number>(),
+    laneStatusRenders: [] as string[],
     suspendCard: null as Promise<void> | null,
+    suspendLaneStatusRender: null as Promise<void> | null,
     suspendedRenders: 0,
     createSupabaseBrowserClient: vi.fn(),
     refresh,
     router: { refresh, replace: vi.fn() },
+  };
+});
+
+vi.mock("@/components/ui/status", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui/status")>();
+  return {
+    ...actual,
+    sessionPhaseStatusValue: (status: Parameters<typeof actual.sessionPhaseStatusValue>[0]) => {
+      if (mocked.suspendLaneStatusRender) {
+        mocked.suspendedRenders += 1;
+        throw mocked.suspendLaneStatusRender;
+      }
+      mocked.laneStatusRenders.push(status);
+      return actual.sessionPhaseStatusValue(status);
+    },
   };
 });
 
@@ -267,6 +284,8 @@ describe("pipeline filter helpers", () => {
     expect(cardMatchesPipelineFilters(sample, "adaptive", "all")).toBe(true);
     expect(cardMatchesPipelineFilters(sample, "#12", "all")).toBe(true);
     expect(cardMatchesPipelineFilters(sample, "op-353", "all")).toBe(true);
+    expect(cardMatchesPipelineFilters(sample, "  OP-353 ", "all")).toBe(true);
+    expect(cardMatchesPipelineFilters(sample, "op-353", "all", { normalized: true })).toBe(true);
     expect(cardMatchesPipelineFilters(sample, "missing", "all")).toBe(false);
     expect(cardMatchesPipelineFilters(sample, "", "awaiting_review")).toBe(false);
   });
@@ -304,11 +323,13 @@ describe("PipelinePageClient", () => {
   afterEach(() => {
     cleanup();
     mocked.cardLinkRenders.clear();
+    mocked.laneStatusRenders.length = 0;
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
     mocked.refresh.mockReset();
     mocked.suspendCard = null;
+    mocked.suspendLaneStatusRender = null;
   });
 
   it("creates its realtime client with server-provided public configuration", async () => {
@@ -1414,5 +1435,148 @@ describe("PipelinePageClient", () => {
       ].sort(),
     );
     expect(screen.getAllByRole("article")).toHaveLength(100);
+  });
+
+  it("skips re-rendering unchanged PipelineLane components on tab switch, load more, and unrelated card updates", async () => {
+    const supabase = installSupabaseMock();
+    const pendingLoadMore = deferredResponse();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(pendingLoadMore.promise));
+
+    const planCard = card(1, PLAN_STAGE_ID, {
+      phaseStatus: "awaiting_review",
+      title: "Plan session",
+    });
+    const buildCard = card(2, BUILD_STAGE_ID, {
+      phaseStatus: "in_progress",
+      title: "Build session",
+    });
+    const reviewCard = card(3, REVIEW_STAGE_ID, {
+      phaseStatus: "approved",
+      title: "Review session",
+    });
+
+    const threeLaneData: PipelineDashboardData = {
+      ...initialData([planCard], [buildCard]),
+      lanes: [
+        ...initialData([planCard], [buildCard]).lanes,
+        {
+          cards: [reviewCard],
+          cursor: null,
+          description: "Review the work.",
+          id: REVIEW_STAGE_ID,
+          name: "Review",
+          pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+          position: 3,
+          slug: "review",
+          totalCount: 1,
+        },
+      ],
+    };
+
+    render(<PipelinePageClient initialData={threeLaneData} />);
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+    expect(mocked.laneStatusRenders).toEqual(["awaiting_review", "in_progress", "approved"]);
+
+    mocked.laneStatusRenders.length = 0;
+    mocked.cardLinkRenders.clear();
+
+    // Switching activeLaneKey only re-renders the previously active and newly active lanes.
+    await userEvent.click(screen.getByRole("tab", { name: /Build/ }));
+    expect(mocked.laneStatusRenders).toEqual(["awaiting_review", "in_progress"]);
+    expect(mocked.cardLinkRenders.size).toBe(0);
+
+    mocked.laneStatusRenders.length = 0;
+
+    // Changing loadingLaneKey on Plan only re-renders the Plan lane.
+    fireEvent.click(screen.getByRole("button", { name: "Load more Plan sessions" }));
+    expect(mocked.laneStatusRenders).toEqual(["awaiting_review"]);
+
+    mocked.laneStatusRenders.length = 0;
+    await act(async () =>
+      pendingLoadMore.resolve(
+        new Response(
+          JSON.stringify({
+            lane: {
+              cards: [card(4, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Plan 2" })],
+              cursor: null,
+              id: PLAN_STAGE_ID,
+              pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+              totalCount: 2,
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText("Plan 2")).toBeTruthy());
+    expect(mocked.laneStatusRenders).toEqual(["awaiting_review"]);
+
+    mocked.laneStatusRenders.length = 0;
+
+    // Updating a card in Plan changes board.cardsById, but Build and Review lanes keep their cached visibleCards.
+    act(() => {
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow({
+          ...planCard,
+          title: "Plan session edited",
+          updatedAt: "2026-07-18T08:00:00.000Z",
+        }),
+      });
+    });
+    expect(screen.getByText("Plan session edited")).toBeTruthy();
+    expect(mocked.laneStatusRenders).toEqual(["awaiting_review"]);
+  });
+
+  it("defers search filtering while keeping the search input and Clear button immediately responsive", async () => {
+    installSupabaseMock();
+    render(
+      <Suspense fallback={<p>Loading board</p>}>
+        <PipelinePageClient
+          enableRealtime={false}
+          initialData={initialData(
+            [
+              card(1, PLAN_STAGE_ID, { linearIssueId: "OP-353", title: "Alpha board" }),
+              card(2, PLAN_STAGE_ID, { title: "Beta item" }),
+            ],
+            [card(3, BUILD_STAGE_ID, { title: "Gamma task" })],
+          )}
+        />
+      </Suspense>,
+    );
+
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect(screen.getByText("Alpha board")).toBeTruthy();
+    expect(screen.getByText("Beta item")).toBeTruthy();
+    expect(screen.getByText("Gamma task")).toBeTruthy();
+
+    let releaseSearchRender!: () => void;
+    mocked.suspendLaneStatusRender = new Promise<void>((resolve) => {
+      releaseSearchRender = resolve;
+    });
+    mocked.suspendedRenders = 0;
+
+    const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
+    await userEvent.type(search, "  OP-353 ");
+
+    expect(mocked.suspendedRenders).toBeGreaterThan(0);
+    expect((search as HTMLInputElement).value).toBe("  OP-353 ");
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+
+    await act(async () => {
+      mocked.suspendLaneStatusRender = null;
+      releaseSearchRender();
+    });
+
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("Alpha board")).toBeTruthy();
+    expect(screen.queryByText("Beta item")).toBeNull();
+    expect(screen.queryByText("Gamma task")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(3));
   });
 });
