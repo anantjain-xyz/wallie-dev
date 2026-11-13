@@ -36,10 +36,18 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const user = await getSupabaseUserOrNull(supabase);
 
   if (user) {
+    if (next === "/") {
+      const [, homePath] = await Promise.all([
+        ensureProfileForUser(supabase, user),
+        resolveAuthenticatedHomePath(supabase),
+      ]);
+      redirect(homePath);
+    }
+
     if (!isWorkspaceInvitationPath(next)) {
       await ensureProfileForUser(supabase, user);
     }
-    redirect(next === "/" ? await resolveAuthenticatedHomePath(supabase) : next);
+    redirect(next);
   }
 
   return (
