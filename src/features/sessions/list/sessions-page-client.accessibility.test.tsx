@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { ComponentProps } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
@@ -11,10 +12,25 @@ import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 
 const mocked = vi.hoisted(() => ({
+  destructiveConfirmationDialogRender: vi.fn(),
   push: vi.fn(),
   refresh: vi.fn(),
   replace: vi.fn(),
 }));
+
+vi.mock("@/components/ui/destructive-confirmation-dialog", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/ui/destructive-confirmation-dialog")>();
+  return {
+    ...actual,
+    DestructiveConfirmationDialog: (
+      props: ComponentProps<typeof actual.DestructiveConfirmationDialog>,
+    ) => {
+      mocked.destructiveConfirmationDialogRender(props);
+      return <actual.DestructiveConfirmationDialog {...props} />;
+    },
+  };
+});
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -83,6 +99,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  mocked.destructiveConfirmationDialogRender.mockReset();
   mocked.push.mockReset();
   mocked.refresh.mockReset();
   mocked.replace.mockReset();
@@ -228,7 +245,7 @@ describe("SessionsPage accessibility", () => {
     );
   });
 
-  it("confirms archive via AlertDialog from the keyboard and announces pending state", async () => {
+  it("lazily mounts archive AlertDialog on demand, restores focus on cancel, confirms, and passes axe", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
@@ -242,6 +259,9 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
+    expect(mocked.destructiveConfirmationDialogRender).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
     const trigger = screen.getByRole("button", { name: "Actions for session #339" });
     await user.click(trigger);
     expect(await screen.findByRole("menu", { name: "Actions for session #339" })).toBeVisible();
@@ -249,15 +269,44 @@ describe("SessionsPage accessibility", () => {
     expect(
       screen.getByRole("menuitem", { name: "Archive session" }).querySelector("svg"),
     ).not.toBeNull();
+    expect(mocked.destructiveConfirmationDialogRender).not.toHaveBeenCalled();
 
     await user.keyboard("{End}{Enter}");
     expect(screen.queryByRole("menu", { name: "Actions for session #339" })).toBeNull();
+    expect(mocked.destructiveConfirmationDialogRender).toHaveBeenCalled();
     expect(await screen.findByRole("alertdialog")).toBeVisible();
     expect(screen.getByRole("button", { name: "Archive session" })).toBeVisible();
+
+    const openDialogAxe = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(openDialogAxe.violations).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(mocked.destructiveConfirmationDialogRender).toHaveBeenLastCalledWith(
+      expect.objectContaining({ open: false }),
+    );
+
+    const closedDialogAxe = await axe.run(screen.getByRole("main"), {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(closedDialogAxe.violations).toEqual([]);
+
+    await user.click(trigger);
+    expect(await screen.findByRole("menu", { name: "Actions for session #339" })).toBeVisible();
+    await user.keyboard("{End}{Enter}");
+    expect(await screen.findByRole("alertdialog")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Archive session" }));
     expect(screen.queryByRole("link", { name: /Open session #339/ })).toBeNull();
     expect(screen.getByText("Archiving session #339…", { exact: true })).toBeVisible();
+
+    const pendingArchiveAxe = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(pendingArchiveAxe.violations).toEqual([]);
   });
 
   it("renders ledger columns and keeps only the title as the detail link", () => {

@@ -89,6 +89,7 @@ export function SessionRowIsland({
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const [archiveDialogRequested, setArchiveDialogRequested] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
@@ -553,25 +554,31 @@ export function SessionRowIsland({
                 className="text-danger"
                 onSelect={() => {
                   setArchiveError(null);
-                  if (isArchived) void unarchive();
-                  else setArchiveDialogOpen(true);
+                  if (isArchived) {
+                    void unarchive();
+                  } else {
+                    setArchiveDialogRequested(true);
+                    setArchiveDialogOpen(true);
+                  }
                 }}
               >
                 <ArchiveIcon className="h-3.5 w-3.5" />
                 {isArchived ? "Unarchive" : "Archive"} session
               </DropdownMenuItem>
             </ActionMenu>
-            <DestructiveConfirmationDialog
-              actionLabel="Archive session"
-              description={`Archive session #${session.number}? You can undo this for a few seconds afterward.`}
-              onConfirm={requestArchive}
-              onOpenChange={setArchiveDialogOpen}
-              open={archiveDialogOpen}
-              pending={archivePending === "archive"}
-              pendingLabel="Archiving…"
-              restoreFocusRef={actionsTriggerRef}
-              title={`Archive session #${session.number}?`}
-            />
+            {archiveDialogRequested || archiveDialogOpen || archivePending === "archive" ? (
+              <DestructiveConfirmationDialog
+                actionLabel="Archive session"
+                description={`Archive session #${session.number}? You can undo this for a few seconds afterward.`}
+                onConfirm={requestArchive}
+                onOpenChange={setArchiveDialogOpen}
+                open={archiveDialogOpen}
+                pending={archivePending === "archive"}
+                pendingLabel="Archiving…"
+                restoreFocusRef={actionsTriggerRef}
+                title={`Archive session #${session.number}?`}
+              />
+            ) : null}
           </>
         ) : null}
       </div>
