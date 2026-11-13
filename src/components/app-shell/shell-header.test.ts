@@ -1,3 +1,4 @@
+import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CreateSessionDialogLoading,
   isActiveNavItem,
+  prefetchShellNavHrefOnIntent,
   preloadCreateSessionDialogOnce,
   ShellHeader,
 } from "@/components/app-shell/shell-header";
@@ -148,6 +150,97 @@ describe("shell page title helpers", () => {
     expect(isActiveNavItem("/w/acme-corp", "acme-corp", navItems[0]!)).toBe(true);
     expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[0]!)).toBe(false);
     expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[1]!)).toBe(true);
+  });
+});
+
+describe("prefetchShellNavHrefOnIntent", () => {
+  it("prefetches a different workspace route with PrefetchKind.FULL on first intent", () => {
+    const prefetch = vi.fn();
+    const prefetchedKeys = new Set<string>();
+
+    const triggered = prefetchShellNavHrefOnIntent(
+      { prefetch },
+      prefetchedKeys,
+      "/w/acme-corp",
+      "/w/acme-corp/sessions",
+    );
+
+    expect(triggered).toBe(true);
+    expect(prefetch).toHaveBeenCalledTimes(1);
+    expect(prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+      kind: PrefetchKind.FULL,
+    });
+    expect(prefetchedKeys.has("/w/acme-corp->/w/acme-corp/sessions")).toBe(true);
+  });
+
+  it("deduplicates repeated hover or focus intent for the same pathname and targetHref", () => {
+    const prefetch = vi.fn();
+    const prefetchedKeys = new Set<string>();
+
+    expect(
+      prefetchShellNavHrefOnIntent(
+        { prefetch },
+        prefetchedKeys,
+        "/w/acme-corp",
+        "/w/acme-corp/settings",
+      ),
+    ).toBe(true);
+    expect(
+      prefetchShellNavHrefOnIntent(
+        { prefetch },
+        prefetchedKeys,
+        "/w/acme-corp",
+        "/w/acme-corp/settings",
+      ),
+    ).toBe(false);
+
+    expect(prefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips prefetching when targetHref matches currentPathname", () => {
+    const prefetch = vi.fn();
+    const prefetchedKeys = new Set<string>();
+
+    const triggered = prefetchShellNavHrefOnIntent(
+      { prefetch },
+      prefetchedKeys,
+      "/w/acme-corp",
+      "/w/acme-corp",
+    );
+
+    expect(triggered).toBe(false);
+    expect(prefetch).not.toHaveBeenCalled();
+    expect(prefetchedKeys.size).toBe(0);
+  });
+
+  it("re-prefetches the target route after currentPathname changes", () => {
+    const prefetch = vi.fn();
+    const prefetchedKeys = new Set<string>();
+
+    expect(
+      prefetchShellNavHrefOnIntent(
+        { prefetch },
+        prefetchedKeys,
+        "/w/acme-corp",
+        "/w/acme-corp/sessions",
+      ),
+    ).toBe(true);
+    expect(
+      prefetchShellNavHrefOnIntent(
+        { prefetch },
+        prefetchedKeys,
+        "/w/acme-corp/settings",
+        "/w/acme-corp/sessions",
+      ),
+    ).toBe(true);
+
+    expect(prefetch).toHaveBeenCalledTimes(2);
+    expect(prefetch).toHaveBeenNthCalledWith(1, "/w/acme-corp/sessions", {
+      kind: PrefetchKind.FULL,
+    });
+    expect(prefetch).toHaveBeenNthCalledWith(2, "/w/acme-corp/sessions", {
+      kind: PrefetchKind.FULL,
+    });
   });
 });
 

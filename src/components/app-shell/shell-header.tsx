@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   createContext,
@@ -13,6 +14,7 @@ import {
   useSyncExternalStore,
   type ComponentProps,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -215,6 +217,31 @@ export function isActiveNavItem(pathname: string, workspaceSlug: string, item: W
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
+function isShellNavIntentPointer(pointerType: string) {
+  return pointerType === "" || pointerType === "mouse" || pointerType === "pen";
+}
+
+/** Prefetch a top-level workspace route once per `(currentPathname, targetHref)` pair on user intent. */
+export function prefetchShellNavHrefOnIntent(
+  router: { prefetch?: (href: string, options?: { kind: PrefetchKind }) => void },
+  prefetchedKeys: Set<string>,
+  currentPathname: string,
+  targetHref: string,
+): boolean {
+  if (currentPathname === targetHref) {
+    return false;
+  }
+
+  const key = `${currentPathname}->${targetHref}`;
+  if (prefetchedKeys.has(key)) {
+    return false;
+  }
+
+  prefetchedKeys.add(key);
+  router.prefetch?.(targetHref, { kind: PrefetchKind.FULL });
+  return true;
+}
+
 export function ShellHeader({
   children,
   navItems,
@@ -299,6 +326,7 @@ export function ShellHeader({
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCreateButtonRef = useRef<HTMLButtonElement>(null);
   const createDialogPreloadStartedKey = useRef<string | null>(null);
+  const prefetchedNavKeysRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (shouldResumeSetup && createFromUrl) {
       router.replace(onboardingHref);
@@ -352,6 +380,22 @@ export function ShellHeader({
     }
   }
 
+  function navPrefetchHandlers(targetHref: string) {
+    const triggerPrefetch = () => {
+      prefetchedNavKeysRef.current ??= new Set<string>();
+      prefetchShellNavHrefOnIntent(router, prefetchedNavKeysRef.current, pathname, targetHref);
+    };
+
+    return {
+      onFocus: triggerPrefetch,
+      onPointerEnter: (event: PointerEvent<HTMLAnchorElement>) => {
+        if (isShellNavIntentPointer(event.pointerType)) {
+          triggerPrefetch();
+        }
+      },
+    };
+  }
+
   function renderNavLinks() {
     return navItems.map((item) => {
       const active = isActiveNavItem(pathname, workspace.slug, item);
@@ -369,6 +413,7 @@ export function ShellHeader({
           onClick={(event) => {
             handleNavClick(event, item);
           }}
+          {...navPrefetchHandlers(item.href)}
         >
           {item.label}
         </Link>
@@ -461,6 +506,7 @@ export function ShellHeader({
                             prefetch={!active && pathname === pipelineHref ? true : undefined}
                             aria-current={active ? "page" : undefined}
                             onClick={(event) => handleNavClick(event, item)}
+                            {...navPrefetchHandlers(item.href)}
                           >
                             {item.label}
                             {active ? <CheckIcon className="ml-auto h-3.5 w-3.5" /> : null}
@@ -487,6 +533,7 @@ export function ShellHeader({
                     onClick={(event) => {
                       if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
                     }}
+                    {...navPrefetchHandlers(pipelineHref)}
                     className="flex min-w-0 max-w-48 items-center gap-2 rounded-[6px] py-1 hover:opacity-80"
                   >
                     <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
