@@ -644,75 +644,116 @@ describe("CodexRunner", () => {
     expect(store.markChatGptAuthReconnectRequired).not.toHaveBeenCalled();
   });
 
-  it("marks ChatGPT auth reconnect required for credential failures", async () => {
-    const authJson = JSON.stringify({
-      auth_mode: "chatgpt",
-      tokens: {
-        access_token: "access-token-value-1234567890",
-        refresh_token: "refresh-token-value-1234567890",
-      },
-    });
-    const rewrittenAuthJson = JSON.stringify({
-      auth_mode: "chatgpt",
-      last_refresh: "2026-05-19T00:00:00.000Z",
-      tokens: {
-        access_token: "invalid-refreshed-access-token",
-        refresh_token: "invalid-refreshed-refresh-token",
-      },
-    });
+  it.each(["401 unauthorized\n", "api_key=unknown-key unauthorized\n"])(
+    "marks ChatGPT auth reconnect required before display redaction (%s)",
+    async (stderr) => {
+      const authJson = JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: "access-token-value-1234567890",
+          refresh_token: "refresh-token-value-1234567890",
+        },
+      });
+      const rewrittenAuthJson = JSON.stringify({
+        auth_mode: "chatgpt",
+        last_refresh: "2026-05-19T00:00:00.000Z",
+        tokens: {
+          access_token: "invalid-refreshed-access-token",
+          refresh_token: "invalid-refreshed-refresh-token",
+        },
+      });
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec(
+        (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
+        [],
+      );
+      sandbox.scriptExec(
+        (call) => call.args[1]?.includes("codex 'exec'") ?? false,
+        () => {
+          sandbox.files.set(harnessPath(sandbox, "codex/auth.json"), {
+            data: Buffer.from(rewrittenAuthJson, "utf8"),
+            mode: 0o600,
+          });
+          return [{ data: stderr, stream: "stderr" }];
+        },
+        { exitCode: 1 },
+      );
+      const credential = {
+        authCacheLastRefresh: null,
+        credentialGeneration: "11111111-1111-4111-8111-111111111111",
+        credentialVersion: 7,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        secret: authJson,
+        type: "chatgpt_auth_json" as const,
+        userId: "user-1",
+      };
+      const store = {
+        loadChatGptAuth: vi.fn().mockResolvedValue(credential),
+        markChatGptAuthReconnectRequired: vi.fn(),
+        persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
+      };
+      const runner = new CodexRunner({
+        chatGptAuthStore: store,
+        credential,
+      });
+
+      for await (const _ of runner.start({
+        prompt: "p",
+        runId: "00000000-0000-0000-0000-000000000001",
+        sandbox,
+        sessionId: "s",
+      })) {
+        void _;
+      }
+
+      expect(store.markChatGptAuthReconnectRequired).toHaveBeenCalledWith({
+        previousCredentialGeneration: "11111111-1111-4111-8111-111111111111",
+        previousCredentialVersion: 7,
+        reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
+        userId: "user-1",
+      });
+      expect(store.persistChatGptAuthJson).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([500, 501])(
+    "marks stderr clipping at the 500-character boundary (%i)",
+    async (length) => {
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec("bash", [{ data: "x".repeat(length), stream: "stderr" }], { exitCode: 1 });
+      const runner = new CodexRunner({
+        credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+      });
+      const events = [];
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+        events.push(event);
+      expect(events).toEqual([
+        {
+          type: "error",
+          message: `codex CLI exited with code 1: ${"x".repeat(500)}`,
+          ...(length > 500 ? { captureTruncated: true } : {}),
+        },
+      ]);
+    },
+  );
+
+  it("redacts unknown credential patterns before clipping stderr", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
-      (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
-      [],
-    );
-    sandbox.scriptExec(
-      (call) => call.args[1]?.includes("codex 'exec'") ?? false,
-      () => {
-        sandbox.files.set(harnessPath(sandbox, "codex/auth.json"), {
-          data: Buffer.from(rewrittenAuthJson, "utf8"),
-          mode: 0o600,
-        });
-        return [{ data: "401 unauthorized\n", stream: "stderr" }];
-      },
+      "bash",
+      [{ data: `${"x".repeat(490)} sk-${"a".repeat(60)} ${"y".repeat(100)}`, stream: "stderr" }],
       { exitCode: 1 },
     );
-    const credential = {
-      authCacheLastRefresh: null,
-      credentialGeneration: "11111111-1111-4111-8111-111111111111",
-      credentialVersion: 7,
-      expiresAt: null,
-      reconnectReason: null,
-      reconnectRequired: false,
-      secret: authJson,
-      type: "chatgpt_auth_json" as const,
-      userId: "user-1",
-    };
-    const store = {
-      loadChatGptAuth: vi.fn().mockResolvedValue(credential),
-      markChatGptAuthReconnectRequired: vi.fn(),
-      persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
-    };
     const runner = new CodexRunner({
-      chatGptAuthStore: store,
-      credential,
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
     });
-
-    for await (const _ of runner.start({
-      prompt: "p",
-      runId: "00000000-0000-0000-0000-000000000001",
-      sandbox,
-      sessionId: "s",
-    })) {
-      void _;
-    }
-
-    expect(store.markChatGptAuthReconnectRequired).toHaveBeenCalledWith({
-      previousCredentialGeneration: "11111111-1111-4111-8111-111111111111",
-      previousCredentialVersion: 7,
-      reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
-      userId: "user-1",
-    });
-    expect(store.persistChatGptAuthJson).not.toHaveBeenCalled();
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+      events.push(event);
+    expect(events[0]).toMatchObject({ type: "error", captureTruncated: true });
+    expect(JSON.stringify(events)).not.toContain("sk-");
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {
@@ -787,6 +828,30 @@ describe("CodexRunner", () => {
 });
 
 describe("parseCodexLine", () => {
+  it.each([
+    {
+      type: "command_execution",
+      command: "cat a.ts",
+      aggregated_output: "sensitive result",
+      exit_code: 0,
+    },
+    { type: "future_tool_result", content: "sensitive result" },
+  ])("marks discarded completed $type without retaining raw material", (item) => {
+    expect(parseCodexLine(JSON.stringify({ type: "item.completed", item }))).toEqual({
+      type: "capture_gap",
+      reason: "unsupported_event",
+    });
+  });
+
+  it.each(["thread.started", "turn.started", "item.started", "item.updated"])(
+    "ignores routine %s framing",
+    (type) => {
+      expect(
+        parseCodexLine(JSON.stringify({ type, item: { type: "command_execution", id: "item-1" } })),
+      ).toBeNull();
+    },
+  );
+
   it("parses text events", () => {
     expect(parseCodexLine('{"type":"text","text":"hello"}')).toEqual({
       type: "progress",

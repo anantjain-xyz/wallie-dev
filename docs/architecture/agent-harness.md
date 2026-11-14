@@ -170,6 +170,22 @@ the target repository remains their runtime semantic owner.
   activity, partial output, and completion summaries do not become the artifact.
   Missing final output creates a visible run diagnostic, publishes no artifact,
   and does not automatically retry; progress and partial output remain in Run history.
+- New attempts append version 1 envelopes to `agent_run_events`. Page within
+  the exact run and attempt by increasing `sequence`. `causation_sequence`
+  links related events within that attempt, such as usage to its terminal
+  event. An identical replay keeps the original event and legacy message.
+- Payloads use typed, bounded fields for text, progress, tool calls and
+  results, terminal outcomes, and usage. The worker redacts credentials before
+  clipping and marks shortened fields with `truncated`. The current adapters
+  record a `normalized_source_only` gap and flag discarded provider events where
+  identifiable. Provider-native tool-result capture expands in OP-532 and OP-533.
+- `capture_end` reports whether Wallie drained the normalized stream to a
+  terminal outcome. An interrupted or missing end marker, a missing sequence,
+  a gap, or a truncated event indicates incomplete capture. The end marker
+  describes capture coverage independently of the stage outcome.
+- The append transaction also writes the compatible `agent_run_messages`
+  projection for Run history. Existing runs keep their legacy messages, and
+  post-run diagnostics continue to use that history.
 - Before publication, Wallie commits remaining nonignored working-tree changes
   with repository hooks disabled, then captures an incremental Git bundle from
   the original base to the final head. Dirty submodules and changed gitlinks

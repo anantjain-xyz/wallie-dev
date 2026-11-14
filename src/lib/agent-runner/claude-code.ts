@@ -1,5 +1,6 @@
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { redactRunSensitiveText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import {
   DEFAULT_AGENT_RUNNER_CONFIG,
@@ -187,9 +188,11 @@ export class ClaudeCodeRunner implements AgentRunner {
           summary: "Claude Code reported usage before a nonzero exit",
         };
       }
+      const redactedStderr = redactRunSensitiveText(safety.redact(stderrBuf));
       yield {
         type: "error",
-        message: `claude CLI exited with code ${code}: ${safety.redact(stderrBuf).slice(0, 500)}`,
+        message: `claude CLI exited with code ${code}: ${redactedStderr.slice(0, 500)}`,
+        ...(redactedStderr.length > 500 ? { captureTruncated: true } : {}),
       };
       return;
     }
@@ -213,20 +216,37 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
       if (Array.isArray(content)) {
         const events: AgentEvent[] = [];
         for (const block of content) {
+          if (!isRecord(block)) continue;
           if (block.type === "text" && typeof block.text === "string" && block.text) {
             events.push({ type: "progress", text: block.text });
           }
           if (block.type === "tool_use") {
             events.push({
               type: "tool_use",
-              tool: block.name ?? "unknown",
+              tool: typeof block.name === "string" ? block.name : "unknown",
               input:
                 typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}),
             });
           }
+          if (
+            typeof block.type === "string" &&
+            block.type !== "text" &&
+            block.type !== "tool_use" &&
+            Object.keys(block).some((key) => key !== "type")
+          ) {
+            events.push({ type: "capture_gap", reason: "unsupported_event" });
+          }
         }
         return events;
       }
+    }
+
+    if (obj.type === "user" && Array.isArray(obj.message?.content)) {
+      return obj.message.content.flatMap((block: unknown): AgentEvent[] =>
+        isRecord(block) && block.type === "tool_result"
+          ? [{ type: "capture_gap", reason: "unsupported_event" }]
+          : [],
+      );
     }
 
     if (obj.type === "result") {

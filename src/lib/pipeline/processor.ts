@@ -4,6 +4,7 @@ import {
   VERCEL_SANDBOX_FAILURE_DIAGNOSTIC_MAX_LENGTH,
   sanitizeRunFailureDiagnostic,
 } from "./failure-diagnostic";
+import { redactRunSensitiveText } from "@/lib/agent-runner/redact-sensitive-text";
 import { wakeWorker } from "@/lib/worker/wake";
 import { validateCheckpoint } from "@/lib/validation-evidence/service";
 import { prepareValidationPlan, validationPlanInstructions } from "@/lib/validation-evidence/plan";
@@ -34,7 +35,7 @@ import {
   pinSessionJobGitInput,
   resolveQueuedRunConfig,
 } from "@/lib/wallie/service";
-import type { AgentEvent, AgentRunner, AgentRunUsage } from "@/lib/agent-runner/types";
+import type { AgentRunner, AgentRunUsage } from "@/lib/agent-runner/types";
 import { getClaudeCodeCredentialForSession } from "@/lib/claude-code/tokens";
 import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib/codex/tokens";
 import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
@@ -57,6 +58,7 @@ import {
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { loadJobFeedback } from "./job-feedback";
+import { ExecutionOwnershipLostError, RunEventCapture } from "./run-events";
 
 import {
   captureSourceCheckpoint,
@@ -158,13 +160,6 @@ export async function processPipelineJob(input: {
   });
 }
 
-class ExecutionOwnershipLostError extends Error {
-  constructor() {
-    super("This execution no longer owns its run.");
-    this.name = "ExecutionOwnershipLostError";
-  }
-}
-
 // --- Generic stage runner ---
 //
 // One implementation handles every user-defined stage. Render the stage's
@@ -227,6 +222,8 @@ async function runStage(input: {
   let finalOutput: string | undefined;
   let taskComplete = false;
   let runFailureMessageRecorded = false;
+  let capture: RunEventCapture | undefined;
+  let captureOpen = false;
   const checkpointSensitiveValues = new Set<string>();
   try {
     const gitInputPromise = loadPinnedSessionJobGitInput({
@@ -311,6 +308,12 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
+    const runEvents = new RunEventCapture(admin, {
+      jobId: job.id,
+      runId,
+      attemptCount: job.attempt_count,
+    });
+    capture = runEvents;
     const executionBudget = await loadSessionExecutionBudget(admin, session.id);
     if (executionBudget?.exhaustionCode) {
       throw new ExecutionBudgetExhaustedError(executionBudget.exhaustionCode);
@@ -342,12 +345,7 @@ async function runStage(input: {
 
     // Every supported provider runs its CLI in a repository sandbox. Provision
     // it before resolving personal credentials so setup cannot retain a revoked key.
-    if (runId) {
-      await persistStartupProgress(admin, runId, job.attempt_count, session.workspace_id, {
-        type: "progress",
-        text: "Preparing sandbox and repository…",
-      });
-    }
+    await persistStartupProgress(runEvents, "Preparing sandbox and repository…");
     github = await loadGitHubContext(admin, session.workspace_id, repository.repository);
     throwIfAborted(signal);
     if (!github) {
@@ -478,10 +476,7 @@ async function runStage(input: {
       job.trigger_type === "manual_retry" &&
       (await restoreRetryInput({ ...retryCheckpointContext, signal }));
     if (resumed) {
-      await persistStartupProgress(admin, runId, job.attempt_count, session.workspace_id, {
-        type: "progress",
-        text: "Restored committed source from the timed-out run.",
-      });
+      await persistStartupProgress(runEvents, "Restored committed source from the timed-out run.");
     }
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
@@ -573,12 +568,7 @@ async function runStage(input: {
       },
     );
 
-    if (runId) {
-      await persistStartupProgress(admin, runId, job.attempt_count, session.workspace_id, {
-        type: "progress",
-        text: "Starting agent…",
-      });
-    }
+    await persistStartupProgress(runEvents, "Starting agent…");
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
     throwIfAborted(signal);
@@ -621,13 +611,12 @@ async function runStage(input: {
           })
             .then((saved) => {
               if (!saved || checkpointSignal.aborted) return;
-              return persistStartupProgress(
-                admin,
-                retryCheckpointContext.runId,
-                job.attempt_count,
-                session.workspace_id,
-                { type: "progress", text: "Saved committed source for Retry." },
-              );
+              // This timer can finish after the agent stream closes while
+              // validation is still running. Keep its checkpoint note in Run history.
+              return persistRunMessage(admin, retryCheckpointContext.runId, session.workspace_id, {
+                kind: "progress",
+                messageMd: "Saved committed source for Retry.",
+              });
             })
             .catch(() => {
               if (!checkpointSignal.aborted) {
@@ -638,6 +627,10 @@ async function runStage(input: {
         Math.max(0, checkpointAt - Date.now()),
       );
     }
+    if (installationToken) runEvents.addSensitiveValue(installationToken);
+    await runEvents.markGap("normalized_source_only");
+    captureOpen = true;
+    let sawTerminal = false;
     for await (const event of runner.start({
       // No current CLI exposes a verified max-output-token option. The value is
       // available to future adapters; unsupported providers remain bounded by
@@ -652,6 +645,7 @@ async function runStage(input: {
       },
       onSensitiveValue: (value) => {
         checkpointSensitiveValues.add(value);
+        runEvents.addSensitiveValue(value);
       },
       signal,
       sessionId: session.id,
@@ -676,34 +670,43 @@ async function runStage(input: {
         }
       }
       if (event.type === "completion" && event.usage) {
-        // Persist provider telemetry before any later failure can lose it. The
-        // fenced RPC also performs reactive token/spend exhaustion checks.
-        await recordSessionRunUsage(admin, {
-          attemptCount: job.attempt_count,
-          jobId: job.id,
-          runId,
-          usage: event.usage,
-        });
-      }
-      throwIfAborted(signal);
-      if (runId) {
-        if (!(await persistEvent(admin, runId, job.attempt_count, session.workspace_id, event))) {
-          throw new ExecutionOwnershipLostError();
+        try {
+          await recordSessionRunUsage(admin, {
+            attemptCount: job.attempt_count,
+            jobId: job.id,
+            runId,
+            usage: event.usage,
+          });
+        } catch (error) {
+          // The budget RPC records usage before reporting exhaustion. Capture the
+          // terminal and its usage while this exact attempt still owns the run.
+          if (error instanceof ExecutionBudgetExhaustedError && !signal?.aborted) {
+            try {
+              await runEvents.record(event);
+            } catch {
+              // Retire for budget exhaustion even if history is unavailable.
+            }
+          }
+          throw error;
         }
       }
+      throwIfAborted(signal);
+      await runEvents.record(event);
       if (event.type === "error") {
         runFailureMessageRecorded = true;
       }
       if (event.type === "completion") {
         // Failed terminal results can carry usage before a following provider
         // error. Drain the stream so its blocker and partial output reach history.
+        sawTerminal = true;
         taskComplete = event.taskComplete;
         if (event.usage) usage = event.usage;
         if (event.taskComplete && event.finalOutput?.trim()) {
           finalOutput = event.finalOutput;
         }
       } else if (event.type === "error") {
-        throw new Error(event.message);
+        // The consumer stops here even if the adapter has pending events.
+        throw new Error(redactRunSensitiveText(event.message));
       }
     }
 
@@ -715,22 +718,25 @@ async function runStage(input: {
       runId,
       usage,
     });
-    if (!taskComplete) throw new Error("Agent ended without a successful completion event.");
+    if (!sawTerminal) await runEvents.markGap("missing_terminal");
+    if (!taskComplete) {
+      await runEvents.finish(sawTerminal ? "complete" : "interrupted");
+      captureOpen = false;
+      throw new Error("Agent ended without a successful completion event.");
+    }
 
     const artifactMarkdown = finalOutput;
     if (!artifactMarkdown) {
       const message = `${stage.name} supplied no final deliverable, so no artifact was created. Progress and any partial output remain available in Run history.`;
 
-      if (runId) {
-        await persistEvent(admin, runId, job.attempt_count, session.workspace_id, {
-          type: "error",
-          message,
-        });
-        runFailureMessageRecorded = true;
-      }
-
+      await runEvents.record({ type: "error", message });
+      runFailureMessageRecorded = true;
+      await runEvents.finish("complete");
+      captureOpen = false;
       throw new MissingReviewableOutputError(message);
     }
+    await runEvents.finish("complete");
+    captureOpen = false;
 
     // Once the agent has produced reviewable work, deletion is safe only after
     // the source is durable. A dual-store outage leaves the provider TTL as the
@@ -806,6 +812,20 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
   } catch (error) {
+    if (
+      capture &&
+      captureOpen &&
+      !signal?.aborted &&
+      !(error instanceof Error && error.name === "ExecutionOwnershipLostError")
+    ) {
+      try {
+        const captureDeadline = AbortSignal.timeout(2_000);
+        await capture.markGap("stream_interrupted", captureDeadline);
+        await capture.finish("interrupted", captureDeadline);
+      } catch {
+        // An absent end marker also identifies an incomplete capture.
+      }
+    }
     // The supervising worker owns its own timeout recovery. A session-budget
     // deadline instead retires this exact attempt here, with no automatic repair.
     if (signal?.aborted) {
@@ -1292,58 +1312,13 @@ async function updateRunSandbox(
 }
 
 /** Startup hints are best effort; a logging outage must not prevent execution. */
-async function persistStartupProgress(
-  admin: AdminClient,
-  runId: string,
-  attemptCount: number,
-  workspaceId: string,
-  event: Extract<AgentEvent, { type: "progress" }>,
-) {
+async function persistStartupProgress(capture: RunEventCapture, text: string) {
   try {
-    if (!(await persistEvent(admin, runId, attemptCount, workspaceId, event))) {
-      throw new ExecutionOwnershipLostError();
-    }
+    await capture.record({ type: "progress", text });
   } catch (error) {
     if (error instanceof ExecutionOwnershipLostError) throw error;
     console.warn("Wallie could not record startup progress.");
   }
-}
-
-async function persistEvent(
-  admin: AdminClient,
-  runId: string,
-  attemptCount: number,
-  workspaceId: string,
-  event: AgentEvent,
-): Promise<boolean> {
-  let kind: string;
-  let messageMd: string;
-
-  switch (event.type) {
-    case "progress":
-    case "text":
-      kind = event.type;
-      messageMd = event.text;
-      break;
-    case "tool_use":
-      kind = "tool_use";
-      messageMd = `**Tool:** ${event.tool}\n\n\`\`\`\n${event.input}\n\`\`\``;
-      break;
-    case "completion":
-      if (!event.finalOutput?.trim() && isGenericRunnerCompletionSummary(event.summary)) {
-        return touchRunActivity(admin, runId, attemptCount);
-      }
-      kind = "completion";
-      messageMd = event.finalOutput?.trim() ? event.finalOutput : event.summary;
-      break;
-    case "error":
-      kind = "error";
-      messageMd = `**Error:** ${event.message}`;
-      break;
-  }
-
-  await persistRunMessage(admin, runId, workspaceId, { kind, messageMd });
-  return touchRunActivity(admin, runId, attemptCount);
 }
 
 /** Run history remains append-only after publication and never changes ownership. */
@@ -1397,10 +1372,6 @@ async function persistRunFailureDiagnostic(
       runId: input.runId,
     });
   }
-}
-
-function isGenericRunnerCompletionSummary(summary: string) {
-  return summary.trim().toLowerCase() === "codex session completed";
 }
 
 async function touchRunActivity(

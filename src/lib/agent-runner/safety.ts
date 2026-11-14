@@ -95,6 +95,8 @@ export class AgentOutputSafety {
     switch (event.type) {
       case "tool_use":
         return { ...event, tool: this.redact(event.tool), input: this.redact(event.input) };
+      case "tool_result":
+        return { ...event, tool: this.redact(event.tool), output: this.redact(event.output) };
       case "completion":
         return {
           ...event,

@@ -388,6 +388,7 @@ function buildAdminMock(opts: MockOptions) {
   const legacyMutationCalls: string[] = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
   const insertedMessages: Array<Record<string, unknown>> = [];
+  const capturedEvents: Array<Record<string, unknown>> = [];
   const updatedJobs: Array<Record<string, unknown>> = [];
   const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
@@ -829,6 +830,36 @@ function buildAdminMock(opts: MockOptions) {
       updatedSessions.push({ phase_status: "in_progress" });
       return { data: run.id, error: null };
     }
+    if (fn === "append_agent_run_event") {
+      const eventRun = runRows.find(
+        (row) =>
+          row.id === payload.p_run_id &&
+          row.agent_job_id === payload.p_job_id &&
+          row.attempt_count === payload.p_attempt_count &&
+          row.status === "running",
+      );
+      if (!eventRun || stale) return { data: false, error: null };
+      if (typeof payload.p_legacy_message_md === "string") {
+        const body = payload.p_payload as { status?: string };
+        const kind =
+          payload.p_kind === "tool_call"
+            ? "tool_use"
+            : payload.p_kind === "terminal"
+              ? body.status === "failed"
+                ? "error"
+                : "completion"
+              : payload.p_kind;
+        const result = await agentRunMessagesTable.insert({
+          agent_run_id: eventRun.id,
+          workspace_id: eventRun.workspace_id,
+          kind,
+          message_md: payload.p_legacy_message_md,
+        });
+        if (result.error) return { data: null, error: result.error };
+      }
+      capturedEvents.push(payload);
+      return { data: true, error: null };
+    }
     if (fn === "record_session_run_usage") {
       if (opts.usageError) return { data: null, error: opts.usageError };
       const usageRun = runRows.find(
@@ -921,6 +952,7 @@ function buildAdminMock(opts: MockOptions) {
     insertedArtifacts,
     legacyMutationCalls,
     insertedMessages,
+    capturedEvents,
     insertedRuns,
     insertedFeedback,
     updatedJobs,
@@ -1715,7 +1747,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toEqual([]);
     expect(insertedMessages).toHaveLength(messageCount);
     expect(replacement.status).toBe("running");
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+    expect(
+      rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
+    ).toEqual([
       "start_session_job_attempt",
       "get_session_execution_budget",
       "pin_session_job_git_input",
@@ -1840,6 +1874,41 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
+  it("keeps a late retry-checkpoint note outside the closed event stream", async () => {
+    vi.useFakeTimers();
+    try {
+      const { admin, capturedEvents, insertedMessages } = buildAdminMock({
+        session: baseSession(),
+      });
+      const validating = Promise.withResolvers<void>();
+      const checkpoint = Promise.withResolvers<void>();
+      const captureSource = mocked.captureSourceCheckpoint.getMockImplementation();
+      mocked.captureSourceCheckpoint.mockImplementationOnce(async (...args) => {
+        validating.resolve();
+        await checkpoint.promise;
+        return captureSource!(...args);
+      });
+      const pending = processPipelineJob({
+        admin,
+        job: baseJob(),
+        deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      await validating.promise;
+      expect(capturedEvents.at(-1)).toMatchObject({ p_kind: "capture_end" });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(insertedMessages).toContainEqual(
+        expect.objectContaining({
+          message_md: "Saved committed source for Retry.",
+        }),
+      );
+      expect(capturedEvents.at(-1)).toMatchObject({ p_kind: "capture_end" });
+      checkpoint.resolve();
+      expect((await pending).result).toBe("success");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores manual retry source before starting the agent and publishes from the accepted base", async () => {
     const pinnedSha = "b".repeat(40);
     const { admin, insertedMessages } = buildAdminMock({
@@ -1935,7 +2004,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
     expect(insertedArtifacts).toEqual([]);
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+    expect(
+      rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
+    ).toEqual([
       "start_session_job_attempt",
       "get_session_execution_budget",
       "pin_session_job_git_input",
@@ -2112,10 +2183,9 @@ describe("processPipelineJob (generic stage runner)", () => {
       }
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
-      "start_session_job_attempt",
-      "get_session_execution_budget",
-    ]);
+    expect(
+      rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
+    ).toEqual(["start_session_job_attempt", "get_session_execution_budget"]);
     expect(insertedMessages.some((message) => message.kind === "error")).toBe(false);
 
     // updateRunSandbox matched zero rows (run already canceled), so the
@@ -2294,6 +2364,89 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect(updatedJobs.at(-1)).toMatchObject({ status: "error" });
     },
   );
+
+  it("captures ordered, redacted events and leaves the legacy history readable", async () => {
+    const activeSecret = "fixture-private-credential";
+    const unknownSecret = "ghp_abcdefghijklmnopqrstuvwxyz012345";
+    const preview = "🧪".repeat(4_000);
+    mocked.createAgentRunner.mockReturnValueOnce({
+      ...makeRunner([]),
+      async *start({ onSensitiveValue }: AgentRunnerStartInput) {
+        onSensitiveValue?.(activeSecret);
+        yield { type: "text", text: `Check ${activeSecret} ${unknownSecret}` };
+        yield { type: "tool_use", tool: "test", input: preview };
+        yield { type: "capture_gap", reason: "unsupported_event" };
+        yield { type: "tool_result", tool: "test", output: activeSecret, status: "success" };
+        yield {
+          type: "completion",
+          taskComplete: true,
+          summary: "Codex session completed",
+          finalOutput: "Build report",
+          usage: { inputTokens: 13, outputTokens: 4 },
+        };
+      },
+    });
+    const { admin, capturedEvents, insertedMessages } = buildAdminMock({ session: baseSession() });
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(capturedEvents.map((event) => event.p_kind)).toEqual([
+      "progress",
+      "progress",
+      "capture_gap",
+      "text",
+      "tool_call",
+      "capture_gap",
+      "tool_result",
+      "terminal",
+      "usage",
+      "capture_end",
+    ]);
+    expect(capturedEvents).toMatchObject(
+      capturedEvents.map((_, index) => ({
+        p_job_id: "job-1",
+        p_run_id: "run-1",
+        p_attempt_count: 1,
+        p_sequence: index + 1,
+      })),
+    );
+    expect(capturedEvents[2]).toMatchObject({ p_payload: { reason: "normalized_source_only" } });
+    expect(capturedEvents[3]).toMatchObject({
+      p_payload: { text: "Check [REDACTED] [redacted]" },
+      p_legacy_message_md: "Check [REDACTED] [redacted]",
+    });
+    expect(capturedEvents[4]).toMatchObject({
+      p_truncated: true,
+      p_payload: { tool: "test", input: "🧪".repeat(1_874) },
+    });
+    expect(capturedEvents[5]).toMatchObject({ p_payload: { reason: "unsupported_event" } });
+    expect(capturedEvents[6]).toMatchObject({
+      p_payload: { tool: "test", output: "[REDACTED]", status: "success" },
+    });
+    expect(capturedEvents[8]).toMatchObject({
+      p_causation_sequence: 8,
+      p_payload: { inputTokens: 13, outputTokens: 4, provenance: "measured" },
+    });
+    expect(capturedEvents[9]).toMatchObject({ p_payload: { status: "complete" } });
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_use",
+        message_md: expect.stringContaining(preview),
+      }),
+    );
+    expect(JSON.stringify(capturedEvents)).not.toContain(activeSecret);
+    expect(JSON.stringify(capturedEvents)).not.toContain(unknownSecret);
+  });
+
+  it("marks a stream that ends without a terminal event", async () => {
+    mocked.createAgentRunner.mockReturnValueOnce(makeRunner([{ type: "text", text: "Partial" }]));
+    const { admin, capturedEvents } = buildAdminMock({ session: baseSession() });
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(capturedEvents.slice(-2)).toMatchObject([
+      { p_kind: "capture_gap", p_payload: { reason: "missing_terminal" } },
+      { p_kind: "capture_end", p_payload: { status: "interrupted" } },
+    ]);
+  });
 
   it("retains provider blockers and usage after an unsuccessful terminal result", async () => {
     const blocker = "Provider stopped: publication credentials unavailable.";
@@ -2532,7 +2685,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     for (const [name, args] of rpc.mock.calls) {
       expect(name).toMatch(
-        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$|^get_session_execution_budget$|^record_session_run_usage$/,
+        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$|^get_session_execution_budget$|^record_session_run_usage$|^append_agent_run_event$/,
       );
       if (name === "get_session_execution_budget") {
         expect(args).toEqual({ p_session_id: "sess-1" });
@@ -2600,7 +2753,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
     expect(sandbox.stop).toHaveBeenCalledOnce();
     expect(insertedArtifacts).toEqual([]);
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+    expect(
+      rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
+    ).toEqual([
       "start_session_job_attempt",
       "get_session_execution_budget",
       "pin_session_job_git_input",

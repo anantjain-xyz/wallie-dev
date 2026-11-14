@@ -3,6 +3,7 @@ import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { redactRunSensitiveText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CURSOR_MODEL } from "./types";
 
@@ -112,12 +113,16 @@ export class CursorRunner implements AgentRunner {
       if (completion?.finalOutput?.trim()) {
         yield { type: "progress", text: completion.finalOutput };
       }
-      const redactedStderr = redactSecrets(stderr.trim(), secrets);
+      const redactedStderr = redactRunSensitiveText(safety.redact(stderr.trim()));
       const reason = `Cursor CLI exited with code ${code}: ${redactedStderr.slice(0, 500)}`;
       if (isCursorAuthenticationError(stderr)) {
         await this.options.onAuthenticationFailure?.(reason, credential);
       }
-      yield { message: reason, type: "error" };
+      yield {
+        message: reason,
+        type: "error",
+        ...(redactedStderr.length > 500 ? { captureTruncated: true } : {}),
+      };
       return;
     }
     if (hadError) return;
@@ -136,7 +141,10 @@ export function parseCursorStreamJsonLine(
   const trimmed = line.trim();
   if (!trimmed) return { event: null };
   try {
-    const value = JSON.parse(trimmed) as Record<string, unknown>;
+    const value: unknown = JSON.parse(trimmed);
+    if (!isRecord(value)) {
+      return { event: { type: "capture_gap", reason: "unsupported_event" } };
+    }
     const sessionId = typeof value.session_id === "string" ? value.session_id : undefined;
     if (value.type === "assistant") {
       const text = extractText(value.message ?? value.text);
@@ -177,6 +185,9 @@ export function parseCursorStreamJsonLine(
     }
     return { event: null, sessionId };
   } catch {
+    if (trimmed.startsWith("{") || /^\[\s*(?:[{"\d-]|true\b|false\b|null\b|\]|$)/.test(trimmed)) {
+      return { event: { type: "capture_gap", reason: "unsupported_event" } };
+    }
     return { event: { text: redactSecrets(trimmed, secrets), type: "progress" } };
   }
 }
@@ -217,7 +228,7 @@ function parseCursorToolCallEvent(
     : undefined;
 
   return {
-    input: serializeToolInput(args, completed ? result : undefined, secrets),
+    ...serializeToolInput(args, completed ? result : undefined, secrets),
     tool,
     type: "tool_use",
   };
@@ -253,49 +264,76 @@ function parseFunctionArguments(value: unknown): unknown {
   return value;
 }
 
+type ToolCapture = { truncated: boolean };
+
 function serializeToolInput(
   args: unknown,
   result: unknown,
   secrets: Array<string | undefined>,
-): string {
-  const compactArgs = compactToolValue(args, secrets);
+): Pick<Extract<AgentEvent, { type: "tool_use" }>, "input" | "captureTruncated"> {
+  const capture = { truncated: false };
+  const compactArgs = compactToolValue(args, secrets, capture);
   const payload =
     result === undefined
       ? compactArgs
       : isRecord(compactArgs)
-        ? { ...compactArgs, result: compactToolResult(result, secrets) }
-        : { args: compactArgs, result: compactToolResult(result, secrets) };
-  const json = redactSecrets(JSON.stringify(payload ?? {}), secrets);
-  if (json.length <= MAX_TOOL_INPUT_CHARS) return json;
-  return `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`;
+        ? { ...compactArgs, result: compactToolResult(result, secrets, capture) }
+        : { args: compactArgs, result: compactToolResult(result, secrets, capture) };
+  const json = redactRunSensitiveText(redactSecrets(JSON.stringify(payload ?? {}), secrets));
+  if (json.length > MAX_TOOL_INPUT_CHARS) capture.truncated = true;
+  return {
+    input:
+      json.length <= MAX_TOOL_INPUT_CHARS
+        ? json
+        : `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`,
+    ...(capture.truncated ? { captureTruncated: true } : {}),
+  };
 }
 
-function compactToolResult(result: unknown, secrets: Array<string | undefined>): unknown {
-  if (!isRecord(result)) return compactToolValue(result, secrets);
-  if (isRecord(result.success)) return compactToolValue(result.success, secrets);
-  if (isRecord(result.error)) return { error: compactToolValue(result.error, secrets) };
-  if (isRecord(result.rejected)) return { rejected: compactToolValue(result.rejected, secrets) };
-  return compactToolValue(result, secrets);
+function compactToolResult(
+  result: unknown,
+  secrets: Array<string | undefined>,
+  capture: ToolCapture,
+): unknown {
+  if (!isRecord(result)) return compactToolValue(result, secrets, capture);
+  if (isRecord(result.success)) return compactToolValue(result.success, secrets, capture);
+  if (isRecord(result.error)) return { error: compactToolValue(result.error, secrets, capture) };
+  if (isRecord(result.rejected)) {
+    return { rejected: compactToolValue(result.rejected, secrets, capture) };
+  }
+  return compactToolValue(result, secrets, capture);
 }
 
-function compactToolValue(value: unknown, secrets: Array<string | undefined>, depth = 0): unknown {
-  if (typeof value === "string") return truncateToolText(redactSecrets(value, secrets));
+function compactToolValue(
+  value: unknown,
+  secrets: Array<string | undefined>,
+  capture: ToolCapture,
+  depth = 0,
+): unknown {
+  if (typeof value === "string") {
+    return truncateToolText(redactRunSensitiveText(redactSecrets(value, secrets)), capture);
+  }
   if (Array.isArray(value)) {
     if (depth > 4) return value;
-    return value.slice(0, 20).map((item) => compactToolValue(item, secrets, depth + 1));
+    if (value.length > 20) capture.truncated = true;
+    return value.slice(0, 20).map((item) => compactToolValue(item, secrets, capture, depth + 1));
   }
   if (!isRecord(value) || depth > 4) return value;
 
   const compacted: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (BULKY_TOOL_FIELDS.has(key)) continue;
-    compacted[key] = compactToolValue(nested, secrets, depth + 1);
+    if (BULKY_TOOL_FIELDS.has(key)) {
+      capture.truncated = true;
+      continue;
+    }
+    compacted[key] = compactToolValue(nested, secrets, capture, depth + 1);
   }
   return compacted;
 }
 
-function truncateToolText(value: string): string {
+function truncateToolText(value: string, capture: ToolCapture): string {
   if (value.length <= MAX_TOOL_TEXT_CHARS) return value;
+  capture.truncated = true;
   return `${value.slice(0, MAX_TOOL_TEXT_CHARS)}…`;
 }
 
