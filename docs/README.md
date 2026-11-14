@@ -5,6 +5,18 @@ conventions, then use this page to find the owner of the part of Wallie you are
 changing. Read the narrowest relevant document before following links into the
 implementation.
 
+## Full factory implementation plan
+
+- [Implementation plan](plans/FACTORY-IMPLEMENTATION-PLAN.md): all 100 capabilities,
+  current design continuity, reusable owners, dependencies, incremental milestones,
+  migration strategy, and release gates.
+- [Capability matrix](plans/FACTORY-CAPABILITY-MATRIX.md): one implementation and
+  completion proof for every capability, with recording timestamps.
+- [Machine-readable register](plans/factory-capabilities.json): feature and milestone
+  dependencies for future work tracking. All entries currently describe planned work.
+- [Linear delivery index](https://linear.app/optimism-llc/document/factory-delivery-map-206-prs-100-capabilities-9853c51dac5c): 17 milestones, 206 one-PR issues and 283 native blocking relationships.
+- [Local Linear map](plans/linear-delivery-map.json): stable issue links, capability coverage and the imported dependency graph.
+
 ## Task map
 
 | When you are changing…                                                                | Read                                                          | Canonical implementation owners                                                  | Prove it with                                              |
