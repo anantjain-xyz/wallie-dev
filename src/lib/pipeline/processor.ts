@@ -628,7 +628,7 @@ async function runStage(input: {
       );
     }
     if (installationToken) runEvents.addSensitiveValue(installationToken);
-    await runEvents.markGap("normalized_source_only");
+    await runEvents.start(runner.provider);
     captureOpen = true;
     let sawTerminal = false;
     for await (const event of runner.start({
@@ -650,7 +650,10 @@ async function runStage(input: {
       signal,
       sessionId: session.id,
     })) {
-      if (event.type === "completion" && event.taskComplete && !retainSource) {
+      const sourceRecoveryRequired =
+        (event.type === "completion" && event.taskComplete) ||
+        (event.type === "usage" && event.sourceRecoveryRequired);
+      if (sourceRecoveryRequired && !retainSource) {
         // Protect the only source copy synchronously, before usage persistence
         // or any other completion bookkeeping can fail or wait past the deadline.
         retainSource = true;
@@ -669,17 +672,19 @@ async function runStage(input: {
           throw new ExecutionOwnershipLostError();
         }
       }
-      if (event.type === "completion" && event.usage) {
+      const eventUsage =
+        event.type === "completion" || event.type === "usage" ? event.usage : undefined;
+      if (eventUsage) {
         try {
           await recordSessionRunUsage(admin, {
             attemptCount: job.attempt_count,
             jobId: job.id,
             runId,
-            usage: event.usage,
+            usage: eventUsage,
           });
         } catch (error) {
-          // The budget RPC records usage before reporting exhaustion. Capture the
-          // terminal and its usage while this exact attempt still owns the run.
+          // The budget RPC records usage before reporting exhaustion. Capture it
+          // while this exact attempt still owns the run.
           if (error instanceof ExecutionBudgetExhaustedError && !signal?.aborted) {
             try {
               await runEvents.record(event);
@@ -692,6 +697,7 @@ async function runStage(input: {
       }
       throwIfAborted(signal);
       await runEvents.record(event);
+      if (eventUsage) usage = eventUsage;
       if (event.type === "error") {
         runFailureMessageRecorded = true;
       }
@@ -700,7 +706,6 @@ async function runStage(input: {
         // error. Drain the stream so its blocker and partial output reach history.
         sawTerminal = true;
         taskComplete = event.taskComplete;
-        if (event.usage) usage = event.usage;
         if (event.taskComplete && event.finalOutput?.trim()) {
           finalOutput = event.finalOutput;
         }

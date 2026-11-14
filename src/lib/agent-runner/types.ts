@@ -22,6 +22,8 @@ export interface AgentEventToolUse {
   type: "tool_use";
   tool: string;
   input: string;
+  /** In-memory correlation only. Persist the resulting causal sequence. */
+  callId?: string;
   captureTruncated?: true;
 }
 
@@ -30,6 +32,8 @@ export interface AgentEventToolResult {
   tool: string;
   output: string;
   status: "success" | "error";
+  exitCode?: number;
+  callId?: string;
   captureTruncated?: true;
 }
 
@@ -64,14 +68,17 @@ export interface AgentEventError {
   captureTruncated?: true;
 }
 
+export type AgentCaptureGap = "unsupported_event" | "missing_tool_call" | "missing_tool_result";
+
 export type AgentEvent =
   | AgentEventText
   | { type: "progress"; text: string }
   | AgentEventToolUse
   | AgentEventToolResult
+  | { type: "usage"; usage: AgentRunUsage; sourceRecoveryRequired?: true }
   | AgentEventCompletion
   | AgentEventError
-  | { type: "capture_gap"; reason: "unsupported_event" };
+  | { type: "capture_gap"; reason: AgentCaptureGap; callId?: string };
 
 // ---------------------------------------------------------------------------
 // Agent Runner Interface

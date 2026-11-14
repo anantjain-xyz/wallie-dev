@@ -1,7 +1,14 @@
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
-import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import type {
+  AgentEvent,
+  AgentEventToolResult,
+  AgentEventToolUse,
+  AgentRunner,
+  AgentRunnerStartInput,
+} from "./types";
 import { redactRunSensitiveText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { ToolEventTracker } from "./tool-event-tracker";
 import {
   DEFAULT_AGENT_RUNNER_CONFIG,
   DEFAULT_CLAUDE_CODE_EFFORT,
@@ -121,8 +128,9 @@ export class ClaudeCodeRunner implements AgentRunner {
     let completion: Extract<AgentEvent, { type: "completion" }> | undefined;
     let hadError = false;
     let bufferedUsageForwarded = false;
+    const tools = new ClaudeToolCapture();
     function* eventsForLine(line: string): Iterable<AgentEvent> {
-      for (const event of parseStreamJsonLine(line)) {
+      for (const event of parseStreamJsonLine(line, tools)) {
         // Success is provisional until the process also exits successfully.
         if (event.type === "completion" && event.taskComplete) {
           completion = event;
@@ -143,6 +151,7 @@ export class ClaudeCodeRunner implements AgentRunner {
               };
             }
             completion = undefined;
+            yield* tools.gaps();
           }
           yield event;
         }
@@ -176,6 +185,7 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     const code = await proc.exitCode;
     input.signal?.throwIfAborted();
+    yield* tools.gaps();
     if (code !== 0) {
       if (completion?.finalOutput?.trim()) {
         yield { type: "progress", text: completion.finalOutput };
@@ -202,17 +212,82 @@ export class ClaudeCodeRunner implements AgentRunner {
   }
 }
 
+class ClaudeToolCapture {
+  private readonly tracker = new ToolEventTracker();
+  private readonly partialCalls = new Set<string>();
+  private reportedGaps = false;
+
+  partial(event: Record<string, unknown>): void {
+    const block = isRecord(event.content_block) ? event.content_block : undefined;
+    if (event.type === "content_block_start" && block?.type === "tool_use") {
+      const id = callIdentity(block.id);
+      if (id) this.partialCalls.add(id);
+    }
+  }
+
+  start(event: AgentEventToolUse): AgentEvent[] {
+    if (event.callId) this.partialCalls.delete(event.callId);
+    return this.tracker.start(event);
+  }
+
+  finish(event: AgentEventToolResult): AgentEvent[] {
+    return this.tracker.finish(event);
+  }
+
+  gaps(): AgentEvent[] {
+    if (this.reportedGaps) return [];
+    this.reportedGaps = true;
+    return [
+      ...Array.from(
+        this.partialCalls,
+        (callId): AgentEvent => ({
+          type: "capture_gap",
+          reason: "unsupported_event",
+          callId,
+        }),
+      ),
+      ...this.tracker.gaps(),
+    ];
+  }
+}
+
+const CLAUDE_STREAM_FRAMING = new Set([
+  "message_start",
+  "message_delta",
+  "message_stop",
+  "content_block_start",
+  "content_block_delta",
+  "content_block_stop",
+  "ping",
+]);
+
 /**
  * Parse a single JSON line from Claude Code's stream-json output format.
  * Preserve every content block in order. A result is successful only when the
  * CLI's terminal subtype says so; text alone is not a completed task.
  */
-export function parseStreamJsonLine(line: string): AgentEvent[] {
+export function parseStreamJsonLine(line: string, tools?: ClaudeToolCapture): AgentEvent[] {
   try {
-    const obj = JSON.parse(line);
+    const obj: unknown = JSON.parse(line);
+    if (!isRecord(obj)) return [{ type: "capture_gap", reason: "unsupported_event" }];
+    const message = isRecord(obj.message) ? obj.message : undefined;
 
-    if (obj.type === "assistant" && obj.message?.content) {
-      const content = obj.message.content;
+    if (obj.type === "stream_event") {
+      // The SDK repeats each finished block as an assistant message before its
+      // content_block_stop. Use that authoritative block, not partial tool JSON.
+      if (
+        !isRecord(obj.event) ||
+        typeof obj.event.type !== "string" ||
+        !CLAUDE_STREAM_FRAMING.has(obj.event.type)
+      ) {
+        return [{ type: "capture_gap", reason: "unsupported_event" }];
+      }
+      tools?.partial(obj.event);
+      return [];
+    }
+
+    if (obj.type === "assistant" && message?.content) {
+      const content = message.content;
       if (Array.isArray(content)) {
         const events: AgentEvent[] = [];
         for (const block of content) {
@@ -221,12 +296,15 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
             events.push({ type: "progress", text: block.text });
           }
           if (block.type === "tool_use") {
-            events.push({
+            const callId = callIdentity(block.id);
+            const event: AgentEventToolUse = {
               type: "tool_use",
               tool: typeof block.name === "string" ? block.name : "unknown",
               input:
                 typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}),
-            });
+              ...(callId ? { callId } : {}),
+            };
+            events.push(...(tools ? tools.start(event) : [event]));
           }
           if (
             typeof block.type === "string" &&
@@ -241,12 +319,32 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
       }
     }
 
-    if (obj.type === "user" && Array.isArray(obj.message?.content)) {
-      return obj.message.content.flatMap((block: unknown): AgentEvent[] =>
-        isRecord(block) && block.type === "tool_result"
-          ? [{ type: "capture_gap", reason: "unsupported_event" }]
-          : [],
-      );
+    if (obj.type === "user" && Array.isArray(message?.content)) {
+      return message.content.flatMap((block: unknown): AgentEvent[] => {
+        if (!isRecord(block) || block.type !== "tool_result") return [];
+        if (block.is_error !== undefined && typeof block.is_error !== "boolean") {
+          return [{ type: "capture_gap", reason: "unsupported_event" }];
+        }
+        const content = toolResultText(block.content);
+        const callId = callIdentity(block.tool_use_id);
+        const result: AgentEventToolResult = {
+          type: "tool_result",
+          tool: "unknown",
+          output: content.text,
+          status: block.is_error === true ? "error" : "success",
+          ...(callId ? { callId } : {}),
+          ...(content.unsupported ? { captureTruncated: true } : {}),
+        };
+        const events = tools ? tools.finish(result) : [result];
+        if (content.unsupported && events.length) {
+          events.unshift({
+            type: "capture_gap",
+            reason: "unsupported_event",
+            ...(callId ? { callId } : {}),
+          });
+        }
+        return events;
+      });
     }
 
     if (obj.type === "result") {
@@ -287,17 +385,53 @@ export function parseStreamJsonLine(line: string): AgentEvent[] {
       ];
     }
 
-    if (obj.type === "content_block_delta" && typeof obj.delta?.text === "string") {
+    if (
+      obj.type === "content_block_delta" &&
+      isRecord(obj.delta) &&
+      typeof obj.delta.text === "string"
+    ) {
       return [{ type: "progress", text: obj.delta.text }];
     }
 
-    return [];
+    if (
+      obj.type === "system" ||
+      (typeof obj.type === "string" && CLAUDE_STREAM_FRAMING.has(obj.type))
+    ) {
+      tools?.partial(obj);
+      return [];
+    }
+    return Object.keys(obj).some((key) => key !== "type")
+      ? [{ type: "capture_gap", reason: "unsupported_event" }]
+      : [];
   } catch {
+    if (/^[\[{]/u.test(line.trim())) {
+      return [{ type: "capture_gap", reason: "unsupported_event" }];
+    }
     if (line.length > 0) {
       return [{ type: "progress", text: line }];
     }
     return [];
   }
+}
+
+function callIdentity(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function toolResultText(content: unknown): { text: string; unsupported: boolean } {
+  if (content === undefined) return { text: "", unsupported: false };
+  if (typeof content === "string") return { text: content, unsupported: false };
+  if (!Array.isArray(content)) return { text: "", unsupported: true };
+  const text: string[] = [];
+  let unsupported = false;
+  for (const block of content) {
+    if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+      text.push(block.text);
+    } else {
+      unsupported = true;
+    }
+  }
+  return { text: text.join("\n"), unsupported };
 }
 
 function parseClaudeResultUsage(result: Record<string, unknown>) {

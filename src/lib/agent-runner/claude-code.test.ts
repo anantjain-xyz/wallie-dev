@@ -4,8 +4,27 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
 import { ClaudeCodeRunner, parseStreamJsonLine } from "./claude-code";
+import type { AgentEvent } from "./types";
 
 const anthropicCredential = { secret: "sk-ant-test" };
+
+async function runClaudeToolRecords(records: unknown[]): Promise<AgentEvent[]> {
+  const sandbox = new FakeSandbox();
+  const stream = records.map((record) => JSON.stringify(record)).join("\n");
+  const midpoint = Math.floor(stream.length / 2);
+  sandbox.scriptExec("bash", [
+    { stream: "stdout", data: stream.slice(0, midpoint) },
+    { stream: "stdout", data: stream.slice(midpoint) },
+  ]);
+  const events: AgentEvent[] = [];
+  for await (const event of new ClaudeCodeRunner({ credential: anthropicCredential }).start({
+    sessionId: "tool-capture",
+    sandbox,
+    prompt: "Inspect the fixture files",
+  }))
+    events.push(event);
+  return events;
+}
 
 describe("ClaudeCodeRunner", () => {
   it("has the correct provider name", () => {
@@ -411,14 +430,141 @@ describe("ClaudeCodeRunner", () => {
 });
 
 describe("parseStreamJsonLine", () => {
-  it("marks a discarded user tool result without retaining raw material", () => {
+  it("reads a user tool result without copying provider metadata", () => {
     expect(
       parseStreamJsonLine(
         JSON.stringify({
           type: "user",
           message: {
             content: [
-              { type: "tool_result", tool_use_id: "secret-id", content: "sensitive output" },
+              {
+                type: "tool_result",
+                tool_use_id: "call-1",
+                content: "file contents",
+                metadata: "discard me",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "tool_result",
+        callId: "call-1",
+        tool: "unknown",
+        output: "file contents",
+        status: "success",
+      },
+    ]);
+  });
+
+  it.each(['{"type":"user","private":"fixture-secret"', '[{"private":"fixture-secret"}'])(
+    "marks incomplete structured output without retaining its contents: %s",
+    (line) => {
+      expect(parseStreamJsonLine(line)).toEqual([
+        { type: "capture_gap", reason: "unsupported_event" },
+      ]);
+    },
+  );
+
+  it("marks unknown substantive top-level events without copying provider fields", () => {
+    expect(
+      parseStreamJsonLine(JSON.stringify({ type: "future_output", payload: "fixture-secret" })),
+    ).toEqual([{ type: "capture_gap", reason: "unsupported_event" }]);
+  });
+
+  it("retains safe text and marks unsupported result content", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call-1",
+                is_error: true,
+                content: [
+                  { type: "text", text: "before" },
+                  { type: "image", source: { data: "opaque-image" } },
+                  { type: "text", text: "after" },
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "capture_gap", reason: "unsupported_event", callId: "call-1" },
+      {
+        type: "tool_result",
+        callId: "call-1",
+        tool: "unknown",
+        output: "before\nafter",
+        status: "error",
+        captureTruncated: true,
+      },
+    ]);
+  });
+
+  it("does not invent text for a result containing only unsupported blocks", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call-1",
+                content: [{ type: "document", source: { data: "opaque-document" } }],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "capture_gap", reason: "unsupported_event", callId: "call-1" },
+      {
+        type: "tool_result",
+        callId: "call-1",
+        tool: "unknown",
+        output: "",
+        status: "success",
+        captureTruncated: true,
+      },
+    ]);
+  });
+
+  it("accepts documented empty results and rejects malformed error flags", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "empty-call",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "tool_result", callId: "empty-call", tool: "unknown", output: "", status: "success" },
+    ]);
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                is_error: "true",
+                content: "discard malformed result",
+              },
             ],
           },
         }),
@@ -683,6 +829,237 @@ describe("parseStreamJsonLine", () => {
       { type: "tool_use", tool: "Read", input: '{"file":"b.ts"}' },
       { type: "progress", text: "All done" },
     ]);
+  });
+});
+
+describe("Claude Code tool capture", () => {
+  it("pairs parallel results by call ID and deduplicates partial and authoritative frames", async () => {
+    const calls = [
+      { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "README.md" } },
+      { type: "tool_use", id: "test-1", name: "Bash", input: { command: "pnpm test" } },
+    ];
+    const results = {
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "test-1",
+            content: "One assertion failed",
+            is_error: true,
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "read-1",
+            content: [{ type: "text", text: `found ${anthropicCredential.secret}` }],
+          },
+        ],
+      },
+    };
+    const events = await runClaudeToolRecords([
+      {
+        type: "stream_event",
+        event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      },
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Inspecting" },
+        },
+      },
+      {
+        type: "assistant",
+        message: { id: "message-1", content: [{ type: "text", text: "Inspecting" }] },
+      },
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "read-1", name: "Read", input: {} },
+        },
+      },
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: '{"file_path":"README.md"}' },
+        },
+      },
+      { type: "assistant", message: { id: "message-1", content: calls } },
+      { type: "stream_event", event: { type: "content_block_stop", index: 1 } },
+      { type: "assistant", message: { id: "message-1", content: calls } },
+      results,
+      results,
+      {
+        type: "result",
+        subtype: "success",
+        result: "Fixed the assertion",
+        usage: { input_tokens: 12, output_tokens: 5 },
+      },
+    ]);
+    expect(events).toEqual([
+      { type: "progress", text: "Inspecting" },
+      { type: "tool_use", callId: "read-1", tool: "Read", input: '{"file_path":"README.md"}' },
+      { type: "tool_use", callId: "test-1", tool: "Bash", input: '{"command":"pnpm test"}' },
+      {
+        type: "tool_result",
+        callId: "test-1",
+        tool: "Bash",
+        output: "One assertion failed",
+        status: "error",
+      },
+      {
+        type: "tool_result",
+        callId: "read-1",
+        tool: "Read",
+        output: "found [REDACTED]",
+        status: "success",
+      },
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "Fixed the assertion",
+        finalOutput: "Fixed the assertion",
+        usage: { inputTokens: 12, outputTokens: 5, provenance: "measured" },
+      },
+    ]);
+  });
+
+  it("marks an orphan result without inventing a tool call", async () => {
+    const events = await runClaudeToolRecords([
+      {
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "unseen", content: "observed output" }],
+        },
+      },
+      { type: "result", subtype: "success", result: "done" },
+    ]);
+    expect(events).toEqual([
+      { type: "capture_gap", reason: "missing_tool_call" },
+      {
+        type: "tool_result",
+        callId: "unseen",
+        tool: "unknown",
+        output: "observed output",
+        status: "success",
+      },
+      { type: "completion", taskComplete: true, summary: "done", finalOutput: "done" },
+    ]);
+  });
+
+  it("reports an unresolved tool before a failed terminal error while retaining usage", async () => {
+    const events = await runClaudeToolRecords([
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "pending", name: "Read", input: { file_path: "README.md" } },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        errors: ["Turn limit reached"],
+        usage: { input_tokens: 8, output_tokens: 2 },
+      },
+    ]);
+    expect(events).toEqual([
+      { type: "tool_use", callId: "pending", tool: "Read", input: '{"file_path":"README.md"}' },
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "Claude Code result was unsuccessful",
+        usage: { inputTokens: 8, outputTokens: 2, provenance: "measured" },
+      },
+      { type: "capture_gap", reason: "missing_tool_result", callId: "pending" },
+      { type: "error", message: "Claude Code error_max_turns: Turn limit reached" },
+    ]);
+  });
+
+  it("marks partial tool input without a completed assistant block rather than inventing arguments", async () => {
+    const events = await runClaudeToolRecords([
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "partial", name: "Read", input: {} },
+        },
+      },
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"file_path":"unfinished' },
+        },
+      },
+      { type: "result", subtype: "success", result: "done" },
+    ]);
+    expect(events).toEqual([
+      { type: "capture_gap", reason: "unsupported_event", callId: "partial" },
+      { type: "completion", taskComplete: true, summary: "done", finalOutput: "done" },
+    ]);
+  });
+
+  it("marks omitted result media before the paired result and retains only text", async () => {
+    const events = await runClaudeToolRecords([
+      {
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "read-image",
+              name: "Read",
+              input: { file_path: "preview.png" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "read-image",
+              content: [
+                { type: "image", source: { data: "opaque-image" } },
+                { type: "text", text: "image metadata" },
+              ],
+            },
+          ],
+        },
+      },
+      { type: "result", subtype: "success", result: "done" },
+    ]);
+    expect(events).toEqual([
+      {
+        type: "tool_use",
+        callId: "read-image",
+        tool: "Read",
+        input: '{"file_path":"preview.png"}',
+      },
+      { type: "capture_gap", reason: "unsupported_event", callId: "read-image" },
+      {
+        type: "tool_result",
+        callId: "read-image",
+        tool: "Read",
+        output: "image metadata",
+        status: "success",
+        captureTruncated: true,
+      },
+      { type: "completion", taskComplete: true, summary: "done", finalOutput: "done" },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("opaque-image");
   });
 });
 

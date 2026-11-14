@@ -6,19 +6,38 @@ import {
   redactRunToolText,
 } from "@/lib/agent-runner/redact-sensitive-text";
 import { AgentOutputSafety } from "@/lib/agent-runner/safety";
-import type { AgentEvent, AgentRunUsage } from "@/lib/agent-runner/types";
+import type {
+  AgentCaptureGap,
+  AgentEvent,
+  AgentRunner,
+  AgentRunUsage,
+} from "@/lib/agent-runner/types";
 import type { Database } from "@/lib/supabase/database.types";
 
 type CaptureGap =
   | "normalized_source_only"
-  | "unsupported_event"
+  | AgentCaptureGap
   | "missing_terminal"
   | "stream_interrupted";
+
+type NativeCaptureAdapter = "codex" | "claude-code";
+type AdapterCoverage = {
+  adapter: NativeCaptureAdapter;
+  toolCalls: number;
+  toolResults: number;
+  unresolvedToolCalls: number;
+  unmatchedToolResults: number;
+  unsupportedEvents: number;
+  truncatedEvents: number;
+};
 
 export type RunEventBody =
   | { kind: "text" | "progress"; payload: { text: string } }
   | { kind: "tool_call"; payload: { tool: string; input: string } }
-  | { kind: "tool_result"; payload: { tool: string; output: string; status: "success" | "error" } }
+  | {
+      kind: "tool_result";
+      payload: { tool: string; output: string; status: "success" | "error"; exitCode?: number };
+    }
   | {
       kind: "terminal";
       payload: { status: "completed" | "incomplete"; summary: string; finalOutput?: string };
@@ -26,7 +45,10 @@ export type RunEventBody =
   | { kind: "terminal"; payload: { status: "failed"; message: string } }
   | { kind: "usage"; payload: Pick<AgentRunUsage, keyof AgentRunUsage> }
   | { kind: "capture_gap"; payload: { reason: CaptureGap } }
-  | { kind: "capture_end"; payload: { status: "complete" | "interrupted" } };
+  | {
+      kind: "capture_end";
+      payload: { status: "complete" | "interrupted"; coverage?: AdapterCoverage };
+    };
 
 type Projection = RunEventBody & { truncated?: boolean; legacyMessage?: string };
 type AttemptIdentity = { jobId: string; runId: string; attemptCount: number };
@@ -45,6 +67,9 @@ export class ExecutionOwnershipLostError extends Error {
 export class RunEventCapture {
   private sequence = 0;
   private readonly safety = new AgentOutputSafety([]);
+  private readonly toolCallSequences = new Map<string, number>();
+  private readonly earlyToolResults = new Set<string>();
+  private coverage: AdapterCoverage | undefined;
 
   constructor(
     private readonly admin: SupabaseClient<Database>,
@@ -55,31 +80,64 @@ export class RunEventCapture {
     this.safety.addSecret(value);
   }
 
+  async start(adapter: AgentRunner["provider"]): Promise<void> {
+    if (adapter === "codex" || adapter === "claude-code") {
+      this.coverage = {
+        adapter,
+        toolCalls: 0,
+        toolResults: 0,
+        unresolvedToolCalls: 0,
+        unmatchedToolResults: 0,
+        unsupportedEvents: 0,
+        truncatedEvents: 0,
+      };
+    } else {
+      await this.markGap("normalized_source_only");
+    }
+  }
+
   async record(event: AgentEvent): Promise<void> {
-    const sequence = await this.append(projectEvent(event, (text) => this.safety.redact(text)));
+    const redact = (text: string) => this.safety.redact(text);
+    const projected = projectEvent(event, redact);
+    const causationSequence =
+      (event.type === "tool_result" || event.type === "capture_gap") && event.callId
+        ? this.toolCallSequences.get(event.callId)
+        : undefined;
+    const sequence = await this.append(projected, { causationSequence });
+    if (event.type === "tool_use" && event.callId && !this.earlyToolResults.delete(event.callId)) {
+      this.toolCallSequences.set(event.callId, sequence);
+    }
+    if (
+      this.coverage &&
+      event.type === "tool_result" &&
+      event.callId &&
+      causationSequence === undefined
+    ) {
+      this.earlyToolResults.add(event.callId);
+    }
+    if (
+      (event.type === "tool_result" ||
+        (event.type === "capture_gap" && event.reason === "missing_tool_result")) &&
+      event.callId
+    ) {
+      this.toolCallSequences.delete(event.callId);
+    }
+
+    const coverage = this.coverage;
+    if (coverage) {
+      if (projected.truncated) coverage.truncatedEvents++;
+      if (event.type === "tool_use") coverage.toolCalls++;
+      if (event.type === "tool_result") coverage.toolResults++;
+      if (event.type === "capture_gap") {
+        if (event.reason === "missing_tool_call") coverage.unmatchedToolResults++;
+        if (event.reason === "missing_tool_result") coverage.unresolvedToolCalls++;
+        if (event.reason === "unsupported_event") coverage.unsupportedEvents++;
+      }
+    }
     if (event.type === "completion" && event.usage) {
-      const { inputTokens, outputTokens, provenance, costUsd, costProvenance, estimationRevision } =
-        event.usage;
-      const revision =
-        estimationRevision === undefined
-          ? undefined
-          : captureText(this.safety.redact(estimationRevision), MAX_LABEL_BYTES);
-      await this.append(
-        {
-          kind: "usage",
-          payload: {
-            inputTokens,
-            outputTokens,
-            provenance: provenance ?? "measured",
-            ...(costUsd !== undefined
-              ? { costUsd, costProvenance: costProvenance ?? "measured" }
-              : {}),
-            ...(revision ? { estimationRevision: revision.excerpt } : {}),
-          },
-          truncated: revision?.truncated,
-        },
-        { causationSequence: sequence },
-      );
+      const usage = projectUsage(event.usage, redact);
+      await this.append(usage, { causationSequence: sequence });
+      if (coverage && usage.truncated) coverage.truncatedEvents++;
     }
   }
 
@@ -88,7 +146,23 @@ export class RunEventCapture {
   }
 
   async finish(status: "complete" | "interrupted", signal?: AbortSignal): Promise<void> {
-    await this.append({ kind: "capture_end", payload: { status } }, { signal });
+    if (this.coverage) {
+      for (const [callId, sequence] of this.toolCallSequences) {
+        await this.append(
+          { kind: "capture_gap", payload: { reason: "missing_tool_result" } },
+          { causationSequence: sequence, signal },
+        );
+        this.coverage.unresolvedToolCalls++;
+        this.toolCallSequences.delete(callId);
+      }
+    }
+    await this.append(
+      {
+        kind: "capture_end",
+        payload: { status, ...(this.coverage ? { coverage: this.coverage } : {}) },
+      },
+      { signal },
+    );
   }
 
   private async append(
@@ -143,10 +217,17 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
       const output = captureText(redactKnown(event.output), MAX_TEXT_BYTES, redactRunToolText);
       return {
         kind: "tool_result",
-        payload: { tool: tool.excerpt, output: output.excerpt, status: event.status },
+        payload: {
+          tool: tool.excerpt,
+          output: output.excerpt,
+          status: event.status,
+          ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
+        },
         truncated: event.captureTruncated || tool.truncated || output.truncated,
       };
     }
+    case "usage":
+      return projectUsage(event.usage, redactKnown);
     case "completion": {
       const summary = capture(event.summary);
       const finalOutput = event.finalOutput?.trim() ? capture(event.finalOutput) : undefined;
@@ -179,6 +260,26 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
       return { kind: "capture_gap", payload: { reason: "unsupported_event" } };
     }
   }
+}
+
+function projectUsage(usage: AgentRunUsage, redact: (text: string) => string): Projection {
+  const { inputTokens, outputTokens, provenance, costUsd, costProvenance, estimationRevision } =
+    usage;
+  const revision =
+    estimationRevision === undefined
+      ? undefined
+      : captureText(redact(estimationRevision), MAX_LABEL_BYTES);
+  return {
+    kind: "usage",
+    payload: {
+      inputTokens,
+      outputTokens,
+      provenance: provenance ?? "measured",
+      ...(costUsd !== undefined ? { costUsd, costProvenance: costProvenance ?? "measured" } : {}),
+      ...(revision ? { estimationRevision: revision.excerpt } : {}),
+    },
+    truncated: revision?.truncated,
+  };
 }
 
 function captureText(text: string, limit: number, redact = redactRunSensitiveText) {
