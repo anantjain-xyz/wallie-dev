@@ -44,6 +44,7 @@ while iterating:
 ```bash
 pnpm check:fast       # canonical fast profile
 pnpm check:cloudflare # native runtime types, workerd tests, and Wrangler build
+pnpm check:factory-plan # standalone roadmap IDs, references, and dependency checks
 pnpm format           # auto-format with Prettier
 pnpm lint:fix         # auto-fix lint issues
 pnpm typecheck        # TypeScript, no emit
@@ -60,12 +61,18 @@ pnpm test -t "name of the test"
 
 ## Pull request guidelines
 
-- **Keep PRs small and focused.** One logical change per PR is much easier to review.
+For factory roadmap work, use the [implementation plan](docs/plans/factory-implementation-plan.md),
+[capability matrix](docs/plans/factory-capability-matrix.md),
+[capability register](docs/plans/factory-capabilities.json), and
+[Linear delivery map](docs/plans/linear-delivery-map.json) to identify scope and prerequisites.
+
+- **Keep PRs small and focused.** Each factory issue yields one PR; split newly discovered independent work into separate issues.
 - **Branch** off `main` and open your PR against `main`.
-- **Write a clear description** — what changed and why. Link the issue it addresses.
-- **Include screenshots or a short clip** for any user-facing UI change.
+- **Write a clear description** — what changed and why. Link the issue; for roadmap work, include its stable plan key, milestone and affected capability IDs.
+- **Include screenshots or a short clip** for any user-facing UI change. Compare against the [current design gallery](docs/design/factory-reference/README.md) and name the exercised state, theme and viewport.
 - **Update docs** (README, `docs/`, `.env.example`) when behavior, setup, or env vars change.
 - **Add or update tests** for behavior changes where practical.
+- **Match evidence to the claim.** Report commands and results, environment, and any unverified acceptance criteria using the [verification matrix](docs/development/verification.md#claim-to-proof-matrix). Record roadmap completion with the [shared completion fields](docs/plans/factory-implementation-plan.md#milestone-completion-record); a supporting PR alone does not complete its capability.
 - Make sure `pnpm check` passes and the PR has no merge conflicts with `main`.
 
 ### Commit messages

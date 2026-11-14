@@ -32,10 +32,9 @@ and usage/cost provenance, see [Execution budgets](execution-budgets.md).
    unarchived session into `in_progress`.
 2. The processor resolves the workspace's selected agent provider and model.
 3. It loads pipeline operating rules, the job's immutable feedback batch (or
-   legacy whole-stage feedback when no batch exists), and
-   the latest artifact version for every stage slug present on the session.
-   After a rejection, that map can include the current stage's unapproved
-   artifact.
+   legacy whole-stage feedback when no batch exists), and the latest unambiguous
+   artifact for each stage with a valid completion row. Artifacts are matched by
+   stage ID and exposed under the stage's current slug.
 4. It prepends operating rules to the stage template and performs template
    substitution.
 5. It resolves the credential belonging to the human who created the session.
@@ -50,12 +49,15 @@ and usage/cost provenance, see [Execution budgets](execution-budgets.md).
 9. The runner creates a private per-invocation directory outside the checkout,
    writes the prompt and provider auth there with owner-only permissions, starts
    the CLI, and streams normalized, sanitized events.
-10. The processor persists events and fenced usage snapshots, concatenates text
-    events into the artifact, captures the source and immutable publication
+10. The processor persists events and fenced usage snapshots, uses only the
+    successful completion event's nonblank `finalOutput` as the artifact,
+    captures the source and immutable publication
     intent, verifies its retained ref, then atomically accepts the
     checkpoint/artifact for review. Trusted maintenance synchronizes one
     canonical PR separately.
-11. The sandbox is stopped in `finally`, whether the run succeeds or fails.
+11. Cleanup runs in `finally`. The sandbox is stopped unless source recovery
+    requires retention; that recovery window ends at the provider's existing
+    expiry.
 
 Every retry creates a fresh sandbox and restores the same generation's fixed input
 SHA/ref/repository before agent bootstrap. Review handoff selects the accepted
@@ -67,35 +69,33 @@ platform policy leave remote publication to the trusted worker.
 
 The renderer currently exposes:
 
-| Variable                         | Source                                                        | Classification                   |
-| -------------------------------- | ------------------------------------------------------------- | -------------------------------- |
-| `session.title`                  | `sessions.title`                                              | Member-controlled data           |
-| `session.prompt`                 | `sessions.prompt_md`                                          | Member-controlled data           |
-| `session.stageSlug`              | Current `pipeline_stages` row                                 | Manager-controlled configuration |
-| `attempt.number`                 | `rejection_count + 1`                                         | Derived value                    |
-| `attempt.feedback`               | Saved feedback for the exact job, with legacy stage fallback  | Reviewer-controlled data         |
-| `artifact.previousStages.<slug>` | Latest artifact per slug, including the current slug on retry | Agent-generated data             |
-| `repo.name`                      | Resolved session repository name                              | Repository data                  |
-| `repo.fullName`                  | Resolved session repository full name                         | Repository data                  |
-| `repo.defaultBranch`             | Resolved default branch, falling back to `main` if absent     | Repository data                  |
+| Variable                         | Source                                                             | Classification                   |
+| -------------------------------- | ------------------------------------------------------------------ | -------------------------------- |
+| `session.title`                  | `sessions.title`                                                   | Member-controlled data           |
+| `session.prompt`                 | `sessions.prompt_md`                                               | Member-controlled data           |
+| `session.stageSlug`              | Current `pipeline_stages` row                                      | Manager-controlled configuration |
+| `attempt.number`                 | `rejection_count + 1`                                              | Derived value                    |
+| `attempt.feedback`               | Saved feedback for the exact job, with legacy stage fallback       | Reviewer-controlled data         |
+| `artifact.previousStages.<slug>` | Latest unambiguous artifact for a completed stage, by current slug | Agent-generated data             |
+| `repo.name`                      | Resolved session repository name                                   | Repository data                  |
+| `repo.fullName`                  | Resolved session repository full name                              | Repository data                  |
+| `repo.defaultBranch`             | Resolved default branch, falling back to `main` if absent          | Repository data                  |
 
 Pipeline `operating_rules_md` is trimmed and prepended to
 `pipeline_stages.prompt_template_md`. Both are manager-controlled instruction
 planes. The renderer supports variable substitution and non-nested conditional
 blocks. Unknown variables become empty strings.
 
-Template variable paths currently match only letters, digits, underscores, and
-dots. Stage slugs permit hyphens, so a reference such as
-`artifact.previousStages.code-review` is not recognized by either substitution
-or conditional parsing and remains verbatim in the rendered prompt. Only stage
-slugs without hyphens currently resolve through this dot-path syntax.
+Template variable paths support letters, digits, underscores, dots, and hyphens.
+References such as `artifact.previousStages.code-review` work in both
+substitutions and conditional blocks.
 
-Despite its name, `loadCompletedStageArtifacts()` currently chooses the latest
-artifact version for every slug on the session. It does not require a matching
-completion row or filter by stage position. On a retry after rejection,
-`artifact.previousStages.<current-slug>` therefore contains the current stage's
-unapproved prior output. Treat every value in this map as agent-generated input,
-even when its stage was approved.
+`loadCompletedStageArtifacts()` requires a `session_phase_completions` row for
+the stage's durable ID, then selects that stage's highest artifact version and
+maps it to the current slug. Missing stage identities and invalidated completions
+do not contribute prompt input; duplicate artifacts at the highest version stop
+the attempt. This is a completed-stage projection, not an immutable snapshot of
+the originally approved artifact. Treat every value as agent-generated input.
 
 ## Current instruction and trust boundary
 
@@ -146,11 +146,16 @@ newer state, including after a disconnect and reconnect. Within one credential
 generation, the provider's latest `last_refresh` wins when concurrent runs
 rotate auth tokens.
 
-The GitHub installation token is placed in the isolated sandbox's credential
-store for clone and push. Execution tokens grant contents and pull-request write
-access to only the selected repository. Capability checks receive contents read
-access to that repository. Arbitrary `workspace_secrets` are not injected into
-the coding-agent process.
+GitHub installation tokens are scoped to one repository and their purpose:
+
+- `checkout`: the coding-agent sandbox receives contents-read access for checkout.
+- `execution`: the trusted publisher receives contents-write and pull-request-write
+  access. These credentials are not supplied to the coding-agent process.
+- `capability-check`: provider probes receive contents-read access.
+
+The trusted publication policy requires local agent work and reserves remote Git
+and PR writes for Wallie, including when a customized prompt requests a push.
+Arbitrary `workspace_secrets` are not injected into the coding-agent process.
 
 Repository-local `AGENTS.md` files and installed skills are interpreted by the
 selected CLI. Wallie prepares those assets during repository onboarding, but
@@ -161,7 +166,10 @@ the target repository remains their runtime semantic owner.
 - Runner output redacts active credentials before events reach logs, artifacts,
   or PR prose. Setup and SDK errors pass through the same boundary.
 - Text, tool, completion, and error events remain distinct. Publication requires
-  explicit successful completion and reviewable text; partial output is not success.
+  explicit successful completion and a nonblank `finalOutput`. Progress, tool
+  activity, partial output, and completion summaries do not become the artifact.
+  Missing final output creates a visible run diagnostic, publishes no artifact,
+  and does not automatically retry; progress and partial output remain in Run history.
 - Before publication, Wallie commits remaining nonignored working-tree changes
   with repository hooks disabled, then captures an incremental Git bundle from
   the original base to the final head. Dirty submodules and changed gitlinks
@@ -192,8 +200,10 @@ the target repository remains their runtime semantic owner.
 
 - Setup and execution failures retire only their captured attempt. Each new
   attempt receives a distinct branch and sandbox.
-- A saved checkpoint survives sandbox teardown and worker crashes. Delivery
-  failures preserve it and retry with exponential backoff, capped at one hour.
+- A saved checkpoint survives sandbox teardown and worker crashes. Checkpoint
+  publication failures retry the same immutable intent within the original
+  attempt deadline, without rerunning the agent. Canonical PR synchronization
+  is a separate recoverable obligation.
 - A Storage outage uses the private database fallback. Successful GitHub delivery
   clears fallback bytes; Storage checkpoints remain until workspace deletion.
 - If both durability stores fail, no artifact is published and no automatic new
@@ -233,8 +243,6 @@ These are current limitations, not desired contracts:
 - Session prompts and legacy reviewer feedback are not bounded by the prompt
   renderer. New feedback batches enforce a 40,000-code-point limit, but this and
   route limits on templates and operating rules do not bound the combined prompt.
-- Artifact variables for valid hyphenated stage slugs are not recognized and
-  remain verbatim in rendered prompts.
 - Continuation IDs are not supplied by the generic processor. It supplies the
   remaining session ceiling as `maxTokens`, but no current CLI adapter has a
   verified max-output-token option; attempts, elapsed time, and reactive usage

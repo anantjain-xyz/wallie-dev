@@ -10,7 +10,7 @@ implementation.
 | Understand how Wallie works       | [Architecture](architecture/architecture.md) and the contracts in [architecture/](architecture/)                                   |
 | Deploy or operate Wallie          | [Self-hosting](deployment/self-hosting.md), [deployment guides](deployment/), or the [AWS runbook index](deployment/aws/README.md) |
 | Validate a change                 | [Verification](development/verification.md)                                                                                        |
-| Build a UI consistent with Wallie | [Accessibility and typography](design/)                                                                                            |
+| Build a UI consistent with Wallie | [Current design gallery](design/factory-reference/README.md) and [accessibility and typography](design/)                           |
 | Measure performance               | [Navigation benchmark](performance/navigation-bench.md) and [performance reports](performance/)                                    |
 | Plan future work                  | [Factory roadmap and capability register](plans/)                                                                                  |
 
@@ -21,10 +21,15 @@ implementation.
   migration strategy, and release gates.
 - [Capability matrix](plans/factory-capability-matrix.md): one implementation and
   completion proof for every capability, with recording timestamps.
-- [Machine-readable register](plans/factory-capabilities.json): feature and milestone
-  dependencies for future work tracking. All entries currently describe planned work.
+- [Machine-readable register](plans/factory-capabilities.json): source inventory,
+  capability ownership and dependencies; planning metadata is not release evidence.
 - [Linear delivery index](https://linear.app/optimism-llc/document/factory-delivery-map-206-prs-100-capabilities-9853c51dac5c): 17 milestones, 206 one-PR issues and 283 native blocking relationships.
 - [Local Linear map](plans/linear-delivery-map.json): stable issue links, capability coverage and the imported dependency graph.
+
+Run `pnpm check:factory-plan` as a standalone check after changing the roadmap.
+Each roadmap issue produces one scoped PR. Record its acceptance evidence using
+the [completion record](plans/factory-implementation-plan.md#milestone-completion-record)
+and the [claim-to-proof matrix](development/verification.md#claim-to-proof-matrix).
 
 ## Task map
 
