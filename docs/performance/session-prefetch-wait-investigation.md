@@ -15,12 +15,12 @@ Five untraced samples per input and condition, interleaved. All 20 pass the expe
 | Constrained, immediate mouse |     722.7 | 718.9–738.5 |
 | Constrained, touch           |     722.6 | 718.1–741.4 |
 
-- Same production fixture with 160 additional sessions and fresh browser contexts after sessions-list warmup. Build, browser, source, and harness hashes are in the evidence.
+- Same production fixture with 160 additional sessions and fresh browser contexts after sessions-list warmup. Build, browser, source, and harness hashes are in the archived sample record.
 - Constrained means 4× browser CPU slowdown, 80 ms configured HTTP latency, 1600 kbps down, and 750 kbps up. Server/database traffic remains local. These are desktop lab conditions.
 - The 10-core host retains other desktop processes. Input and condition order alternate to limit drift.
 - Four separate profiles and 21 controlled diagnostics establish mechanisms. Their timings include instrumentation overhead and do not establish a speedup.
 
-[Samples, reduced profiles, cache observations, interventions, and artifact hashes](../evidence/session-prefetch-wait-investigation.json).
+Samples, reduced profiles, cache observations, interventions, and artifact hashes stay in Git history at [`a567807d`](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/session-prefetch-wait-investigation.json).
 
 ## Two different waits
 
@@ -84,7 +84,7 @@ Two untraced local samples take about 525 ms, with a roughly 320 ms push-to-arti
 3. Alternate baseline/candidate builds with the unchanged harness, five samples per input and condition. Capture separate profiles to confirm the intended branch changed. The current local spread exceeds 80 ms, so the end-to-end result may remain inconclusive.
 4. Address the partial-head fallback separately. An unconditional page gate causes compatibility delays, and private cache objects are diagnostic tools rather than an application API.
 
-Use the [navigation benchmark instructions](navigation-bench.md). Original traces and probe outputs remain in `bench-results/prefetch-wait-investigation/`. The diagnostic runner is `.wallie/prefetch-wait-investigation/probe.mjs`; its options and hashes, along with the cache logpoint specifications, are retained in the evidence.
+Use the [navigation benchmark instructions](navigation-bench.md). Original traces and probe outputs remain in `bench-results/prefetch-wait-investigation/`. The diagnostic runner is `.wallie/prefetch-wait-investigation/probe.mjs`; its options and hashes, along with the cache logpoint specifications, are retained in the archived sample record.
 
 Pstack's Explain the Number kept untraced samples separate from diagnostics. Runtime Forensics required the head-selection counterfactual before accepting the cache diagnosis. Guard the Context Window delegated bulk trace reduction.
 

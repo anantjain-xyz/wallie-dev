@@ -111,7 +111,7 @@ node --env-file=/private/path/to/server.env \
   --import ./scripts/register-server-only.mjs --import tsx \
   scripts/audit-github-pr-verification.ts \
   --repository anantjain-xyz/wallie-dev --repository-id 1196742316 \
-  --pr 592 --output docs/evidence/op-506-github-permissions.json
+  --pr 592 --output /tmp/wallie-op-506-github-permissions.json
 ```
 
 The audit verifies access, not readiness. Its list probes request one page,
@@ -127,7 +127,9 @@ that the installed App has the same access or event subscriptions.
 
 ## Qualification evidence for OP-506
 
-The [configured local App audit](../evidence/op-506-github-permissions.json) on
+These receipts stay in Git history at `a567807d`.
+
+The [configured local App audit](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/op-506-github-permissions.json) on
 November 6, 2026 identified `wallie.dev.local` (App 4361881). That App could not
 resolve an installation for `anantjain-xyz/wallie-dev` (HTTP 404), lacked
 Administration read access, and had no event subscriptions. A separate
@@ -137,7 +139,7 @@ or changed. Before enabling collection in an environment, its operator must
 verify the intended installation, grant the documented read permissions, and
 approve the subscriptions. The audit must pass using that environment's App.
 
-The separate [operator smoke](../evidence/op-506-github-collector-smoke.json) read
+The separate [operator smoke](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/op-506-github-collector-smoke.json) read
 existing wallie-dev PR #592 with the authorized GitHub CLI user's credentials.
 The collector observed the PR as merged, verified protection, and collected
 passing checks, reviews, and threads. Unknown mergeability remained explicit
