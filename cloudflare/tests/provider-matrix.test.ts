@@ -165,7 +165,7 @@ describe("all agent/sandbox combinations under workerd", () => {
     if (agent === "codex" || agent === "opencode") {
       expect(events).toContainEqual(
         expect.objectContaining({
-          type: "completion",
+          type: agent === "codex" ? "usage" : "completion",
           usage: {
             inputTokens: agent === "codex" ? 1 : 3,
             outputTokens: agent === "codex" ? 2 : 6,

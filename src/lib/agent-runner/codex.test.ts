@@ -12,6 +12,7 @@ import {
   CodexRunner,
   codexExecArgs,
   parseCodexLine,
+  parseCodexStreamLine,
 } from "./codex";
 
 function expectExternalSandboxMode(command: string) {
@@ -55,6 +56,45 @@ function scriptCodexRun(
   );
 }
 
+async function collectCodexRecords(
+  records: unknown[],
+  credential: CodexCredential = {
+    expiresAt: null,
+    secret: "fixture-access-token",
+    type: "codex_access_token",
+  },
+  secrets: string[] = [],
+) {
+  const sandbox = new FakeSandbox();
+  sandbox.scriptExec(
+    (call) => call.args[1]?.includes("codex 'exec'") ?? false,
+    () => {
+      sandbox.files.set(harnessPath(sandbox, "final-output.md"), {
+        data: Buffer.from("authoritative file"),
+      });
+      const stream = records
+        .map((record) => (typeof record === "string" ? record : JSON.stringify(record)))
+        .join("\n");
+      return [
+        { stream: "stdout", data: stream.slice(0, 19) },
+        { stream: "stdout", data: stream.slice(19) },
+      ];
+    },
+  );
+  const runner = new CodexRunner({
+    credential,
+    chatGptAuthStore: {
+      loadChatGptAuth: vi.fn().mockResolvedValue(credential),
+      markChatGptAuthReconnectRequired: vi.fn(),
+      persistChatGptAuthJson: vi.fn(),
+    },
+  });
+  const events: AgentEvent[] = [];
+  for await (const event of runner.start({ sessionId: "s", sandbox, prompt: "p", secrets }))
+    events.push(event);
+  return events;
+}
+
 describe("CodexRunner", () => {
   const launchCredentials = [
     { expiresAt: null, secret: "cached-api-key", type: "platform_api_key" },
@@ -71,6 +111,82 @@ describe("CodexRunner", () => {
       userId: "user-1",
     },
   ] satisfies CodexCredential[];
+
+  it.each(launchCredentials)(
+    "keeps interleaved native tool order and deduplicates snapshots for $type",
+    async (credential) => {
+      const shell = {
+        id: "shell-1",
+        type: "command_execution",
+        command: "pnpm test",
+        aggregated_output: "",
+        status: "in_progress",
+      };
+      const mcp = {
+        id: "mcp-1",
+        type: "mcp_tool_call",
+        server: "docs",
+        tool: "read",
+        arguments: { path: "guide" },
+        status: "in_progress",
+      };
+      const shellDone = {
+        ...shell,
+        status: "completed",
+        aggregated_output: "tests passed",
+        exit_code: 0,
+      };
+      const events = await collectCodexRecords(
+        [
+          { type: "item.started", item: shell },
+          { type: "item.started", item: mcp },
+          { type: "item.completed", item: { type: "agent_message", text: "Still working" } },
+          { type: "item.started", item: shell },
+          { type: "item.updated", item: { ...shell, aggregated_output: "partial" } },
+          {
+            type: "item.completed",
+            item: { ...mcp, status: "failed", error: { message: "document missing" } },
+          },
+          { type: "item.completed", item: shellDone },
+          { type: "item.completed", item: shellDone },
+          { type: "turn.completed", usage: { input_tokens: 4, output_tokens: 2 } },
+          { type: "result", summary: "untrusted bookkeeping" },
+        ],
+        credential,
+      );
+      expect(events).toEqual([
+        { type: "tool_use", tool: "command_execution", input: "pnpm test", callId: "shell-1" },
+        { type: "tool_use", tool: "mcp:docs/read", input: '{"path":"guide"}', callId: "mcp-1" },
+        { type: "progress", text: "Still working" },
+        {
+          type: "tool_result",
+          tool: "mcp:docs/read",
+          output: "document missing",
+          status: "error",
+          callId: "mcp-1",
+        },
+        {
+          type: "tool_result",
+          tool: "command_execution",
+          output: "tests passed",
+          status: "success",
+          exitCode: 0,
+          callId: "shell-1",
+        },
+        {
+          type: "usage",
+          sourceRecoveryRequired: true,
+          usage: { inputTokens: 4, outputTokens: 2, provenance: "measured" },
+        },
+        {
+          type: "completion",
+          taskComplete: true,
+          summary: "Codex session completed",
+          finalOutput: "authoritative file",
+        },
+      ]);
+    },
+  );
 
   describe.each(launchCredentials)("$type deliverables", (credential) => {
     async function collect(
@@ -114,9 +230,8 @@ describe("CodexRunner", () => {
         finalOutput,
       });
       expect(events).toContainEqual({
-        type: "completion",
-        taskComplete: true,
-        summary: "Codex turn completed",
+        type: "usage",
+        sourceRecoveryRequired: true,
         usage: { inputTokens: 21, outputTokens: 13, provenance: "measured" },
       });
     });
@@ -390,9 +505,8 @@ describe("CodexRunner", () => {
       { type: "progress", text: "Drafted product spec" },
       { type: "tool_use", tool: "read_file", input: '{"path":"a.ts"}' },
       {
-        type: "completion",
-        taskComplete: true,
-        summary: "Codex turn completed",
+        type: "usage",
+        sourceRecoveryRequired: true,
         usage: { inputTokens: 10, outputTokens: 4, provenance: "measured" },
       },
       {
@@ -495,7 +609,12 @@ describe("CodexRunner", () => {
           data: Buffer.from(refreshedAuthJson, "utf8"),
           mode: 0o600,
         });
-        return [{ data: `{"type":"result","summary":"done"}\n`, stream: "stdout" }];
+        return [
+          {
+            data: `{"type":"result","summary":"done","usage":{"input_tokens":1,"output_tokens":1}}\n`,
+            stream: "stdout",
+          },
+        ];
       },
     );
     const currentCredential = {
@@ -539,7 +658,7 @@ describe("CodexRunner", () => {
       sandbox,
       sessionId: "s",
     })) {
-      if (ev.type === "completion" && ev.summary === "done") {
+      if (ev.type === "usage") {
         expect(store.persistChatGptAuthJson).not.toHaveBeenCalled();
         const read = onCheckpointSensitiveValues.mock.calls[0]?.[0];
         if (!read) throw new Error("Missing checkpoint credential reader");
@@ -561,7 +680,11 @@ describe("CodexRunner", () => {
       events.push(ev);
     }
 
-    expect(events).toContainEqual({ type: "completion", taskComplete: true, summary: "done" });
+    expect(events).toContainEqual({
+      type: "usage",
+      sourceRecoveryRequired: true,
+      usage: { inputTokens: 1, outputTokens: 1, provenance: "measured" },
+    });
     expect(store.loadChatGptAuth).toHaveBeenCalledWith({ userId: "user-1" });
     expect(store.persistChatGptAuthJson).toHaveBeenCalledWith({
       authJson: refreshedAuthJson,
@@ -843,14 +966,11 @@ describe("parseCodexLine", () => {
     });
   });
 
-  it.each(["thread.started", "turn.started", "item.started", "item.updated"])(
-    "ignores routine %s framing",
-    (type) => {
-      expect(
-        parseCodexLine(JSON.stringify({ type, item: { type: "command_execution", id: "item-1" } })),
-      ).toBeNull();
-    },
-  );
+  it.each(["thread.started", "turn.started"])("ignores routine %s framing", (type) => {
+    expect(
+      parseCodexLine(JSON.stringify({ type, item: { type: "command_execution", id: "item-1" } })),
+    ).toBeNull();
+  });
 
   it("parses text events", () => {
     expect(parseCodexLine('{"type":"text","text":"hello"}')).toEqual({
@@ -966,5 +1086,212 @@ describe("parseCodexLine", () => {
   it("returns null for empty lines", () => {
     expect(parseCodexLine("")).toBeNull();
     expect(parseCodexLine("   ")).toBeNull();
+  });
+});
+
+// Wire fixtures: https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs
+// Native start/completion mapping: https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs
+describe("native Codex tool records", () => {
+  it.each([
+    { status: "completed", exit_code: 0, aggregated_output: "", expected: "success" },
+    { status: "failed", exit_code: 2, aggregated_output: "test failure", expected: "error" },
+    {
+      status: "declined",
+      exit_code: null,
+      aggregated_output: "permission declined",
+      expected: "error",
+    },
+  ])(
+    "retains observed command input and $status output without inventing a start",
+    async ({ expected, ...result }) => {
+      const events = await collectCodexRecords([
+        {
+          type: "item.completed",
+          item: { id: "c1", type: "command_execution", command: "check", ...result },
+        },
+      ]);
+      expect(events.slice(0, -1)).toEqual([
+        { type: "tool_use", tool: "command_execution", input: "check", callId: "c1" },
+        {
+          type: "tool_result",
+          tool: "command_execution",
+          output: result.aggregated_output,
+          status: expected,
+          callId: "c1",
+          ...(result.exit_code === null ? {} : { exitCode: result.exit_code }),
+        },
+      ]);
+    },
+  );
+
+  it("marks an orphan output without inventing missing command input", async () => {
+    const events = await collectCodexRecords([
+      {
+        type: "item.completed",
+        item: {
+          id: "orphan",
+          type: "command_execution",
+          status: "completed",
+          aggregated_output: "actual output",
+          exit_code: 0,
+        },
+      },
+    ]);
+    expect(events.slice(0, -1)).toEqual([
+      { type: "capture_gap", reason: "missing_tool_call" },
+      {
+        type: "tool_result",
+        tool: "command_execution",
+        output: "actual output",
+        status: "success",
+        exitCode: 0,
+        callId: "orphan",
+      },
+    ]);
+  });
+
+  it.each([
+    {},
+    { aggregated_output: null },
+    { status: "in_progress", aggregated_output: "partial" },
+  ])(
+    "reports one unresolved gap when a started command has no actual result (%j)",
+    async (completion) => {
+      const call = {
+        id: "unfinished",
+        type: "command_execution",
+        command: "check",
+        status: "in_progress",
+      };
+      const events = await collectCodexRecords([
+        { type: "item.started", item: call },
+        { type: "item.completed", item: { ...call, status: "completed", ...completion } },
+        { type: "item.completed", item: { ...call, status: "completed", ...completion } },
+      ]);
+      expect(events.filter((event) => event.type === "capture_gap")).toEqual([
+        { type: "capture_gap", reason: "missing_tool_result", callId: "unfinished" },
+      ]);
+      expect(events.filter((event) => event.type === "tool_result")).toEqual([]);
+      expect(events.filter((event) => event.type === "tool_use")).toHaveLength(1);
+    },
+  );
+
+  it("retains MCP text in order while marking discarded binary and metadata fields", async () => {
+    const item = {
+      id: "m1",
+      type: "mcp_tool_call",
+      server: "docs",
+      tool: "read",
+      arguments: { path: "guide" },
+      status: "completed",
+      result: {
+        content: [
+          { type: "text", text: "first" },
+          { type: "image", data: "hidden-base64", mimeType: "image/png" },
+          { type: "text", text: "second" },
+        ],
+        structured_content: { raw: "hidden-structured" },
+        _meta: { raw: "hidden-meta" },
+        meta: { raw: "hidden-other-meta" },
+      },
+    };
+    const events = await collectCodexRecords([
+      { type: "item.completed", item },
+      { type: "item.completed", item },
+    ]);
+    expect(events.slice(0, -1)).toEqual([
+      { type: "tool_use", tool: "mcp:docs/read", input: '{"path":"guide"}', callId: "m1" },
+      { type: "capture_gap", reason: "unsupported_event", callId: "m1" },
+      {
+        type: "tool_result",
+        tool: "mcp:docs/read",
+        output: "first\nsecond",
+        status: "success",
+        captureTruncated: true,
+        callId: "m1",
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("hidden-");
+  });
+
+  it("marks structured-only MCP output instead of inventing a textual result", async () => {
+    const events = await collectCodexRecords([
+      {
+        type: "item.completed",
+        item: {
+          id: "m2",
+          type: "mcp_tool_call",
+          server: "docs",
+          tool: "read",
+          arguments: {},
+          status: "completed",
+          result: { content: [], structured_content: { raw: "hidden-structured" } },
+        },
+      },
+    ]);
+    expect(events.filter((event) => event.type === "tool_result")).toEqual([]);
+    expect(events.filter((event) => event.type === "capture_gap")).toEqual([
+      { type: "capture_gap", reason: "unsupported_event", callId: "m2" },
+      { type: "capture_gap", reason: "missing_tool_result", callId: "m2" },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("hidden-structured");
+  });
+
+  it("accepts an observed empty MCP response", () => {
+    expect(
+      parseCodexStreamLine(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "m3",
+            type: "mcp_tool_call",
+            server: "docs",
+            tool: "read",
+            arguments: {},
+            status: "completed",
+            result: { content: [], structured_content: null },
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "tool_use", tool: "mcp:docs/read", input: "{}", callId: "m3" },
+      { type: "tool_result", tool: "mcp:docs/read", output: "", status: "success", callId: "m3" },
+    ]);
+  });
+
+  it("redacts known and unknown credentials in native input and output", async () => {
+    const events = await collectCodexRecords(
+      [
+        {
+          type: "item.completed",
+          item: {
+            id: "safe",
+            type: "command_execution",
+            command: 'echo {"api_key":"unregistered-value"}',
+            status: "failed",
+            exit_code: 1,
+            aggregated_output:
+              "known-value " +
+              JSON.stringify({ command: 'echo {"password":"unregistered-password"}' }),
+          },
+        },
+      ],
+      undefined,
+      ["known-value"],
+    );
+    expect(JSON.stringify(events)).not.toContain("unregistered-");
+    expect(JSON.stringify(events)).not.toContain("known-value");
+    expect(events.some((event) => event.type === "tool_result")).toBe(true);
+  });
+
+  it.each([
+    '{"type":"item.completed","item":',
+    "null",
+    '[{"raw":"hidden"}',
+    JSON.stringify({ type: "future_event", raw: "hidden" }),
+  ])("does not echo raw unsupported JSON (%s)", (line) => {
+    expect(parseCodexStreamLine(line)).toEqual([
+      { type: "capture_gap", reason: "unsupported_event" },
+    ]);
   });
 });

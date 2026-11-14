@@ -172,17 +172,26 @@ the target repository remains their runtime semantic owner.
   and does not automatically retry; progress and partial output remain in Run history.
 - New attempts append version 1 envelopes to `agent_run_events`. Page within
   the exact run and attempt by increasing `sequence`. `causation_sequence`
-  links related events within that attempt, such as usage to its terminal
-  event. An identical replay keeps the original event and legacy message.
+  links tool results and unresolved-call gaps to their calls. It also links
+  terminal usage to its completion. An identical replay keeps the original
+  event and legacy message.
 - Payloads use typed, bounded fields for text, progress, tool calls and
   results, terminal outcomes, and usage. The worker redacts credentials before
-  clipping and marks shortened fields with `truncated`. The current adapters
-  record a `normalized_source_only` gap and flag discarded provider events where
-  identifiable. Provider-native tool-result capture expands in OP-532 and OP-533.
+  clipping and marks shortened fields with `truncated`. Codex captures command
+  and MCP tool items. Claude Code captures assistant tool calls and user tool
+  results. The adapters retain text output and record gaps for unsupported
+  content and missing pairs. Provider IDs stay in memory. Cursor and OpenCode
+  report `normalized_source_only` until OP-533.
+- Codex turn usage remains an accounting event. The final-message file is the
+  authoritative Codex deliverable. Claude Code uses the successful result event
+  as its deliverable.
 - `capture_end` reports whether Wallie drained the normalized stream to a
   terminal outcome. An interrupted or missing end marker, a missing sequence,
-  a gap, or a truncated event indicates incomplete capture. The end marker
-  describes capture coverage independently of the stage outcome.
+  a gap, or a truncated event indicates incomplete capture. For Codex and
+  Claude Code, the end marker also counts tool calls, results, missing pairs,
+  unsupported events, and truncated events for the exact attempt.
+  The source formats are documented by [Codex exec JSONL](https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs)
+  and [Claude Code streaming output](https://code.claude.com/docs/en/agent-sdk/streaming-output).
 - The append transaction also writes the compatible `agent_run_messages`
   projection for Run history. Existing runs keep their legacy messages, and
   post-run diagnostics continue to use that history.

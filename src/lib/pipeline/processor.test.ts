@@ -2370,7 +2370,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const unknownSecret = "ghp_abcdefghijklmnopqrstuvwxyz012345";
     const preview = "🧪".repeat(4_000);
     mocked.createAgentRunner.mockReturnValueOnce({
-      ...makeRunner([]),
+      ...makeRunner([], { provider: "cursor" }),
       async *start({ onSensitiveValue }: AgentRunnerStartInput) {
         onSensitiveValue?.(activeSecret);
         yield { type: "text", text: `Check ${activeSecret} ${unknownSecret}` };
@@ -2462,6 +2462,216 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     expect(JSON.stringify(calls)).not.toContain(secret);
     expect(JSON.stringify(insertedMessages)).not.toContain(secret);
+  });
+
+  it.each(["codex", "claude-code"] as const)(
+    "records causal tool sequences and a coverage receipt for %s",
+    async (provider) => {
+      const callId = "provider-private-call-id";
+      const unfinished = "provider-private-unfinished-id";
+      const { admin, capturedEvents, insertedArtifacts } = buildAdminMock({
+        session: baseSession(),
+      });
+      mocked.createAgentRunner.mockReturnValueOnce(
+        makeRunner(
+          [
+            { type: "tool_use", tool: "Read", input: "package.json", callId },
+            { type: "progress", text: "Narration" },
+            {
+              type: "tool_result",
+              tool: "Read",
+              output: "result",
+              status: "success",
+              callId,
+              captureTruncated: true,
+            },
+            { type: "tool_use", tool: "Bash", input: "pnpm test", callId: unfinished },
+            { type: "capture_gap", reason: "missing_tool_result", callId: unfinished },
+            { type: "capture_gap", reason: "unsupported_event" },
+            { type: "capture_gap", reason: "missing_tool_call" },
+            {
+              type: "tool_result",
+              tool: "unknown",
+              output: "orphan",
+              status: "error",
+              callId: "orphan-id",
+            },
+            {
+              type: "completion",
+              taskComplete: true,
+              summary: "Done",
+              finalOutput: "Authoritative deliverable",
+            },
+          ],
+          { provider },
+        ),
+      );
+
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+      const [read, bash] = capturedEvents.filter(({ p_kind }) => p_kind === "tool_call");
+      const [result, orphan] = capturedEvents.filter(({ p_kind }) => p_kind === "tool_result");
+      expect(result).toMatchObject({ p_causation_sequence: read.p_sequence, p_truncated: true });
+      expect(orphan).not.toHaveProperty("p_causation_sequence");
+      expect(capturedEvents).toContainEqual(
+        expect.objectContaining({
+          p_kind: "capture_gap",
+          p_payload: { reason: "missing_tool_result" },
+          p_causation_sequence: bash.p_sequence,
+        }),
+      );
+      expect(capturedEvents.at(-1)).toMatchObject({
+        p_kind: "capture_end",
+        p_payload: {
+          status: "complete",
+          coverage: {
+            adapter: provider,
+            toolCalls: 2,
+            toolResults: 2,
+            unresolvedToolCalls: 1,
+            unmatchedToolResults: 1,
+            unsupportedEvents: 1,
+            truncatedEvents: 1,
+          },
+        },
+      });
+      expect(JSON.stringify(capturedEvents)).not.toMatch(
+        /provider-private|orphan-id|normalized_source_only/,
+      );
+      expect(insertedArtifacts).toEqual([
+        expect.objectContaining({ artifact_json: "Authoritative deliverable" }),
+      ]);
+    },
+  );
+
+  it("keeps reordered tool events without reporting a missing result", async () => {
+    const { admin, capturedEvents } = buildAdminMock({ session: baseSession() });
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner(
+        [
+          { type: "capture_gap", reason: "missing_tool_call" },
+          {
+            type: "tool_result",
+            tool: "unknown",
+            output: "early",
+            status: "success",
+            callId: "late",
+          },
+          { type: "tool_use", tool: "Read", input: "package.json", callId: "late" },
+          { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Final file" },
+        ],
+        { provider: "claude-code" },
+      ),
+    );
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(capturedEvents.at(-1)).toMatchObject({
+      p_kind: "capture_end",
+      p_payload: {
+        coverage: { toolCalls: 1, toolResults: 1, unmatchedToolResults: 1, unresolvedToolCalls: 0 },
+      },
+    });
+    expect(capturedEvents.find(({ p_kind }) => p_kind === "tool_result")).not.toHaveProperty(
+      "p_causation_sequence",
+    );
+  });
+
+  it("stores interim Codex usage and withholds terminal output until the deliverable arrives", async () => {
+    const { admin, capturedEvents, insertedArtifacts, rpc } = buildAdminMock({
+      session: baseSession(),
+    });
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner(
+        [
+          { type: "usage", usage: { inputTokens: 21, outputTokens: 8 } },
+          { type: "progress", text: "Interim narration" },
+          {
+            type: "completion",
+            taskComplete: true,
+            summary: "Codex session completed",
+            finalOutput: "Final file",
+          },
+        ],
+        { provider: "codex" },
+      ),
+    );
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
+    expect(capturedEvents.filter(({ p_kind }) => p_kind === "terminal")).toEqual([
+      expect.objectContaining({
+        p_payload: {
+          status: "completed",
+          summary: "Codex session completed",
+          finalOutput: "Final file",
+        },
+      }),
+    ]);
+    expect(capturedEvents).toContainEqual(
+      expect.objectContaining({
+        p_kind: "usage",
+        p_payload: { inputTokens: 21, outputTokens: 8, provenance: "measured" },
+      }),
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "record_session_run_usage",
+      expect.objectContaining({
+        p_input_tokens: 21,
+        p_output_tokens: 8,
+        p_finalize: true,
+      }),
+    );
+    expect(insertedArtifacts).toEqual([expect.objectContaining({ artifact_json: "Final file" })]);
+  });
+
+  it("protects the Codex checkout before turn usage can exhaust the budget", async () => {
+    const { admin, capturedEvents, runRows, insertedArtifacts } = buildAdminMock({
+      session: baseSession(),
+      usageExhaustionCode: "tokens",
+    });
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner(
+        [
+          {
+            type: "usage",
+            usage: { inputTokens: 21, outputTokens: 8 },
+            sourceRecoveryRequired: true,
+          },
+          { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Final file" },
+        ],
+        { provider: "codex" },
+      ),
+    );
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(runRows[0].source_recovery_required).toBe(true);
+    expect((await mocked.createSessionSandbox.mock.results[0].value).stop).not.toHaveBeenCalled();
+    expect(capturedEvents.some(({ p_kind }) => p_kind === "terminal")).toBe(false);
+    expect(insertedArtifacts).toHaveLength(0);
+  });
+
+  it("records pending tool calls when a native provider stream fails", async () => {
+    const { admin, capturedEvents } = buildAdminMock({ session: baseSession() });
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner(
+        [
+          { type: "tool_use", tool: "Bash", input: "pnpm test", callId: "interrupted-id" },
+          { type: "error", message: "Provider connection lost" },
+        ],
+        { provider: "claude-code" },
+      ),
+    );
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    const call = capturedEvents.find(({ p_kind }) => p_kind === "tool_call");
+    expect(capturedEvents.slice(-2)).toMatchObject([
+      {
+        p_kind: "capture_gap",
+        p_payload: { reason: "missing_tool_result" },
+        p_causation_sequence: call?.p_sequence,
+      },
+      {
+        p_kind: "capture_end",
+        p_payload: { status: "interrupted", coverage: { unresolvedToolCalls: 1 } },
+      },
+    ]);
   });
 
   it("marks a stream that ends without a terminal event", async () => {

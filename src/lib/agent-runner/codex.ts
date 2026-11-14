@@ -5,7 +5,8 @@ import {
   type CodexCredential,
 } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
-import { redactRunSensitiveText } from "./redact-sensitive-text";
+import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
+import { ToolEventTracker } from "./tool-event-tracker";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
@@ -130,6 +131,7 @@ export class CodexRunner implements AgentRunner {
     });
 
     const errors: string[] = [];
+    const tools = new ToolEventTracker();
     let lastMessage: string | undefined;
     let stdoutBuf = "";
     let stderrBuf = "";
@@ -145,8 +147,7 @@ export class CodexRunner implements AgentRunner {
       stdoutBuf = lines.pop() ?? "";
 
       for (const line of lines) {
-        const event = parseCodexLine(line);
-        if (event) {
+        for (const event of trackedCodexLine(line, tools)) {
           if (event.type === "error") errors.push(event.message);
           else {
             if (event.type === "progress") lastMessage = event.text;
@@ -157,8 +158,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     if (stdoutBuf.trim()) {
-      const event = parseCodexLine(stdoutBuf);
-      if (event) {
+      for (const event of trackedCodexLine(stdoutBuf, tools)) {
         if (event.type === "error") errors.push(event.message);
         else {
           if (event.type === "progress") lastMessage = event.text;
@@ -167,6 +167,7 @@ export class CodexRunner implements AgentRunner {
       }
     }
 
+    yield* tools.gaps();
     const code = await proc.exitCode;
     const stderr = safety.redact(stderrBuf);
     if (code !== 0) errors.push(codexExitErrorMessage(code, stderr));
@@ -224,6 +225,7 @@ export class CodexRunner implements AgentRunner {
     );
 
     const errors: string[] = [];
+    const tools = new ToolEventTracker();
     let lastMessage: string | undefined;
     let stdoutBuf = "";
     let stderrBuf = "";
@@ -239,8 +241,7 @@ export class CodexRunner implements AgentRunner {
       stdoutBuf = lines.pop() ?? "";
 
       for (const line of lines) {
-        const event = parseCodexLine(line);
-        if (event) {
+        for (const event of trackedCodexLine(line, tools)) {
           if (event.type === "error") errors.push(event.message);
           else {
             if (event.type === "progress") lastMessage = event.text;
@@ -251,8 +252,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     if (stdoutBuf.trim()) {
-      const event = parseCodexLine(stdoutBuf);
-      if (event) {
+      for (const event of trackedCodexLine(stdoutBuf, tools)) {
         if (event.type === "error") errors.push(event.message);
         else {
           if (event.type === "progress") lastMessage = event.text;
@@ -261,6 +261,7 @@ export class CodexRunner implements AgentRunner {
       }
     }
 
+    yield* tools.gaps();
     const code = await proc.exitCode;
     const stderr = safety.redact(stderrBuf);
     const errorMessage = code === 0 ? null : codexExitErrorMessage(code, stderr);
@@ -295,86 +296,101 @@ export class CodexRunner implements AgentRunner {
   }
 }
 
-/**
- * Parse a single line of Codex CLI `--json` output. One JSON object per line.
- * Known event shapes:
- *   { type: "message", role: "assistant", content: "..." }
- *   { type: "text", text: "..." }
- *   { type: "tool_call", name: "...", arguments: {...} }
- *   { type: "item.completed", item: { type: "agent_message", text: "..." } }
- *   { type: "turn.completed", usage: {...} }
- *   { type: "result", summary: "..." }
- * Unknown JSON bookkeeping shapes are ignored; non-JSON stdout falls through
- * to progress so we do not silently drop plain output. Only the CLI's
- * output-last-message file supplies the reviewable deliverable.
- */
+/** Retain the legacy parser assertion shape; the runner consumes every parsed event. */
 export function parseCodexLine(raw: string): AgentEvent | null {
+  return parseCodexStreamLine(raw)[0] ?? null;
+}
+
+/** Parse exec JSONL without retaining provider metadata or unsupported content. */
+export function parseCodexStreamLine(raw: string): AgentEvent[] {
   const trimmed = raw.trim();
-  if (!trimmed) return null;
-
+  if (!trimmed) return [];
+  let obj: unknown;
   try {
-    const obj = JSON.parse(trimmed) as Record<string, unknown>;
-
-    if (obj.type === "text" && typeof obj.text === "string") {
-      return { type: "progress", text: obj.text };
+    obj = JSON.parse(trimmed);
+  } catch {
+    if (trimmed.startsWith("{") || /^\[\s*(?:[{"\d-]|true\b|false\b|null\b|\]|$)/.test(trimmed)) {
+      return [{ type: "capture_gap", reason: "unsupported_event" }];
     }
+    return [{ type: "progress", text: trimmed }];
+  }
+  if (!isRecord(obj)) return [{ type: "capture_gap", reason: "unsupported_event" }];
 
-    if (obj.type === "message" && typeof obj.content === "string") {
-      return { type: "progress", text: obj.content };
+  if (
+    (obj.type === "item.started" || obj.type === "item.updated" || obj.type === "item.completed") &&
+    isRecord(obj.item)
+  ) {
+    if (obj.item.type === "command_execution" || obj.item.type === "mcp_tool_call") {
+      return parseCodexToolItem(obj.type, obj.item);
     }
+    if (obj.type !== "item.completed") return [];
+    const event = parseCodexItem(obj.item);
+    return event ? [event] : [];
+  }
 
-    if (obj.type === "tool_call" && typeof obj.name === "string") {
-      const input =
-        typeof obj.arguments === "string" ? obj.arguments : JSON.stringify(obj.arguments ?? {});
-      return { type: "tool_use", tool: obj.name, input };
-    }
+  const event = parseCodexControl(obj);
+  return event ? [event] : [];
+}
 
-    if (obj.type === "item.completed" && isRecord(obj.item)) {
-      return parseCodexItem(obj.item);
-    }
+function trackedCodexLine(raw: string, tools: ToolEventTracker): AgentEvent[] {
+  const parsed = parseCodexStreamLine(raw);
+  const tracked = parsed.flatMap((event): AgentEvent[] => {
+    if (event.type === "tool_use") return tools.start(event);
+    if (event.type === "tool_result") return tools.finish(event);
+    // Native turn notifications report usage before the authoritative file is read.
+    if (event.type === "completion")
+      return event.usage
+        ? [{ type: "usage", usage: event.usage, sourceRecoveryRequired: true }]
+        : [];
+    return [event];
+  });
+  const hasResult = (event: AgentEvent) => event.type === "tool_result";
+  if (parsed.some(hasResult) && !tracked.some(hasResult)) {
+    return tracked.filter((event) => event.type !== "capture_gap");
+  }
+  return tracked;
+}
 
-    if (obj.type === "turn.failed" || obj.type === "error") {
-      const message =
-        typeof obj.message === "string"
-          ? obj.message
-          : isRecord(obj.error) && typeof obj.error.message === "string"
-            ? obj.error.message
-            : "Codex reported a failed turn.";
-      return { type: "error", message };
-    }
-
-    if (obj.type === "turn.completed") {
-      const event: AgentEvent = {
-        type: "completion",
-        taskComplete: true,
-        summary: "Codex turn completed",
-      };
-      const usage = parseCodexUsage(obj.usage);
-      if (usage) event.usage = usage;
-      return event;
-    }
-
-    if (obj.type === "result") {
-      const summary =
-        typeof obj.summary === "string"
+function parseCodexControl(obj: Record<string, unknown>): AgentEvent | null {
+  if (obj.type === "text" && typeof obj.text === "string") {
+    return { type: "progress", text: obj.text };
+  }
+  if (obj.type === "message" && typeof obj.content === "string") {
+    return { type: "progress", text: obj.content };
+  }
+  if (obj.type === "tool_call" && typeof obj.name === "string") {
+    return {
+      type: "tool_use",
+      tool: obj.name,
+      input: codexToolText(obj.arguments ?? {}),
+      ...(typeof obj.call_id === "string" && obj.call_id ? { callId: obj.call_id } : {}),
+    };
+  }
+  if (obj.type === "turn.failed" || obj.type === "error") {
+    const message =
+      typeof obj.message === "string"
+        ? obj.message
+        : isRecord(obj.error) && typeof obj.error.message === "string"
+          ? obj.error.message
+          : "Codex reported a failed turn.";
+    return { type: "error", message };
+  }
+  if (obj.type === "turn.completed" || obj.type === "result") {
+    const summary =
+      obj.type === "turn.completed"
+        ? "Codex turn completed"
+        : typeof obj.summary === "string"
           ? obj.summary
           : typeof obj.result === "string"
             ? obj.result
             : "Codex run finished";
-      const event: AgentEvent = {
-        type: "completion",
-        taskComplete: true,
-        summary,
-      };
-      const usage = parseCodexUsage(obj.usage);
-      if (usage) event.usage = usage;
-      return event;
-    }
-
-    return null;
-  } catch {
-    return { type: "progress", text: trimmed };
+    const event: AgentEvent = { type: "completion", taskComplete: true, summary };
+    const usage = parseCodexUsage(obj.usage);
+    if (usage) event.usage = usage;
+    return event;
   }
+  if (obj.type === "thread.started" || obj.type === "turn.started") return null;
+  return { type: "capture_gap", reason: "unsupported_event" };
 }
 
 function parseCodexItem(item: Record<string, unknown>): AgentEvent | null {
@@ -382,28 +398,141 @@ function parseCodexItem(item: Record<string, unknown>): AgentEvent | null {
     const text = textFromCodexContent(item.text ?? item.content);
     return text ? { type: "progress", text } : null;
   }
-
   if (
     (item.type === "tool_call" || item.type === "function_call") &&
     typeof item.name === "string"
   ) {
-    const rawInput = item.arguments ?? item.input ?? {};
     return {
       type: "tool_use",
       tool: item.name,
-      input: typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput),
+      input: codexToolText(item.arguments ?? item.input ?? {}),
+      ...(typeof item.id === "string" && item.id ? { callId: item.id } : {}),
     };
   }
-
   if (
     typeof item.type === "string" &&
-    (item.type === "command_execution" ||
-      Object.keys(item).some((key) => key !== "id" && key !== "type"))
+    Object.keys(item).some((key) => key !== "id" && key !== "type")
   ) {
     return { type: "capture_gap", reason: "unsupported_event" };
   }
-
   return null;
+}
+
+function codexToolText(value: unknown): string {
+  return redactRunToolText(typeof value === "string" ? value : JSON.stringify(value));
+}
+
+// Wire fields verified against openai/codex exec_events.rs and sdk/typescript/src/items.ts.
+function parseCodexToolItem(
+  phase: "item.started" | "item.updated" | "item.completed",
+  item: Record<string, unknown>,
+): AgentEvent[] {
+  if (phase === "item.updated") return [];
+  const call = typeof item.id === "string" && item.id ? { callId: item.id } : {};
+  const status = item.status;
+  const command = item.type === "command_execution";
+  if (
+    status !== "in_progress" &&
+    status !== "completed" &&
+    status !== "failed" &&
+    !(command && status === "declined")
+  ) {
+    return [{ type: "capture_gap", reason: "unsupported_event" }];
+  }
+  const events: AgentEvent[] = [];
+  const namedMcp =
+    typeof item.server === "string" &&
+    !!item.server &&
+    typeof item.tool === "string" &&
+    !!item.tool;
+  const tool = command
+    ? "command_execution"
+    : namedMcp
+      ? `mcp:${item.server}/${item.tool}`
+      : "mcp_tool_call";
+  const hasInput = command
+    ? typeof item.command === "string"
+    : namedMcp && Object.hasOwn(item, "arguments");
+  if (hasInput) {
+    events.push({
+      type: "tool_use",
+      tool,
+      input: codexToolText(command ? item.command : item.arguments),
+      ...call,
+    });
+  }
+  if (phase === "item.started") {
+    return events.length ? events : [{ type: "capture_gap", reason: "unsupported_event" }];
+  }
+  if (status === "in_progress") {
+    if (!call.callId) events.push({ type: "capture_gap", reason: "missing_tool_result" });
+
+    return events;
+  }
+  if (command && typeof item.aggregated_output === "string") {
+    events.push({
+      type: "tool_result",
+      tool,
+      output: codexToolText(item.aggregated_output),
+      ...(typeof item.exit_code === "number" && Number.isInteger(item.exit_code)
+        ? { exitCode: item.exit_code }
+        : {}),
+      status:
+        status === "completed" && !(typeof item.exit_code === "number" && item.exit_code !== 0)
+          ? "success"
+          : "error",
+      ...call,
+    });
+    return events;
+  }
+  if (!command) {
+    const error =
+      isRecord(item.error) && typeof item.error.message === "string"
+        ? item.error.message
+        : undefined;
+    if (error !== undefined) {
+      events.push({
+        type: "tool_result",
+        tool,
+        output: codexToolText(error),
+        status: "error",
+        ...call,
+      });
+      return events;
+    }
+    if (isRecord(item.result)) {
+      const content = item.result.content;
+      const text: string[] = [];
+      let unsupported =
+        item.result.structured_content != null ||
+        item.result._meta != null ||
+        item.result.meta != null;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (isRecord(block) && block.type === "text" && typeof block.text === "string")
+            text.push(block.text);
+          else unsupported = true;
+        }
+        if (text.length || (!content.length && !unsupported)) {
+          if (unsupported)
+            events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+          events.push({
+            type: "tool_result",
+            tool,
+            output: codexToolText(text.join("\n")),
+            status: status === "completed" ? "success" : "error",
+            ...(unsupported ? { captureTruncated: true } : {}),
+            ...call,
+          });
+          return events;
+        }
+      }
+      events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    }
+  }
+  if (!call.callId) events.push({ type: "capture_gap", reason: "missing_tool_result" });
+
+  return events;
 }
 
 function textFromCodexContent(content: unknown): string | null {
