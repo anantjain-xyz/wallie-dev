@@ -14,15 +14,30 @@ import type {
 } from "@/lib/agent-runner/types";
 import type { Database } from "@/lib/supabase/database.types";
 
-type CaptureGap =
-  | "normalized_source_only"
-  | AgentCaptureGap
-  | "missing_terminal"
-  | "stream_interrupted";
+type CaptureGap = AgentCaptureGap | "missing_terminal" | "stream_interrupted";
 
-type NativeCaptureAdapter = "codex" | "claude-code";
+type CaptureAdapter = AgentRunner["provider"];
+type CaptureLimitation =
+  | "usage_unavailable"
+  | "tool_identity_may_be_unavailable"
+  | "tool_start_may_be_unavailable"
+  | "child_session_events_unavailable"
+  | "terminal_inferred_from_final_step";
+
+const ADAPTER_LIMITATIONS: Record<CaptureAdapter, readonly CaptureLimitation[]> = {
+  codex: [],
+  "claude-code": [],
+  cursor: ["usage_unavailable", "tool_identity_may_be_unavailable"],
+  opencode: [
+    "tool_start_may_be_unavailable",
+    "child_session_events_unavailable",
+    "terminal_inferred_from_final_step",
+  ],
+};
+
 type AdapterCoverage = {
-  adapter: NativeCaptureAdapter;
+  adapter: CaptureAdapter;
+  limitations?: CaptureLimitation[];
   toolCalls: number;
   toolResults: number;
   unresolvedToolCalls: number;
@@ -36,7 +51,13 @@ export type RunEventBody =
   | { kind: "tool_call"; payload: { tool: string; input: string } }
   | {
       kind: "tool_result";
-      payload: { tool: string; output: string; status: "success" | "error"; exitCode?: number };
+      payload: {
+        tool: string;
+        output: string;
+        status: "success" | "error";
+        outcome?: "rejected";
+        exitCode?: number;
+      };
     }
   | {
       kind: "terminal";
@@ -80,25 +101,23 @@ export class RunEventCapture {
     this.safety.addSecret(value);
   }
 
-  async start(adapter: AgentRunner["provider"]): Promise<void> {
-    if (adapter === "codex" || adapter === "claude-code") {
-      this.coverage = {
-        adapter,
-        toolCalls: 0,
-        toolResults: 0,
-        unresolvedToolCalls: 0,
-        unmatchedToolResults: 0,
-        unsupportedEvents: 0,
-        truncatedEvents: 0,
-      };
-    } else {
-      await this.markGap("normalized_source_only");
-    }
+  start(adapter: CaptureAdapter): void {
+    const limitations = ADAPTER_LIMITATIONS[adapter];
+    this.coverage = {
+      adapter,
+      ...(limitations.length ? { limitations: [...limitations] } : {}),
+      toolCalls: 0,
+      toolResults: 0,
+      unresolvedToolCalls: 0,
+      unmatchedToolResults: 0,
+      unsupportedEvents: 0,
+      truncatedEvents: 0,
+    };
   }
 
   async record(event: AgentEvent): Promise<void> {
     const redact = (text: string) => this.safety.redact(text);
-    const projected = projectEvent(event, redact);
+    const projected = projectEvent(event, redact, this.coverage?.adapter);
     const causationSequence =
       (event.type === "tool_result" || event.type === "capture_gap") && event.callId
         ? this.toolCallSequences.get(event.callId)
@@ -189,7 +208,11 @@ export class RunEventCapture {
   }
 }
 
-function projectEvent(event: AgentEvent, redactKnown: (text: string) => string): Projection {
+function projectEvent(
+  event: AgentEvent,
+  redactKnown: (text: string) => string,
+  adapter: CaptureAdapter | undefined,
+): Projection {
   const capture = (text: string, limit = MAX_TEXT_BYTES) => captureText(redactKnown(text), limit);
   switch (event.type) {
     case "text":
@@ -221,9 +244,15 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
           tool: tool.excerpt,
           output: output.excerpt,
           status: event.status,
+          ...(event.outcome ? { outcome: event.outcome } : {}),
           ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
         },
         truncated: event.captureTruncated || tool.truncated || output.truncated,
+        ...(adapter === "cursor"
+          ? {
+              legacyMessage: `**Tool:** ${tool.excerpt.replace(/[\r\n]/g, " ")} result\n\n\`\`\`\n${event.outcome ?? event.status}\n${output.excerpt}\n\`\`\``,
+            }
+          : {}),
       };
     }
     case "usage":

@@ -5,6 +5,7 @@ import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { ToolEventTracker } from "./tool-event-tracker";
 import { DEFAULT_CURSOR_MODEL } from "./types";
 
 export interface CursorRunnerOptions {
@@ -78,10 +79,23 @@ export class CursorRunner implements AgentRunner {
     let stderr = "";
     let completion: Extract<AgentEvent, { type: "completion" }> | undefined;
     let hadError = false;
+    const tools = new ToolEventTracker();
     function* eventsForLine(line: string): Iterable<AgentEvent> {
-      const { event } = parseCursorStreamJsonLine(line, secrets);
-      if (event?.type === "completion") completion = event;
-      else if (event) {
+      const parsed = parseCursorStreamJsonLine(line, secrets).events;
+      const tracked = parsed.flatMap((event): AgentEvent[] => {
+        if (event.type === "tool_use") return tools.start(event);
+        if (event.type === "tool_result") return tools.finish(event);
+        return [event];
+      });
+      const repeatedResult =
+        parsed.some((event) => event.type === "tool_result") &&
+        !tracked.some((event) => event.type === "tool_result");
+      for (const event of tracked) {
+        if (repeatedResult && event.type === "capture_gap") continue;
+        if (event.type === "completion") {
+          completion = event;
+          continue;
+        }
         if (event.type === "error") {
           hadError = true;
           if (completion?.finalOutput?.trim()) {
@@ -108,6 +122,7 @@ export class CursorRunner implements AgentRunner {
       yield* eventsForLine(stdout);
     }
 
+    yield* tools.gaps();
     const code = await proc.exitCode;
     if (code !== 0) {
       if (completion?.finalOutput?.trim()) {
@@ -134,44 +149,48 @@ export class CursorRunner implements AgentRunner {
 export function parseCursorStreamJsonLine(
   line: string,
   secrets: Array<string | undefined> = [],
-): {
-  event: AgentEvent | null;
-  sessionId?: string;
-} {
+): { events: AgentEvent[]; sessionId?: string } {
   const trimmed = line.trim();
-  if (!trimmed) return { event: null };
+  if (!trimmed) return { events: [] };
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(trimmed);
-    if (!isRecord(value)) {
-      return { event: { type: "capture_gap", reason: "unsupported_event" } };
+    value = JSON.parse(trimmed);
+  } catch {
+    if (trimmed.startsWith("{") || /^\[\s*(?:[{"\d-]|true\b|false\b|null\b|\]|$)/.test(trimmed)) {
+      return { events: [{ type: "capture_gap", reason: "unsupported_event" }] };
     }
-    const sessionId = typeof value.session_id === "string" ? value.session_id : undefined;
-    if (value.type === "assistant") {
-      const text = extractText(value.message ?? value.text);
+    return { events: [{ text: redactSecrets(trimmed, secrets), type: "progress" }] };
+  }
+  if (!isRecord(value)) return { events: [{ type: "capture_gap", reason: "unsupported_event" }] };
+  const sessionId = typeof value.session_id === "string" ? value.session_id : undefined;
+  if (value.type === "assistant") {
+    const text = extractText(value.message ?? value.text);
+    return {
+      events: text ? [{ text: redactSecrets(text, secrets), type: "progress" }] : [],
+      sessionId,
+    };
+  }
+  if (value.type === "tool_call")
+    return { events: parseCursorToolCallEvents(value, secrets), sessionId };
+  if (value.type === "result") {
+    if (value.is_error === true || (value.subtype && value.subtype !== "success")) {
       return {
-        event: text ? { text: redactSecrets(text, secrets), type: "progress" } : null,
-        sessionId,
-      };
-    }
-    if (value.type === "tool_call") {
-      return { event: parseCursorToolCallEvent(value, secrets), sessionId };
-    }
-    if (value.type === "result") {
-      if (value.is_error === true || (value.subtype && value.subtype !== "success")) {
-        return {
-          event: {
+        events: [
+          {
             type: "error",
             message: redactSecrets(
               extractText(value.result ?? value.summary) || "Cursor result was unsuccessful",
               secrets,
             ),
           },
-          sessionId,
-        };
-      }
-      const finalOutput = redactSecrets(extractText(value.result), secrets);
-      return {
-        event: {
+        ],
+        sessionId,
+      };
+    }
+    const finalOutput = redactSecrets(extractText(value.result), secrets);
+    return {
+      events: [
+        {
           ...(finalOutput.trim() ? { finalOutput } : {}),
           summary: redactSecrets(
             extractText(value.result ?? value.summary) || "Cursor session completed",
@@ -180,21 +199,36 @@ export function parseCursorStreamJsonLine(
           taskComplete: true,
           type: "completion",
         },
-        sessionId,
-      };
-    }
-    return { event: null, sessionId };
-  } catch {
-    if (trimmed.startsWith("{") || /^\[\s*(?:[{"\d-]|true\b|false\b|null\b|\]|$)/.test(trimmed)) {
-      return { event: { type: "capture_gap", reason: "unsupported_event" } };
-    }
-    return { event: { text: redactSecrets(trimmed, secrets), type: "progress" } };
+      ],
+      sessionId,
+    };
   }
+  if (value.type === "system" || value.type === "user") return { events: [], sessionId };
+  return { events: [{ type: "capture_gap", reason: "unsupported_event" }], sessionId };
 }
 
 const TOOL_CALL_KEY_SUFFIX = "ToolCall";
 const MAX_TOOL_INPUT_CHARS = 4096;
 const MAX_TOOL_TEXT_CHARS = 500;
+const PRIVATE_TOOL_FIELDS = new Set([
+  "toolCallId",
+  "tool_call_id",
+  "callId",
+  "call_id",
+  "requestId",
+  "request_id",
+  "sessionId",
+  "session_id",
+]);
+const OPAQUE_TOOL_FIELDS = new Set([
+  "_meta",
+  "meta",
+  "metadata",
+  "attachments",
+  "blob",
+  "base64",
+  "base64Data",
+]);
 const BULKY_TOOL_FIELDS = new Set([
   "afterFullFileContent",
   "content",
@@ -204,10 +238,16 @@ const BULKY_TOOL_FIELDS = new Set([
   "parsingResult",
 ]);
 
-function parseCursorToolCallEvent(
+// Native envelope: https://cursor.com/docs/cli/reference/output-format#tool-call-events
+function parseCursorToolCallEvents(
   value: Record<string, unknown>,
   secrets: Array<string | undefined>,
-): AgentEvent {
+): AgentEvent[] {
+  const call = typeof value.call_id === "string" && value.call_id ? { callId: value.call_id } : {};
+  const subtype = value.subtype;
+  if (subtype !== undefined && subtype !== "started" && subtype !== "completed") {
+    return [{ type: "capture_gap", reason: "unsupported_event", ...call }];
+  }
   const toolCall = isRecord(value.tool_call) ? value.tool_call : value;
   const nested = findNestedToolCall(toolCall);
   const functionCall = isRecord(toolCall.function) ? toolCall.function : null;
@@ -220,18 +260,77 @@ function parseCursorToolCallEvent(
     nested?.body.args ??
     parseFunctionArguments(functionCall?.arguments) ??
     toolCall.input ??
-    toolCall.args ??
-    {};
-  const completed = value.subtype === "completed";
-  const result = completed
-    ? (nested?.body.result ?? functionCall?.result ?? toolCall.result)
-    : undefined;
-
-  return {
-    ...serializeToolInput(args, completed ? result : undefined, secrets),
+    toolCall.args;
+  const hasInput = args !== undefined;
+  const events: AgentEvent[] = [];
+  if (hasInput && (subtype !== "completed" || call.callId)) {
+    const serialized = serializeToolValue(args, secrets, true);
+    events.push({
+      type: "tool_use",
+      tool,
+      input: serialized.text,
+      ...(serialized.truncated ? { captureTruncated: true } : {}),
+      ...call,
+    });
+  }
+  if (subtype !== "completed") {
+    return events.length ? events : [{ type: "capture_gap", reason: "unsupported_event", ...call }];
+  }
+  const result = nested?.body.result ?? functionCall?.result ?? toolCall.result;
+  if (result === undefined || result === null) {
+    if (!call.callId) events.push({ type: "capture_gap", reason: "missing_tool_result" });
+    else if (!hasInput) events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    return events;
+  }
+  if (!isRecord(result)) {
+    events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    return events;
+  }
+  const outcomes = (["success", "error", "rejected"] as const).filter(
+    (kind) => result[kind] !== undefined && result[kind] !== null,
+  );
+  if (outcomes.length !== 1) {
+    events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    return events;
+  }
+  const outcome = outcomes[0]!;
+  const payload = result[outcome];
+  if (!isRecord(payload) || !Object.keys(payload).some((key) => key !== "toolCallId")) {
+    events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    return events;
+  }
+  if (
+    outcome !== "success" &&
+    !(typeof payload.message === "string" && payload.message.trim()) &&
+    !(typeof payload.reason === "string" && payload.reason.trim())
+  ) {
+    events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    return events;
+  }
+  const exitCode =
+    isRecord(payload) && typeof payload.exitCode === "number" && Number.isInteger(payload.exitCode)
+      ? payload.exitCode
+      : undefined;
+  const serialized = serializeToolValue(payload, secrets, false);
+  const sourceLimited = isRecord(payload) && payload.exceededLimit === true;
+  if (!serialized.retained) {
+    events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+    return events;
+  }
+  if (serialized.omitted)
+    events.push({ type: "capture_gap", reason: "unsupported_event", ...call });
+  events.push({
+    type: "tool_result",
     tool,
-    type: "tool_use",
-  };
+    output: serialized.text,
+    status:
+      outcome === "success" && (exitCode === undefined || exitCode === 0) ? "success" : "error",
+    ...(outcome === "rejected" ? { outcome: "rejected" } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(serialized.truncated || sourceLimited ? { captureTruncated: true } : {}),
+    ...call,
+  });
+  return events;
 }
 
 function findNestedToolCall(toolCall: Record<string, unknown>): {
@@ -266,48 +365,47 @@ function parseFunctionArguments(value: unknown): unknown {
 
 type ToolCapture = { truncated: boolean };
 
-function serializeToolInput(
-  args: unknown,
-  result: unknown,
+function serializeToolValue(
+  value: unknown,
   secrets: Array<string | undefined>,
-): Pick<Extract<AgentEvent, { type: "tool_use" }>, "input" | "captureTruncated"> {
+  omitBulkyFields: boolean,
+): { text: string; truncated: boolean; retained: boolean; omitted: boolean } {
   const capture = { truncated: false };
-  const compactArgs = compactToolValue(args, secrets, capture);
-  const payload =
-    result === undefined
-      ? compactArgs
-      : isRecord(compactArgs)
-        ? { ...compactArgs, result: compactToolResult(result, secrets, capture) }
-        : { args: compactArgs, result: compactToolResult(result, secrets, capture) };
-  const json = redactRunToolText(redactSecrets(JSON.stringify(payload ?? {}), secrets));
+  const compacted = compactToolValue(value, secrets, capture, omitBulkyFields);
+  let retained = false;
+  let omitted = false;
+  const encoded = JSON.stringify(compacted, (key, nested: unknown) => {
+    if (
+      PRIVATE_TOOL_FIELDS.has(key) ||
+      OPAQUE_TOOL_FIELDS.has(key) ||
+      (isRecord(nested) && (nested.type === "image" || nested.type === "audio"))
+    ) {
+      capture.truncated = true;
+      omitted = true;
+      return undefined;
+    }
+    if (typeof nested === "string" || typeof nested === "number" || typeof nested === "boolean")
+      retained = true;
+    return nested;
+  });
+  const json = redactRunToolText(redactSecrets(encoded ?? "null", secrets));
   if (json.length > MAX_TOOL_INPUT_CHARS) capture.truncated = true;
   return {
-    input:
+    text:
       json.length <= MAX_TOOL_INPUT_CHARS
         ? json
         : `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`,
-    ...(capture.truncated ? { captureTruncated: true } : {}),
+    truncated: capture.truncated,
+    retained,
+    omitted,
   };
-}
-
-function compactToolResult(
-  result: unknown,
-  secrets: Array<string | undefined>,
-  capture: ToolCapture,
-): unknown {
-  if (!isRecord(result)) return compactToolValue(result, secrets, capture);
-  if (isRecord(result.success)) return compactToolValue(result.success, secrets, capture);
-  if (isRecord(result.error)) return { error: compactToolValue(result.error, secrets, capture) };
-  if (isRecord(result.rejected)) {
-    return { rejected: compactToolValue(result.rejected, secrets, capture) };
-  }
-  return compactToolValue(result, secrets, capture);
 }
 
 function compactToolValue(
   value: unknown,
   secrets: Array<string | undefined>,
   capture: ToolCapture,
+  omitBulkyFields: boolean,
   depth = 0,
 ): unknown {
   if (typeof value === "string") {
@@ -316,17 +414,19 @@ function compactToolValue(
   if (Array.isArray(value)) {
     if (depth > 4) return value;
     if (value.length > 20) capture.truncated = true;
-    return value.slice(0, 20).map((item) => compactToolValue(item, secrets, capture, depth + 1));
+    return value
+      .slice(0, 20)
+      .map((item) => compactToolValue(item, secrets, capture, omitBulkyFields, depth + 1));
   }
   if (!isRecord(value) || depth > 4) return value;
 
   const compacted: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (BULKY_TOOL_FIELDS.has(key)) {
+    if (omitBulkyFields && BULKY_TOOL_FIELDS.has(key)) {
       capture.truncated = true;
       continue;
     }
-    compacted[key] = compactToolValue(nested, secrets, capture, depth + 1);
+    compacted[key] = compactToolValue(nested, secrets, capture, omitBulkyFields, depth + 1);
   }
   return compacted;
 }

@@ -842,7 +842,7 @@ function buildAdminMock(opts: MockOptions) {
       if (typeof payload.p_legacy_message_md === "string") {
         const body = payload.p_payload as { status?: string };
         const kind =
-          payload.p_kind === "tool_call"
+          payload.p_kind === "tool_call" || payload.p_kind === "tool_result"
             ? "tool_use"
             : payload.p_kind === "terminal"
               ? body.status === "failed"
@@ -2392,7 +2392,6 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(capturedEvents.map((event) => event.p_kind)).toEqual([
       "progress",
       "progress",
-      "capture_gap",
       "text",
       "tool_call",
       "capture_gap",
@@ -2409,30 +2408,44 @@ describe("processPipelineJob (generic stage runner)", () => {
         p_sequence: index + 1,
       })),
     );
-    expect(capturedEvents[2]).toMatchObject({ p_payload: { reason: "normalized_source_only" } });
-    expect(capturedEvents[3]).toMatchObject({
+    expect(capturedEvents[2]).toMatchObject({
       p_payload: { text: "Check [REDACTED] [redacted]" },
       p_legacy_message_md: "Check [REDACTED] [redacted]",
     });
-    expect(capturedEvents[4]).toMatchObject({
+    expect(capturedEvents[3]).toMatchObject({
       p_truncated: true,
       p_payload: { tool: "test", input: "🧪".repeat(1_874) },
     });
-    expect(capturedEvents[5]).toMatchObject({ p_payload: { reason: "unsupported_event" } });
-    expect(capturedEvents[6]).toMatchObject({
+    expect(capturedEvents[4]).toMatchObject({ p_payload: { reason: "unsupported_event" } });
+    expect(capturedEvents[5]).toMatchObject({
       p_payload: { tool: "test", output: "[REDACTED]", status: "success" },
     });
-    expect(capturedEvents[8]).toMatchObject({
-      p_causation_sequence: 8,
+    expect(capturedEvents[7]).toMatchObject({
+      p_causation_sequence: 7,
       p_payload: { inputTokens: 13, outputTokens: 4, provenance: "measured" },
     });
-    expect(capturedEvents[9]).toMatchObject({ p_payload: { status: "complete" } });
+    expect(capturedEvents[8]).toMatchObject({
+      p_payload: {
+        status: "complete",
+        coverage: {
+          adapter: "cursor",
+          limitations: ["usage_unavailable", "tool_identity_may_be_unavailable"],
+        },
+      },
+    });
     expect(insertedMessages).toContainEqual(
       expect.objectContaining({
         kind: "tool_use",
         message_md: expect.stringContaining(preview),
       }),
     );
+    expect(insertedMessages).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_use",
+        message_md: expect.stringContaining("**Tool:** test result"),
+      }),
+    );
+    expect(JSON.stringify(insertedMessages)).not.toContain(activeSecret);
     expect(JSON.stringify(capturedEvents)).not.toContain(activeSecret);
     expect(JSON.stringify(capturedEvents)).not.toContain(unknownSecret);
   });
@@ -2464,7 +2477,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(JSON.stringify(insertedMessages)).not.toContain(secret);
   });
 
-  it.each(["codex", "claude-code"] as const)(
+  it.each(["codex", "claude-code", "cursor", "opencode"] as const)(
     "records causal tool sequences and a coverage receipt for %s",
     async (provider) => {
       const callId = "provider-private-call-id";
@@ -2648,31 +2661,67 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedArtifacts).toHaveLength(0);
   });
 
-  it("records pending tool calls when a native provider stream fails", async () => {
-    const { admin, capturedEvents } = buildAdminMock({ session: baseSession() });
-    mocked.createAgentRunner.mockReturnValueOnce(
-      makeRunner(
-        [
-          { type: "tool_use", tool: "Bash", input: "pnpm test", callId: "interrupted-id" },
-          { type: "error", message: "Provider connection lost" },
-        ],
-        { provider: "claude-code" },
-      ),
-    );
-    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
-    const call = capturedEvents.find(({ p_kind }) => p_kind === "tool_call");
-    expect(capturedEvents.slice(-2)).toMatchObject([
-      {
-        p_kind: "capture_gap",
-        p_payload: { reason: "missing_tool_result" },
-        p_causation_sequence: call?.p_sequence,
-      },
-      {
-        p_kind: "capture_end",
-        p_payload: { status: "interrupted", coverage: { unresolvedToolCalls: 1 } },
-      },
-    ]);
-  });
+  it.each(["claude-code", "cursor", "opencode"] as const)(
+    "records pending tool calls when the %s stream fails",
+    async (provider) => {
+      const { admin, capturedEvents } = buildAdminMock({ session: baseSession() });
+      mocked.createAgentRunner.mockReturnValueOnce(
+        makeRunner(
+          [
+            { type: "tool_use", tool: "Bash", input: "pnpm test", callId: "interrupted-id" },
+            { type: "error", message: "Provider connection lost" },
+          ],
+          { provider },
+        ),
+      );
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+      const call = capturedEvents.find(({ p_kind }) => p_kind === "tool_call");
+      expect(capturedEvents.slice(-2)).toMatchObject([
+        {
+          p_kind: "capture_gap",
+          p_payload: { reason: "missing_tool_result" },
+          p_causation_sequence: call?.p_sequence,
+        },
+        {
+          p_kind: "capture_end",
+          p_payload: { status: "interrupted", coverage: { unresolvedToolCalls: 1 } },
+        },
+      ]);
+    },
+  );
+
+  it.each(["cursor", "opencode"] as const)(
+    "leaves an incomplete %s capture when the worker cancels",
+    async (provider) => {
+      const control = new AbortController();
+      const { admin, capturedEvents, insertedArtifacts } = buildAdminMock({
+        session: baseSession(),
+      });
+      mocked.createAgentRunner.mockReturnValueOnce({
+        ...makeRunner([], { provider }),
+        async *start(): AsyncIterable<AgentEvent> {
+          yield { type: "tool_use", tool: "Read", input: "package.json", callId: "canceled-call" };
+          control.abort();
+          yield {
+            type: "tool_result",
+            tool: "Read",
+            status: "success",
+            output: "late",
+            callId: "canceled-call",
+          };
+        },
+      });
+
+      expect(
+        (await processPipelineJob({ admin, job: baseJob(), signal: control.signal })).result,
+      ).toBe("idle");
+      expect(insertedArtifacts).toHaveLength(0);
+      expect(capturedEvents.at(-1)).toMatchObject({ p_kind: "tool_call" });
+      expect(
+        capturedEvents.some(({ p_kind }) => p_kind === "tool_result" || p_kind === "capture_end"),
+      ).toBe(false);
+    },
+  );
 
   it("marks a stream that ends without a terminal event", async () => {
     mocked.createAgentRunner.mockReturnValueOnce(makeRunner([{ type: "text", text: "Partial" }]));

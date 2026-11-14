@@ -628,7 +628,7 @@ async function runStage(input: {
       );
     }
     if (installationToken) runEvents.addSensitiveValue(installationToken);
-    await runEvents.start(runner.provider);
+    runEvents.start(runner.provider);
     captureOpen = true;
     let sawTerminal = false;
     for await (const event of runner.start({

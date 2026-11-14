@@ -179,22 +179,30 @@ the target repository remains their runtime semantic owner.
   results, terminal outcomes, and usage. The worker redacts credentials before
   clipping and marks shortened fields with `truncated`. Codex captures command
   and MCP tool items. Claude Code captures assistant tool calls and user tool
-  results. The adapters retain text output and record gaps for unsupported
-  content and missing pairs. Provider IDs stay in memory. Cursor and OpenCode
-  report `normalized_source_only` until OP-533.
+  results. Cursor captures identified tool calls and outcomes from its headless
+  stream. OpenCode captures tool state and output from JSON snapshots. The
+  adapters record gaps for unsupported content and missing pairs. Provider
+  identifiers stay in memory.
 - Codex turn usage remains an accounting event. The final-message file is the
   authoritative Codex deliverable. Claude Code uses the successful result event
   as its deliverable.
 - `capture_end` reports whether Wallie drained the normalized stream to a
   terminal outcome. An interrupted or missing end marker, a missing sequence,
-  a gap, or a truncated event indicates incomplete capture. For Codex and
-  Claude Code, the end marker also counts tool calls, results, missing pairs,
-  unsupported events, and truncated events for the exact attempt.
-  The source formats are documented by [Codex exec JSONL](https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs)
-  and [Claude Code streaming output](https://code.claude.com/docs/en/agent-sdk/streaming-output).
+  a gap, or a truncated event indicates incomplete capture. The end marker
+  counts tool calls, results, missing pairs, unsupported events, and truncated
+  events for the exact attempt. Cursor reports that usage and some call
+  identities are unavailable. OpenCode reports that call starts and child
+  session events may be missing and that completion comes from the final step.
+  Cancellation can leave an open call and no end marker. A transport failure
+  can close capture as interrupted while the attempt still owns the run.
+  See [Codex exec JSONL](https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs),
+  [Claude Code streaming output](https://code.claude.com/docs/en/agent-sdk/streaming-output),
+  [Cursor headless output](https://cursor.com/docs/cli/reference/output-format), and
+  [OpenCode JSON output](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/cli/cmd/run.ts).
 - The append transaction also writes the compatible `agent_run_messages`
-  projection for Run history. Existing runs keep their legacy messages, and
-  post-run diagnostics continue to use that history.
+  projection for Run history, including Cursor's tool outcome previews.
+  Existing runs keep their legacy messages, and post-run diagnostics
+  continue to use that history.
 - Before publication, Wallie commits remaining nonignored working-tree changes
   with repository hooks disabled, then captures an incremental Git bundle from
   the original base to the final head. Dirty submodules and changed gitlinks

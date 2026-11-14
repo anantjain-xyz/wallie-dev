@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { AgentEvent } from "./types";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
@@ -376,16 +377,16 @@ describe("CursorRunner", () => {
       events.push(event);
     }
 
-    const toolUse = events.find((event) => event.type === "tool_use");
-    expect(toolUse).toMatchObject({ tool: "shell", type: "tool_use" });
-    if (!toolUse || toolUse.type !== "tool_use") {
+    const toolUse = events.find((event) => event.type === "tool_result");
+    expect(toolUse).toMatchObject({ tool: "shell", type: "tool_result" });
+    if (!toolUse || toolUse.type !== "tool_result") {
       throw new Error("expected tool_use event");
     }
-    expect(toolUse.input).not.toContain(secret);
-    expect(toolUse.input).toContain("[REDACTED]");
-    expect(JSON.parse(toolUse.input)).toMatchObject({
-      command: "printenv CURSOR_API_KEY",
-      result: { exitCode: 0, stdout: "[REDACTED]" },
+    expect(toolUse.output).not.toContain(secret);
+    expect(toolUse.output).toContain("[REDACTED]");
+    expect(JSON.parse(toolUse.output)).toMatchObject({
+      exitCode: 0,
+      stdout: "[REDACTED]",
     });
   });
 
@@ -422,16 +423,16 @@ describe("CursorRunner", () => {
       events.push(event);
     }
 
-    const toolUse = events.find((event) => event.type === "tool_use");
-    expect(toolUse).toMatchObject({ tool: "shell", type: "tool_use" });
-    if (!toolUse || toolUse.type !== "tool_use") {
+    const toolUse = events.find((event) => event.type === "tool_result");
+    expect(toolUse).toMatchObject({ tool: "shell", type: "tool_result" });
+    if (!toolUse || toolUse.type !== "tool_result") {
       throw new Error("expected tool_use event");
     }
-    expect(toolUse.input).not.toContain(installationToken);
-    expect(toolUse.input).toContain("[REDACTED]");
-    expect(JSON.parse(toolUse.input)).toMatchObject({
-      command: "printenv GH_TOKEN",
-      result: { exitCode: 0, stdout: "[REDACTED]" },
+    expect(toolUse.output).not.toContain(installationToken);
+    expect(toolUse.output).toContain("[REDACTED]");
+    expect(JSON.parse(toolUse.output)).toMatchObject({
+      exitCode: 0,
+      stdout: "[REDACTED]",
     });
   });
 
@@ -465,12 +466,20 @@ describe("CursorRunner", () => {
 });
 
 function parseToolUse(line: string, secrets: Array<string | undefined> = []) {
-  const event = parseCursorStreamJsonLine(line, secrets).event;
+  const event = parseCursorStreamJsonLine(line, secrets).events[0];
   expect(event).toMatchObject({ type: "tool_use" });
   if (!event || event.type !== "tool_use") {
     throw new Error("expected tool_use event");
   }
   return { event, input: JSON.parse(event.input) as Record<string, unknown> };
+}
+
+function parseToolResult(line: string, secrets: Array<string | undefined> = []) {
+  const event = parseCursorStreamJsonLine(line, secrets).events.find(
+    (event) => event.type === "tool_result",
+  );
+  if (!event || event.type !== "tool_result") throw new Error("expected tool_result event");
+  return { event, output: JSON.parse(event.output) as Record<string, unknown> };
 }
 
 describe("parseCursorStreamJsonLine", () => {
@@ -479,13 +488,13 @@ describe("parseCursorStreamJsonLine", () => {
       parseCursorStreamJsonLine(
         '{"type":"assistant","session_id":"s","message":{"content":[{"type":"text","text":"hello"}]}}',
       ),
-    ).toEqual({ event: { text: "hello", type: "progress" }, sessionId: "s" });
+    ).toEqual({ events: [{ text: "hello", type: "progress" }], sessionId: "s" });
     expect(
       parseCursorStreamJsonLine(
         '{"type":"tool_call","subtype":"started","tool_call":{"name":"shell","args":{"cmd":"ls"}}}',
-      ).event,
+      ).events[0],
     ).toEqual({ input: '{"cmd":"ls"}', tool: "shell", type: "tool_use" });
-    expect(parseCursorStreamJsonLine('{"type":"result","result":"done"}').event).toEqual({
+    expect(parseCursorStreamJsonLine('{"type":"result","result":"done"}').events[0]).toEqual({
       summary: "done",
       finalOutput: "done",
       taskComplete: true,
@@ -494,7 +503,9 @@ describe("parseCursorStreamJsonLine", () => {
   });
 
   it("leaves usage unavailable even if a result contains telemetry-shaped fields", () => {
-    const { event } = parseCursorStreamJsonLine(
+    const {
+      events: [event],
+    } = parseCursorStreamJsonLine(
       JSON.stringify({
         type: "result",
         result: "done",
@@ -515,11 +526,11 @@ describe("parseCursorStreamJsonLine", () => {
     expect(
       parseCursorStreamJsonLine(JSON.stringify({ type: "result", result: "Final secret-token" }), [
         "secret-token",
-      ]).event,
+      ]).events[0],
     ).toMatchObject({ finalOutput: "Final [REDACTED]" });
-    expect(parseCursorStreamJsonLine(JSON.stringify({ type: "result" })).event).not.toHaveProperty(
-      "finalOutput",
-    );
+    expect(
+      parseCursorStreamJsonLine(JSON.stringify({ type: "result" })).events[0],
+    ).not.toHaveProperty("finalOutput");
   });
 
   it("extracts nested *ToolCall names and args from official stream-json", () => {
@@ -531,8 +542,13 @@ describe("parseCursorStreamJsonLine", () => {
           tool_call: { readToolCall: { args: { path: "file.txt" } } },
           type: "tool_call",
         }),
-      ).event,
-    ).toEqual({ input: '{"path":"file.txt"}', tool: "read", type: "tool_use" });
+      ).events[0],
+    ).toEqual({
+      input: '{"path":"file.txt"}',
+      tool: "read",
+      type: "tool_use",
+      callId: "toolu_read",
+    });
 
     const glob = parseToolUse(
       JSON.stringify({
@@ -550,9 +566,9 @@ describe("parseCursorStreamJsonLine", () => {
     });
   });
 
-  it("summarizes completed tool results without dumping file or stdout contents", () => {
+  it("retains bounded completed tool output separately from its input", () => {
     const stdout = "x".repeat(4000);
-    const completed = parseToolUse(
+    const completed = parseToolResult(
       JSON.stringify({
         call_id: "toolu_shell",
         subtype: "completed",
@@ -568,14 +584,14 @@ describe("parseCursorStreamJsonLine", () => {
 
     expect(completed.event.tool).toBe("shell");
     expect(completed.event.captureTruncated).toBe(true);
-    expect(completed.input).toMatchObject({
-      command: "cat huge.log",
-      result: { exitCode: 0, stderr: "" },
+    expect(completed.output).toMatchObject({
+      exitCode: 0,
+      stderr: "",
     });
-    expect((completed.input.result as { stdout: string }).stdout).toBe(`${"x".repeat(500)}…`);
-    expect(completed.event.input).not.toContain(stdout);
+    expect(completed.output.stdout).toBe(`${"x".repeat(500)}…`);
+    expect(completed.event.output).not.toContain(stdout);
 
-    const readCompleted = parseToolUse(
+    const readCompleted = parseToolResult(
       JSON.stringify({
         subtype: "completed",
         tool_call: {
@@ -596,21 +612,19 @@ describe("parseCursorStreamJsonLine", () => {
       }),
     );
     expect(readCompleted.event.tool).toBe("read");
-    expect(readCompleted.event.captureTruncated).toBe(true);
-    expect(readCompleted.input).toEqual({
-      path: "README.md",
-      result: {
-        exceededLimit: false,
-        isEmpty: false,
-        totalChars: 1254,
-        totalLines: 54,
-      },
+    expect(readCompleted.event.captureTruncated).toBeUndefined();
+    expect(readCompleted.output).toEqual({
+      content: "# Project\n\nThis is a sample project...",
+      exceededLimit: false,
+      isEmpty: false,
+      totalChars: 1254,
+      totalLines: 54,
     });
   });
 
   it("redacts known secrets from tool results before truncation", () => {
     const secret = "sk-cursor-live-secret-value-12345";
-    const completed = parseToolUse(
+    const completed = parseToolResult(
       JSON.stringify({
         subtype: "completed",
         tool_call: {
@@ -631,15 +645,13 @@ describe("parseCursorStreamJsonLine", () => {
     );
 
     expect(completed.event.tool).toBe("shell");
-    expect(completed.event.input).not.toContain(secret);
-    expect((completed.input.result as { stdout: string }).stdout).toBe(
-      `[REDACTED]\n${"x".repeat(489)}…`,
-    );
+    expect(completed.event.output).not.toContain(secret);
+    expect(completed.output.stdout).toBe(`[REDACTED]\n${"x".repeat(489)}…`);
   });
 
   it("redacts a sandbox GitHub token from tool results before truncation", () => {
     const installationToken = "ghs_sandbox-installation-token-12345";
-    const completed = parseToolUse(
+    const completed = parseToolResult(
       JSON.stringify({
         subtype: "completed",
         tool_call: {
@@ -660,10 +672,8 @@ describe("parseCursorStreamJsonLine", () => {
     );
 
     expect(completed.event.tool).toBe("shell");
-    expect(completed.event.input).not.toContain(installationToken);
-    expect((completed.input.result as { stdout: string }).stdout).toBe(
-      `[REDACTED]\n${"x".repeat(489)}…`,
-    );
+    expect(completed.event.output).not.toContain(installationToken);
+    expect(completed.output.stdout).toBe(`[REDACTED]\n${"x".repeat(489)}…`);
   });
 
   it.each([
@@ -694,7 +704,9 @@ describe("parseCursorStreamJsonLine", () => {
       truncated: true,
     },
   ])("marks actual capture loss for $name", ({ args, truncated }) => {
-    const { event } = parseCursorStreamJsonLine(JSON.stringify({ type: "tool_call", input: args }));
+    const {
+      events: [event],
+    } = parseCursorStreamJsonLine(JSON.stringify({ type: "tool_call", input: args }));
     expect(event?.type).toBe("tool_use");
     if (event?.type !== "tool_use") throw new Error("Expected tool event");
     expect(event.captureTruncated).toBe(truncated ? true : undefined);
@@ -703,7 +715,7 @@ describe("parseCursorStreamJsonLine", () => {
 
   it("redacts unknown credential patterns before clipping tool output", () => {
     const secret = `sk-${"a".repeat(60)}`;
-    const completed = parseToolUse(
+    const completed = parseToolResult(
       JSON.stringify({
         type: "tool_call",
         subtype: "completed",
@@ -716,7 +728,7 @@ describe("parseCursorStreamJsonLine", () => {
       }),
     );
     expect(completed.event.captureTruncated).toBe(true);
-    expect(completed.event.input).not.toContain("sk-");
+    expect(completed.event.output).not.toContain("sk-");
   });
 
   it.each([
@@ -730,25 +742,424 @@ describe("parseCursorStreamJsonLine", () => {
     "[]",
   ])("marks malformed or nonobject JSON without echoing it (%s)", (line) => {
     expect(parseCursorStreamJsonLine(line)).toEqual({
-      event: { type: "capture_gap", reason: "unsupported_event" },
+      events: [{ type: "capture_gap", reason: "unsupported_event" }],
     });
   });
 
   it.each(["ordinary CLI progress", "[info] plain progress", "[warning] still working"])(
     "retains ordinary text progress (%s)",
     (line) => {
-      expect(parseCursorStreamJsonLine(line)).toEqual({ event: { type: "progress", text: line } });
+      expect(parseCursorStreamJsonLine(line)).toEqual({
+        events: [{ type: "progress", text: line }],
+      });
     },
   );
 
   it("never uses subtype as the tool name", () => {
     expect(
-      parseCursorStreamJsonLine('{"type":"tool_call","subtype":"started","tool_call":{}}').event,
-    ).toEqual({ input: "{}", tool: "tool", type: "tool_use" });
-    expect(parseCursorStreamJsonLine('{"type":"tool_call","subtype":"completed"}').event).toEqual({
-      input: "{}",
-      tool: "tool",
-      type: "tool_use",
+      parseCursorStreamJsonLine('{"type":"tool_call","subtype":"started","tool_call":{}}')
+        .events[0],
+    ).toEqual({ type: "capture_gap", reason: "unsupported_event" });
+    expect(
+      parseCursorStreamJsonLine('{"type":"tool_call","subtype":"completed"}').events[0],
+    ).toEqual({
+      type: "capture_gap",
+      reason: "missing_tool_result",
     });
+  });
+});
+
+// Native envelope fixtures: https://cursor.com/docs/cli/reference/output-format#tool-call-events
+// Headless rejections: https://cursor.com/docs/cli/headless#file-modification-in-scripts
+describe("Cursor native tool outcomes", () => {
+  const read = {
+    type: "tool_call",
+    subtype: "started",
+    call_id: "read-1",
+    tool_call: { readToolCall: { args: { path: "README.md" } } },
+  };
+  const write = {
+    type: "tool_call",
+    subtype: "started",
+    call_id: "write-1",
+    tool_call: {
+      writeToolCall: { args: { path: "summary.txt", toolCallId: "write-1", fileText: "summary" } },
+    },
+  };
+  const done = { type: "result", subtype: "success", result: "Final deliverable" };
+  async function collect(records: unknown[], exitCode = 0) {
+    const stream = records.map((record) => JSON.stringify(record)).join("\n");
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [
+        { stream: "stdout", data: stream.slice(0, 23) },
+        { stream: "stdout", data: stream.slice(23) },
+      ],
+      { exitCode },
+    );
+    const events: AgentEvent[] = [];
+    for await (const event of new CursorRunner({ credential }).start({
+      sandbox,
+      prompt: "p",
+      sessionId: "s",
+    }))
+      events.push(event);
+    return events;
+  }
+
+  it("keeps interleaved outcomes in order and avoids repeated call or result rows", async () => {
+    const readDone = {
+      ...read,
+      subtype: "completed",
+      tool_call: {
+        readToolCall: {
+          args: { path: "README.md" },
+          result: { success: { content: "read content", totalLines: 1, totalChars: 12 } },
+        },
+      },
+    };
+    const writeDone = {
+      ...write,
+      subtype: "completed",
+      tool_call: {
+        writeToolCall: {
+          args: { path: "summary.txt", toolCallId: "write-1", fileText: "summary" },
+          result: { success: { path: "summary.txt", linesCreated: 1, fileSize: 7 } },
+        },
+      },
+    };
+    const events = await collect([
+      read,
+      write,
+      read,
+      { type: "assistant", text: "Working" },
+      writeDone,
+      readDone,
+      writeDone,
+      done,
+    ]);
+    expect(events).toEqual([
+      { type: "tool_use", tool: "read", input: '{"path":"README.md"}', callId: "read-1" },
+      {
+        type: "tool_use",
+        tool: "write",
+        input: '{"path":"summary.txt"}',
+        callId: "write-1",
+        captureTruncated: true,
+      },
+      { type: "progress", text: "Working" },
+      {
+        type: "tool_result",
+        tool: "write",
+        output: '{"path":"summary.txt","linesCreated":1,"fileSize":7}',
+        status: "success",
+        callId: "write-1",
+      },
+      {
+        type: "tool_result",
+        tool: "read",
+        output: '{"content":"read content","totalLines":1,"totalChars":12}',
+        status: "success",
+        callId: "read-1",
+      },
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "Final deliverable",
+        finalOutput: "Final deliverable",
+      },
+    ]);
+    expect(
+      events
+        .filter((event) => event.type === "tool_use")
+        .map((event) => event.input)
+        .join(""),
+    ).not.toContain("toolCallId");
+  });
+
+  it.each([
+    {
+      result: { success: { stdout: "", stderr: "", exitCode: 0 } },
+      status: "success",
+      exitCode: 0,
+    },
+    {
+      result: { success: { stdout: "", stderr: "test failed", exitCode: 2 } },
+      status: "error",
+      exitCode: 2,
+    },
+    { result: { error: { message: "file missing" } }, status: "error" },
+    { result: { rejected: { reason: "permission denied" } }, status: "error", outcome: "rejected" },
+  ])(
+    "retains explicit outcomes without converting completed into success (%j)",
+    async ({ result, status, exitCode, outcome }) => {
+      const events = await collect([
+        {
+          type: "tool_call",
+          subtype: "completed",
+          call_id: "shell-1",
+          tool_call: { shellToolCall: { args: { command: "check" }, result } },
+        },
+        done,
+      ]);
+      expect(events[0]).toEqual({
+        type: "tool_use",
+        tool: "shell",
+        input: '{"command":"check"}',
+        callId: "shell-1",
+      });
+      expect(events[1]).toMatchObject({
+        type: "tool_result",
+        status,
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(outcome ? { outcome } : {}),
+      });
+      expect(events.at(-1)).toMatchObject({ type: "completion", finalOutput: "Final deliverable" });
+      expect(events.some((event) => event.type === "error")).toBe(false);
+    },
+  );
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { success: null },
+    { success: {} },
+    { success: [] },
+    { success: true },
+    { success: { stdout: "x" }, error: { message: "contradiction" } },
+    { futureOutcome: { raw: "hidden-value" } },
+  ])("labels missing or unknown outcomes rather than fabricating a result (%j)", async (result) => {
+    const events = await collect([
+      read,
+      {
+        ...read,
+        subtype: "completed",
+        tool_call: { readToolCall: { args: { path: "README.md" }, result } },
+      },
+      done,
+    ]);
+    expect(events.some((event) => event.type === "tool_result")).toBe(false);
+    expect(events).toContainEqual({
+      type: "capture_gap",
+      reason: "missing_tool_result",
+      callId: "read-1",
+    });
+    expect(JSON.stringify(events)).not.toContain("hidden-value");
+    expect(events.filter((event) => event.type === "tool_use")).toHaveLength(1);
+  });
+
+  it("keeps an orphan result without inventing call arguments", async () => {
+    const events = await collect([
+      {
+        type: "tool_call",
+        subtype: "completed",
+        call_id: "orphan",
+        tool_call: { readToolCall: { result: { success: { content: "observed" } } } },
+      },
+      done,
+    ]);
+    expect(events.slice(0, -1)).toEqual([
+      { type: "capture_gap", reason: "missing_tool_call" },
+      {
+        type: "tool_result",
+        tool: "read",
+        output: '{"content":"observed"}',
+        status: "success",
+        callId: "orphan",
+      },
+    ]);
+  });
+
+  it("does not emit a duplicate call on an uncorrelated completion", async () => {
+    const events = await collect([
+      {
+        type: "tool_call",
+        subtype: "started",
+        tool_call: { readToolCall: { args: { path: "README.md" } } },
+      },
+      {
+        type: "tool_call",
+        subtype: "completed",
+        tool_call: {
+          readToolCall: {
+            args: { path: "README.md" },
+            result: { success: { content: "observed" } },
+          },
+        },
+      },
+      done,
+    ]);
+    expect(events.filter((event) => event.type === "tool_use")).toHaveLength(1);
+    expect(events).toContainEqual({ type: "capture_gap", reason: "missing_tool_call" });
+  });
+
+  it("supports documented generic function arguments and explicit result wrappers", async () => {
+    const events = await collect([
+      {
+        type: "tool_call",
+        subtype: "completed",
+        call_id: "fn-1",
+        tool_call: {
+          function: {
+            name: "search",
+            arguments: '{"query":"docs"}',
+            result: { success: { matches: ["one"] } },
+          },
+        },
+      },
+      done,
+    ]);
+    expect(events.slice(0, -1)).toEqual([
+      { type: "tool_use", tool: "search", input: '{"query":"docs"}', callId: "fn-1" },
+      {
+        type: "tool_result",
+        tool: "search",
+        output: '{"matches":["one"]}',
+        status: "success",
+        callId: "fn-1",
+      },
+    ]);
+  });
+
+  it("labels provider-limited output and clips retained read content after redaction", async () => {
+    const events = await collect([
+      {
+        ...read,
+        subtype: "completed",
+        tool_call: {
+          readToolCall: {
+            args: { path: "README.md" },
+            result: {
+              success: {
+                content: 'echo {"api_key":"unknown-secret"} ' + "x".repeat(900),
+                exceededLimit: true,
+              },
+            },
+          },
+        },
+      },
+      done,
+    ]);
+    const result = events.find((event) => event.type === "tool_result");
+    expect(result).toMatchObject({ type: "tool_result", captureTruncated: true });
+    expect(JSON.stringify(result)).not.toContain("unknown-secret");
+    if (result?.type !== "tool_result") throw new Error("Missing result");
+    expect(JSON.parse(result.output).content.length).toBe(501);
+  });
+
+  it("omits opaque result metadata and attachments while retaining bounded text", async () => {
+    const events = await collect([
+      {
+        ...read,
+        subtype: "completed",
+        tool_call: {
+          readToolCall: {
+            args: { path: "README.md" },
+            result: {
+              success: {
+                content: "visible",
+                toolCallId: "hidden-call",
+                _meta: { token: "hidden-meta" },
+                attachments: [{ type: "image", data: "hidden-base64" }],
+              },
+            },
+          },
+        },
+      },
+      done,
+    ]);
+    expect(events).toContainEqual({
+      type: "capture_gap",
+      reason: "unsupported_event",
+      callId: "read-1",
+    });
+    expect(events).toContainEqual({
+      type: "tool_result",
+      tool: "read",
+      output: '{"content":"visible"}',
+      status: "success",
+      captureTruncated: true,
+      callId: "read-1",
+    });
+    expect(JSON.stringify(events)).not.toContain("hidden-");
+  });
+
+  it("does not turn metadata-only or binary-only payloads into empty success", async () => {
+    for (const success of [{ metadata: { raw: "hidden" } }, { type: "image", data: "hidden" }]) {
+      const events = await collect([
+        {
+          ...read,
+          subtype: "completed",
+          tool_call: { readToolCall: { args: { path: "README.md" }, result: { success } } },
+        },
+        done,
+      ]);
+      expect(events.some((event) => event.type === "tool_result")).toBe(false);
+      expect(events).toContainEqual({
+        type: "capture_gap",
+        reason: "unsupported_event",
+        callId: "read-1",
+      });
+      expect(JSON.stringify(events)).not.toContain("hidden");
+    }
+  });
+
+  it("marks cancellation and disconnect records without manufacturing tool results", async () => {
+    const events = await collect(
+      [
+        read,
+        { type: "connection", subtype: "reconnecting", raw: "hidden-connection" },
+        { type: "tool_call", subtype: "cancelled", call_id: "read-1", raw: "hidden-cancellation" },
+        { type: "result", subtype: "cancelled", is_error: true, result: "Canceled" },
+      ],
+      1,
+    );
+    expect(
+      events.some((event) => event.type === "tool_result" || event.type === "completion"),
+    ).toBe(false);
+    expect(events).toContainEqual({
+      type: "capture_gap",
+      reason: "missing_tool_result",
+      callId: "read-1",
+    });
+    expect(JSON.stringify(events)).not.toContain("hidden-");
+  });
+
+  it("rejects an aborted live iterator without turning pending work into success", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [
+      { stream: "stdout", data: JSON.stringify(read) + "\n" },
+      { stream: "stdout", data: JSON.stringify(done) + "\n" },
+    ]);
+    const controller = new AbortController();
+    const run = new CursorRunner({ credential })
+      .start({ sandbox, prompt: "p", sessionId: "s", signal: controller.signal })
+      [Symbol.asyncIterator]();
+    expect((await run.next()).value).toMatchObject({ type: "tool_use", callId: "read-1" });
+    controller.abort(new Error("Canceled by test"));
+    await expect(run.next()).rejects.toThrow("Canceled by test");
+  });
+
+  it("surfaces transport disconnection after the observed call without fabricated output", async () => {
+    const sandbox = new FakeSandbox();
+    const original = sandbox.exec.bind(sandbox);
+    vi.spyOn(sandbox, "exec").mockImplementation(async (...args) => {
+      const proc = await original(...args);
+      if (args[0] !== "bash") return proc;
+      return {
+        ...proc,
+        logs: async function* () {
+          yield { stream: "stdout" as const, data: JSON.stringify(read) + "\n" };
+          throw new Error("transport disconnected");
+        },
+      };
+    });
+    const run = new CursorRunner({ credential })
+      .start({ sandbox, prompt: "p", sessionId: "s" })
+      [Symbol.asyncIterator]();
+    expect((await run.next()).value).toMatchObject({ type: "tool_use", callId: "read-1" });
+    await expect(run.next()).rejects.toThrow("transport disconnected");
   });
 });

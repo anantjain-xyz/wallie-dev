@@ -2,12 +2,260 @@ import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
+import type { AgentEvent } from "./types";
 
 import { OpenCodeRunner, parseOpenCodeLine } from "./opencode";
 
 const credential = { secret: "zen-secret-key-1234567890" };
 
+async function collectOpenCodeRecords(records: unknown[], exitCode = 0) {
+  const sandbox = new FakeSandbox();
+  const stream = records.map((record) => JSON.stringify(record)).join("\n");
+  sandbox.scriptExec(
+    "bash",
+    [
+      { stream: "stdout", data: stream.slice(0, 27) },
+      { stream: "stdout", data: stream.slice(27) },
+    ],
+    { exitCode },
+  );
+  const events: AgentEvent[] = [];
+  for await (const event of new OpenCodeRunner({ credential }).start({
+    sandbox,
+    sessionId: "tool-results",
+    prompt: "p",
+  }))
+    events.push(event);
+  return events;
+}
+
 describe("OpenCodeRunner", () => {
+  it("preserves terminal tool snapshots in order without replaying calls or results", async () => {
+    // CLI terminal ToolPart snapshots: v1 callID and the current renderer's id.
+    const completed = {
+      type: "tool_use",
+      part: {
+        id: "part-read",
+        callID: "call-read",
+        tool: "read",
+        state: { status: "completed", input: { filePath: "README.md" }, output: "# Wallie" },
+      },
+    };
+    const failed = {
+      type: "tool_use",
+      part: {
+        id: "call-shell",
+        tool: "bash",
+        state: { status: "error", input: { command: "pnpm test" }, error: "Test failed" },
+      },
+    };
+    const events = await collectOpenCodeRecords([
+      completed,
+      failed,
+      completed,
+      failed,
+      { type: "step_start", part: { messageID: "final" } },
+      { type: "text", part: { id: "final-text", messageID: "final", text: "Tests need repair." } },
+      {
+        type: "step_finish",
+        part: { messageID: "final", reason: "stop", cost: 0, tokens: { input: 7, output: 2 } },
+      },
+    ]);
+    expect(events).toEqual([
+      { type: "tool_use", callId: "call-read", tool: "read", input: '{"filePath":"README.md"}' },
+      {
+        type: "tool_result",
+        callId: "call-read",
+        tool: "read",
+        output: "# Wallie",
+        status: "success",
+      },
+      { type: "tool_use", callId: "call-shell", tool: "bash", input: '{"command":"pnpm test"}' },
+      {
+        type: "tool_result",
+        callId: "call-shell",
+        tool: "bash",
+        output: "Test failed",
+        status: "error",
+      },
+      { type: "progress", text: "Tests need repair." },
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "OpenCode session completed",
+        finalOutput: "Tests need repair.",
+        usage: {
+          inputTokens: 7,
+          outputTokens: 2,
+          provenance: "measured",
+          costUsd: 0,
+          costProvenance: "measured",
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    { attachments: [{ type: "file", url: "data:image/png;base64,private-image" }] },
+    { metadata: { truncated: true, outputPath: "/private/provider-metadata" } },
+    { time: { start: 1, end: 2, compacted: 3 } },
+  ])(
+    "marks omitted tool material before its result and suppresses replay gaps (%j)",
+    async (extra) => {
+      const record = {
+        type: "tool_use",
+        part: {
+          callID: "call-partial",
+          tool: "custom-mcp-tool",
+          state: { status: "completed", input: {}, output: "visible text", ...extra },
+        },
+      };
+      const events = await collectOpenCodeRecords([record, record]);
+      expect(events.slice(0, -1)).toEqual([
+        { type: "tool_use", callId: "call-partial", tool: "custom-mcp-tool", input: "{}" },
+        { type: "capture_gap", callId: "call-partial", reason: "unsupported_event" },
+        {
+          type: "tool_result",
+          callId: "call-partial",
+          tool: "custom-mcp-tool",
+          output: "visible text",
+          status: "success",
+          captureTruncated: true,
+        },
+      ]);
+      expect(JSON.stringify(events)).not.toContain("private-image");
+      expect(JSON.stringify(events)).not.toContain("provider-metadata");
+    },
+  );
+
+  it.each([
+    { status: "completed" },
+    { status: "completed", output: null },
+    { status: "completed", output: { secret: "provider-envelope" } },
+    { status: "error" },
+    { status: "error", error: ["provider-envelope"] },
+  ])(
+    "labels a missing or unsupported result and retains the unresolved call (%j)",
+    async (state) => {
+      const events = await collectOpenCodeRecords([
+        {
+          type: "tool_use",
+          part: {
+            callID: "unfinished",
+            tool: "read",
+            state: { ...state, input: { path: "a.ts" } },
+          },
+        },
+      ]);
+      expect(events.slice(0, -1)).toEqual([
+        { type: "tool_use", callId: "unfinished", tool: "read", input: '{"path":"a.ts"}' },
+        { type: "capture_gap", callId: "unfinished", reason: "unsupported_event" },
+        { type: "capture_gap", callId: "unfinished", reason: "missing_tool_result" },
+      ]);
+      expect(JSON.stringify(events)).not.toContain("provider-envelope");
+    },
+  );
+
+  it("retains an observed result without inventing unavailable input", async () => {
+    const events = await collectOpenCodeRecords([
+      {
+        type: "tool_use",
+        part: {
+          callID: "result-only",
+          tool: "read",
+          state: { status: "completed", output: "observed" },
+        },
+      },
+    ]);
+    expect(events.slice(0, -1)).toEqual([
+      { type: "capture_gap", callId: "result-only", reason: "unsupported_event" },
+      { type: "capture_gap", reason: "missing_tool_call" },
+      {
+        type: "tool_result",
+        callId: "result-only",
+        tool: "read",
+        output: "observed",
+        status: "success",
+      },
+    ]);
+  });
+
+  it("retains long result text and redacts known secrets without metadata leakage", async () => {
+    const output = `${"line\n".repeat(2_000)}${credential.secret}`;
+    const events = await collectOpenCodeRecords([
+      {
+        type: "tool_use",
+        part: {
+          callID: "long-result",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command: "pnpm test" },
+            output,
+            metadata: { raw: "private-metadata" },
+          },
+        },
+      },
+    ]);
+    expect(events[1]).toEqual({
+      type: "tool_result",
+      callId: "long-result",
+      tool: "bash",
+      output: `${"line\n".repeat(2_000)}[REDACTED]`,
+      status: "success",
+    });
+    expect(JSON.stringify(events)).not.toContain(credential.secret);
+    expect(JSON.stringify(events)).not.toContain("private-metadata");
+  });
+
+  it.each(["cancel", "disconnect"])(
+    "does not complete an unresolved call after %s",
+    async (interruption) => {
+      const sandbox = new FakeSandbox();
+      const controller = new AbortController();
+      const originalExec = sandbox.exec.bind(sandbox);
+      vi.spyOn(sandbox, "exec").mockImplementation(async (cmd, args, opts) => {
+        const proc = await originalExec(cmd, args, opts);
+        if (cmd !== "bash") return proc;
+        return {
+          ...proc,
+          logs: async function* () {
+            yield {
+              stream: "stdout",
+              data: `${JSON.stringify({ type: "tool_use", part: { callID: "pending", tool: "read", state: { status: "completed", input: { path: "a.ts" } } } })}\n`,
+            };
+            throw new Error(`stream disconnected ${credential.secret}`);
+          },
+        };
+      });
+      const events: AgentEvent[] = [];
+      const run = async () => {
+        for await (const event of new OpenCodeRunner({ credential }).start({
+          sandbox,
+          sessionId: "interrupted",
+          prompt: "p",
+          signal: controller.signal,
+        })) {
+          events.push(event);
+          if (interruption === "cancel" && event.type === "tool_use")
+            controller.abort(new Error("attempt canceled"));
+        }
+      };
+      await expect(run()).rejects.toThrow(
+        interruption === "cancel" ? "attempt canceled" : "stream disconnected [REDACTED]",
+      );
+      expect(events[0]).toEqual({
+        type: "tool_use",
+        callId: "pending",
+        tool: "read",
+        input: '{"path":"a.ts"}',
+      });
+      expect(
+        events.some((event) => event.type === "tool_result" || event.type === "completion"),
+      ).toBe(false);
+    },
+  );
+
   it.each([
     { progress: [] },
     { progress: ["Inspecting the implementation", "Tests are still running"] },
@@ -306,8 +554,8 @@ describe("OpenCodeRunner", () => {
       { data: `ing"}}\n{"type":"tool_use","sessionID":"native-42",`, stream: "stdout" },
       {
         data:
-          `"part":{"tool":"bash","state":{"status":"completed",` +
-          `"input":{"command":"ls"}}}}\n` +
+          `"part":{"tool":"bash","callID":"call-ls","state":{"status":"completed",` +
+          `"input":{"command":"ls"},"output":"README.md"}}}\n` +
           `{"type":"step_finish","sessionID":"native-42","part":{"tokens":{"input":10,"output":4}}}\n` +
           `{"type":"step_finish","sessionID":"native-42","part":{"tokens":{"input":7,"output":3}}}`,
         stream: "stdout",
@@ -331,7 +579,14 @@ describe("OpenCodeRunner", () => {
 
     expect(events).toEqual([
       { type: "progress", text: "working" },
-      { type: "tool_use", tool: "bash", input: `{"command":"ls"}` },
+      { type: "tool_use", tool: "bash", callId: "call-ls", input: `{"command":"ls"}` },
+      {
+        type: "tool_result",
+        tool: "bash",
+        callId: "call-ls",
+        output: "README.md",
+        status: "success",
+      },
       {
         type: "completion",
         taskComplete: true,
@@ -628,36 +883,52 @@ describe("OpenCodeRunner", () => {
     );
   });
 
-  it("emits completed and failed tool events but ignores pending tool events", () => {
+  it("labels nonterminal snapshots and missing results without inventing successful output", () => {
     expect(
       parseOpenCodeLine(
         `{"type":"tool_use","part":{"tool":"read","state":{"status":"pending","input":{}}}}`,
       ),
-    ).toEqual({ events: [], sessionId: undefined });
+    ).toEqual({
+      events: [{ type: "capture_gap", reason: "unsupported_event" }],
+      sessionId: undefined,
+    });
     expect(
       parseOpenCodeLine(
         `{"type":"tool_use","part":{"tool":"read","state":{"status":"error","input":{"path":"x"}}}}`,
       ),
     ).toEqual({
-      events: [{ type: "tool_use", tool: "read", input: `{"path":"x"}` }],
+      events: [
+        { type: "tool_use", tool: "read", input: `{"path":"x"}` },
+        { type: "capture_gap", reason: "unsupported_event" },
+        { type: "capture_gap", reason: "missing_tool_result" },
+      ],
       sessionId: undefined,
     });
   });
 
   it.each([
-    { status: "completed", output: "sensitive result" },
-    { status: "error", error: "sensitive failure" },
-  ])("marks discarded tool result material for $status without retaining raw material", (state) => {
+    {
+      state: { status: "completed", output: "observed result" },
+      status: "success",
+      output: "observed result",
+    },
+    {
+      state: { status: "error", error: "observed failure" },
+      status: "error",
+      output: "observed failure",
+    },
+    { state: { status: "completed", output: "" }, status: "success", output: "" },
+  ])("captures explicit tool output with $status status", ({ state, status, output }) => {
     expect(
       parseOpenCodeLine(
         JSON.stringify({
           type: "tool_use",
-          part: { tool: "read", state: { ...state, input: { path: "a.ts" } } },
+          part: { callID: "call-read", tool: "read", state: { ...state, input: { path: "a.ts" } } },
         }),
       )?.events,
     ).toEqual([
-      { type: "tool_use", tool: "read", input: '{"path":"a.ts"}' },
-      { type: "capture_gap", reason: "unsupported_event" },
+      { type: "tool_use", callId: "call-read", tool: "read", input: '{"path":"a.ts"}' },
+      { type: "tool_result", callId: "call-read", tool: "read", output, status },
     ]);
   });
 
@@ -691,6 +962,8 @@ describe("OpenCodeRunner", () => {
           path: "src/large.ts",
         }),
       },
+      { type: "capture_gap", reason: "unsupported_event" },
+      { type: "capture_gap", reason: "missing_tool_result" },
     ]);
     expect(JSON.stringify(parsed)).not.toContain(secret);
     expect(JSON.stringify(parsed)).not.toContain("x".repeat(100));
@@ -927,8 +1200,31 @@ describe("OpenCodeRunner", () => {
 });
 
 describe("parseOpenCodeLine", () => {
-  it("ignores malformed lines", () => {
-    expect(parseOpenCodeLine("not json")).toBeNull();
+  it.each([
+    '{"type":"tool_use","private":"secret"',
+    '[{"private":"secret"}]',
+    '{"type":"unknown-provider-event","private":"secret"}',
+    '{"type":"tool_use","part":{"tool":"read","state":{"status":"unknown","private":"secret"}}}',
+    '{"type":"tool_use","part":{"state":{"status":"completed","input":{},"output":"secret"}}}',
+    '{"type":"reasoning","part":{"text":"secret"}}',
+    '{"type":"text","part":{"text":{"private":"secret"}}}',
+  ])("marks unknown output as a metadata-only gap: %s", (line) => {
+    expect(parseOpenCodeLine(line)?.events).toEqual([
+      { type: "capture_gap", reason: "unsupported_event" },
+    ]);
+  });
+
+  it("does not serialize an unknown error envelope", () => {
+    expect(parseOpenCodeLine('{"type":"error","error":{"private":"secret"}}')?.events).toEqual([
+      { type: "capture_gap", reason: "unsupported_event" },
+      { type: "error", message: "OpenCode session failed." },
+    ]);
+  });
+
+  it("ignores blank lines and labels malformed output without retaining it", () => {
+    expect(parseOpenCodeLine("not json")).toEqual({
+      events: [{ type: "capture_gap", reason: "unsupported_event" }],
+    });
     expect(parseOpenCodeLine("   ")).toBeNull();
   });
 
