@@ -57,7 +57,7 @@ inventory or current deployment policy.
 
 ## Reading order
 
-For AWS work, start with the [September 2026 staging web milestone, replay, and teardown](AWS-STAGING-MILESTONE.md), then the [historical AWS migration plan](AWS_VPC_DEPLOYMENT_PLAN.md). The [self-hosting guide](SELF_HOSTING.md) remains the current deployment procedure.
+For AWS work, start with the [staging web milestone, replay, and teardown guide](AWS-STAGING-MILESTONE.md). Use the [self-hosting guide](SELF_HOSTING.md) for the current deployment procedure and the [factory plan](plans/FACTORY-IMPLEMENTATION-PLAN.md) for planned hosting and release capabilities.
 
 1. Read `AGENTS.md` and the one task-specific document from the table above.
 2. Follow its links to the semantic owner in code or SQL.

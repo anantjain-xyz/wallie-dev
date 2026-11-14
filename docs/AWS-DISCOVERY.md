@@ -71,4 +71,4 @@ node scripts/inspect-aws-staging.mjs inspect \
 - **Sandboxes:** supported Daytona deployment, in-account controller/runners/snapshots/logs, real stage execution, network/IAM isolation, cleanup, and support terms.
 - **Deployment:** available capacity, cost, network layout, remaining quotas, and narrowly scoped deployment permissions.
 
-Successful discovery establishes inventory only. Continue with the [AWS deployment plan](AWS_VPC_DEPLOYMENT_PLAN.md).
+Successful discovery establishes inventory only. For a staging web canary, follow the [AWS replay guide](AWS-STAGING-MILESTONE.md#reuse-the-checked-in-staging-infrastructure).

@@ -34,4 +34,4 @@ docker run --detach --name wallie-web \
 - Keep the runtime image cache writable. This image uses a local cache; shared caches, rollout coordination, and AWS ingress belong to deployment configuration.
 - Keep the exact Supabase avatar origin restriction. Private-address image support remains limited to explicitly configured loopback development URLs.
 
-See [Next.js self-hosting](https://nextjs.org/docs/app/guides/self-hosting) and the [AWS migration plan](AWS_VPC_DEPLOYMENT_PLAN.md).
+See [Next.js self-hosting](https://nextjs.org/docs/app/guides/self-hosting) and the [AWS staging web replay guide](AWS-STAGING-MILESTONE.md) for the ECS example.
