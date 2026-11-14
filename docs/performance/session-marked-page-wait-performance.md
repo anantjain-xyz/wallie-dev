@@ -28,7 +28,7 @@ Native click to the expected latest v1 artifact and enabled review controls acro
 - Same isolated local Supabase fixture, with migrations through OP-504 and 160 additional benchmark sessions. Chromium 149.0.7827.55; 10-core desktop host with other desktop processes retained.
 - Default: CPU 1×, no configured network delay. Constrained: CPU 4×, 80 ms HTTP latency, 1600 kbps down, 750 kbps up. Server/database traffic stays local; these are desktop lab conditions.
 
-[Samples, conditions, hashes, branch traces, and verification](../evidence/session-marked-page-wait-performance.json).
+Samples, conditions, hashes, branch traces, and verification stay in Git history at [`a567807d`](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/session-marked-page-wait-performance.json).
 
 ## Explain the number
 
@@ -66,6 +66,6 @@ Pstack's Explain the Number kept profiles separate from untraced measurements an
 - New client tests cover marked completion, buffered evidence, unmarked/failed/unsupported/stale/foreign evidence, missing/bodyless responses, final frame, deadline, and once-only navigation.
 - All five existing navigation smoke flows pass. Screenshots add no evidence for this timing-only change; branch traces and artifact/action checks verify its behavior.
 
-Raw samples and diagnostic traces remain in `bench-results/session-marked-page-wait/`. The comparison uses the same benchmark spec and driver as the prior investigation; their hashes and raw artifact hashes are retained in the evidence.
+Raw samples and diagnostic traces remain in `bench-results/session-marked-page-wait/`. The comparison uses the same benchmark spec and driver as the prior investigation; their hashes and raw artifact hashes are retained in the archived sample record.
 
 throughput checkpoint: n/a, bounded client timer change

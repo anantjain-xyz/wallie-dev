@@ -15,11 +15,11 @@ Five alternating runs per build and intent, fresh browser contexts, the same iso
 - Readiness requires the expected rendered latest v1 artifact and enabled review controls across a painted frame. Request changes must load a review successfully after timing ends.
 - Settled hover waits until the dynamic page-data response has completed in browser resource timing, then dwells at least 150 ms before clicking.
 - All 20 samples pass. Both builds make two recovery reads during a request window that extends 250 ms after the benchmark observes readiness. This change does not establish a refetch reduction.
-- Playwright reports some completed RSC streams as aborted. Counts remain in the evidence. Controlled delayed-response tests have zero destination aborts on both builds.
+- Playwright reports some completed RSC streams as aborted. Counts remain in the archived sample record. Controlled delayed-response tests have zero destination aborts on both builds.
 - The host has 10 cores and other desktop processes remain active. Per-run load averages are recorded. Alternating runs limit drift.
 - Localhost excludes wide-area latency. These results do not establish a mobile or production-field speedup.
 
-[Samples, ranges, request diagnostics, build IDs, and parsed trace events](../evidence/session-opening-performance.json).
+Samples, ranges, request diagnostics, build IDs, and parsed trace events stay in Git history at [`a567807d`](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/session-opening-performance.json).
 
 ## Limiter and change
 
@@ -55,6 +55,6 @@ pnpm bench:navigation --session-only --session-intent settled --skip-build --ski
 
 Use `--session-intent immediate` for the immediate-click comparison. Use `--profile --trace-out bench-results/session-open.trace.json` for a separate diagnostic run. An isolated local database can be selected with `--supabase-workdir`.
 
-Full diagnostic traces remain local at `bench-results/session-before.trace.json` and `bench-results/session-after.trace.json`. The linked JSON contains the relevant marks and timer events without raw trace payloads.
+Full diagnostic traces remain local at `bench-results/session-before.trace.json` and `bench-results/session-after.trace.json`. The archived sample record contains the relevant marks and timer events without raw trace payloads.
 
 The final change passes `pnpm check:fast`, `pnpm test --maxWorkers=4` with 4,846 passed and two existing skipped cases, `pnpm check:cloudflare` with 35 passed, `pnpm check:route-budgets`, and `pnpm analyze:authenticated-bundle`. The production build and five prefetch browser regressions pass.
