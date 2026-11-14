@@ -131,11 +131,40 @@ command:
 | `pnpm test:e2e:onboarding`               | Onboarding mutation requests and setup flow     |
 | `pnpm test:e2e:responsive`               | Responsive product behavior                     |
 | `pnpm test:e2e:session-prefetch`         | Session-detail navigation and prefetch behavior |
+| `pnpm test:e2e:factory-reference`        | Current Wallie visual and navigation reference  |
 | `pnpm test:benchmark:interaction`        | Repeated interaction timing benchmark           |
 | `pnpm test:benchmark:content-visibility` | Content-visibility benchmark                    |
 
 These scripts build first. Other specs in [`e2e/`](../../e2e/) may be run directly
 with Playwright when their journey is affected.
+
+### Current design reference
+
+Run `pnpm test:e2e:factory-reference` to capture Wallie’s current components
+at desktop (1440px) and compact (390px) widths in light and dark themes.
+The suite starts a production build in preview mode. It uses synthetic data,
+fixed time and controlled API responses, so it needs no database, worker,
+provider account, or login. Install Chromium with `pnpm exec playwright install
+chromium` if needed. The build fetches the same fonts as the application.
+
+| Surface          | Captured states                                              |
+| ---------------- | ------------------------------------------------------------ |
+| Pipeline         | Populated, loading, empty, partial lane and pagination error |
+| Sessions         | Populated, empty and loading                                 |
+| Review Workbench | Artifact and review actions                                  |
+| Settings         | Integrations, partial usage and recoverable setup error      |
+| Onboarding       | Setup and blocked verification                               |
+| Route recovery   | Recoverable page error                                       |
+
+The suite writes 60 named PNGs to `test-results/factory-reference/` and attaches
+them to its test results. The [design reference gallery](../design/factory-reference/README.md)
+holds representative captures of each surface. Update the relevant reference
+when an intentional visual change lands.
+
+The suite checks keyboard focus, document scrolling, Settings anchors and axe
+on the populated surfaces. The Sessions ledger allows two existing axe findings
+on their specific elements: low contrast on archived badges and small Linear
+issue links at 390px. The rest of the page remains covered.
 
 The checked-in development visual-proof surfaces are the retained `/dev/*`
 routes: `/dev/content-visibility` for the rendering benchmark,

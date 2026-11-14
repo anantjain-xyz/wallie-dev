@@ -19,7 +19,9 @@ export function CopyStatesPreview({ onboarding }: { onboarding: ReactNode }) {
           sessionId="preview"
         />
       ) : recovered ? (
-        <p role="status">Page loaded.</p>
+        <p role="status" tabIndex={-1} ref={(element) => element?.focus()}>
+          Page loaded.
+        </p>
       ) : (
         <PageFailure reset={() => setRecovered(true)} />
       )}

@@ -68,8 +68,32 @@ function makeSession(index: number): SessionListItem {
  * Non-production fixture: command bar + 50 real ledger rows for hydration /
  * responsive / screenshot checks of the Sessions operational ledger.
  */
-export default function SessionsLedgerFixturePage() {
+export default async function SessionsLedgerFixturePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ state?: string }>;
+}) {
   if (isProductionDeploy()) notFound();
+
+  const { state } = await searchParams;
+  if (state === "empty") {
+    return (
+      <main
+        id="main-content"
+        className="mx-auto max-w-[1080px] px-4 py-8 sm:px-8"
+        data-sessions-ledger-fixture="empty"
+      >
+        <h1 className="type-page-title">Sessions</h1>
+        <div className="mt-8">
+          <SessionsZeroState
+            newSessionHref="/w/fixture/sessions?create=1"
+            onboarding={null}
+            workspaceSlug="fixture"
+          />
+        </div>
+      </main>
+    );
+  }
 
   const sessions = Array.from({ length: ROW_COUNT }, (_, index) => makeSession(index + 1));
 
