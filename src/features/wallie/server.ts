@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import type { Tables } from "@/lib/supabase/database.types";
+import { olderRunFilter, splitRunPage } from "@/features/wallie/run-pagination";
 import { buildWallieSessionData } from "@/features/wallie/data";
 import type {
   WallieSessionRepository,
@@ -143,9 +144,7 @@ export async function loadWallieRunPage(input: {
     .limit(WALLIE_RUN_PAGE_SIZE + 1);
 
   if (input.cursor) {
-    query = query.or(
-      `created_at.lt.${input.cursor.createdAt},and(created_at.eq.${input.cursor.createdAt},id.lt.${input.cursor.id})`,
-    );
+    query = query.or(olderRunFilter(input.cursor));
   }
 
   let rows: AgentRunRow[];
@@ -173,7 +172,10 @@ export async function loadWallieRunPage(input: {
         : await loadAttemptOrdinalsByRunId(createSupabaseAdminClient(), input.sessionId);
   }
 
-  const pageRows = rows.slice(0, WALLIE_RUN_PAGE_SIZE);
+  const { rows: pageRows, nextCursor } = splitRunPage(rows, WALLIE_RUN_PAGE_SIZE, (row) => ({
+    createdAt: row.created_at,
+    id: row.id,
+  }));
   const failedRunIds = pageRows.filter((run) => run.status === "error").map((run) => run.id);
   // One fenced terminal record per run. Activity remains lazy and bounded independently.
   const failures = failedRunIds.length
@@ -194,15 +196,7 @@ export async function loadWallieRunPage(input: {
     runs: pageRows.map((row) => toBuildableRunRow(row, attemptOrdinals.get(row.id) ?? 1)),
     vercelSandboxConnection: missingVercelSandboxConnection,
   }).runs;
-  const lastRun = pageRows.at(-1);
-
-  return {
-    nextCursor:
-      rows.length > WALLIE_RUN_PAGE_SIZE && lastRun
-        ? { createdAt: lastRun.created_at, id: lastRun.id }
-        : null,
-    runs,
-  };
+  return { nextCursor, runs };
 }
 
 export async function loadWallieSessionData(input: {

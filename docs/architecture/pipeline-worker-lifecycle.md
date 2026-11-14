@@ -26,6 +26,30 @@ The applied schema is the ordered result of the baseline and every forward
 migration. A function redefined by a later migration is governed by the latest
 definition, not by the copy in the baseline.
 
+## Run catalog
+
+- `GET /api/workspaces/{workspaceId}/runs` lists up to 50 runs. Filters are
+  `sessionId`, `status`, `provider`, and `stageId`. Use `nextCursor` with the
+  same workspace and filters to read the next page.
+- The cursor uses the run's original `created_at` and ID, newest first.
+  Preserve it across older-page requests. Fetch the head again on reconnect
+  and merge by run ID to pick up new runs and status changes. Status filters
+  match the current state on each request. Restart from the head when the
+  filter changes.
+- `GET /api/workspaces/{workspaceId}/runs/{runId}` finds one exact attempt,
+  including older retries. `sessionRunHref` opens that run in existing Session
+  activity. The catalog uses the stored job attempt count, which may be absent
+  on historical or unclaimed runs. The session UI still displays stage ordinals.
+- List and lookup return transcript availability, usage, and recovery metadata.
+  They use bounded reads and keep transcript content in the history loaders.
+  Recovery metadata distinguishes queue state, publication timing, and retained
+  source. A recorded timeout identifies an interrupted execution. Capture
+  interruption is tracked separately from execution outcome. Activity age
+  alone does not prove a worker has stopped.
+- The catalog runs under workspace membership and row-level security. The
+  recovery lookup uses the run IDs from that authorized page. Endpoints send
+  private, non-cacheable responses.
+
 ## Execution ownership
 
 Workers and control paths use these service-role-only APIs for state transitions.

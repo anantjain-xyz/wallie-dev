@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { runCursorSchema } from "@/features/wallie/run-pagination";
 import type { WallieActionErrorCode, WallieRun, WallieRunPage } from "@/features/wallie/types";
 
 const workspaceIdSchema = z.string().uuid("Workspace id is invalid.");
@@ -10,11 +11,8 @@ export const runHistoryParamsSchema = z.object({
   sessionId: sessionIdSchema,
 });
 
-export const runHistoryQuerySchema = z
-  .object({
-    createdAt: z.string().datetime({ offset: true }).optional(),
-    id: runIdSchema.optional(),
-  })
+export const runHistoryQuerySchema = runCursorSchema
+  .partial()
   .refine((value) => Boolean(value.createdAt) === Boolean(value.id), {
     message: "Run history cursor requires both createdAt and id.",
   });
