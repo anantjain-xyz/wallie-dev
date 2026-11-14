@@ -7,6 +7,7 @@ import { ArtifactPanel, artifactBodyCacheKey } from "@/features/sessions/detail/
 import { sessionReviewReadOnlyReason } from "@/features/sessions/review/comment-access";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
+import { SessionStageWorkspace } from "@/features/sessions/detail/session-stage-workspace";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { StageTimeline, type StageTimelineEntry } from "@/features/sessions/detail/stage-timeline";
 import {
@@ -73,6 +74,41 @@ function InteractionMotionContent({
       ? reviewArtifact.source
       : `# Implementation complete\n\nVersion ${version} is ready for review.`;
   const paragraphStart = source.indexOf("Version");
+  const showingBuild = selected === "build";
+  const artifact = (
+    <ArtifactPanel
+      emptyText="No artifact yet."
+      initialFormattedArtifact={
+        version === reviewArtifact.version ? (
+          <div dangerouslySetInnerHTML={{ __html: reviewArtifact.html }} />
+        ) : (
+          <div>
+            <h2 data-review-text-start={2} data-review-text-end={25}>
+              Implementation complete
+            </h2>
+            <p data-review-text-start={paragraphStart} data-review-text-end={source.length}>
+              Version {version} is ready for review.
+            </p>
+          </div>
+        )
+      }
+      initialFormattedArtifactKey={artifactBodyCacheKey("preview", "build", version, artifactId)}
+      initialNow={initialNow}
+      isDrafting={false}
+      isAwaitingReview={phaseStatus === "awaiting_review"}
+      latestArtifact={{
+        id: artifactId,
+        createdAt: initialNow,
+        payload: source,
+        stageSlug: "build",
+        version,
+      }}
+      loadLatest
+      readOnlyReason={sessionReviewReadOnlyReason({ archivedAt, phaseStatus })}
+      sessionId="preview"
+      stageSlug="build"
+    />
+  );
   const timeline: StageTimelineEntry[] = stages.map((stage) => ({
     stage,
     phaseStatus: stage.slug === "build" && phaseStatus !== "approved" ? phaseStatus : null,
@@ -131,71 +167,43 @@ function InteractionMotionContent({
         initialNow={initialNow}
       />
       <SessionCompletionSummary session={{ phaseStatus, pullRequests: [] }} />
-      <section
-        aria-label={referenceMode ? "Build review" : undefined}
-        className={referenceMode ? "ui-sheet min-w-0" : undefined}
-      >
-        <div className={referenceMode ? "p-4 sm:p-5" : undefined}>
-          <ArtifactPanel
-            emptyText="No artifact yet."
-            initialFormattedArtifact={
-              version === reviewArtifact.version ? (
-                <div dangerouslySetInnerHTML={{ __html: reviewArtifact.html }} />
-              ) : (
-                <div>
-                  <h2 data-review-text-start={2} data-review-text-end={25}>
-                    Implementation complete
-                  </h2>
-                  <p data-review-text-start={paragraphStart} data-review-text-end={source.length}>
-                    Version {version} is ready for review.
-                  </p>
-                </div>
-              )
-            }
-            initialFormattedArtifactKey={artifactBodyCacheKey(
-              "preview",
-              "build",
-              version,
-              artifactId,
-            )}
-            initialNow={initialNow}
-            isDrafting={false}
-            isAwaitingReview={phaseStatus === "awaiting_review"}
-            latestArtifact={{
-              id: artifactId,
-              createdAt: initialNow,
-              payload: source,
-              stageSlug: "build",
-              version,
-            }}
-            loadLatest={true}
-            readOnlyReason={sessionReviewReadOnlyReason({ archivedAt, phaseStatus })}
-            sessionId="preview"
-            stageSlug="build"
-          />
-        </div>
-        {referenceMode ? (
-          <SessionReviewBar
-            attached
-            approveLabel="Approve stage"
-            approveDescription="Approval advances or completes the session. Final-stage approval may also archive the session."
-            mode={resolveReviewMode({
-              archivedAt,
-              canApprove: true,
-              phaseStatus,
-              selectedStageIsCurrent: selected === "build",
-            })}
-            onApprove={() => setPhaseStatus("approved")}
-            onReject={() => {
-              setPhaseStatus("rejected");
-              return Promise.resolve(true);
-            }}
-            reviewArtifact={artifactId ? { artifactId, stageId: "build", version } : null}
-            phaseActionPending={null}
-            stageName="Build"
-          />
-        ) : null}
-      </section>
+      {referenceMode ? (
+        <SessionStageWorkspace
+          stageName={showingBuild ? "Build" : "Plan"}
+          stageSlug={selected}
+          focus={showingBuild ? "artifact" : "empty"}
+          emptyText="No output was recorded for this stage."
+          artifact={showingBuild ? artifact : null}
+          activity={null}
+          reviewControls={
+            showingBuild ? (
+              <SessionReviewBar
+                attached
+                approveLabel="Approve stage"
+                approveDescription="Approval advances or completes the session. Final-stage approval may also archive the session."
+                mode={resolveReviewMode({
+                  archivedAt,
+                  canApprove: true,
+                  phaseStatus,
+                  selectedStageIsCurrent: showingBuild,
+                })}
+                onApprove={() => setPhaseStatus("approved")}
+                onReject={() => {
+                  setPhaseStatus("rejected");
+                  return Promise.resolve(true);
+                }}
+                reviewArtifact={artifactId ? { artifactId, stageId: "build", version } : null}
+                phaseActionPending={null}
+                stageName="Build"
+              />
+            ) : null
+          }
+        />
+      ) : (
+        <section>
+          <div>{artifact}</div>
+        </section>
+      )}
     </main>
   );
 }

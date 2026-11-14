@@ -159,13 +159,22 @@ for (const viewport of viewports) {
         page,
       }, info) => {
         await page.goto("/dev/interaction-motion?reference=1&reviewState=editable");
+        const artifact = page.getByRole("region", { name: "Build artifact", exact: true });
         await expect(
-          page.getByText("Version 1 is ready for review.", { exact: true }),
+          artifact.getByRole("heading", { name: "Build artifact", level: 2, exact: true }),
         ).toBeVisible();
-        await expect(page.getByRole("button", { name: "Comments", exact: true })).toBeVisible();
         await expect(
-          page.getByRole("button", { name: "Approve stage", exact: true }),
+          artifact.getByText("Version 1 is ready for review.", { exact: true }),
         ).toBeVisible();
+        await expect(artifact.getByRole("button", { name: "Comments", exact: true })).toBeVisible();
+        await expect(
+          artifact.getByRole("button", { name: "Approve stage", exact: true }),
+        ).toBeVisible();
+        await expect(
+          page
+            .getByRole("region", { name: "Session runs" })
+            .getByRole("heading", { name: "Run history" }),
+        ).toHaveAttribute("id", "session-runs-heading");
         await capture(page, info, "review-artifact");
         await expectAccessible(page);
         const trigger = page.getByRole("button", { name: "Request changes", exact: true });
