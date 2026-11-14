@@ -80,10 +80,8 @@ begin
   select p.id, p.session_id, p.number, p.title, p.agent_job_id, p.attempt_count,
     p.stage_id, p.stage_name, p.model_provider, p.model_name, p.status,
     p.created_at, p.started_at, p.finished_at, p.last_activity_at, p.source_recovery_required,
-    exists(select 1 from public.agent_run_events e
-      where e.agent_run_id = p.id and e.workspace_id = p_workspace_id and e.attempt_count = p.attempt_count),
-    exists(select 1 from public.agent_run_messages m
-      where m.agent_run_id = p.id and m.workspace_id = p_workspace_id),
+    event_presence.present is true,
+    message_presence.present is true,
     capture_end.sequence is not null,
     coalesce(capture_end.status = 'interrupted', false),
     case when receipt.value->'version' = '1'::jsonb
@@ -98,6 +96,17 @@ begin
     p.input_tokens, p.output_tokens, p.total_cost_usd,
     p.token_provenance, p.cost_provenance, p.usage_finalized_at
   from page p
+  left join lateral (
+    select true as present from public.agent_run_events e
+    where e.agent_run_id = p.id and e.workspace_id = p_workspace_id
+      and e.attempt_count = p.attempt_count
+    limit 1
+  ) event_presence on true
+  left join lateral (
+    select true as present from public.agent_run_messages m
+    where m.agent_run_id = p.id and m.workspace_id = p_workspace_id
+    limit 1
+  ) message_presence on true
   left join lateral (
     select e.sequence, e.payload->>'status' as status
     from public.agent_run_events e
