@@ -13,7 +13,6 @@ implementation.
 | Build a UI consistent with Wallie | [Accessibility and typography](design/)                                                                                            |
 | Measure performance               | [Navigation benchmark](performance/navigation-bench.md) and [performance reports](performance/)                                    |
 | Plan future work                  | [Factory roadmap and capability register](plans/)                                                                                  |
-| Inspect recorded verification     | [Evidence](evidence/)                                                                                                              |
 
 ## Full factory implementation plan
 

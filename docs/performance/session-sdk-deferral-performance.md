@@ -18,7 +18,7 @@ Five alternating samples per build, input, and condition. Baseline is latest mai
 - Readiness requires the expected latest v1 artifact and enabled review controls across a painted frame. All 40 samples pass, with zero failed requests excluding separately recorded browser-aborted RSC streams. Request changes successfully loads the displayed artifact's review after timing ends.
 - The metric measures first review readiness. Realtime establishment and later revalidation remain background work. Request collection extends 250 ms after observed readiness, so counts from that window do not establish a reduction in total recovery reads.
 
-[Samples, build IDs, source and harness hashes, request timings, and reduced profiles](../evidence/session-sdk-deferral-performance.json).
+Samples, build IDs, source and harness hashes, request timings, and reduced profiles stay in Git history at [`a567807d`](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/session-sdk-deferral-performance.json).
 
 ## Change
 
@@ -82,7 +82,7 @@ pnpm bench:navigation --session-only --session-intent immediate --skip-build --s
 
 Repeat both intents with both conditions. Add `--supabase-workdir` for an isolated database. Capture separate diagnostics with `--profile --trace-out`; exclude them from the numeric comparison.
 
-Full local artifacts remain under `bench-results/session-sdk-deferral/`. The linked evidence retains the relevant data and raw-artifact hashes without shipping trace payloads.
+Full local artifacts remain under `bench-results/session-sdk-deferral/`. The archived sample record retains the relevant data and raw-artifact hashes without shipping trace payloads.
 
 ## Validation
 

@@ -18,10 +18,10 @@ Native click to the expected latest v1 artifact, enabled review controls, and a 
 - All 20 samples pass the correct artifact and working Request changes checks. Zero failed requests, excluding separately recorded browser-aborted RSC streams.
 - Production build `SYlI4CAWDh1_sWl61mJVJ`, Chromium `149.0.7827.55`, local isolated Supabase fixture plus 160 additional sessions. Fresh browser contexts keep destination scripts cold while the sessions list is warmed.
 - Constrained means 4× browser CPU slowdown, 80 ms configured HTTP latency, 1600 kbps download, and 750 kbps upload. Server-to-database traffic remains local. These are lab conditions, not physical phone or production-field measurements.
-- The 10-core host retained other desktop processes. Samples were interleaved; per-sample load averages are retained in the evidence.
+- The 10-core host retained other desktop processes. Samples were interleaved; per-sample load averages are retained in the archived sample record.
 - This harness revision moves Playwright selector assertions after the browser ready mark in session-only mode. These numbers are a new baseline. They do not establish an improvement over the previous report's immediate-click numbers.
 
-[Samples, diagnostic timelines, controlled probes, and artifact hashes](../evidence/session-opening-investigation.json).
+Samples, diagnostic timelines, controlled probes, and artifact hashes stay in Git history at [`a567807d`](https://github.com/anantjain-xyz/wallie-dev/blob/a567807db7a2b3e5d2781fda071130b2407e0622/docs/evidence/session-opening-investigation.json).
 
 ## Confirmed mechanisms
 
@@ -90,7 +90,7 @@ pnpm bench:navigation --session-only --session-intent touch --cpu-rate 4 --laten
 pnpm bench:navigation --session-only --session-intent immediate --profile --runs 3 --skip-build --skip-seed --trace-out bench-results/immediate.trace.json
 ```
 
-Local raw artifacts are under `bench-results/immediate-investigation/`. The linked evidence identifies and hashes every trace and sidecar. Seven diagnostic profiles include native marks, actual observer delivery, timer scheduling/firing, destination stream reads, and network bytes. Diagnostic-only hold scripts remain under `.wallie/session-investigation/` in the investigation workspace. They buffer the first page response or the named chunk, click a real link, record the release, and check the expected artifact. The wide timer probe records delays up to 500 ms; the bypass targets only the observed React commit stack. The recorded observed release time takes precedence over the requested hold setting.
+Local raw artifacts are under `bench-results/immediate-investigation/`. The archived sample record identifies and hashes every trace and sidecar. Seven diagnostic profiles include native marks, actual observer delivery, timer scheduling/firing, destination stream reads, and network bytes. Diagnostic-only hold scripts remain under `.wallie/session-investigation/` in the investigation workspace. They buffer the first page response or the named chunk, click a real link, record the release, and check the expected artifact. The wide timer probe records delays up to 500 ms; the bypass targets only the observed React commit stack. The recorded observed release time takes precedence over the requested hold setting.
 
 CPU samples are approximate. Injected hooks add cost; negative V8 sample deltas require reconstruction, and Chrome thread-clock counters sometimes exceed wall intervals. Constrained post-push main-task intervals occupy 354–375 ms while sampled idle occupies 415–434 ms. These overlapping diagnostics are not an additive time budget. Source-matched secondary work includes timeline centering, navigation measurement, and list timer cleanup; none earns priority over the proven cold chunk dependency.
 
