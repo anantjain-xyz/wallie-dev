@@ -32,6 +32,7 @@ export interface AgentEventToolResult {
   tool: string;
   output: string;
   status: "success" | "error";
+  outcome?: "rejected";
   exitCode?: number;
   callId?: string;
   captureTruncated?: true;

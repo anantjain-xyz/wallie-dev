@@ -27,6 +27,7 @@ $$;
 
 create temp table event_owner as select * from pg_temp.event_fixture(1);
 create temp table other_owner as select * from pg_temp.event_fixture(2);
+create temp table cursor_owner as select * from pg_temp.event_fixture(4);
 create temp table foreign_workspace as
 with inserted as (
   insert into public.workspaces(slug, name) values ('ordered-run-event-proof', 'Other event workspace') returning id
@@ -41,7 +42,7 @@ select workspace_id, id, 'plan', 'Plan', 1, 'Plan the task' from foreign_pipelin
 insert into public.workspace_members(workspace_id, user_id, kind, role)
 select id, 'a1b2c3d4-0002-4000-8000-000000000002', 'human', 'member' from foreign_workspace;
 create temp table foreign_owner as select * from pg_temp.event_fixture(3, (select id from foreign_workspace));
-grant select on event_owner, other_owner, foreign_owner, foreign_workspace to authenticated, service_role;
+grant select on event_owner, other_owner, cursor_owner, foreign_owner, foreign_workspace to authenticated, service_role;
 
 create function pg_temp.reject_event_projection() returns trigger language plpgsql as $$
 begin
@@ -142,11 +143,46 @@ select ok(public.append_agent_run_event(job_id, run_id, 1, 9, 'tool_result', '{"
   'tool results retain their originating call without a legacy projection') from event_owner;
 select ok(public.append_agent_run_event(job_id, run_id, 1, 10, 'usage', '{"inputTokens":2,"outputTokens":1}', false, 4),
   'usage retains its originating terminal event without a legacy projection') from event_owner;
+
+select ok(public.append_agent_run_event(job_id, run_id, 1, 1, 'tool_call',
+  '{"tool":"shell","input":"pwd"}', false, null, '**Tool:** shell call'),
+  'a Cursor tool call retains its original history entry') from cursor_owner;
+select ok(public.append_agent_run_event(job_id, run_id, 1, 2, 'tool_result',
+  '{"tool":"shell","output":"/workspace","status":"success","exitCode":0}', false, 1, '**Tool:** shell result'),
+  'a Cursor tool result appends its envelope and current history projection') from cursor_owner;
+select is((select kind from public.agent_run_messages where agent_run_id = (select run_id from cursor_owner)
+  and message_md = '**Tool:** shell result'), 'tool_use', 'tool results use the existing history reader kind');
+select ok((select event.causation_sequence = 1 and event.attempt_count = 1
+  and event.workspace_id = message.workspace_id and event.agent_run_id = message.agent_run_id
+  from public.agent_run_events event join public.agent_run_messages message
+    on message.id = md5('agent_run_event:' || event.agent_run_id::text || ':1:2')::uuid
+  where event.agent_run_id = (select run_id from cursor_owner) and event.sequence = 2),
+  'the tool result and legacy message share deterministic run, workspace, and attempt identity');
+select ok(public.append_agent_run_event(job_id, run_id, 1, 2, 'tool_result',
+  '{"tool":"shell","output":"/workspace","status":"success","exitCode":0}', false, 1, '**Tool:** shell result'),
+  'a tool result and its history projection replay idempotently') from cursor_owner;
+select is((select count(*) from public.agent_run_events where agent_run_id = (select run_id from cursor_owner)),
+  2::bigint, 'replaying a projected tool result does not duplicate an envelope');
+select is((select count(*) from public.agent_run_messages where agent_run_id = (select run_id from cursor_owner)),
+  2::bigint, 'replaying a projected tool result does not duplicate history');
+select ok(not public.append_agent_run_event(job_id, run_id, 1, 2, 'tool_result',
+  '{"tool":"shell","output":"changed","status":"success","exitCode":0}', false, 1, '**Tool:** shell result'),
+  'a projected tool result cannot overwrite its retained output') from cursor_owner;
+select ok(not public.append_agent_run_event(job_id, run_id, 1, 2, 'tool_result',
+  '{"tool":"shell","output":"/workspace","status":"success","exitCode":0}', false, 1, 'changed result'),
+  'a projected tool result cannot overwrite its current history entry') from cursor_owner;
+select ok(not public.append_agent_run_event(job_id, run_id, 1, 2, 'tool_result',
+  '{"tool":"shell","output":"/workspace","status":"success","exitCode":0}', false, 1),
+  'a projected tool result cannot remove its current history entry on replay') from cursor_owner;
+
 select throws_ok(format('select public.append_agent_run_event(%L,%L,1,1,%L,%L,false,null,%L)',
-  job_id, run_id, 'text', '{"text":"atomic"}', 'fixture projection failure'), 'P0001', 'Fixture legacy projection unavailable.',
-  'a failed legacy write fails the combined append') from other_owner;
+  job_id, run_id, event_kind, '{"text":"atomic"}', 'fixture projection failure'), 'P0001', 'Fixture legacy projection unavailable.',
+  'a failed legacy write fails the combined ' || event_kind || ' append')
+from other_owner cross join (values ('text'), ('tool_result')) events(event_kind);
 select is((select count(*) from public.agent_run_events where agent_run_id = (select run_id from other_owner)),
   0::bigint, 'a legacy write failure rolls back the envelope');
+select is((select count(*) from public.agent_run_messages where agent_run_id = (select run_id from other_owner)),
+  0::bigint, 'a legacy write failure leaves no partial history entry');
 select is((select last_activity_at from public.agent_runs where id = (select run_id from other_owner)),
   '2026-01-01T00:00:00Z'::timestamptz, 'a failed combined append does not refresh run activity');
 

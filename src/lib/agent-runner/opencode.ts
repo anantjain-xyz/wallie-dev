@@ -5,6 +5,7 @@ import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { ToolEventTracker } from "./tool-event-tracker";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 import { isTokenCount, normalizeMeasuredUsage } from "./usage";
 
@@ -126,6 +127,7 @@ export class OpenCodeRunner implements AgentRunner {
     let usageInvalid = false;
     let hasCompleteCost = true;
     const messageText = new Map<string, Map<string, string>>();
+    const tools = new ToolEventTracker();
     let lastStep: { messageId: string | undefined; reason: string | undefined } | undefined;
 
     const handleLine = (line: string): AgentEvent[] => {
@@ -188,11 +190,19 @@ export class OpenCodeRunner implements AgentRunner {
         }
         return event;
       });
-      return events.filter((event) => {
-        if (event.type !== "error") return true;
-        deferredErrors.push(event);
-        return false;
+      const tracked = events.flatMap((event) => {
+        if (event.type === "tool_use") return tools.start(event);
+        if (event.type === "tool_result") return tools.finish(event);
+        if (event.type === "error") {
+          deferredErrors.push(event);
+          return [];
+        }
+        return [event];
       });
+      const repeatedResult =
+        events.some((event) => event.type === "tool_result") &&
+        !tracked.some((event) => event.type === "tool_result");
+      return repeatedResult ? tracked.filter((event) => event.type !== "capture_gap") : tracked;
     };
 
     for await (const log of proc.logs()) {
@@ -214,6 +224,7 @@ export class OpenCodeRunner implements AgentRunner {
     }
 
     const code = await proc.exitCode;
+    yield* tools.gaps();
     const finalUsage =
       hasUsage && !usageInvalid
         ? normalizeMeasuredUsage(
@@ -297,9 +308,11 @@ export function parseOpenCodeLine(
   try {
     value = JSON.parse(trimmed);
   } catch {
-    return null;
+    return { events: [{ type: "capture_gap", reason: "unsupported_event" }] };
   }
-  if (!isRecord(value)) return null;
+  if (!isRecord(value)) {
+    return { events: [{ type: "capture_gap", reason: "unsupported_event" }] };
+  }
 
   const part = isRecord(value.part) ? value.part : null;
   const sessionId =
@@ -321,9 +334,9 @@ export function parseOpenCodeLine(
       : typeof value.text === "string"
         ? value.text
         : null;
-  if (type === "text" && text && text.trim()) {
+  if (type === "text" && text !== null) {
     return {
-      events: [{ type: "progress", text }],
+      events: text.trim() ? [{ type: "progress", text }] : [],
       sessionId,
       ...(messageId ? { messageId } : {}),
       ...(part && typeof part.id === "string" ? { textPartId: part.id } : {}),
@@ -337,25 +350,57 @@ export function parseOpenCodeLine(
   if (type === "tool_use") {
     const toolPart = part ?? value;
     const state = isRecord(toolPart.state) ? toolPart.state : null;
-    const status = state && typeof state.status === "string" ? state.status : null;
-    if (status !== "completed" && status !== "error") {
-      return { events: [], sessionId };
+    const tool = typeof toolPart.tool === "string" && toolPart.tool.trim() ? toolPart.tool : null;
+    // Both CLI generations emit terminal snapshots; v1 uses callID, while
+    // the current renderer carries the actual tool identity in id.
+    const callId =
+      typeof toolPart.callID === "string" && toolPart.callID
+        ? toolPart.callID
+        : typeof toolPart.id === "string" && toolPart.id
+          ? toolPart.id
+          : undefined;
+    const correlation = callId ? { callId } : {};
+    const unsupported: AgentEvent = {
+      type: "capture_gap",
+      reason: "unsupported_event",
+      ...correlation,
+    };
+    if (!state || !tool || (state.status !== "completed" && state.status !== "error")) {
+      return { events: [unsupported], sessionId };
     }
-    const input = state?.input;
-    const events: AgentEvent[] = [
-      {
+    const events: AgentEvent[] = [];
+    if (isRecord(state.input)) {
+      events.push({
         type: "tool_use",
-        tool: typeof toolPart.tool === "string" ? toolPart.tool : "unknown",
-        ...serializeToolInput(input, secrets),
-      },
-    ];
-    if (
-      state &&
-      ((state.output !== undefined && state.output !== null) ||
-        (state.error !== undefined && state.error !== null))
-    ) {
-      events.push({ type: "capture_gap", reason: "unsupported_event" });
+        tool,
+        ...correlation,
+        ...serializeToolInput(state.input, secrets),
+      });
+    } else {
+      events.push(unsupported);
     }
+    const output = state.status === "completed" ? state.output : state.error;
+    if (typeof output !== "string") {
+      if (isRecord(state.input)) events.push(unsupported);
+      if (!callId || !isRecord(state.input)) {
+        events.push({ type: "capture_gap", reason: "missing_tool_result", ...correlation });
+      }
+      return { events, sessionId };
+    }
+    const truncated =
+      (state.attachments !== undefined &&
+        (!Array.isArray(state.attachments) || state.attachments.length > 0)) ||
+      (isRecord(state.metadata) && state.metadata.truncated === true) ||
+      (isRecord(state.time) && typeof state.time.compacted === "number");
+    if (truncated) events.push(unsupported);
+    events.push({
+      type: "tool_result",
+      tool,
+      ...correlation,
+      output: redactRunToolText(redactSecrets(output, secrets)),
+      status: state.status === "completed" ? "success" : "error",
+      ...(truncated ? { captureTruncated: true } : {}),
+    });
     return { events, sessionId };
   }
 
@@ -388,13 +433,18 @@ export function parseOpenCodeLine(
   }
 
   if (type === "error") {
+    const message = openCodeErrorMessage(value.error ?? value.message);
+    const events: AgentEvent[] = message
+      ? []
+      : [{ type: "capture_gap", reason: "unsupported_event" }];
+    events.push({ type: "error", message: message ?? "OpenCode session failed." });
     return {
-      events: [{ type: "error", message: openCodeErrorMessage(value.error ?? value.message) }],
+      events,
       sessionId,
     };
   }
 
-  return { events: [], sessionId };
+  return { events: [{ type: "capture_gap", reason: "unsupported_event" }], sessionId };
 }
 
 function buildOpenCodeAuthEntries(
@@ -431,7 +481,7 @@ function missingProviderCredentialError(providerId: string): Error {
   );
 }
 
-function openCodeErrorMessage(error: unknown): string {
+function openCodeErrorMessage(error: unknown): string | undefined {
   if (typeof error === "string" && error.trim()) return error;
   if (isRecord(error)) {
     if (typeof error.message === "string" && error.message.trim()) return error.message;
@@ -442,9 +492,8 @@ function openCodeErrorMessage(error: unknown): string {
     ) {
       return error.data.message;
     }
-    return JSON.stringify(error);
   }
-  return "OpenCode session failed.";
+  return undefined;
 }
 
 type ToolCapture = { truncated: boolean };
