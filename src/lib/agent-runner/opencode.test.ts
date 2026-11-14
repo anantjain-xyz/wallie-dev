@@ -644,6 +644,23 @@ describe("OpenCodeRunner", () => {
     });
   });
 
+  it.each([
+    { status: "completed", output: "sensitive result" },
+    { status: "error", error: "sensitive failure" },
+  ])("marks discarded tool result material for $status without retaining raw material", (state) => {
+    expect(
+      parseOpenCodeLine(
+        JSON.stringify({
+          type: "tool_use",
+          part: { tool: "read", state: { ...state, input: { path: "a.ts" } } },
+        }),
+      )?.events,
+    ).toEqual([
+      { type: "tool_use", tool: "read", input: '{"path":"a.ts"}' },
+      { type: "capture_gap", reason: "unsupported_event" },
+    ]);
+  });
+
   it("compacts bulky tool input before emitting it", () => {
     const secret = "tool-input-secret";
     const parsed = parseOpenCodeLine(
@@ -668,6 +685,7 @@ describe("OpenCodeRunner", () => {
       {
         type: "tool_use",
         tool: "write",
+        captureTruncated: true,
         input: JSON.stringify({
           note: `[REDACTED]${"y".repeat(490)}…`,
           path: "src/large.ts",
@@ -696,6 +714,98 @@ describe("OpenCodeRunner", () => {
     expect(boundedInput.endsWith("…[truncated]")).toBe(true);
   });
 
+  it.each([
+    {
+      name: "intact strings and arrays",
+      input: { note: "x".repeat(500), files: Array(20).fill("x") },
+      truncated: false,
+    },
+    { name: "long strings", input: { note: "x".repeat(501) }, truncated: true },
+    { name: "long arrays", input: { files: Array(21).fill("x") }, truncated: true },
+    ...[
+      "afterFullFileContent",
+      "content",
+      "diffString",
+      "directoryTreeRoot",
+      "fileText",
+      "parsingResult",
+    ].map((field) => ({
+      name: `omitted ${field}`,
+      input: { [field]: "omitted", path: "a.ts" },
+      truncated: true,
+    })),
+    {
+      name: "total payload limit",
+      input: Object.fromEntries(
+        Array.from({ length: 10 }, (_, index) => [`field${index}`, "x".repeat(450)]),
+      ),
+      truncated: true,
+    },
+  ])("marks actual capture loss for $name", ({ input, truncated }) => {
+    const event = parseOpenCodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        part: { tool: "custom", state: { status: "completed", input } },
+      }),
+    )?.events[0];
+    expect(event?.type).toBe("tool_use");
+    if (event?.type !== "tool_use") throw new Error("Expected tool event");
+    expect(event.captureTruncated).toBe(truncated ? true : undefined);
+    expect(event.input.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("redacts unknown credential patterns before clipping tool input", () => {
+    const secret = `sk-${"a".repeat(60)}`;
+    const event = parseOpenCodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        part: {
+          tool: "custom",
+          state: {
+            status: "completed",
+            input: { note: `${"x".repeat(490)} ${secret} ${"y".repeat(100)}` },
+          },
+        },
+      }),
+    )?.events[0];
+    expect(event).toMatchObject({ type: "tool_use", captureTruncated: true });
+    expect(JSON.stringify(event)).not.toContain("sk-");
+  });
+
+  it.each([500, 501])(
+    "marks stderr clipped beyond the 500-character boundary (%i)",
+    async (length) => {
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec("bash", [{ data: "x".repeat(length), stream: "stderr" }], { exitCode: 1 });
+      const runner = new OpenCodeRunner({ credential });
+      const events = [];
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+        events.push(event);
+      expect(events).toEqual([
+        {
+          type: "error",
+          message: `opencode CLI exited with code 1: ${"x".repeat(500)}`,
+          ...(length > 500 ? { captureTruncated: true } : {}),
+        },
+      ]);
+    },
+  );
+
+  it("redacts unknown credentials before clipping stderr", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [{ data: `${"x".repeat(490)} sk-${"a".repeat(60)} ${"y".repeat(100)}`, stream: "stderr" }],
+      { exitCode: 1 },
+    );
+    const runner = new OpenCodeRunner({ credential });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+      events.push(event);
+    expect(events[0]).toMatchObject({ type: "error", captureTruncated: true });
+    expect(JSON.stringify(events)).not.toContain("sk-");
+  });
+
   it("emits a useful clipped non-zero error without exposing the credential", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
@@ -711,7 +821,7 @@ describe("OpenCodeRunner", () => {
     }
 
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "error" });
+    expect(events[0]).toMatchObject({ type: "error", captureTruncated: true });
     const message = (events[0] as { message: string }).message;
     expect(message).toContain("exited with code 9");
     expect(message).not.toContain(credential.secret);

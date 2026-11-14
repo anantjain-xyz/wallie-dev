@@ -3,6 +3,7 @@ import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
+import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 import { isTokenCount, normalizeMeasuredUsage } from "./usage";
@@ -231,12 +232,14 @@ export class OpenCodeRunner implements AgentRunner {
         };
       }
       yield* deferredErrors;
+      const redactedStderr = redactRunSensitiveText(safety.redact(stderrBuf).trim());
       yield {
         type: "error",
         message: redactSecrets(
-          `opencode CLI exited with code ${code}: ${safety.redact(stderrBuf).trim().slice(0, 500) || "(no stderr)"}`,
+          `opencode CLI exited with code ${code}: ${redactedStderr.slice(0, 500) || "(no stderr)"}`,
           secrets,
         ),
+        ...(redactedStderr.length > 500 ? { captureTruncated: true } : {}),
       };
       return;
     }
@@ -339,16 +342,21 @@ export function parseOpenCodeLine(
       return { events: [], sessionId };
     }
     const input = state?.input;
-    return {
-      events: [
-        {
-          type: "tool_use",
-          tool: typeof toolPart.tool === "string" ? toolPart.tool : "unknown",
-          input: serializeToolInput(input, secrets),
-        },
-      ],
-      sessionId,
-    };
+    const events: AgentEvent[] = [
+      {
+        type: "tool_use",
+        tool: typeof toolPart.tool === "string" ? toolPart.tool : "unknown",
+        ...serializeToolInput(input, secrets),
+      },
+    ];
+    if (
+      state &&
+      ((state.output !== undefined && state.output !== null) ||
+        (state.error !== undefined && state.error !== null))
+    ) {
+      events.push({ type: "capture_gap", reason: "unsupported_event" });
+    }
+    return { events, sessionId };
   }
 
   if (type === "step_finish") {
@@ -439,34 +447,60 @@ function openCodeErrorMessage(error: unknown): string {
   return "OpenCode session failed.";
 }
 
-function serializeToolInput(input: unknown, secrets: Array<string | undefined>): string {
-  const compactInput = compactToolValue(input ?? {}, secrets);
-  const json = redactSecrets(
-    typeof compactInput === "string" ? compactInput : JSON.stringify(compactInput),
-    secrets,
+type ToolCapture = { truncated: boolean };
+
+function serializeToolInput(
+  input: unknown,
+  secrets: Array<string | undefined>,
+): Pick<Extract<AgentEvent, { type: "tool_use" }>, "input" | "captureTruncated"> {
+  const capture = { truncated: false };
+  const compactInput = compactToolValue(input ?? {}, secrets, capture);
+  const json = redactRunToolText(
+    redactSecrets(
+      typeof compactInput === "string" ? compactInput : JSON.stringify(compactInput),
+      secrets,
+    ),
   );
-  if (json.length <= MAX_TOOL_INPUT_CHARS) return json;
-  return `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`;
+  if (json.length > MAX_TOOL_INPUT_CHARS) capture.truncated = true;
+  return {
+    input:
+      json.length <= MAX_TOOL_INPUT_CHARS
+        ? json
+        : `${json.slice(0, MAX_TOOL_INPUT_CHARS - 15)}…[truncated]`,
+    ...(capture.truncated ? { captureTruncated: true } : {}),
+  };
 }
 
-function compactToolValue(value: unknown, secrets: Array<string | undefined>, depth = 0): unknown {
-  if (typeof value === "string") return truncateToolText(redactSecrets(value, secrets));
+function compactToolValue(
+  value: unknown,
+  secrets: Array<string | undefined>,
+  capture: ToolCapture,
+  depth = 0,
+): unknown {
+  if (typeof value === "string") {
+    return truncateToolText(redactRunToolText(redactSecrets(value, secrets)), capture);
+  }
   if (Array.isArray(value)) {
     if (depth > 4) return value;
-    return value.slice(0, 20).map((item) => compactToolValue(item, secrets, depth + 1));
+    if (value.length > 20) capture.truncated = true;
+    return value.slice(0, 20).map((item) => compactToolValue(item, secrets, capture, depth + 1));
   }
   if (!isRecord(value) || depth > 4) return value;
 
   const compacted: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (BULKY_TOOL_FIELDS.has(key)) continue;
-    compacted[key] = compactToolValue(nested, secrets, depth + 1);
+    if (BULKY_TOOL_FIELDS.has(key)) {
+      capture.truncated = true;
+      continue;
+    }
+    compacted[key] = compactToolValue(nested, secrets, capture, depth + 1);
   }
   return compacted;
 }
 
-function truncateToolText(value: string): string {
+function truncateToolText(value: string, capture: ToolCapture): string {
   if (value.length <= MAX_TOOL_TEXT_CHARS) return value;
+  capture.truncated = true;
   return `${value.slice(0, MAX_TOOL_TEXT_CHARS)}…`;
 }
 

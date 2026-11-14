@@ -5,6 +5,7 @@ import {
   type CodexCredential,
 } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { redactRunSensitiveText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
@@ -167,9 +168,16 @@ export class CodexRunner implements AgentRunner {
     }
 
     const code = await proc.exitCode;
-    if (code !== 0) errors.push(codexExitErrorMessage(code, safety.redact(stderrBuf)));
+    const stderr = safety.redact(stderrBuf);
+    if (code !== 0) errors.push(codexExitErrorMessage(code, stderr));
 
-    yield* codexSessionCompletion(sandbox, finalOutputFile, errors, lastMessage);
+    yield* codexSessionCompletion(
+      sandbox,
+      finalOutputFile,
+      errors,
+      lastMessage,
+      code !== 0 && redactRunSensitiveText(stderr).length > 500,
+    );
   }
 
   private async *runWithChatGptAuth(
@@ -254,8 +262,11 @@ export class CodexRunner implements AgentRunner {
     }
 
     const code = await proc.exitCode;
-    const errorMessage = code === 0 ? null : codexExitErrorMessage(code, safety.redact(stderrBuf));
-    if (errorMessage && isAuthFailure(errorMessage)) {
+    const stderr = safety.redact(stderrBuf);
+    const errorMessage = code === 0 ? null : codexExitErrorMessage(code, stderr);
+    const authenticationFailed =
+      code !== 0 && isAuthFailure(`codex CLI exited with code ${code}: ${stderr.slice(0, 500)}`);
+    if (authenticationFailed) {
       await store.markChatGptAuthReconnectRequired({
         previousCredentialGeneration: credential.credentialGeneration,
         previousCredentialVersion: credential.credentialVersion,
@@ -274,7 +285,13 @@ export class CodexRunner implements AgentRunner {
 
     if (errorMessage) errors.push(errorMessage);
 
-    yield* codexSessionCompletion(sandbox, finalOutputFile, errors, lastMessage);
+    yield* codexSessionCompletion(
+      sandbox,
+      finalOutputFile,
+      errors,
+      lastMessage,
+      code !== 0 && redactRunSensitiveText(stderr).length > 500,
+    );
   }
 }
 
@@ -376,6 +393,14 @@ function parseCodexItem(item: Record<string, unknown>): AgentEvent | null {
       tool: item.name,
       input: typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput),
     };
+  }
+
+  if (
+    typeof item.type === "string" &&
+    (item.type === "command_execution" ||
+      Object.keys(item).some((key) => key !== "id" && key !== "type"))
+  ) {
+    return { type: "capture_gap", reason: "unsupported_event" };
   }
 
   return null;
@@ -511,6 +536,7 @@ async function* codexSessionCompletion(
   finalOutputFile: string,
   errors: readonly string[],
   lastMessage: string | undefined,
+  captureTruncated: boolean,
 ): AsyncIterable<AgentEvent> {
   let finalOutput: string | null;
   try {
@@ -523,6 +549,7 @@ async function* codexSessionCompletion(
         ...errors,
         `Could not read Codex final output: ${error instanceof Error ? error.message : String(error)}`,
       ].join("\n\n"),
+      ...(captureTruncated ? { captureTruncated: true } : {}),
     };
     return;
   }
@@ -532,7 +559,11 @@ async function* codexSessionCompletion(
     if (finalOutput?.trim() && finalOutput !== lastMessage) {
       yield { type: "progress", text: finalOutput };
     }
-    yield { type: "error", message: errors.join("\n\n") };
+    yield {
+      type: "error",
+      message: errors.join("\n\n"),
+      ...(captureTruncated ? { captureTruncated: true } : {}),
+    };
     return;
   }
   if (!finalOutput?.trim()) {
@@ -568,7 +599,7 @@ async function ensureCodexHome(
   const code = await proc.exitCode;
   if (code !== 0) {
     throw new Error(
-      `Failed to create Codex auth directory: ${safety.redact(stderr).slice(0, 500)}`,
+      `Failed to create Codex auth directory: ${redactRunSensitiveText(safety.redact(stderr)).slice(0, 500)}`,
     );
   }
 }
@@ -586,7 +617,7 @@ function isAuthFailure(message: string): boolean {
 }
 
 function codexExitErrorMessage(code: number, stderr: string): string {
-  const excerpt = stderr.slice(0, 500);
+  const excerpt = redactRunSensitiveText(stderr).slice(0, 500);
   if (isCodexInnerSandboxFailure(stderr)) {
     return [
       `codex CLI exited with code ${code}: Codex's inner Bubblewrap sandbox was invoked unexpectedly inside Vercel Sandbox.`,

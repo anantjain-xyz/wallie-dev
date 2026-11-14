@@ -361,6 +361,40 @@ describe("ClaudeCodeRunner", () => {
     expect(events[2]).toMatchObject({ type: "error" });
   });
 
+  it.each([500, 501])(
+    "marks stderr clipping at the 500-character boundary (%i)",
+    async (length) => {
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec("bash", [{ data: "x".repeat(length), stream: "stderr" }], { exitCode: 1 });
+      const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
+      const events = [];
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+        events.push(event);
+      expect(events).toEqual([
+        {
+          type: "error",
+          message: `claude CLI exited with code 1: ${"x".repeat(500)}`,
+          ...(length > 500 ? { captureTruncated: true } : {}),
+        },
+      ]);
+    },
+  );
+
+  it("redacts unknown credential patterns before clipping stderr", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [{ data: `${"x".repeat(490)} sk-${"a".repeat(60)} ${"y".repeat(100)}`, stream: "stderr" }],
+      { exitCode: 1 },
+    );
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+      events.push(event);
+    expect(events[0]).toMatchObject({ type: "error", captureTruncated: true });
+    expect(JSON.stringify(events)).not.toContain("sk-");
+  });
+
   it("emits an error event when the CLI exits non-zero", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [{ data: "boom\n", stream: "stderr" }], { exitCode: 2 });
@@ -377,6 +411,51 @@ describe("ClaudeCodeRunner", () => {
 });
 
 describe("parseStreamJsonLine", () => {
+  it("marks a discarded user tool result without retaining raw material", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              { type: "tool_result", tool_use_id: "secret-id", content: "sensitive output" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([{ type: "capture_gap", reason: "unsupported_event" }]);
+  });
+
+  it("marks substantive unsupported assistant blocks in content order", () => {
+    expect(
+      parseStreamJsonLine(
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [
+              { type: "text", text: "before" },
+              { type: "thinking", thinking: "sensitive content" },
+              { type: "future_block", payload: "sensitive content" },
+              { type: "text", text: "after" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "progress", text: "before" },
+      { type: "capture_gap", reason: "unsupported_event" },
+      { type: "capture_gap", reason: "unsupported_event" },
+      { type: "progress", text: "after" },
+    ]);
+  });
+
+  it.each(["system", "message_start", "message_stop", "content_block_stop"])(
+    "ignores routine %s framing",
+    (type) => {
+      expect(parseStreamJsonLine(JSON.stringify({ type }))).toEqual([]);
+    },
+  );
+
   it("parses an assistant text block", () => {
     expect(
       parseStreamJsonLine(

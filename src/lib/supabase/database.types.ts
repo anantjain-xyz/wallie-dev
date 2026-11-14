@@ -104,6 +104,60 @@ export type Database = {
           },
         ]
       }
+      agent_run_events: {
+        Row: {
+          agent_run_id: string
+          attempt_count: number
+          causation_sequence: number | null
+          created_at: string
+          kind: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          truncated: boolean
+          workspace_id: string
+        }
+        Insert: {
+          agent_run_id: string
+          attempt_count: number
+          causation_sequence?: number | null
+          created_at?: string
+          kind: string
+          payload: Json
+          schema_version?: number
+          sequence: number
+          truncated?: boolean
+          workspace_id: string
+        }
+        Update: {
+          agent_run_id?: string
+          attempt_count?: number
+          causation_sequence?: number | null
+          created_at?: string
+          kind?: string
+          payload?: Json
+          schema_version?: number
+          sequence?: number
+          truncated?: boolean
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_run_events_agent_run_id_fkey"
+            columns: ["agent_run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_run_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_run_messages: {
         Row: {
           agent_run_id: string
@@ -4573,6 +4627,20 @@ export type Database = {
           p_remote_ref?: string
           p_remote_sha?: string
           p_run_id: string
+        }
+        Returns: boolean
+      }
+      append_agent_run_event: {
+        Args: {
+          p_attempt_count: number
+          p_causation_sequence?: number
+          p_job_id: string
+          p_kind: string
+          p_legacy_message_md?: string
+          p_payload: Json
+          p_run_id: string
+          p_sequence: number
+          p_truncated: boolean
         }
         Returns: boolean
       }

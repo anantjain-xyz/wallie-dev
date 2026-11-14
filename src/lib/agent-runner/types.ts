@@ -22,6 +22,15 @@ export interface AgentEventToolUse {
   type: "tool_use";
   tool: string;
   input: string;
+  captureTruncated?: true;
+}
+
+export interface AgentEventToolResult {
+  type: "tool_result";
+  tool: string;
+  output: string;
+  status: "success" | "error";
+  captureTruncated?: true;
 }
 
 export interface AgentRunUsage {
@@ -52,14 +61,17 @@ export interface AgentEventCompletion {
 export interface AgentEventError {
   type: "error";
   message: string;
+  captureTruncated?: true;
 }
 
 export type AgentEvent =
   | AgentEventText
   | { type: "progress"; text: string }
   | AgentEventToolUse
+  | AgentEventToolResult
   | AgentEventCompletion
-  | AgentEventError;
+  | AgentEventError
+  | { type: "capture_gap"; reason: "unsupported_event" };
 
 // ---------------------------------------------------------------------------
 // Agent Runner Interface

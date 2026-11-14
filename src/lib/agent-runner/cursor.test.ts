@@ -314,6 +314,40 @@ describe("CursorRunner", () => {
     }
   });
 
+  it.each([500, 501])(
+    "marks stderr clipped beyond the 500-character boundary (%i)",
+    async (length) => {
+      const sandbox = new FakeSandbox();
+      sandbox.scriptExec("bash", [{ data: "x".repeat(length), stream: "stderr" }], { exitCode: 1 });
+      const runner = new CursorRunner({ credential });
+      const events = [];
+      for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+        events.push(event);
+      expect(events).toEqual([
+        {
+          type: "error",
+          message: `Cursor CLI exited with code 1: ${"x".repeat(500)}`,
+          ...(length > 500 ? { captureTruncated: true } : {}),
+        },
+      ]);
+    },
+  );
+
+  it("redacts unknown credentials before clipping stderr", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [{ data: `${"x".repeat(490)} sk-${"a".repeat(60)} ${"y".repeat(100)}`, stream: "stderr" }],
+      { exitCode: 1 },
+    );
+    const runner = new CursorRunner({ credential });
+    const events = [];
+    for await (const event of runner.start({ prompt: "p", sandbox, sessionId: "s" }))
+      events.push(event);
+    expect(events[0]).toMatchObject({ type: "error", captureTruncated: true });
+    expect(JSON.stringify(events)).not.toContain("sk-");
+  });
+
   it("redacts the Cursor API key from completed tool stdout before yielding", async () => {
     const secret = "sk-cursor-live-secret-value-12345";
     const sandbox = new FakeSandbox();
@@ -533,6 +567,7 @@ describe("parseCursorStreamJsonLine", () => {
     );
 
     expect(completed.event.tool).toBe("shell");
+    expect(completed.event.captureTruncated).toBe(true);
     expect(completed.input).toMatchObject({
       command: "cat huge.log",
       result: { exitCode: 0, stderr: "" },
@@ -561,6 +596,7 @@ describe("parseCursorStreamJsonLine", () => {
       }),
     );
     expect(readCompleted.event.tool).toBe("read");
+    expect(readCompleted.event.captureTruncated).toBe(true);
     expect(readCompleted.input).toEqual({
       path: "README.md",
       result: {
@@ -629,6 +665,81 @@ describe("parseCursorStreamJsonLine", () => {
       `[REDACTED]\n${"x".repeat(489)}…`,
     );
   });
+
+  it.each([
+    {
+      name: "intact strings and arrays",
+      args: { note: "x".repeat(500), files: Array(20).fill("x") },
+      truncated: false,
+    },
+    { name: "long strings", args: { note: "x".repeat(501) }, truncated: true },
+    { name: "long arrays", args: { files: Array(21).fill("x") }, truncated: true },
+    ...[
+      "afterFullFileContent",
+      "content",
+      "diffString",
+      "directoryTreeRoot",
+      "fileText",
+      "parsingResult",
+    ].map((field) => ({
+      name: `omitted ${field}`,
+      args: { [field]: "omitted", path: "a.ts" },
+      truncated: true,
+    })),
+    {
+      name: "total payload limit",
+      args: Object.fromEntries(
+        Array.from({ length: 10 }, (_, index) => [`field${index}`, "x".repeat(450)]),
+      ),
+      truncated: true,
+    },
+  ])("marks actual capture loss for $name", ({ args, truncated }) => {
+    const { event } = parseCursorStreamJsonLine(JSON.stringify({ type: "tool_call", input: args }));
+    expect(event?.type).toBe("tool_use");
+    if (event?.type !== "tool_use") throw new Error("Expected tool event");
+    expect(event.captureTruncated).toBe(truncated ? true : undefined);
+    expect(event.input.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("redacts unknown credential patterns before clipping tool output", () => {
+    const secret = `sk-${"a".repeat(60)}`;
+    const completed = parseToolUse(
+      JSON.stringify({
+        type: "tool_call",
+        subtype: "completed",
+        tool_call: {
+          shellToolCall: {
+            args: {},
+            result: { success: { stdout: `${"x".repeat(490)} ${secret} ${"y".repeat(100)}` } },
+          },
+        },
+      }),
+    );
+    expect(completed.event.captureTruncated).toBe(true);
+    expect(completed.event.input).not.toContain("sk-");
+  });
+
+  it.each([
+    '{"type":"tool_call","input":{"api_key":"raw-secret"',
+    '[{"api_key":"raw-secret"}',
+    '["raw-secret"',
+    "null",
+    "42",
+    "true",
+    '"raw-secret"',
+    "[]",
+  ])("marks malformed or nonobject JSON without echoing it (%s)", (line) => {
+    expect(parseCursorStreamJsonLine(line)).toEqual({
+      event: { type: "capture_gap", reason: "unsupported_event" },
+    });
+  });
+
+  it.each(["ordinary CLI progress", "[info] plain progress", "[warning] still working"])(
+    "retains ordinary text progress (%s)",
+    (line) => {
+      expect(parseCursorStreamJsonLine(line)).toEqual({ event: { type: "progress", text: line } });
+    },
+  );
 
   it("never uses subtype as the tool name", () => {
     expect(
