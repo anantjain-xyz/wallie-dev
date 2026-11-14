@@ -21,7 +21,7 @@ export { mergeRepositoryOnboardingState } from "@/features/repositories/reposito
 // guide so a self-hoster on the blocked GitHub step can reach setup instructions
 // without leaving the page blind.
 const GITHUB_APP_SETUP_DOCS_URL =
-  "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/SELF_HOSTING.md#5-create-the-production-github-app";
+  "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/deployment/self-hosting.md#5-create-the-production-github-app";
 
 type GitHubConnectionPanelProps = {
   canManage: boolean;

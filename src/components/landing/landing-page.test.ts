@@ -10,7 +10,7 @@ describe("LandingPage", () => {
 
     expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
     expect(html.match(/href="\/login"/g)).toHaveLength(2);
-    expect(html).toContain("docs/SELF_HOSTING.md");
+    expect(html).toContain("docs/deployment/self-hosting.md");
     expect(html).toContain("agent credentials");
     expect(html).toContain("Linear is optional");
   });

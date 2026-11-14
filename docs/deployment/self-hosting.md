@@ -1,0 +1,272 @@
+# Self-Hosting Wallie
+
+This guide walks through deploying your **own production Wallie instance** on the internet. To use the hosted instance at [**wallie.dev**](https://wallie.dev), you do not need to deploy these services. You still connect a GitHub repository, a sandbox provider, and your agent credentials before running a task. Linear is optional.
+
+If you only want to run Wallie **locally for development**, follow the [README → Local Setup](../../README.md#local-setup-end-to-end) instead. This document covers hosted deployment.
+
+## Architecture: what you need to host
+
+Wallie deploys its web app and worker separately, with managed backing services:
+
+| Component                                | What it is                                                                   | Where it runs                                                                    |
+| ---------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Web app**                              | Next.js App Router (UI + API route handlers)                                 | Any Next.js host. Vercel is the smoothest path. Stateless.                       |
+| **Worker**                               | Dispatches jobs and runs agent stages in per-attempt Workflows               | Cloudflare Workers + Workflows; alternatively, an always-on Node/container host. |
+| **Database / Auth / Realtime / Storage** | Supabase                                                                     | Supabase Cloud (or your own Supabase).                                           |
+| **Sandboxes**                            | Ephemeral VMs that run the agent per stage                                   | Vercel Sandbox, E2B, or Daytona Cloud/approved self-hosted Daytona.              |
+| **Integrations**                         | GitHub App, Linear, model provider (Codex / Claude Code / Cursor / OpenCode) | External; configured per-workspace in the app UI.                                |
+
+The native worker uses durable dispatch and Workflows for long-running stages.
+Deploy it separately from the web app, using the same Supabase project and current
+encryption key. `pnpm worker` retains the Node daemon for local development and
+container deployments.
+
+## Prerequisites
+
+### Deployment environment
+
+- Set `WALLIE_DEPLOY_ENV=production` for a production deployment on any host.
+- Values: `production`, `preview`, or `development`; blank means automatic detection.
+- Precedence: `WALLIE_DEPLOY_ENV` → recognized `VERCEL_ENV` → `NODE_ENV` (`production` or local development).
+- Production blocks `/dev/*` fixtures at request time. Use `preview` for an isolated preview or fixture test server.
+- Vercel analytics stays limited to Vercel production; choosing production on another host does not enable it.
+
+### Runtime public configuration
+
+| Setting                                | Used for                                                 |
+| -------------------------------------- | -------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Metadata, authentication redirects, and invitation links |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Browser/server clients and the avatar image allowlist    |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public browser/server client authentication              |
+
+- With `pnpm start`, set these values at startup; the same build can run against different installations. Keep `next.config.ts` and its imports available.
+- The server passes only the public Supabase URL/key to React clients. Private keys stay on the server.
+- Pages render at request time so HTML, hydration, metadata, and telemetry use the current deployment configuration. Public pages no longer use build-time prerendering.
+- Image optimization retains the exact configured origin and avatar buckets; redirects and arbitrary remote hosts remain blocked.
+- **Supported runtime:** `next start`. Standalone output embeds Next.js configuration and needs a separate solution before cross-installation promotion.
+- On Vercel, keep the existing environment settings. No variable renaming is required.
+
+See [Next.js runtime environment guidance](https://nextjs.org/docs/app/guides/self-hosting#environment-variables).
+
+### Accounts and tools
+
+- A [Supabase](https://supabase.com) account and the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started).
+- A host for the web app (e.g. [Vercel](https://vercel.com)).
+- A Workers Paid account for native Cloudflare orchestration, or an always-on Node/container host.
+- A GitHub account/org where you can create a **GitHub App**.
+- A Vercel, E2B, or Daytona account for Sandbox execution.
+- Agent provider access (Codex, Claude Code, Cursor, and/or OpenCode) — entered per-workspace later, not at deploy time.
+- A domain (recommended) for a stable origin.
+
+## 1. Create the Supabase project
+
+1. Create a new project in the Supabase dashboard. Note the **project ref**.
+2. Link the CLI and push the schema from this repo:
+
+   ```bash
+   supabase link --project-ref <your-project-ref>
+   supabase db push          # applies everything in supabase/migrations/
+   ```
+
+   `supabase db push` runs the baseline migration plus all forward migrations against your hosted database. Do **not** load `supabase/seed.sql` — that's local development demo data.
+
+3. **Auth:** in **Authentication → URL Configuration**, set the **Site URL** to your production origin (e.g. `https://wallie.example.com`) and add the email/magic-link/invite callback to **Redirect URLs**. The app's email sign-in and workspace invites redirect to `/auth/confirm`, sometimes with `?next=...`; allow-list `https://wallie.example.com/auth/confirm**` to cover both forms. Supabase ignores `redirectTo` URLs that aren't allow-listed, which would silently break login and invite acceptance. Enable email sign-in. If you want the branded emails, copy the templates from `supabase/templates/auth/` into **Authentication → Email Templates**.
+4. From **Project Settings → API**, collect:
+   - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
+   - Publishable / anon key → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+   - Secret / service-role key → `SUPABASE_SECRET_KEY` (server-side only — never expose to the browser)
+
+## 2. Generate the encryption key
+
+Wallie encrypts workspace secrets and per-user agent credentials at rest with AES-256-GCM. Generate the master key once and store it in your host's secret manager:
+
+```bash
+openssl rand -hex 32
+```
+
+Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-encrypting all existing encrypted values**, so treat it as durable. See [SECURITY.md](../../SECURITY.md).
+
+## 3. Deploy the web app (Vercel)
+
+For the packaged Docker image and runtime configuration smoke check, see [Web container](web-container.md).
+
+1. Import the repository into Vercel.
+2. Set the environment variables (mirror `.env.example`):
+
+   | Variable                                                             | Value                                                      |
+   | -------------------------------------------------------------------- | ---------------------------------------------------------- |
+   | `NEXT_PUBLIC_APP_URL`                                                | Your production origin, e.g. `https://wallie.example.com`  |
+   | `NEXT_PUBLIC_SUPABASE_URL`                                           | From step 1                                                |
+   | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`                               | From step 1                                                |
+   | `SUPABASE_SECRET_KEY`                                                | From step 1                                                |
+   | `WALLIE_ENCRYPTION_KEY`                                              | From step 2                                                |
+   | `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET`                  | From step 5; required for new connections                  |
+   | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_WEBHOOK_SECRET` | From step 5                                                |
+   | `WALLIE_ENABLED_SANDBOX_PROVIDERS`                                   | Start with `vercel`; add `e2b`, then `daytona` to roll out |
+   | `WALLIE_DAYTONA_API_URL_ALLOWLIST`                                   | Optional exact HTTPS self-hosted Daytona API URLs          |
+
+3. Deploy, then point your domain at the deployment so `NEXT_PUBLIC_APP_URL` matches the real origin.
+
+> **Session sandbox credentials:** hosting the web app on Vercel does not replace the per-workspace sandbox connection. Connect and test the selected provider in Settings (step 6). The `VERCEL_*` environment credentials described in step 4 are for operator/helper sandboxes; they do not make a workspace ready to run sessions.
+
+## 4. Deploy the worker
+
+Use the [native Cloudflare worker guide](cloudflare-worker.md) for configuration,
+migrations, all twelve agent/sandbox combinations, live qualification, and rollback.
+The web app remains on Vercel; all durable state and encrypted credentials remain
+in Supabase. The checked-in `wrangler.jsonc` keeps dispatch disabled until qualification.
+
+The hosted wallie.dev worker is automatically deployed by Cloudflare from its
+connected repository; routine merges do not require a separate manual deploy.
+For your own instance, configure Cloudflare's Git integration and production
+branch/build/deploy settings, or explicitly deploy it yourself:
+
+```bash
+pnpm check:cloudflare
+pnpm worker:deploy
+```
+
+The CLI command is the manual/self-hosted option, not an additional step after an
+automatic deployment. Verify the Cloudflare deployment's commit/version and
+runtime configuration rather than inferring worker deployment from Vercel or CI.
+See [Production deployment](cloudflare-worker.md#production-deployment), including
+how checked-in dispatch defaults interact with automatic deployments.
+
+Supply the current Supabase/encryption/GitHub credentials through Cloudflare
+secrets and matching public connection variables. Configure the same wake secret
+on Vercel and Cloudflare and set Vercel's `WALLIE_WORKER_WAKE_URL` to the Worker's
+`/internal/wake` endpoint. Workspace sandbox connections remain in Settings.
+
+For local development, run `pnpm dev` and `pnpm worker`, or use `pnpm worker:dev`
+with local Supabase values in an ignored `.dev.vars` file. Generic Node/container
+hosting remains supported; follow [Worker container](worker-container.md) for the
+image, direct Node startup, and pre-stop draining requirements.
+
+## 5. Create the production GitHub App
+
+This mirrors the [README → Create a GitHub App](../../README.md#5-create-a-github-app) steps, but with production URLs. At <https://github.com/settings/apps> → **New GitHub App**:
+
+- **Homepage URL:** your origin (e.g. `https://wallie.example.com`)
+- **Callback URL:** `https://wallie.example.com/api/github/callback` (keep OAuth-during-install **off**)
+- **Setup URL (post installation):** `https://wallie.example.com/api/github/callback` — **required.** With OAuth-during-install off, GitHub sends the user here after install, with an untrusted `installation_id` and opaque `state`. Wallie then starts a separate GitHub OAuth flow to verify ownership before saving the connection. Without it, an install can finish on GitHub and leave the workspace disconnected.
+- **Webhook URL:** `https://wallie.example.com/api/github/webhooks`
+- **Webhook secret:** a strong random string → also set as `GITHUB_WEBHOOK_SECRET`
+- **Repository permissions:**
+  - **Contents** → **Read and write** — repo onboarding creates branches, trees, and commits (`src/lib/repo-onboarding/server.ts`).
+  - **Pull requests** → **Read and write** — onboarding opens a setup PR and session completion opens PRs (`src/lib/pipeline/pull-request.ts`); webhook ingestion also reads PR state.
+  - **Metadata** → **Read-only** (mandatory, set automatically).
+- **Organization permissions:** **Members** → **Read-only**, so Wallie can verify active organization ownership. Existing installations must approve the added permission.
+- **Subscribe to events:** `Pull request`
+- **Where can this app be installed?** "Any account" if you want others to install it; "Only this account" for a private deployment.
+
+After creating it: copy the **App ID** → `GITHUB_APP_ID` and **Client ID** → `GITHUB_APP_CLIENT_ID`, generate a client secret → `GITHUB_APP_CLIENT_SECRET`, generate a private key and put its PEM contents in `GITHUB_APP_PRIVATE_KEY` (PKCS#1 and PKCS#8 are both accepted; escape newlines as `\n` if you inline it), and redeploy both services so the new env vars take effect.
+
+### GitHub ownership verification upgrade
+
+Before deploying the callback changes:
+
+1. Check existing installation rows for ambiguous workspace ownership:
+
+   ```sql
+   select workspace_id, array_agg(id) as installation_rows
+   from public.github_installations
+   group by workspace_id
+   having count(*) > 1;
+   ```
+
+   The migration fails if this returns rows. Investigate and explicitly resolve the connections with their workspace owners before retrying; it does not delete or transfer existing installations automatically.
+
+2. Apply migration `20260908004716_secure_github_installation_ownership.sql`. It adds a service-only OAuth flow table, enforces one installation per workspace, and forbids changing an existing connection's workspace or installation ID, including through the service role.
+3. Configure `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`, the exact callback and setup URLs above, and Organization Members read permission. Keep OAuth-during-install **off**. Redeploy. Missing OAuth configuration disables new connections; existing worker access and repository refresh still use the App ID/private key.
+4. Start a fresh connection from Wallie's workspace GitHub settings, using the same signed-in browser. Old signed callback links are invalidated by this upgrade. New flows expire after ten minutes and are consumed before code exchange; after an error or expiry, start again.
+5. Verify a personal-account owner or active organization owner can connect, and an ordinary repository collaborator cannot. Only Wallie workspace owners/admins may initiate or complete this flow. Confirm the same installation reconnects to its existing workspace and is rejected for a different workspace.
+
+The ownership check uses a short-lived GitHub user authorization solely during the callback; Wallie persists neither access nor refresh tokens. Installations already connected before this upgrade retain their mappings and are not retrospectively reauthorized. Review existing mappings if the vulnerable callback was exposed. To change installations, uninstall the existing App installation through GitHub and let its signed deletion webhook remove the connection before starting a new installation. If a webhook was missed, an operator must investigate and remove the obsolete mapping explicitly. Automatic replacement and cross-workspace transfer are no longer supported.
+
+## 6. Per-workspace setup (in the app, not env vars)
+
+These are entered through the app's **Settings** UI and stored encrypted in your database — they are intentionally **not** environment variables:
+
+- **Agent provider & model** — Codex, Claude Code, Cursor, or OpenCode, plus the provider credential (ChatGPT sign-in / Codex token / OpenAI key, an Anthropic API key, Cursor browser sign-in, or an OpenCode Zen / per-provider API key). Cursor sign-in is processed by the Wallie worker.
+- **Linear API key (optional)** — add one if you want to attach Linear issue context. You can start a session with a prompt alone.
+- **GitHub installation** — install the App onto the repos a workspace should see.
+- **Sandbox provider** — connect Vercel, E2B, and/or Daytona, choose one active provider, then run its repository capability check. Connections are retained when switching.
+
+See [README → Configure agent provider](../../README.md#configure-agent-provider) and the integration sections for details.
+
+## 7. Verify the first task through completion
+
+Use a repository and a small task you are comfortable running through your
+configured providers. This rehearsal uses sandbox and model access and can
+create a branch and pull request in that repository.
+
+1. Open your origin in a fresh browser session. Request a sign-in email and
+   follow its link. Confirm it returns to your origin and the expected account.
+2. Create a workspace and work through onboarding: connect GitHub, select and
+   prepare a repository, and connect execution access. A workspace name alone
+   does not complete setup. Keep the default Plan → Build pipeline for the
+   first rehearsal; Linear is optional.
+3. In onboarding's Verify step, run the selected sandbox provider's repository
+   capability check and resolve all checklist blockers, then choose **Complete
+   setup**. Before creating the task, confirm the worker has started and
+   is publishing fresh heartbeats; see [Worker operations](worker-operations.md#heartbeats-and-activity).
+4. Describe a bounded change with a clear acceptance condition, such as fixing
+   a specific README typo. Start the session once. In Runs, confirm it moves
+   from queued into execution and produces an artifact ready for review.
+5. Request one concrete change to the first artifact. Confirm the request
+   succeeds, a new run appears, and a new artifact version becomes
+   reviewable. Inspect the revised output before approving it.
+6. Approve the stage and confirm the next configured stage starts. Continue
+   through every selected stage and approve the final output. Confirm the
+   session shows **Session complete**.
+7. For this code-change rehearsal, require a resulting PR. Open it on GitHub
+   and verify the repository, requested change, and checks. A completed session
+   and artifact alone do not verify GitHub access: pushing or PR creation can
+   fail without failing the stage. If the PR is missing, inspect the run and
+   worker diagnostics and fix any push or PR-creation failure before repeating
+   the rehearsal. An intentional no-change result (`no_commits`) is appropriate
+   only for a task that requires no repository edits; it does not satisfy this
+   code-change rehearsal. Session completion does not mean the PR was merged
+   or deployed.
+8. Reload the completed session and open its URL in a second signed-in browser
+   session. Confirm the output, artifact history, and completion state remain
+   available.
+
+Record the deployed commit, provider/model, session URL, review/revision outcome,
+and any resulting PR URL. Record queue wait and execution duration separately
+from Runs and worker logs; a fast-loading page does not prove fast execution.
+Do not use seeded completed sessions as evidence that your deployment ran a task.
+
+Before inviting a wider team, send a test invitation to an account you control
+and follow it from a signed-out browser. Confirm it reaches the intended
+workspace with the intended role. The local browser suite verifies selected
+auth and UI behavior, but does not prove production email delivery or provider
+execution; see [Verification](../development/verification.md).
+
+If a session remains queued, inspect the worker logs and heartbeat freshness,
+then workspace readiness and available capacity. If it has started but stops
+making progress, inspect the latest run error/activity and provider access.
+There is no public worker-health endpoint; a responsive web page alone does
+not establish that the worker is healthy.
+
+## Upgrading
+
+Apply required compatible migrations and release compatible web and worker code:
+
+```bash
+git pull
+supabase db push   # applies any new migrations in supabase/migrations/
+```
+
+For Git-connected deployments, the configured hosts deploy the updated production
+branch automatically. Otherwise, use your chosen manual deployment process.
+Verify both services reached the intended compatible versions; a merge or green
+CI alone does not prove deployment. Keep old/new code compatible during rollout
+and apply prerequisite migrations before code that depends on them.
+
+## Operational notes
+
+- **Keep web app and worker on the same env + schema.** Drift causes subtle failures.
+- **Back up your database** and store `WALLIE_ENCRYPTION_KEY` durably — losing it makes encrypted secrets unrecoverable.
+- **Secrets hygiene:** never commit `.env.local`; keep the service-role key server-side only. See [SECURITY.md](../../SECURITY.md).
+- **Scaling the worker:** the queue uses atomic compare-and-swap claims, so you can run more than one worker if you need more throughput.

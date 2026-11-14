@@ -30,7 +30,7 @@ The validation report is retained with this artifact. Temporary evidence from ol
 
 ## Reference links
 
-[Repository documentation](https://github.com/anantjain-xyz/wallie-dev/blob/714edc93/docs/VALIDATION-EVIDENCE.md) · [Relative document](docs/VALIDATION-EVIDENCE.md) · [Review section](#retained-evidence)
+[Repository documentation](https://github.com/anantjain-xyz/wallie-dev/blob/714edc93/docs/VALIDATION-EVIDENCE.md) · [Relative document](docs/architecture/validation-evidence.md) · [Review section](#retained-evidence)
 `;
 
 /** Deterministic, non-production preview of the actual artifact review renderer. */
