@@ -37,6 +37,7 @@
     "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
     "check:db-tests": "node --import tsx scripts/check-db-tests.ts",
     "check:continuity": "node --import tsx scripts/check-continuity.ts",
+    "check:factory-plan": "node --import tsx scripts/check-factory-plan.ts",
     "check:route-budgets": "tsx scripts/check-route-budgets.ts",
     "check:types-drift": "pnpm db:types:check",
     "start": "next start",

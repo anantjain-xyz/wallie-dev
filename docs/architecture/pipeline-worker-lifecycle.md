@@ -37,13 +37,14 @@ runs and queued placeholders may remain unbound (`null`). New execution intents 
 use a new attempt. Callers must never reload the latest attempt to authorize an
 older worker's writes.
 
-| API                                                            | Atomic boundary                                                                                         |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `start_session_job_attempt`                                    | Validate the claimed attempt, expected stage/version, bind legacy job stage, and claim/start its run.   |
-| `publish_session_job_attempt`                                  | Validate ownership, insert markdown, advance the review pointer, and mark the exact run successful.     |
-| `complete_session_job_attempt`                                 | Close only the exact published job/run, including after approval advances the session.                  |
-| `fail_session_job_attempt`                                     | Fail/retry only the captured owner; a published run remains successful and its artifact remains intact. |
-| `cancel_session_job_attempts` / `archive_session_job_attempts` | Cancel owned work and park/archive the session before sandbox cleanup.                                  |
+| API                                                            | Atomic boundary                                                                                               |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `start_session_job_attempt`                                    | Validate the claimed attempt, expected stage/version, bind legacy job stage, and claim/start its run.         |
+| `prepare_session_source_and_checkpoint_publication`            | Save source and immutable artifact intent for the exact attempt before remote publication.                    |
+| `adopt_session_checkpoint_publication`                         | Validate the publication claim and retained-ref proof, adopt source/artifact, and complete the exact job/run. |
+| `complete_session_job_attempt`                                 | Close only the exact published job/run, including after approval advances the session.                        |
+| `fail_session_job_attempt`                                     | Fail/retry only the captured owner; a published run remains successful and its artifact remains intact.       |
+| `cancel_session_job_attempts` / `archive_session_job_attempts` | Cancel owned work and park/archive the session before sandbox cleanup.                                        |
 
 The functions lock the session before its jobs and runs. Cancellation returns
 run IDs for cleanup outside the transaction. A stale expected run cannot cancel
@@ -134,24 +135,29 @@ reroutes can all place a session there.
 
 ## Normal lifecycle
 
-| Event                        | Guard or atomic boundary                                                                                                                 | Durable result                                                                                                   | Follow-up                                     |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Create session               | `create_session_with_first_job` runs transactionally                                                                                     | Session at first stage, queued job, and queued run are inserted together                                         | Worker polling discovers the job              |
-| Claim job                    | `claim_next_agent_job` locks and CAS-updates a ready queued job while enforcing workspace capacity                                       | Job becomes running and its attempt count advances                                                               | Scheduler advertises the job in its heartbeat |
-| Claim session for generation | `start_session_job_attempt` validates captured job/attempt, expected stage/version, and archive state                                    | Session becomes or remains `in_progress`                                                                         | Generic stage execution begins                |
-| Complete generation          | `publish_session_job_attempt` inserts markdown, claims `awaiting_review`, and records run success atomically, then PR                    | Artifact version becomes current and session becomes `awaiting_review`; the winner publishes its attempt branch  | Run and job finish successfully               |
-| Fail generation              | `fail_session_job_attempt` checks the captured job/attempt/run before failure or retry                                                   | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored         | A later claim may start the retry             |
-| Reject artifact              | `reject_session_stage` locks the session row and applies feedback, enqueue, and `rejected` in one transaction                            | Feedback is recorded; a queued rerun is inserted or a queued job is adopted; a publishing generation is replaced | Worker claim returns it to `in_progress`      |
-| Approve nonterminal stage    | `approve_session_stage` validates workspace, review identity, phase, and approver; records completion, advances, and enqueues atomically | Session points to next stage at its maximum historical version and `in_progress`; next job/run are queued        | Worker polling discovers the next job         |
-| Approve terminal stage       | Same approval transaction                                                                                                                | Session is `approved`; linked manual-merge sessions stay open until Linear Done, others archive                  | No further job is created                     |
+| Event                        | Guard or atomic boundary                                                                                                                    | Durable result                                                                                                   | Follow-up                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| Create session               | `create_session_with_first_job` runs transactionally                                                                                        | Session at first stage, queued job, and queued run are inserted together                                         | Worker polling discovers the job                  |
+| Claim job                    | `claim_next_agent_job` locks and CAS-updates a ready queued job while enforcing workspace capacity                                          | Job becomes running and its attempt count advances                                                               | Scheduler advertises the job in its heartbeat     |
+| Claim session for generation | `start_session_job_attempt` validates captured job/attempt, expected stage/version, and archive state                                       | Session becomes or remains `in_progress`                                                                         | Generic stage execution begins                    |
+| Complete generation          | `adopt_session_checkpoint_publication` validates retained-ref proof and atomically adopts the checkpoint/artifact and completes the job/run | Artifact version becomes current and session becomes `awaiting_review`                                           | Trusted maintenance synchronizes the canonical PR |
+| Fail generation              | `fail_session_job_attempt` checks the captured job/attempt/run before failure or retry                                                      | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored         | A later claim may start the retry                 |
+| Reject artifact              | `reject_session_stage` locks the session row and applies feedback, enqueue, and `rejected` in one transaction                               | Feedback is recorded; a queued rerun is inserted or a queued job is adopted; a publishing generation is replaced | Worker claim returns it to `in_progress`          |
+| Approve nonterminal stage    | `approve_session_stage` validates workspace, review identity, phase, and approver; records completion, advances, and enqueues atomically    | Session points to next stage at its maximum historical version and `in_progress`; next job/run are queued        | Worker polling discovers the next job             |
+| Approve terminal stage       | Same approval transaction                                                                                                                   | Session is `approved`; linked manual-merge sessions stay open until Linear Done, others archive                  | No further job is created                         |
 
-The processor calls `start_session_job_attempt` before creating a sandbox, then
-publishes markdown, the review pointer, and exact run success together in
-`publish_session_job_attempt`. Artifact rows are inserted once; publication
-never overwrites existing markdown or deletes a losing attempt's output.
-Attempt-specific branches prevent an expired worker from rewriting a successor's
-branch. A late failure after publication closes the published job successfully
-without changing the artifact or review state.
+The processor calls `start_session_job_attempt` before creating a sandbox. After
+successful final output, it durably saves source and the immutable publication
+intent. Trusted publication verifies the exact retained remote ref and SHA before
+`adopt_session_checkpoint_publication` atomically accepts the checkpoint,
+artifact, review pointer, and exact job/run success. No-code output reuses its
+input checkpoint instead of creating a remote ref.
+
+Artifact rows are inserted once; publication never overwrites existing markdown
+or deletes a losing attempt's output. Recovery retries the same intent within its
+original deadline without rerunning the agent. Canonical PR synchronization is
+separate and uses the durable checkpoint, not the coding-agent sandbox. A late
+failure cannot change an adopted artifact or its successful run.
 
 ## Review concurrency
 
@@ -165,8 +171,8 @@ Approval is one transactional database operation:
   member; otherwise a nonempty approver list allows only its active members;
   otherwise only active owners and admins may approve.
 - An active predecessor must have an exact successful job attempt and run for
-  the reviewed stage. Approval completes only that job; its successful run and
-  sandbox remain available for the worker's PR delivery and shutdown.
+  the reviewed stage. Approval completes only that job; PR delivery uses the
+  durable checkpoint and does not require the coding-agent sandbox to remain alive.
 - Completion recording, stage advancement, and the next job/run commit together.
   Queue failure rolls back the entire decision, including predecessor completion.
 - The next stage starts from its maximum retained artifact version, avoiding

@@ -25,9 +25,9 @@ flowchart LR
   db --> web
   worker["Always-on worker"] --> db
   db --> worker
-  worker --> sandbox["Ephemeral sandbox provider"]
-  worker -- "Installation token and pull-request API" --> github["GitHub repository and pull request"]
-  sandbox -- "Clone and push" --> github
+  worker --> sandbox["Ephemeral coding-agent sandbox"]
+  worker -- "Trusted checkpoint and PR publication" --> github["GitHub repository and pull request"]
+  sandbox -- "Read-only checkout" --> github
   worker --> linear["Linear API"]
   worker --> agent["Codex, Claude Code, Cursor, or OpenCode"]
   db -. "Realtime changes" .-> user
@@ -36,6 +36,10 @@ flowchart LR
 The web app is stateless. Durable work lives in Supabase. Agent jobs progress
 only while at least one worker is running; serverless background callbacks are
 not a substitute for the worker.
+
+The coding-agent sandbox receives a repository-scoped read-only token. Trusted
+publication uses separate write credentials and utility sandboxes that run Git
+plumbing without executing repository source.
 
 ## Layers and owners
 
