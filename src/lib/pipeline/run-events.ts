@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { redactRunSensitiveText } from "@/lib/agent-runner/redact-sensitive-text";
+import {
+  redactRunSensitiveText,
+  redactRunToolText,
+} from "@/lib/agent-runner/redact-sensitive-text";
 import { AgentOutputSafety } from "@/lib/agent-runner/safety";
 import type { AgentEvent, AgentRunUsage } from "@/lib/agent-runner/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -127,7 +130,7 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
     }
     case "tool_use": {
       const tool = capture(event.tool, MAX_LABEL_BYTES);
-      const input = capture(event.input);
+      const input = captureText(redactKnown(event.input), MAX_TEXT_BYTES, redactRunToolText);
       return {
         kind: "tool_call",
         payload: { tool: tool.excerpt, input: input.excerpt },
@@ -137,7 +140,7 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
     }
     case "tool_result": {
       const tool = capture(event.tool, MAX_LABEL_BYTES);
-      const output = capture(event.output);
+      const output = captureText(redactKnown(event.output), MAX_TEXT_BYTES, redactRunToolText);
       return {
         kind: "tool_result",
         payload: { tool: tool.excerpt, output: output.excerpt, status: event.status },
@@ -178,10 +181,8 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
   }
 }
 
-function captureText(text: string, limit: number) {
-  const full = decoder
-    .decode(encoder.encode(redactRunSensitiveText(text)))
-    .replaceAll("\0", "\uFFFD");
+function captureText(text: string, limit: number, redact = redactRunSensitiveText) {
+  const full = decoder.decode(encoder.encode(redact(text))).replaceAll("\0", "\uFFFD");
   const fits = (value: string) => encoder.encode(JSON.stringify(value)).length <= limit;
   if (fits(full)) return { full, excerpt: full, truncated: false };
 

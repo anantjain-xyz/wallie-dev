@@ -134,3 +134,47 @@ export function redactRunSensitiveText(message: string): string {
       REDACTED,
     );
 }
+
+const QUOTED_JSON_FIELD = /("(?:\\.|[^"\\])*"\s*:\s*)("(?:\\.|[^"\\])*")/g;
+
+function redactToolString(message: string, encodedDepth: number): string {
+  // Shell arguments can contain JSON fragments even when the whole string isn't JSON.
+  const sanitized = message.replace(
+    QUOTED_JSON_FIELD,
+    (field: string, key: string, value: string) => {
+      try {
+        const name: string = JSON.parse(key.trimEnd().slice(0, -1));
+        const decoded: string = JSON.parse(value);
+        if (SECRET_KEY_PATTERN.test(name)) return `${key}${JSON.stringify(REDACTED)}`;
+        const redacted = redactRunToolText(decoded, encodedDepth + 1);
+        return redacted === decoded ? field : `${key}${JSON.stringify(redacted)}`;
+      } catch {
+        return field;
+      }
+    },
+  );
+  return redactRunSensitiveText(sanitized);
+}
+
+/** Redact decoded tool fields before their JSON escapes can hide credentials. */
+export function redactRunToolText(message: string, encodedDepth = 0): string {
+  if (encodedDepth >= 8) return REDACTED;
+  const first = message.trimStart()[0];
+  if (first !== "{" && first !== "[" && first !== '"')
+    return redactToolString(message, encodedDepth);
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(message);
+  } catch {
+    return redactToolString(message, encodedDepth);
+  }
+  try {
+    return JSON.stringify(decoded, (key: string, value: unknown) => {
+      if (SECRET_KEY_PATTERN.test(key)) return REDACTED;
+      return typeof value === "string" ? redactRunToolText(value, encodedDepth + 1) : value;
+    });
+  } catch {
+    // Deep provider data may exceed the serializer stack. Keep no raw fallback.
+    return REDACTED;
+  }
+}

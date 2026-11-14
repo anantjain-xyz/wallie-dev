@@ -2437,6 +2437,33 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(JSON.stringify(capturedEvents)).not.toContain(unknownSecret);
   });
 
+  it("redacts JSON credentials escaped within serialized tool fields", async () => {
+    const secret = "unregistered-private-value";
+    const input = JSON.stringify({
+      command: `echo '${JSON.stringify({ api_key: secret })}'`,
+      args: JSON.stringify([{ client_secret: secret }]),
+      nested: `echo '${JSON.stringify({ body: JSON.stringify({ password: secret }) })}'`,
+    });
+    mocked.createAgentRunner.mockReturnValueOnce(
+      makeRunner([
+        { type: "tool_use", tool: "bash", input },
+        { type: "tool_result", tool: "bash", status: "success", output: input },
+      ]),
+    );
+    const { admin, capturedEvents, insertedMessages } = buildAdminMock({ session: baseSession() });
+    await processPipelineJob({ admin, job: baseJob() });
+    const calls = capturedEvents.filter(
+      ({ p_kind }) => p_kind === "tool_call" || p_kind === "tool_result",
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ p_payload: { input: expect.stringContaining("[redacted]") } });
+    expect(calls[1]).toMatchObject({
+      p_payload: { output: expect.stringContaining("[redacted]") },
+    });
+    expect(JSON.stringify(calls)).not.toContain(secret);
+    expect(JSON.stringify(insertedMessages)).not.toContain(secret);
+  });
+
   it("marks a stream that ends without a terminal event", async () => {
     mocked.createAgentRunner.mockReturnValueOnce(makeRunner([{ type: "text", text: "Partial" }]));
     const { admin, capturedEvents } = buildAdminMock({ session: baseSession() });

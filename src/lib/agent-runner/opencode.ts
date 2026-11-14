@@ -3,7 +3,7 @@ import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
-import { redactRunSensitiveText } from "./redact-sensitive-text";
+import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 import { isTokenCount, normalizeMeasuredUsage } from "./usage";
@@ -455,7 +455,7 @@ function serializeToolInput(
 ): Pick<Extract<AgentEvent, { type: "tool_use" }>, "input" | "captureTruncated"> {
   const capture = { truncated: false };
   const compactInput = compactToolValue(input ?? {}, secrets, capture);
-  const json = redactRunSensitiveText(
+  const json = redactRunToolText(
     redactSecrets(
       typeof compactInput === "string" ? compactInput : JSON.stringify(compactInput),
       secrets,
@@ -478,7 +478,7 @@ function compactToolValue(
   depth = 0,
 ): unknown {
   if (typeof value === "string") {
-    return truncateToolText(redactRunSensitiveText(redactSecrets(value, secrets)), capture);
+    return truncateToolText(redactRunToolText(redactSecrets(value, secrets)), capture);
   }
   if (Array.isArray(value)) {
     if (depth > 4) return value;

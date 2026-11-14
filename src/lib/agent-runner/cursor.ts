@@ -3,7 +3,7 @@ import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
-import { redactRunSensitiveText } from "./redact-sensitive-text";
+import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { DEFAULT_CURSOR_MODEL } from "./types";
 
@@ -279,7 +279,7 @@ function serializeToolInput(
       : isRecord(compactArgs)
         ? { ...compactArgs, result: compactToolResult(result, secrets, capture) }
         : { args: compactArgs, result: compactToolResult(result, secrets, capture) };
-  const json = redactRunSensitiveText(redactSecrets(JSON.stringify(payload ?? {}), secrets));
+  const json = redactRunToolText(redactSecrets(JSON.stringify(payload ?? {}), secrets));
   if (json.length > MAX_TOOL_INPUT_CHARS) capture.truncated = true;
   return {
     input:
@@ -311,7 +311,7 @@ function compactToolValue(
   depth = 0,
 ): unknown {
   if (typeof value === "string") {
-    return truncateToolText(redactRunSensitiveText(redactSecrets(value, secrets)), capture);
+    return truncateToolText(redactRunToolText(redactSecrets(value, secrets)), capture);
   }
   if (Array.isArray(value)) {
     if (depth > 4) return value;
