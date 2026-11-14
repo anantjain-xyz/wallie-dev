@@ -88,7 +88,7 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
 
 ## 3. Deploy the web app (Vercel)
 
-For the packaged Docker image and runtime configuration smoke check, see [Web container](WEB-CONTAINER.md).
+For the packaged Docker image and runtime configuration smoke check, see [Web container](deployment/WEB-CONTAINER.md).
 
 1. Import the repository into Vercel.
 2. Set the environment variables (mirror `.env.example`):
@@ -111,7 +111,7 @@ For the packaged Docker image and runtime configuration smoke check, see [Web co
 
 ## 4. Deploy the worker
 
-Use the [native Cloudflare worker guide](CLOUDFLARE-WORKER.md) for configuration,
+Use the [native Cloudflare worker guide](deployment/CLOUDFLARE-WORKER.md) for configuration,
 migrations, all twelve agent/sandbox combinations, live qualification, and rollback.
 The web app remains on Vercel; all durable state and encrypted credentials remain
 in Supabase. The checked-in `wrangler.jsonc` keeps dispatch disabled until qualification.
@@ -129,7 +129,7 @@ pnpm worker:deploy
 The CLI command is the manual/self-hosted option, not an additional step after an
 automatic deployment. Verify the Cloudflare deployment's commit/version and
 runtime configuration rather than inferring worker deployment from Vercel or CI.
-See [Production deployment](CLOUDFLARE-WORKER.md#production-deployment), including
+See [Production deployment](deployment/CLOUDFLARE-WORKER.md#production-deployment), including
 how checked-in dispatch defaults interact with automatic deployments.
 
 Supply the current Supabase/encryption/GitHub credentials through Cloudflare
@@ -139,7 +139,7 @@ on Vercel and Cloudflare and set Vercel's `WALLIE_WORKER_WAKE_URL` to the Worker
 
 For local development, run `pnpm dev` and `pnpm worker`, or use `pnpm worker:dev`
 with local Supabase values in an ignored `.dev.vars` file. Generic Node/container
-hosting remains supported; follow [Worker container](WORKER-CONTAINER.md) for the
+hosting remains supported; follow [Worker container](deployment/WORKER-CONTAINER.md) for the
 image, direct Node startup, and pre-stop draining requirements.
 
 ## 5. Create the production GitHub App
@@ -209,7 +209,7 @@ create a branch and pull request in that repository.
 3. In onboarding's Verify step, run the selected sandbox provider's repository
    capability check and resolve all checklist blockers, then choose **Complete
    setup**. Before creating the task, confirm the worker has started and
-   is publishing fresh heartbeats; see [Worker operations](WORKER-OPERATIONS.md#heartbeats-and-activity).
+   is publishing fresh heartbeats; see [Worker operations](deployment/WORKER-OPERATIONS.md#heartbeats-and-activity).
 4. Describe a bounded change with a clear acceptance condition, such as fixing
    a specific README typo. Start the session once. In Runs, confirm it moves
    from queued into execution and produces an artifact ready for review.
@@ -241,7 +241,7 @@ Before inviting a wider team, send a test invitation to an account you control
 and follow it from a signed-out browser. Confirm it reaches the intended
 workspace with the intended role. The local browser suite verifies selected
 auth and UI behavior, but does not prove production email delivery or provider
-execution; see [Verification](VERIFICATION.md).
+execution; see [Verification](development/VERIFICATION.md).
 
 If a session remains queued, inspect the worker logs and heartbeat freshness,
 then workspace readiness and available capacity. If it has started but stops

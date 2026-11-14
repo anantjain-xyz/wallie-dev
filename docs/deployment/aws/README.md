@@ -1,0 +1,13 @@
+# AWS staging runbooks
+
+Start with the [staging web milestone, replay, and teardown guide](AWS-STAGING-MILESTONE.md) for the proven staging configuration and the limits of that rehearsal. Follow the [Wallie self-hosting guide](../../SELF_HOSTING.md) for the current deployment procedure.
+
+| Task                                   | Runbooks                                                                                                                                                                                                                                                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inspect an account and region          | [Staging discovery](AWS-DISCOVERY.md)                                                                                                                                                                                                                                                                |
+| Prepare Terraform state and networking | [State bootstrap](foundation/AWS-STATE-BOOTSTRAP.md), [staging network](foundation/AWS-STAGING-NETWORK.md), [network hardening](foundation/AWS-NETWORK-HARDENING.md), and [Supabase networking](foundation/AWS-SUPABASE-NETWORK.md)                                                                  |
+| Publish and verify container images    | [Staging registry](images/AWS-STAGING-REGISTRY.md), [image publishing](images/AWS-IMAGE-PUBLISHING.md), and [image signing](images/AWS-IMAGE-SIGNING.md)                                                                                                                                             |
+| Qualify and launch the ECS web task    | [Application foundation](application/AWS-APPLICATION-FOUNDATION.md), [execution roles](application/AWS-EXECUTION-ROLES.md), [task definitions](application/AWS-APP-TASK-DEFINITIONS.md), [task launch](application/AWS-APP-TASK-LAUNCH.md), and [visible web canary](application/AWS-VISIBLE-WEB.md) |
+| Prepare PostgreSQL infrastructure      | [Qualification host](postgres/AWS-POSTGRES-HOST.md), [data volume](postgres/AWS-POSTGRES-DATA-VOLUME.md), [operator session](postgres/AWS-POSTGRES-OPERATOR-SESSION.md), and [backup destination](postgres/AWS-POSTGRES-BACKUP-DESTINATION.md)                                                       |
+
+The linked runbooks lead to the related grants, smoke checks, and rollback instructions in each folder.

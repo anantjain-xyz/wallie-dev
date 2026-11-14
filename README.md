@@ -185,7 +185,7 @@ The whole module is stage-agnostic. There are no per-phase files; one generic ru
 
 - [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. The public entry is `processPipelineJob()`; its internal `runStage()` helper renders operating rules plus the stage prompt, spins a sandbox, runs the agent, writes the markdown artifact, and invokes best-effort PR synchronization. Also exports `handleApproval` / `handleRejection`.
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages`, pipeline operating rules, and the prior-stage artifact map used by the prompt template.
-- [pull-request.ts](src/lib/pipeline/pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- remote PR synchronization and terminal session controls.
+- [source-pull-request.ts](src/lib/pipeline/source-pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- canonical PR synchronization and terminal session controls.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
 - [types.ts](src/lib/pipeline/types.ts) -- shared pipeline phase and agent job/run status types. Active-job dedupe keys (`session:<session_id>:active`) are built in the enqueue SQL RPCs.
 
@@ -193,7 +193,7 @@ The default `plan → build` seed lives in the `internal.default_pipeline_stages
 
 #### Worker (`src/worker/`) -- the daemon
 
-- [Cloudflare entry](cloudflare/index.ts) -- production dispatcher, attempt/auth Workflows, and scheduled maintenance. See [deployment and qualification](docs/CLOUDFLARE-WORKER.md).
+- [Cloudflare entry](cloudflare/index.ts) -- production dispatcher, attempt/auth Workflows, and scheduled maintenance. See [deployment and qualification](docs/deployment/CLOUDFLARE-WORKER.md).
 - [index.ts](src/worker/index.ts) -- local Node entry (`pnpm worker`).
 - [scheduler.ts](src/worker/scheduler.ts) -- bounded-concurrency fill/wait loop and in-flight job tracking.
 - [loop.ts](src/worker/loop.ts) -- atomic concurrency-aware job claim + execution.
@@ -497,7 +497,7 @@ Go to <https://github.com/settings/apps> -> **New GitHub App** (or your org's eq
 - **Subscribe to events**: `Check run`, `Check suite`, `Status`, `Pull request`, `Pull request review`, `Pull request review comment`, `Pull request review thread`, and `Push`. The `installation` and `installation_repositories` events are delivered automatically by GitHub and are handled at `/api/github/webhooks`.
 - **Where can this GitHub App be installed?** Only on this account (for local dev).
 
-Existing installations must approve new repository permissions before PR verification can use them. Missing access is recorded explicitly; it never implies that checks or repository rules passed. See [PR verification and the read-only permission audit](docs/GITHUB-PR-VERIFICATION.md). Updating these instructions does not change an installed App or production settings.
+Existing installations must approve new repository permissions before PR verification can use them. Missing access is recorded explicitly; it never implies that checks or repository rules passed. See [PR verification and the read-only permission audit](docs/architecture/GITHUB-PR-VERIFICATION.md). Updating these instructions does not change an installed App or production settings.
 
 After creation:
 
@@ -583,7 +583,9 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 
 ## Architecture Notes
 
-For ownership boundaries and dependency direction, see [Architecture](docs/ARCHITECTURE.md). For session/job transition detail, see [Pipeline and worker lifecycle](docs/PIPELINE-WORKER-LIFECYCLE.md).
+Use the [documentation index](docs/README.md) to find the guide for your task.
+
+For ownership boundaries and dependency direction, see [Architecture](docs/architecture/ARCHITECTURE.md). For session/job transition detail, see [Pipeline and worker lifecycle](docs/architecture/PIPELINE-WORKER-LIFECYCLE.md).
 
 ### Multi-tenancy
 
@@ -617,7 +619,7 @@ Webhook endpoint: `/api/github/webhooks`
 
 ### Linear
 
-Linear is optional. A linked issue keeps its identifier and URL attached to a session. The worker observes its current state span and applies configured routing once: rerouting, cancellation, and replacement enqueue commit together, preserving published artifact versions. See [the lifecycle contract](docs/PIPELINE-WORKER-LIFECYCLE.md#linear-transition-receipts) for bootstrap and rollout behavior. The personal API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`; Wallie does not require a Linear webhook or OAuth flow.
+Linear is optional. A linked issue keeps its identifier and URL attached to a session. The worker observes its current state span and applies configured routing once: rerouting, cancellation, and replacement enqueue commit together, preserving published artifact versions. See [the lifecycle contract](docs/architecture/PIPELINE-WORKER-LIFECYCLE.md#linear-transition-receipts) for bootstrap and rollout behavior. The personal API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`; Wallie does not require a Linear webhook or OAuth flow.
 
 ## Contributing
 
