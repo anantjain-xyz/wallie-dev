@@ -1,0 +1,2522 @@
+{
+  "schema_version": 1,
+  "imported_on": "2026-11-13",
+  "source_baseline": "3ea0c14be7ac7695d3fa2999433130a4d0e44a20",
+  "project": {
+    "id": "b0f323aa-e0cd-4e47-b3a0-11486ca0dbef",
+    "identifier": "P-OP-11",
+    "url": "https://linear.app/optimism-llc/project/wallie-4404e866a048"
+  },
+  "counts": {
+    "capabilities": 100,
+    "milestones": 17,
+    "issues": 206,
+    "blocking_relationships": 283
+  },
+  "contract": "Each issue is one PR, including its migrations, tests and documentation. Capability completion requires the owning milestone's qualification. Native Linear blockers are authoritative for current scheduling.",
+  "documents": {
+    "plan": {
+      "id": "b300066a-1b2a-4a9a-ad35-15c6e5995651",
+      "title": "Factory implementation plan — full 100-capability end state",
+      "url": "https://linear.app/optimism-llc/document/factory-implementation-plan-full-100-capability-end-state-9f0884bfabf7"
+    },
+    "matrix": {
+      "id": "3e6a5a88-43d4-4db1-b9f4-33cac76a7a2e",
+      "title": "Factory capability matrix — F001–F100",
+      "url": "https://linear.app/optimism-llc/document/factory-capability-matrix-f001-f100-2521901e74dd"
+    },
+    "delivery": {
+      "id": "4f012685-57b3-4581-a275-5ecf00c63aef",
+      "title": "Factory delivery map — 206 PRs, 100 capabilities",
+      "url": "https://linear.app/optimism-llc/document/factory-delivery-map-206-prs-100-capabilities-9853c51dac5c"
+    }
+  },
+  "milestones": [
+    {
+      "key": "M00",
+      "id": "0f5a1a09-a582-4e5f-874c-b36cc3de7122",
+      "title": "Design and compatibility baseline",
+      "capabilities": [],
+      "qualification": "FCT-M00-03",
+      "issues": ["FCT-M00-01", "FCT-M00-02", "FCT-M00-03"]
+    },
+    {
+      "key": "M01",
+      "id": "75df605a-05bb-41c4-a626-69ae2904772f",
+      "title": "Durable run history and evidence",
+      "capabilities": ["F002", "F040", "F042", "F044", "F046"],
+      "qualification": "FCT-M01-09",
+      "issues": [
+        "FCT-M01-01",
+        "FCT-M01-02",
+        "FCT-M01-03",
+        "FCT-M01-04",
+        "FCT-M01-05",
+        "FCT-M01-06",
+        "FCT-M01-07",
+        "FCT-M01-08",
+        "FCT-M01-09"
+      ]
+    },
+    {
+      "key": "M02",
+      "id": "0dcfe440-0ed4-4505-b370-589de1f85a64",
+      "title": "Immutable factory definitions",
+      "capabilities": ["F004", "F007", "F008", "F009", "F010"],
+      "qualification": "FCT-M02-10",
+      "issues": [
+        "FCT-M02-01",
+        "FCT-M02-02",
+        "FCT-M02-03",
+        "FCT-M02-04",
+        "FCT-M02-05",
+        "FCT-M02-06",
+        "FCT-M02-07",
+        "FCT-M02-08",
+        "FCT-M02-09",
+        "FCT-M02-10"
+      ]
+    },
+    {
+      "key": "M03",
+      "id": "a5bffe39-1d85-4f9d-962f-1e4e8dedebaa",
+      "title": "Factories, agents and scoped configuration",
+      "capabilities": [
+        "F001",
+        "F011",
+        "F012",
+        "F013",
+        "F014",
+        "F015",
+        "F016",
+        "F020",
+        "F039",
+        "F093"
+      ],
+      "qualification": "FCT-M03-14",
+      "issues": [
+        "FCT-M03-01",
+        "FCT-M03-02",
+        "FCT-M03-03",
+        "FCT-M03-04",
+        "FCT-M03-05",
+        "FCT-M03-06",
+        "FCT-M03-07",
+        "FCT-M03-08",
+        "FCT-M03-09",
+        "FCT-M03-10",
+        "FCT-M03-11",
+        "FCT-M03-12",
+        "FCT-M03-13",
+        "FCT-M03-14"
+      ]
+    },
+    {
+      "key": "M04",
+      "id": "67e4fe98-a7ae-41ea-850b-793693400e5e",
+      "title": "Shared work, Inbox and programmable access",
+      "capabilities": ["F003", "F019", "F024", "F028", "F035", "F036", "F041", "F043"],
+      "qualification": "FCT-M04-14",
+      "issues": [
+        "FCT-M04-01",
+        "FCT-M04-02",
+        "FCT-M04-03",
+        "FCT-M04-04",
+        "FCT-M04-05",
+        "FCT-M04-06",
+        "FCT-M04-07",
+        "FCT-M04-08",
+        "FCT-M04-09",
+        "FCT-M04-10",
+        "FCT-M04-11",
+        "FCT-M04-12",
+        "FCT-M04-13",
+        "FCT-M04-14"
+      ]
+    },
+    {
+      "key": "M05",
+      "id": "5e40be1a-f493-4a0b-a75f-92a5d96d18ea",
+      "title": "Context, memory and demonstrated evidence",
+      "capabilities": ["F022", "F045", "F047", "F048", "F049", "F050"],
+      "qualification": "FCT-M05-12",
+      "issues": [
+        "FCT-M05-01",
+        "FCT-M05-02",
+        "FCT-M05-03",
+        "FCT-M05-04",
+        "FCT-M05-05",
+        "FCT-M05-06",
+        "FCT-M05-07",
+        "FCT-M05-08",
+        "FCT-M05-09",
+        "FCT-M05-10",
+        "FCT-M05-11",
+        "FCT-M05-12"
+      ]
+    },
+    {
+      "key": "M06",
+      "id": "0e72ab6a-93a7-4eb1-8f76-adc165f868b3",
+      "title": "Factory outcomes and analytics",
+      "capabilities": ["F059", "F060", "F061", "F062", "F063", "F064", "F065"],
+      "qualification": "FCT-M06-11",
+      "issues": [
+        "FCT-M06-01",
+        "FCT-M06-02",
+        "FCT-M06-03",
+        "FCT-M06-04",
+        "FCT-M06-05",
+        "FCT-M06-06",
+        "FCT-M06-07",
+        "FCT-M06-08",
+        "FCT-M06-09",
+        "FCT-M06-10",
+        "FCT-M06-11"
+      ]
+    },
+    {
+      "key": "M07",
+      "id": "b514a120-cf15-4a00-99fc-ea37befa409f",
+      "title": "Online scorers and quality trends",
+      "capabilities": ["F066", "F067", "F068", "F069", "F070", "F071", "F072", "F073"],
+      "qualification": "FCT-M07-10",
+      "issues": [
+        "FCT-M07-01",
+        "FCT-M07-02",
+        "FCT-M07-03",
+        "FCT-M07-04",
+        "FCT-M07-05",
+        "FCT-M07-06",
+        "FCT-M07-07",
+        "FCT-M07-08",
+        "FCT-M07-09",
+        "FCT-M07-10"
+      ]
+    },
+    {
+      "key": "M08",
+      "id": "7b46a9c0-892e-4225-81fe-aac2d28ebcf8",
+      "title": "Historical replay and benchmarks",
+      "capabilities": [
+        "F079",
+        "F080",
+        "F081",
+        "F082",
+        "F083",
+        "F084",
+        "F085",
+        "F086",
+        "F087",
+        "F088",
+        "F089"
+      ],
+      "qualification": "FCT-M08-14",
+      "issues": [
+        "FCT-M08-01",
+        "FCT-M08-02",
+        "FCT-M08-03",
+        "FCT-M08-04",
+        "FCT-M08-05",
+        "FCT-M08-06",
+        "FCT-M08-07",
+        "FCT-M08-08",
+        "FCT-M08-09",
+        "FCT-M08-10",
+        "FCT-M08-11",
+        "FCT-M08-12",
+        "FCT-M08-13",
+        "FCT-M08-14"
+      ]
+    },
+    {
+      "key": "M09",
+      "id": "3d37cc65-1991-4c2d-9829-a483e879e81b",
+      "title": "Evidence-backed model routing",
+      "capabilities": ["F090", "F091", "F092"],
+      "qualification": "FCT-M09-08",
+      "issues": [
+        "FCT-M09-01",
+        "FCT-M09-02",
+        "FCT-M09-03",
+        "FCT-M09-04",
+        "FCT-M09-05",
+        "FCT-M09-06",
+        "FCT-M09-07",
+        "FCT-M09-08"
+      ]
+    },
+    {
+      "key": "M10",
+      "id": "cf336ece-93c1-46aa-ab76-86992917c343",
+      "title": "Reviewed factory improvement",
+      "capabilities": ["F074", "F075", "F076", "F077", "F078"],
+      "qualification": "FCT-M10-10",
+      "issues": [
+        "FCT-M10-01",
+        "FCT-M10-02",
+        "FCT-M10-03",
+        "FCT-M10-04",
+        "FCT-M10-05",
+        "FCT-M10-06",
+        "FCT-M10-07",
+        "FCT-M10-08",
+        "FCT-M10-09",
+        "FCT-M10-10"
+      ]
+    },
+    {
+      "key": "M11",
+      "id": "3e2fe0e0-2926-4f26-a59b-0dfaf2e1fd9f",
+      "title": "Bounded multi-agent workflows",
+      "capabilities": ["F017", "F018", "F021", "F025", "F026", "F027"],
+      "qualification": "FCT-M11-15",
+      "issues": [
+        "FCT-M11-01",
+        "FCT-M11-02",
+        "FCT-M11-03",
+        "FCT-M11-04",
+        "FCT-M11-05",
+        "FCT-M11-06",
+        "FCT-M11-07",
+        "FCT-M11-08",
+        "FCT-M11-09",
+        "FCT-M11-10",
+        "FCT-M11-11",
+        "FCT-M11-12",
+        "FCT-M11-13",
+        "FCT-M11-14",
+        "FCT-M11-15"
+      ]
+    },
+    {
+      "key": "M12",
+      "id": "1add1cf3-7783-48ca-96cf-d3a7ebaa8b0c",
+      "title": "Automations, delivery and monitoring",
+      "capabilities": ["F023", "F037", "F038", "F094", "F095", "F096"],
+      "qualification": "FCT-M12-11",
+      "issues": [
+        "FCT-M12-01",
+        "FCT-M12-02",
+        "FCT-M12-03",
+        "FCT-M12-04",
+        "FCT-M12-05",
+        "FCT-M12-06",
+        "FCT-M12-07",
+        "FCT-M12-08",
+        "FCT-M12-09",
+        "FCT-M12-10",
+        "FCT-M12-11"
+      ]
+    },
+    {
+      "key": "M13",
+      "id": "86fc0022-e498-4849-a5b7-b5c894cb3031",
+      "title": "Slack, Linear and GitHub",
+      "capabilities": ["F006", "F029", "F031", "F033", "F097"],
+      "qualification": "FCT-M13-13",
+      "issues": [
+        "FCT-M13-01",
+        "FCT-M13-02",
+        "FCT-M13-03",
+        "FCT-M13-04",
+        "FCT-M13-05",
+        "FCT-M13-06",
+        "FCT-M13-07",
+        "FCT-M13-08",
+        "FCT-M13-09",
+        "FCT-M13-10",
+        "FCT-M13-11",
+        "FCT-M13-12",
+        "FCT-M13-13"
+      ]
+    },
+    {
+      "key": "M14",
+      "id": "699673a7-53e9-403d-b9b0-38c347d471e3",
+      "title": "Teams, Jira and GitLab",
+      "capabilities": ["F030", "F032", "F034"],
+      "qualification": "FCT-M14-16",
+      "issues": [
+        "FCT-M14-01",
+        "FCT-M14-02",
+        "FCT-M14-03",
+        "FCT-M14-04",
+        "FCT-M14-05",
+        "FCT-M14-06",
+        "FCT-M14-07",
+        "FCT-M14-08",
+        "FCT-M14-09",
+        "FCT-M14-10",
+        "FCT-M14-11",
+        "FCT-M14-12",
+        "FCT-M14-13",
+        "FCT-M14-14",
+        "FCT-M14-15",
+        "FCT-M14-16"
+      ]
+    },
+    {
+      "key": "M15",
+      "id": "2f5c32eb-3eda-4c2a-ad62-f1e3c75f9476",
+      "title": "Owned infrastructure and open inference",
+      "capabilities": ["F005", "F051", "F052", "F053", "F054", "F055", "F056", "F057", "F058"],
+      "qualification": "FCT-M15-22",
+      "issues": [
+        "FCT-M15-01",
+        "FCT-M15-02",
+        "FCT-M15-03",
+        "FCT-M15-04",
+        "FCT-M15-05",
+        "FCT-M15-06",
+        "FCT-M15-07",
+        "FCT-M15-08",
+        "FCT-M15-09",
+        "FCT-M15-10",
+        "FCT-M15-11",
+        "FCT-M15-12",
+        "FCT-M15-13",
+        "FCT-M15-14",
+        "FCT-M15-15",
+        "FCT-M15-16",
+        "FCT-M15-17",
+        "FCT-M15-18",
+        "FCT-M15-19",
+        "FCT-M15-20",
+        "FCT-M15-21",
+        "FCT-M15-22"
+      ]
+    },
+    {
+      "key": "M16",
+      "id": "594bb71e-5d3d-4f8b-a293-75b2d2c0171d",
+      "title": "Complete open-source distribution",
+      "capabilities": ["F098", "F099", "F100"],
+      "qualification": "FCT-M16-14",
+      "issues": [
+        "FCT-M16-01",
+        "FCT-M16-02",
+        "FCT-M16-03",
+        "FCT-M16-04",
+        "FCT-M16-05",
+        "FCT-M16-06",
+        "FCT-M16-07",
+        "FCT-M16-08",
+        "FCT-M16-09",
+        "FCT-M16-10",
+        "FCT-M16-11",
+        "FCT-M16-12",
+        "FCT-M16-13",
+        "FCT-M16-14"
+      ]
+    }
+  ],
+  "issues": [
+    {
+      "key": "FCT-M00-01",
+      "identifier": "OP-528",
+      "uuid": "38570f48-d836-486e-a3f8-37fc6c7913a7",
+      "url": "https://linear.app/optimism-llc/issue/OP-528/m0001-record-the-factory-design-route-and-compatibility-contracts",
+      "milestone": "M00",
+      "title": "Record the factory design, route and compatibility contracts",
+      "capabilities": [],
+      "blocked_by": []
+    },
+    {
+      "key": "FCT-M00-02",
+      "identifier": "OP-529",
+      "uuid": "f9a65ddc-cafb-4330-9efa-520b063433ac",
+      "url": "https://linear.app/optimism-llc/issue/OP-529/m0002-add-current-product-visual-and-navigation-reference-fixtures",
+      "milestone": "M00",
+      "title": "Add current-product visual and navigation reference fixtures",
+      "capabilities": [],
+      "blocked_by": ["FCT-M00-01"]
+    },
+    {
+      "key": "FCT-M00-03",
+      "identifier": "OP-530",
+      "uuid": "6f1c7e58-288a-4ff1-83a4-789f328eb592",
+      "url": "https://linear.app/optimism-llc/issue/OP-530/m0003-add-a-roadmap-coverage-check-and-reconcile-stale-execution",
+      "milestone": "M00",
+      "title": "Add a roadmap coverage check and reconcile stale execution documentation",
+      "capabilities": [],
+      "blocked_by": ["FCT-M00-02"]
+    },
+    {
+      "key": "FCT-M01-01",
+      "identifier": "OP-531",
+      "uuid": "221191ef-49cb-4354-b128-581a6b343c4f",
+      "url": "https://linear.app/optimism-llc/issue/OP-531/m0101-persist-ordered-sanitized-run-event-envelopes-with-capture",
+      "milestone": "M01",
+      "title": "Persist ordered sanitized run-event envelopes with capture coverage",
+      "capabilities": ["F044", "F042"],
+      "blocked_by": ["FCT-M00-03"]
+    },
+    {
+      "key": "FCT-M01-02",
+      "identifier": "OP-532",
+      "uuid": "c1ef5446-ab7d-4dd0-9c42-0228b56c5720",
+      "url": "https://linear.app/optimism-llc/issue/OP-532/m0102-capture-codex-and-claude-tool-result-events-with-adapter",
+      "milestone": "M01",
+      "title": "Capture Codex and Claude tool-result events with adapter coverage receipts",
+      "capabilities": ["F044"],
+      "blocked_by": ["FCT-M01-01"]
+    },
+    {
+      "key": "FCT-M01-03",
+      "identifier": "OP-533",
+      "uuid": "5e80a8e2-6405-421a-b447-14d7065db3bf",
+      "url": "https://linear.app/optimism-llc/issue/OP-533/m0103-capture-cursor-and-opencode-tool-result-events-with-adapter",
+      "milestone": "M01",
+      "title": "Capture Cursor and OpenCode tool-result events with adapter coverage receipts",
+      "capabilities": ["F044"],
+      "blocked_by": ["FCT-M01-01"]
+    },
+    {
+      "key": "FCT-M01-04",
+      "identifier": "OP-534",
+      "uuid": "19e9a700-884c-4d33-9428-16dd43a373ec",
+      "url": "https://linear.app/optimism-llc/issue/OP-534/m0104-expose-a-tenant-scoped-run-catalog-with-stable-cursors-and",
+      "milestone": "M01",
+      "title": "Expose a tenant-scoped run catalog with stable cursors and recovery state",
+      "capabilities": ["F040", "F042", "F002"],
+      "blocked_by": ["FCT-M01-01"]
+    },
+    {
+      "key": "FCT-M01-05",
+      "identifier": "OP-535",
+      "uuid": "63f394bb-52b5-4bf6-94bb-51683c11b45d",
+      "url": "https://linear.app/optimism-llc/issue/OP-535/m0105-ship-the-shared-runs-list-and-exact-attempt-transcript-inspector",
+      "milestone": "M01",
+      "title": "Ship the shared Runs list and exact-attempt transcript inspector",
+      "capabilities": ["F040", "F042", "F044"],
+      "blocked_by": ["FCT-M01-02", "FCT-M01-03", "FCT-M01-04"]
+    },
+    {
+      "key": "FCT-M01-06",
+      "identifier": "OP-536",
+      "uuid": "68cf7984-5a96-429f-8df7-551d09a30005",
+      "url": "https://linear.app/optimism-llc/issue/OP-536/m0106-index-durable-artifacts-by-exact-run-checkpoint-and-validation",
+      "milestone": "M01",
+      "title": "Index durable artifacts by exact run, checkpoint and validation receipt",
+      "capabilities": ["F046"],
+      "blocked_by": ["FCT-M01-01"]
+    },
+    {
+      "key": "FCT-M01-07",
+      "identifier": "OP-537",
+      "uuid": "ab3ba968-4cda-4b3e-9cf9-3e73163b3d56",
+      "url": "https://linear.app/optimism-llc/issue/OP-537/m0107-expose-artifact-provenance-and-availability-in-run-and-review",
+      "milestone": "M01",
+      "title": "Expose artifact provenance and availability in run and review views",
+      "capabilities": ["F046", "F040"],
+      "blocked_by": ["FCT-M01-05", "FCT-M01-06"]
+    },
+    {
+      "key": "FCT-M01-08",
+      "identifier": "OP-538",
+      "uuid": "ca8635ae-9d6c-4517-8940-168318a6b8c8",
+      "url": "https://linear.app/optimism-llc/issue/OP-538/m0108-apply-explicit-run-retention-and-complete-export-manifests",
+      "milestone": "M01",
+      "title": "Apply explicit run retention and complete export manifests",
+      "capabilities": ["F042", "F044", "F046"],
+      "blocked_by": ["FCT-M01-07"]
+    },
+    {
+      "key": "FCT-M01-09",
+      "identifier": "OP-539",
+      "uuid": "87e26969-ef48-4ce6-ad19-13dd584f29e2",
+      "url": "https://linear.app/optimism-llc/issue/OP-539/m0109-qualify-durable-run-inspection-across-worker-restart-and-browser",
+      "milestone": "M01",
+      "title": "Qualify durable run inspection across worker restart and browser closure",
+      "capabilities": ["F002", "F040", "F042", "F044", "F046"],
+      "blocked_by": ["FCT-M01-08"]
+    },
+    {
+      "key": "FCT-M02-01",
+      "identifier": "OP-540",
+      "uuid": "4e0b4d13-89c0-4e74-bf85-f2a75f942f94",
+      "url": "https://linear.app/optimism-llc/issue/OP-540/m0201-add-the-default-factory-anchor-and-immutable-definition-revision",
+      "milestone": "M02",
+      "title": "Add the default factory anchor and immutable definition revision records",
+      "capabilities": ["F004", "F007", "F008"],
+      "blocked_by": ["FCT-M01-09"]
+    },
+    {
+      "key": "FCT-M02-02",
+      "identifier": "OP-541",
+      "uuid": "f4d14a86-e89c-40af-a7e5-1d7aacbbb726",
+      "url": "https://linear.app/optimism-llc/issue/OP-541/m0202-compile-serial-factory-definitions-with-stable-component",
+      "milestone": "M02",
+      "title": "Compile serial factory definitions with stable component references",
+      "capabilities": ["F004", "F007", "F009"],
+      "blocked_by": ["FCT-M02-01"]
+    },
+    {
+      "key": "FCT-M02-03",
+      "identifier": "OP-542",
+      "uuid": "68e752b0-6b60-42c2-a8bc-4636da4040f4",
+      "url": "https://linear.app/optimism-llc/issue/OP-542/m0203-publish-and-roll-back-factory-revisions-with-guarded-activation",
+      "milestone": "M02",
+      "title": "Publish and roll back factory revisions with guarded activation",
+      "capabilities": ["F008", "F010"],
+      "blocked_by": ["FCT-M02-02"]
+    },
+    {
+      "key": "FCT-M02-04",
+      "identifier": "OP-543",
+      "uuid": "009d831c-ec03-4e5f-bb10-7245d7799247",
+      "url": "https://linear.app/optimism-llc/issue/OP-543/m0204-pin-complete-configuration-and-exact-predecessor-inputs-at",
+      "milestone": "M02",
+      "title": "Pin complete configuration and exact predecessor inputs at session creation",
+      "capabilities": ["F008"],
+      "blocked_by": ["FCT-M02-03"]
+    },
+    {
+      "key": "FCT-M02-05",
+      "identifier": "OP-544",
+      "uuid": "b24b8338-18ed-4e9b-810c-b2d46dbf4be8",
+      "url": "https://linear.app/optimism-llc/issue/OP-544/m0205-execute-and-retry-from-pinned-definitions-instead-of-live",
+      "milestone": "M02",
+      "title": "Execute and retry from pinned definitions instead of live workspace settings",
+      "capabilities": ["F008", "F004"],
+      "blocked_by": ["FCT-M02-04"]
+    },
+    {
+      "key": "FCT-M02-06",
+      "identifier": "OP-545",
+      "uuid": "0c87a40d-4ba2-4b98-8f5b-40d58fa347b9",
+      "url": "https://linear.app/optimism-llc/issue/OP-545/m0206-route-existing-configuration-forms-through-shared-definition",
+      "milestone": "M02",
+      "title": "Route existing configuration forms through shared definition drafts",
+      "capabilities": ["F007", "F008"],
+      "blocked_by": ["FCT-M02-05"]
+    },
+    {
+      "key": "FCT-M02-07",
+      "identifier": "OP-546",
+      "uuid": "eb816215-ec3f-4286-bf56-c329e8c3fdcf",
+      "url": "https://linear.app/optimism-llc/issue/OP-546/m0207-build-the-factory-definition-editor-semantic-diff-and-revision",
+      "milestone": "M02",
+      "title": "Build the factory definition editor, semantic diff and revision history",
+      "capabilities": ["F007", "F008", "F010"],
+      "blocked_by": ["FCT-M02-06"]
+    },
+    {
+      "key": "FCT-M02-08",
+      "identifier": "OP-547",
+      "uuid": "71fb482f-9d0d-4ca1-b820-65d66e66e1d4",
+      "url": "https://linear.app/optimism-llc/issue/OP-547/m0208-run-isolated-configuration-smoke-tests-against-candidate",
+      "milestone": "M02",
+      "title": "Run isolated configuration smoke tests against candidate definition digests",
+      "capabilities": ["F009"],
+      "blocked_by": ["FCT-M02-07"]
+    },
+    {
+      "key": "FCT-M02-09",
+      "identifier": "OP-548",
+      "uuid": "2f0171fc-aed5-4804-8afa-983892c802f3",
+      "url": "https://linear.app/optimism-llc/issue/OP-548/m0209-expose-candidate-test-evidence-and-activation-eligibility-in-the",
+      "milestone": "M02",
+      "title": "Expose candidate test evidence and activation eligibility in the definition UI",
+      "capabilities": ["F009", "F010"],
+      "blocked_by": ["FCT-M02-08"]
+    },
+    {
+      "key": "FCT-M02-10",
+      "identifier": "OP-549",
+      "uuid": "1385a1d2-c932-44d6-8df8-d36f7e8d62bd",
+      "url": "https://linear.app/optimism-llc/issue/OP-549/m0210-prove-pinned-configuration-enrollment-retry-and-rollback",
+      "milestone": "M02",
+      "title": "Prove pinned configuration enrollment, retry and rollback compatibility",
+      "capabilities": ["F004", "F007", "F008", "F009", "F010"],
+      "blocked_by": ["FCT-M02-09"]
+    },
+    {
+      "key": "FCT-M03-01",
+      "identifier": "OP-550",
+      "uuid": "45806411-036b-4319-aae9-0eae8f26a39f",
+      "url": "https://linear.app/optimism-llc/issue/OP-550/m0301-scope-factories-default-migration-and-resource-access-beneath",
+      "milestone": "M03",
+      "title": "Scope factories, default migration and resource access beneath each workspace",
+      "capabilities": ["F001", "F093"],
+      "blocked_by": ["FCT-M02-10"]
+    },
+    {
+      "key": "FCT-M03-02",
+      "identifier": "OP-551",
+      "uuid": "259063f4-3cd3-45d9-b4db-4a841ad14245",
+      "url": "https://linear.app/optimism-llc/issue/OP-551/m0302-restore-grouped-sidebar-navigation-and-a-permission-aware",
+      "milestone": "M03",
+      "title": "Restore grouped sidebar navigation and a permission-aware factory selector",
+      "capabilities": ["F001", "F039"],
+      "blocked_by": ["FCT-M03-01"]
+    },
+    {
+      "key": "FCT-M03-03",
+      "identifier": "OP-552",
+      "uuid": "683de156-47cc-4a7d-b5dd-f006554efd7a",
+      "url": "https://linear.app/optimism-llc/issue/OP-552/m0303-version-named-agents-and-prompts-while-preserving-the",
+      "milestone": "M03",
+      "title": "Version named agents and prompts while preserving the implementation agent",
+      "capabilities": ["F011", "F020"],
+      "blocked_by": ["FCT-M03-01"]
+    },
+    {
+      "key": "FCT-M03-04",
+      "identifier": "OP-553",
+      "uuid": "dba8a2f3-68e8-449a-b938-94d14c40702b",
+      "url": "https://linear.app/optimism-llc/issue/OP-553/m0304-register-versioned-skills-and-resolve-pinned-agent-skill-bundles",
+      "milestone": "M03",
+      "title": "Register versioned skills and resolve pinned agent skill bundles",
+      "capabilities": ["F012"],
+      "blocked_by": ["FCT-M03-03"]
+    },
+    {
+      "key": "FCT-M03-05",
+      "identifier": "OP-554",
+      "uuid": "d2912a8e-c1d6-457f-afdf-54009fa27bcd",
+      "url": "https://linear.app/optimism-llc/issue/OP-554/m0305-bind-factory-repository-sets-and-select-one-writable-repository",
+      "milestone": "M03",
+      "title": "Bind factory repository sets and select one writable repository per execution",
+      "capabilities": ["F014"],
+      "blocked_by": ["FCT-M03-03"]
+    },
+    {
+      "key": "FCT-M03-06",
+      "identifier": "OP-555",
+      "uuid": "edf7e12b-bc5b-45fa-8cef-4035416dcab9",
+      "url": "https://linear.app/optimism-llc/issue/OP-555/m0306-model-service-principals-and-auditable-factory-execution-grants",
+      "milestone": "M03",
+      "title": "Model service principals and auditable factory execution grants",
+      "capabilities": ["F093", "F015"],
+      "blocked_by": ["FCT-M03-01"]
+    },
+    {
+      "key": "FCT-M03-07",
+      "identifier": "OP-556",
+      "uuid": "dfa9407a-f4d8-4aa3-9996-a5514ec2193d",
+      "url": "https://linear.app/optimism-llc/issue/OP-556/m0307-resolve-scoped-secret-bindings-without-exporting-credential",
+      "milestone": "M03",
+      "title": "Resolve scoped secret bindings without exporting credential material",
+      "capabilities": ["F015"],
+      "blocked_by": ["FCT-M03-06", "FCT-M03-03"]
+    },
+    {
+      "key": "FCT-M03-08",
+      "identifier": "OP-557",
+      "uuid": "d6b43714-fde6-4a4f-99ba-aed20ad5be57",
+      "url": "https://linear.app/optimism-llc/issue/OP-557/m0308-register-approved-tools-and-compile-explicit-per-agent-mcp",
+      "milestone": "M03",
+      "title": "Register approved tools and compile explicit per-agent MCP bindings",
+      "capabilities": ["F013"],
+      "blocked_by": ["FCT-M03-07"]
+    },
+    {
+      "key": "FCT-M03-09",
+      "identifier": "OP-558",
+      "uuid": "37f13bcb-19ca-419d-adec-bcd189bf49ba",
+      "url": "https://linear.app/optimism-llc/issue/OP-558/m0309-inject-approved-tool-bindings-into-codex-and-claude-execution",
+      "milestone": "M03",
+      "title": "Inject approved tool bindings into Codex and Claude execution adapters",
+      "capabilities": ["F013", "F016"],
+      "blocked_by": ["FCT-M03-08"]
+    },
+    {
+      "key": "FCT-M03-10",
+      "identifier": "OP-559",
+      "uuid": "993f3279-3715-498f-8a6b-d9d7a96f8b39",
+      "url": "https://linear.app/optimism-llc/issue/OP-559/m0310-inject-approved-tool-bindings-into-cursor-and-opencode-execution",
+      "milestone": "M03",
+      "title": "Inject approved tool bindings into Cursor and OpenCode execution adapters",
+      "capabilities": ["F013", "F016"],
+      "blocked_by": ["FCT-M03-08"]
+    },
+    {
+      "key": "FCT-M03-11",
+      "identifier": "OP-560",
+      "uuid": "16b8d167-b1c3-44d7-b496-b262b4ffe42d",
+      "url": "https://linear.app/optimism-llc/issue/OP-560/m0311-resolve-effective-agent-execution-profiles-with-current",
+      "milestone": "M03",
+      "title": "Resolve effective agent execution profiles with current capability readiness",
+      "capabilities": ["F016", "F020"],
+      "blocked_by": ["FCT-M03-04", "FCT-M03-05", "FCT-M03-09", "FCT-M03-10"]
+    },
+    {
+      "key": "FCT-M03-12",
+      "identifier": "OP-561",
+      "uuid": "531af965-0454-4e2b-b540-b8c709789982",
+      "url": "https://linear.app/optimism-llc/issue/OP-561/m0312-build-agent-configuration-screens-from-shared-versioned",
+      "milestone": "M03",
+      "title": "Build agent configuration screens from shared versioned components",
+      "capabilities": ["F011", "F012", "F013", "F014", "F015", "F016", "F020"],
+      "blocked_by": ["FCT-M03-02", "FCT-M03-11"]
+    },
+    {
+      "key": "FCT-M03-13",
+      "identifier": "OP-562",
+      "uuid": "c56f23bc-6951-4bed-be1a-df80fc82efbd",
+      "url": "https://linear.app/optimism-llc/issue/OP-562/m0313-show-cross-factory-activity-and-auditable-governance-controls",
+      "milestone": "M03",
+      "title": "Show cross-factory activity and auditable governance controls",
+      "capabilities": ["F039", "F093"],
+      "blocked_by": ["FCT-M03-12"]
+    },
+    {
+      "key": "FCT-M03-14",
+      "identifier": "OP-563",
+      "uuid": "01b0861d-cbab-499a-9ca3-d53d6561dd7a",
+      "url": "https://linear.app/optimism-llc/issue/OP-563/m0314-qualify-factory-isolation-and-the-complete-agent-configuration",
+      "milestone": "M03",
+      "title": "Qualify factory isolation and the complete agent configuration journey",
+      "capabilities": [
+        "F001",
+        "F011",
+        "F012",
+        "F013",
+        "F014",
+        "F015",
+        "F016",
+        "F020",
+        "F039",
+        "F093"
+      ],
+      "blocked_by": ["FCT-M03-13"]
+    },
+    {
+      "key": "FCT-M04-01",
+      "identifier": "OP-564",
+      "uuid": "3aee894d-9b1b-428f-b8e6-d54be4ad6e8c",
+      "url": "https://linear.app/optimism-llc/issue/OP-564/m0401-extract-source-neutral-session-commands-with-durable-idempotency",
+      "milestone": "M04",
+      "title": "Extract source-neutral session commands with durable idempotency receipts",
+      "capabilities": ["F028", "F036", "F043"],
+      "blocked_by": ["FCT-M03-14"]
+    },
+    {
+      "key": "FCT-M04-02",
+      "identifier": "OP-565",
+      "uuid": "c25b619a-364d-4652-9021-2ff435fa1c74",
+      "url": "https://linear.app/optimism-llc/issue/OP-565/m0402-persist-shared-conversations-and-source-thread-associations-for",
+      "milestone": "M04",
+      "title": "Persist shared conversations and source-thread associations for sessions",
+      "capabilities": ["F003", "F041", "F043"],
+      "blocked_by": ["FCT-M04-01"]
+    },
+    {
+      "key": "FCT-M04-03",
+      "identifier": "OP-566",
+      "uuid": "ed4a75aa-163f-4e5f-bd4f-79777a9c74e0",
+      "url": "https://linear.app/optimism-llc/issue/OP-566/m0403-support-collaborative-specification-and-bounded-clarification",
+      "milestone": "M04",
+      "title": "Support collaborative specification and bounded clarification continuations",
+      "capabilities": ["F003", "F019", "F028"],
+      "blocked_by": ["FCT-M04-02"]
+    },
+    {
+      "key": "FCT-M04-04",
+      "identifier": "OP-567",
+      "uuid": "00f81444-e0d8-4356-bd92-d71c606ee81c",
+      "url": "https://linear.app/optimism-llc/issue/OP-567/m0404-issue-scoped-machine-tokens-with-revocation-and-access-audit",
+      "milestone": "M04",
+      "title": "Issue scoped machine tokens with revocation and access audit",
+      "capabilities": ["F036"],
+      "blocked_by": ["FCT-M03-14"]
+    },
+    {
+      "key": "FCT-M04-05",
+      "identifier": "OP-568",
+      "uuid": "048051fc-d5fb-4456-a5d0-ad1ea1f4b401",
+      "url": "https://linear.app/optimism-llc/issue/OP-568/m0405-add-oauth-authorization-for-scoped-custom-clients",
+      "milestone": "M04",
+      "title": "Add OAuth authorization for scoped custom clients",
+      "capabilities": ["F036", "F043"],
+      "blocked_by": ["FCT-M04-04"]
+    },
+    {
+      "key": "FCT-M04-06",
+      "identifier": "OP-569",
+      "uuid": "0826005f-ac04-40cb-afc2-dfbf686d7d70",
+      "url": "https://linear.app/optimism-llc/issue/OP-569/m0406-enforce-durable-request-quotas-and-shared-api-authorization",
+      "milestone": "M04",
+      "title": "Enforce durable request quotas and shared API authorization",
+      "capabilities": ["F035", "F036"],
+      "blocked_by": ["FCT-M04-01", "FCT-M04-05"]
+    },
+    {
+      "key": "FCT-M04-07",
+      "identifier": "OP-570",
+      "uuid": "26ce5177-ea82-40ef-812c-dbe470dab27d",
+      "url": "https://linear.app/optimism-llc/issue/OP-570/m0407-publish-versioned-read-apis-for-sessions-runs-and-exact-review",
+      "milestone": "M04",
+      "title": "Publish versioned read APIs for sessions, runs and exact review context",
+      "capabilities": ["F036", "F041", "F043"],
+      "blocked_by": ["FCT-M04-02", "FCT-M04-06"]
+    },
+    {
+      "key": "FCT-M04-08",
+      "identifier": "OP-571",
+      "uuid": "0e618657-5d9e-4895-8e50-d5e8554813c3",
+      "url": "https://linear.app/optimism-llc/issue/OP-571/m0408-publish-idempotent-session-mutation-apis-over-shared-commands",
+      "milestone": "M04",
+      "title": "Publish idempotent session mutation APIs over shared commands",
+      "capabilities": ["F028", "F036", "F043"],
+      "blocked_by": ["FCT-M04-03", "FCT-M04-07"]
+    },
+    {
+      "key": "FCT-M04-09",
+      "identifier": "OP-572",
+      "uuid": "8fab883d-0cda-493a-b59e-24515de4da5d",
+      "url": "https://linear.app/optimism-llc/issue/OP-572/m0409-bind-cross-surface-review-requests-to-exact-human-authorized",
+      "milestone": "M04",
+      "title": "Bind cross-surface review requests to exact human-authorized decisions",
+      "capabilities": ["F024", "F003", "F043"],
+      "blocked_by": ["FCT-M04-08"]
+    },
+    {
+      "key": "FCT-M04-10",
+      "identifier": "OP-573",
+      "uuid": "314b6f11-f278-49b7-ba11-1c8086bcb144",
+      "url": "https://linear.app/optimism-llc/issue/OP-573/m0410-ship-an-actionable-inbox-backed-by-authoritative-review-and",
+      "milestone": "M04",
+      "title": "Ship an actionable Inbox backed by authoritative review and clarification states",
+      "capabilities": ["F024", "F003"],
+      "blocked_by": ["FCT-M04-09"]
+    },
+    {
+      "key": "FCT-M04-11",
+      "identifier": "OP-574",
+      "uuid": "6a45dca2-a51a-4aa1-93fc-951c2eb1de9e",
+      "url": "https://linear.app/optimism-llc/issue/OP-574/m0411-deliver-scoped-event-subscriptions-through-a-durable-outbound",
+      "milestone": "M04",
+      "title": "Deliver scoped event subscriptions through a durable outbound outbox",
+      "capabilities": ["F036", "F043"],
+      "blocked_by": ["FCT-M04-09"]
+    },
+    {
+      "key": "FCT-M04-12",
+      "identifier": "OP-575",
+      "uuid": "d06190ca-dcb2-4ab0-b8cb-16c7dc7aa406",
+      "url": "https://linear.app/optimism-llc/issue/OP-575/m0412-expose-wallie-mcp-tools-over-the-shared-api-command-contracts",
+      "milestone": "M04",
+      "title": "Expose Wallie MCP tools over the shared API command contracts",
+      "capabilities": ["F035", "F028", "F043"],
+      "blocked_by": ["FCT-M04-11"]
+    },
+    {
+      "key": "FCT-M04-13",
+      "identifier": "OP-576",
+      "uuid": "2b2ed5db-9e06-405b-b171-92d47f9ec0ff",
+      "url": "https://linear.app/optimism-llc/issue/OP-576/m0413-publish-a-typed-client-and-executable-cli-examples-for-shared",
+      "milestone": "M04",
+      "title": "Publish a typed client and executable CLI examples for shared session workflows",
+      "capabilities": ["F036", "F043"],
+      "blocked_by": ["FCT-M04-12"]
+    },
+    {
+      "key": "FCT-M04-14",
+      "identifier": "OP-577",
+      "uuid": "a043c22b-1ef8-4e53-baf1-be66860c128d",
+      "url": "https://linear.app/optimism-llc/issue/OP-577/m0414-qualify-one-shared-session-across-browser-api-and-mcp-with",
+      "milestone": "M04",
+      "title": "Qualify one shared session across browser, API and MCP with revocation recovery",
+      "capabilities": ["F003", "F019", "F024", "F028", "F035", "F036", "F041", "F043"],
+      "blocked_by": ["FCT-M04-10", "FCT-M04-13"]
+    },
+    {
+      "key": "FCT-M05-01",
+      "identifier": "OP-578",
+      "uuid": "35db7043-9355-4011-a7c6-a9e12927dcff",
+      "url": "https://linear.app/optimism-llc/issue/OP-578/m0501-register-external-context-sources-and-immutable-synchronized",
+      "milestone": "M05",
+      "title": "Register external context sources and immutable synchronized revisions",
+      "capabilities": ["F045"],
+      "blocked_by": ["FCT-M04-14"]
+    },
+    {
+      "key": "FCT-M05-02",
+      "identifier": "OP-579",
+      "uuid": "b3741fd0-9947-483c-9873-7fdc392160c7",
+      "url": "https://linear.app/optimism-llc/issue/OP-579/m0502-retrieve-authorized-context-with-provenance-and-current-access",
+      "milestone": "M05",
+      "title": "Retrieve authorized context with provenance and current-access checks",
+      "capabilities": ["F045", "F050"],
+      "blocked_by": ["FCT-M05-01"]
+    },
+    {
+      "key": "FCT-M05-03",
+      "identifier": "OP-580",
+      "uuid": "14f02672-f9b5-4f64-b5ea-de23a1e5f738",
+      "url": "https://linear.app/optimism-llc/issue/OP-580/m0503-freeze-retrieved-context-and-conversation-inputs-for-exact-run",
+      "milestone": "M05",
+      "title": "Freeze retrieved context and conversation inputs for exact run replay",
+      "capabilities": ["F045", "F050"],
+      "blocked_by": ["FCT-M05-02"]
+    },
+    {
+      "key": "FCT-M05-04",
+      "identifier": "OP-581",
+      "uuid": "168cad81-ad97-45e0-8e6e-531039f4a447",
+      "url": "https://linear.app/optimism-llc/issue/OP-581/m0504-version-factory-memories-with-provenance-review-correction-and",
+      "milestone": "M05",
+      "title": "Version factory memories with provenance, review, correction and expiry",
+      "capabilities": ["F049", "F050"],
+      "blocked_by": ["FCT-M05-03"]
+    },
+    {
+      "key": "FCT-M05-05",
+      "identifier": "OP-582",
+      "uuid": "f80f2357-5169-41c7-b1c8-a75089821166",
+      "url": "https://linear.app/optimism-llc/issue/OP-582/m0505-build-context-and-memory-screens-with-input-and-provenance",
+      "milestone": "M05",
+      "title": "Build Context and Memory screens with input and provenance inspection",
+      "capabilities": ["F045", "F049", "F050"],
+      "blocked_by": ["FCT-M05-04"]
+    },
+    {
+      "key": "FCT-M05-06",
+      "identifier": "OP-583",
+      "uuid": "64c18446-d465-4783-a7e2-60418a4aa084",
+      "url": "https://linear.app/optimism-llc/issue/OP-583/m0506-define-trusted-browser-verification-plans-and-exact-capture",
+      "milestone": "M05",
+      "title": "Define trusted browser verification plans and exact capture receipts",
+      "capabilities": ["F022", "F047", "F048"],
+      "blocked_by": ["FCT-M03-14"]
+    },
+    {
+      "key": "FCT-M05-07",
+      "identifier": "OP-584",
+      "uuid": "726d966c-261b-4fcb-8e62-9ebc437ffc77",
+      "url": "https://linear.app/optimism-llc/issue/OP-584/m0507-capture-and-retain-private-screenshot-evidence-through-the",
+      "milestone": "M05",
+      "title": "Capture and retain private screenshot evidence through the trusted browser path",
+      "capabilities": ["F022", "F047"],
+      "blocked_by": ["FCT-M05-06"]
+    },
+    {
+      "key": "FCT-M05-08",
+      "identifier": "OP-585",
+      "uuid": "26553463-f55e-48cc-b668-907ba21112a7",
+      "url": "https://linear.app/optimism-llc/issue/OP-585/m0508-display-exact-screenshot-evidence-alongside-artifacts-and-review",
+      "milestone": "M05",
+      "title": "Display exact screenshot evidence alongside artifacts and review findings",
+      "capabilities": ["F022", "F047"],
+      "blocked_by": ["FCT-M05-07", "FCT-M04-14"]
+    },
+    {
+      "key": "FCT-M05-09",
+      "identifier": "OP-586",
+      "uuid": "6a7451aa-61e8-47c9-b0f2-8002c5f195c1",
+      "url": "https://linear.app/optimism-llc/issue/OP-586/m0509-record-bounded-browser-verification-videos-with-durable-capture",
+      "milestone": "M05",
+      "title": "Record bounded browser verification videos with durable capture manifests",
+      "capabilities": ["F022", "F048"],
+      "blocked_by": ["FCT-M05-07"]
+    },
+    {
+      "key": "FCT-M05-10",
+      "identifier": "OP-587",
+      "uuid": "07493e9a-5967-4084-807e-f3f491eb80fa",
+      "url": "https://linear.app/optimism-llc/issue/OP-587/m0510-add-private-video-playback-and-time-linked-verification-findings",
+      "milestone": "M05",
+      "title": "Add private video playback and time-linked verification findings",
+      "capabilities": ["F022", "F048"],
+      "blocked_by": ["FCT-M05-08", "FCT-M05-09"]
+    },
+    {
+      "key": "FCT-M05-11",
+      "identifier": "OP-588",
+      "uuid": "8d7df611-ae09-4321-8adc-ed3d25238529",
+      "url": "https://linear.app/optimism-llc/issue/OP-588/m0511-apply-retention-forgetting-and-deletion-to-context-memory-and",
+      "milestone": "M05",
+      "title": "Apply retention, forgetting and deletion to context, memory and media",
+      "capabilities": ["F045", "F047", "F048", "F049", "F050"],
+      "blocked_by": ["FCT-M05-04", "FCT-M05-10"]
+    },
+    {
+      "key": "FCT-M05-12",
+      "identifier": "OP-589",
+      "uuid": "ae5684a2-fbfb-4c39-b878-e8033493cb0f",
+      "url": "https://linear.app/optimism-llc/issue/OP-589/m0512-qualify-frozen-context-and-browser-evidence-across-teardown-and",
+      "milestone": "M05",
+      "title": "Qualify frozen context and browser evidence across teardown and revoked access",
+      "capabilities": ["F022", "F045", "F047", "F048", "F049", "F050"],
+      "blocked_by": ["FCT-M05-05", "FCT-M05-11"]
+    },
+    {
+      "key": "FCT-M06-01",
+      "identifier": "OP-590",
+      "uuid": "43fcefca-6669-4139-b2ec-2695b96a8cfc",
+      "url": "https://linear.app/optimism-llc/issue/OP-590/m0601-record-transactional-lifecycle-observations-and-revisioned",
+      "milestone": "M06",
+      "title": "Record transactional lifecycle observations and revisioned metric definitions",
+      "capabilities": ["F059", "F061"],
+      "blocked_by": ["FCT-M04-14"]
+    },
+    {
+      "key": "FCT-M06-02",
+      "identifier": "OP-591",
+      "uuid": "d7f95109-0756-4b8d-a928-ec1bb6d805ff",
+      "url": "https://linear.app/optimism-llc/issue/OP-591/m0602-capture-authoritative-canonical-pull-request-merge-observations",
+      "milestone": "M06",
+      "title": "Capture authoritative canonical pull-request merge observations",
+      "capabilities": ["F061", "F064"],
+      "blocked_by": ["FCT-M06-01"]
+    },
+    {
+      "key": "FCT-M06-03",
+      "identifier": "OP-592",
+      "uuid": "3c2bbe59-69a7-435f-a837-328762a4da10",
+      "url": "https://linear.app/optimism-llc/issue/OP-592/m0603-ingest-authenticated-read-only-deployment-observations-with",
+      "milestone": "M06",
+      "title": "Ingest authenticated read-only deployment observations with provenance",
+      "capabilities": ["F061"],
+      "blocked_by": ["FCT-M06-01"]
+    },
+    {
+      "key": "FCT-M06-04",
+      "identifier": "OP-593",
+      "uuid": "a56b93b7-c5a2-450e-9607-e65eac945cba",
+      "url": "https://linear.app/optimism-llc/issue/OP-593/m0604-project-flow-and-delivery-time-distributions-from-observable",
+      "milestone": "M06",
+      "title": "Project flow and delivery-time distributions from observable transitions",
+      "capabilities": ["F059", "F061"],
+      "blocked_by": ["FCT-M06-02", "FCT-M06-03"]
+    },
+    {
+      "key": "FCT-M06-05",
+      "identifier": "OP-594",
+      "uuid": "a5ac1a3a-ea1a-4bfd-bec2-d869ad040ee3",
+      "url": "https://linear.app/optimism-llc/issue/OP-594/m0605-compute-delivery-cohort-cost-and-period-operating-efficiency",
+      "milestone": "M06",
+      "title": "Compute delivery-cohort cost and period operating efficiency without hiding unknowns",
+      "capabilities": ["F060"],
+      "blocked_by": ["FCT-M06-02"]
+    },
+    {
+      "key": "FCT-M06-06",
+      "identifier": "OP-595",
+      "uuid": "c3becadb-2db1-48a4-b7d7-3580c831957f",
+      "url": "https://linear.app/optimism-llc/issue/OP-595/m0606-attribute-throughput-and-outcomes-by-source-person-agent-and",
+      "milestone": "M06",
+      "title": "Attribute throughput and outcomes by source, person, agent and effective configuration",
+      "capabilities": ["F062", "F063", "F064"],
+      "blocked_by": ["FCT-M06-04", "FCT-M06-05"]
+    },
+    {
+      "key": "FCT-M06-07",
+      "identifier": "OP-596",
+      "uuid": "10c595e1-e82b-40e8-8187-dd68adf13290",
+      "url": "https://linear.app/optimism-llc/issue/OP-596/m0607-track-verified-revert-relationships-with-explicit-observation",
+      "milestone": "M06",
+      "title": "Track verified revert relationships with explicit observation windows",
+      "capabilities": ["F065"],
+      "blocked_by": ["FCT-M06-06"]
+    },
+    {
+      "key": "FCT-M06-08",
+      "identifier": "OP-597",
+      "uuid": "e6056693-dbcf-46e7-8cd8-826158968fb7",
+      "url": "https://linear.app/optimism-llc/issue/OP-597/m0608-build-analytics-with-comparable-cohorts-freshness-and-evidence",
+      "milestone": "M06",
+      "title": "Build Analytics with comparable cohorts, freshness and evidence drilldowns",
+      "capabilities": ["F059", "F060", "F061", "F062", "F063", "F064", "F065"],
+      "blocked_by": ["FCT-M06-07"]
+    },
+    {
+      "key": "FCT-M06-09",
+      "identifier": "OP-598",
+      "uuid": "25701f09-ea86-4b1f-b11c-58c90b0a84c4",
+      "url": "https://linear.app/optimism-llc/issue/OP-598/m0609-export-reproducible-metric-cohorts-and-contributing-observations",
+      "milestone": "M06",
+      "title": "Export reproducible metric cohorts and contributing observations",
+      "capabilities": ["F059", "F060", "F061", "F062", "F063", "F064", "F065"],
+      "blocked_by": ["FCT-M06-08"]
+    },
+    {
+      "key": "FCT-M06-10",
+      "identifier": "OP-599",
+      "uuid": "e8413890-d9c9-481d-aa6a-f14358bfac56",
+      "url": "https://linear.app/optimism-llc/issue/OP-599/m0610-add-an-overview-outcome-summary-with-honest-projection-health",
+      "milestone": "M06",
+      "title": "Add an Overview outcome summary with honest projection health",
+      "capabilities": ["F059", "F060", "F061", "F064", "F065"],
+      "blocked_by": ["FCT-M06-08"]
+    },
+    {
+      "key": "FCT-M06-11",
+      "identifier": "OP-600",
+      "uuid": "66c805a3-e999-47bb-834b-068933ad7593",
+      "url": "https://linear.app/optimism-llc/issue/OP-600/m0611-qualify-outcome-analytics-against-a-complete-adversarial",
+      "milestone": "M06",
+      "title": "Qualify outcome analytics against a complete adversarial delivery cohort",
+      "capabilities": ["F059", "F060", "F061", "F062", "F063", "F064", "F065"],
+      "blocked_by": ["FCT-M06-09", "FCT-M06-10"]
+    },
+    {
+      "key": "FCT-M07-01",
+      "identifier": "OP-601",
+      "uuid": "2533f011-2182-417e-b746-45e9c07384ec",
+      "url": "https://linear.app/optimism-llc/issue/OP-601/m0701-persist-immutable-scorer-revisions-and-threshold-semantics",
+      "milestone": "M07",
+      "title": "Persist immutable scorer revisions and threshold semantics",
+      "capabilities": ["F068", "F071", "F072"],
+      "blocked_by": ["FCT-M05-12", "FCT-M06-11"]
+    },
+    {
+      "key": "FCT-M07-02",
+      "identifier": "OP-602",
+      "uuid": "1ed2a4f7-8c3f-4b49-9b86-42bc085b4f50",
+      "url": "https://linear.app/optimism-llc/issue/OP-602/m0702-add-the-scorer-editor-and-factory-binding-controls",
+      "milestone": "M07",
+      "title": "Add the scorer editor and factory binding controls",
+      "capabilities": ["F068", "F071", "F072"],
+      "blocked_by": ["FCT-M07-01"]
+    },
+    {
+      "key": "FCT-M07-03",
+      "identifier": "OP-603",
+      "uuid": "122b3835-6896-4a4f-8a90-0c2ba02e4cd5",
+      "url": "https://linear.app/optimism-llc/issue/OP-603/m0703-record-deterministic-scorer-sampling-and-backfill-eligibility",
+      "milestone": "M07",
+      "title": "Record deterministic scorer sampling and backfill eligibility",
+      "capabilities": ["F070", "F066"],
+      "blocked_by": ["FCT-M07-01"]
+    },
+    {
+      "key": "FCT-M07-04",
+      "identifier": "OP-604",
+      "uuid": "3e7031f4-a13c-42c2-821d-669addf63930",
+      "url": "https://linear.app/optimism-llc/issue/OP-604/m0704-add-a-fenced-evaluation-queue-isolated-from-production-sessions",
+      "milestone": "M07",
+      "title": "Add a fenced evaluation queue isolated from production sessions",
+      "capabilities": ["F066"],
+      "blocked_by": ["FCT-M07-03"]
+    },
+    {
+      "key": "FCT-M07-05",
+      "identifier": "OP-605",
+      "uuid": "df336aad-ad94-4090-80b9-c7f085d67c08",
+      "url": "https://linear.app/optimism-llc/issue/OP-605/m0705-execute-bounded-llm-judges-with-validated-structured-results",
+      "milestone": "M07",
+      "title": "Execute bounded LLM judges with validated structured results",
+      "capabilities": ["F067"],
+      "blocked_by": ["FCT-M07-04"]
+    },
+    {
+      "key": "FCT-M07-06",
+      "identifier": "OP-606",
+      "uuid": "327d2728-d29d-4425-94ac-d4cb804a59ec",
+      "url": "https://linear.app/optimism-llc/issue/OP-606/m0706-persist-immutable-evaluations-and-exact-evaluator-usage",
+      "milestone": "M07",
+      "title": "Persist immutable evaluations and exact evaluator usage",
+      "capabilities": ["F066", "F067"],
+      "blocked_by": ["FCT-M07-05"]
+    },
+    {
+      "key": "FCT-M07-07",
+      "identifier": "OP-607",
+      "uuid": "ae269d6c-262a-4205-a5b4-f18f7708b32c",
+      "url": "https://linear.app/optimism-llc/issue/OP-607/m0707-ship-calibrated-scorer-presets-including-redundant-test",
+      "milestone": "M07",
+      "title": "Ship calibrated scorer presets including redundant-test detection",
+      "capabilities": ["F069", "F068", "F071"],
+      "blocked_by": ["FCT-M07-06"]
+    },
+    {
+      "key": "FCT-M07-08",
+      "identifier": "OP-608",
+      "uuid": "c866bafa-0b98-4e81-b995-24664439be2c",
+      "url": "https://linear.app/optimism-llc/issue/OP-608/m0708-show-score-results-coverage-and-revision-aware-trends",
+      "milestone": "M07",
+      "title": "Show score results, coverage and revision-aware trends",
+      "capabilities": ["F073"],
+      "blocked_by": ["FCT-M07-02", "FCT-M07-06"]
+    },
+    {
+      "key": "FCT-M07-09",
+      "identifier": "OP-609",
+      "uuid": "0e406ab5-9c41-4ab2-8ef9-68d759b6a95f",
+      "url": "https://linear.app/optimism-llc/issue/OP-609/m0709-add-scorer-calibration-adjudication-and-health-controls",
+      "milestone": "M07",
+      "title": "Add scorer calibration, adjudication and health controls",
+      "capabilities": ["F068", "F071", "F073"],
+      "blocked_by": ["FCT-M07-07", "FCT-M07-08"]
+    },
+    {
+      "key": "FCT-M07-10",
+      "identifier": "OP-610",
+      "uuid": "f18e437c-9a9e-44e6-9c25-e73296c95a05",
+      "url": "https://linear.app/optimism-llc/issue/OP-610/m0710-qualify-scorer-execution-sampling-and-immutable-history-end-to",
+      "milestone": "M07",
+      "title": "Qualify scorer execution, sampling and immutable history end to end",
+      "capabilities": ["F066", "F067", "F068", "F069", "F070", "F071", "F072", "F073"],
+      "blocked_by": ["FCT-M07-09"]
+    },
+    {
+      "key": "FCT-M08-01",
+      "identifier": "OP-611",
+      "uuid": "7ce0ae00-d80d-4ab2-aa35-96450acce9f2",
+      "url": "https://linear.app/optimism-llc/issue/OP-611/m0801-persist-benchmark-task-snapshots-and-versioned-suite-membership",
+      "milestone": "M08",
+      "title": "Persist benchmark task snapshots and versioned suite membership",
+      "capabilities": ["F079", "F081"],
+      "blocked_by": ["FCT-M07-10"]
+    },
+    {
+      "key": "FCT-M08-02",
+      "identifier": "OP-612",
+      "uuid": "80284381-7f3c-4151-821a-28bd12909a4a",
+      "url": "https://linear.app/optimism-llc/issue/OP-612/m0802-capture-a-historical-run-as-an-inspectable-benchmark-task",
+      "milestone": "M08",
+      "title": "Capture a historical run as an inspectable benchmark task",
+      "capabilities": ["F080", "F082"],
+      "blocked_by": ["FCT-M08-01"]
+    },
+    {
+      "key": "FCT-M08-03",
+      "identifier": "OP-613",
+      "uuid": "9ae72428-dba7-4a9c-8d2f-537d715b7a97",
+      "url": "https://linear.app/optimism-llc/issue/OP-613/m0803-build-specialized-suite-curation-and-acceptance-editing",
+      "milestone": "M08",
+      "title": "Build specialized suite curation and acceptance editing",
+      "capabilities": ["F079", "F081"],
+      "blocked_by": ["FCT-M08-02"]
+    },
+    {
+      "key": "FCT-M08-04",
+      "identifier": "OP-614",
+      "uuid": "e388335a-c744-453d-a368-7da34dae3c08",
+      "url": "https://linear.app/optimism-llc/issue/OP-614/m0804-restore-replay-inputs-with-explicit-reproducibility",
+      "milestone": "M08",
+      "title": "Restore replay inputs with explicit reproducibility qualification",
+      "capabilities": ["F082"],
+      "blocked_by": ["FCT-M08-02"]
+    },
+    {
+      "key": "FCT-M08-05",
+      "identifier": "OP-615",
+      "uuid": "750c6e48-9592-4e1b-9f1d-7d4d5a186a5b",
+      "url": "https://linear.app/optimism-llc/issue/OP-615/m0805-enforce-isolated-replay-tools-credentials-and-side-effect-policy",
+      "milestone": "M08",
+      "title": "Enforce isolated replay tools, credentials and side-effect policy",
+      "capabilities": ["F083"],
+      "blocked_by": ["FCT-M08-04"]
+    },
+    {
+      "key": "FCT-M08-06",
+      "identifier": "OP-616",
+      "uuid": "5d0d9474-e3e4-4d22-ba9b-979e6c9feb32",
+      "url": "https://linear.app/optimism-llc/issue/OP-616/m0806-execute-a-benchmark-trial-through-an-isolated-internal-session",
+      "milestone": "M08",
+      "title": "Execute a benchmark trial through an isolated internal session",
+      "capabilities": ["F082", "F089"],
+      "blocked_by": ["FCT-M08-05"]
+    },
+    {
+      "key": "FCT-M08-07",
+      "identifier": "OP-617",
+      "uuid": "8d3ee36c-9e09-450c-af72-3290d91ea8c1",
+      "url": "https://linear.app/optimism-llc/issue/OP-617/m0807-freeze-experiment-matrices-and-materialize-trial-identities",
+      "milestone": "M08",
+      "title": "Freeze experiment matrices and materialize trial identities",
+      "capabilities": ["F084", "F086"],
+      "blocked_by": ["FCT-M08-03", "FCT-M08-06"]
+    },
+    {
+      "key": "FCT-M08-08",
+      "identifier": "OP-618",
+      "uuid": "4b1e099b-9e46-43d8-933c-858c544c0c6a",
+      "url": "https://linear.app/optimism-llc/issue/OP-618/m0808-schedule-benchmark-trials-with-experiment-budgets-and-fair",
+      "milestone": "M08",
+      "title": "Schedule benchmark trials with experiment budgets and fair capacity",
+      "capabilities": ["F084", "F083"],
+      "blocked_by": ["FCT-M08-07"]
+    },
+    {
+      "key": "FCT-M08-09",
+      "identifier": "OP-619",
+      "uuid": "a0c4dfdb-2b85-4895-9d13-40d7ea5d71b2",
+      "url": "https://linear.app/optimism-llc/issue/OP-619/m0809-support-independent-harness-and-factory-configuration-comparison",
+      "milestone": "M08",
+      "title": "Support independent harness and factory-configuration comparison axes",
+      "capabilities": ["F085", "F086"],
+      "blocked_by": ["FCT-M08-07"]
+    },
+    {
+      "key": "FCT-M08-10",
+      "identifier": "OP-620",
+      "uuid": "a5de5254-f267-4468-bc37-f51047d776f0",
+      "url": "https://linear.app/optimism-llc/issue/OP-620/m0810-evaluate-trials-with-selected-dimensions-and-complete-cost",
+      "milestone": "M08",
+      "title": "Evaluate trials with selected dimensions and complete cost attribution",
+      "capabilities": ["F087", "F084"],
+      "blocked_by": ["FCT-M08-08", "FCT-M08-09"]
+    },
+    {
+      "key": "FCT-M08-11",
+      "identifier": "OP-621",
+      "uuid": "a2006bae-1704-4b98-9665-83f8f20a8158",
+      "url": "https://linear.app/optimism-llc/issue/OP-621/m0811-render-comparison-results-and-immutable-result-exports",
+      "milestone": "M08",
+      "title": "Render comparison results and immutable result exports",
+      "capabilities": ["F084", "F085", "F086", "F087"],
+      "blocked_by": ["FCT-M08-10"]
+    },
+    {
+      "key": "FCT-M08-12",
+      "identifier": "OP-622",
+      "uuid": "eb95ab76-ebb8-493f-94c1-0de63ede6590",
+      "url": "https://linear.app/optimism-llc/issue/OP-622/m0812-add-exact-task-and-trial-evidence-drilldowns",
+      "milestone": "M08",
+      "title": "Add exact task and trial evidence drilldowns",
+      "capabilities": ["F089"],
+      "blocked_by": ["FCT-M08-11"]
+    },
+    {
+      "key": "FCT-M08-13",
+      "identifier": "OP-623",
+      "uuid": "d3042f9d-adea-466e-96b9-d2629ea2d235",
+      "url": "https://linear.app/optimism-llc/issue/OP-623/m0813-add-an-explainable-cost-quality-frontier-and-recommendation",
+      "milestone": "M08",
+      "title": "Add an explainable cost-quality frontier and recommendation policy",
+      "capabilities": ["F088"],
+      "blocked_by": ["FCT-M08-12"]
+    },
+    {
+      "key": "FCT-M08-14",
+      "identifier": "OP-624",
+      "uuid": "dfb49141-3ce6-4ca2-a524-3127e6b803d1",
+      "url": "https://linear.app/optimism-llc/issue/OP-624/m0814-qualify-replay-isolation-and-full-matrix-accounting-end-to-end",
+      "milestone": "M08",
+      "title": "Qualify replay isolation and full matrix accounting end to end",
+      "capabilities": [
+        "F079",
+        "F080",
+        "F081",
+        "F082",
+        "F083",
+        "F084",
+        "F085",
+        "F086",
+        "F087",
+        "F088",
+        "F089"
+      ],
+      "blocked_by": ["FCT-M08-13"]
+    },
+    {
+      "key": "FCT-M09-01",
+      "identifier": "OP-625",
+      "uuid": "b5200def-6b92-4771-9717-48668e9da7da",
+      "url": "https://linear.app/optimism-llc/issue/OP-625/m0901-version-task-classes-and-model-routing-policy-constraints",
+      "milestone": "M09",
+      "title": "Version task classes and model-routing policy constraints",
+      "capabilities": ["F091", "F092"],
+      "blocked_by": ["FCT-M08-14"]
+    },
+    {
+      "key": "FCT-M09-02",
+      "identifier": "OP-626",
+      "uuid": "480ba025-f66e-48c6-a247-68b0a0e2c351",
+      "url": "https://linear.app/optimism-llc/issue/OP-626/m0902-resolve-and-persist-routing-decisions-before-run-admission",
+      "milestone": "M09",
+      "title": "Resolve and persist routing decisions before run admission",
+      "capabilities": ["F091"],
+      "blocked_by": ["FCT-M09-01"]
+    },
+    {
+      "key": "FCT-M09-03",
+      "identifier": "OP-627",
+      "uuid": "f9fd5e0f-86cd-41e4-9220-be89683549b7",
+      "url": "https://linear.app/optimism-llc/issue/OP-627/m0903-create-reviewed-routing-candidates-from-benchmark-findings",
+      "milestone": "M09",
+      "title": "Create reviewed routing candidates from benchmark findings",
+      "capabilities": ["F090", "F092"],
+      "blocked_by": ["FCT-M09-01"]
+    },
+    {
+      "key": "FCT-M09-04",
+      "identifier": "OP-628",
+      "uuid": "cd25ad8e-66d0-4853-aa83-c0411d54b557",
+      "url": "https://linear.app/optimism-llc/issue/OP-628/m0904-build-the-routing-editor-preview-and-decision-inspector",
+      "milestone": "M09",
+      "title": "Build the routing editor, preview and decision inspector",
+      "capabilities": ["F091", "F092"],
+      "blocked_by": ["FCT-M09-02", "FCT-M09-03"]
+    },
+    {
+      "key": "FCT-M09-05",
+      "identifier": "OP-629",
+      "uuid": "31a9641a-afae-407e-9954-cf6eee7149c5",
+      "url": "https://linear.app/optimism-llc/issue/OP-629/m0905-activate-routing-revisions-and-record-authorized-overrides",
+      "milestone": "M09",
+      "title": "Activate routing revisions and record authorized overrides",
+      "capabilities": ["F090", "F091"],
+      "blocked_by": ["FCT-M09-04"]
+    },
+    {
+      "key": "FCT-M09-06",
+      "identifier": "OP-630",
+      "uuid": "e6d70fed-ff7e-4eb1-b696-ab05a68ed591",
+      "url": "https://linear.app/optimism-llc/issue/OP-630/m0906-add-routing-canary-cohorts-and-observed-outcome-comparisons",
+      "milestone": "M09",
+      "title": "Add routing canary cohorts and observed outcome comparisons",
+      "capabilities": ["F090", "F092"],
+      "blocked_by": ["FCT-M09-05"]
+    },
+    {
+      "key": "FCT-M09-07",
+      "identifier": "OP-631",
+      "uuid": "5d586b83-6dd6-4c98-93a6-2d78823215b0",
+      "url": "https://linear.app/optimism-llc/issue/OP-631/m0907-invalidate-stale-routing-evidence-and-support-safe-rollback",
+      "milestone": "M09",
+      "title": "Invalidate stale routing evidence and support safe rollback",
+      "capabilities": ["F090", "F091", "F092"],
+      "blocked_by": ["FCT-M09-06"]
+    },
+    {
+      "key": "FCT-M09-08",
+      "identifier": "OP-632",
+      "uuid": "34e470fc-d1ed-4271-931d-4e219aeed70e",
+      "url": "https://linear.app/optimism-llc/issue/OP-632/m0908-qualify-benchmark-to-routing-activation-and-rollback",
+      "milestone": "M09",
+      "title": "Qualify benchmark-to-routing activation and rollback",
+      "capabilities": ["F090", "F091", "F092"],
+      "blocked_by": ["FCT-M09-07"]
+    },
+    {
+      "key": "FCT-M10-01",
+      "identifier": "OP-633",
+      "uuid": "fddefe3c-a319-4447-867f-73c032504398",
+      "url": "https://linear.app/optimism-llc/issue/OP-633/m1001-persist-recurring-failure-cohorts-with-evidence-and-sample",
+      "milestone": "M10",
+      "title": "Persist recurring-failure cohorts with evidence and sample support",
+      "capabilities": ["F074"],
+      "blocked_by": ["FCT-M07-10"]
+    },
+    {
+      "key": "FCT-M10-02",
+      "identifier": "OP-634",
+      "uuid": "a95464ea-48b2-440d-b78a-e690640cd7ac",
+      "url": "https://linear.app/optimism-llc/issue/OP-634/m1002-add-the-failure-group-explorer-and-reviewed-cohort-labels",
+      "milestone": "M10",
+      "title": "Add the failure-group explorer and reviewed cohort labels",
+      "capabilities": ["F074"],
+      "blocked_by": ["FCT-M10-01"]
+    },
+    {
+      "key": "FCT-M10-03",
+      "identifier": "OP-635",
+      "uuid": "38663c53-a6f7-442b-a98d-f7911e918f74",
+      "url": "https://linear.app/optimism-llc/issue/OP-635/m1003-run-bounded-diagnosis-with-explicit-agent-attribution",
+      "milestone": "M10",
+      "title": "Run bounded diagnosis with explicit agent attribution",
+      "capabilities": ["F075"],
+      "blocked_by": ["FCT-M10-01"]
+    },
+    {
+      "key": "FCT-M10-04",
+      "identifier": "OP-636",
+      "uuid": "32088f8d-0d5a-48cb-813e-4de67523b60c",
+      "url": "https://linear.app/optimism-llc/issue/OP-636/m1004-compile-scoped-factory-change-proposals-against-an-exact-base",
+      "milestone": "M10",
+      "title": "Compile scoped factory-change proposals against an exact base revision",
+      "capabilities": ["F076"],
+      "blocked_by": ["FCT-M10-03"]
+    },
+    {
+      "key": "FCT-M10-05",
+      "identifier": "OP-637",
+      "uuid": "330e36dd-15cb-41e6-b702-375e21a54dd7",
+      "url": "https://linear.app/optimism-llc/issue/OP-637/m1005-build-proposal-discussion-semantic-diffs-and-review-states",
+      "milestone": "M10",
+      "title": "Build proposal discussion, semantic diffs and review states",
+      "capabilities": ["F076"],
+      "blocked_by": ["FCT-M10-02", "FCT-M10-04"]
+    },
+    {
+      "key": "FCT-M10-06",
+      "identifier": "OP-638",
+      "uuid": "21b501dd-35a0-4683-9e87-ae202d5b032f",
+      "url": "https://linear.app/optimism-llc/issue/OP-638/m1006-validate-proposals-on-targeted-and-held-out-benchmark-suites",
+      "milestone": "M10",
+      "title": "Validate proposals on targeted and held-out benchmark suites",
+      "capabilities": ["F078"],
+      "blocked_by": ["FCT-M10-04", "FCT-M08-14"]
+    },
+    {
+      "key": "FCT-M10-07",
+      "identifier": "OP-639",
+      "uuid": "e490e8eb-4636-4dbe-8ac4-cc41487ce187",
+      "url": "https://linear.app/optimism-llc/issue/OP-639/m1007-publish-actual-improvement-prs-with-tested-configuration",
+      "milestone": "M10",
+      "title": "Publish actual improvement PRs with tested configuration provenance",
+      "capabilities": ["F077"],
+      "blocked_by": ["FCT-M10-06"]
+    },
+    {
+      "key": "FCT-M10-08",
+      "identifier": "OP-640",
+      "uuid": "ad412817-a4ae-440c-a123-47e736c9fe0b",
+      "url": "https://linear.app/optimism-llc/issue/OP-640/m1008-activate-only-the-exact-reviewed-and-benchmarked-improvement",
+      "milestone": "M10",
+      "title": "Activate only the exact reviewed and benchmarked improvement digest",
+      "capabilities": ["F076", "F078"],
+      "blocked_by": ["FCT-M10-07", "FCT-M09-08"]
+    },
+    {
+      "key": "FCT-M10-09",
+      "identifier": "OP-641",
+      "uuid": "d675cd4f-bd9e-4266-8e88-5e3ff9a50ec4",
+      "url": "https://linear.app/optimism-llc/issue/OP-641/m1009-track-adopted-improvement-outcomes-and-restore-prior",
+      "milestone": "M10",
+      "title": "Track adopted improvement outcomes and restore prior configuration",
+      "capabilities": ["F078"],
+      "blocked_by": ["FCT-M10-08"]
+    },
+    {
+      "key": "FCT-M10-10",
+      "identifier": "OP-642",
+      "uuid": "a759d141-d08e-4aab-b12f-394ad8b820f0",
+      "url": "https://linear.app/optimism-llc/issue/OP-642/m1010-qualify-the-failure-to-pr-to-adoption-improvement-loop",
+      "milestone": "M10",
+      "title": "Qualify the failure-to-PR-to-adoption improvement loop",
+      "capabilities": ["F074", "F075", "F076", "F077", "F078"],
+      "blocked_by": ["FCT-M10-05", "FCT-M10-09"]
+    },
+    {
+      "key": "FCT-M11-01",
+      "identifier": "OP-643",
+      "uuid": "79eb3b79-c7a6-47b0-93f9-55706814d62b",
+      "url": "https://linear.app/optimism-llc/issue/OP-643/m1101-compile-typed-workflow-graphs-while-preserving-serial-pipeline",
+      "milestone": "M11",
+      "title": "Compile typed workflow graphs while preserving serial pipeline behavior",
+      "capabilities": ["F025", "F027"],
+      "blocked_by": ["FCT-M05-12"]
+    },
+    {
+      "key": "FCT-M11-02",
+      "identifier": "OP-644",
+      "uuid": "f5656d19-4946-4250-8eed-a2bad7b3efc5",
+      "url": "https://linear.app/optimism-llc/issue/OP-644/m1102-persist-fenced-workflow-executions-and-transition-receipts",
+      "milestone": "M11",
+      "title": "Persist fenced workflow executions and transition receipts",
+      "capabilities": ["F025", "F027"],
+      "blocked_by": ["FCT-M11-01"]
+    },
+    {
+      "key": "FCT-M11-03",
+      "identifier": "OP-645",
+      "uuid": "9a9ed9cb-09f6-4aab-b2ab-622b5ef90744",
+      "url": "https://linear.app/optimism-llc/issue/OP-645/m1103-execute-deterministic-workflow-steps-through-guarded-domain",
+      "milestone": "M11",
+      "title": "Execute deterministic workflow steps through guarded domain commands",
+      "capabilities": ["F025"],
+      "blocked_by": ["FCT-M11-02"]
+    },
+    {
+      "key": "FCT-M11-04",
+      "identifier": "OP-646",
+      "uuid": "71302041-e7c7-4d6a-9b9f-fa991cb06a98",
+      "url": "https://linear.app/optimism-llc/issue/OP-646/m1104-validate-intelligent-route-decisions-against-bounded-workflow",
+      "milestone": "M11",
+      "title": "Validate intelligent route decisions against bounded workflow policy",
+      "capabilities": ["F026", "F017"],
+      "blocked_by": ["FCT-M11-03"]
+    },
+    {
+      "key": "FCT-M11-05",
+      "identifier": "OP-647",
+      "uuid": "722b96aa-5c51-4267-b1bd-bb58a8dae11b",
+      "url": "https://linear.app/optimism-llc/issue/OP-647/m1105-admit-delegated-child-sessions-with-inherited-grants-and-root",
+      "milestone": "M11",
+      "title": "Admit delegated child sessions with inherited grants and root reservations",
+      "capabilities": ["F017", "F027"],
+      "blocked_by": ["FCT-M11-04"]
+    },
+    {
+      "key": "FCT-M11-06",
+      "identifier": "OP-648",
+      "uuid": "310105a1-898e-4034-99ad-c3109c645378",
+      "url": "https://linear.app/optimism-llc/issue/OP-648/m1106-run-foreman-delegation-through-typed-child-session-commands",
+      "milestone": "M11",
+      "title": "Run foreman delegation through typed child-session commands",
+      "capabilities": ["F017", "F026"],
+      "blocked_by": ["FCT-M11-05"]
+    },
+    {
+      "key": "FCT-M11-07",
+      "identifier": "OP-649",
+      "uuid": "d71a1611-8215-415f-abca-7b830c6d54e9",
+      "url": "https://linear.app/optimism-llc/issue/OP-649/m1107-add-triage-and-clarification-workflows-with-accepted-scope",
+      "milestone": "M11",
+      "title": "Add triage and clarification workflows with accepted scope artifacts",
+      "capabilities": ["F018"],
+      "blocked_by": ["FCT-M11-06"]
+    },
+    {
+      "key": "FCT-M11-08",
+      "identifier": "OP-650",
+      "uuid": "7fa7f4c4-3f01-45ec-ac76-8eaeae0af218",
+      "url": "https://linear.app/optimism-llc/issue/OP-650/m1108-propagate-workflow-pause-cancellation-and-recovery-to",
+      "milestone": "M11",
+      "title": "Propagate workflow pause, cancellation and recovery to descendants",
+      "capabilities": ["F017", "F025", "F027"],
+      "blocked_by": ["FCT-M11-06"]
+    },
+    {
+      "key": "FCT-M11-09",
+      "identifier": "OP-651",
+      "uuid": "0d8465f3-3f56-464a-92e4-eab04d214cb9",
+      "url": "https://linear.app/optimism-llc/issue/OP-651/m1109-run-isolated-parallel-branches-and-retain-branch-output-receipts",
+      "milestone": "M11",
+      "title": "Run isolated parallel branches and retain branch output receipts",
+      "capabilities": ["F017", "F027"],
+      "blocked_by": ["FCT-M11-08"]
+    },
+    {
+      "key": "FCT-M11-10",
+      "identifier": "OP-652",
+      "uuid": "d62bc322-bb6b-49ce-bf0d-895f92e2e3bb",
+      "url": "https://linear.app/optimism-llc/issue/OP-652/m1110-join-branch-outputs-into-one-validated-parent-checkpoint",
+      "milestone": "M11",
+      "title": "Join branch outputs into one validated parent checkpoint",
+      "capabilities": ["F025", "F027"],
+      "blocked_by": ["FCT-M11-09"]
+    },
+    {
+      "key": "FCT-M11-11",
+      "identifier": "OP-653",
+      "uuid": "91ac5962-d3eb-45f1-a48b-92df3c23bc8b",
+      "url": "https://linear.app/optimism-llc/issue/OP-653/m1111-coordinate-multi-repository-outputs-with-explicit-partial",
+      "milestone": "M11",
+      "title": "Coordinate multi-repository outputs with explicit partial delivery",
+      "capabilities": ["F027"],
+      "blocked_by": ["FCT-M11-10"]
+    },
+    {
+      "key": "FCT-M11-12",
+      "identifier": "OP-654",
+      "uuid": "cbb6884c-e624-4ef4-b5bf-95880ec9f7bb",
+      "url": "https://linear.app/optimism-llc/issue/OP-654/m1112-add-exact-commit-review-agents-and-bounded-repair-transitions",
+      "milestone": "M11",
+      "title": "Add exact-commit review agents and bounded repair transitions",
+      "capabilities": ["F021"],
+      "blocked_by": ["FCT-M11-10"]
+    },
+    {
+      "key": "FCT-M11-13",
+      "identifier": "OP-655",
+      "uuid": "2fb34e59-9d69-43a8-95d4-c7a30d17700c",
+      "url": "https://linear.app/optimism-llc/issue/OP-655/m1113-build-accessible-workflow-graph-and-ordered-list-editing",
+      "milestone": "M11",
+      "title": "Build accessible workflow graph and ordered-list editing",
+      "capabilities": ["F025", "F026", "F027"],
+      "blocked_by": ["FCT-M11-10"]
+    },
+    {
+      "key": "FCT-M11-14",
+      "identifier": "OP-656",
+      "uuid": "9173c345-f429-4959-b179-3c2f747d5c48",
+      "url": "https://linear.app/optimism-llc/issue/OP-656/m1114-show-parent-child-workflow-execution-and-reusable-lifecycle",
+      "milestone": "M11",
+      "title": "Show parent-child workflow execution and reusable lifecycle templates",
+      "capabilities": ["F017", "F018", "F021", "F027"],
+      "blocked_by": ["FCT-M11-07", "FCT-M11-11", "FCT-M11-12", "FCT-M11-13"]
+    },
+    {
+      "key": "FCT-M11-15",
+      "identifier": "OP-657",
+      "uuid": "74692a67-8469-4d38-a782-19dc454c1383",
+      "url": "https://linear.app/optimism-llc/issue/OP-657/m1115-qualify-serial-compatibility-and-multi-agent-recovery-boundaries",
+      "milestone": "M11",
+      "title": "Qualify serial compatibility and multi-agent recovery boundaries",
+      "capabilities": ["F017", "F018", "F021", "F025", "F026", "F027"],
+      "blocked_by": ["FCT-M11-14"]
+    },
+    {
+      "key": "FCT-M12-01",
+      "identifier": "OP-658",
+      "uuid": "3c7d1591-0104-41b5-a49d-b0052f99a513",
+      "url": "https://linear.app/optimism-llc/issue/OP-658/m1201-persist-versioned-automation-definitions-and-execution-targets",
+      "milestone": "M12",
+      "title": "Persist versioned automation definitions and execution targets",
+      "capabilities": ["F037", "F038"],
+      "blocked_by": ["FCT-M11-15"]
+    },
+    {
+      "key": "FCT-M12-02",
+      "identifier": "OP-659",
+      "uuid": "3a2b5bf3-c699-4c66-ac2e-37c535c255e4",
+      "url": "https://linear.app/optimism-llc/issue/OP-659/m1202-evaluate-automation-rules-with-side-effect-free-dry-runs",
+      "milestone": "M12",
+      "title": "Evaluate automation rules with side-effect-free dry runs",
+      "capabilities": ["F037", "F038"],
+      "blocked_by": ["FCT-M12-01"]
+    },
+    {
+      "key": "FCT-M12-03",
+      "identifier": "OP-660",
+      "uuid": "a797a713-a55f-4bf9-8a2f-c7acc4088af0",
+      "url": "https://linear.app/optimism-llc/issue/OP-660/m1203-admit-automation-occurrences-once-with-pause-and-recursion",
+      "milestone": "M12",
+      "title": "Admit automation occurrences once with pause and recursion guards",
+      "capabilities": ["F037", "F038"],
+      "blocked_by": ["FCT-M12-02"]
+    },
+    {
+      "key": "FCT-M12-04",
+      "identifier": "OP-661",
+      "uuid": "937389ca-6c0d-42c5-833a-c8c0f3a5b084",
+      "url": "https://linear.app/optimism-llc/issue/OP-661/m1204-schedule-durable-automation-occurrences-across-timezone-changes",
+      "milestone": "M12",
+      "title": "Schedule durable automation occurrences across timezone changes",
+      "capabilities": ["F094", "F037"],
+      "blocked_by": ["FCT-M12-03"]
+    },
+    {
+      "key": "FCT-M12-05",
+      "identifier": "OP-662",
+      "uuid": "d5549972-6909-4ce1-985d-4373d3960cf4",
+      "url": "https://linear.app/optimism-llc/issue/OP-662/m1205-normalize-pull-request-events-into-automation-occurrences",
+      "milestone": "M12",
+      "title": "Normalize pull-request events into automation occurrences",
+      "capabilities": ["F095", "F037"],
+      "blocked_by": ["FCT-M12-03"]
+    },
+    {
+      "key": "FCT-M12-06",
+      "identifier": "OP-663",
+      "uuid": "b72e599f-8ad7-4d0a-9da2-cb199fd1233b",
+      "url": "https://linear.app/optimism-llc/issue/OP-663/m1206-normalize-issue-state-spans-for-automation-rules",
+      "milestone": "M12",
+      "title": "Normalize issue state spans for automation rules",
+      "capabilities": ["F096", "F037"],
+      "blocked_by": ["FCT-M12-03"]
+    },
+    {
+      "key": "FCT-M12-07",
+      "identifier": "OP-664",
+      "uuid": "16a3419f-feaf-444c-b790-b5e9d9de01f5",
+      "url": "https://linear.app/optimism-llc/issue/OP-664/m1207-ship-automation-setup-and-occurrence-history-in-wallie",
+      "milestone": "M12",
+      "title": "Ship automation setup and occurrence history in Wallie",
+      "capabilities": ["F037", "F038", "F094", "F095", "F096"],
+      "blocked_by": ["FCT-M12-04", "FCT-M12-05", "FCT-M12-06"]
+    },
+    {
+      "key": "FCT-M12-08",
+      "identifier": "OP-665",
+      "uuid": "d2cca412-904b-4790-b796-6f0980023cea",
+      "url": "https://linear.app/optimism-llc/issue/OP-665/m1208-add-guarded-delivery-commands-and-deployment-outcome-receipts",
+      "milestone": "M12",
+      "title": "Add guarded delivery commands and deployment outcome receipts",
+      "capabilities": ["F023"],
+      "blocked_by": ["FCT-M12-03", "FCT-M06-11"]
+    },
+    {
+      "key": "FCT-M12-09",
+      "identifier": "OP-666",
+      "uuid": "d666c294-11da-4b49-a8e4-49c8b00bb32d",
+      "url": "https://linear.app/optimism-llc/issue/OP-666/m1209-connect-a-configured-ci-workflow-to-guarded-delivery",
+      "milestone": "M12",
+      "title": "Connect a configured CI workflow to guarded delivery",
+      "capabilities": ["F023"],
+      "blocked_by": ["FCT-M12-08"]
+    },
+    {
+      "key": "FCT-M12-10",
+      "identifier": "OP-667",
+      "uuid": "63685d47-0d3e-41f1-92bc-1144d4ef6f93",
+      "url": "https://linear.app/optimism-llc/issue/OP-667/m1210-create-attributable-incident-work-from-signed-monitoring-events",
+      "milestone": "M12",
+      "title": "Create attributable incident work from signed monitoring events",
+      "capabilities": ["F023", "F037"],
+      "blocked_by": ["FCT-M12-08"]
+    },
+    {
+      "key": "FCT-M12-11",
+      "identifier": "OP-668",
+      "uuid": "43bc6728-9d04-406e-883d-5fa139291a64",
+      "url": "https://linear.app/optimism-llc/issue/OP-668/m1211-qualify-automation-recovery-and-monitored-delivery-with",
+      "milestone": "M12",
+      "title": "Qualify automation recovery and monitored delivery with executable fixtures",
+      "capabilities": ["F023", "F037", "F038", "F094", "F095", "F096"],
+      "blocked_by": ["FCT-M12-07", "FCT-M12-09", "FCT-M12-10"]
+    },
+    {
+      "key": "FCT-M13-01",
+      "identifier": "OP-669",
+      "uuid": "2978df06-905f-4245-86df-ea14909c2b9a",
+      "url": "https://linear.app/optimism-llc/issue/OP-669/m1301-persist-scoped-connector-installations-and-resource-mappings",
+      "milestone": "M13",
+      "title": "Persist scoped connector installations and resource mappings",
+      "capabilities": ["F006"],
+      "blocked_by": ["FCT-M12-11"]
+    },
+    {
+      "key": "FCT-M13-02",
+      "identifier": "OP-670",
+      "uuid": "d2b79503-553f-41fc-8509-b41efc9499ad",
+      "url": "https://linear.app/optimism-llc/issue/OP-670/m1302-link-external-actors-to-scoped-human-and-service-identities",
+      "milestone": "M13",
+      "title": "Link external actors to scoped human and service identities",
+      "capabilities": ["F006", "F029", "F031", "F033"],
+      "blocked_by": ["FCT-M13-01"]
+    },
+    {
+      "key": "FCT-M13-03",
+      "identifier": "OP-671",
+      "uuid": "9bf7520b-17c6-46eb-9650-5e8dec341066",
+      "url": "https://linear.app/optimism-llc/issue/OP-671/m1303-deliver-connector-replies-through-a-recoverable-provider-outbox",
+      "milestone": "M13",
+      "title": "Deliver connector replies through a recoverable provider outbox",
+      "capabilities": ["F006"],
+      "blocked_by": ["FCT-M13-02"]
+    },
+    {
+      "key": "FCT-M13-04",
+      "identifier": "OP-672",
+      "uuid": "751290c8-b942-40ec-842a-d11fb14f904b",
+      "url": "https://linear.app/optimism-llc/issue/OP-672/m1304-discover-eligible-linear-issues-and-admit-new-sessions",
+      "milestone": "M13",
+      "title": "Discover eligible Linear issues and admit new sessions",
+      "capabilities": ["F031", "F006"],
+      "blocked_by": ["FCT-M13-02"]
+    },
+    {
+      "key": "FCT-M13-05",
+      "identifier": "OP-673",
+      "uuid": "148b5b98-2ced-421a-824a-6f97bca8f71d",
+      "url": "https://linear.app/optimism-llc/issue/OP-673/m1305-return-linear-progress-and-outcomes-to-linked-issues",
+      "milestone": "M13",
+      "title": "Return Linear progress and outcomes to linked issues",
+      "capabilities": ["F031", "F006"],
+      "blocked_by": ["FCT-M13-03", "FCT-M13-04"]
+    },
+    {
+      "key": "FCT-M13-06",
+      "identifier": "OP-674",
+      "uuid": "abb2e6a1-4c3b-4dcd-aff3-2588fc00599b",
+      "url": "https://linear.app/optimism-llc/issue/OP-674/m1306-admit-github-issue-and-pull-request-work-through-common-intake",
+      "milestone": "M13",
+      "title": "Admit GitHub issue and pull-request work through common intake",
+      "capabilities": ["F033", "F006"],
+      "blocked_by": ["FCT-M13-02"]
+    },
+    {
+      "key": "FCT-M13-07",
+      "identifier": "OP-675",
+      "uuid": "a3aa20b4-2fe2-494f-afbc-5ce336ad346d",
+      "url": "https://linear.app/optimism-llc/issue/OP-675/m1307-continue-github-conversations-and-publish-linked-outcomes",
+      "milestone": "M13",
+      "title": "Continue GitHub conversations and publish linked outcomes",
+      "capabilities": ["F033", "F006"],
+      "blocked_by": ["FCT-M13-03", "FCT-M13-06"]
+    },
+    {
+      "key": "FCT-M13-08",
+      "identifier": "OP-676",
+      "uuid": "fbc2f2d4-ad3a-42d0-a118-1cb382838508",
+      "url": "https://linear.app/optimism-llc/issue/OP-676/m1308-install-slack-with-scoped-channels-and-verified-identity-binding",
+      "milestone": "M13",
+      "title": "Install Slack with scoped channels and verified identity binding",
+      "capabilities": ["F029", "F006"],
+      "blocked_by": ["FCT-M13-02"]
+    },
+    {
+      "key": "FCT-M13-09",
+      "identifier": "OP-677",
+      "uuid": "cc01f1eb-3e89-4ed1-b983-8e03eecd1d21",
+      "url": "https://linear.app/optimism-llc/issue/OP-677/m1309-route-slack-mentions-and-thread-follow-ups-into-factory-work",
+      "milestone": "M13",
+      "title": "Route Slack mentions and thread follow-ups into factory work",
+      "capabilities": ["F029", "F097"],
+      "blocked_by": ["FCT-M13-08"]
+    },
+    {
+      "key": "FCT-M13-10",
+      "identifier": "OP-678",
+      "uuid": "9868493a-a1ae-43cb-9afa-4c42fad9a521",
+      "url": "https://linear.app/optimism-llc/issue/OP-678/m1310-bind-slack-review-actions-to-current-human-approval-identity",
+      "milestone": "M13",
+      "title": "Bind Slack review actions to current human approval identity",
+      "capabilities": ["F029"],
+      "blocked_by": ["FCT-M13-09"]
+    },
+    {
+      "key": "FCT-M13-11",
+      "identifier": "OP-679",
+      "uuid": "78471ae9-9f3b-4070-92d4-01797dc03db7",
+      "url": "https://linear.app/optimism-llc/issue/OP-679/m1311-publish-slack-progress-and-outcomes-with-reliable-thread-updates",
+      "milestone": "M13",
+      "title": "Publish Slack progress and outcomes with reliable thread updates",
+      "capabilities": ["F029", "F006"],
+      "blocked_by": ["FCT-M13-03", "FCT-M13-10"]
+    },
+    {
+      "key": "FCT-M13-12",
+      "identifier": "OP-680",
+      "uuid": "fd4e91f0-f6c6-4d6f-972c-8ae0288ebc7a",
+      "url": "https://linear.app/optimism-llc/issue/OP-680/m1312-expose-connector-resource-setup-and-delivery-diagnostics",
+      "milestone": "M13",
+      "title": "Expose connector resource setup and delivery diagnostics",
+      "capabilities": ["F006", "F029", "F031", "F033", "F097"],
+      "blocked_by": ["FCT-M13-05", "FCT-M13-07", "FCT-M13-11"]
+    },
+    {
+      "key": "FCT-M13-13",
+      "identifier": "OP-681",
+      "uuid": "9fcfcdcb-6fca-4149-a332-f08a680c5da5",
+      "url": "https://linear.app/optimism-llc/issue/OP-681/m1313-qualify-slack-linear-and-github-conversation-continuity",
+      "milestone": "M13",
+      "title": "Qualify Slack, Linear and GitHub conversation continuity",
+      "capabilities": ["F006", "F029", "F031", "F033", "F097"],
+      "blocked_by": ["FCT-M13-12"]
+    },
+    {
+      "key": "FCT-M14-01",
+      "identifier": "OP-682",
+      "uuid": "706dfb26-f992-4fea-91cb-6990f632d662",
+      "url": "https://linear.app/optimism-llc/issue/OP-682/m1401-install-microsoft-teams-with-tenant-and-resource-scopes",
+      "milestone": "M14",
+      "title": "Install Microsoft Teams with tenant and resource scopes",
+      "capabilities": ["F030"],
+      "blocked_by": ["FCT-M13-13"]
+    },
+    {
+      "key": "FCT-M14-02",
+      "identifier": "OP-683",
+      "uuid": "749b5e07-da73-466e-8f05-eaea34b2d64b",
+      "url": "https://linear.app/optimism-llc/issue/OP-683/m1402-continue-teams-conversations-through-shared-intake-commands",
+      "milestone": "M14",
+      "title": "Continue Teams conversations through shared intake commands",
+      "capabilities": ["F030"],
+      "blocked_by": ["FCT-M14-01"]
+    },
+    {
+      "key": "FCT-M14-03",
+      "identifier": "OP-684",
+      "uuid": "38673a44-7219-4f7d-ac5f-e50d12addde8",
+      "url": "https://linear.app/optimism-llc/issue/OP-684/m1403-verify-human-review-actions-from-teams-cards",
+      "milestone": "M14",
+      "title": "Verify human review actions from Teams cards",
+      "capabilities": ["F030"],
+      "blocked_by": ["FCT-M14-02"]
+    },
+    {
+      "key": "FCT-M14-04",
+      "identifier": "OP-685",
+      "uuid": "49cd11cf-1d56-438d-8c50-5c53f9ce77d8",
+      "url": "https://linear.app/optimism-llc/issue/OP-685/m1404-deliver-teams-progress-and-outcomes-through-the-shared-outbox",
+      "milestone": "M14",
+      "title": "Deliver Teams progress and outcomes through the shared outbox",
+      "capabilities": ["F030"],
+      "blocked_by": ["FCT-M14-03"]
+    },
+    {
+      "key": "FCT-M14-05",
+      "identifier": "OP-686",
+      "uuid": "7cdb73c9-8897-4cb9-b759-9c61c9fea9b1",
+      "url": "https://linear.app/optimism-llc/issue/OP-686/m1405-connect-jira-projects-with-explicit-issue-mappings",
+      "milestone": "M14",
+      "title": "Connect Jira projects with explicit issue mappings",
+      "capabilities": ["F032"],
+      "blocked_by": ["FCT-M13-13"]
+    },
+    {
+      "key": "FCT-M14-06",
+      "identifier": "OP-687",
+      "uuid": "0131fc5a-984b-4983-a195-f02f61f366e3",
+      "url": "https://linear.app/optimism-llc/issue/OP-687/m1406-reconcile-jira-issue-events-and-polling-into-factory-work",
+      "milestone": "M14",
+      "title": "Reconcile Jira issue events and polling into factory work",
+      "capabilities": ["F032"],
+      "blocked_by": ["FCT-M14-05"]
+    },
+    {
+      "key": "FCT-M14-07",
+      "identifier": "OP-688",
+      "uuid": "b24e30bd-9345-46f4-ac36-016c3dc62bbb",
+      "url": "https://linear.app/optimism-llc/issue/OP-688/m1407-publish-jira-progress-review-links-and-outcome-transitions",
+      "milestone": "M14",
+      "title": "Publish Jira progress, review links and outcome transitions",
+      "capabilities": ["F032"],
+      "blocked_by": ["FCT-M14-06"]
+    },
+    {
+      "key": "FCT-M14-08",
+      "identifier": "OP-689",
+      "uuid": "b86acfed-40e7-4d6d-a595-fd5a0bf137a4",
+      "url": "https://linear.app/optimism-llc/issue/OP-689/m1408-introduce-source-host-neutral-repository-identities-with-github",
+      "milestone": "M14",
+      "title": "Introduce source-host-neutral repository identities with GitHub compatibility",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M13-13"]
+    },
+    {
+      "key": "FCT-M14-09",
+      "identifier": "OP-690",
+      "uuid": "13e054d6-b2c7-4103-b1cf-c2e01482f975",
+      "url": "https://linear.app/optimism-llc/issue/OP-690/m1409-extract-source-checkout-and-credential-contracts-without",
+      "milestone": "M14",
+      "title": "Extract source checkout and credential contracts without changing GitHub behavior",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-08"]
+    },
+    {
+      "key": "FCT-M14-10",
+      "identifier": "OP-691",
+      "uuid": "dea2ce5b-1a5b-471e-9e48-c341cf9c38a9",
+      "url": "https://linear.app/optimism-llc/issue/OP-691/m1410-extract-publication-and-readiness-adapters-around-current-github",
+      "milestone": "M14",
+      "title": "Extract publication and readiness adapters around current GitHub contracts",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-09"]
+    },
+    {
+      "key": "FCT-M14-11",
+      "identifier": "OP-692",
+      "uuid": "cd49bc74-b2be-4f4c-a038-0da8d758b4de",
+      "url": "https://linear.app/optimism-llc/issue/OP-692/m1411-connect-gitlab-repositories-with-scoped-permissions-and",
+      "milestone": "M14",
+      "title": "Connect GitLab repositories with scoped permissions and discovery",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-08"]
+    },
+    {
+      "key": "FCT-M14-12",
+      "identifier": "OP-693",
+      "uuid": "954647f1-c010-446b-bef9-2bb9f3917484",
+      "url": "https://linear.app/optimism-llc/issue/OP-693/m1412-restore-gitlab-inputs-and-publish-retained-private-checkpoints",
+      "milestone": "M14",
+      "title": "Restore GitLab inputs and publish retained private checkpoints",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-10", "FCT-M14-11"]
+    },
+    {
+      "key": "FCT-M14-13",
+      "identifier": "OP-694",
+      "uuid": "a3c3300c-18bb-468a-8c48-d27e5de34194",
+      "url": "https://linear.app/optimism-llc/issue/OP-694/m1413-synchronize-one-canonical-gitlab-merge-request-from-accepted",
+      "milestone": "M14",
+      "title": "Synchronize one canonical GitLab merge request from accepted checkpoints",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-12"]
+    },
+    {
+      "key": "FCT-M14-14",
+      "identifier": "OP-695",
+      "uuid": "d54631fd-060d-49f7-8632-9859491cca5b",
+      "url": "https://linear.app/optimism-llc/issue/OP-695/m1414-verify-gitlab-merge-requests-against-exact-source-and-review",
+      "milestone": "M14",
+      "title": "Verify GitLab merge requests against exact source and review state",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-13"]
+    },
+    {
+      "key": "FCT-M14-15",
+      "identifier": "OP-696",
+      "uuid": "10fb95fe-92ba-4b99-9849-fe303917faec",
+      "url": "https://linear.app/optimism-llc/issue/OP-696/m1415-connect-gitlab-issue-and-mr-conversations-to-automation-intake",
+      "milestone": "M14",
+      "title": "Connect GitLab issue and MR conversations to automation intake",
+      "capabilities": ["F034"],
+      "blocked_by": ["FCT-M14-14"]
+    },
+    {
+      "key": "FCT-M14-16",
+      "identifier": "OP-697",
+      "uuid": "d2e97ff7-07b1-4122-ab82-a16374ce4bd5",
+      "url": "https://linear.app/optimism-llc/issue/OP-697/m1416-qualify-teams-jira-and-gitlab-parity-without-github-regressions",
+      "milestone": "M14",
+      "title": "Qualify Teams, Jira and GitLab parity without GitHub regressions",
+      "capabilities": ["F030", "F032", "F034"],
+      "blocked_by": ["FCT-M14-04", "FCT-M14-07", "FCT-M14-15"]
+    },
+    {
+      "key": "FCT-M15-01",
+      "identifier": "OP-698",
+      "uuid": "b411dff0-476b-4553-b4df-340ac91146fe",
+      "url": "https://linear.app/optimism-llc/issue/OP-698/m1501-version-execution-profiles-and-their-qualified-capabilities",
+      "milestone": "M15",
+      "title": "Version execution profiles and their qualified capabilities",
+      "capabilities": ["F051", "F052", "F054", "F055", "F056"],
+      "blocked_by": ["FCT-M04-14"]
+    },
+    {
+      "key": "FCT-M15-02",
+      "identifier": "OP-699",
+      "uuid": "57d1047c-7e64-4234-bf24-61fbef79e4a3",
+      "url": "https://linear.app/optimism-llc/issue/OP-699/m1502-expose-a-typed-harness-extension-registry-and-conformance",
+      "milestone": "M15",
+      "title": "Expose a typed harness extension registry and conformance contract",
+      "capabilities": ["F055"],
+      "blocked_by": ["FCT-M15-01"]
+    },
+    {
+      "key": "FCT-M15-03",
+      "identifier": "OP-700",
+      "uuid": "8f16d6d4-97ac-4bad-ae2d-77969fc703b9",
+      "url": "https://linear.app/optimism-llc/issue/OP-700/m1503-enroll-owned-runners-with-factory-grants-and-revocable-machine",
+      "milestone": "M15",
+      "title": "Enroll owned runners with factory grants and revocable machine identity",
+      "capabilities": ["F053", "F051"],
+      "blocked_by": ["FCT-M15-01"]
+    },
+    {
+      "key": "FCT-M15-04",
+      "identifier": "OP-701",
+      "uuid": "bbc8958a-8667-475f-aec0-41d184a903fe",
+      "url": "https://linear.app/optimism-llc/issue/OP-701/m1504-lease-work-to-owned-runners-with-fenced-control-plane-commands",
+      "milestone": "M15",
+      "title": "Lease work to owned runners with fenced control-plane commands",
+      "capabilities": ["F053", "F051"],
+      "blocked_by": ["FCT-M15-03"]
+    },
+    {
+      "key": "FCT-M15-05",
+      "identifier": "OP-702",
+      "uuid": "edf3eac6-4788-4779-9cc1-9d677e667501",
+      "url": "https://linear.app/optimism-llc/issue/OP-702/m1505-ship-the-owned-runner-daemon-with-recovery-and-bounded-cleanup",
+      "milestone": "M15",
+      "title": "Ship the owned runner daemon with recovery and bounded cleanup",
+      "capabilities": ["F053", "F051"],
+      "blocked_by": ["FCT-M15-02", "FCT-M15-04"]
+    },
+    {
+      "key": "FCT-M15-06",
+      "identifier": "OP-703",
+      "uuid": "e1ed9b35-7fb1-4db4-a1aa-40cdd78aad8a",
+      "url": "https://linear.app/optimism-llc/issue/OP-703/m1506-execute-owned-work-in-isolated-docker-task-environments",
+      "milestone": "M15",
+      "title": "Execute owned work in isolated Docker task environments",
+      "capabilities": ["F053", "F051", "F054"],
+      "blocked_by": ["FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-07",
+      "identifier": "OP-704",
+      "uuid": "fdb96d78-6bf7-41df-bf3d-94a8077ac427",
+      "url": "https://linear.app/optimism-llc/issue/OP-704/m1507-execute-owned-work-in-kubernetes-jobs-with-namespace-controls",
+      "milestone": "M15",
+      "title": "Execute owned work in Kubernetes jobs with namespace controls",
+      "capabilities": ["F053", "F051", "F054"],
+      "blocked_by": ["FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-08",
+      "identifier": "OP-705",
+      "uuid": "6cc83263-7da1-44d4-b70c-eeba935ee984",
+      "url": "https://linear.app/optimism-llc/issue/OP-705/m1508-execute-linux-tasks-through-an-explicitly-isolated-direct-runner",
+      "milestone": "M15",
+      "title": "Execute Linux tasks through an explicitly isolated direct runner profile",
+      "capabilities": ["F053", "F051", "F054"],
+      "blocked_by": ["FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-09",
+      "identifier": "OP-706",
+      "uuid": "d9a83eb0-0961-4984-a01e-d14d34db45cd",
+      "url": "https://linear.app/optimism-llc/issue/OP-706/m1509-qualify-a-native-macos-runner-bootstrap-and-task-lifecycle",
+      "milestone": "M15",
+      "title": "Qualify a native macOS runner bootstrap and task lifecycle",
+      "capabilities": ["F054", "F053", "F051"],
+      "blocked_by": ["FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-10",
+      "identifier": "OP-707",
+      "uuid": "b68bb536-2f72-446c-915c-1cb59f7fa5b0",
+      "url": "https://linear.app/optimism-llc/issue/OP-707/m1510-qualify-a-native-windows-runner-bootstrap-and-task-lifecycle",
+      "milestone": "M15",
+      "title": "Qualify a native Windows runner bootstrap and task lifecycle",
+      "capabilities": ["F054", "F053", "F051"],
+      "blocked_by": ["FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-11",
+      "identifier": "OP-708",
+      "uuid": "ddbfd233-09c1-4446-bdcd-aaf7c4ba3727",
+      "url": "https://linear.app/optimism-llc/issue/OP-708/m1511-operate-runner-fleets-through-capacity-drain-and-cleanup",
+      "milestone": "M15",
+      "title": "Operate runner fleets through capacity, drain and cleanup controls",
+      "capabilities": ["F053", "F051", "F052", "F054"],
+      "blocked_by": ["FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-12",
+      "identifier": "OP-709",
+      "uuid": "e7a0d7a1-a3bf-4b25-92a5-b398822211a7",
+      "url": "https://linear.app/optimism-llc/issue/OP-709/m1512-qualify-existing-managed-providers-against-the-expanded-profile",
+      "milestone": "M15",
+      "title": "Qualify existing managed providers against the expanded profile contract",
+      "capabilities": ["F052", "F051", "F055"],
+      "blocked_by": ["FCT-M15-02"]
+    },
+    {
+      "key": "FCT-M15-13",
+      "identifier": "OP-710",
+      "uuid": "67634783-bb31-44a5-bfab-482eb1b669a4",
+      "url": "https://linear.app/optimism-llc/issue/OP-710/m1513-separate-model-catalogs-and-inference-identity-from-harness",
+      "milestone": "M15",
+      "title": "Separate model catalogs and inference identity from harness choice",
+      "capabilities": ["F056", "F057", "F058"],
+      "blocked_by": ["FCT-M15-02"]
+    },
+    {
+      "key": "FCT-M15-14",
+      "identifier": "OP-711",
+      "uuid": "a3f09562-5bc5-4f84-b4b5-7eab692d800d",
+      "url": "https://linear.app/optimism-llc/issue/OP-711/m1514-configure-organization-inference-gateways-with-scoped-health",
+      "milestone": "M15",
+      "title": "Configure organization inference gateways with scoped health probes",
+      "capabilities": ["F057", "F056"],
+      "blocked_by": ["FCT-M15-13"]
+    },
+    {
+      "key": "FCT-M15-15",
+      "identifier": "OP-712",
+      "uuid": "eae58c74-a734-4e9e-bf94-d8de324b732a",
+      "url": "https://linear.app/optimism-llc/issue/OP-712/m1515-run-opencode-through-a-qualified-organization-gateway",
+      "milestone": "M15",
+      "title": "Run OpenCode through a qualified organization gateway",
+      "capabilities": ["F057", "F056"],
+      "blocked_by": ["FCT-M15-14"]
+    },
+    {
+      "key": "FCT-M15-16",
+      "identifier": "OP-713",
+      "uuid": "934ef2e0-8a05-4346-8fcf-48e966c3f197",
+      "url": "https://linear.app/optimism-llc/issue/OP-713/m1516-qualify-codex-gateway-configuration-and-protocol-compatibility",
+      "milestone": "M15",
+      "title": "Qualify Codex gateway configuration and protocol compatibility",
+      "capabilities": ["F057", "F056", "F055"],
+      "blocked_by": ["FCT-M15-14"]
+    },
+    {
+      "key": "FCT-M15-17",
+      "identifier": "OP-714",
+      "uuid": "4b4abd2a-d35e-4e32-a7a3-72a6084ec7cb",
+      "url": "https://linear.app/optimism-llc/issue/OP-714/m1517-qualify-claude-code-gateway-configuration-and-explicit-harness",
+      "milestone": "M15",
+      "title": "Qualify Claude Code gateway configuration and explicit harness limits",
+      "capabilities": ["F057", "F056", "F055"],
+      "blocked_by": ["FCT-M15-14"]
+    },
+    {
+      "key": "FCT-M15-18",
+      "identifier": "OP-715",
+      "uuid": "bb7d70b4-c2f4-46e9-8b26-f6dce578926f",
+      "url": "https://linear.app/optimism-llc/issue/OP-715/m1518-connect-self-hosted-model-deployments-to-qualified-owned",
+      "milestone": "M15",
+      "title": "Connect self-hosted model deployments to qualified owned execution",
+      "capabilities": ["F058", "F056", "F057", "F053"],
+      "blocked_by": ["FCT-M15-06", "FCT-M15-15"]
+    },
+    {
+      "key": "FCT-M15-19",
+      "identifier": "OP-716",
+      "uuid": "fcd61654-b98f-427d-82ac-d457171de5de",
+      "url": "https://linear.app/optimism-llc/issue/OP-716/m1519-version-data-ownership-location-and-storage-policy-settings",
+      "milestone": "M15",
+      "title": "Version data ownership, location and storage policy settings",
+      "capabilities": ["F005", "F051"],
+      "blocked_by": ["FCT-M15-01", "FCT-M07-10"]
+    },
+    {
+      "key": "FCT-M15-20",
+      "identifier": "OP-717",
+      "uuid": "259eaa04-0ad6-455a-91d2-95215d51fa84",
+      "url": "https://linear.app/optimism-llc/issue/OP-717/m1520-enforce-data-and-network-policy-when-admitting-execution",
+      "milestone": "M15",
+      "title": "Enforce data and network policy when admitting execution profiles",
+      "capabilities": ["F005", "F051", "F052", "F053", "F054"],
+      "blocked_by": [
+        "FCT-M15-06",
+        "FCT-M15-07",
+        "FCT-M15-08",
+        "FCT-M15-09",
+        "FCT-M15-10",
+        "FCT-M15-14",
+        "FCT-M15-19"
+      ]
+    },
+    {
+      "key": "FCT-M15-21",
+      "identifier": "OP-718",
+      "uuid": "47f32632-4d1b-4cc9-b9ad-4baa997213a1",
+      "url": "https://linear.app/optimism-llc/issue/OP-718/m1521-apply-retention-and-deletion-to-execution-and-evaluation-data",
+      "milestone": "M15",
+      "title": "Apply retention and deletion to execution and evaluation data",
+      "capabilities": ["F005"],
+      "blocked_by": ["FCT-M15-19", "FCT-M10-10", "FCT-M15-05"]
+    },
+    {
+      "key": "FCT-M15-22",
+      "identifier": "OP-719",
+      "uuid": "bf09b6df-892b-4c82-bf1e-522aa845c943",
+      "url": "https://linear.app/optimism-llc/issue/OP-719/m1522-qualify-owned-infrastructure-and-inference-recovery-across",
+      "milestone": "M15",
+      "title": "Qualify owned infrastructure and inference recovery across supported profiles",
+      "capabilities": ["F005", "F051", "F052", "F053", "F054", "F055", "F056", "F057", "F058"],
+      "blocked_by": [
+        "FCT-M15-11",
+        "FCT-M15-12",
+        "FCT-M15-16",
+        "FCT-M15-17",
+        "FCT-M15-18",
+        "FCT-M15-20",
+        "FCT-M15-21"
+      ]
+    },
+    {
+      "key": "FCT-M16-01",
+      "identifier": "OP-720",
+      "uuid": "584a18ec-72e7-4459-998d-a1bddfb42c85",
+      "url": "https://linear.app/optimism-llc/issue/OP-720/m1601-define-versioned-release-manifests-and-installable-milestone",
+      "milestone": "M16",
+      "title": "Define versioned release manifests and installable milestone packages",
+      "capabilities": ["F098", "F100"],
+      "blocked_by": ["FCT-M02-10"]
+    },
+    {
+      "key": "FCT-M16-02",
+      "identifier": "OP-721",
+      "uuid": "b0dd4f4e-10af-485e-9d02-ca1119625916",
+      "url": "https://linear.app/optimism-llc/issue/OP-721/m1602-export-portable-factory-definitions-without-secret-values",
+      "milestone": "M16",
+      "title": "Export portable factory definitions without secret values",
+      "capabilities": ["F099"],
+      "blocked_by": ["FCT-M14-16", "FCT-M15-22"]
+    },
+    {
+      "key": "FCT-M16-03",
+      "identifier": "OP-722",
+      "uuid": "a157ba89-9e8d-4924-a8c3-33ce40359cf1",
+      "url": "https://linear.app/optimism-llc/issue/OP-722/m1603-import-factory-bundles-with-explicit-credential-and-connector",
+      "milestone": "M16",
+      "title": "Import factory bundles with explicit credential and connector remapping",
+      "capabilities": ["F099"],
+      "blocked_by": ["FCT-M16-02"]
+    },
+    {
+      "key": "FCT-M16-04",
+      "identifier": "OP-723",
+      "uuid": "8a30ac99-d3ac-4523-bbe5-28f67dc1626d",
+      "url": "https://linear.app/optimism-llc/issue/OP-723/m1604-package-the-complete-independent-stack-for-docker-compose",
+      "milestone": "M16",
+      "title": "Package the complete independent stack for Docker Compose",
+      "capabilities": ["F098"],
+      "blocked_by": ["FCT-M16-01", "FCT-M15-22"]
+    },
+    {
+      "key": "FCT-M16-05",
+      "identifier": "OP-724",
+      "uuid": "5f38b48c-bc4c-452b-ac86-57a9c2265340",
+      "url": "https://linear.app/optimism-llc/issue/OP-724/m1605-ship-a-kubernetes-deployment-blueprint-for-the-full-factory",
+      "milestone": "M16",
+      "title": "Ship a Kubernetes deployment blueprint for the full factory stack",
+      "capabilities": ["F098"],
+      "blocked_by": ["FCT-M16-04"]
+    },
+    {
+      "key": "FCT-M16-06",
+      "identifier": "OP-725",
+      "uuid": "257ce421-93fe-43d2-8cd0-dd00a4bad986",
+      "url": "https://linear.app/optimism-llc/issue/OP-725/m1606-upgrade-installations-with-drain-compatibility-and-forward",
+      "milestone": "M16",
+      "title": "Upgrade installations with drain, compatibility and forward recovery",
+      "capabilities": ["F098"],
+      "blocked_by": ["FCT-M16-04", "FCT-M14-16"]
+    },
+    {
+      "key": "FCT-M16-07",
+      "identifier": "OP-726",
+      "uuid": "d01db70f-c46e-4a1f-b296-20b794d87fa7",
+      "url": "https://linear.app/optimism-llc/issue/OP-726/m1607-back-up-metadata-private-assets-and-recoverable-secret-key",
+      "milestone": "M16",
+      "title": "Back up metadata, private assets and recoverable secret-key material",
+      "capabilities": ["F098", "F005"],
+      "blocked_by": ["FCT-M16-04"]
+    },
+    {
+      "key": "FCT-M16-08",
+      "identifier": "OP-727",
+      "uuid": "0a578300-99c6-42d0-86e6-007c7e980b82",
+      "url": "https://linear.app/optimism-llc/issue/OP-727/m1608-restore-installations-while-reconciling-active-attempts-and",
+      "milestone": "M16",
+      "title": "Restore installations while reconciling active attempts and source lineage",
+      "capabilities": ["F098"],
+      "blocked_by": ["FCT-M16-06", "FCT-M16-07", "FCT-M14-16"]
+    },
+    {
+      "key": "FCT-M16-09",
+      "identifier": "OP-728",
+      "uuid": "34471462-5f0f-4bc3-ad17-5f04e2fc88d2",
+      "url": "https://linear.app/optimism-llc/issue/OP-728/m1609-expose-operator-health-and-recovery-diagnostics-for-self-hosted",
+      "milestone": "M16",
+      "title": "Expose operator health and recovery diagnostics for self-hosted services",
+      "capabilities": ["F098"],
+      "blocked_by": ["FCT-M16-06", "FCT-M16-07", "FCT-M14-16"]
+    },
+    {
+      "key": "FCT-M16-10",
+      "identifier": "OP-729",
+      "uuid": "1fb41a24-f3bc-4014-b2e4-593c22d86294",
+      "url": "https://linear.app/optimism-llc/issue/OP-729/m1610-publish-reproducible-release-artifacts-with-provenance-and-sboms",
+      "milestone": "M16",
+      "title": "Publish reproducible release artifacts with provenance and SBOMs",
+      "capabilities": ["F098", "F100"],
+      "blocked_by": ["FCT-M16-05"]
+    },
+    {
+      "key": "FCT-M16-11",
+      "identifier": "OP-730",
+      "uuid": "55db5f7f-9087-4901-af25-6be4dbeb2465",
+      "url": "https://linear.app/optimism-llc/issue/OP-730/m1611-ship-portable-sample-factories-and-integration-setup-examples",
+      "milestone": "M16",
+      "title": "Ship portable sample factories and integration setup examples",
+      "capabilities": ["F099", "F098", "F100"],
+      "blocked_by": ["FCT-M16-03", "FCT-M16-04"]
+    },
+    {
+      "key": "FCT-M16-12",
+      "identifier": "OP-731",
+      "uuid": "ea8e363c-49c3-42d3-86b7-9042f8565807",
+      "url": "https://linear.app/optimism-llc/issue/OP-731/m1612-document-extension-contracts-with-a-tested-contributor-example",
+      "milestone": "M16",
+      "title": "Document extension contracts with a tested contributor example",
+      "capabilities": ["F100"],
+      "blocked_by": ["FCT-M16-01", "FCT-M13-13", "FCT-M15-22"]
+    },
+    {
+      "key": "FCT-M16-13",
+      "identifier": "OP-732",
+      "uuid": "9318573c-4fdf-426f-9bc4-fc4dcef4cb5a",
+      "url": "https://linear.app/optimism-llc/issue/OP-732/m1613-expose-source-license-and-release-information-inside-wallie",
+      "milestone": "M16",
+      "title": "Expose source, license and release information inside Wallie",
+      "capabilities": ["F100", "F098"],
+      "blocked_by": ["FCT-M16-01", "FCT-M03-14"]
+    },
+    {
+      "key": "FCT-M16-14",
+      "identifier": "OP-733",
+      "uuid": "f090e816-7381-4d86-b323-b7c225062b9d",
+      "url": "https://linear.app/optimism-llc/issue/OP-733/m1614-qualify-the-complete-100-capability-independent-release",
+      "milestone": "M16",
+      "title": "Qualify the complete 100-capability independent release",
+      "capabilities": ["F098", "F099", "F100"],
+      "blocked_by": [
+        "FCT-M16-08",
+        "FCT-M16-09",
+        "FCT-M16-10",
+        "FCT-M16-11",
+        "FCT-M16-12",
+        "FCT-M16-13"
+      ]
+    }
+  ]
+}

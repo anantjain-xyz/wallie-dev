@@ -7,9 +7,9 @@ AI-powered product development automation. Wallie turns a work prompt -- optiona
 
 > **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance. To run your first task, connect a GitHub repository, a sandbox provider, and your agent credentials. Linear is optional.
 >
-> **Want to run your own?** Wallie is open source (MIT). Follow the [Self-Hosting guide](docs/SELF_HOSTING.md) to deploy your own instance, or the [Local Setup](#local-setup-end-to-end) section below to hack on it.
+> **Want to run your own?** Wallie is open source (MIT). Follow the [Self-Hosting guide](docs/deployment/self-hosting.md) to deploy your own instance, or the [Local Setup](#local-setup-end-to-end) section below to hack on it.
 >
-> After setup, follow the [first-task verification walkthrough](docs/SELF_HOSTING.md#7-verify-the-first-task-through-completion) to review the output and verify the resulting PR.
+> After setup, follow the [first-task verification walkthrough](docs/deployment/self-hosting.md#7-verify-the-first-task-through-completion) to review the output and verify the resulting PR.
 
 ## How It Works
 
@@ -185,7 +185,7 @@ The whole module is stage-agnostic. There are no per-phase files; one generic ru
 
 - [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. The public entry is `processPipelineJob()`; its internal `runStage()` helper renders operating rules plus the stage prompt, spins a sandbox, runs the agent, writes the markdown artifact, and invokes best-effort PR synchronization. Also exports `handleApproval` / `handleRejection`.
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages`, pipeline operating rules, and the prior-stage artifact map used by the prompt template.
-- [pull-request.ts](src/lib/pipeline/pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- remote PR synchronization and terminal session controls.
+- [source-pull-request.ts](src/lib/pipeline/source-pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- canonical PR synchronization and terminal session controls.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
 - [types.ts](src/lib/pipeline/types.ts) -- shared pipeline phase and agent job/run status types. Active-job dedupe keys (`session:<session_id>:active`) are built in the enqueue SQL RPCs.
 
@@ -193,7 +193,7 @@ The default `plan → build` seed lives in the `internal.default_pipeline_stages
 
 #### Worker (`src/worker/`) -- the daemon
 
-- [Cloudflare entry](cloudflare/index.ts) -- production dispatcher, attempt/auth Workflows, and scheduled maintenance. See [deployment and qualification](docs/CLOUDFLARE-WORKER.md).
+- [Cloudflare entry](cloudflare/index.ts) -- production dispatcher, attempt/auth Workflows, and scheduled maintenance. See [deployment and qualification](docs/deployment/cloudflare-worker.md).
 - [index.ts](src/worker/index.ts) -- local Node entry (`pnpm worker`).
 - [scheduler.ts](src/worker/scheduler.ts) -- bounded-concurrency fill/wait loop and in-flight job tracking.
 - [loop.ts](src/worker/loop.ts) -- atomic concurrency-aware job claim + execution.
@@ -385,7 +385,7 @@ supabase/
 
 ## Local Setup (End-to-End)
 
-> This section gets Wallie running **locally for development** (local Supabase + a tunnel). To deploy a real, internet-facing instance, see the [Self-Hosting guide](docs/SELF_HOSTING.md).
+> This section gets Wallie running **locally for development** (local Supabase + a tunnel). To deploy a real, internet-facing instance, see the [Self-Hosting guide](docs/deployment/self-hosting.md).
 
 ### Prerequisites
 
@@ -497,7 +497,7 @@ Go to <https://github.com/settings/apps> -> **New GitHub App** (or your org's eq
 - **Subscribe to events**: `Check run`, `Check suite`, `Status`, `Pull request`, `Pull request review`, `Pull request review comment`, `Pull request review thread`, and `Push`. The `installation` and `installation_repositories` events are delivered automatically by GitHub and are handled at `/api/github/webhooks`.
 - **Where can this GitHub App be installed?** Only on this account (for local dev).
 
-Existing installations must approve new repository permissions before PR verification can use them. Missing access is recorded explicitly; it never implies that checks or repository rules passed. See [PR verification and the read-only permission audit](docs/GITHUB-PR-VERIFICATION.md). Updating these instructions does not change an installed App or production settings.
+Existing installations must approve new repository permissions before PR verification can use them. Missing access is recorded explicitly; it never implies that checks or repository rules passed. See [PR verification and the read-only permission audit](docs/architecture/github-pr-verification.md). Updating these instructions does not change an installed App or production settings.
 
 After creation:
 
@@ -505,7 +505,7 @@ After creation:
 2. Click **Generate a private key**, download the `.pem`, and put its contents in `GITHUB_APP_PRIVATE_KEY` (PKCS#1 and PKCS#8 PEM are both accepted). If you inline it into `.env.local`, replace real newlines with `\n` and quote the value.
 3. From your workspace's GitHub settings, start **Install GitHub App**, choose the repositories, and complete the separate GitHub authorization screen. Stay signed in to the same Wallie account and browser throughout the ten-minute flow. You must be a Wallie workspace owner/admin and the GitHub personal-account owner or an active organization owner. Repository collaborators and organization members cannot connect installation-wide access.
 
-Wallie verifies ownership before saving a connection. The browser-bound flow is single-use, uses PKCE, and stores only a hash of state and an encrypted verifier; OAuth access and refresh tokens are never persisted. An installation can belong to only one workspace. Reconnecting the same installation refreshes its metadata; changing installations requires explicit disconnection first. See the [upgrade instructions](docs/SELF_HOSTING.md#github-ownership-verification-upgrade) before deploying this change to an existing database.
+Wallie verifies ownership before saving a connection. The browser-bound flow is single-use, uses PKCE, and stores only a hash of state and an encrypted verifier; OAuth access and refresh tokens are never persisted. An installation can belong to only one workspace. Reconnecting the same installation refreshes its metadata; changing installations requires explicit disconnection first. See the [upgrade instructions](docs/deployment/self-hosting.md#github-ownership-verification-upgrade) before deploying this change to an existing database.
 
 ### 6. Linear API key (optional)
 
@@ -583,7 +583,9 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 
 ## Architecture Notes
 
-For ownership boundaries and dependency direction, see [Architecture](docs/ARCHITECTURE.md). For session/job transition detail, see [Pipeline and worker lifecycle](docs/PIPELINE-WORKER-LIFECYCLE.md).
+Use the [documentation index](docs/README.md) to find the guide for your task.
+
+For ownership boundaries and dependency direction, see [Architecture](docs/architecture/architecture.md). For session/job transition detail, see [Pipeline and worker lifecycle](docs/architecture/pipeline-worker-lifecycle.md).
 
 ### Multi-tenancy
 
@@ -617,7 +619,7 @@ Webhook endpoint: `/api/github/webhooks`
 
 ### Linear
 
-Linear is optional. A linked issue keeps its identifier and URL attached to a session. The worker observes its current state span and applies configured routing once: rerouting, cancellation, and replacement enqueue commit together, preserving published artifact versions. See [the lifecycle contract](docs/PIPELINE-WORKER-LIFECYCLE.md#linear-transition-receipts) for bootstrap and rollout behavior. The personal API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`; Wallie does not require a Linear webhook or OAuth flow.
+Linear is optional. A linked issue keeps its identifier and URL attached to a session. The worker observes its current state span and applies configured routing once: rerouting, cancellation, and replacement enqueue commit together, preserving published artifact versions. See [the lifecycle contract](docs/architecture/pipeline-worker-lifecycle.md#linear-transition-receipts) for bootstrap and rollout behavior. The personal API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`; Wallie does not require a Linear webhook or OAuth flow.
 
 ## Contributing
 

@@ -8,7 +8,8 @@ import styles from "./landing.module.css";
 
 const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
 const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";
-const selfHostingUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/SELF_HOSTING.md";
+const selfHostingUrl =
+  "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/deployment/self-hosting.md";
 const licenseUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/LICENSE";
 
 export function LandingPage() {

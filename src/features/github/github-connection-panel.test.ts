@@ -209,7 +209,7 @@ describe("GitHubConnectionPanel", () => {
     // Human-readable explanation instead of a bare error box.
     expect(markup).toContain("Wallie needs a GitHub App to read your repositories");
     // Direct link to the GitHub App section of the self-hosting guide.
-    expect(markup).toContain("docs/SELF_HOSTING.md#5-create-the-production-github-app");
+    expect(markup).toContain("docs/deployment/self-hosting.md#5-create-the-production-github-app");
     expect(markup).toContain("GitHub App setup guide");
     // Disabled affordances are explained rather than left dead.
     expect(markup).toContain("the install button turns on");

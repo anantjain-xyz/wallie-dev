@@ -12,7 +12,7 @@ By participating in this project you agree to abide by our [Code of Conduct](COD
 
 ## Getting set up
 
-The full local development setup (Node, pnpm, local Supabase, GitHub App, worker) lives in the [README — Local Setup](README.md#local-setup-end-to-end). Follow that end-to-end before making changes. For deploying a real instance, see the [Self-Hosting guide](docs/SELF_HOSTING.md).
+The full local development setup (Node, pnpm, local Supabase, GitHub App, worker) lives in the [README — Local Setup](README.md#local-setup-end-to-end). Follow that end-to-end before making changes. For deploying a real instance, see the [Self-Hosting guide](docs/deployment/self-hosting.md).
 
 In short:
 
