@@ -13,7 +13,8 @@ export default async function InteractionMotionPage({
   if (isProductionDeploy()) notFound();
   const params = await searchParams;
   const version = params.reviewVersion === "2" ? 2 : 1;
-  const source = reviewFixtureSource(params.reviewText, version);
+  const fixtureSource = reviewFixtureSource(params.reviewText, version);
+  const source = params.reference === "1" ? fixtureSource.replace(/^# /, "## ") : fixtureSource;
   const reviewArtifact = {
     source,
     html: renderMarkdownToHtml(source, true),
@@ -22,7 +23,9 @@ export default async function InteractionMotionPage({
   return (
     <Suspense>
       <InteractionMotionPreview
-        initialNow={new Date().toISOString()}
+        initialNow={
+          params.reference === "1" ? "2026-11-08T12:00:00.000Z" : new Date().toISOString()
+        }
         reviewArtifact={reviewArtifact}
       />
     </Suspense>

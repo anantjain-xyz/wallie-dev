@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 
 import { isProductionDeploy } from "@/env/deploy";
 import { verificationData } from "@/features/onboarding/fixtures";
@@ -16,9 +17,10 @@ export default async function SettingsPreviewPage({
   if (isProductionDeploy()) notFound();
 
   const { category, state } = await searchParams;
+  const selectedCategory = parseSettingsCategory(category);
   if (state === "loading") {
     return (
-      <main id="main-content">
+      <main id="main-content" data-settings-fixture="loading">
         <SettingsLoadingSkeleton />
       </main>
     );
@@ -82,15 +84,32 @@ export default async function SettingsPreviewPage({
   void setupData.catch(() => undefined);
 
   return (
-    <main id="main-content">
+    <main id="main-content" data-settings-fixture={state ?? "loaded"}>
       <SettingsServerShell
-        category={parseSettingsCategory(category)}
+        category={selectedCategory}
         initialData={data}
         searchState={{ codexStatus: null, githubStatus: null }}
         setupData={setupData}
         usage={Promise.resolve(data.usage)}
         workspaceInvitations={Promise.resolve([])}
       />
+      {state === "error" ? (
+        <aside
+          aria-label="Fixture recovery"
+          className="mx-auto max-w-[1080px] space-y-3 px-4 pb-8 sm:px-8"
+        >
+          <p className="type-body text-muted">
+            This fixture can restore its setup data without connecting to a service.
+          </p>
+          <Link
+            className="ui-button"
+            href={`/dev/settings?category=${selectedCategory}&state=loaded`}
+            prefetch={false}
+          >
+            Restore fixture setup data
+          </Link>
+        </aside>
+      ) : null}
     </main>
   );
 }

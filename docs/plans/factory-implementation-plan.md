@@ -212,6 +212,9 @@ No calendar dates are asserted without staffing and provider-account availabilit
 
 ### M00 — Establish the visual and compatibility baseline
 
+Use the [current Wallie reference captures](../design/factory-reference/README.md)
+to compare the implemented surfaces in both themes and at compact and desktop widths.
+
 Ship these three preparation slices independently:
 
 | Slice                                       | Deliverable                                                                                                                                                                      | Acceptance                                                                                                                                           |

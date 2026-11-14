@@ -2,7 +2,11 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { isProductionDeploy } from "@/env/deploy";
-import { onboardingData, verificationData } from "@/features/onboarding/fixtures";
+import {
+  onboardingData,
+  verificationCheck,
+  verificationData,
+} from "@/features/onboarding/fixtures";
 import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
 import { CopyStatesPreview } from "./preview-client";
 
@@ -14,14 +18,18 @@ export default async function CopyStatesPage({
 }) {
   if (isProductionDeploy()) notFound();
   const { state } = await searchParams;
+  const initialData =
+    state === "onboarding-verify" || state === "onboarding-blocked"
+      ? verificationData()
+      : onboardingData();
+  if (state === "onboarding-blocked") {
+    initialData.setupHealth.latestSandboxCapabilityCheck = verificationCheck("error");
+  }
   return (
     <Suspense>
       <CopyStatesPreview
         onboarding={
-          <OnboardingPageClient
-            initialData={state === "onboarding-verify" ? verificationData() : onboardingData()}
-            initialNow="2026-11-08T12:00:00.000Z"
-          />
+          <OnboardingPageClient initialData={initialData} initialNow="2026-11-08T12:00:00.000Z" />
         }
       />
     </Suspense>
