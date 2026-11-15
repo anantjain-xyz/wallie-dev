@@ -1,6 +1,6 @@
 # Factory definition activation
 
-The default factory's active revision is the target of its highest activation number. Publication and rollback append to that history. Session admission will use the active revision when OP-543 adds pins.
+The default factory's active revision is the target of its highest activation number. Publication and rollback append to that history. [Session admission](factory-session-inputs.md) pins the active revision under the same workspace lock fence.
 
 ## Commands
 

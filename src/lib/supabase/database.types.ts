@@ -2102,6 +2102,155 @@ export type Database = {
           },
         ]
       }
+      session_attempt_manifests: {
+        Row: {
+          agent_effort: string | null
+          attempt_count: number
+          base_branch: string
+          checkout_sha: string
+          created_at: string
+          credential_owner_member_id: string | null
+          definition_delivery_policy_revision_id: string | null
+          definition_digest: string | null
+          definition_execution_policy_revision_id: string | null
+          definition_provenance: string
+          definition_revision_id: string | null
+          definition_skill_ids: string[]
+          definition_tool_ids: string[]
+          execution_policy_revision_id: string | null
+          initial_base_sha: string
+          input_ref: string | null
+          input_sha: string
+          job_id: string
+          max_turns: number | null
+          model_name: string
+          model_provider: string
+          predecessors: Json
+          prompt_sha256: string
+          prompt_utf8_bytes: number
+          renderer_version: number
+          repository_full_name: string
+          repository_id: string
+          retry_source_run_id: string | null
+          run_id: string
+          run_type: string
+          sandbox_connection_revision: string | null
+          sandbox_provider: string | null
+          session_id: string
+          source_checkpoint_run_id: string | null
+          stage_id: string
+          worker_runtime: string
+          workspace_id: string
+        }
+        Insert: {
+          agent_effort?: string | null
+          attempt_count: number
+          base_branch: string
+          checkout_sha: string
+          created_at?: string
+          credential_owner_member_id?: string | null
+          definition_delivery_policy_revision_id?: string | null
+          definition_digest?: string | null
+          definition_execution_policy_revision_id?: string | null
+          definition_provenance: string
+          definition_revision_id?: string | null
+          definition_skill_ids: string[]
+          definition_tool_ids: string[]
+          execution_policy_revision_id?: string | null
+          initial_base_sha: string
+          input_ref?: string | null
+          input_sha: string
+          job_id: string
+          max_turns?: number | null
+          model_name: string
+          model_provider: string
+          predecessors: Json
+          prompt_sha256: string
+          prompt_utf8_bytes: number
+          renderer_version: number
+          repository_full_name: string
+          repository_id: string
+          retry_source_run_id?: string | null
+          run_id: string
+          run_type: string
+          sandbox_connection_revision?: string | null
+          sandbox_provider?: string | null
+          session_id: string
+          source_checkpoint_run_id?: string | null
+          stage_id: string
+          worker_runtime: string
+          workspace_id: string
+        }
+        Update: {
+          agent_effort?: string | null
+          attempt_count?: number
+          base_branch?: string
+          checkout_sha?: string
+          created_at?: string
+          credential_owner_member_id?: string | null
+          definition_delivery_policy_revision_id?: string | null
+          definition_digest?: string | null
+          definition_execution_policy_revision_id?: string | null
+          definition_provenance?: string
+          definition_revision_id?: string | null
+          definition_skill_ids?: string[]
+          definition_tool_ids?: string[]
+          execution_policy_revision_id?: string | null
+          initial_base_sha?: string
+          input_ref?: string | null
+          input_sha?: string
+          job_id?: string
+          max_turns?: number | null
+          model_name?: string
+          model_provider?: string
+          predecessors?: Json
+          prompt_sha256?: string
+          prompt_utf8_bytes?: number
+          renderer_version?: number
+          repository_full_name?: string
+          repository_id?: string
+          retry_source_run_id?: string | null
+          run_id?: string
+          run_type?: string
+          sandbox_connection_revision?: string | null
+          sandbox_provider?: string | null
+          session_id?: string
+          source_checkpoint_run_id?: string | null
+          stage_id?: string
+          worker_runtime?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_attempt_manifests_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attempt_manifests_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attempt_manifests_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attempt_manifests_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_checkpoint_cleanup: {
         Row: {
           attempt_count: number
@@ -2301,6 +2450,86 @@ export type Database = {
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_factory_admission_inputs: {
+        Row: {
+          activation_number: number
+          created_at: string
+          definition_digest: string
+          definition_revision_id: string
+          execution_policy_revision_id: string | null
+          factory_id: string
+          github_repository_id: string | null
+          model_name: string
+          model_provider: string
+          pipeline_id: string
+          prompt_sha256: string
+          selected_stage_ids: string[]
+          session_id: string
+          title_sha256: string
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          created_at?: string
+          definition_digest: string
+          definition_revision_id: string
+          execution_policy_revision_id?: string | null
+          factory_id: string
+          github_repository_id?: string | null
+          model_name: string
+          model_provider: string
+          pipeline_id: string
+          prompt_sha256: string
+          selected_stage_ids: string[]
+          session_id: string
+          title_sha256: string
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          created_at?: string
+          definition_digest?: string
+          definition_revision_id?: string
+          execution_policy_revision_id?: string | null
+          factory_id?: string
+          github_repository_id?: string | null
+          model_name?: string
+          model_provider?: string
+          pipeline_id?: string
+          prompt_sha256?: string
+          selected_stage_ids?: string[]
+          session_id?: string
+          title_sha256?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_factory_admission_inp_workspace_id_definition_revi_fkey"
+            columns: ["workspace_id", "definition_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_revisions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "session_factory_admission_inp_workspace_id_factory_id_acti_fkey"
+            columns: ["workspace_id", "factory_id", "activation_number"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "session_factory_admission_inputs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -3526,6 +3755,63 @@ export type Database = {
           },
           {
             foreignKeyName: "session_source_deliveries_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_stage_approval_receipts: {
+        Row: {
+          approval_number: number
+          approved_at: string
+          approved_by_member_id: string
+          artifact_digest: string
+          artifact_id: string
+          artifact_version: number
+          completion_id: string
+          id: string
+          session_id: string
+          stage_id: string
+          workspace_id: string
+        }
+        Insert: {
+          approval_number?: never
+          approved_at?: string
+          approved_by_member_id: string
+          artifact_digest: string
+          artifact_id: string
+          artifact_version: number
+          completion_id: string
+          id?: string
+          session_id: string
+          stage_id: string
+          workspace_id: string
+        }
+        Update: {
+          approval_number?: never
+          approved_at?: string
+          approved_by_member_id?: string
+          artifact_digest?: string
+          artifact_id?: string
+          artifact_version?: number
+          completion_id?: string
+          id?: string
+          session_id?: string
+          stage_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_stage_approval_receipts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_stage_approval_receipts_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -6138,6 +6424,20 @@ export type Database = {
           usage_finalized_at: string
         }[]
       }
+      load_attempt_predecessor_approvals: {
+        Args: { p_session_id: string }
+        Returns: {
+          approval_receipt_id: string
+          artifact_digest: string
+          artifact_id: string
+          artifact_text: string
+          artifact_version: number
+          completion_id: string
+          current_stage_slug: string
+          stage_id: string
+          stage_slug: string
+        }[]
+      }
       load_session_claude_code_credential: {
         Args: { p_creator_member_id: string; p_workspace_id: string }
         Returns: {
@@ -6251,6 +6551,23 @@ export type Database = {
         Returns: {
           credential_version: number
         }[]
+      }
+      pin_session_attempt_manifest: {
+        Args: {
+          p_agent_effort?: string
+          p_attempt_count: number
+          p_checkout_sha: string
+          p_credential_owner_member_id?: string
+          p_job_id: string
+          p_max_turns?: number
+          p_predecessors: Json
+          p_prompt_sha256: string
+          p_prompt_utf8_bytes: number
+          p_renderer_version: number
+          p_run_id: string
+          p_worker_runtime: string
+        }
+        Returns: boolean
       }
       pin_session_job_git_input: {
         Args: {

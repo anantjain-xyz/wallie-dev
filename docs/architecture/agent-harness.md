@@ -69,17 +69,17 @@ platform policy leave remote publication to the trusted worker.
 
 The renderer currently exposes:
 
-| Variable                         | Source                                                             | Classification                   |
-| -------------------------------- | ------------------------------------------------------------------ | -------------------------------- |
-| `session.title`                  | `sessions.title`                                                   | Member-controlled data           |
-| `session.prompt`                 | `sessions.prompt_md`                                               | Member-controlled data           |
-| `session.stageSlug`              | Current `pipeline_stages` row                                      | Manager-controlled configuration |
-| `attempt.number`                 | `rejection_count + 1`                                              | Derived value                    |
-| `attempt.feedback`               | Saved feedback for the exact job, with legacy stage fallback       | Reviewer-controlled data         |
-| `artifact.previousStages.<slug>` | Latest unambiguous artifact for a completed stage, by current slug | Agent-generated data             |
-| `repo.name`                      | Resolved session repository name                                   | Repository data                  |
-| `repo.fullName`                  | Resolved session repository full name                              | Repository data                  |
-| `repo.defaultBranch`             | Resolved default branch, falling back to `main` if absent          | Repository data                  |
+| Variable                         | Source                                                       | Classification                   |
+| -------------------------------- | ------------------------------------------------------------ | -------------------------------- |
+| `session.title`                  | `sessions.title`                                             | Member-controlled data           |
+| `session.prompt`                 | `sessions.prompt_md`                                         | Member-controlled data           |
+| `session.stageSlug`              | Current `pipeline_stages` row                                | Manager-controlled configuration |
+| `attempt.number`                 | `rejection_count + 1`                                        | Derived value                    |
+| `attempt.feedback`               | Saved feedback for the exact job, with legacy stage fallback | Reviewer-controlled data         |
+| `artifact.previousStages.<slug>` | Approved artifact for a completed stage, by current slug     | Agent-generated data             |
+| `repo.name`                      | Resolved session repository name                             | Repository data                  |
+| `repo.fullName`                  | Resolved session repository full name                        | Repository data                  |
+| `repo.defaultBranch`             | Resolved default branch, falling back to `main` if absent    | Repository data                  |
 
 Pipeline `operating_rules_md` is trimmed and prepended to
 `pipeline_stages.prompt_template_md`. Both are manager-controlled instruction
@@ -90,12 +90,11 @@ Template variable paths support letters, digits, underscores, dots, and hyphens.
 References such as `artifact.previousStages.code-review` work in both
 substitutions and conditional blocks.
 
-`loadCompletedStageArtifacts()` requires a `session_phase_completions` row for
-the stage's durable ID, then selects that stage's highest artifact version and
-maps it to the current slug. Missing stage identities and invalidated completions
-do not contribute prompt input; duplicate artifacts at the highest version stop
-the attempt. This is a completed-stage projection, not an immutable snapshot of
-the originally approved artifact. Treat every value as agent-generated input.
+`loadAttemptPredecessors()` uses the current completion and its approval receipt
+to verify the artifact digest and map the approved text to the current slug.
+Older completions can supply the latest unambiguous retained text and carry
+`legacy_unverified` provenance in the [attempt manifest](factory-session-inputs.md).
+Every artifact value remains agent-generated input.
 
 ## Current instruction and trust boundary
 

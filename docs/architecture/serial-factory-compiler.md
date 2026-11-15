@@ -48,4 +48,4 @@ The bundle replaces aliases with stable IDs. The compiler sorts and deduplicates
 
 `canonicalDigest` is the lowercase SHA-256 of the exact UTF-8 bytes in `definitionJson`. The records migration checks those bytes at persistence. See [Factory definition records](factory-definition-records.md).
 
-Compilation uses the supplied catalog without external calls. OP-542 handles publication and activation and verifies current authority. OP-543 pins the active revision and execution inputs at session admission.
+Compilation uses the supplied catalog without external calls. [Publication and activation](factory-definition-activation.md) verify current authority. [Session input records](factory-session-inputs.md) capture the active revision at admission and the exact inputs used by each attempt.

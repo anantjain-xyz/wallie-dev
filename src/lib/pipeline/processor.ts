@@ -27,6 +27,7 @@ import {
 } from "@/lib/agent-runner";
 import {
   AGENT_PROVIDERS,
+  agentProviderSupportsEffort,
   normalizeAgentProviderName,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
@@ -58,6 +59,7 @@ import {
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { loadJobFeedback } from "./job-feedback";
+import { pinSessionAttemptManifest, type AttemptWorkerRuntime } from "./attempt-manifest";
 import { ExecutionOwnershipLostError, RunEventCapture } from "./run-events";
 
 import {
@@ -79,7 +81,7 @@ import {
   deferSessionJobForGitContinuityRelease,
   isGitContinuityReleasePause,
 } from "./git-continuity-release";
-import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
+import { loadAttemptPredecessors, loadPipelineOperatingRules, loadStageById } from "./stages";
 import {
   ExecutionBudgetExhaustedError,
   loadSessionExecutionBudget,
@@ -127,6 +129,7 @@ export async function processPipelineJob(input: {
   captureOrderedEvents?: boolean;
   deadlineAt?: string;
   signal?: AbortSignal;
+  workerRuntime?: AttemptWorkerRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
   throwIfAborted(input.signal);
@@ -159,6 +162,7 @@ export async function processPipelineJob(input: {
     deadlineAt: input.deadlineAt,
     signal: input.signal,
     stage,
+    workerRuntime: input.workerRuntime,
   });
 }
 
@@ -177,6 +181,7 @@ async function runStage(input: {
   signal?: AbortSignal;
   session: SessionRow;
   stage: PipelineStage;
+  workerRuntime?: AttemptWorkerRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, session, stage, captureOrderedEvents = true } = input;
   const supervisorSignal = input.signal;
@@ -237,7 +242,7 @@ async function runStage(input: {
     });
     const [
       config,
-      previousStages,
+      predecessorInputs,
       attemptFeedback,
       operatingRulesMd,
       sessionAttachments,
@@ -245,7 +250,7 @@ async function runStage(input: {
       priorGitInput,
     ] = await Promise.all([
       loadWorkspaceAgentConfig(admin, session.workspace_id),
-      loadCompletedStageArtifacts(admin, session.id),
+      loadAttemptPredecessors(admin, session.id),
       loadJobFeedback(admin, job, stage.id),
       loadPipelineOperatingRules(admin, stage.pipelineId),
       loadSessionAttachmentInputs(admin, {
@@ -547,7 +552,7 @@ async function runStage(input: {
           validationPlanInstructions(runId),
         ),
         previousStages: Object.fromEntries(
-          Object.entries(previousStages).map(([slug, artifact]) => [
+          Object.entries(predecessorInputs.promptArtifacts).map(([slug, artifact]) => [
             slug,
             untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
           ]),
@@ -574,6 +579,28 @@ async function runStage(input: {
     await persistStartupProgress(runEvents, "Starting agent…");
     if (!(await touchRunActivity(admin, runId, job.attempt_count)))
       throw new ExecutionOwnershipLostError();
+    throwIfAborted(signal);
+    const checkoutSha = resumed ? await readSourceBase(sandbox, signal) : gitInput.input_sha;
+    if (
+      !(await pinSessionAttemptManifest({
+        admin,
+        jobId: job.id,
+        runId,
+        attemptCount: job.attempt_count,
+        prompt,
+        checkoutSha,
+        predecessors: predecessorInputs.predecessors,
+        credentialOwnerMemberId: session.creator_member_id,
+        workerRuntime: input.workerRuntime ?? "node",
+        ...(agentProviderSupportsEffort(provider) ? { effort: config.effort } : {}),
+        ...(provider === "claude-code" && config.maxTurns !== undefined
+          ? { maxTurns: config.maxTurns }
+          : {}),
+        signal,
+      }))
+    ) {
+      throw new ExecutionOwnershipLostError();
+    }
     throwIfAborted(signal);
     // Runners load credentials after their own nonsecret remote setup, directly
     // before delivering the secret. Construction never decrypts personal keys.

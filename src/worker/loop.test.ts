@@ -176,6 +176,7 @@ describe("runClaimedJob", () => {
       captureOrderedEvents: true,
       signal: expect.any(AbortSignal),
       deadlineAt: expect.any(String),
+      workerRuntime: "node",
     });
     expect(admin.from).not.toHaveBeenCalled();
     expect(admin.rpc).not.toHaveBeenCalled();

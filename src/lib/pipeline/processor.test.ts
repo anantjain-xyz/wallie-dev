@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { APIError } from "@vercel/sandbox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -48,7 +49,7 @@ const mocked = vi.hoisted(() => ({
   markCursorReconnectRequired: vi.fn(),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
-  loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
+  loadAttemptPredecessors: vi.fn().mockResolvedValue({ promptArtifacts: {}, predecessors: [] }),
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
   loadSessionAttachmentInputs: vi.fn().mockResolvedValue([]),
   materializeSessionAttachments: vi.fn().mockResolvedValue([]),
@@ -90,7 +91,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("./stages", () => ({
   loadStageById: mocked.loadStageById,
-  loadCompletedStageArtifacts: mocked.loadCompletedStageArtifacts,
+  loadAttemptPredecessors: mocked.loadAttemptPredecessors,
   loadPipelineOperatingRules: mocked.loadPipelineOperatingRules,
 }));
 
@@ -106,6 +107,7 @@ vi.mock("./source-delivery", async (importOriginal) => ({
 
 vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
+  STAGE_PROMPT_RENDERER_VERSION: 1,
 }));
 
 vi.mock("@/lib/pipeline/session-attachments", () => ({
@@ -725,6 +727,10 @@ function buildAdminMock(opts: MockOptions) {
 
   const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
+    if (fn === "pin_session_attempt_manifest") {
+      const run = runRows.find((row) => row.id === payload.p_run_id && row.status === "running");
+      return { data: Boolean(run && run.attempt_count === payload.p_attempt_count), error: null };
+    }
     if (fn === "pin_session_job_git_input") {
       if (
         opts.priorGitInput &&
@@ -1505,11 +1511,15 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("renders the stage prompt, runs the agent, writes the artifact, and flips status", async () => {
     const session = baseSession();
     const job = baseJob();
-    mocked.loadCompletedStageArtifacts.mockResolvedValueOnce({ plan: "Approved plan" });
+    const predecessor = { status: "legacy_unverified", stageId: "stage-plan", stageSlug: "plan" };
+    mocked.loadAttemptPredecessors.mockResolvedValueOnce({
+      promptArtifacts: { plan: "Approved plan" },
+      predecessors: [predecessor],
+    });
     mocked.loadPipelineOperatingRules.mockResolvedValueOnce(
       "Keep changes scoped to the approved plan.",
     );
-    const { admin, insertedArtifacts, capturedEvents, insertedMessages, updatedSessions } =
+    const { admin, insertedArtifacts, capturedEvents, insertedMessages, updatedSessions, rpc } =
       buildAdminMock({
         session,
         agentConfig: [],
@@ -1517,6 +1527,18 @@ describe("processPipelineJob (generic stage runner)", () => {
       });
 
     const result = await processPipelineJob({ admin, job });
+    expect(rpc).toHaveBeenCalledWith("pin_session_attempt_manifest", {
+      p_job_id: "job-1",
+      p_run_id: "run-1",
+      p_attempt_count: 1,
+      p_prompt_sha256: createHash("sha256").update("rendered prompt", "utf8").digest("hex"),
+      p_prompt_utf8_bytes: Buffer.byteLength("rendered prompt", "utf8"),
+      p_renderer_version: 1,
+      p_checkout_sha: "a".repeat(40),
+      p_predecessors: [predecessor],
+      p_worker_runtime: "node",
+      p_agent_effort: "xhigh",
+    });
 
     expect(mocked.octokitRequest).toHaveBeenCalledExactlyOnceWith(
       "POST /app/installations/{installation_id}/access_tokens",
@@ -1749,6 +1771,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       "start_session_job_attempt",
       "get_session_execution_budget",
       "pin_session_job_git_input",
+      "pin_session_attempt_manifest",
     ]);
     expect(sandbox.stop).toHaveBeenCalledOnce();
   });
@@ -1907,11 +1930,12 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("restores manual retry source before starting the agent and publishes from the accepted base", async () => {
     const pinnedSha = "b".repeat(40);
-    const { admin, capturedEvents } = buildAdminMock({
+    const restoredSha = "c".repeat(40);
+    const { admin, capturedEvents, rpc } = buildAdminMock({
       session: baseSession(),
       priorGitInput: { input_sha: pinnedSha },
     });
-    mocked.readSourceBase.mockResolvedValueOnce(pinnedSha);
+    mocked.readSourceBase.mockResolvedValueOnce(pinnedSha).mockResolvedValueOnce(restoredSha);
     mocked.restoreRetryInput.mockResolvedValueOnce(true);
     const runner = makeRunner([
       { type: "completion", taskComplete: true, summary: "Done", finalOutput: "Done" },
@@ -1926,6 +1950,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledBefore(mocked.restoreRetryInput);
     expect(mocked.restoreRetryInput).toHaveBeenCalledBefore(vi.mocked(runner.start));
+    expect(rpc).toHaveBeenCalledWith(
+      "pin_session_attempt_manifest",
+      expect.objectContaining({ p_checkout_sha: restoredSha }),
+    );
     expect(capturedEvents).toContainEqual(
       expect.objectContaining({
         p_kind: "progress",
@@ -2009,6 +2037,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       "start_session_job_attempt",
       "get_session_execution_budget",
       "pin_session_job_git_input",
+      "pin_session_attempt_manifest",
     ]);
     expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
@@ -2977,7 +3006,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     for (const [name, args] of rpc.mock.calls) {
       expect(name).toMatch(
-        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$|^get_session_execution_budget$|^record_session_run_usage$|^append_agent_run_event$/,
+        /^(start|complete)_session_job_attempt$|^publish_session_job_with_source$|^pin_session_job_git_input$|^pin_session_attempt_manifest$|^get_session_execution_budget$|^record_session_run_usage$|^append_agent_run_event$/,
       );
       if (name === "get_session_execution_budget") {
         expect(args).toEqual({ p_session_id: "sess-1" });
@@ -3057,7 +3086,7 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("fails preparation by captured job and attempt before any run is bound", async () => {
     const { admin, rpc, insertedRuns } = buildAdminMock({ session: baseSession() });
     const job = baseJob({ attempt_count: 2 });
-    mocked.loadCompletedStageArtifacts.mockImplementationOnce(async () => {
+    mocked.loadAttemptPredecessors.mockImplementationOnce(async () => {
       job.attempt_count = 3;
       throw new Error("context unavailable");
     });

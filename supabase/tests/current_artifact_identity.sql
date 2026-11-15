@@ -80,6 +80,8 @@ select throws_ok($q$select * from pg_temp.reject_identity((select id from identi
   '55000','Review artifact changed. Refresh and try again.','same stage and version cannot authorize rejection of the unpinned artifact');
 select is((select count(*) from public.session_phase_completions where session_id=(select session_id from identity_session)),0::bigint,
   'wrong identity records no completion');
+select is((select count(*) from public.session_stage_approval_receipts where session_id=(select session_id from identity_session)),
+  0::bigint, 'a failed approval records no exact predecessor receipt');
 select is((select count(*) from public.session_artifact_feedback where session_id=(select session_id from identity_session)),0::bigint,
   'wrong identity records no feedback');
 
@@ -152,6 +154,55 @@ select is((select current_stage_slug from identity_repaired_approval),'identity-
   'exact new publication is reviewable after legacy identity repair');
 select is((select current_artifact_id from public.sessions where id=(select session_id from identity_session)),null::uuid,
   'approval clears the old exact identity when advancing to another stage');
+
+create temp table identity_receipt_first as
+select * from public.session_stage_approval_receipts where session_id=(select session_id from identity_session);
+select ok((select r.artifact_version=2 and r.artifact_digest=
+    encode(sha256(convert_to('New unambiguous publication','UTF8')),'hex')
+  and exists(select 1 from public.session_artifacts a where a.id=r.artifact_id
+    and a.artifact_json=to_jsonb('New unambiguous publication'::text))
+  from identity_receipt_first r), 'successful approval records the exact reviewed artifact and UTF-8 digest');
+
+create temp table identity_next_artifact as with inserted as (
+  insert into public.session_artifacts(workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
+  select workspace_id,session_id,stage_id,'identity-plan',3,to_jsonb('Nouvelle publication'::text)
+  from identity_receipt_first returning id
+) select id from inserted;
+select is((select artifact_id from public.load_attempt_predecessor_approvals((select session_id from identity_session))),
+  (select artifact_id from identity_receipt_first), 'a newer publication does not replace the approved predecessor');
+
+-- A later approval can preserve the original completion fact while accepting a
+-- different artifact for exactly the same stage after a reroute.
+update public.agent_jobs set status='success' where id=(select job_id from identity_repaired_approval);
+update public.agent_runs set status='success' where id=(select run_id from identity_repaired_approval);
+update public.sessions set current_stage_id=(select stage_id from identity_receipt_first),
+  phase_status='awaiting_review',current_artifact_version=3 where id=(select session_id from identity_session);
+update public.sessions set current_artifact_id=(select id from identity_next_artifact)
+where id=(select session_id from identity_session);
+select is((select count(*) from pg_temp.approve_identity((select id from identity_next_artifact),3)),
+  1::bigint, 'a rerouted stage can approve a new artifact');
+select is((select count(*) from public.session_stage_approval_receipts
+    where completion_id=(select completion_id from identity_receipt_first)),
+  2::bigint, 're-approval preserves the original completion and both accepted identities');
+select is((select artifact_text from public.load_attempt_predecessor_approvals((select session_id from identity_session))),
+  'Nouvelle publication', 'predecessor lookup uses the most recently approved artifact on reroute');
+select throws_ok($q$update public.session_stage_approval_receipts set artifact_version=1
+    where id=(select id from identity_receipt_first)$q$,
+  '23514','Stage approval receipts are immutable.','approval history cannot be rewritten');
+select ok(not has_function_privilege('authenticated','public.load_attempt_predecessor_approvals(uuid)','EXECUTE'),
+  'the predecessor body lookup is service-only');
+
+delete from public.session_phase_completions where id=(select completion_id from identity_receipt_first);
+select is((select count(*) from public.load_attempt_predecessor_approvals((select session_id from identity_session))),
+  0::bigint, 'an invalidated completion makes both approvals ineligible as current inputs');
+select is((select count(*) from public.session_stage_approval_receipts
+    where completion_id=(select completion_id from identity_receipt_first)),
+  2::bigint, 'completion invalidation retains durable approval history');
+insert into public.session_phase_completions(session_id,workspace_id,stage_id,stage_slug,completed_by_member_id)
+select session_id,workspace_id,stage_id,'identity-plan',approved_by_member_id from identity_receipt_first;
+select ok((select approval_receipt_id is null and artifact_id is null
+  from public.load_attempt_predecessor_approvals((select session_id from identity_session))),
+  'an unstamped legacy completion does not guess an approved artifact from history');
 
 -- A legacy direct stage transition also must not carry another stage's ID.
 update public.sessions set current_artifact_id=(select id from identity_legacy_artifacts where stage_slug='identity-plan-original'),
