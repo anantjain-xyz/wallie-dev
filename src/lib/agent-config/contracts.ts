@@ -45,8 +45,8 @@ const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
 };
 
 export function normalizeAgentProviderName(provider: string | undefined): AgentProvider | null {
-  if (!provider) return null;
-  return AGENT_PROVIDER_ALIASES[provider] ?? null;
+  if (!provider || !Object.hasOwn(AGENT_PROVIDER_ALIASES, provider)) return null;
+  return AGENT_PROVIDER_ALIASES[provider];
 }
 
 export function agentProviderSupportsEffort(provider: AgentProvider): boolean {

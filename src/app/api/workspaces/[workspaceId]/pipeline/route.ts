@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  pipelineApproversSchema,
+  pipelineOperatingRulesSchema,
+  pipelineStageFields,
+} from "@/lib/pipeline/stage-schema";
 import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -22,18 +27,11 @@ const stageInputSchema = z.object({
   // id is optional — present for existing stages that should be updated,
   // absent for newly added stages.
   id: z.string().uuid().nullish(),
-  slug: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "slug must be lowercase kebab-case"),
-  name: z.string().min(1).max(80),
-  description: z.string().max(500).default(""),
-  promptTemplateMd: z.string().max(20000).default(""),
+  ...pipelineStageFields,
   // Optional so older clients preserve an existing policy instead of
   // accidentally resetting it. Current editors always send this field.
   anyoneCanApprove: z.boolean().optional(),
-  approverMemberIds: z.array(z.string().uuid()).default([]),
+  approverMemberIds: pipelineApproversSchema,
 });
 
 const pipelineUpdateSchema = z.object({
@@ -41,7 +39,7 @@ const pipelineUpdateSchema = z.object({
   // Optional, not defaulted: an omitted field must preserve the pipeline's
   // existing operating rules (e.g. a stale client that predates this field),
   // not silently clear them. An explicit "" still clears intentionally.
-  operatingRulesMd: z.string().max(20000).optional(),
+  operatingRulesMd: pipelineOperatingRulesSchema.optional(),
   stages: z.array(stageInputSchema).min(1, "Pipeline must have at least one stage."),
 });
 
