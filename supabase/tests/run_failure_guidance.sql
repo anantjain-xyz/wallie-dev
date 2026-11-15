@@ -64,14 +64,15 @@ create temp table failures as select fixtures.*,failure,code from (values
   (6,'Unclassified failure api_key=private-value','unknown')
 ) as cases(fixture,failure,code) cross join lateral pg_temp.failure_fixture(fixture) fixtures;
 
-insert into public.agent_run_messages(agent_run_id,workspace_id,kind,message_md)
-select run_id,'b1b2c3d4-0001-4000-8000-000000000001','error','**Error:** Test failed in agent output'
+insert into public.agent_run_events(agent_run_id,workspace_id,attempt_count,sequence,kind,payload)
+select run_id,'b1b2c3d4-0001-4000-8000-000000000001',1,1,'terminal',
+  '{"status":"failed","message":"Test failed in agent output"}'::jsonb
 from failures;
 select is(public.fail_session_job_attempt(job_id,1,failure,false,3,run_id),'error','failure finalizes the exact run: '||code)
 from failures;
 select is((select message_md::jsonb->>'code' from public.agent_run_messages where agent_run_id=failures.run_id and kind='run_failure'),
   code,'terminal metadata survives independently from agent/test errors: '||code) from failures;
-select is((select count(*) from public.agent_run_messages where agent_run_id=failures.run_id and kind='error'),1::bigint,
+select is((select count(*) from public.agent_run_events where agent_run_id=failures.run_id and kind='terminal'),1::bigint,
   'terminal persistence retains the separate agent activity: '||code) from failures;
 select is(public.fail_session_job_attempt(job_id,1,'Checkpoint publication ref changed.',false,3,run_id),'stale',
   'late failure cannot replace a terminal cause: '||code) from failures;

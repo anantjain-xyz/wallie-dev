@@ -84,9 +84,6 @@ select public.adopt_session_checkpoint_publication(c.run_id, c.token, null, null
 from export_checkpoint_claim c;
 
 insert into public.agent_run_messages(id, agent_run_id, workspace_id, kind, message_md)
-select '53810000-0002-4000-8000-000000000001', f.run_id, f.workspace_id, 'assistant', 'Legacy unsequenced note'
-from export_run f;
-insert into public.agent_run_messages(id, agent_run_id, workspace_id, kind, message_md)
 select '53810000-0002-4000-8000-000000000003', f.run_id, f.workspace_id, 'worker_error', 'Worker diagnostic'
 from export_run f;
 insert into public.session_artifacts(id, session_id, workspace_id, stage_slug, version, artifact_json)
@@ -146,8 +143,8 @@ reset role;
 select is((select count(*) from internal.run_export_entries e join export_run r on e.run_id = r.run_id
   where e.record_kind = 'event'), 4::bigint, 'all recorded exact-run event identities are enumerated');
 select is((select count(*) from internal.run_export_entries e join export_run r on e.run_id = r.run_id
-  where e.record_kind = 'legacy_message' or e.record_id = '53810000-0002-4000-8000-000000000001'),
-  0::bigint, 'historical unsequenced activity is excluded from the roster');
+  where e.record_kind = 'legacy_message'),
+  0::bigint, 'the export roster only uses canonical transcript events');
 select is((select e.metadata->>'kind' from internal.run_export_entries e join export_run r on e.run_id = r.run_id
   where e.record_kind = 'run_diagnostic' and e.record_id = '53810000-0002-4000-8000-000000000003'),
   'worker_error', 'current worker diagnostics remain exportable');

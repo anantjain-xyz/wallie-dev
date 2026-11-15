@@ -14,6 +14,10 @@ Limits accept whole days from 1 to 3650 and apply to existing content. Workers
 mark expired transcripts and evidence before purging their data. Catalog entries
 continue to explain why content is unavailable.
 
+The ordered-events migration removes the superseded transcript copies and
+expires exports that included them. It keeps explicit worker diagnostics and
+any recorded ordered events.
+
 ## Export contract
 
 A worker freezes a workspace catalog snapshot on the first claim. A lease and

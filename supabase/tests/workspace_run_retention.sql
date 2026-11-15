@@ -42,9 +42,11 @@ insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_
   ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000001',
     'worker_progress', 'Current worker diagnostic'),
   ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000002',
-    'run_failure', '{"version":1,"category":"timeout","code":"timeout"}'),
+    'run_failure', '{"version":1,"category":"timeout","code":"timeout"}');
+select throws_ok($$insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_md) values
   ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000006',
-    'progress', 'Historical unsequenced activity');
+    'progress', 'Unsequenced activity')$$, '23514', null,
+  'the diagnostics table rejects unsequenced transcript writes');
 insert into public.agent_run_events(agent_run_id, workspace_id, attempt_count, sequence, kind, payload)
 select r.id, r.workspace_id, r.attempt_count, seq, 'text', '{"text":"Ordered transcript body"}'::jsonb
 from public.agent_runs r
@@ -118,13 +120,10 @@ select ok(not has_function_privilege(current_user, 'public.save_workspace_run_re
 select is((select count(*) from public.agent_run_events where agent_run_id =
   '53800000-0005-4000-8000-000000000001'), 0::bigint,
   'expiry immediately hides ordered activity before physical deletion');
-select is((select count(*) from public.agent_run_messages where agent_run_id =
-  '53800000-0005-4000-8000-000000000006'), 0::bigint,
-  'historical activity is outside authenticated diagnostics access');
 select ok((select transcript_expired_at is null and not has_events
   from public.list_workspace_run_catalog('53800000-0001-4000-8000-000000000001',
     p_run_id => '53800000-0005-4000-8000-000000000006')),
-  'historical activity does not produce an ordered transcript expiry marker');
+  'a run without an ordered transcript does not get a transcript expiry marker');
 select is((select count(*) from public.agent_run_messages where agent_run_id =
   '53800000-0005-4000-8000-000000000001' and kind = 'worker_progress'), 1::bigint,
   'current worker diagnostics stay readable after ordered activity expires');

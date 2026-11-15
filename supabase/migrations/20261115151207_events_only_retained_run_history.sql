@@ -9,7 +9,6 @@ alter policy agent_run_messages_select_membership on public.agent_run_messages u
   workspace_id in (select internal.current_user_workspace_ids())
   and exists (select 1 from public.workspaces w
     where w.id = agent_run_messages.workspace_id and w.deletion_requested_at is null)
-  and kind in ('run_failure', 'worker_error', 'worker_progress', 'worker_completion')
 );
 
 do $$
@@ -554,3 +553,11 @@ update public.run_exports j set status = 'expired', failure_code = 'source_withh
 where j.status in ('running', 'completed') and exists (
   select 1 from internal.run_export_entries i where i.export_id = j.id and i.record_kind = 'legacy_message'
 );
+
+-- Discard the old transcript copies during the format cutover. Diagnostics
+-- remain separate from transcript retention and exports use the ordered events.
+delete from public.agent_run_messages
+where kind not in ('run_failure', 'worker_error', 'worker_progress', 'worker_completion');
+
+alter table public.agent_run_messages add constraint agent_run_messages_diagnostic_kind
+  check (kind in ('run_failure', 'worker_error', 'worker_progress', 'worker_completion'));
