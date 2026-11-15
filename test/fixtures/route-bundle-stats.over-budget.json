@@ -10,6 +10,11 @@
     "firstLoadChunkPaths": [".next/static/chunks/sessions.js"]
   },
   {
+    "route": "/w/[workspaceSlug]/runs",
+    "firstLoadUncompressedJsBytes": 1150000,
+    "firstLoadChunkPaths": [".next/static/chunks/runs.js"]
+  },
+  {
     "route": "/w/[workspaceSlug]/settings",
     "firstLoadUncompressedJsBytes": 1320401,
     "firstLoadChunkPaths": [".next/static/chunks/settings.js"]
@@ -18,6 +23,11 @@
     "route": "/w/[workspaceSlug]/sessions/[sessionNumber]",
     "firstLoadUncompressedJsBytes": 1350000,
     "firstLoadChunkPaths": [".next/static/chunks/detail.js"]
+  },
+  {
+    "route": "/w/[workspaceSlug]/runs/[runId]",
+    "firstLoadUncompressedJsBytes": 1350000,
+    "firstLoadChunkPaths": [".next/static/chunks/run-detail.js"]
   },
   {
     "route": "/w/[workspaceSlug]/onboarding",

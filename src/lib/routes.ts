@@ -56,6 +56,14 @@ export function workspaceSessionDetailPath(
   return withSearchParams(`${workspaceSessionsPath(workspaceSlug)}/${sessionNumber}`, query);
 }
 
+export function workspaceRunsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/runs`, query);
+}
+
+export function workspaceRunDetailPath(workspaceSlug: string, runId: string) {
+  return `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`;
+}
+
 export function workspaceSettingsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }

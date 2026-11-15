@@ -6,8 +6,10 @@ export const establishedMaximumBytes = {
   "shared/root": 450 * 1024,
   pipeline: 750 * 1024,
   sessions: 750 * 1024,
+  runs: 750 * 1024,
   settings: 850 * 1024,
   detail: 900 * 1024,
+  "run-detail": 900 * 1024,
   onboarding: 625 * 1024,
 } as const;
 
@@ -23,8 +25,10 @@ export type RouteBundleStat = Readonly<{
 const routeByBudget: Record<Exclude<BudgetName, "shared/root">, string> = {
   pipeline: "/w/[workspaceSlug]",
   sessions: "/w/[workspaceSlug]/sessions",
+  runs: "/w/[workspaceSlug]/runs",
   settings: "/w/[workspaceSlug]/settings",
   detail: "/w/[workspaceSlug]/sessions/[sessionNumber]",
+  "run-detail": "/w/[workspaceSlug]/runs/[runId]",
   onboarding: "/w/[workspaceSlug]/onboarding",
 };
 
