@@ -104,9 +104,6 @@ from public.session_phase_completions c join legacy_target target using (session
 select throws_ok($$select pg_temp.pin_manifest(job_id,run_id,jsonb_set(exact_input.value,'{0,artifactVersion}','2'))
   from approval_target cross join exact_input$$, '23514', 'The predecessor is not the exact approved artifact.',
   'a newer unapproved artifact version cannot replace the reviewed version');
-select throws_ok($$select pg_temp.pin_manifest(job_id,run_id,jsonb_set(exact_input.value,'{0,stageSlug}','"wrong-stage"'))
-  from approval_target cross join exact_input$$, '23514', 'The predecessor is not the exact approved artifact.',
-  'the correct receipt cannot be assigned a different prompt slug');
 select throws_ok($$select pg_temp.pin_manifest(job_id,run_id,jsonb_set(exact_input.value,'{0,artifactText}','"private body"'))
   from approval_target cross join exact_input$$, '23514', 'The predecessor is not the exact approved artifact.',
   'predecessor metadata cannot persist raw artifact text');
@@ -116,11 +113,13 @@ select throws_ok($$select pg_temp.pin_manifest(job_id,run_id,legacy_input.value)
 select throws_ok($$select pg_temp.pin_manifest(job_id,run_id,exact_input.value)
   from legacy_target cross join exact_input$$, '23514', 'The predecessor is not the exact approved artifact.',
   'an approval receipt cannot cross sessions');
-select ok(pg_temp.pin_manifest(job_id,run_id,legacy_input.value), 'an old completion can be recorded with an explicit unverified marker')
+update public.pipeline_stages set slug = 'plan-renamed'
+where id = (select (value #>> '{0,stageId}')::uuid from exact_input);
+select ok(pg_temp.pin_manifest(job_id,run_id,legacy_input.value), 'a legacy completion can keep the prompt key captured before a rename')
   from legacy_target cross join legacy_input;
 select ok(pg_temp.pin_manifest(job_id,run_id,exact_input.value), 'the exact approval is pinned with the actual attempt')
   from approval_target cross join exact_input;
-select is(m.predecessors, exact_input.value, 'the manifest freezes the reviewed artifact metadata')
+select is(m.predecessors, exact_input.value, 'the manifest freezes the reviewed artifact and pre-rename prompt key')
   from public.session_attempt_manifests m join approval_target using (run_id) cross join exact_input;
 select is(m.definition_digest, revision.canonical_digest, 'the admitted definition digest is copied from the immutable revision')
   from public.session_attempt_manifests m join approval_target using (run_id)

@@ -143,11 +143,13 @@ begin
   end if;
 
   -- Only exact approvals still linked to an effective stage completion can
-  -- authorize an artifact identity. Legacy markers never claim artifact bytes.
+  -- authorize an artifact identity. The captured slug is the renderer's key
+  -- and can differ from the live label after a concurrent rename.
   for reference in select value from jsonb_array_elements(p_predecessors) loop
     if jsonb_typeof(reference) is distinct from 'object'
       or not reference ?& array['stageId', 'stageSlug', 'status']
       or jsonb_typeof(reference->'stageSlug') is distinct from 'string'
+      or btrim(reference->>'stageSlug') = ''
       or jsonb_typeof(reference->'status') is distinct from 'string'
       or jsonb_typeof(reference->'stageId') not in ('string', 'null')
       or (reference->>'stageId' is not null and reference->>'stageId' !~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$') then
@@ -168,10 +170,7 @@ begin
     select receipt.* into predecessor_receipt from public.session_stage_approval_receipts receipt
     join public.session_phase_completions completion on completion.id = receipt.completion_id
       and (completion.session_id, completion.workspace_id, completion.stage_id) = (receipt.session_id, receipt.workspace_id, receipt.stage_id)
-    left join public.pipeline_stages stage on (stage.workspace_id, stage.pipeline_id, stage.id) =
-      (owner.workspace_id, owner.pipeline_id, completion.stage_id)
     where (receipt.session_id, receipt.workspace_id, receipt.stage_id) = (owner.id, owner.workspace_id, predecessor_stage)
-      and coalesce(stage.slug, completion.stage_slug) = predecessor_slug
     order by receipt.approval_number desc limit 1;
     case reference->>'status'
       when 'approved' then
@@ -188,11 +187,9 @@ begin
       when 'legacy_unverified' then
         if found or (select count(*) from jsonb_object_keys(reference)) <> 3 or not exists (
           select 1 from public.session_phase_completions completion
-          left join public.pipeline_stages stage on (stage.workspace_id, stage.pipeline_id, stage.id) =
-            (owner.workspace_id, owner.pipeline_id, completion.stage_id)
           where (completion.session_id, completion.workspace_id) = (owner.id, owner.workspace_id)
             and completion.stage_id is not distinct from predecessor_stage
-            and coalesce(stage.slug, completion.stage_slug) = predecessor_slug
+            and (predecessor_stage is not null or completion.stage_slug = predecessor_slug)
         ) then raise exception 'The predecessor has no matching unverified legacy completion.' using errcode = '23514'; end if;
       else raise exception 'Invalid predecessor input identity.' using errcode = '23514';
     end case;

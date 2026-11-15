@@ -22,6 +22,7 @@ import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   createAgentRunner,
+  DEFAULT_AGENT_RUNNER_CONFIG,
   DEFAULT_OPENCODE_MODEL,
   loadWorkspaceAgentConfig,
 } from "@/lib/agent-runner";
@@ -581,6 +582,10 @@ async function runStage(input: {
       throw new ExecutionOwnershipLostError();
     throwIfAborted(signal);
     const checkoutSha = resumed ? await readSourceBase(sandbox, signal) : gitInput.input_sha;
+    const maxTurns =
+      provider === "claude-code"
+        ? (config.maxTurns ?? DEFAULT_AGENT_RUNNER_CONFIG.maxTurns)
+        : undefined;
     if (
       !(await pinSessionAttemptManifest({
         admin,
@@ -593,9 +598,7 @@ async function runStage(input: {
         credentialOwnerMemberId: session.creator_member_id,
         workerRuntime: input.workerRuntime ?? "node",
         ...(agentProviderSupportsEffort(provider) ? { effort: config.effort } : {}),
-        ...(provider === "claude-code" && config.maxTurns !== undefined
-          ? { maxTurns: config.maxTurns }
-          : {}),
+        maxTurns,
         signal,
       }))
     ) {
@@ -607,7 +610,7 @@ async function runStage(input: {
     const runner = createSessionAgentRunner({
       admin,
       effort: config.effort,
-      maxTurns: config.maxTurns,
+      maxTurns,
       model: config.model,
       provider,
       session,

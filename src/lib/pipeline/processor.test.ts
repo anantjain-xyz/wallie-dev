@@ -1637,7 +1637,7 @@ describe("processPipelineJob (generic stage runner)", () => {
   });
 
   it("passes the configured Claude turn budget and resolved non-main repository prompt fields", async () => {
-    const { admin } = buildAdminMock({
+    const { admin, rpc } = buildAdminMock({
       session: baseSession({ github_repository_id: "repo-1" }),
       agentConfig: [
         { key: "agent_provider", value_json: "claude-code" },
@@ -1649,6 +1649,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
       claudeCode: expect.objectContaining({ maxTurns: 17 }),
     });
+    expect(rpc).toHaveBeenCalledWith(
+      "pin_session_attempt_manifest",
+      expect.objectContaining({ p_max_turns: 17 }),
+    );
     expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -3406,7 +3410,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("resolves the session owner's Anthropic API key for Claude Code runs", async () => {
     const session = baseSession();
-    const { admin } = buildAdminMock({
+    const { admin, rpc } = buildAdminMock({
       session,
       agentConfig: [
         { key: "agent_effort", value_json: "max" },
@@ -3425,9 +3429,14 @@ describe("processPipelineJob (generic stage runner)", () => {
       claudeCode: {
         loadCredential: expect.any(Function),
         effort: "max",
+        maxTurns: 5,
         model: "claude-sonnet-4-5",
       },
     });
+    expect(rpc).toHaveBeenCalledWith(
+      "pin_session_attempt_manifest",
+      expect.objectContaining({ p_max_turns: 5 }),
+    );
   });
 
   it("preserves the configured effort for Codex runs", async () => {
