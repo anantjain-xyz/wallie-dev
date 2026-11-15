@@ -9,7 +9,7 @@ Each workspace gets one default factory during workspace creation. The migration
 | Revision   | Published definition, author UUID, creation time, and optional source draft.                                                                                               |
 | Activation | Selected revision, author UUID, and creation time. Activation numbers start at 1 and increase by 1 within each factory. The highest number identifies the active revision. |
 
-Drafts and revisions each store a schema version and a lowercase SHA-256 digest of the exact UTF-8 bytes in `definition_json`. Database checks bind the digest to those bytes. The definition compiler establishes the canonical serialization. Workspace and factory keys keep draft, revision, and activation references inside the owning factory.
+Drafts and revisions each store a schema version and a lowercase SHA-256 digest of the exact UTF-8 bytes in `definition_json`. Database checks bind the digest to those bytes. Workspace and factory keys keep draft, revision, and activation references inside the owning factory. See the [serial factory definition compiler](serial-factory-compiler.md) for canonical serialization.
 
 Activation history is append-only. An activation at number `N + 1` expects `N` as the current activation. A rollback records a new activation that points to a previous revision, so every activation remains distinct even when it reuses a revision.
 
