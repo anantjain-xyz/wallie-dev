@@ -20,3 +20,5 @@ Active workspace members can read factories, revisions, and activations through 
 The migration adds factory definition provenance to sessions without rewriting their rows. Pre-enrollment sessions report `legacy` and have a null factory definition revision. Current creation paths also use `legacy` until admission supplies an exact revision. A session marked `pinned` must reference a revision in its workspace. The database preserves that provenance for the life of the session.
 
 A legacy session retains its existing session ID, workspace number, pipeline, stage links, artifacts, and run history. Its legacy marker records that the session predates definition enrollment. The current factory definition supplies no evidence about the configuration that produced that history.
+
+See [Factory definition activation](factory-definition-activation.md) for draft, publish, and rollback commands.

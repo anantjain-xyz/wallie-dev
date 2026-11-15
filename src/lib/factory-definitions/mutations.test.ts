@@ -1,0 +1,253 @@
+import { createClient } from "@supabase/supabase-js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Database } from "@/lib/supabase/database.types";
+
+import { compileFactoryDefinition } from "./compiler";
+import { mutateFactoryDefinition } from "./mutations";
+import type { FactoryDefinitionCatalog } from "./references";
+import { recompileStoredFactoryDefinition } from "./stored-definition";
+
+const mocks = vi.hoisted(() => ({ loadCatalog: vi.fn(), activationRequirements: vi.fn() }));
+vi.mock("./authority", () => ({
+  loadFactoryDefinitionCatalog: mocks.loadCatalog,
+  factoryActivationRequirements: mocks.activationRequirements,
+}));
+
+const workspaceId = "54200000-0001-4000-8000-000000000001";
+const factoryId = "54200000-0001-4000-8000-000000000002";
+const actorUserId = "54200000-0001-4000-8000-000000000003";
+const pipelineId = "54200000-0001-4000-8000-000000000004";
+const repositoryId = "54200000-0001-4000-8000-000000000005";
+const stageId = "54200000-0001-4000-8000-000000000006";
+const draftId = "54200000-0001-4000-8000-000000000007";
+const revisionId = "54200000-0001-4000-8000-000000000008";
+const memberId = "54200000-0001-4000-8000-000000000009";
+const createdAt = "2026-11-15T20:00:00.000Z";
+
+const catalog: FactoryDefinitionCatalog = {
+  workspaceId,
+  pipelines: [{ id: pipelineId, workspaceId, aliases: ["Current pipeline"] }],
+  repositories: [{ id: repositoryId, workspaceId, aliases: ["wallie/factory"] }],
+  executionPolicyRevisions: [],
+  deliveryPolicyRevisions: [],
+  skills: [],
+  tools: [],
+  approvers: [{ id: memberId, workspaceId }],
+  sandboxProviders: ["vercel"],
+};
+const source = {
+  kind: "structured",
+  value: {
+    schemaVersion: 1,
+    kind: "serial",
+    pipeline: "Current pipeline",
+    repository: "wallie/factory",
+    sandboxProvider: "vercel",
+    agent: {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      concurrencyLimit: 1,
+      stallTimeoutMs: 60_000,
+      maxRetries: 1,
+      maxTurns: 5,
+    },
+    stages: [
+      {
+        id: stageId,
+        slug: "prepare",
+        name: "Préparer",
+        promptTemplateMd: "Use {{session.prompt}}.",
+        approverMemberIds: [memberId],
+      },
+    ],
+  },
+} as const;
+const compiled = compileFactoryDefinition(source, catalog);
+if (!compiled.ok) throw new Error("The factory definition test fixture did not compile.");
+
+function fixture(handler: (request: { url: URL; body?: unknown }) => Response) {
+  const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    if (url.pathname.endsWith("/factories")) {
+      expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+      expect(url.searchParams.get("is_default")).toBe("eq.true");
+      return Response.json([{ id: factoryId }]);
+    }
+    return handler({
+      url,
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+    });
+  });
+  const admin = createClient<Database>("http://localhost:9999", "test-service-role", {
+    global: { fetch },
+  });
+  return { admin, fetch };
+}
+
+function assertStoredScope(url: URL, expectedId: string) {
+  expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+  expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+  expect(url.searchParams.get("id")).toBe(`eq.${expectedId}`);
+}
+
+const stored = {
+  definition_json: compiled.definitionJson,
+  canonical_digest: compiled.canonicalDigest,
+};
+
+describe("factory definition commands", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.loadCatalog.mockResolvedValue(catalog);
+    mocks.activationRequirements.mockReturnValue({
+      enabledSandboxProviders: ["vercel"],
+      requiredProbes: ["git", "codexExternalSandbox"],
+    });
+  });
+
+  it("saves compiler bytes and the explicit workspace and actor scope", async () => {
+    const { admin } = fixture(({ url, body }) => {
+      expect(url.pathname).toMatch(/\/rpc\/save_factory_definition_draft$/);
+      expect(body).toEqual({
+        p_workspace_id: workspaceId,
+        p_factory_id: factoryId,
+        p_actor_user_id: actorUserId,
+        p_expected_activation_number: 0,
+        p_definition_json: stored.definition_json,
+        p_canonical_digest: stored.canonical_digest,
+      });
+      return Response.json({
+        id: draftId,
+        base_activation_number: null,
+        schema_version: 1,
+        canonical_digest: stored.canonical_digest,
+        created_at: createdAt,
+      });
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: { action: "draft", expectedActivationNumber: 0, source },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        draft: {
+          id: draftId,
+          baseActivationNumber: null,
+          schemaVersion: 1,
+          canonicalDigest: stored.canonical_digest,
+          createdAt,
+        },
+      },
+    });
+  });
+
+  it("publishes only a scoped stored draft and passes server-derived capability requirements", async () => {
+    const { admin } = fixture(({ url, body }) => {
+      if (url.pathname.endsWith("/factory_definition_drafts")) {
+        assertStoredScope(url, draftId);
+        return Response.json([stored]);
+      }
+      expect(url.pathname).toMatch(/\/rpc\/publish_factory_definition_draft$/);
+      expect(body).toEqual({
+        p_workspace_id: workspaceId,
+        p_factory_id: factoryId,
+        p_actor_user_id: actorUserId,
+        p_expected_activation_number: 5,
+        p_draft_id: draftId,
+        p_enabled_sandbox_providers: ["vercel"],
+        p_required_probes: ["git", "codexExternalSandbox"],
+      });
+      return Response.json({
+        id: "activation",
+        revision_id: revisionId,
+        activation_number: 6,
+        previous_activation_number: 5,
+        created_at: createdAt,
+      });
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: { action: "publish", expectedActivationNumber: 5, draftId },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        activation: {
+          id: "activation",
+          revisionId,
+          activationNumber: 6,
+          previousActivationNumber: 5,
+          createdAt,
+        },
+      },
+    });
+  });
+
+  it("rejects rollback when a stored approver is absent from the live catalog", async () => {
+    mocks.loadCatalog.mockResolvedValue({ ...catalog, approvers: [] });
+    const { admin, fetch } = fixture(({ url }) => {
+      expect(url.pathname).toMatch(/\/factory_definition_revisions$/);
+      assertStoredScope(url, revisionId);
+      return Response.json([stored]);
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: { action: "rollback", expectedActivationNumber: 2, revisionId },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 422,
+      diagnostics: [{ path: ["stages", 0, "approverMemberIds", 0], code: "missing_reference" }],
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a stale rollback head returned by the database command", async () => {
+    const { admin } = fixture(({ url, body }) => {
+      if (url.pathname.endsWith("/factory_definition_revisions")) return Response.json([stored]);
+      expect(url.pathname).toMatch(/\/rpc\/rollback_factory_definition$/);
+      expect(body).toMatchObject({ p_expected_activation_number: 2, p_revision_id: revisionId });
+      return Response.json({ code: "PT409", message: "Reload before retrying." }, { status: 409 });
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: { action: "rollback", expectedActivationNumber: 2, revisionId },
+      }),
+    ).resolves.toEqual({ ok: false, status: 409, error: "Reload before retrying." });
+  });
+});
+
+describe("stored factory definition identity", () => {
+  it("preserves the exact archived bytes when display aliases change", () => {
+    expect(
+      recompileStoredFactoryDefinition(stored.definition_json, stored.canonical_digest, {
+        ...catalog,
+        repositories: [{ id: repositoryId, workspaceId, aliases: ["renamed/factory"] }],
+      }),
+    ).toEqual(compiled);
+  });
+
+  it("rejects binding an absent stable ID to a different component via an alias", () => {
+    const otherId = "54200000-0001-4000-8000-000000000010";
+    expect(
+      recompileStoredFactoryDefinition(stored.definition_json, stored.canonical_digest, {
+        ...catalog,
+        repositories: [{ id: otherId, workspaceId, aliases: [repositoryId] }],
+      }),
+    ).toMatchObject({ ok: false, diagnostics: [{ path: [], code: "invalid_schema" }] });
+  });
+});

@@ -6350,6 +6350,33 @@ export type Database = {
         }
         Returns: boolean
       }
+      publish_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       publish_session_job_attempt: {
         Args: {
           p_artifact_json: string
@@ -6632,6 +6659,33 @@ export type Database = {
         }
         Returns: Json
       }
+      rollback_factory_definition: {
+        Args: {
+          p_actor_user_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       save_delivery_policy: {
         Args: {
           p_actor_user_id: string
@@ -6674,6 +6728,33 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "execution_policy_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_canonical_digest: string
+          p_definition_json: string
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number | null
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_drafts"
           isOneToOne: true
           isSetofReturn: false
         }
