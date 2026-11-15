@@ -256,6 +256,8 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     execution_exhausted_at: null,
     execution_exhaustion_code: null,
     execution_exhaustion_detail: null,
+    factory_definition_provenance: "legacy",
+    factory_definition_revision_id: null,
     ...overrides,
   };
 }

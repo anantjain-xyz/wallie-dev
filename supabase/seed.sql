@@ -1092,6 +1092,11 @@ $$;
 -- Re-enable triggers.
 SET session_replication_role = DEFAULT;
 
+-- Workspace inserts above bypassed the default-factory provisioning trigger.
+INSERT INTO public.factories(workspace_id)
+SELECT id FROM public.workspaces WHERE id = 'b1b2c3d4-0001-4000-8000-000000000001'
+ON CONFLICT (workspace_id) WHERE is_default DO NOTHING;
+
 -- Drop the seeding helper so it doesn't linger in the database.
 DROP FUNCTION IF EXISTS internal.seed_agent_run(
   uuid, uuid, uuid, text, uuid, text, text, text, int, timestamptz, timestamptz);
