@@ -5,6 +5,7 @@ import {
   normalizeCreateSessionPayload,
 } from "@/features/sessions/create";
 import type { WallieSessionRepository } from "@/features/wallie/types";
+import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { generateSessionTitle } from "@/lib/sessions/generate-title";
@@ -246,13 +247,26 @@ export async function POST(request: Request) {
       return creationRequestErrorResponse(error);
     }
   }
+  let pinned: Awaited<ReturnType<typeof loadActiveFactoryExecution>>;
+  try {
+    pinned = await loadActiveFactoryExecution(admin, normalized.workspaceId);
+  } catch (error) {
+    return NextResponse.json(
+      { error: getErrorMessage(error, "Wallie could not resolve the active factory definition.") },
+      { status: 500 },
+    );
+  }
   const [onboardingResult, firstRunPrereqsResult, linearIssueResult] = await Promise.all([
     access.context.supabase
       .from("workspace_onboarding")
       .select("status, selected_github_repository_id")
       .eq("workspace_id", normalized.workspaceId)
       .maybeSingle(),
-    loadSessionFirstRunPrerequisites({ admin, workspaceId: normalized.workspaceId }).then(
+    loadSessionFirstRunPrerequisites({
+      admin,
+      workspaceId: normalized.workspaceId,
+      ...(pinned ? { pinned } : {}),
+    }).then(
       (data) => ({ data, error: null }),
       (error: unknown) => ({ data: null, error }),
     ),
@@ -291,11 +305,12 @@ export async function POST(request: Request) {
 
   let githubRepositoryId: string | null = null;
   let repositoryForPreflight: WallieSessionRepository | null = null;
+  const requestedRepositoryId = pinned?.repositoryId ?? normalized.githubRepositoryId;
   try {
-    if (normalized.githubRepositoryId) {
+    if (requestedRepositoryId) {
       const repository = await loadSessionRepositoryById({
         admin,
-        repositoryId: normalized.githubRepositoryId,
+        repositoryId: requestedRepositoryId,
         requireActive: true,
         workspaceId: normalized.workspaceId,
       });
@@ -341,6 +356,7 @@ export async function POST(request: Request) {
     await assertSessionSandboxCapabilityReady({
       admin,
       agentConfig,
+      ...(pinned ? { definitionDigest: pinned.canonicalDigest } : {}),
       repository: repositoryForPreflight,
       sandboxConnection: firstRunPrereqsResult.data.vercelSandboxConnection,
       workspaceId: normalized.workspaceId,
@@ -374,6 +390,9 @@ export async function POST(request: Request) {
       modelName: agentConfig.model,
       modelProvider: agentConfig.provider,
       promptMd: normalized.promptMd || linearIssue?.description.trim() || linearIssue?.title || "",
+      ...(normalized.restartOfSessionId
+        ? { restartOfSessionId: normalized.restartOfSessionId }
+        : {}),
       selectedStageIds: normalized.selectedStageIds,
       title,
       workspaceId: normalized.workspaceId,
@@ -389,6 +408,15 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (getErrorCode(error) === "P0005") return creationRequestErrorResponse(error);
+    if (getErrorCode(error) === "PT404") {
+      return NextResponse.json({ error: "The session to restart was not found." }, { status: 404 });
+    }
+    if (getErrorCode(error) === "PT422") {
+      return NextResponse.json(
+        { error: getErrorMessage(error, "The pinned factory is not ready to start.") },
+        { status: 422 },
+      );
+    }
     if (getErrorCode(error) === "P0002") {
       return NextResponse.json(
         { error: getErrorMessage(error, "Workspace pipeline is not configured.") },

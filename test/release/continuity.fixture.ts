@@ -12,6 +12,8 @@ import { expect, it, vi } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 
 import type { AgentEvent } from "@/lib/agent-runner/types";
+import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
+import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createArtifactSourceAnchor } from "@/features/sessions/review/source-anchor";
 import { loadRunTranscript } from "@/features/wallie/run-transcript";
@@ -87,7 +89,15 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   };
   try {
     const { remote, writer, baseSha } = await createGitFixture(root);
-    let phase: "plan" | "build" | "stale" | "revision" | "cancel" | "capture-paused" = "plan";
+    let phase:
+      | "plan"
+      | "build"
+      | "stale"
+      | "revision"
+      | "cancel"
+      | "capture-paused"
+      | "frozen-first"
+      | "frozen-next" = "plan";
     const cancelStarted = deferred<string>();
     finishCanceledRun = deferred<void>();
     let planSha = "";
@@ -103,6 +113,25 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         assert(input.sandbox && input.runId);
         const mode = phase;
         const sandbox = input.sandbox;
+        if (mode === "frozen-first" || mode === "frozen-next") {
+          expect(input.prompt).toContain("Frozen operating rules");
+          expect(input.prompt).toContain("Original pinned session title");
+          expect(input.prompt).toContain(`Pinned template ${mode}`);
+          expect(input.prompt).not.toContain("Edited live template");
+          if (mode === "frozen-next") {
+            expect(input.prompt).toContain("Approved frozen-first artifact");
+            expect(await sandbox.readFile(`${sandbox.repoPath}/src/frozen.ts`)).toBe(planCode);
+          } else {
+            await sandbox.writeFile(`${sandbox.repoPath}/src/frozen.ts`, planCode);
+          }
+          yield {
+            type: "completion",
+            taskComplete: true,
+            summary: "Frozen execution completed",
+            finalOutput: `# Approved ${mode} artifact`,
+          } satisfies AgentEvent;
+          return;
+        }
         if (mode === "cancel") {
           yield initialRunEvent;
           cancelStarted.resolve(input.runId);
@@ -1103,6 +1132,167 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(nativeCheckpoints).toHaveLength(1);
     expect(nativeCheckpoints[0]?.attempt_count).toBe(nativeDispatch.attempt_count);
 
+    const factory = await checked(
+      admin.from("factories").select("id").eq("workspace_id", ids.workspaceId).single(),
+    );
+    const [nextStageId, firstStageId] = ids.stageIds;
+    const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
+      schemaVersion: 1,
+      kind: "serial",
+      pipelineId: ids.pipelineId,
+      repositoryId: ids.repositoryId,
+      sandboxProvider: "e2b",
+      executionPolicyRevisionId: null,
+      deliveryPolicyRevisionId: null,
+      skillIds: [],
+      toolIds: [],
+      agent: {
+        provider: "codex",
+        model: "gpt-5.5",
+        effort: "high",
+        concurrencyLimit: 4,
+        stallTimeoutMs: 120_000,
+        maxRetries: 2,
+        maxTurns: 5,
+      },
+      operatingRulesMd: "Frozen operating rules",
+      operatingRuleStageIds: [],
+      stages: [firstStageId, nextStageId].map((id, index) => ({
+        id,
+        slug: index === 0 ? "frozen-first" : "frozen-next",
+        name: index === 0 ? "Frozen First" : "Frozen Next",
+        description: "",
+        anyoneCanApprove: true,
+        approverMemberIds: [],
+        previousStageIds: index === 0 ? [] : [firstStageId],
+        promptTemplateMd:
+          index === 0
+            ? "Pinned template frozen-first {{session.title}}"
+            : "Pinned template frozen-next {{session.title}} {{artifact.previousStages.frozen-first}}",
+      })),
+    });
+    await checked(
+      admin.from("user_codex_credentials").insert({
+        user_id: userId,
+        credential_type: "codex_access_token",
+        encrypted_credential: "unused-local-fixture",
+      }),
+    );
+    const connection = await checked(
+      admin
+        .from("workspace_e2b_sandbox_connections")
+        .insert({
+          workspace_id: ids.workspaceId,
+          encrypted_api_key: "unused-local-fixture",
+        })
+        .select("connection_revision")
+        .single(),
+    );
+    const probes = getSandboxProviderContract("e2b").capabilityProbes;
+    const requiredProbes = [...new Set([...probes.required, ...probes.requiredByAgent.codex])];
+    await checked(
+      admin.from("sandbox_capability_checks").insert({
+        workspace_id: ids.workspaceId,
+        github_repository_id: ids.repositoryId,
+        status: "success",
+        agent_model: "gpt-5.5",
+        agent_provider: "codex",
+        sandbox_provider: "e2b",
+        sandbox_connection_revision: connection.connection_revision,
+        factory_definition_digest: canonicalDigest,
+        capabilities: Object.fromEntries(
+          requiredProbes.map((probe) => [probe, { ok: true, detail: null }]),
+        ),
+      }),
+    );
+    const activationScope = {
+      p_workspace_id: ids.workspaceId,
+      p_factory_id: factory.id,
+      p_actor_user_id: userId,
+      p_expected_activation_number: 0,
+    };
+    const draft = await checked(
+      admin.rpc("save_factory_definition_draft", {
+        ...activationScope,
+        p_definition_json: definitionJson,
+        p_canonical_digest: canonicalDigest,
+      }),
+    );
+    const activation = await checked(
+      admin.rpc("publish_factory_definition_draft", {
+        ...activationScope,
+        p_draft_id: draft.id,
+        p_enabled_sandbox_providers: ["e2b"],
+        p_required_probes: requiredProbes,
+      }),
+    );
+    const frozen = await createFixtureSession("Original pinned session title");
+    await checked(
+      admin
+        .from("sessions")
+        .update({ title: "Edited live session title" })
+        .eq("id", frozen.sessionId),
+    );
+    await checked(
+      admin
+        .from("pipeline_stages")
+        .update({ prompt_template_md: "Edited live template" })
+        .eq("id", firstStageId),
+    );
+    await checked(
+      admin
+        .from("workspace_agent_config")
+        .update({ value_json: "cursor" })
+        .eq("workspace_id", ids.workspaceId)
+        .eq("key", "agent_provider"),
+    );
+    phase = "frozen-first";
+    const firstFrozen = await production.processPipelineJob({
+      admin,
+      job: await claimJob(admin, frozen.jobId),
+    });
+    expect(firstFrozen.result).toBe("success");
+    const frozenSession = await checked(
+      admin.from("sessions").select("*").eq("id", frozen.sessionId).single(),
+    );
+    expect(frozenSession.current_stage_id).toBe(firstStageId);
+    assert(frozenSession.current_artifact_id);
+    const frozenApproval = await production.handleApproval({
+      admin,
+      approverMemberId: ids.memberId,
+      sessionId: frozen.sessionId,
+      expectedWorkspaceId: ids.workspaceId,
+      expectedStageId: firstStageId,
+      expectedArtifactId: frozenSession.current_artifact_id,
+      expectedReviewRevision: frozenSession.artifact_review_revision,
+      version: frozenSession.current_artifact_version!,
+    });
+    expect(frozenApproval.success).toBe(true);
+    expect(frozenApproval.session?.currentStageId).toBe(nextStageId);
+    assert(frozenApproval.jobId);
+    phase = "frozen-next";
+    const frozenNext = await production.processPipelineJob({
+      admin,
+      job: await claimJob(admin, frozenApproval.jobId),
+    });
+    expect(frozenNext.result).toBe("success");
+    const frozenManifest = await checked(
+      admin.from("session_attempt_manifests").select("*").eq("run_id", frozenNext.runId!).single(),
+    );
+    expect(frozenManifest).toMatchObject({
+      model_provider: "codex",
+      model_name: "gpt-5.5",
+      definition_revision_id: activation.revision_id,
+      source_checkpoint_run_id: firstFrozen.runId,
+      predecessors: [
+        expect.objectContaining({
+          status: "approved",
+          artifactId: frozenSession.current_artifact_id,
+          stageSlug: "frozen-first",
+        }),
+      ],
+    });
+
     evidence = {
       schemaVersion: 1,
       fixture: "local-fake-provider-with-real-database-and-git",
@@ -1115,6 +1305,11 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         fullName: repositoryName,
       },
       initialBaseSha: baseSha,
+      pinnedDefinition: {
+        revisionId: activation.revision_id,
+        firstRun: firstFrozen.runId,
+        nextRun: frozenNext.runId,
+      },
       movingDefaultSha: movedMain,
       checkpoints: lineage.map((row) => ({
         ...row,

@@ -21,6 +21,7 @@ export const createSessionPayloadSchema = z
     linearIssueUrl: z.string().nullable().optional(),
     promptMd: z.string().nullable().optional(),
     requestId: z.string().uuid("Creation request id is invalid.").optional(),
+    restartOfSessionId: z.string().uuid("Source session id is invalid.").optional(),
     selectedStageIds: selectedStageIdsSchema.optional(),
     title: z.string().nullable().optional(),
     workspaceId: z.string().uuid("Workspace id is invalid."),
@@ -44,6 +45,14 @@ export const createSessionPayloadSchema = z
         path: ["linearIssueUrl"],
       });
     }
+
+    if (payload.restartOfSessionId && !payload.requestId) {
+      context.addIssue({
+        code: "custom",
+        message: "A creation request id is required to restart a session.",
+        path: ["requestId"],
+      });
+    }
   });
 
 export type CreateSessionPayload = z.infer<typeof createSessionPayloadSchema>;
@@ -60,6 +69,9 @@ export function normalizeCreateSessionPayload(payload: CreateSessionPayload) {
     linearIssueUrl,
     promptMd,
     requestId: payload.requestId,
+    ...(payload.restartOfSessionId
+      ? { restartOfSessionId: payload.restartOfSessionId.toLowerCase() }
+      : {}),
     selectedStageIds: payload.selectedStageIds,
     title,
     workspaceId: payload.workspaceId,

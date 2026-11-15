@@ -14,6 +14,7 @@ import {
   type AgentProvider,
 } from "@/lib/agent-config/contracts";
 import { SANDBOX_PROVIDER_IDS } from "@/lib/sandbox/types";
+import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
@@ -260,6 +261,8 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     execution_exhaustion_detail: null,
     factory_definition_provenance: "legacy",
     factory_definition_revision_id: null,
+    execute_pinned_definition: false,
+    pinned_delivery_policy_revision_id: null,
     ...overrides,
   };
 }
@@ -300,6 +303,12 @@ function gitInputFixture(overrides: Partial<GitInputFixture> = {}): GitInputFixt
 
 interface MockOptions {
   session: Tables<"sessions"> | null;
+  pinnedDefinition?: { definition_json: string; canonical_digest: string };
+  originalInput?: {
+    original_title: string;
+    original_prompt_md: string;
+    definition_revision_id: string;
+  };
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   agentConfigError?: { message: string };
   claimSucceeds?: boolean;
@@ -390,6 +399,12 @@ function createProcessorTestAdminClient(
 }
 
 function buildAdminMock(opts: MockOptions) {
+  const readOnly = (data: unknown) => ({
+    select: () => {
+      const query = { eq: () => query, maybeSingle: async () => ({ data, error: null }) };
+      return query;
+    },
+  });
   const insertedArtifacts: Array<Record<string, unknown>> = [];
   const legacyMutationCalls: string[] = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
@@ -692,6 +707,8 @@ function buildAdminMock(opts: MockOptions) {
       },
     },
     sessions: sessionsTable,
+    factory_definition_revisions: readOnly(opts.pinnedDefinition),
+    session_factory_admission_inputs: readOnly(opts.originalInput),
     session_artifact_feedback: feedbackTable,
     artifact_feedback_batch_jobs: {
       select: () => {
@@ -1038,6 +1055,117 @@ describe("processPipelineJob (generic stage runner)", () => {
       ]),
     );
   });
+
+  it.each(["manual_run", "manual_retry"] as const)(
+    "executes %s on the compiled stage with its original prompt and authorized sandbox",
+    async (trigger) => {
+      const stageId = "77900000-0000-4000-8000-000000000001";
+      const pipelineId = "77900000-0000-4000-8000-000000000002";
+      const repositoryId = "77900000-0000-4000-8000-000000000003";
+      const revisionId = "77900000-0000-4000-8000-000000000004";
+      const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
+        schemaVersion: 1,
+        kind: "serial",
+        pipelineId,
+        repositoryId,
+        sandboxProvider: "vercel",
+        agent: {
+          provider: "claude-code",
+          model: "claude-sonnet-4-5",
+          effort: "max",
+          concurrencyLimit: 2,
+          stallTimeoutMs: 120000,
+          maxRetries: 2,
+          maxTurns: 17,
+        },
+        operatingRulesMd: "Original operating rules",
+        operatingRuleStageIds: [],
+        executionPolicyRevisionId: null,
+        deliveryPolicyRevisionId: null,
+        skillIds: [],
+        toolIds: [],
+        stages: [
+          {
+            id: stageId,
+            slug: "original",
+            name: "Original",
+            description: "",
+            promptTemplateMd: "Original stage template {{session.prompt}}",
+            anyoneCanApprove: false,
+            approverMemberIds: [],
+            previousStageIds: [],
+          },
+        ],
+      });
+      const { admin, rpc } = buildAdminMock({
+        session: baseSession({
+          execute_pinned_definition: true,
+          factory_definition_provenance: "pinned",
+          factory_definition_revision_id: revisionId,
+          pipeline_id: pipelineId,
+          current_stage_id: stageId,
+          github_repository_id: repositoryId,
+          title: "Renamed session",
+          prompt_md: "Edited live prompt",
+        }),
+        pinnedDefinition: { definition_json: definitionJson, canonical_digest: canonicalDigest },
+        originalInput: {
+          original_title: "Initial title",
+          original_prompt_md: "Initial user prompt",
+          definition_revision_id: revisionId,
+        },
+        agentConfig: [{ key: "agent_provider", value_json: "codex" }],
+        priorGitInput: { repository_id: repositoryId, base_branch: "original-main" },
+        githubRepositories: [
+          { id: repositoryId, full_name: "acme/app", default_branch: "renamed-main" },
+        ],
+      });
+
+      expect(
+        (
+          await processPipelineJob({
+            admin,
+            job: baseJob({ stage_id: stageId, trigger_type: trigger }),
+          })
+        ).result,
+      ).toBe("success");
+      expect(mocked.loadWorkspaceAgentConfig).not.toHaveBeenCalled();
+      expect(mocked.loadStageById).not.toHaveBeenCalled();
+      expect(mocked.loadPipelineOperatingRules).not.toHaveBeenCalled();
+      expect(mocked.loadRequiredWorkspaceSandboxConnection).toHaveBeenCalledWith(
+        admin,
+        "ws-1",
+        "vercel",
+      );
+      expect(mocked.assertCurrentSandboxCapabilityCheck).toHaveBeenCalledWith(
+        expect.objectContaining({ definitionDigest: canonicalDigest, repositoryId }),
+      );
+      expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          promptTemplateMd: expect.objectContaining({
+            value: "Original stage template {{session.prompt}}",
+          }),
+        }),
+        expect.objectContaining({
+          operatingRulesMd: expect.objectContaining({ value: "Original operating rules" }),
+          sessionTitle: expect.objectContaining({ value: "Initial title" }),
+          sessionPrompt: expect.objectContaining({ value: "Initial user prompt" }),
+          repoDefaultBranch: expect.objectContaining({ value: "original-main" }),
+        }),
+      );
+      expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
+        claudeCode: expect.objectContaining({
+          model: "claude-sonnet-4-5",
+          maxTurns: 17,
+          effort: "max",
+        }),
+      });
+      expect(rpc).toHaveBeenCalledWith(
+        "pin_session_attempt_manifest",
+        expect.objectContaining({ p_max_turns: 17, p_agent_effort: "max" }),
+      );
+    },
+  );
 
   it("executes the persisted input before starting the agent when the default branch moves", async () => {
     const pinnedSha = "b".repeat(40);

@@ -7,6 +7,7 @@ import {
   deliveryRequirementsSchema,
   type DeliveryRequirements,
 } from "@/lib/delivery-policy/contracts";
+import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import type { ValidationEvidenceRecord } from "@/lib/validation-evidence/contracts";
 import { evaluateValidationEvidence } from "@/lib/validation-evidence/evaluate";
 import { readPrivateValidationAsset } from "@/lib/validation-evidence/private-asset";
@@ -610,23 +611,31 @@ async function loadSessionPolicy(
 ): Promise<SessionPolicyRow | null> {
   const { data: session, error: sessionError } = await admin
     .from("sessions")
-    .select("id, workspace_id, pipeline_id, archived_at")
+    .select(
+      "id, workspace_id, pipeline_id, execute_pinned_definition, pinned_delivery_policy_revision_id",
+    )
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw new Error("Delivery session is unavailable.");
   if (!session) return null;
-  const { data: policy, error: policyError } = await admin
-    .from("delivery_policies")
-    .select("current_revision_id")
-    .eq("workspace_id", session.workspace_id)
-    .eq("pipeline_id", session.pipeline_id)
-    .maybeSingle();
-  if (policyError) throw new Error("Delivery policy is unavailable.");
-  if (!policy) return null;
+  let revisionId = session.pinned_delivery_policy_revision_id;
+  if (!session.execute_pinned_definition) {
+    const { data: policy, error: policyError } = await admin
+      .from("delivery_policies")
+      .select("current_revision_id")
+      .eq("workspace_id", session.workspace_id)
+      .eq("pipeline_id", session.pipeline_id)
+      .maybeSingle();
+    if (policyError) throw new Error("Delivery policy is unavailable.");
+    revisionId = policy?.current_revision_id ?? null;
+  }
+  if (!revisionId) return null;
   const { data: revision, error: revisionError } = await admin
     .from("delivery_policy_revisions")
     .select("id, workspace_id, pipeline_id, requirements")
-    .eq("id", policy.current_revision_id)
+    .eq("id", revisionId)
+    .eq("workspace_id", session.workspace_id)
+    .eq("pipeline_id", session.pipeline_id)
     .maybeSingle();
   if (revisionError || !revision) throw new Error("Delivery policy is unsupported.");
   const requirements = deliveryRequirementsSchema.safeParse(revision.requirements);
@@ -1015,10 +1024,16 @@ export async function recordPrReadinessDecision(
 async function currentStageIsFinal(admin: AdminClient, sessionId: string): Promise<boolean> {
   const { data: session, error: sessionError } = await admin
     .from("sessions")
-    .select("current_stage_id, pipeline_id")
+    .select(
+      "current_stage_id, pipeline_id, workspace_id, execute_pinned_definition, factory_definition_revision_id",
+    )
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError || !session) return false;
+  if (session.execute_pinned_definition) {
+    const definition = await loadPinnedFactoryExecution(admin, session);
+    return definition?.stages.at(-1)?.id === session.current_stage_id;
+  }
   const { data: selection, error: selectionError } = await admin
     .from("session_selected_stages")
     .select("stage_id")

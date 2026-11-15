@@ -81,10 +81,12 @@ The renderer currently exposes:
 | `repo.fullName`                  | Resolved session repository full name                        | Repository data                  |
 | `repo.defaultBranch`             | Resolved default branch, falling back to `main` if absent    | Repository data                  |
 
-Pipeline `operating_rules_md` is trimmed and prepended to
-`pipeline_stages.prompt_template_md`. Both are manager-controlled instruction
-planes. The renderer supports variable substitution and non-nested conditional
-blocks. Unknown variables become empty strings.
+The renderer prepends operating rules to the stage template. Enrolled sessions
+use their compiled rules, template, and stage slug, plus the original session
+input from the [immutable admission record](factory-session-inputs.md). Existing
+live execution uses the current pipeline, stage, and session rows. The renderer
+supports variables and non-nested conditional blocks. Unknown variables become
+empty strings.
 
 Template variable paths support letters, digits, underscores, dots, and hyphens.
 References such as `artifact.previousStages.code-review` work in both

@@ -357,6 +357,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "agent_runs_agent_job_id_fkey"
+            columns: ["agent_job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
             foreignKeyName: "agent_runs_execution_policy_revision_id_fkey"
             columns: ["execution_policy_revision_id"]
             isOneToOne: false
@@ -429,6 +436,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batch_jobs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "artifact_feedback_batch_jobs_session_id_fkey"
@@ -606,6 +620,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_feedback_batches_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "artifact_feedback_batches_run_id_fkey"
@@ -2229,6 +2250,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "session_attempt_manifests_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
             foreignKeyName: "session_attempt_manifests_run_id_fkey"
             columns: ["run_id"]
             isOneToOne: true
@@ -2322,6 +2350,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_checkpoint_cleanup_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "session_checkpoint_cleanup_run_id_fkey"
@@ -2432,6 +2467,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "session_checkpoint_publications_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
             foreignKeyName: "session_checkpoint_publications_run_id_fkey"
             columns: ["run_id"]
             isOneToOne: true
@@ -2465,6 +2507,8 @@ export type Database = {
           github_repository_id: string | null
           model_name: string
           model_provider: string
+          original_prompt_md: string | null
+          original_title: string | null
           pipeline_id: string
           prompt_sha256: string
           selected_stage_ids: string[]
@@ -2482,6 +2526,8 @@ export type Database = {
           github_repository_id?: string | null
           model_name: string
           model_provider: string
+          original_prompt_md?: string | null
+          original_title?: string | null
           pipeline_id: string
           prompt_sha256: string
           selected_stage_ids: string[]
@@ -2499,6 +2545,8 @@ export type Database = {
           github_repository_id?: string | null
           model_name?: string
           model_provider?: string
+          original_prompt_md?: string | null
+          original_title?: string | null
           pipeline_id?: string
           prompt_sha256?: string
           selected_stage_ids?: string[]
@@ -2603,6 +2651,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_git_checkpoints_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "session_git_checkpoints_run_id_fkey"
@@ -2818,6 +2873,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_job_git_inputs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "session_job_git_inputs_pinned_run_id_fkey"
@@ -3508,6 +3570,42 @@ export type Database = {
           },
         ]
       }
+      session_restart_lineages: {
+        Row: {
+          created_at: string
+          session_id: string
+          source_session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          session_id: string
+          source_session_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          session_id?: string
+          source_session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_restart_lineages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_restart_lineages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_retry_checkpoint_jobs: {
         Row: {
           job_id: string
@@ -3531,6 +3629,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_retry_checkpoint_jobs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "session_retry_checkpoint_jobs_source_run_id_fkey"
@@ -3731,6 +3836,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_source_deliveries_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "session_source_deliveries_repository_id_fkey"
@@ -3970,6 +4082,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "session_validation_evidence_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
             foreignKeyName: "session_validation_evidence_run_id_fkey"
             columns: ["run_id"]
             isOneToOne: true
@@ -4038,6 +4157,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "session_validation_plans_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
             foreignKeyName: "session_validation_plans_run_id_fkey"
             columns: ["run_id"]
             isOneToOne: true
@@ -4069,6 +4195,7 @@ export type Database = {
           current_artifact_id: string | null
           current_artifact_version: number
           current_stage_id: string
+          execute_pinned_definition: boolean
           execution_exhausted_at: string | null
           execution_exhaustion_code: string | null
           execution_exhaustion_detail: Json | null
@@ -4082,6 +4209,7 @@ export type Database = {
           linear_issue_url: string | null
           number: number
           phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          pinned_delivery_policy_revision_id: string | null
           pipeline_id: string
           prompt_md: string
           rejection_count: number
@@ -4099,6 +4227,7 @@ export type Database = {
           current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id: string
+          execute_pinned_definition?: boolean
           execution_exhausted_at?: string | null
           execution_exhaustion_code?: string | null
           execution_exhaustion_detail?: Json | null
@@ -4112,6 +4241,7 @@ export type Database = {
           linear_issue_url?: string | null
           number: number
           phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          pinned_delivery_policy_revision_id?: string | null
           pipeline_id: string
           prompt_md?: string
           rejection_count?: number
@@ -4129,6 +4259,7 @@ export type Database = {
           current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id?: string
+          execute_pinned_definition?: boolean
           execution_exhausted_at?: string | null
           execution_exhaustion_code?: string | null
           execution_exhaustion_detail?: Json | null
@@ -4142,6 +4273,7 @@ export type Database = {
           linear_issue_url?: string | null
           number?: number
           phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          pinned_delivery_policy_revision_id?: string | null
           pipeline_id?: string
           prompt_md?: string
           rejection_count?: number
@@ -4192,6 +4324,13 @@ export type Database = {
             columns: ["github_repository_id"]
             isOneToOne: false
             referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_pinned_delivery_policy_revision_id_fkey"
+            columns: ["pinned_delivery_policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "delivery_policy_revisions"
             referencedColumns: ["id"]
           },
           {
@@ -4439,6 +4578,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_dispatches_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
           },
           {
             foreignKeyName: "worker_dispatches_workspace_id_fkey"
@@ -5282,6 +5428,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "artifact_feedback_batch_jobs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
             foreignKeyName: "artifact_feedback_batch_jobs_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
@@ -5317,6 +5470,14 @@ export type Database = {
             referencedColumns: ["run_id"]
           },
         ]
+      }
+      pinned_job_recovery_settings: {
+        Row: {
+          job_id: string | null
+          max_retries: number | null
+          stall_timeout_ms: number | null
+        }
+        Relationships: []
       }
       session_pr_verification_currentness: {
         Row: {
@@ -6960,6 +7121,32 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      restart_session_once_with_first_job: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          source_session_id: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
       }
       rewrite_default_pipeline: {
         Args: {

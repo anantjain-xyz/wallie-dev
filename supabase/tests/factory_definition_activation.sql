@@ -36,7 +36,8 @@ insert into public.github_repositories(id,workspace_id,github_installation_id,re
    '54200000-0005-4000-8000-000000000001',54200012,'factory-admission','fixture/factory-admission',true,
    'https://github.com/fixture/factory-admission','trunk');
 insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential) values
-  ('54200000-0000-4000-8000-000000000001','platform_api_key','activation-test-ciphertext');
+  ('54200000-0000-4000-8000-000000000001','platform_api_key','activation-test-ciphertext'),
+  ('54200000-0000-4000-8000-000000000002','platform_api_key','admission-test-ciphertext');
 insert into public.workspace_sandbox_settings(workspace_id,active_provider) values
   ('54200000-0001-4000-8000-000000000001','e2b') on conflict (workspace_id) do update set active_provider = excluded.active_provider;
 insert into public.workspace_e2b_sandbox_connections(workspace_id,encrypted_api_key) values
@@ -66,22 +67,31 @@ select f.workspace_id, f.id as factory_id,
 from public.factories f
 where f.workspace_id = '54200000-0001-4000-8000-000000000001' and f.is_default;
 
-create function pg_temp.factory_activation_bundle(p_name text,p_approver uuid default null)
+create function pg_temp.factory_activation_bundle(p_name text,p_approver uuid default null,p_execution_policy uuid default null)
 returns text language sql immutable as $$
   select jsonb_build_object(
     'schemaVersion',1,'kind','serial','sandboxProvider','e2b',
     'pipelineId','54200000-0003-4000-8000-000000000001',
     'repositoryId','54200000-0006-4000-8000-000000000001',
-    'executionPolicyRevisionId',null,'deliveryPolicyRevisionId',null,
+    'executionPolicyRevisionId',p_execution_policy,'deliveryPolicyRevisionId',null,
     'skillIds','[]'::jsonb,'toolIds','[]'::jsonb,
     'operatingRulesMd','','operatingRuleStageIds','[]'::jsonb,
     'agent',jsonb_build_object('provider','codex','model','gpt-5','effort',null,
       'concurrencyLimit',1,'stallTimeoutMs',900000,'maxRetries',3,'maxTurns',5),
-    'stages',jsonb_build_array(jsonb_build_object('id','54200000-0004-4000-8000-000000000001',
+    'stages',jsonb_build_array(jsonb_build_object('id','54200000-0004-4000-8000-000000000002',
+      'slug','compiled-handoff','name','Compiled handoff','description','','promptTemplateMd','Prepare {{session.title}}.',
+      'anyoneCanApprove',true,'previousStageIds','[]'::jsonb,'approverMemberIds','[]'::jsonb),
+      jsonb_build_object('id','54200000-0004-4000-8000-000000000001',
       'slug','verify-delivery','name',p_name,'description','','promptTemplateMd','Check {{session.title}}.',
       'anyoneCanApprove',false,'previousStageIds','[]'::jsonb,'approverMemberIds',
       case when p_approver is null then '[]'::jsonb else jsonb_build_array(p_approver) end))
   )::text;
+$$;
+
+create function pg_temp.factory_admission_budget(p_revision bigint) returns uuid language sql as $$
+  select (public.save_execution_policy(s.workspace_id,s.owner_id,p_revision,
+    '{"version":1,"maxRepairAttempts":2,"maxExecutionMs":3600000,"maxTotalTokens":null,"maxCostUsd":null}')).id
+  from factory_activation_scope s;
 $$;
 
 create function pg_temp.factory_activation_save(p_base bigint,p_definition text)
@@ -100,14 +110,15 @@ create function pg_temp.factory_activation_command(p_kind text,p_base bigint,p_t
   from factory_activation_scope s;
 $$;
 
-create function pg_temp.factory_admission_command(p_request_id uuid, p_title text)
+create function pg_temp.factory_admission_command(p_request_id uuid, p_title text,
+  p_creator_member_id uuid default '54200000-0002-4000-8000-000000000001')
 returns text language sql as $$
   select format($q$select session_id from public.create_session_once_with_first_job(
-    '54200000-0001-4000-8000-000000000001', '54200000-0002-4000-8000-000000000001',
+    '54200000-0001-4000-8000-000000000001', %L::uuid,
     %L::uuid, repeat('d',64), %L, '  Immutable original prompt  ', 'codex','gpt-5.1', '{}'::uuid[],
     session_github_repository_id => '54200000-0006-4000-8000-000000000002',
     selected_stage_ids => array['54200000-0004-4000-8000-000000000002','54200000-0004-4000-8000-000000000001']::uuid[]
-  )$q$, p_request_id, '  ' || p_title || '  ');
+  )$q$, p_creator_member_id, p_request_id, '  ' || p_title || '  ');
 $$;
 
 create function pg_temp.admit_factory_session(p_request_id uuid, p_title text)
@@ -146,17 +157,21 @@ select throws_ok($$select public.save_factory_definition_draft(s.workspace_id,f.
 select throws_ok($$select pg_temp.factory_activation_save(0,'{"schemaVersion":1,"kind":"graph"}')$$,
   '22023',null,'draft admission rejects a nonserial definition envelope');
 
+create temp table factory_admission_policy as select pg_temp.factory_admission_budget(0) as original_revision;
 create temp table factory_activation_initial as
-select * from pg_temp.factory_activation_save(0,pg_temp.factory_activation_bundle('Initial'));
-select ok((select base_activation_number is null and definition_json=pg_temp.factory_activation_bundle('Initial')
-  from factory_activation_initial), 'an initial draft stores exact bytes and no predecessor');
+select * from pg_temp.factory_activation_save(0,pg_temp.factory_activation_bundle('Initial',p_execution_policy =>
+  (select original_revision from factory_admission_policy)));
+select ok((select base_activation_number is null and definition_json=pg_temp.factory_activation_bundle('Initial',p_execution_policy => original_revision)
+  from factory_activation_initial cross join factory_admission_policy), 'an initial draft stores exact bytes and no predecessor');
 select is((select count(*) from public.factory_definition_activations a join factory_activation_scope s on s.factory_id=a.factory_id),
   0::bigint,'saving a draft has no activation side effect');
 
 create temp table factory_admission_legacy as
 select pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000001','Before enrollment') as session_id;
 select ok((select s.factory_definition_provenance='legacy' and s.factory_definition_revision_id is null
-  and input.session_id is null from factory_admission_legacy fixture
+  and not s.execute_pinned_definition and input.session_id is null
+  and s.execution_policy_revision_id=(select original_revision from factory_admission_policy)
+  from factory_admission_legacy fixture
   join public.sessions s on s.id=fixture.session_id
   left join public.session_factory_admission_inputs input on input.session_id=s.id),
   'normal creation before activation makes an explicit legacy session without an admission receipt');
@@ -177,16 +192,52 @@ select ok((select s.factory_definition_provenance='legacy' and s.factory_definit
   left join public.session_factory_admission_inputs input on input.session_id=s.id),
   'publication and replay do not backfill a historical pin or receipt');
 
+select pg_temp.factory_admission_budget(1);
+update public.pipeline_stages set slug='renamed-live-handoff',name='Renamed live handoff',position=20,archived_at=clock_timestamp()
+where id='54200000-0004-4000-8000-000000000002';
+
 create temp table factory_admission_first as
 select session_id from public.create_session_with_first_job(
   '54200000-0001-4000-8000-000000000001', '54200000-0002-4000-8000-000000000001',
   'Unwrapped session creation', 'Original input', 'codex', 'gpt-5'
 );
-select ok((select s.factory_definition_provenance='pinned' and s.factory_definition_revision_id=a.revision_id
+select ok((select s.execute_pinned_definition and s.factory_definition_provenance='pinned' and s.factory_definition_revision_id=a.revision_id
   and input.activation_number=a.activation_number and input.definition_revision_id=a.revision_id
+  and s.execution_policy_revision_id=(select original_revision from factory_admission_policy)
+  and input.execution_policy_revision_id=s.execution_policy_revision_id
   from factory_admission_first fixture join public.sessions s on s.id=fixture.session_id
   join public.session_factory_admission_inputs input on input.session_id=s.id
-  cross join factory_activation_first a), 'creation without the attachment or idempotency wrapper also admits the active definition');
+  cross join factory_activation_first a), 'direct creation admits the active definition with its earlier execution policy');
+select ok((select s.current_stage_id='54200000-0004-4000-8000-000000000002'::uuid
+  and first_job.stage_id=s.current_stage_id and first_job.stage_slug='compiled-handoff' and first_job.stage_name='Compiled handoff'
+  and first_run.stage_id=s.current_stage_id and first_run.stage_slug=first_job.stage_slug and first_run.stage_name=first_job.stage_name
+  and first_run.execution_policy_revision_id=s.execution_policy_revision_id
+  from factory_admission_first fixture join public.sessions s on s.id=fixture.session_id
+  join public.agent_jobs first_job on first_job.session_id=s.id
+  join public.agent_runs first_run on first_run.agent_job_id=first_job.id),
+  'the first compiled stage and queued run survive live rename, reorder, and archive');
+select throws_ok($$update public.sessions set execute_pinned_definition=false
+  where id=(select session_id from factory_admission_first)$$,
+  '23514','Session factory definition provenance is immutable.','the session cannot switch back to live execution');
+
+delete from public.user_codex_credentials where user_id='54200000-0000-4000-8000-000000000002';
+select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000004','Revoked session owner',
+  '54200000-0002-4000-8000-000000000002'),
+  'PT422','A current personal credential is required for this agent.','the creator needs a current credential even if the publisher still has one');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values('54200000-0000-4000-8000-000000000002','platform_api_key','admission-test-ciphertext');
+
+update public.github_repositories set is_archived=true where id='54200000-0006-4000-8000-000000000001';
+select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000005','Archived factory repository'),
+  'P0002','The factory definition repository is unavailable.','a live repository override cannot replace the unavailable pinned repository');
+update public.github_repositories set is_archived=false where id='54200000-0006-4000-8000-000000000001';
+
+create temp table factory_activation_missing_stage as
+select id from pg_temp.factory_activation_save(1,jsonb_set(pg_temp.factory_activation_bundle('Unknown stage')::jsonb,
+  '{stages,0,id}','"54200000-0004-4000-8000-000000009999"')::text);
+select throws_ok(pg_temp.factory_activation_command('publish',1,(select id from factory_activation_missing_stage)),
+  'PT422','The factory definition has stages unavailable in its pipeline.','a definition needs stable backing stage identities before activation');
+
 select ok(has_table_privilege('service_role','public.session_factory_admission_inputs','SELECT')
   and not has_table_privilege('service_role','public.session_factory_admission_inputs','INSERT, UPDATE, DELETE')
   and not has_table_privilege('authenticated','public.session_factory_admission_inputs','SELECT'),
@@ -269,30 +320,33 @@ select ok((select s.factory_definition_provenance='pinned' and s.factory_definit
   join public.factory_definition_activations a on a.revision_id=winner.revision_id
   join public.factory_definition_revisions r on r.id=a.revision_id),
   'session admission racing a publication waits for and captures its committed activation and exact definition');
-select ok((select input.pipeline_id=s.pipeline_id and input.github_repository_id=s.github_repository_id
-    and input.github_repository_id <> (r.definition_json::jsonb ->> 'repositoryId')::uuid
-    and input.model_name=run.model_name and input.model_name <> (r.definition_json::jsonb #>> '{agent,model}')
-    and input.selected_stage_ids=array['54200000-0004-4000-8000-000000000001','54200000-0004-4000-8000-000000000002']::uuid[]
-    and (input.execution_policy_revision_id is not distinct from s.execution_policy_revision_id)
+select ok((select s.execute_pinned_definition and input.pipeline_id=s.pipeline_id and input.github_repository_id=s.github_repository_id
+    and input.github_repository_id = (r.definition_json::jsonb ->> 'repositoryId')::uuid
+    and input.model_name=run.model_name and input.model_name = (r.definition_json::jsonb #>> '{agent,model}')
+    and input.selected_stage_ids=array['54200000-0004-4000-8000-000000000002','54200000-0004-4000-8000-000000000001']::uuid[]
+    and input.execution_policy_revision_id is null and s.execution_policy_revision_id is null
+    and run.execution_policy_revision_id is null and s.pinned_delivery_policy_revision_id is null
+    and input.original_title='Admission racing publication' and input.original_prompt_md='Immutable original prompt'
     and input.title_sha256=encode(sha256(convert_to('Admission racing publication','UTF8')),'hex')
     and input.prompt_sha256=encode(sha256(convert_to('Immutable original prompt','UTF8')),'hex')
   from factory_admission_after_publish fixture join public.sessions s on s.id=fixture.session_id
   join public.session_factory_admission_inputs input on input.session_id=s.id
   join public.factory_definition_revisions r on r.id=input.definition_revision_id
   join public.agent_runs run on run.session_id=s.id),
-  'admission records the actual selected pipeline, repository, stages, model, policy and normalized text digests');
+  'admission uses the compiled pipeline, repository, stage order, model, and explicit null policies');
 select throws_ok($$update public.session_factory_admission_inputs set prompt_sha256=repeat('a',64)
   where session_id=(select session_id from factory_admission_after_publish)$$,
   '23514','Session factory admission inputs are immutable.','admitted inputs cannot be updated in place');
 select throws_ok($$delete from public.session_factory_admission_inputs
   where session_id=(select session_id from factory_admission_after_publish)$$,
   '23514','Session factory admission inputs are immutable.','the receipt cannot be deleted while the session exists');
-update public.sessions set title='Renamed session'
+update public.sessions set title='Renamed session',prompt_md='Edited prompt'
   where id=(select session_id from factory_admission_after_publish);
-select is((select input.title_sha256 from factory_admission_after_publish fixture
+select ok((select input.title_sha256=encode(sha256(convert_to('Admission racing publication','UTF8')),'hex')
+  and input.original_title='Admission racing publication' and input.original_prompt_md='Immutable original prompt'
+  from factory_admission_after_publish fixture
   join public.session_factory_admission_inputs input using(session_id)),
-  encode(sha256(convert_to('Admission racing publication','UTF8')),'hex'),
-  'renaming the session preserves its original admission title digest');
+  'later session edits preserve original title and prompt bytes');
 select is((select count(*) from public.factory_definition_revisions r join factory_activation_scope s on s.factory_id=r.factory_id),
   2::bigint,'the losing transaction leaves no orphan revision');
 

@@ -7,6 +7,8 @@ const adminOrdinalRows: Array<{
   stage_id: string | null;
 }> = [];
 const adminRangeCalls: Array<{ from: number; to: number }> = [];
+const pinnedFactoryMock = vi.fn();
+const sandboxOverviewMock = vi.fn();
 const createSupabaseAdminClientMock = vi.fn(() => ({
   from: () => ({
     select: () => ({
@@ -31,10 +33,20 @@ vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: () => createSupabaseAdminClientMock(),
 }));
 
+vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
+  loadPinnedFactoryExecution: (...args: unknown[]) => pinnedFactoryMock(...args),
+}));
+
+vi.mock("@/lib/sandbox-connections/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sandbox-connections/server")>()),
+  loadWorkspaceSandboxOverview: (...args: unknown[]) => sandboxOverviewMock(...args),
+}));
+
 import {
   ATTEMPT_ORDINAL_PAGE_SIZE,
   computeAttemptOrdinalsFromRows,
   loadWallieRunPage,
+  loadWallieSessionData,
   mapWallieSandboxConnectionStatus,
   WALLIE_RUN_PAGE_SIZE,
 } from "@/features/wallie/server";
@@ -119,6 +131,79 @@ beforeEach(() => {
   adminOrdinalRows.length = 0;
   adminRangeCalls.length = 0;
   createSupabaseAdminClientMock.mockClear();
+  pinnedFactoryMock.mockReset();
+  sandboxOverviewMock.mockReset();
+});
+
+describe("loadWallieSessionData", () => {
+  it("keeps Retry tied to the admitted sandbox, repository, and stall time after live settings change", async () => {
+    const { supabase: runClient, query } = client([]);
+    const session = {
+      execute_pinned_definition: true,
+      factory_definition_revision_id: uuid(1),
+      workspace_id: uuid(8),
+    };
+    const bindings = {
+      eq: vi.fn(),
+      maybeSingle: vi.fn(async () => ({ data: session, error: null })),
+      select: vi.fn(),
+    };
+    bindings.eq.mockReturnValue(bindings);
+    bindings.select.mockReturnValue(bindings);
+    const repository = {
+      eq: vi.fn(),
+      maybeSingle: vi.fn(async () => ({
+        data: { id: uuid(2), full_name: "acme/pinned", github_installation_id: uuid(9) },
+        error: null,
+      })),
+      select: vi.fn(),
+    };
+    repository.eq.mockReturnValue(repository);
+    repository.select.mockReturnValue(repository);
+    const supabase = {
+      from: (table: string) => {
+        if (table === "sessions") return bindings;
+        if (table === "github_repositories") return repository;
+        if (table === "workspace_members") return query;
+        return runClient.from(table);
+      },
+    };
+    pinnedFactoryMock.mockResolvedValue({
+      repositoryId: uuid(2),
+      sandboxProvider: "e2b",
+      agent: { stallTimeoutMs: 321_000 },
+    });
+    sandboxOverviewMock.mockResolvedValue({
+      activeProvider: "vercel",
+      connections: {
+        daytona: null,
+        e2b: { connectionRevision: "revision-e2b", status: "connected" },
+        vercel: null,
+      },
+      enabledProviders: ["vercel", "e2b"],
+    });
+
+    await expect(
+      loadWallieSessionData({
+        repository: null,
+        session: { id: uuid(5), githubRepositoryId: uuid(3) },
+        supabase: supabase as never,
+        workspaceId: uuid(8),
+      }),
+    ).resolves.toMatchObject({
+      factoryPinned: true,
+      mode: "code",
+      repository: { id: uuid(2) },
+      stallTimeoutMs: 321_000,
+      vercelSandboxConnection: { connected: true, provider: "e2b", status: "connected" },
+    });
+    expect(bindings.eq.mock.calls).toEqual([
+      ["id", uuid(5)],
+      ["workspace_id", uuid(8)],
+    ]);
+    expect(repository.eq).toHaveBeenCalledWith("workspace_id", uuid(8));
+    expect(repository.eq).toHaveBeenCalledWith("id", uuid(2));
+  });
 });
 
 describe("computeAttemptOrdinalsFromRows", () => {

@@ -304,6 +304,21 @@ describe("session detail loader", () => {
     const from = vi.fn((table: string) => {
       if (table === "workspace_members") return memberQuery;
       if (table === "pipeline_stages") return stageQuery;
+      if (table === "sessions") {
+        return {
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: {
+              execute_pinned_definition: false,
+              factory_definition_revision_id: null,
+              pipeline_id: payload.session.pipelineId,
+              workspace_id: payload.activity.workspaceId,
+            },
+            error: null,
+          }),
+          select: vi.fn().mockReturnThis(),
+        };
+      }
       if (table === "agent_runs") return runsQuery;
       throw new Error(`unexpected table ${table}`);
     });

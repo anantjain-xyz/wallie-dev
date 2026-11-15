@@ -24,6 +24,7 @@ describe("session creation fingerprint", () => {
     { githubRepositoryId: "another-repository" },
     { selectedStageIds: ["stage-1"] },
     { attachmentIds: ["image-1"] },
+    { restartOfSessionId: "deadbeef-5555-4555-8555-555555555555" },
     { linearIssueUrl: "https://linear.app/acme/issue/ABC-123/example" },
   ])("distinguishes changed user intent: %j", (change) => {
     expect(fingerprintSessionCreation({ ...input, ...change })).not.toBe(

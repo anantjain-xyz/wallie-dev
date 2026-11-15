@@ -14,8 +14,13 @@ import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/rea
 
 const mocks = vi.hoisted(() => ({
   assertCurrentSandboxCapabilityCheck: vi.fn(),
+  loadPinnedFactoryExecution: vi.fn(),
   loadWorkspaceSandboxOverview: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
+}));
+
+vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
+  loadPinnedFactoryExecution: mocks.loadPinnedFactoryExecution,
 }));
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
@@ -40,6 +45,7 @@ vi.mock("@/lib/sandbox-capabilities/readiness", async () => {
 beforeEach(() => {
   mocks.assertCurrentSandboxCapabilityCheck.mockReset();
   mocks.assertCurrentSandboxCapabilityCheck.mockResolvedValue(undefined);
+  mocks.loadPinnedFactoryExecution.mockReset().mockResolvedValue(null);
   mocks.loadWorkspaceSandboxOverview.mockReset();
   mocks.resolveSandboxImplementation.mockReset();
   mocks.resolveSandboxImplementation.mockReturnValue("vercel");
@@ -677,6 +683,92 @@ function buildSupabaseMocks(opts: {
 }
 
 describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
+  function pinnedRetry() {
+    const digest = "a".repeat(64);
+    mocks.loadPinnedFactoryExecution.mockResolvedValue({
+      agent: { provider: "codex", model: "gpt-5.5" },
+      canonicalDigest: digest,
+      repositoryId: "repo-pinned",
+      sandboxProvider: "e2b",
+    });
+    const enqueueCalls: Array<Record<string, unknown>> = [];
+    const { admin, rpc, supabase } = buildSupabaseMocks({
+      agentConfig: [{ key: "agent_provider", value_json: "live-provider-unavailable" }],
+      enqueueCalls,
+      primaryRepositoryId: "repo-live",
+      repositories: [{ full_name: "acme/pinned", id: "repo-pinned" }],
+    });
+    return {
+      enqueueCalls,
+      rpc,
+      digest,
+      retry: () =>
+        retryWallieRun({
+          admin,
+          runId: "run-1",
+          requestedByMemberId: "mem-1",
+          supabase,
+          workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+        }),
+    };
+  }
+
+  it("preflights and queues the admitted model and sandbox after live settings change", async () => {
+    const { enqueueCalls, retry, digest } = pinnedRetry();
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      connections: {
+        e2b: { connectionRevision: "revision-e2b", status: "connected" },
+        vercel: null,
+      },
+      enabledProviders: ["e2b", "vercel"],
+    });
+    await retry();
+    expect(mocks.assertCurrentSandboxCapabilityCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: { provider: "codex", model: "gpt-5.5" },
+        connection: { provider: "e2b", revision: "revision-e2b" },
+        definitionDigest: digest,
+        repositoryId: "repo-pinned",
+      }),
+    );
+    expect(enqueueCalls).toEqual([
+      expect.objectContaining({
+        p_agent_model_provider: "codex",
+        p_agent_model_name: "gpt-5.5",
+        p_retry_run_id: "run-1",
+        p_run_type: "code",
+      }),
+    ]);
+  });
+
+  it("blocks a pinned Retry if its sandbox revokes access even when the live sandbox is connected", async () => {
+    const { enqueueCalls, retry } = pinnedRetry();
+    await expect(retry()).rejects.toMatchObject({
+      code: "sandbox_connection_missing",
+      provider: "e2b",
+    });
+    expect(enqueueCalls).toEqual([]);
+  });
+
+  it("keeps pinned Retry on the checkpoint-aware RPC if its schema is unavailable", async () => {
+    const { retry, rpc } = pinnedRetry();
+    mocks.resolveSandboxImplementation.mockReturnValue("fake");
+    rpc.mockResolvedValueOnce({
+      data: null,
+      error: {
+        code: "PGRST202",
+        details: "",
+        hint: "",
+        message: "Missing RPC",
+        name: "PostgrestError",
+      },
+    });
+    await expect(retry()).rejects.toMatchObject({ code: "PGRST202" });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("enqueue_session_retry_with_checkpoint", expect.anything());
+  });
+
   it("stamps the queued run with the workspace's configured model and provider", async () => {
     const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({

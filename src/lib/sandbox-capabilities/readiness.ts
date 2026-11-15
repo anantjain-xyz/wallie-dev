@@ -26,22 +26,41 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
   admin: AdminClient;
   agent: { model: string; provider: AgentProvider };
   connection: Pick<SandboxConnection, "provider" | "revision">;
+  definitionDigest?: string;
   repositoryId: string;
   workspaceId: string;
 }): Promise<void> {
-  const { data, error } = await input.admin
-    .from("sandbox_capability_checks")
-    .select(
-      "status, capabilities, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision",
-    )
-    .eq("workspace_id", input.workspaceId)
-    .eq("github_repository_id", input.repositoryId)
-    .is("factory_definition_digest", null)
-    .order("checked_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  async function latestCheck(digest: string | null, exactRuntime = false) {
+    const checks = input.admin
+      .from("sandbox_capability_checks")
+      .select(
+        "status, capabilities, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision",
+      )
+      .eq("workspace_id", input.workspaceId)
+      .eq("github_repository_id", input.repositoryId);
+    const scope = digest
+      ? checks.eq("factory_definition_digest", digest)
+      : checks.is("factory_definition_digest", null);
+    if (exactRuntime) {
+      scope
+        .eq("sandbox_provider", input.connection.provider)
+        .eq("sandbox_connection_revision", input.connection.revision)
+        .eq("agent_provider", input.agent.provider)
+        .eq("agent_model", input.agent.model);
+    }
+    const { data, error } = await scope
+      .order("checked_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
 
-  if (error) throw error;
+  // Activation can reuse a current live check for the same runtime when there
+  // is no candidate-specific check. Unrelated live settings stay out of scope.
+  const data = input.definitionDigest
+    ? ((await latestCheck(input.definitionDigest)) ?? (await latestCheck(null, true)))
+    : await latestCheck(null);
 
   const agentMatch =
     data?.agent_provider === input.agent.provider && data?.agent_model === input.agent.model;

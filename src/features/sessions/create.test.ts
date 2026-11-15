@@ -6,6 +6,7 @@ import { extractLinearIssueId } from "./linear-issue-url";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const STAGE_ID = "33333333-3333-4333-8333-333333333333";
 const ATTACHMENT_ID = "44444444-4444-4444-8444-444444444444";
+const SOURCE_SESSION_ID = "deadbeef-5555-4555-8555-555555555555";
 
 describe("createSessionPayloadSchema", () => {
   it("accepts either a prompt or a Linear issue URL", () => {
@@ -92,6 +93,25 @@ describe("createSessionPayloadSchema", () => {
         workspaceId: WORKSPACE_ID,
       }).success,
     ).toBe(false);
+  });
+
+  it("requires a creation request id for an explicit restart", () => {
+    const input = {
+      promptMd: "Try another approach",
+      restartOfSessionId: SOURCE_SESSION_ID.toUpperCase(),
+      workspaceId: WORKSPACE_ID,
+    };
+    expect(createSessionPayloadSchema.safeParse(input).error?.issues[0]?.path).toEqual([
+      "requestId",
+    ]);
+    expect(
+      normalizeCreateSessionPayload(
+        createSessionPayloadSchema.parse({ ...input, requestId: ATTACHMENT_ID }),
+      ),
+    ).toMatchObject({
+      requestId: ATTACHMENT_ID,
+      restartOfSessionId: SOURCE_SESSION_ID,
+    });
   });
 });
 

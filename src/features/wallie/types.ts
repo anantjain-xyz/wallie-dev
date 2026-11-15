@@ -117,13 +117,14 @@ export type WallieRunPage = {
 export type WallieSessionData = {
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
+  factoryPinned?: boolean;
   loadedMessageRunIds: string[];
   mode: WallieRunMode;
   nextRunCursor: WallieRunCursor | null;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
   runs: WallieRun[];
-  /** Workspace stall timeout used by the worker; UI mirrors it for "No recent activity". */
+  /** Execution stall timeout used by the worker and mirrored by activity status. */
   stallTimeoutMs: number;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
   workspaceMembers: WorkspaceMember[];

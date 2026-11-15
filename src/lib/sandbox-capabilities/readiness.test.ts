@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { assertCurrentSandboxCapabilityCheck, SandboxCapabilityCheckStaleError } from "./readiness";
 import type { SandboxCapabilityReport } from "./contracts";
@@ -48,6 +48,55 @@ function assertReady(row: Record<string, unknown> | null) {
 }
 
 describe("assertCurrentSandboxCapabilityCheck", () => {
+  it.each([null, "error"])(
+    "scopes pinned capability reuse when the definition-specific result is %s",
+    async (status) => {
+      const row = {
+        agent_model: "gpt-5.5",
+        agent_provider: "codex",
+        capabilities: completeCapabilities,
+        sandbox_connection_revision: connection.revision,
+        sandbox_provider: connection.provider,
+        status: "success",
+      };
+      const query = (data: typeof row | null) => {
+        const builder = {
+          eq: vi.fn(() => builder),
+          is: vi.fn(() => builder),
+          limit: () => builder,
+          maybeSingle: async () => ({ data, error: null }),
+          order: () => builder,
+          select: () => builder,
+        };
+        return builder;
+      };
+      const specific = query(status === null ? null : { ...row, status });
+      const compatible = query(row);
+      const from = vi.fn().mockReturnValueOnce(specific).mockReturnValueOnce(compatible);
+      const check = assertCurrentSandboxCapabilityCheck({
+        admin: { from } as never,
+        agent: { model: "gpt-5.5", provider: "codex" },
+        connection,
+        definitionDigest: "pinned-digest",
+        repositoryId: "repository-1",
+        workspaceId: "workspace-1",
+      });
+      expect(specific.eq).toHaveBeenCalledWith("factory_definition_digest", "pinned-digest");
+      if (status === null) {
+        await expect(check).resolves.toBeUndefined();
+        expect(compatible.is).toHaveBeenCalledWith("factory_definition_digest", null);
+        expect(compatible.eq).toHaveBeenCalledWith("agent_model", "gpt-5.5");
+        expect(compatible.eq).toHaveBeenCalledWith(
+          "sandbox_connection_revision",
+          connection.revision,
+        );
+      } else {
+        await expect(check).rejects.toBeInstanceOf(SandboxCapabilityCheckStaleError);
+        expect(from).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
   it("accepts a complete check for the exact provider, revision, and agent", async () => {
     await expect(
       assertReady({

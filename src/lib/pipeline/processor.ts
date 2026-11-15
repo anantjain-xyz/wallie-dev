@@ -22,10 +22,16 @@ import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   createAgentRunner,
+  DEFAULT_AGENT_EFFORT,
   DEFAULT_AGENT_RUNNER_CONFIG,
   DEFAULT_OPENCODE_MODEL,
   loadWorkspaceAgentConfig,
 } from "@/lib/agent-runner";
+import {
+  loadPinnedFactoryExecution,
+  loadPinnedSessionPrompt,
+  type PinnedFactoryExecution,
+} from "@/lib/factory-definitions/runtime-definition";
 import {
   AGENT_PROVIDERS,
   agentProviderSupportsEffort,
@@ -138,10 +144,22 @@ export async function processPipelineJob(input: {
   const job = { ...input.job };
   let session: SessionRow | null;
   let stage: PipelineStage | null;
+  let pinned: PinnedFactoryExecution | null = null;
   try {
     const loaded = await loadSessionById(admin, job.session_id);
     session = loaded ? { ...loaded } : null;
-    stage = session ? await loadStageById(admin, session.current_stage_id) : null;
+    if (session) pinned = await loadPinnedFactoryExecution(admin, session);
+    if (session && pinned) {
+      const currentStageId = session.current_stage_id;
+      const index = pinned.stages.findIndex(({ id }) => id === currentStageId);
+      const pinnedStage = pinned.stages[index];
+      stage =
+        pinned.pipelineId === session.pipeline_id && pinnedStage
+          ? { ...pinnedStage, position: index + 1, pipelineId: pinned.pipelineId }
+          : null;
+    } else {
+      stage = session ? await loadStageById(admin, session.current_stage_id) : null;
+    }
   } catch (error) {
     throwIfAborted(input.signal);
     const result = await failPipelineJob(admin, job, getErrorMessage(error, "Pipeline job failed"));
@@ -163,6 +181,7 @@ export async function processPipelineJob(input: {
     deadlineAt: input.deadlineAt,
     signal: input.signal,
     stage,
+    pinned,
     workerRuntime: input.workerRuntime,
   });
 }
@@ -182,9 +201,10 @@ async function runStage(input: {
   signal?: AbortSignal;
   session: SessionRow;
   stage: PipelineStage;
+  pinned: PinnedFactoryExecution | null;
   workerRuntime?: AttemptWorkerRuntime;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, job, session, stage, captureOrderedEvents = true } = input;
+  const { admin, job, session, stage, pinned, captureOrderedEvents = true } = input;
   const supervisorSignal = input.signal;
   let signal = input.signal;
   let budgetController: AbortController | undefined;
@@ -246,29 +266,37 @@ async function runStage(input: {
       predecessorInputs,
       attemptFeedback,
       operatingRulesMd,
+      sessionPrompt,
       sessionAttachments,
       repository,
       priorGitInput,
     ] = await Promise.all([
-      loadWorkspaceAgentConfig(admin, session.workspace_id),
+      pinned?.agent ?? loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadAttemptPredecessors(admin, session.id),
       loadJobFeedback(admin, job, stage.id),
-      loadPipelineOperatingRules(admin, stage.pipelineId),
+      pinned?.operatingRulesMd ?? loadPipelineOperatingRules(admin, stage.pipelineId),
+      pinned
+        ? loadPinnedSessionPrompt(admin, session)
+        : { title: session.title, promptMd: session.prompt_md },
       loadSessionAttachmentInputs(admin, {
         sessionId: session.id,
         workspaceId: session.workspace_id,
       }),
-      gitInputPromise.then((pinned) =>
-        resolveEffectiveSessionRepository({
-          ...(pinned ? { pinnedRepositoryId: pinned.repository_id } : {}),
+      gitInputPromise.then((gitInput) => {
+        const repositoryId = pinned?.repositoryId ?? gitInput?.repository_id;
+        return resolveEffectiveSessionRepository({
+          pinnedRepositoryId: repositoryId,
           sessionId: session.id,
           supabase: admin,
           workspaceId: session.workspace_id,
-        }),
-      ),
+        });
+      }),
       gitInputPromise,
     ]);
     throwIfAborted(signal);
+    if (pinned && predecessorInputs.predecessors.some(({ status }) => status !== "approved")) {
+      throw new Error("The factory session has a predecessor without an exact approval receipt.");
+    }
     if (
       priorGitInput &&
       session.github_repository_id &&
@@ -312,6 +340,7 @@ async function runStage(input: {
       // No authority was acquired. Never guess an active run: another start
       // carrying the same claim may have won, or a newer attempt may exist.
       await failPipelineJob(admin, job, "Session execution could not be started.", {
+        maxRetries: pinned?.agent.maxRetries,
         retry: false,
       });
       return { jobId: job.id, processed: true, result: "idle", runId: null };
@@ -377,12 +406,19 @@ async function runStage(input: {
     const sandboxSelection =
       sandboxImplementation === "fake"
         ? null
-        : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
+        : pinned
+          ? await loadRequiredWorkspaceSandboxConnection(
+              admin,
+              session.workspace_id,
+              pinned.sandboxProvider,
+            )
+          : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
     if (sandboxSelection) {
       await assertCurrentSandboxCapabilityCheck({
         admin,
         agent: { model: config.model, provider },
         connection: sandboxSelection.connection,
+        ...(pinned ? { definitionDigest: pinned.canonicalDigest } : {}),
         repositoryId: github.repo.id,
         workspaceId: session.workspace_id,
       });
@@ -539,7 +575,7 @@ async function runStage(input: {
         repoFullName: untrustedPromptValue("repo.fullName", github.repo.full_name),
         repoDefaultBranch: untrustedPromptValue(
           "repo.defaultBranch",
-          github.repo.default_branch ?? "main",
+          pinned ? gitInput.base_branch : (github.repo.default_branch ?? "main"),
         ),
         operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
         retryCheckpointInstructions: checkpointInstructions.length
@@ -572,8 +608,8 @@ async function runStage(input: {
                 formatSessionAttachmentPromptData(materializedAttachments),
               )
             : undefined,
-        sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
-        sessionTitle: untrustedPromptValue("session.title", session.title),
+        sessionPrompt: untrustedPromptValue("session.prompt", sessionPrompt.promptMd),
+        sessionTitle: untrustedPromptValue("session.title", sessionPrompt.title),
       },
     );
 
@@ -586,6 +622,7 @@ async function runStage(input: {
       provider === "claude-code"
         ? (config.maxTurns ?? DEFAULT_AGENT_RUNNER_CONFIG.maxTurns)
         : undefined;
+    const effort = config.effort ?? DEFAULT_AGENT_EFFORT;
     if (
       !(await pinSessionAttemptManifest({
         admin,
@@ -597,7 +634,7 @@ async function runStage(input: {
         predecessors: predecessorInputs.predecessors,
         credentialOwnerMemberId: session.creator_member_id,
         workerRuntime: input.workerRuntime ?? "node",
-        ...(agentProviderSupportsEffort(provider) ? { effort: config.effort } : {}),
+        ...(agentProviderSupportsEffort(provider) ? { effort } : {}),
         maxTurns,
         signal,
       }))
@@ -609,7 +646,7 @@ async function runStage(input: {
     // before delivering the secret. Construction never decrypts personal keys.
     const runner = createSessionAgentRunner({
       admin,
-      effort: config.effort,
+      effort,
       maxTurns,
       model: config.model,
       provider,
@@ -791,6 +828,7 @@ async function runStage(input: {
         sensitiveValues: sensitiveValues(),
       });
       checkpoint = await validateCheckpoint({
+        ...(pinned ? { pinnedDeliveryPolicyRevisionId: pinned.deliveryPolicyRevisionId } : {}),
         admin,
         workspaceId: session.workspace_id,
         pipelineId: stage.pipelineId,
@@ -873,6 +911,7 @@ async function runStage(input: {
     if (signal?.aborted) {
       if (budgetExpired && !supervisorSignal?.aborted) {
         await failPipelineJob(admin, job, "Session elapsed execution budget exhausted.", {
+          maxRetries: pinned?.agent.maxRetries,
           runId,
           retry: false,
         });
@@ -893,6 +932,7 @@ async function runStage(input: {
       job,
       getErrorMessage(error, "Stage generation failed"),
       {
+        maxRetries: pinned?.agent.maxRetries,
         runId,
         // Source+intent preparation may have committed despite a lost reply.
         // The database guard serializes with that transaction before failing.
@@ -1450,9 +1490,14 @@ async function failPipelineJob(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
-  options: { retry?: boolean; runId?: string | null; preservePublication?: boolean } = {},
+  options: {
+    maxRetries?: number;
+    retry?: boolean;
+    runId?: string | null;
+    preservePublication?: boolean;
+  } = {},
 ): Promise<ProcessPipelineJobResult["result"]> {
-  const maxRetries = await loadMaxRetries(admin, job.workspace_id);
+  const maxRetries = options.maxRetries ?? (await loadMaxRetries(admin, job.workspace_id));
   const { data, error } = await admin.rpc(
     options.preservePublication ? "fail_stalled_session_job_attempt" : "fail_session_job_attempt",
     {

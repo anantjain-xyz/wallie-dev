@@ -5,6 +5,7 @@ import {
   mayContainEvidenceLinks,
   renderMarkdownToHtml,
 } from "@/components/shared/markdown-content.server";
+import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { loadArtifactEvidenceLinks } from "@/lib/validation-evidence/artifact-links";
@@ -117,7 +118,7 @@ export async function GET(request: Request, context: RouteContext) {
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
     .select(
-      "id, pipeline_id, workspace_id, current_stage_id, current_artifact_id, current_artifact_version",
+      "id, pipeline_id, workspace_id, current_stage_id, current_artifact_id, current_artifact_version, execute_pinned_definition, factory_definition_revision_id",
     )
     .eq("id", parsedParams.data.sessionId)
     .maybeSingle();
@@ -130,23 +131,29 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   const { artifactId, latest, stage, version } = parsedQuery.data;
-  // A stage slug is editable; resolve the selected stage once, then load its
-  // immutable artifact/run associations without changing their stored snapshots.
-  const { data: selection, error: stageError } = await supabase
-    .from("session_selected_stages")
-    .select("stage:pipeline_stages!inner(id, slug, pipeline_id)")
-    .eq("session_id", sessionRow.id)
-    .eq("workspace_id", sessionRow.workspace_id)
-    .eq("stage.pipeline_id", sessionRow.pipeline_id)
-    .eq("stage.slug", stage)
-    .maybeSingle();
-  if (stageError) {
-    return NextResponse.json({ error: stageError.message }, { status: 500 });
+  let selectedStage: { id: string; slug: string } | null = null;
+  try {
+    const pinned = await loadPinnedFactoryExecution(supabase, sessionRow);
+    if (pinned) {
+      selectedStage = pinned.stages.find(({ slug }) => slug === stage) ?? null;
+    } else {
+      const { data: selection, error } = await supabase
+        .from("session_selected_stages")
+        .select("stage:pipeline_stages!inner(id, slug, pipeline_id)")
+        .eq("session_id", sessionRow.id)
+        .eq("workspace_id", sessionRow.workspace_id)
+        .eq("stage.pipeline_id", sessionRow.pipeline_id)
+        .eq("stage.slug", stage)
+        .maybeSingle();
+      if (error) throw error;
+      selectedStage = selection?.stage ?? null;
+    }
+  } catch {
+    return NextResponse.json({ error: "Could not load the selected stage." }, { status: 500 });
   }
-  if (!selection?.stage) {
+  if (!selectedStage) {
     return NextResponse.json({ error: "Selected stage not found." }, { status: 404 });
   }
-  const selectedStage = selection.stage;
 
   if (artifactId || latest || version) {
     const currentLatest = latest && selectedStage.id === sessionRow.current_stage_id;

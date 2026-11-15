@@ -68,15 +68,16 @@ export async function sweepStalledRuns(
   if (!candidates.length) return result;
 
   const workspaceIds = [...new Set(candidates.map((job) => job.workspace_id))];
-  const [runs, stallTimeouts, maxRetries] = await Promise.all([
+  const [runs, pinnedSettings, stallTimeouts, maxRetries] = await Promise.all([
     loadRuns(
       admin,
       candidates.map((job) => job.id),
     ),
+    loadPinnedRecoverySettings(admin, candidates),
     loadStallTimeouts(admin, workspaceIds),
     loadMaxRetries(admin, workspaceIds),
   ]);
-  if (!runs) return result;
+  if (!runs || !pinnedSettings) return result;
   const runsByJob = new Map<string, RecoveryRun[]>();
   for (const run of runs) {
     if (!run.agent_job_id) continue;
@@ -106,7 +107,9 @@ export async function sweepStalledRuns(
     // An owned terminal failure is already resolved transactionally. Legacy
     // terminal runs are history, not evidence about the latest queue claim.
     if (ownedRun && !isActiveRun(ownedRun)) continue;
-    const timeoutMs = stallTimeouts.get(job.workspace_id) ?? defaultStallTimeoutMs;
+    const pinned = pinnedSettings.get(job.id);
+    const timeoutMs =
+      pinned?.stallTimeoutMs ?? stallTimeouts.get(job.workspace_id) ?? defaultStallTimeoutMs;
     const activity = ownedRun
       ? (ownedRun.last_activity_at ?? ownedRun.created_at)
       : (job.started_at ?? job.created_at);
@@ -138,7 +141,7 @@ export async function sweepStalledRuns(
       p_run_id: ownedRun?.id,
       p_error: reason,
       p_retry: true,
-      p_max_retries: maxRetries.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
+      p_max_retries: pinned?.maxRetries ?? maxRetries.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
     });
     if (error) {
       console.error("[stall-detector] failed to recover captured attempt", {
@@ -247,6 +250,34 @@ async function loadRuns(admin: AdminClient, jobIds: string[]): Promise<RecoveryR
     }
   }
   return runs;
+}
+
+async function loadPinnedRecoverySettings(admin: AdminClient, jobs: ClaimedJob[]) {
+  const settings = new Map<string, { stallTimeoutMs: number; maxRetries: number }>();
+  for (let batch = 0; batch < jobs.length; batch += PAGE_SIZE) {
+    const { data, error } = await admin
+      .from("pinned_job_recovery_settings")
+      .select("job_id, stall_timeout_ms, max_retries")
+      .in(
+        "job_id",
+        jobs.slice(batch, batch + PAGE_SIZE).map((job) => job.id),
+      );
+    if (error) {
+      console.error("[stall-detector] failed to load pinned recovery settings", {
+        error: error.message,
+      });
+      return null;
+    }
+    for (const {
+      job_id: jobId,
+      stall_timeout_ms: stallTimeoutMs,
+      max_retries: maxRetries,
+    } of data ?? []) {
+      if (!jobId || stallTimeoutMs === null || maxRetries === null) return null;
+      settings.set(jobId, { stallTimeoutMs, maxRetries });
+    }
+  }
+  return settings;
 }
 
 async function insertRunErrorMessage(admin: AdminClient, run: RecoveryRun, reason: string) {
