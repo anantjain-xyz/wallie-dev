@@ -98,6 +98,10 @@ function database(rows: Record<string, Row[]>) {
           maximum = value;
           return this;
         },
+        abortSignal(signal: AbortSignal) {
+          signal.throwIfAborted();
+          return this;
+        },
         async maybeSingle() {
           const value = result();
           return { ...value, data: value.data[0] ?? null };
@@ -197,11 +201,13 @@ it("opens newly captured private artifact evidence after the entire source check
       return { error: null };
     },
   );
-  const download = vi.fn(async (path: string) => ({
-    data: new Blob([
-      new Uint8Array(await readFile(join(storage, "session-validation-evidence", path))),
-    ]),
-    error: null,
+  const download = vi.fn((path: string) => ({
+    asStream: async () => ({
+      data: new Blob([
+        new Uint8Array(await readFile(join(storage, "session-validation-evidence", path))),
+      ]).stream(),
+      error: null,
+    }),
   }));
   const client = {
     ...database(rows),
@@ -265,6 +271,8 @@ it("opens newly captured private artifact evidence after the entire source check
   expect(response.headers.get("cache-control")).toBe("private, no-store");
   expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
 
+  rows.session_validation_asset_withholdings = [{ asset_id: report.id, state: "redacted" }];
+  expect((await downloadAsset(request(), context)).status).toBe(409);
   mocks.user.mockResolvedValue(null);
   expect((await downloadAsset(request(), context)).status).toBe(401);
   expect(download).toHaveBeenCalledTimes(1);

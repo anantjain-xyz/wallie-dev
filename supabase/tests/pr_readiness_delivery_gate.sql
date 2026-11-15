@@ -237,6 +237,14 @@ select is(pg_temp.pr_failure_state($$select pg_temp.approve_final((select sessio
 select pg_temp.record_readiness((select session_id from blocked_fixture),'ready');
 select is((select phase_status::text from public.sessions where id=(select session_id from blocked_fixture)),'awaiting_review',
   'recording a current Ready decision does not approve the stage');
+-- A new negative check of the same observation supersedes historical Ready.
+select pg_temp.record_readiness((select session_id from blocked_fixture),'blocked',
+  '[{"code":"evidence_unavailable","requirement":"tests"}]'::jsonb);
+select is(pg_temp.pr_failure_state($$select pg_temp.approve_final((select session_id from blocked_fixture))$$),'PT428',
+  'a newer Blocked evidence decision displaces Ready for the same GitHub observation');
+select is((select phase_status::text from public.sessions where id=(select session_id from blocked_fixture)),'awaiting_review',
+  'a previously Ready decision cannot advance the stage after the evidence goes unavailable');
+select pg_temp.record_readiness((select session_id from blocked_fixture),'ready');
 select is(pg_temp.approve_final((select session_id from blocked_fixture)),'approved',
   'a current Ready decision passes the final delivery gate');
 select is((select archived_at is not null from public.sessions where id=(select session_id from blocked_fixture)),true,
