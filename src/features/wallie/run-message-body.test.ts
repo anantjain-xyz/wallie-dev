@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseToolUseMessage, summarizeToolUse } from "@/features/wallie/run-message-body";
+import { formatToolPayload, summarizeToolUse } from "@/features/wallie/run-message-body";
 
 describe("summarizeToolUse", () => {
   it.each([
@@ -14,75 +14,31 @@ describe("summarizeToolUse", () => {
     ["unknown", '"not an object"', "unknown", "", null],
     ["unknown", "not JSON", "unknown", "", null],
   ])("summarizes %s without deriving a lifecycle state", (name, input, title, target, category) => {
-    expect(summarizeToolUse(`**Tool:** ${name}\n\n\`\`\`\n${input}\n\`\`\``)).toEqual({
-      title,
-      target,
-      category,
-    });
+    expect(summarizeToolUse(name, input)).toEqual({ title, target, category });
   });
 });
 
-describe("parseToolUseMessage", () => {
-  it("parses a Cursor-style Tool name plus fenced JSON and pretty-prints the payload", () => {
-    const parsed = parseToolUseMessage(
-      '**Tool:** read\n\n```\n{"path":"src/lib/agent-runner/cursor.ts"}\n```',
+describe("formatToolPayload", () => {
+  it("pretty-prints JSON payloads", () => {
+    expect(formatToolPayload('{"path":"src/lib/agent-runner/cursor.ts"}')).toEqual(
+      '{\n  "path": "src/lib/agent-runner/cursor.ts"\n}',
     );
-
-    expect(parsed).toEqual({
-      payload: '{\n  "path": "src/lib/agent-runner/cursor.ts"\n}',
-      tool: "read",
-    });
   });
 
-  it("parses a Codex bash tool-use row", () => {
-    const parsed = parseToolUseMessage('**Tool:** bash\n\n```\n{"cmd":"ls"}\n```');
-
-    expect(parsed?.tool).toBe("bash");
-    expect(parsed?.payload).toContain('"cmd": "ls"');
-  });
-
-  it("takes the last wrapper fence when the payload contains inner fences", () => {
-    const parsed = parseToolUseMessage("**Tool:** read\n\n```\nbefore\n```\nafter\n```");
-
-    expect(parsed).toEqual({
-      payload: "before\n```\nafter",
-      tool: "read",
-    });
-  });
-
-  it("leaves truncated JSON unchanged and does not throw", () => {
-    const truncated = '{"path":"src/lib/agent-runner/cursor.ts","result":"…[truncated]';
-
-    expect(() =>
-      parseToolUseMessage(`**Tool:** read\n\n\`\`\`\n${truncated}\n\`\`\``),
-    ).not.toThrow();
-    expect(parseToolUseMessage(`**Tool:** read\n\n\`\`\`\n${truncated}\n\`\`\``)).toEqual({
-      payload: truncated,
-      tool: "read",
-    });
-  });
-
-  it("returns null for a non-template string", () => {
-    expect(parseToolUseMessage("Cloning repository")).toBeNull();
-    expect(parseToolUseMessage("**Tool:** read")).toBeNull();
-    expect(parseToolUseMessage("**Error:** boom")).toBeNull();
-  });
+  it.each([
+    "before\n```\nafter",
+    '{"path":"src/lib/agent-runner/cursor.ts","result":"…[truncated]',
+  ])("preserves a non-JSON or truncated payload", (payload) =>
+    expect(formatToolPayload(payload)).toBe(payload),
+  );
 
   it("pretty-prints JSON without rounding integers outside the JS safe range", () => {
-    const parsed = parseToolUseMessage(
-      '**Tool:** read\n\n```\n{"id":9007199254740993,"ok":true}\n```',
-    );
-
-    expect(parsed).toEqual({
-      payload: '{\n  "id": 9007199254740993,\n  "ok": true\n}',
-      tool: "read",
-    });
-    expect(parsed?.payload).not.toContain("9007199254740992");
+    const result = formatToolPayload('{"id":9007199254740993,"ok":true}');
+    expect(result).toEqual('{\n  "id": 9007199254740993,\n  "ok": true\n}');
+    expect(result).not.toContain("9007199254740992");
   });
 
   it("preserves original number tokens that JSON.parse would canonicalize", () => {
-    const parsed = parseToolUseMessage('**Tool:** read\n\n```\n{"n":1.0,"exp":1e2}\n```');
-
-    expect(parsed?.payload).toBe('{\n  "n": 1.0,\n  "exp": 1e2\n}');
+    expect(formatToolPayload('{"n":1.0,"exp":1e2}')).toBe('{\n  "n": 1.0,\n  "exp": 1e2\n}');
   });
 });

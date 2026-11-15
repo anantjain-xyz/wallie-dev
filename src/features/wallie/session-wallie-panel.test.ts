@@ -489,10 +489,10 @@ describe("SessionWalliePanel", () => {
           messages: [
             {
               id: "tool-1",
-              kind: "tool_use",
+              kind: "tool_call",
+              tool: "bash",
               createdAt: "2026-05-20T20:05:00.000Z",
-              messageMd:
-                '**Tool:** bash\n\n```\n{"cmd":"pnpm check","internal":"large payload"}\n```',
+              messageMd: '{"cmd":"pnpm check","internal":"large payload"}',
             },
           ],
         }),

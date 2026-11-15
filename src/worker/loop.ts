@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { workerRunCaptureEnvSchema } from "@/env/worker";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 
@@ -49,7 +50,12 @@ export async function claimNextJob(
 export async function runClaimedJob(
   admin: AdminClient,
   job: AgentJobRow,
-  options: { timeoutMs?: number; recoveryTimeoutMs?: number; deadlineAt?: string } = {},
+  options: {
+    captureOrderedEvents?: boolean;
+    timeoutMs?: number;
+    recoveryTimeoutMs?: number;
+    deadlineAt?: string;
+  } = {},
 ): Promise<void> {
   const jobId = job.id;
   const attemptCount = job.attempt_count;
@@ -73,8 +79,17 @@ export async function runClaimedJob(
         reject(error);
       }, timeoutMs);
     });
+    const captureOrderedEvents =
+      options.captureOrderedEvents ??
+      workerRunCaptureEnvSchema.parse(process.env).WALLIE_ORDERED_RUN_CAPTURE_ENABLED;
     await Promise.race([
-      processPipelineJob({ admin, job, deadlineAt, signal: controller.signal }),
+      processPipelineJob({
+        admin,
+        job,
+        captureOrderedEvents,
+        deadlineAt,
+        signal: controller.signal,
+      }),
       deadline,
     ]);
   } catch (error) {
@@ -164,7 +179,7 @@ async function retireAttempt(
         .insert({
           agent_run_id: run.id,
           workspace_id: input.workspaceId,
-          kind: "error",
+          kind: "worker_error",
           message_md: input.historyMessage,
         })
         .abortSignal(input.signal);

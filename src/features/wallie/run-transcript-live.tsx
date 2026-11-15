@@ -5,10 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { formatUtcTimestamp } from "@/components/shared/time-format";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
-import { formatMessageSourceLabel } from "@/features/wallie/activity-summary";
 import { LiveConnectionNotice } from "@/features/wallie/live-connection-notice";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
-import { parseToolUseMessage } from "@/features/wallie/run-message-body";
 import type {
   RunTranscriptEntry,
   RunTranscriptPage,
@@ -104,10 +102,7 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
       const before = current.current;
       if (before.expiredAt && !page.expiredAt) return;
       if (page.expiredAt) position = "replace";
-      if (
-        position !== "replace" &&
-        (before.mode !== page.mode || before.attemptCount !== page.attemptCount)
-      ) {
+      if (position !== "replace" && before.attemptCount !== page.attemptCount) {
         if (position !== "head") return;
         position = "replace";
       }
@@ -131,7 +126,7 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
           position === "head" &&
           !before.hasOlder &&
           page.olderCursor !== repairedOlderCursor.current &&
-          hasUnseenEarlierActivity(before.entries, entries, page)
+          hasUnseenEarlierActivity(entries, page)
         ) {
           // Keep a way to page into history that arrived behind the forward cursor.
           next.olderCursor = page.olderCursor;
@@ -213,34 +208,19 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
         subscribeDeferredAuthenticatedChannel(
           getSupabase,
           (client) =>
-            client
-              .channel(`wallie-inspector:${runId}`)
-              // Every ordered append updates activity on this exact run in the
-              // append transaction. Both notifications are hints, never payloads.
-              .on(
-                "postgres_changes",
-                {
-                  schema: "public",
-                  table: "agent_runs",
-                  event: "UPDATE",
-                  filter: `id=eq.${runId}`,
-                },
-                () => {
-                  if (isCurrent()) recovery.invalidate();
-                },
-              )
-              .on(
-                "postgres_changes",
-                {
-                  schema: "public",
-                  table: "agent_run_messages",
-                  event: "INSERT",
-                  filter: `agent_run_id=eq.${runId}`,
-                },
-                () => {
-                  if (isCurrent()) recovery.invalidate();
-                },
-              ),
+            client.channel(`wallie-inspector:${runId}`).on(
+              "postgres_changes",
+              {
+                schema: "public",
+                table: "agent_runs",
+                event: "UPDATE",
+                filter: `id=eq.${runId}`,
+              },
+              // Ordered appends update the run in the same transaction.
+              () => {
+                if (isCurrent()) recovery.invalidate();
+              },
+            ),
           onStatus,
           isCurrent,
         ),
@@ -327,63 +307,34 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
           ))}
         </ol>
       ) : (
-        <p className="mt-3 type-body text-muted">No activity has been recorded for this run.</p>
+        <p className="mt-3 type-body text-muted">
+          {isWallieRunTerminalStatus(state.runStatus)
+            ? "No transcript was recorded for this run."
+            : "No activity has been recorded for this run."}
+        </p>
       )}
     </section>
   );
 }
 
-function hasUnseenEarlierActivity(
-  previous: readonly RunTranscriptEntry[],
-  merged: readonly RunTranscriptEntry[],
-  head: RunTranscriptPage,
-) {
+function hasUnseenEarlierActivity(merged: readonly RunTranscriptEntry[], head: RunTranscriptPage) {
   const first = head.entries[0];
   if (!head.hasOlder || !head.olderCursor || !first) return false;
-  if (first.sequence !== null) {
-    // Ordered capture starts at sequence 1. A lower rank means there are gaps
-    // below this bounded page, even if its newest event was already loaded.
-    return merged.findIndex((entry) => entry.id === first.id) < first.sequence - 1;
-  }
-  const knownIds = new Set(previous.map((entry) => entry.id));
-  return head.entries.some((entry) => !knownIds.has(entry.id));
+  // A lower rank means there are gaps below this bounded page.
+  return merged.findIndex((entry) => entry.id === first.id) < first.sequence - 1;
 }
 
 export function mergeTranscriptEntries(
   previous: readonly RunTranscriptEntry[],
   incoming: readonly RunTranscriptEntry[],
 ) {
-  if (incoming.length === 0) return [...previous];
   const byId = new Map(previous.map((entry) => [entry.id, entry]));
   for (const entry of incoming) byId.set(entry.id, entry);
-  return Array.from(byId.values()).sort((a, b) => {
-    if (a.sequence !== null && b.sequence !== null) return a.sequence - b.sequence;
-    return compareTimestamp(a.createdAt, b.createdAt) || a.id.localeCompare(b.id);
-  });
-}
-
-/** Preserve database ordering for timestamps within the same millisecond. */
-function compareTimestamp(a: string, b: string) {
-  return (
-    Date.parse(a) - Date.parse(b) ||
-    (a.match(/\.(\d+)/)?.[1] ?? "")
-      .padEnd(6, "0")
-      .localeCompare((b.match(/\.(\d+)/)?.[1] ?? "").padEnd(6, "0"))
-  );
+  return Array.from(byId.values()).sort((a, b) => a.sequence - b.sequence);
 }
 
 function TranscriptCoverage({ state }: { state: TranscriptState }) {
-  if (state.expiredAt) return null;
-  if (state.mode === "legacy") {
-    if (state.entries.length === 0 && !isWallieRunTerminalStatus(state.runStatus)) return null;
-    return (
-      <p className="mt-2 type-body text-muted">
-        {state.entries.length
-          ? "Legacy activity has no structured capture receipt."
-          : "No structured capture receipt was recorded."}
-      </p>
-    );
-  }
+  if (state.expiredAt || !state.entries.length) return null;
   const end = state.entries.findLast((entry) => entry.kind === "capture_end");
   const coverage = end?.payload.coverage;
   const incomplete =
@@ -422,9 +373,7 @@ function TranscriptLine({ entry }: { entry: RunTranscriptEntry }) {
     <li className="min-w-0 py-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="type-label font-medium text-foreground">{label}</span>
-        {entry.sequence !== null ? (
-          <span className="type-annotation text-muted">#{entry.sequence}</span>
-        ) : null}
+        <span className="type-annotation text-muted">#{entry.sequence}</span>
         {entry.causationSequence !== null ? (
           <span className="type-annotation text-muted">From #{entry.causationSequence}</span>
         ) : null}
@@ -476,15 +425,5 @@ function describeEntry(entry: RunTranscriptEntry): { label: string; text?: strin
       return {
         label: entry.payload.status === "complete" ? "Capture ended" : "Capture interrupted",
       };
-    case "legacy": {
-      const tool =
-        entry.payload.kind === "tool_use" ? parseToolUseMessage(entry.payload.text) : null;
-      if (tool) return { label: `Tool use · ${tool.tool}`, text: tool.payload };
-      const label =
-        entry.payload.kind === "run_failure"
-          ? "Run failure"
-          : formatMessageSourceLabel(entry.payload.kind);
-      return { label, text: entry.payload.text };
-    }
   }
 }

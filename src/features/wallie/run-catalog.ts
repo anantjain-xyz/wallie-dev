@@ -156,7 +156,6 @@ function toCatalogItem(
     transcript: {
       expiredAt: row.transcript_expired_at ?? null,
       hasEvents: row.has_events,
-      hasLegacyMessages: row.has_legacy_messages,
       captureEnded: row.capture_ended,
       captureInterrupted: row.capture_interrupted,
     },

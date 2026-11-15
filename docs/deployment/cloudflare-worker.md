@@ -152,6 +152,15 @@ failures, and pending source delivery. Inspect `worker_dispatches`,
 `worker_auth_dispatches`, `worker_heartbeats`, and `session_source_deliveries`
 through privileged tooling. Never log source bundles, tokens, or login verifiers.
 
+## Ordered run capture
+
+Use the Worker variable `WALLIE_ORDERED_RUN_CAPTURE_ENABLED=false` to pause
+ordered capture on subsequently started attempts. The worker still refreshes
+run activity and can publish artifacts. Keep the override in the deployment
+configuration until capture resumes. A Worker with the variable unset uses
+ordered capture.
+[Enrollment and rollback](worker-operations.md#ordered-run-capture).
+
 ## Rollback
 
 - Set `WALLIE_WORKER_DISPATCH_ENABLED=false` through the controlled deployment configuration to stop new claims. Keep that setting effective on subsequent automatic builds. Existing attempts finish or recover through their captured ownership guards.

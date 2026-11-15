@@ -173,11 +173,26 @@ describe("runClaimedJob", () => {
     expect(mocked.processPipelineJob).toHaveBeenCalledWith({
       admin,
       job: baseJob,
+      captureOrderedEvents: true,
       signal: expect.any(AbortSignal),
       deadlineAt: expect.any(String),
     });
     expect(admin.from).not.toHaveBeenCalled();
     expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("pins the worker capture setting into the claimed attempt", async () => {
+    vi.stubEnv("WALLIE_ORDERED_RUN_CAPTURE_ENABLED", "false");
+    try {
+      const admin = recoveryAdmin();
+      mocked.processPipelineJob.mockResolvedValue(undefined);
+      await runClaimedJob(admin as never, baseJob as never);
+      expect(mocked.processPipelineJob).toHaveBeenCalledWith(
+        expect.objectContaining({ captureOrderedEvents: false }),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("recovers a thrown processor error through the exact owned run", async () => {
@@ -263,7 +278,7 @@ describe("runClaimedJob", () => {
       expect(admin.query.insert).toHaveBeenCalledExactlyOnceWith({
         agent_run_id: "run-attempt-1",
         workspace_id: "workspace-1",
-        kind: "error",
+        kind: "worker_error",
         message_md: "Worker attempt exceeded its 50ms deadline.",
       });
     },
@@ -354,7 +369,7 @@ describe("runClaimedJob", () => {
     expect(admin.query.insert).toHaveBeenCalledWith({
       agent_run_id: "run-attempt-1",
       workspace_id: "workspace-1",
-      kind: "error",
+      kind: "worker_error",
       message_md: "Worker attempt exceeded its 50ms deadline.",
     });
     expect(admin.rpc).toHaveBeenCalledWith(

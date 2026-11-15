@@ -339,7 +339,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     expect(inserts).toEqual([
       {
         agent_run_id: "run-1",
-        kind: "error",
+        kind: "worker_error",
         message_md: expect.stringContaining("Stalled: no activity"),
         workspace_id: "ws-1",
       },

@@ -57,6 +57,7 @@ function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
     branchName: null,
     canCancel: false,
     canRetry: false,
+    captureAttemptCount: 1,
     createdAt: `2026-07-18T12:${(59 - index).toString().padStart(2, "0")}:00.000Z`,
     finishedAt: "2026-07-18T13:00:00.000Z",
     id,
@@ -132,18 +133,40 @@ function data(
 
 type ChangeCallback = (payload: { eventType: string; new: unknown }) => void;
 
-function fakeSupabase(messages: Record<string, Array<Record<string, string>>> = {}) {
+function activityEvent(
+  runId: string,
+  sequence: number,
+  kind: string,
+  payload: unknown,
+  createdAt = "2026-07-18T13:00:00.000Z",
+) {
+  return {
+    agent_run_id: runId,
+    attempt_count: 1,
+    created_at: createdAt,
+    kind,
+    payload,
+    schema_version: 1,
+    sequence,
+  };
+}
+
+type ActivityRows = Record<string, Array<Record<string, unknown>>>;
+
+function fakeSupabase(messages: ActivityRows = {}) {
   const activeChannels = new Set<FakeChannel>();
   const channels: FakeChannel[] = [];
   const messageQueries: string[] = [];
 
   class FakeChannel {
+    readonly changeCallbacks = new Map<string, ChangeCallback>();
     changeCallback: ChangeCallback | null = null;
     statusCallback: ((status: string) => void) | null = null;
 
     constructor(readonly name: string) {}
 
-    on(_event: string, _config: unknown, callback: ChangeCallback) {
+    on(_event: string, config: { table: string }, callback: ChangeCallback) {
+      this.changeCallbacks.set(config.table, callback);
       this.changeCallback = callback;
       return this;
     }
@@ -161,18 +184,37 @@ function fakeSupabase(messages: Record<string, Array<Record<string, string>>> = 
       channels.push(channel);
       return channel;
     }),
-    from: vi.fn(() => ({
-      select: () => ({
-        eq: (_column: string, runId: string) => ({
-          order: () => ({
-            limit: () => {
-              const result = Promise.resolve({ data: messages[runId] ?? [], error: null });
-              messageQueries.push(runId);
-              return Object.assign(result, { abortSignal: () => result });
-            },
+    from: vi.fn((table: string) => ({
+      select: () => {
+        let runId = "";
+        let captureAttemptCount: number | undefined;
+        const builder = {
+          eq: (column: string, value: string | number) => {
+            if (column === "agent_run_id" && typeof value === "string") runId = value;
+            if (column === "attempt_count" && typeof value === "number") {
+              captureAttemptCount = value;
+            }
+            return builder;
+          },
+          in: (_column: string, kinds: string[]) => ({
+            order: () => ({
+              limit: () => {
+                const canonical = table === "agent_run_events";
+                const data = (messages[runId] ?? []).filter(
+                  (row) =>
+                    (canonical
+                      ? row.attempt_count === captureAttemptCount
+                      : !("sequence" in row)) && kinds.includes(String(row.kind)),
+                );
+                if (canonical) messageQueries.push(runId);
+                const result = Promise.resolve({ data, error: null });
+                return Object.assign(result, { abortSignal: () => result });
+              },
+            }),
           }),
-        }),
-      }),
+        };
+        return builder;
+      },
     })),
     removeChannel: vi.fn(async (channel: FakeChannel) => {
       activeChannels.delete(channel);
@@ -489,7 +531,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
           agent_run_id: "run-1",
           created_at: "2026-07-18T12:59:00.000Z",
           id: "test-error",
-          kind: "error",
+          kind: "worker_error",
           message_md: "Unit tests failed. API_KEY=private-test-key",
         },
       ],
@@ -527,15 +569,12 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByText("Failure cause unavailable")).toBeTruthy();
 
     await act(async () => {
-      channel?.changeCallback?.({
+      channel?.changeCallbacks.get("agent_run_events")?.({
         eventType: "INSERT",
-        new: {
-          agent_run_id: failed.id,
-          created_at: "2026-07-18T13:00:00.000Z",
-          id: "agent-error",
-          kind: "error",
-          message_md: "Tests failed during execution",
-        },
+        new: activityEvent(failed.id, 1, "terminal", {
+          status: "failed",
+          message: "Tests failed during execution",
+        }),
       });
     });
     expect(screen.getByText("Failure cause unavailable")).toBeTruthy();
@@ -561,15 +600,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
 
   it("renders and opens existing activity while the browser client is loading", async () => {
     const fake = fakeSupabase({
-      "run-1": [
-        {
-          agent_run_id: "run-1",
-          created_at: "2026-07-18T13:00:00.000Z",
-          id: "message-late",
-          kind: "progress",
-          message_md: "Loaded after the browser client",
-        },
-      ],
+      "run-1": [activityEvent("run-1", 1, "progress", { text: "Loaded after the browser client" })],
     });
     let finish!: (client: SupabaseClient<Database>) => void;
     deferredClient.load.mockReturnValue(new Promise((resolve) => (finish = resolve)));
@@ -627,15 +658,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
 
   it("lets an expanded run retry when the browser client cannot load", async () => {
     const fake = fakeSupabase({
-      "run-1": [
-        {
-          agent_run_id: "run-1",
-          created_at: "2026-07-18T13:00:00.000Z",
-          id: "message-retry",
-          kind: "progress",
-          message_md: "Loaded on retry",
-        },
-      ],
+      "run-1": [activityEvent("run-1", 1, "progress", { text: "Loaded on retry" })],
     });
     deferredClient.load.mockRejectedValue(new Error("SDK chunk unavailable"));
     const view = panel(data([run(1)]));
@@ -821,15 +844,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     const initialRuns = Array.from({ length: 20 }, (_, index) => run(index + 1));
     const olderRuns = Array.from({ length: 20 }, (_, index) => run(index + 21));
     const fake = fakeSupabase({
-      "run-1": [
-        {
-          agent_run_id: "run-1",
-          created_at: "2026-07-18T13:00:00.000Z",
-          id: "message-1",
-          kind: "progress",
-          message_md: "Cached message",
-        },
-      ],
+      "run-1": [activityEvent("run-1", 1, "progress", { text: "Cached message" })],
     });
     vi.stubGlobal(
       "fetch",
@@ -1381,6 +1396,83 @@ describe("SessionWalliePanel run history lifecycle", () => {
 });
 
 describe("SessionWalliePanel activity states", () => {
+  it("uses only the exact capture attempt, preserves sequence order, and clears expired activity on refresh", async () => {
+    const current = run(1, { captureAttemptCount: 2 });
+    const firstEvent = {
+      ...activityEvent(
+        current.id,
+        1,
+        "text",
+        { text: "First canonical event" },
+        "2026-07-18T13:02:00.000Z",
+      ),
+      attempt_count: 2,
+    };
+    const secondEvent = {
+      ...activityEvent(
+        current.id,
+        2,
+        "text",
+        { text: "Second canonical event" },
+        "2026-07-18T13:01:00.000Z",
+      ),
+      attempt_count: 2,
+    };
+    const diagnostic = {
+      agent_run_id: current.id,
+      created_at: "2026-07-18T12:58:00.000Z",
+      id: "diagnostic",
+      kind: "worker_progress",
+      message_md: "Worker prepared the sandbox",
+    };
+    const obsolete = { ...diagnostic, id: "old", kind: "text", message_md: "Legacy projection" };
+    const otherAttempt = activityEvent(current.id, 5, "text", { text: "Other capture attempt" });
+    const rows: ActivityRows = {
+      [current.id]: [secondEvent, obsolete, otherAttempt, diagnostic, firstEvent],
+    };
+    const fake = fakeSupabase(rows);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ nextCursor: null, runs: [current] }))),
+    );
+    panel(data([current]), fake.supabase);
+    fireEvent.click(screen.getByRole("button", { name: /activity: Completed/ }));
+    const activity = within(screen.getByRole("list", { name: "Run activity" }));
+    await activity.findByText("First canonical event");
+    expect(activity.getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([
+      "Worker prepared the sandbox",
+      "First canonical event",
+      "Second canonical event",
+    ]);
+
+    await act(async () => idleCallback?.());
+    await subscribeChannels(fake);
+    const channel = fake.channels.find((entry) =>
+      entry.name.startsWith("wallie-summary-messages:"),
+    );
+    expect(channel).toBeDefined();
+    await act(async () => {
+      const receive = channel?.changeCallbacks.get("agent_run_events");
+      receive?.({ eventType: "INSERT", new: otherAttempt });
+      receive?.({ eventType: "INSERT", new: secondEvent });
+      receive?.({
+        eventType: "INSERT",
+        new: { ...secondEvent, sequence: 3, payload: { text: "Live canonical event" } },
+      });
+    });
+    expect(activity.queryByText("Other capture attempt")).toBeNull();
+    expect(activity.getAllByText("Second canonical event")).toHaveLength(1);
+    expect(activity.getByText("Live canonical event")).toBeTruthy();
+
+    rows[current.id] = [diagnostic, obsolete];
+    await act(async () => channel?.statusCallback?.("CHANNEL_ERROR"));
+    await act(async () => channel?.statusCallback?.("SUBSCRIBED"));
+    await settleRecovery();
+    expect(activity.getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([
+      "Worker prepared the sandbox",
+    ]);
+  });
+
   it("announces disconnect and restore while preserving run history", async () => {
     const initialRun = run(1, {
       finishedAt: null,
@@ -1399,13 +1491,13 @@ describe("SessionWalliePanel activity states", () => {
     });
     const fake = fakeSupabase({
       "run-1": [
-        {
-          agent_run_id: "run-1",
-          created_at: "2026-07-18T12:01:00.000Z",
-          id: "msg-1",
-          kind: "progress",
-          message_md: "Cloning repository",
-        },
+        activityEvent(
+          "run-1",
+          1,
+          "progress",
+          { text: "Cloning repository" },
+          "2026-07-18T12:01:00.000Z",
+        ),
       ],
     });
     vi.stubGlobal(
@@ -1537,7 +1629,9 @@ describe("SessionWalliePanel activity states", () => {
       ],
       status: "running",
     });
-    const fake = fakeSupabase();
+    const fake = fakeSupabase({
+      "run-1": [activityEvent("run-1", 1, "progress", { text: "Cloning repository" })],
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -1638,7 +1732,9 @@ describe("SessionWalliePanel activity states", () => {
       stageName: "Older",
       status: "success",
     });
-    const fake = fakeSupabase();
+    const fake = fakeSupabase({
+      "run-1": [activityEvent("run-1", 1, "progress", { text: "Cloning repository" })],
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -1670,15 +1766,15 @@ describe("SessionWalliePanel activity states", () => {
       .length;
 
     await act(async () => {
-      summaryChannels()[0]?.changeCallback?.({
+      summaryChannels()[0]?.changeCallbacks.get("agent_run_events")?.({
         eventType: "INSERT",
-        new: {
-          agent_run_id: active.id,
-          created_at: "2026-07-18T12:02:00.000Z",
-          id: "msg-2",
-          kind: "progress",
-          message_md: "Installing dependencies",
-        },
+        new: activityEvent(
+          active.id,
+          2,
+          "progress",
+          { text: "Installing dependencies" },
+          "2026-07-18T12:02:00.000Z",
+        ),
       });
     });
 
@@ -1880,7 +1976,7 @@ describe("live update recovery regression", () => {
       status: "running",
     });
     let persisted = active;
-    const messages: Record<string, Array<Record<string, string>>> = {};
+    const messages: ActivityRows = {};
     const fake = fakeSupabase(messages);
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify({ nextCursor: null, runs: [persisted] })),
@@ -1926,13 +2022,13 @@ describe("live update recovery regression", () => {
       updatedAt: "2026-07-18T13:02:00.000Z",
     };
     messages[active.id] = [
-      {
-        agent_run_id: active.id,
-        id: "completed",
-        created_at: persisted.updatedAt,
-        kind: "completion",
-        message_md: "Saved during the outage",
-      },
+      activityEvent(
+        active.id,
+        1,
+        "terminal",
+        { status: "completed", summary: "Saved during the outage" },
+        persisted.updatedAt,
+      ),
     ];
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(screen.getByText("Completed")).toBeTruthy();

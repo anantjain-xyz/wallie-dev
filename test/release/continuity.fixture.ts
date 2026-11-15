@@ -14,6 +14,8 @@ import { createClient } from "@supabase/supabase-js";
 import type { AgentEvent } from "@/lib/agent-runner/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createArtifactSourceAnchor } from "@/features/sessions/review/source-anchor";
+import { loadRunTranscript } from "@/features/wallie/run-transcript";
+import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import {
   adminClient,
   checked,
@@ -30,6 +32,17 @@ import {
   setRelease,
   type Manifest,
 } from "./harness";
+import { browserHistoryHandshake } from "./run-history-browser-handshake";
+import {
+  assertPublishedRunHistory,
+  completedRunEvent,
+  initialRunEvent,
+  initialText,
+  reconnectRunEvent,
+  reconnectText,
+  terminalText,
+  type RunHistoryFixture,
+} from "./run-history-fixture";
 
 const exec = promisify(execFile);
 const originalCode = 'export const original = "preserve me";\n';
@@ -51,6 +64,9 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   const priorRelease = await releaseState(admin);
   const root = await mkdtemp(join(tmpdir(), "wallie-continuity-release-"));
   const ids = fixtureIds();
+  const workspaceSlug = `continuity-${ids.workspaceId}`;
+  const browser = browserHistoryHandshake();
+  let plannedSession: { id: string; number: number; jobId: string; userEmail: string } | undefined;
   const repositoryName = `wallie-fixture/continuity-${ids.workspaceId}`;
   const repositoryNumericId = Math.floor(Date.now() / 1000);
   let userId: string | undefined;
@@ -59,6 +75,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   let signOutReviewer: (() => Promise<unknown>) | undefined;
   let staleRelease: ReturnType<typeof deferred<void>> | undefined;
   let staleWorker: Promise<unknown> | undefined;
+  let finishCanceledRun: ReturnType<typeof deferred<void>> | undefined;
+  let canceledWorker: Promise<unknown> | undefined;
   let stopSandboxes: (() => Promise<void>) | undefined;
   const evidencePath = process.env.WALLIE_CONTINUITY_EVIDENCE_PATH;
   let evidence: Record<string, unknown> | undefined;
@@ -69,7 +87,9 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   };
   try {
     const { remote, writer, baseSha } = await createGitFixture(root);
-    let phase: "plan" | "build" | "stale" | "revision" = "plan";
+    let phase: "plan" | "build" | "stale" | "revision" | "cancel" | "capture-paused" = "plan";
+    const cancelStarted = deferred<string>();
+    finishCanceledRun = deferred<void>();
     let planSha = "";
     let buildSha = "";
     const staleStarted = deferred<{ runId: string; sandboxPath: string }>();
@@ -83,11 +103,54 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         assert(input.sandbox && input.runId);
         const mode = phase;
         const sandbox = input.sandbox;
+        if (mode === "cancel") {
+          yield initialRunEvent;
+          cancelStarted.resolve(input.runId);
+          await finishCanceledRun!.promise;
+          yield completedRunEvent;
+          return;
+        }
+        if (mode === "capture-paused") {
+          yield initialRunEvent;
+          yield completedRunEvent;
+          return;
+        }
         expect(await sandbox.readFile(`${sandbox.repoPath}/src/original.ts`)).toBe(originalCode);
         const head = await git(sandbox.repoPath, "rev-parse", "HEAD");
         if (mode === "plan") {
           expect(head).toBe(baseSha);
           await sandbox.writeFile(`${sandbox.repoPath}/src/plan.ts`, planCode);
+          yield initialRunEvent;
+          if (browser && plannedSession) {
+            const { attempt_count: attemptCount } = await checked(
+              admin.from("agent_runs").select("attempt_count").eq("id", input.runId).single(),
+            );
+            await browser.record({
+              file: "run-ready.json",
+              body: {
+                workspaceId: ids.workspaceId,
+                workspaceSlug,
+                userEmail: plannedSession.userEmail,
+                sessionId: plannedSession.id,
+                sessionNumber: plannedSession.number,
+                jobId: plannedSession.jobId,
+                runId: input.runId,
+                attemptCount,
+                stageSlug: "plan",
+                initialText,
+                reconnectText,
+                terminalText,
+              },
+            });
+            await browser.waitFor("browser-offline");
+          }
+          yield reconnectRunEvent;
+          if (browser) {
+            await browser.record({ file: "run-update" });
+            await browser.waitFor("browser-closed");
+          }
+          yield completedRunEvent;
+          return;
         } else {
           expect(await sandbox.readFile(`${sandbox.repoPath}/src/plan.ts`)).toBe(planCode);
           expect(head).toBe(mode === "build" ? planSha : buildSha);
@@ -160,7 +223,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     await checked(
       admin.from("workspaces").insert({
         id: ids.workspaceId,
-        slug: `continuity-${ids.workspaceId}`,
+        slug: workspaceSlug,
         name: "Isolated continuity release",
         created_by: userId,
       }),
@@ -229,20 +292,22 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     );
 
     await setRelease(admin, true, "Enable isolated local continuity acceptance fixture");
-    const created = await production.createSessionWithFirstJob({
-      admin,
-      creatorMemberId: ids.memberId,
-      githubRepositoryId: ids.repositoryId,
-      linearIssueId: null,
-      linearIssueUrl: null,
-      modelName: "gpt-5.5",
-      modelProvider: "codex",
-      pipelineId: ids.pipelineId,
-      selectedStageIds: ids.stageIds,
-      promptMd: "Implement the deterministic continuity fixture.",
-      title: "Continuity release proof",
-      workspaceId: ids.workspaceId,
-    });
+    const createFixtureSession = (title: string) =>
+      production.createSessionWithFirstJob({
+        admin,
+        creatorMemberId: ids.memberId,
+        githubRepositoryId: ids.repositoryId,
+        linearIssueId: null,
+        linearIssueUrl: null,
+        modelName: "gpt-5.5",
+        modelProvider: "codex",
+        pipelineId: ids.pipelineId,
+        selectedStageIds: ids.stageIds,
+        promptMd: "Implement the deterministic continuity fixture.",
+        title,
+        workspaceId: ids.workspaceId,
+      });
+    const created = await createFixtureSession("Continuity release proof");
     const sessionId = created.sessionId;
     const enrollment = await rpc<Array<{ state: string }>>(
       admin,
@@ -290,6 +355,14 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       return epoch;
     };
 
+    const sessionNumber = (await session()).number;
+    assert(account.data.user.email);
+    plannedSession = {
+      id: sessionId,
+      number: sessionNumber,
+      jobId: created.jobId,
+      userEmail: account.data.user.email,
+    };
     // A completed result is durable before acceptance; pausing must preserve it.
     transport.blockedCheckpointPush = true;
     const planJob = await claimJob(admin, created.jobId);
@@ -308,16 +381,83 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(Boolean(source.checkpoint_path || source.bundle_base64)).toBe(true);
     expect((await session()).current_artifact_id).toBeNull();
     expect(existsSync(transport.sandboxes[0].repoPath)).toBe(false);
-    await setRelease(admin, false, "Exercise captured-result recovery while paused");
+    await setRelease(
+      admin,
+      false,
+      priorRelease.enabled ? "Exercise captured-result recovery while paused" : priorRelease.reason,
+    );
     transport.blockedCheckpointPush = false;
     const publication = await checked(
       admin.from("session_checkpoint_publications").select("*").eq("run_id", planRun.id).single(),
     );
+    const historyScope = {
+      workspaceId: ids.workspaceId,
+      workspaceSlug,
+      sessionId,
+      runId: planRun.id,
+      jobId: planJob.id,
+      attemptCount: planJob.attempt_count,
+    } satisfies RunHistoryFixture;
+    const captured = await loadRunTranscript({ supabase: reviewer, ...historyScope });
+    expect(captured?.runStatus).toBe("running");
+    expect(captured?.entries.filter((entry) => entry.kind === "terminal")).toHaveLength(1);
+    expect(publication.status).toBe("pending");
+    const recoveryOutput = join(root, "publication-recovery-result.json");
+    const recoveryManifest = join(root, "publication-recovery.json");
+    await writeFile(
+      recoveryManifest,
+      JSON.stringify({
+        root,
+        remote,
+        repositoryName,
+        repositoryNumericId,
+        runId: planRun.id,
+        outputPath: recoveryOutput,
+      }),
+      { mode: 0o600 },
+    );
     await dueAt(publication.next_attempt_at);
+    await exec(
+      process.execPath,
+      [
+        resolve("node_modules/vitest/vitest.mjs"),
+        "run",
+        "test/release/restart-publication.worker.fixture.ts",
+        "--config",
+        "vitest.continuity.config.ts",
+      ],
+      {
+        env: { ...process.env, WALLIE_CONTINUITY_PUBLICATION_MANIFEST: recoveryManifest },
+        timeout: 45_000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    const recovered = JSON.parse(await readFile(recoveryOutput, "utf8")) as { pid: number };
+    expect(recovered.pid).not.toBe(process.pid);
+    const acceptedPlan = await checkpoint(planRun.id);
+    planSha = acceptedPlan.output_sha;
+    await assertPublishedRunHistory(reviewer, historyScope, {
+      artifactId: acceptedPlan.artifact_id,
+      checkpointSha: planSha,
+    });
+    const acceptedSession = await session();
+    expect(acceptedSession.current_artifact_id).toBe(acceptedPlan.artifact_id);
     expect(
-      await production.drainCheckpointPublications(admin, { runId: planRun.id, limit: 1 }),
-    ).toEqual({ adopted: 1, failed: 0 });
-    planSha = (await checkpoint(planRun.id)).output_sha;
+      await checked(admin.from("session_artifacts").select("id").eq("session_id", sessionId)),
+    ).toEqual([{ id: acceptedPlan.artifact_id }]);
+    if (browser) {
+      await browser.record({
+        file: "run-complete.json",
+        body: {
+          artifactId: acceptedPlan.artifact_id,
+          artifactVersion: acceptedSession.current_artifact_version,
+          runId: planRun.id,
+          checkpointSha: planSha,
+          workerPid: recovered.pid,
+        },
+      });
+      await browser.waitFor("browser-verified");
+    }
     expect(transport.runnerStarts).toBe(1);
     expect((await session()).phase_status).toBe("awaiting_review");
     expect(await production.drainCanonicalPullRequests(admin, { sessionId, limit: 1 })).toEqual({
@@ -325,7 +465,13 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       failed: 0,
     });
     expect(transport.createCount).toBe(0);
-    await setRelease(admin, true, "Resume canonical publication after durable recovery");
+    await setRelease(
+      admin,
+      true,
+      priorRelease.enabled
+        ? priorRelease.reason
+        : "Resume canonical publication after durable recovery",
+    );
     const firstEpoch = await canonical();
 
     const buildJobId = await approve();
@@ -771,6 +917,160 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         .eq("session_id", sessionId)
         .eq("workspace_id", ids.workspaceId),
     );
+    phase = "cancel";
+    const cancelTarget = await createFixtureSession("Cancel during durable capture");
+    const cancelJob = await claimJob(admin, cancelTarget.jobId);
+    const pendingCancellation = production.processPipelineJob({ admin, job: cancelJob });
+    canceledWorker = pendingCancellation;
+    const canceledRun = await Promise.race([
+      cancelStarted.promise,
+      pendingCancellation.then(() => {
+        throw new Error("Worker missed the cancellation barrier.");
+      }),
+    ]);
+    const cancelReceipt = await cancelSessionWork(admin, {
+      expectedRunId: canceledRun,
+      reason: "Canceled during durable capture fixture.",
+      sessionId: cancelTarget.sessionId,
+      workspaceId: ids.workspaceId,
+    });
+    expect(cancelReceipt.canceledRunIds).toEqual([canceledRun]);
+    expect(cancelReceipt.canceledJobIds).toEqual([cancelJob.id]);
+    const cancelSession = await checked(
+      admin.from("sessions").select("current_stage_id").eq("id", cancelTarget.sessionId).single(),
+    );
+    const replacementRows = await checked(
+      admin.rpc("enqueue_session_job_with_run", {
+        p_session_id: cancelTarget.sessionId,
+        p_workspace_id: ids.workspaceId,
+        p_expected_stage_id: cancelSession.current_stage_id,
+        p_requested_by_member_id: ids.memberId,
+        p_trigger_type: "manual_retry",
+        p_agent_model_provider: "codex",
+        p_agent_model_name: "gpt-5.5",
+        p_run_type: "project",
+      }),
+    );
+    assert(replacementRows[0]?.job_id);
+    const replacement = await claimJob(admin, replacementRows[0].job_id);
+    expect(replacement.id).not.toBe(cancelJob.id);
+    const mixedClaim = await checked(
+      admin.rpc("append_agent_run_event", {
+        p_job_id: replacement.id,
+        p_run_id: canceledRun,
+        p_attempt_count: replacement.attempt_count,
+        p_sequence: 50,
+        p_kind: "terminal",
+        p_payload: {
+          status: "completed",
+          summary: "Canceled attempt cannot borrow a fresh claim.",
+        },
+        p_truncated: false,
+      }),
+    );
+    expect(mixedClaim).toBe(false);
+    finishCanceledRun.resolve();
+    expect(await pendingCancellation).toMatchObject({ result: "idle" });
+    canceledWorker = undefined;
+    const canceledHistory = await loadRunTranscript({
+      supabase: reviewer,
+      workspaceId: ids.workspaceId,
+      runId: canceledRun,
+    });
+    expect(canceledHistory?.runStatus).toBe("canceled");
+    expect(
+      canceledHistory?.entries.some(
+        (entry) => entry.kind === "text" && entry.payload.text === initialText,
+      ),
+    ).toBe(true);
+    expect(canceledHistory?.entries.some((entry) => entry.kind === "terminal")).toBe(false);
+    expect(
+      await checked(
+        admin.from("session_git_checkpoints").select("artifact_id").eq("run_id", canceledRun),
+      ),
+    ).toEqual([]);
+
+    phase = "capture-paused";
+    const pausedResult = await production.processPipelineJob({
+      admin,
+      job: replacement,
+      captureOrderedEvents: false,
+    });
+    expect(pausedResult.result).toBe("success");
+    assert(pausedResult.runId);
+    const pausedHistory = await loadRunTranscript({
+      supabase: reviewer,
+      workspaceId: ids.workspaceId,
+      runId: pausedResult.runId,
+    });
+    expect(pausedHistory?.runStatus).toBe("success");
+    expect(pausedHistory?.entries).toEqual([]);
+    expect(
+      await checked(
+        admin.from("agent_run_events").select("sequence").eq("agent_run_id", pausedResult.runId),
+      ),
+    ).toEqual([]);
+    await assertPublishedRunHistory(reviewer, historyScope, {
+      artifactId: acceptedPlan.artifact_id,
+      checkpointSha: planSha,
+    });
+
+    const nativeSession = await createFixtureSession("Native Workflow durable history");
+    const nativeStage = await checked(
+      admin.from("sessions").select("current_stage_id").eq("id", nativeSession.sessionId).single(),
+    );
+    const dispatchRows = await checked(
+      admin.rpc("claim_next_worker_dispatch", { p_timeout_ms: 120_000 }),
+    );
+    const nativeDispatch = dispatchRows[0];
+    expect(nativeDispatch?.job_id).toBe(nativeSession.jobId);
+    assert(nativeDispatch);
+    assert(signedIn.data.session);
+    await exec(
+      process.execPath,
+      [
+        resolve("node_modules/vitest/vitest.mjs"),
+        "run",
+        "cloudflare/tests/retained-history.fixture.test.ts",
+        "--config",
+        "cloudflare/vitest.config.mts",
+      ],
+      {
+        env: {
+          ...process.env,
+          CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false",
+          WRANGLER_SEND_METRICS: "false",
+          WRANGLER_LOG_PATH: join(root, "workerd-qualification.log"),
+          WALLIE_NATIVE_HISTORY_FIXTURE: JSON.stringify({
+            url: process.env.WALLIE_CONTINUITY_SUPABASE_URL,
+            serviceKey: process.env.WALLIE_CONTINUITY_SERVICE_ROLE_KEY,
+            reviewerToken: signedIn.data.session.access_token,
+            workspaceId: ids.workspaceId,
+            workspaceSlug,
+            sessionId: nativeSession.sessionId,
+            stageId: nativeStage.current_stage_id,
+            repositoryId: ids.repositoryId,
+            baseSha,
+            jobId: nativeDispatch.job_id,
+            attemptCount: nativeDispatch.attempt_count,
+            workflowId: nativeDispatch.workflow_id,
+          }),
+        },
+        timeout: 55_000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    // A skipped child cannot establish this persisted adoption receipt.
+    const nativeCheckpoints = await checked(
+      admin
+        .from("session_git_checkpoints")
+        .select("run_id,artifact_id,attempt_count")
+        .eq("workspace_id", ids.workspaceId)
+        .eq("session_id", nativeSession.sessionId),
+    );
+    expect(nativeCheckpoints).toHaveLength(1);
+    expect(nativeCheckpoints[0]?.attempt_count).toBe(nativeDispatch.attempt_count);
+
     evidence = {
       schemaVersion: 1,
       fixture: "local-fake-provider-with-real-database-and-git",
@@ -818,6 +1118,22 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         laterEditAndReplyRemainUnsent: true,
         networkRetrySameGeneration: true,
       },
+      retainedHistory: {
+        runId: historyScope.runId,
+        attemptCount: historyScope.attemptCount,
+        checkpointSha: planSha,
+        artifactId: acceptedPlan.artifact_id,
+        publicationRecoveryPid: recovered.pid,
+        canceledRunId: canceledRun,
+        mixedClaimRejected: true,
+        capturePausedRunId: pausedResult.runId,
+        nativeWorkflowRestart: {
+          workflowId: nativeDispatch.workflow_id,
+          runId: nativeCheckpoints[0]?.run_id,
+          artifactId: nativeCheckpoints[0]?.artifact_id,
+          attemptCount: nativeDispatch.attempt_count,
+        },
+      },
       staleWorker: {
         runId: oldExecution.runId,
         attemptCount: oldJob.attempt_count,
@@ -849,9 +1165,13 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       subprocessRestart: true,
       staleWorkerFenced: true,
       capturedRecoveryWhilePaused: true,
+      nodeAndWorkerdRetainedHistory: true,
+      captureDisabledLegacyHistory: true,
       immutableInlineFeedback: true,
     });
   } finally {
+    finishCanceledRun?.resolve();
+    await canceledWorker?.catch(() => undefined);
     staleRelease?.resolve();
     await staleWorker?.catch(() => undefined);
     await stopSandboxes?.();

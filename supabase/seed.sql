@@ -10,9 +10,9 @@
 -- board looks realistic.
 -- =============================================================================
 
--- Helper: insert one agent run plus a user/assistant message pair, with stage-
--- and outcome-appropriate copy. Keeps the generated run history in Section 10
--- compact and consistent. Dropped at the end of this script.
+-- Helper: insert one agent run with sample ordered activity for a completed
+-- attempt. Keeps the generated run history in Section 10 compact and
+-- consistent. Dropped at the end of this script.
 --   p_kind: 'completed' (approved prior stage) | 'awaiting' (current, awaiting
 --           review) | 'rejected' (produced an artifact that was rejected) |
 --           'queued' (the current attempt, still generating)
@@ -42,61 +42,58 @@ DECLARE
   v_queued   boolean := (p_kind = 'queued');
   v_status   public.agent_run_status := CASE WHEN v_queued THEN 'queued' ELSE 'success' END;
   v_retry    text := CASE WHEN p_attempt > 1 THEN ' (attempt ' || p_attempt || ')' ELSE '' END;
-  v_user_md  text;
-  v_asst_md  text;
+  v_progress text;
+  v_summary  text;
 BEGIN
   -- A queued run has not started yet: no started_at / finished_at / activity.
   -- Every other run is terminal (success), finishing at p_finished_at.
   INSERT INTO public.agent_runs
     (id, workspace_id, session_id, agent_job_id, triggered_by_member_id,
      stage_id, stage_slug, stage_name, run_type, model_provider, model_name,
-     status, last_activity_at, started_at, finished_at, created_at)
+     status, attempt_count, last_activity_at, started_at, finished_at, created_at)
   VALUES
     (v_run_id, p_workspace_id, p_session_id, null, p_member_id,
      p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-8[1m]',
-     v_status,
+     v_status, p_attempt,
      CASE WHEN v_queued THEN null ELSE coalesce(p_finished_at, p_started_at) END,
      CASE WHEN v_queued THEN null ELSE p_started_at END,
      CASE WHEN v_queued THEN null ELSE p_finished_at END,
      p_started_at - interval '2 minutes');
 
-  v_user_md := CASE p_stage_slug
+  IF v_queued THEN
+    RETURN;
+  END IF;
+
+  v_progress := CASE p_stage_slug
     WHEN 'plan'   THEN 'Generate the plan for: ' || p_title || '.'
     WHEN 'build'  THEN 'Plan approved — implement: ' || p_title || '.'
     WHEN 'review' THEN 'Run the review-and-fix loop for: ' || p_title || '.'
     WHEN 'land'   THEN 'Approved — land: ' || p_title || '.'
     ELSE 'Run the ' || lower(p_stage_name) || ' stage for: ' || p_title || '.'
   END;
-  -- Any attempt past the first was triggered by a reviewer rejection.
   IF p_attempt > 1 THEN
-    v_user_md := 'Reviewer requested changes — re-run the ' || lower(p_stage_name)
+    v_progress := 'Reviewer requested changes — re-run the ' || lower(p_stage_name)
       || v_retry || ' for: ' || p_title || '.';
   END IF;
 
-  -- The enqueued request is always present.
-  INSERT INTO public.agent_run_messages
-    (id, workspace_id, agent_run_id, kind, message_md, created_at)
+  v_summary := CASE p_stage_slug
+    WHEN 'plan'   THEN 'Plan complete — captured the problem statement, user story, acceptance criteria, and technical approach.'
+    WHEN 'build'  THEN 'Build complete — implemented the change and pushed it to the working branch for review.'
+    WHEN 'review' THEN 'Review complete — verified against the plan, swept PR feedback, and confirmed CI is green. Recommending approval.'
+    WHEN 'land'   THEN 'Land complete — squash-merged the PR and confirmed the deploy.'
+    ELSE 'Finished the ' || lower(p_stage_name) || ' stage.'
+  END;
+
+  INSERT INTO public.agent_run_events
+    (workspace_id, agent_run_id, attempt_count, sequence, kind, payload, created_at)
   VALUES
-    (gen_random_uuid(), p_workspace_id, v_run_id, 'user', v_user_md,
-     p_started_at + interval '5 seconds');
-
-  -- A queued run has produced no assistant output yet; terminal runs close
-  -- with the agent's completion message.
-  IF NOT v_queued THEN
-    v_asst_md := CASE p_stage_slug
-      WHEN 'plan'   THEN 'Plan complete — captured the problem statement, user story, acceptance criteria, and technical approach.'
-      WHEN 'build'  THEN 'Build complete — implemented the change and pushed it to the working branch for review.'
-      WHEN 'review' THEN 'Review complete — verified against the plan, swept PR feedback, and confirmed CI is green. Recommending approval.'
-      WHEN 'land'   THEN 'Land complete — squash-merged the PR and confirmed the deploy.'
-      ELSE 'Finished the ' || lower(p_stage_name) || ' stage.'
-    END;
-
-    INSERT INTO public.agent_run_messages
-      (id, workspace_id, agent_run_id, kind, message_md, created_at)
-    VALUES
-      (gen_random_uuid(), p_workspace_id, v_run_id, 'assistant', v_asst_md,
-       coalesce(p_finished_at, p_started_at + interval '4 minutes'));
-  END IF;
+    (p_workspace_id, v_run_id, p_attempt, 1, 'progress',
+      jsonb_build_object('text', v_progress), p_started_at + interval '5 seconds'),
+    (p_workspace_id, v_run_id, p_attempt, 2, 'terminal',
+      jsonb_build_object('status', 'completed', 'summary', v_summary),
+      coalesce(p_finished_at, p_started_at + interval '4 minutes')),
+    (p_workspace_id, v_run_id, p_attempt, 3, 'capture_end',
+      '{"status":"complete"}'::jsonb, coalesce(p_finished_at, p_started_at + interval '4 minutes'));
 END;
 $fn$;
 

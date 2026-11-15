@@ -4,10 +4,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
-import {
-  redactRunSensitiveText,
-  redactRunToolText,
-} from "@/lib/agent-runner/redact-sensitive-text";
+import { redactRunSensitiveText } from "@/lib/agent-runner/redact-sensitive-text";
 import type { Database } from "@/lib/supabase/database.types";
 import { readPrivateValidationAsset } from "@/lib/validation-evidence/private-asset";
 import { removeWorkspaceStoragePrefix } from "@/lib/workspaces/deletion";
@@ -51,7 +48,7 @@ const rowSchema = z.object({
   record_kind: z.enum([
     "run",
     "event",
-    "legacy_message",
+    "run_diagnostic",
     "stage_markdown",
     "checkpoint",
     "validation_receipt",
@@ -114,14 +111,11 @@ async function materializeRecord(
   if (row.availability !== "recorded") {
     let payload: unknown = null;
     if (row.availability === "available" || row.availability === "gap") {
-      if (row.record_kind === "legacy_message") {
+      if (row.record_kind === "run_diagnostic") {
         if (typeof row.payload !== "string") {
           return { ...identity, availability: "inaccessible", payload: null };
         }
-        payload =
-          row.metadata.kind === "tool_use"
-            ? redactRunToolText(row.payload)
-            : redactRunSensitiveText(row.payload);
+        payload = redactRunSensitiveText(row.payload);
       } else {
         payload = row.payload ?? null;
       }

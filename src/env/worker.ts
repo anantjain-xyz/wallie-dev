@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-export const workerControlEnvSchema = z.object({
+export const workerRunCaptureEnvSchema = z.object({
+  WALLIE_ORDERED_RUN_CAPTURE_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+});
+
+export const workerControlEnvSchema = workerRunCaptureEnvSchema.extend({
   WORKER_JOB_TIMEOUT_MS: z.preprocess(
     (value) => (value === "" ? undefined : value),
     z.coerce.number().int().positive().max(1_800_000).default(1_800_000),

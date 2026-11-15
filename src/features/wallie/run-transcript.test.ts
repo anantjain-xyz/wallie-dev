@@ -15,17 +15,13 @@ const timestamp = "2026-11-14T19:01:10.123456+00:00";
 const owner: {
   run_id: string;
   attempt_count: number | null;
-  has_events: boolean;
   status: string;
   transcript_expired_at?: string;
-} = { run_id: runId, attempt_count: 2, has_events: true, status: "running" };
+} = { run_id: runId, attempt_count: 2, status: "running" };
 
 function client(pages: unknown[][] = [], currentOwner = owner) {
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
-  const rpc = vi.fn().mockImplementation(async (name: string) => ({
-    data: name === "list_run_legacy_transcript" ? (pages.shift() ?? []) : [currentOwner],
-    error: null,
-  }));
+  const rpc = vi.fn().mockResolvedValue({ data: [currentOwner], error: null });
   const from = vi.fn((table: string) => {
     const result = { data: pages.shift() ?? [], error: null };
     const builder = {
@@ -35,7 +31,6 @@ function client(pages: unknown[][] = [], currentOwner = owner) {
       limit: (value: number) => record("limit", value),
       gt: (key: string, value: unknown) => record("gt", key, value),
       lt: (key: string, value: unknown) => record("lt", key, value),
-      or: (value: string) => record("or", value),
       then: Promise.resolve(result).then.bind(Promise.resolve(result)),
     };
     function record(method: string, ...args: unknown[]) {
@@ -64,23 +59,11 @@ function event(sequence: number, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-function legacy(index: number, overrides: Record<string, unknown> = {}) {
-  return {
-    id: `53400000-0006-4000-8000-${String(index).padStart(12, "0")}`,
-    created_at: timestamp,
-    kind: "progress",
-    message_excerpt: `Legacy ${index}`,
-    message_truncated: false,
-    ...overrides,
-  };
-}
-
 describe("run transcript pages", () => {
   it("returns an explicit expiry receipt without reading transcript bodies", async () => {
     const test = client([], {
       ...owner,
       status: "success",
-      has_events: false,
       transcript_expired_at: timestamp,
     });
     await expect(loadRunTranscript(test.input)).resolves.toMatchObject({
@@ -96,7 +79,7 @@ describe("run transcript pages", () => {
   it("discards page bytes when retention expires the transcript during the read", async () => {
     const test = client([[event(1)]]);
     test.rpc.mockResolvedValueOnce({ data: [owner], error: null }).mockResolvedValueOnce({
-      data: [{ ...owner, has_events: false, status: "success", transcript_expired_at: timestamp }],
+      data: [{ ...owner, status: "success", transcript_expired_at: timestamp }],
       error: null,
     });
     await expect(loadRunTranscript(test.input)).resolves.toMatchObject({
@@ -112,7 +95,6 @@ describe("run transcript pages", () => {
     expect(page).toMatchObject({
       runId,
       attemptCount: 2,
-      mode: "events",
       runStatus: "running",
       hasOlder: true,
       hasNewer: false,
@@ -172,50 +154,50 @@ describe("run transcript pages", () => {
     expect(empty?.hasNewer).toBe(false);
   });
 
-  it("keeps precise legacy timestamp/id ties and never queries event projections for legacy mode", async () => {
-    const test = client([[legacy(3), legacy(2), legacy(1)], [legacy(1)]], {
-      ...owner,
-      has_events: false,
-    });
-    const first = await loadRunTranscript({ ...test.input, query: { limit: 2 } });
-    expect(first?.entries.map((entry) => entry.id)).toEqual([
-      `message:${legacy(2).id}`,
-      `message:${legacy(3).id}`,
-    ]);
-    expect(first?.entries[0]).toMatchObject({
-      kind: "legacy",
-      payload: { kind: "progress", text: "Legacy 2" },
-      sequence: null,
-    });
-    await loadRunTranscript({ ...test.input, query: { cursor: first?.olderCursor ?? undefined } });
-    expect(test.from).not.toHaveBeenCalled();
-    expect(test.rpc).toHaveBeenCalledWith("list_run_legacy_transcript", {
-      p_workspace_id: workspaceId,
-      p_run_id: runId,
-      p_limit: 31,
-      p_direction: "older",
-      p_cursor_created_at: timestamp,
-      p_cursor_id: legacy(2).id,
-    });
-  });
-
-  it("provides an origin cursor for an empty transcript and reads its first later message", async () => {
-    const test = client([[], [legacy(1)]], { ...owner, attempt_count: null, has_events: false });
+  it("uses the same exact-attempt cursor before the first ordered event arrives", async () => {
+    const test = client([[], [event(1)]]);
     const empty = await loadRunTranscript(test.input);
     expect(empty).toMatchObject({
+      attemptCount: 2,
       entries: [],
       hasOlder: false,
       hasNewer: false,
       olderCursor: null,
     });
     expect(empty?.newerCursor).toBeTruthy();
-    expect(empty?.attemptCount).toBeNull();
     const first = await loadRunTranscript({
       ...test.input,
       query: { direction: "newer", cursor: empty?.newerCursor },
     });
-    expect(first?.entries).toHaveLength(1);
+    expect(first?.entries.map((entry) => entry.sequence)).toEqual([1]);
     expect(first?.hasOlder).toBe(false);
+    expect(test.calls).toContainEqual({
+      table: "agent_run_events",
+      method: "gt",
+      args: ["sequence", 0],
+    });
+    expect(test.from).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an empty transcript without reading bodies before an attempt is bound", async () => {
+    const test = client([], { ...owner, attempt_count: null, status: "queued" });
+    const empty = await loadRunTranscript(test.input);
+    expect(empty).toMatchObject({
+      attemptCount: null,
+      entries: [],
+      hasOlder: false,
+      hasNewer: false,
+      olderCursor: null,
+    });
+    expect(test.from).not.toHaveBeenCalled();
+    test.rpc.mockResolvedValue({ data: [owner], error: null });
+    await expect(
+      loadRunTranscript({
+        ...test.input,
+        query: { cursor: empty?.newerCursor, direction: "newer" },
+      }),
+    ).rejects.toBeInstanceOf(RunTranscriptResetError);
+    expect(test.from).not.toHaveBeenCalled();
   });
 
   it("returns null without querying transcript bodies when the run is invisible", async () => {
@@ -252,7 +234,6 @@ describe("run transcript pages", () => {
         workspaceId,
         runId,
         attemptCount: 2,
-        mode: "events",
         sequence: 0,
       }),
     ).toString("base64url");
@@ -275,20 +256,7 @@ describe("run transcript pages", () => {
     },
   );
 
-  it("resets the cursor when the first exact event supersedes legacy projections", async () => {
-    const test = client([[]], { ...owner, has_events: false });
-    const initial = await loadRunTranscript(test.input);
-    test.rpc.mockResolvedValue({ data: [owner], error: null });
-    await expect(
-      loadRunTranscript({
-        ...test.input,
-        query: { cursor: initial?.newerCursor, direction: "newer" },
-      }),
-    ).rejects.toBeInstanceOf(RunTranscriptResetError);
-    expect(test.from).not.toHaveBeenCalled();
-  });
-
-  it("resets if an attempt or source changes during a read", async () => {
+  it("resets if the bound attempt changes during a read", async () => {
     const test = client([[event(1)]]);
     test.rpc
       .mockResolvedValueOnce({ data: [owner], error: null })
@@ -315,17 +283,16 @@ describe("run transcript pages", () => {
     },
   );
 
-  it.each([
-    "bad cursor",
-    "a".repeat(513),
-    Buffer.from('{"mode":"events","sequence":-1}').toString("base64url"),
-  ])("rejects malformed cursor %s", async (cursor) => {
-    const test = client();
-    await expect(loadRunTranscript({ ...test.input, query: { cursor } })).rejects.toBeInstanceOf(
-      RunTranscriptCursorError,
-    );
-    expect(test.from).not.toHaveBeenCalled();
-  });
+  it.each(["bad cursor", "a".repeat(513), Buffer.from('{"sequence":-1}').toString("base64url")])(
+    "rejects malformed cursor %s",
+    async (cursor) => {
+      const test = client();
+      await expect(loadRunTranscript({ ...test.input, query: { cursor } })).rejects.toBeInstanceOf(
+        RunTranscriptCursorError,
+      );
+      expect(test.from).not.toHaveBeenCalled();
+    },
+  );
 
   it("caps displayed entries and the query lookahead even for internal callers", async () => {
     const test = client([Array.from({ length: 51 }, (_, index) => event(51 - index))]);
@@ -336,22 +303,6 @@ describe("run transcript pages", () => {
 });
 
 describe("transcript payload boundaries", () => {
-  it.each(["user", "assistant"])(
-    "keeps readable historical %s messages and the database truncation marker",
-    async (kind) => {
-      const test = client(
-        [[legacy(1, { kind, message_excerpt: "Recorded conversation", message_truncated: true })]],
-        { ...owner, has_events: false },
-      );
-      const page = await loadRunTranscript(test.input);
-      expect(page?.entries[0]).toMatchObject({
-        kind: "legacy",
-        payload: { kind, text: "Recorded conversation" },
-        truncated: true,
-      });
-    },
-  );
-
   it("retains known tool outcomes, causation, usage and capture coverage but removes extra fields", async () => {
     const coverage = {
       adapter: "cursor",
@@ -460,33 +411,22 @@ describe("transcript payload boundaries", () => {
     });
   });
 
-  it("sanitizes legacy text and exposes only typed failure metadata", async () => {
-    const test = client(
+  it("sanitizes structured terminal text before a page leaves the server", async () => {
+    const test = client([
       [
-        [
-          legacy(3, { kind: "unknown-kind", message_excerpt: "private-marker" }),
-          legacy(2, {
-            kind: "run_failure",
-            message_excerpt:
-              '{"version":1,"category":"timeout","code":"timeout","private":"private-marker"}',
-          }),
-          legacy(1, {
-            kind: "error",
-            message_excerpt: "Authorization: Bearer fixture-secret-token-value",
-          }),
-        ],
+        event(1, {
+          kind: "terminal",
+          payload: {
+            status: "failed",
+            message: "Authorization: Bearer fixture-secret-token-value",
+          },
+        }),
       ],
-      { ...owner, has_events: false },
-    );
+    ]);
     const page = await loadRunTranscript(test.input);
     expect(page?.entries[0]).toMatchObject({
-      payload: { text: expect.stringMatching(/\[redacted\]/i) },
+      payload: { message: expect.stringMatching(/\[redacted\]/i) },
     });
-    expect(page?.entries[1]).toMatchObject({
-      payload: { kind: "run_failure", text: expect.stringContaining("Timeout") },
-    });
-    expect(page?.entries[2]).toMatchObject({ payload: { kind: "unknown" } });
-    expect(JSON.stringify(page)).not.toContain("private-marker");
     expect(JSON.stringify(page)).not.toContain("fixture-secret-token-value");
   });
 });

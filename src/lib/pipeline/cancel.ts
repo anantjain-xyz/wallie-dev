@@ -248,7 +248,7 @@ export async function cleanupSessionWorkReceipt(
     if (input.reason && run.status === "canceled") {
       const { error: messageError } = await admin.from("agent_run_messages").insert({
         agent_run_id: run.id,
-        kind: "error" as const,
+        kind: "worker_error",
         message_md: `**Canceled:** ${input.reason}`,
         workspace_id: run.workspace_id,
       });

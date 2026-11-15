@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { workerRunCaptureEnvSchema } from "@/env/worker";
+
 const optional = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 
@@ -24,6 +26,7 @@ export const workerWakeEnvSchema = z.object({
 });
 
 export const cloudflareEnvSchema = workerWakeEnvSchema.extend({
+  ...workerRunCaptureEnvSchema.shape,
   WALLIE_WORKER_DISPATCH_ENABLED: z.enum(["true", "false"]).default("false"),
   WALLIE_WORKER_AUTH_ENABLED: z.enum(["true", "false"]).default("false"),
   WORKER_MAX_CONCURRENT_JOBS: z.coerce.number().int().positive().max(100).default(10),

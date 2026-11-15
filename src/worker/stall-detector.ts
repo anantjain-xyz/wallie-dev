@@ -252,7 +252,7 @@ async function loadRuns(admin: AdminClient, jobIds: string[]): Promise<RecoveryR
 async function insertRunErrorMessage(admin: AdminClient, run: RecoveryRun, reason: string) {
   const { error } = await admin.from("agent_run_messages").insert({
     agent_run_id: run.id,
-    kind: "error",
+    kind: "worker_error",
     message_md: `**Error:** ${reason}`,
     workspace_id: run.workspace_id,
   });

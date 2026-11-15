@@ -11,7 +11,7 @@ import {
   messagesFailedCopy,
   messagesLoadingCopy,
 } from "@/features/wallie/activity-summary";
-import type { WallieRun } from "@/features/wallie/types";
+import type { WallieRun, WallieRunMessage } from "@/features/wallie/types";
 
 function run(overrides: Partial<WallieRun> = {}): WallieRun {
   return {
@@ -53,11 +53,12 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
 
 describe("activity-summary helpers", () => {
   it("groups only adjacent exploration and keeps stable event IDs as the group grows", () => {
-    const tool = (id: string, name: string) => ({
+    const tool = (id: string, name: string): WallieRunMessage => ({
       id,
-      kind: "tool_use",
+      kind: "tool_call",
+      tool: name,
       createdAt: "2026-07-18T12:00:00.000Z",
-      messageMd: `**Tool:** ${name}\n\n\`\`\`\n{}\n\`\`\``,
+      messageMd: "{}",
     });
     const read = tool("read", "read_file");
     expect(groupActivityMessages([read])[0].id).toBe("read");
@@ -123,7 +124,7 @@ describe("activity-summary helpers", () => {
     expect(currentOperationLabel({ run: run(), stalled: false })).toBe("Working");
     expect(formatMessageSourceLabel("progress")).toBe("Progress");
     expect(formatMessageSourceLabel("error")).toBe("Error");
-    expect(formatMessageSourceLabel("tool_use")).toBe("Tool use");
+    expect(formatMessageSourceLabel("tool_call")).toBe("Tool use");
     expect(messagesLoadingCopy()).toBe("Loading run messages…");
     expect(messagesEmptyCopy()).toContain("No messages");
     expect(messagesFailedCopy()).toContain("Collapse and expand");
@@ -141,8 +142,9 @@ describe("activity-summary helpers", () => {
       messages: [
         {
           id: "message-1",
-          kind: "tool_use",
-          messageMd: `**Tool:** ${tool}\n\n\`\`\`\n{"command":"pnpm check"}\n\`\`\``,
+          kind: "tool_call",
+          tool,
+          messageMd: '{"command":"pnpm check"}',
           createdAt: "2026-07-18T12:00:00.000Z",
         },
       ],

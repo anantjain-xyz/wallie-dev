@@ -90,6 +90,21 @@ See [Execution budgets](../architecture/execution-budgets.md).
 Do not manually set a queued job to running. That bypasses row locks, workspace
 capacity, mutation locks, attempt accounting, and heartbeat ownership.
 
+## Ordered run capture
+
+Deploy the events-only schema and its matching web and worker versions together.
+Ordered capture defaults to `true`. Verify an exact run, transcript, checkpoint,
+and artifact before expanding enrollment.
+
+Set `WALLIE_ORDERED_RUN_CAPTURE_ENABLED=false` in the worker environment to
+pause ordered capture for subsequently started attempts. Those attempts still
+refresh run activity and can publish artifacts. Runs and Review keep reading
+retained ordered events under the workspace’s access and retention policies.
+
+Set the variable to `true` to resume capture for subsequent attempts. Use the
+[durable run history qualification](../development/durable-run-history-qualification.md)
+to verify recovery and the capture switch.
+
 ## Controlled checkpoint continuity release
 
 Checkpoint continuity starts **paused** after the OP-499 migration. The database

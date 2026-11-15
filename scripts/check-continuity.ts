@@ -54,7 +54,17 @@ try {
     WALLIE_CONTINUITY_SUPABASE_URL: apiUrl,
     WALLIE_CONTINUITY_DB_URL: dbUrl,
     WALLIE_CONTINUITY_SERVICE_ROLE_KEY: key,
+    NEXT_PUBLIC_SUPABASE_URL: apiUrl,
+    // The server's admin config also validates the public configuration.
+    // The local service client never sends this placeholder to Supabase.
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
+      status.PUBLISHABLE_KEY ??
+      status.ANON_KEY ??
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+      "local-admin-fixture",
+    SUPABASE_SECRET_KEY: key,
     WALLIE_SANDBOX_IMPL: "fake",
+    WALLIE_ORDERED_RUN_CAPTURE_ENABLED: "true",
   };
   delete env.WALLIE_WORKER_WAKE_URL;
   delete env.WALLIE_WORKER_WAKE_SECRET;

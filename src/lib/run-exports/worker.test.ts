@@ -189,7 +189,7 @@ function exportFixture(rows: ReturnType<typeof catalogRow>[]) {
 }
 
 describe("durable run export worker", () => {
-  it("enumerates exact capture gaps, redacts legacy text, and copies verified asset bytes", async () => {
+  it("enumerates exact capture gaps, redacts worker diagnostics, and copies verified asset bytes", async () => {
     const fixture = exportFixture([
       catalogAsset("recorded"),
       catalogRow(2, {
@@ -198,7 +198,8 @@ describe("durable run export worker", () => {
         metadata: { reason: "capture_end_missing" },
       }),
       catalogRow(3, {
-        record_kind: "legacy_message",
+        record_kind: "run_diagnostic",
+        metadata: { kind: "worker_error" },
         payload: "api_key=synthetic-value",
       }),
     ]);
@@ -227,7 +228,9 @@ describe("durable run export worker", () => {
     expect(fixture.page(2).records).toMatchObject([
       { availability: "gap", metadata: { reason: "capture_end_missing" } },
     ]);
-    expect(fixture.page(3).records).toMatchObject([{ payload: "api_key=[redacted]" }]);
+    expect(fixture.page(3).records).toMatchObject([
+      { kind: "run_diagnostic", payload: "api_key=[redacted]" },
+    ]);
   });
 
   it("resumes from the committed ordinal after a lost acknowledgement", async () => {

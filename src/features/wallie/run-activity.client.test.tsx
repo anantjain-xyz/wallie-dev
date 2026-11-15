@@ -17,9 +17,10 @@ afterEach(cleanup);
 const now = "2026-09-06T12:00:00.000Z";
 const tool = (id: string, name: string, input: string): WallieRunMessage => ({
   id,
-  kind: "tool_use",
+  kind: "tool_call",
+  tool: name,
   createdAt: now,
-  messageMd: `**Tool:** ${name}\n\n\`\`\`\n${input}\n\`\`\``,
+  messageMd: input,
 });
 
 function toggle(summaryText: string | RegExp) {
@@ -274,22 +275,31 @@ describe("concise run activity", () => {
     expect(screen.getByText("Shell").closest("details")?.open).toBe(false);
   });
 
-  it("preserves malformed tools and long logs behind disclosure", async () => {
-    const raw = "read src/a.ts\nnot a persisted wrapper";
-    const log = "long/path/".repeat(100);
+  it("keeps a plain-text tool result behind disclosure", async () => {
+    const raw = "read src/a.ts\nnot JSON";
+    const output = "long/path/".repeat(100);
     render(
       <RunMessageTimeline
         messages={[
-          { id: "bad", createdAt: now, kind: "tool_use", messageMd: raw },
-          { id: "log", createdAt: now, kind: "log", messageMd: log },
+          tool("bad", "", raw),
+          {
+            id: "result",
+            createdAt: now,
+            kind: "tool_result",
+            tool: "Read",
+            messageMd: output,
+            outcome: "success",
+          },
         ]}
         renderNow={now}
       />,
     );
     toggle("Tool use");
     expect((await screen.findByLabelText("Tool payload")).textContent).toBe(raw);
-    toggle("Log");
-    expect((await screen.findByLabelText("Message details")).textContent).toBe(log);
+    toggle("Tool use");
+    await waitFor(() => expect(screen.queryByLabelText("Tool payload")).toBeNull());
+    toggle("Read result");
+    expect((await screen.findByLabelText("Tool payload")).textContent).toBe(output);
   });
 
   it("renders unavailable usage explicitly instead of displaying zero", () => {

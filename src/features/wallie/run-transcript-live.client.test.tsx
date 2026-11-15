@@ -46,7 +46,6 @@ function page(sequences: number[], overrides: Partial<RunTranscriptPage> = {}): 
     runId,
     runStatus: "running",
     attemptCount: 1,
-    mode: "events",
     expiredAt: null,
     entries: sequences.map(entry),
     newerCursor: String(sequences.at(-1) ?? 0),
@@ -85,7 +84,6 @@ describe("exact run transcript", () => {
   it("clears previously displayed activity after an expiry receipt", async () => {
     const expired = page([], {
       expiredAt: "2026-11-15T00:00:00Z",
-      mode: "legacy",
       runStatus: "success",
     });
     const fetchTranscript = vi.fn().mockResolvedValue(Response.json(expired));
@@ -187,33 +185,36 @@ describe("exact run transcript", () => {
     expect(screen.queryByRole("button", { name: "Load earlier activity" })).toBeNull();
   });
 
-  it("restarts when the exact run changes from legacy to structured capture", async () => {
+  it("waits for the first ordered event and catches it up from the empty cursor", async () => {
+    const fetchTranscript = vi.fn(async () => Response.json(page([1])));
+    vi.stubGlobal("fetch", fetchTranscript);
+    mount(page([], { olderCursor: null }));
+    expect(screen.getByText("No activity has been recorded for this run.")).toBeTruthy();
+    await refresh();
+    expect(fetchTranscript).toHaveBeenCalledWith(
+      "/api/workspaces/selected-workspace/runs/selected-run/transcript?cursor=0&direction=newer",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(rows()).toEqual(["Recorded item 1"]);
+  });
+
+  it("shows a terminal run with no captured transcript", () => {
+    mount(page([], { runStatus: "success", olderCursor: null }));
+    expect(screen.getByText("No transcript was recorded for this run.")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Run activity" })).toBeNull();
+    expect(mocks.recovery.register).not.toHaveBeenCalled();
+  });
+
+  it("replaces activity after the bound attempt changes", async () => {
     vi.stubGlobal(
       "fetch",
       vi
         .fn()
         .mockResolvedValueOnce(new Response(null, { status: 409 }))
-        .mockResolvedValueOnce(Response.json(page([1]))),
+        .mockResolvedValueOnce(Response.json(page([1], { attemptCount: 2 }))),
     );
-    mount(
-      page([], {
-        mode: "legacy",
-        entries: [
-          {
-            id: "old-message",
-            kind: "legacy",
-            payload: { kind: "text", text: "Historical message" },
-            sequence: null,
-            causationSequence: null,
-            createdAt: "2026-11-14T00:00:00.000Z",
-            truncated: false,
-          },
-        ],
-      }),
-    );
-    expect(screen.getByText("Legacy activity has no structured capture receipt.")).toBeTruthy();
+    mount(page([8]));
     await refresh();
-    expect(screen.queryByText("Historical message")).toBeNull();
     expect(rows()).toEqual(["Recorded item 1"]);
   });
 
