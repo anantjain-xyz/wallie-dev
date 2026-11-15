@@ -322,6 +322,8 @@ interface MockOptions {
   >;
   jobStatus?: string;
   artifactInsertError?: { message: string } | null;
+  eventInsertError?: { message: string };
+  eventInsertErrorOnText?: string;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
   beforeMessageInsert?: (row: Record<string, unknown>) => Promise<void>;
@@ -830,7 +832,7 @@ function buildAdminMock(opts: MockOptions) {
       updatedSessions.push({ phase_status: "in_progress" });
       return { data: run.id, error: null };
     }
-    if (fn === "append_agent_run_event") {
+    if (fn === "append_agent_run_event" || fn === "touch_agent_run_activity") {
       const eventRun = runRows.find(
         (row) =>
           row.id === payload.p_run_id &&
@@ -839,25 +841,18 @@ function buildAdminMock(opts: MockOptions) {
           row.status === "running",
       );
       if (!eventRun || stale) return { data: false, error: null };
-      if (typeof payload.p_legacy_message_md === "string") {
-        const body = payload.p_payload as { status?: string };
-        const kind =
-          payload.p_kind === "tool_call" || payload.p_kind === "tool_result"
-            ? "tool_use"
-            : payload.p_kind === "terminal"
-              ? body.status === "failed"
-                ? "error"
-                : "completion"
-              : payload.p_kind;
-        const result = await agentRunMessagesTable.insert({
-          agent_run_id: eventRun.id,
-          workspace_id: eventRun.workspace_id,
-          kind,
-          message_md: payload.p_legacy_message_md,
-        });
-        if (result.error) return { data: null, error: result.error };
+      if (fn === "append_agent_run_event") {
+        const body = payload.p_payload as { text?: string; finalOutput?: string };
+        if (
+          opts.eventInsertError &&
+          (!opts.eventInsertErrorOnText ||
+            body.text === opts.eventInsertErrorOnText ||
+            body.finalOutput === opts.eventInsertErrorOnText)
+        ) {
+          return { data: null, error: opts.eventInsertError };
+        }
+        capturedEvents.push(payload);
       }
-      capturedEvents.push(payload);
       return { data: true, error: null };
     }
     if (fn === "record_session_run_usage") {
@@ -1461,7 +1456,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           { provider: agent },
         ),
       );
-      const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+      const { admin, insertedArtifacts, capturedEvents } = buildAdminMock({
         session: baseSession(),
         agentConfig: [{ key: "agent_provider", value_json: agent }],
       });
@@ -1473,7 +1468,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       );
       expect(insertedArtifacts).toHaveLength(1);
       expect(insertedArtifacts[0].artifact_json).toBe("Matrix reviewable artifact");
-      expect(insertedMessages.some((row) => row.kind === "text")).toBe(true);
+      expect(capturedEvents.some((row) => row.p_kind === "text")).toBe(true);
       expect(mocked.prepareSourceDelivery).toHaveBeenCalledOnce();
       expect(stop).toHaveBeenCalledOnce();
       expect(mocked.prepareSourceDelivery.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1512,11 +1507,12 @@ describe("processPipelineJob (generic stage runner)", () => {
     mocked.loadPipelineOperatingRules.mockResolvedValueOnce(
       "Keep changes scoped to the approved plan.",
     );
-    const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
-      session,
-      agentConfig: [],
-      latestFeedback: { feedback_text: "Preserve the public API." },
-    });
+    const { admin, insertedArtifacts, capturedEvents, insertedMessages, updatedSessions } =
+      buildAdminMock({
+        session,
+        agentConfig: [],
+        latestFeedback: { feedback_text: "Preserve the public API." },
+      });
 
     const result = await processPipelineJob({ admin, job });
 
@@ -1597,19 +1593,17 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(artifact.version).toBe(1);
     expect(artifact.artifact_json).toContain("Drafted spec body");
     expect(artifact.artifact_json).not.toContain("Done");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
-      expect.objectContaining({
-        kind: "text",
-        message_md: "Drafted spec body",
-      }),
-      expect.objectContaining({
-        kind: "completion",
-        message_md: "Drafted spec body",
-      }),
-      expect.objectContaining({
-        kind: "completion",
-        message_md: "Product run completed",
-      }),
+    expect(capturedEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ p_kind: "text", p_payload: { text: "Drafted spec body" } }),
+        expect.objectContaining({
+          p_kind: "terminal",
+          p_payload: expect.objectContaining({ finalOutput: "Drafted spec body" }),
+        }),
+      ]),
+    );
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({ kind: "worker_completion", message_md: "Product run completed" }),
     ]);
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
@@ -1911,7 +1905,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("restores manual retry source before starting the agent and publishes from the accepted base", async () => {
     const pinnedSha = "b".repeat(40);
-    const { admin, insertedMessages } = buildAdminMock({
+    const { admin, capturedEvents } = buildAdminMock({
       session: baseSession(),
       priorGitInput: { input_sha: pinnedSha },
     });
@@ -1930,8 +1924,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(mocked.checkoutPinnedGitInput).toHaveBeenCalledBefore(mocked.restoreRetryInput);
     expect(mocked.restoreRetryInput).toHaveBeenCalledBefore(vi.mocked(runner.start));
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({ message_md: "Restored committed source from the timed-out run." }),
+    expect(capturedEvents).toContainEqual(
+      expect.objectContaining({
+        p_kind: "progress",
+        p_payload: { text: "Restored committed source from the timed-out run." },
+      }),
     );
     expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
       expect.objectContaining({ baseSha: pinnedSha }),
@@ -1966,7 +1963,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedMessages).toContainEqual(
       expect.objectContaining({
         agent_run_id: "run-1",
-        kind: "completion",
+        kind: "worker_completion",
         message_md: "Product run completed",
       }),
     );
@@ -2056,7 +2053,9 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect(runRows[0].status).toBe("running");
       expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
       expect(rpc).not.toHaveBeenCalledWith("complete_session_job_attempt", expect.anything());
-      expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "error" }));
+      expect(insertedMessages).not.toContainEqual(
+        expect.objectContaining({ kind: "worker_error" }),
+      );
       // The private bundle is durable before publication, so a remote outage no
       // longer requires keeping the execution sandbox alive.
       expect((await mocked.createSessionSandbox.mock.results[0].value).stop).toHaveBeenCalledOnce();
@@ -2186,7 +2185,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(
       rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
     ).toEqual(["start_session_job_attempt", "get_session_execution_budget"]);
-    expect(insertedMessages.some((message) => message.kind === "error")).toBe(false);
+    expect(insertedMessages.some((message) => message.kind === "worker_error")).toBe(false);
 
     // updateRunSandbox matched zero rows (run already canceled), so the
     // freshly-created sandbox must be stopped instead of left running detached.
@@ -2234,20 +2233,23 @@ describe("processPipelineJob (generic stage runner)", () => {
         { type: "completion", taskComplete: true, summary: "Cursor session completed" },
       ]),
     );
-    const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+    const { admin, insertedArtifacts, capturedEvents } = buildAdminMock({
       session: baseSession(),
       agentConfig: [],
     });
     await processPipelineJob({ admin, job: baseJob() });
     expect(insertedArtifacts[0]?.artifact_json).toBe("The final deliverable");
-    expect(insertedMessages).toEqual(
+    expect(capturedEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "text", message_md: "Inspecting the repository…" }),
         expect.objectContaining({
-          kind: "progress",
-          message_md: "Preparing sandbox and repository…",
+          p_kind: "text",
+          p_payload: { text: "Inspecting the repository…" },
         }),
-        expect.objectContaining({ kind: "progress", message_md: "Starting agent…" }),
+        expect.objectContaining({
+          p_kind: "progress",
+          p_payload: { text: "Preparing sandbox and repository…" },
+        }),
+        expect.objectContaining({ p_kind: "progress", p_payload: { text: "Starting agent…" } }),
       ]),
     );
   });
@@ -2294,7 +2296,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         credential: { expiresAt: null, secret: "synthetic-key", type: "platform_api_key" },
       }),
     );
-    const { admin, insertedArtifacts, insertedMessages, rpc } = buildAdminMock({
+    const { admin, insertedArtifacts, capturedEvents, rpc } = buildAdminMock({
       session: baseSession({ current_artifact_version: 1 }),
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
@@ -2302,12 +2304,20 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect.objectContaining({ artifact_json: finalOutput, version: 2 }),
     ]);
     expect(
-      insertedMessages.filter((message) => progress.includes(String(message.message_md))),
-    ).toEqual(
-      progress.map((message_md) => expect.objectContaining({ kind: "progress", message_md })),
+      capturedEvents.filter((event) =>
+        progress.some((text) => JSON.stringify(event.p_payload) === JSON.stringify({ text })),
+      ),
+    ).toMatchObject(
+      progress.map((text) => ({
+        p_kind: "progress",
+        p_payload: { text },
+      })),
     );
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({ kind: "completion", message_md: finalOutput }),
+    expect(capturedEvents).toContainEqual(
+      expect.objectContaining({
+        p_kind: "terminal",
+        p_payload: expect.objectContaining({ finalOutput }),
+      }),
     );
     expect(rpc).toHaveBeenCalledWith(
       "record_session_run_usage",
@@ -2341,22 +2351,27 @@ describe("processPipelineJob (generic stage runner)", () => {
           },
         ]),
       );
-      const { admin, insertedArtifacts, insertedMessages, rpc, updatedJobs } = buildAdminMock({
+      const { admin, insertedArtifacts, capturedEvents, rpc, updatedJobs } = buildAdminMock({
         session: baseSession({ current_artifact_version: 1 }),
       });
       expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
       expect(insertedArtifacts).toEqual([]);
       expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
       expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
-      expect(insertedMessages).toEqual(
+      expect(capturedEvents).toEqual(
         expect.arrayContaining(
-          narration.map((message_md) => expect.objectContaining({ message_md })),
+          narration.map((text) => expect.objectContaining({ p_payload: { text } })),
         ),
       );
-      expect(insertedMessages.at(-1)).toMatchObject({
-        kind: "error",
-        message_md: expect.stringContaining("no final deliverable"),
-      });
+      expect(capturedEvents).toContainEqual(
+        expect.objectContaining({
+          p_kind: "terminal",
+          p_payload: {
+            status: "failed",
+            message: expect.stringContaining("no final deliverable"),
+          },
+        }),
+      );
       expect(rpc).toHaveBeenCalledWith(
         "record_session_run_usage",
         expect.objectContaining({ p_input_tokens: 123, p_output_tokens: 45 }),
@@ -2365,7 +2380,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
-  it("captures ordered, redacted events and leaves the legacy history readable", async () => {
+  it("captures ordered, redacted events without duplicating activity", async () => {
     const activeSecret = "fixture-private-credential";
     const unknownSecret = "ghp_abcdefghijklmnopqrstuvwxyz012345";
     const preview = "🧪".repeat(4_000);
@@ -2410,7 +2425,6 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(capturedEvents[2]).toMatchObject({
       p_payload: { text: "Check [REDACTED] [redacted]" },
-      p_legacy_message_md: "Check [REDACTED] [redacted]",
     });
     expect(capturedEvents[3]).toMatchObject({
       p_truncated: true,
@@ -2433,19 +2447,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         },
       },
     });
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({
-        kind: "tool_use",
-        message_md: expect.stringContaining(preview),
-      }),
-    );
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({
-        kind: "tool_use",
-        message_md: expect.stringContaining("**Tool:** test result"),
-      }),
-    );
-    expect(JSON.stringify(insertedMessages)).not.toContain(activeSecret);
+    expect(insertedMessages).toEqual([expect.objectContaining({ kind: "worker_completion" })]);
     expect(JSON.stringify(capturedEvents)).not.toContain(activeSecret);
     expect(JSON.stringify(capturedEvents)).not.toContain(unknownSecret);
   });
@@ -2748,20 +2750,23 @@ describe("processPipelineJob (generic stage runner)", () => {
         { type: "error", message: blocker },
       ]),
     );
-    const { admin, insertedArtifacts, insertedMessages, rpc } = buildAdminMock({
+    const { admin, insertedArtifacts, capturedEvents, rpc } = buildAdminMock({
       session: baseSession(),
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
     expect(insertedArtifacts).toEqual([]);
     expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({
-        kind: "progress",
-        message_md: "Validation passed; publication is blocked.",
-      }),
-    );
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({ kind: "error", message_md: `**Error:** ${blocker}` }),
+    expect(capturedEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          p_kind: "progress",
+          p_payload: { text: "Validation passed; publication is blocked." },
+        }),
+        expect.objectContaining({
+          p_kind: "terminal",
+          p_payload: { status: "failed", message: blocker },
+        }),
+      ]),
     );
     expect(rpc).toHaveBeenCalledWith(
       "record_session_run_usage",
@@ -2781,7 +2786,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         },
       ]),
     );
-    const { admin, insertedArtifacts, insertedMessages } = buildAdminMock({
+    const { admin, insertedArtifacts, capturedEvents } = buildAdminMock({
       session: baseSession({ current_artifact_version: 1 }),
     });
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("success");
@@ -2806,8 +2811,14 @@ describe("processPipelineJob (generic stage runner)", () => {
         attemptCount: 1,
       }),
     );
-    expect(insertedMessages).toContainEqual(
-      expect.objectContaining({ kind: "completion", message_md: finalOutput }),
+    expect(capturedEvents).toContainEqual(
+      expect.objectContaining({
+        p_kind: "terminal",
+        p_truncated: true,
+        p_payload: expect.objectContaining({
+          finalOutput: expect.stringContaining("# Final deliverable"),
+        }),
+      }),
     );
   });
 
@@ -2823,8 +2834,8 @@ describe("processPipelineJob (generic stage runner)", () => {
       const { admin, insertedArtifacts } = buildAdminMock({
         session: baseSession(),
         agentConfig: [],
-        messageInsertError: { message: "Progress log unavailable" },
-        messageInsertErrorOnMessage: message,
+        eventInsertError: { message: "Progress log unavailable" },
+        eventInsertErrorOnText: message,
       });
       const result = await processPipelineJob({ admin, job: baseJob() });
       expect(result.result).toBe("success");
@@ -2837,29 +2848,22 @@ describe("processPipelineJob (generic stage runner)", () => {
       makeRunner([{ type: "completion", taskComplete: true, summary: "Codex session completed" }]),
     );
     const session = baseSession();
-    const {
-      admin,
-      insertedArtifacts,
-      insertedMessages,
-      updatedJobs,
-      updatedRuns,
-      updatedSessions,
-    } = buildAdminMock({
-      session,
-      agentConfig: [],
-    });
+    const { admin, insertedArtifacts, capturedEvents, updatedJobs, updatedRuns, updatedSessions } =
+      buildAdminMock({
+        session,
+        agentConfig: [],
+      });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(capturedEvents).toContainEqual(
       expect.objectContaining({
-        kind: "error",
-        message_md:
-          "**Error:** Product supplied no final deliverable, so no artifact was created. Progress and any partial output remain available in Run history.",
+        p_kind: "terminal",
+        p_payload: { status: "failed", message: expect.stringContaining("no final deliverable") },
       }),
-    ]);
+    );
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedJobs.at(-1)).toMatchObject({
       last_error:
@@ -3155,9 +3159,9 @@ describe("processPipelineJob (generic stage runner)", () => {
       runId: "run-1",
     });
     expect(insertedRuns).toHaveLength(0);
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: "**Error:** Unsupported state or unable to authenticate data",
       }),
     ]);
@@ -3174,6 +3178,42 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
       { phase_status: "rejected" },
+    ]);
+  });
+
+  it("keeps exact run activity and publishes the artifact when transcript capture is paused", async () => {
+    const { admin, capturedEvents, insertedMessages, rpc } = buildAdminMock({
+      session: baseSession(),
+    });
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob(),
+      captureOrderedEvents: false,
+    });
+    expect(result.result).toBe("success");
+    expect(capturedEvents).toEqual([]);
+    expect(insertedMessages).toEqual([expect.objectContaining({ kind: "worker_completion" })]);
+    expect(rpc).toHaveBeenCalledWith("touch_agent_run_activity", {
+      p_run_id: "run-1",
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+    });
+  });
+
+  it("records the worker diagnostic for a failed run with capture paused", async () => {
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([{ type: "error", message: "rate limited" }]),
+    );
+    const { admin, capturedEvents, insertedMessages } = buildAdminMock({ session: baseSession() });
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob(),
+      captureOrderedEvents: false,
+    });
+    expect(result.result).toBe("error");
+    expect(capturedEvents).toEqual([]);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({ kind: "worker_error", message_md: "**Error:** rate limited" }),
     ]);
   });
 
@@ -3196,7 +3236,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(activityUpdates[1]).toEqual({ last_activity_at: expect.any(String) });
   });
 
-  it("fails the stage when persisting a run message fails", async () => {
+  it("fails the stage when persisting a run event fails", async () => {
     mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Spec body" }]));
     const session = baseSession();
     const {
@@ -3209,17 +3249,22 @@ describe("processPipelineJob (generic stage runner)", () => {
     } = buildAdminMock({
       session,
       agentConfig: [],
-      messageInsertError: { message: "message insert failed" },
+      eventInsertError: { message: "event insert failed" },
     });
 
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "worker_error",
+        message_md: "**Error:** event insert failed",
+      }),
+    ]);
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedJobs.at(-1)).toMatchObject({
-      last_error: "message insert failed",
+      last_error: "event insert failed",
       status: "error",
     });
     expect(updatedSessions).toEqual([
@@ -3803,7 +3848,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(runRows[0].status).toBe("running");
     expect(updatedJobs).toEqual([]);
     expect(insertedArtifacts).toEqual([]);
-    expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "error" }));
+    expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "worker_error" }));
     expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenCalledWith(
       "fail_stalled_session_job_attempt",
@@ -3847,7 +3892,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(runRows[0].status).toBe("success");
     expect(updatedJobs).toEqual([{ status: "success" }]);
     expect(insertedArtifacts).toEqual([{ artifact_json: "Drafted spec body", version: 1 }]);
-    expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "error" }));
+    expect(insertedMessages).not.toContainEqual(expect.objectContaining({ kind: "worker_error" }));
     expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", expect.anything());
     expect(rpc).not.toHaveBeenCalledWith("fail_session_job_attempt", expect.anything());
@@ -3862,8 +3907,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     const { admin, insertedArtifacts, runRows, rpc } = buildAdminMock({
       session: baseSession(),
-      messageInsertError: { message: "history unavailable" },
-      messageInsertErrorOnMessage: "Done",
+      eventInsertError: { message: "history unavailable" },
+      eventInsertErrorOnText: "Done",
       beforeMessageInsert: async (row) => {
         if (row.message_md === "Done") expect(runRows[0].source_recovery_required).toBe(true);
       },
@@ -3999,7 +4044,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(insertedMessages).toContainEqual(
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: expect.stringContaining("Remove it before retrying"),
       }),
     );
@@ -4016,17 +4061,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "text",
-        message_md: "Drafted spec body",
-      }),
-      expect.objectContaining({
-        kind: "completion",
-        message_md: "Drafted spec body",
-      }),
-      expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: "**Error:** artifact insert failed",
       }),
     ]);
@@ -4131,9 +4168,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md:
           "**Error:** No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
       }),
@@ -4161,9 +4198,9 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: "**Error:** Connect a Vercel Sandbox account before starting Wallie runs.",
       }),
     ]);
@@ -4248,9 +4285,9 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md:
           "**Error:** vercel sandbox unavailable: https://[redacted]@example.com/run?token=[redacted]",
       }),
@@ -4281,9 +4318,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: [
           "**Error:** sandbox failed while loading env",
           'PRIVATE_KEY="[redacted]"',
@@ -4292,15 +4329,15 @@ describe("processPipelineJob (generic stage runner)", () => {
         ].join("\n"),
       }),
     ]);
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "BEGIN PRIVATE KEY",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "abc def ghi",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "first second third",
-    );
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("BEGIN PRIVATE KEY");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("abc def ghi");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("first second third");
   });
 
   it("redacts escaped quoted secret assignments before persisting sandbox failures", async () => {
@@ -4315,9 +4352,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: [
           "**Error:** sandbox failed while loading env",
           'API_KEY="[redacted]"',
@@ -4325,12 +4362,12 @@ describe("processPipelineJob (generic stage runner)", () => {
         ].join("\n"),
       }),
     ]);
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "abc",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "def-secret",
-    );
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("abc");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("def-secret");
   });
 
   it("redacts quoted JSON secret fields before persisting sandbox failures", async () => {
@@ -4345,22 +4382,22 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md:
           '**Error:** sandbox config rejected: {"token": "[redacted]","password": "[redacted]","safe":"visible"}',
       }),
     ]);
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "plain-secret-12345",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "hunter2",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).toContain(
-      '"safe":"visible"',
-    );
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("plain-secret-12345");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("hunter2");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).toContain('"safe":"visible"');
   });
 
   it("redacts camelCase JSON secret fields before persisting sandbox failures", async () => {
@@ -4375,25 +4412,25 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md:
           '**Error:** sandbox config rejected: {"apiKey": "[redacted]","privateKey": "[redacted]","clientSecret": "[redacted]","safe":"visible"}',
       }),
     ]);
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "plain-api-key",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "plain-private-key",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "plain-client-secret",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).toContain(
-      '"safe":"visible"',
-    );
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("plain-api-key");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("plain-private-key");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("plain-client-secret");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).toContain('"safe":"visible"');
   });
 
   it("redacts object-valued JSON secret fields before persisting sandbox failures", async () => {
@@ -4408,25 +4445,25 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md:
           '**Error:** sandbox config rejected: {"token": "[redacted]","privateKey": "[redacted]","safe":"visible"}',
       }),
     ]);
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "plain-secret-12345",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "line1",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).not.toContain(
-      "line2",
-    );
-    expect(insertedMessages.find((message) => message.kind === "error")!.message_md).toContain(
-      '"safe":"visible"',
-    );
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("plain-secret-12345");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("line1");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).not.toContain("line2");
+    expect(
+      insertedMessages.find((message) => message.kind === "worker_error")!.message_md,
+    ).toContain('"safe":"visible"');
   });
 
   it("aborts the stage when persisting the sandbox id fails", async () => {
@@ -4442,9 +4479,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("error");
     expect(result.runId).toBe("run-1");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
+    expect(insertedMessages.filter((message) => message.kind !== "worker_progress")).toEqual([
       expect.objectContaining({
-        kind: "error",
+        kind: "worker_error",
         message_md: "**Error:** sandbox id write failed",
       }),
     ]);
@@ -4483,7 +4520,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    const diagnostic = insertedMessages.find((message) => message.kind === "error")?.message_md;
+    const diagnostic = insertedMessages.find(
+      (message) => message.kind === "worker_error",
+    )?.message_md;
     expect(diagnostic).toContain(
       "Vercel Sandbox request failed (502 GET https://vercel.com/api/v2/sandboxes/sessions/ses_1/cmd?wait=true)",
     );
@@ -4528,7 +4567,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       ]),
     );
     const session = baseSession();
-    const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
+    const { admin, insertedArtifacts, capturedEvents, updatedSessions } = buildAdminMock({
       session,
     });
 
@@ -4536,16 +4575,15 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages.filter((message) => message.kind !== "progress")).toEqual([
-      expect.objectContaining({
-        kind: "text",
-        message_md: "partial output",
-      }),
-      expect.objectContaining({
-        kind: "error",
-        message_md: "**Error:** rate limited",
-      }),
-    ]);
+    expect(capturedEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ p_kind: "text", p_payload: { text: "partial output" } }),
+        expect.objectContaining({
+          p_kind: "terminal",
+          p_payload: { status: "failed", message: "rate limited" },
+        }),
+      ]),
+    );
     expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },

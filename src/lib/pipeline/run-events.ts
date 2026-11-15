@@ -71,7 +71,7 @@ export type RunEventBody =
       payload: { status: "complete" | "interrupted"; coverage?: AdapterCoverage };
     };
 
-type Projection = RunEventBody & { truncated?: boolean; legacyMessage?: string };
+type Projection = RunEventBody & { truncated?: boolean };
 type AttemptIdentity = { jobId: string; runId: string; attemptCount: number };
 const MAX_TEXT_BYTES = 7_500;
 const MAX_LABEL_BYTES = 512;
@@ -103,6 +103,7 @@ export class RunEventCapture {
   }
 
   start(adapter: CaptureAdapter): void {
+    if (!this.captureOrderedEvents) return;
     const limitations = ADAPTER_LIMITATIONS[adapter];
     this.coverage = {
       adapter,
@@ -117,8 +118,20 @@ export class RunEventCapture {
   }
 
   async record(event: AgentEvent): Promise<void> {
+    if (!this.captureOrderedEvents) {
+      const { jobId, runId, attemptCount } = this.identity;
+      const { data, error } = await this.admin.rpc("touch_agent_run_activity", {
+        p_job_id: jobId,
+        p_run_id: runId,
+        p_attempt_count: attemptCount,
+      });
+      if (error) throw error;
+      if (!data) throw new ExecutionOwnershipLostError();
+      return;
+    }
+
     const redact = (text: string) => this.safety.redact(text);
-    const projected = projectEvent(event, redact, this.coverage?.adapter);
+    const projected = projectEvent(event, redact);
     const causationSequence =
       (event.type === "tool_result" || event.type === "capture_gap") && event.callId
         ? this.toolCallSequences.get(event.callId)
@@ -162,10 +175,12 @@ export class RunEventCapture {
   }
 
   async markGap(reason: CaptureGap, signal?: AbortSignal): Promise<void> {
+    if (!this.captureOrderedEvents) return;
     await this.append({ kind: "capture_gap", payload: { reason } }, { signal });
   }
 
   async finish(status: "complete" | "interrupted", signal?: AbortSignal): Promise<void> {
+    if (!this.captureOrderedEvents) return;
     if (this.coverage) {
       for (const [callId, sequence] of this.toolCallSequences) {
         await this.append(
@@ -191,10 +206,7 @@ export class RunEventCapture {
   ): Promise<number> {
     const sequence = ++this.sequence;
     const { jobId, runId, attemptCount } = this.identity;
-    const rpc = this.captureOrderedEvents
-      ? "append_agent_run_event"
-      : "append_agent_run_legacy_event";
-    const request = this.admin.rpc(rpc, {
+    const request = this.admin.rpc("append_agent_run_event", {
       p_job_id: jobId,
       p_run_id: runId,
       p_attempt_count: attemptCount,
@@ -203,7 +215,6 @@ export class RunEventCapture {
       p_payload: event.payload,
       p_truncated: event.truncated ?? false,
       ...(causationSequence !== undefined ? { p_causation_sequence: causationSequence } : {}),
-      ...(event.legacyMessage !== undefined ? { p_legacy_message_md: event.legacyMessage } : {}),
     });
     const { data, error } = await (signal ? request.abortSignal(signal) : request);
     if (error) throw error;
@@ -212,11 +223,7 @@ export class RunEventCapture {
   }
 }
 
-function projectEvent(
-  event: AgentEvent,
-  redactKnown: (text: string) => string,
-  adapter: CaptureAdapter | undefined,
-): Projection {
+function projectEvent(event: AgentEvent, redactKnown: (text: string) => string): Projection {
   const capture = (text: string, limit = MAX_TEXT_BYTES) => captureText(redactKnown(text), limit);
   switch (event.type) {
     case "text":
@@ -226,7 +233,6 @@ function projectEvent(
         kind: event.type,
         payload: { text: text.excerpt },
         truncated: text.truncated,
-        legacyMessage: text.full,
       };
     }
     case "tool_use": {
@@ -236,7 +242,6 @@ function projectEvent(
         kind: "tool_call",
         payload: { tool: tool.excerpt, input: input.excerpt },
         truncated: event.captureTruncated || tool.truncated || input.truncated,
-        legacyMessage: `**Tool:** ${tool.full}\n\n\`\`\`\n${input.full}\n\`\`\``,
       };
     }
     case "tool_result": {
@@ -252,11 +257,6 @@ function projectEvent(
           ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
         },
         truncated: event.captureTruncated || tool.truncated || output.truncated,
-        ...(adapter === "cursor"
-          ? {
-              legacyMessage: `**Tool:** ${tool.excerpt.replace(/[\r\n]/g, " ")} result\n\n\`\`\`\n${event.outcome ?? event.status}\n${output.excerpt}\n\`\`\``,
-            }
-          : {}),
       };
     }
     case "usage":
@@ -264,7 +264,6 @@ function projectEvent(
     case "completion": {
       const summary = capture(event.summary);
       const finalOutput = event.finalOutput?.trim() ? capture(event.finalOutput) : undefined;
-      const genericSummary = summary.full.trim().toLowerCase() === "codex session completed";
       return {
         kind: "terminal",
         payload: {
@@ -273,7 +272,6 @@ function projectEvent(
           ...(finalOutput ? { finalOutput: finalOutput.excerpt } : {}),
         },
         truncated: summary.truncated || finalOutput?.truncated,
-        legacyMessage: finalOutput?.full ?? (genericSummary ? undefined : summary.full),
       };
     }
     case "error": {
@@ -282,7 +280,6 @@ function projectEvent(
         kind: "terminal",
         payload: { status: "failed", message: message.excerpt },
         truncated: event.captureTruncated || message.truncated,
-        legacyMessage: `**Error:** ${message.full}`,
       };
     }
     case "capture_gap":
@@ -318,7 +315,7 @@ function projectUsage(usage: AgentRunUsage, redact: (text: string) => string): P
 function captureText(text: string, limit: number, redact = redactRunSensitiveText) {
   const full = decoder.decode(encoder.encode(redact(text))).replaceAll("\0", "\uFFFD");
   const fits = (value: string) => encoder.encode(JSON.stringify(value)).length <= limit;
-  if (fits(full)) return { full, excerpt: full, truncated: false };
+  if (fits(full)) return { excerpt: full, truncated: false };
 
   // Count escaped JSON bytes, including Unicode and control characters.
   let low = 0;
@@ -329,5 +326,5 @@ function captureText(text: string, limit: number, redact = redactRunSensitiveTex
     else high = mid - 1;
   }
   if (full.charCodeAt(low - 1) >= 0xd800 && full.charCodeAt(low - 1) <= 0xdbff) low--;
-  return { full, excerpt: full.slice(0, low), truncated: true };
+  return { excerpt: full.slice(0, low), truncated: true };
 }

@@ -41,7 +41,6 @@ function runRow(index: number, changes: Partial<CatalogRow> = {}): CatalogRow {
     last_activity_at: timestamp,
     source_recovery_required: false,
     has_events: true,
-    has_legacy_messages: true,
     capture_ended: true,
     capture_interrupted: false,
     failure_receipt: "",
@@ -159,7 +158,7 @@ describe("workspace run catalog", () => {
         attemptCount: 4,
         status,
         interrupted: expectedInterrupted,
-        transcript: { hasEvents: true, hasLegacyMessages: true, captureEnded: true },
+        transcript: { hasEvents: true, captureEnded: true },
         usage: { inputTokens: 3, outputTokens: 8, tokenProvenance: "measured", finalized: true },
       });
       expect(item).not.toHaveProperty("messages");
@@ -168,11 +167,10 @@ describe("workspace run catalog", () => {
     },
   );
 
-  it("caps the page and keeps legacy metadata readable without a bound attempt", async () => {
-    const legacy = runRow(51, {
+  it("caps the page and keeps run metadata readable without a bound attempt", async () => {
+    const unbound = runRow(51, {
       attempt_count: null,
       has_events: false,
-      has_legacy_messages: true,
       capture_ended: false,
       input_tokens: null,
       output_tokens: null,
@@ -182,7 +180,7 @@ describe("workspace run catalog", () => {
       usage_finalized_at: null,
     });
     const { input, rpc } = client([
-      legacy,
+      unbound,
       ...Array.from({ length: 50 }, (_, i) => runRow(50 - i)),
     ]);
     const page = await loadWorkspaceRunCatalogPage({ ...input, query: { limit: 1000 } });
@@ -194,7 +192,7 @@ describe("workspace run catalog", () => {
     expect(page.runs[0]).toMatchObject({
       attemptCount: null,
       usage: { inputTokens: null, outputTokens: null, totalCostUsd: null, finalized: false },
-      transcript: { hasEvents: false, hasLegacyMessages: true, captureEnded: false },
+      transcript: { hasEvents: false, captureEnded: false },
     });
     expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(64 * 1024);
   });

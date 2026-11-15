@@ -3,12 +3,12 @@
 Workspace owners and admins manage run retention and request exports under
 **Settings → Advanced → Run history**.
 
-| Data                                                                                                | Retention rule                                                                                                                                               |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Exact-attempt events and legacy transcript messages                                                 | A finite setting expires terminal transcripts by run age. Blank keeps transcripts indefinitely.                                                              |
-| Validation evidence files                                                                           | A finite setting expires eligible files by run and receipt age. Required evidence remains available for unarchived sessions. Blank keeps files indefinitely. |
-| Run identity, usage, failure summaries, stage Markdown, checkpoint lineage, and validation receipts | Wallie preserves these records until workspace deletion.                                                                                                     |
-| Export copies                                                                                       | Completed exports expire at seven days or the earliest source retention deadline, whichever comes first.                                                     |
+| Data                                                                                                 | Retention rule                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Exact-attempt ordered events                                                                         | A finite setting expires terminal transcripts by run age. Blank keeps transcripts indefinitely.                                                              |
+| Validation evidence files                                                                            | A finite setting expires eligible files by run and receipt age. Required evidence remains available for unarchived sessions. Blank keeps files indefinitely. |
+| Run identity, usage, worker diagnostics, stage Markdown, checkpoint lineage, and validation receipts | Wallie preserves these records until workspace deletion.                                                                                                     |
+| Export copies                                                                                        | Completed exports expire at seven days or the earliest source retention deadline, whichever comes first.                                                     |
 
 Limits accept whole days from 1 to 3650 and apply to existing content. Workers
 mark expired transcripts and evidence before purging their data. Catalog entries
@@ -30,8 +30,8 @@ SHA-256 digests. Completion requires contiguous coverage of the entire snapshot.
    record marked `payloadEncoding: "base64"` contains UTF-8 text encoded as base64.
 
 Records identify capture gaps, expired or redacted content, missing files, and
-metadata-only checkpoints. The manifest covers run records and their catalog
-entries, including legacy Markdown without an exact checkpoint link. A complete
+metadata-only checkpoints. The manifest covers ordered activity, worker diagnostics, and catalog entries,
+including Markdown without an exact checkpoint link. A complete
 export can contain unavailable records. It means every record in scope is
 accounted for.
 

@@ -55,7 +55,6 @@ const transcriptSchema = z.object({
   runId: identifier,
   runStatus: z.string(),
   attemptCount: positiveInteger,
-  mode: z.literal("events"),
   entries: z.array(runTranscriptBodySchema),
 });
 const artifactCatalogSchema = z.object({
@@ -328,6 +327,16 @@ test("reopens an exact retained run after browser closure and worker restart", a
         .filter({ has: inspected.getByText("Checkpoint commit", { exact: true }) })
         .locator("dd");
       await expect(checkpointCommit).toHaveText(accepted.checkpointSha);
+
+      const sessionRun = inspected
+        .getByRole("region", { name: "Session runs", exact: true })
+        .locator(`[data-run-id="${run.runId}"]`);
+      const disclosure = sessionRun.getByRole("button", { name: /activity: Completed/ });
+      await disclosure.click();
+      const sessionActivity = sessionRun.getByRole("list", { name: "Run activity" });
+      for (const text of [run.initialText, run.reconnectText]) {
+        await expect(sessionActivity.getByText(text, { exact: true })).toHaveCount(1);
+      }
     });
 
     await fixture.mark("browser-verified");

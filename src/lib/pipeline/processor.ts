@@ -178,7 +178,7 @@ async function runStage(input: {
   session: SessionRow;
   stage: PipelineStage;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, job, session, stage } = input;
+  const { admin, job, session, stage, captureOrderedEvents = true } = input;
   const supervisorSignal = input.signal;
   let signal = input.signal;
   let budgetController: AbortController | undefined;
@@ -224,7 +224,7 @@ async function runStage(input: {
   let installationToken: string | undefined;
   let finalOutput: string | undefined;
   let taskComplete = false;
-  let runFailureMessageRecorded = false;
+  let runFailureEventRecorded = false;
   let capture: RunEventCapture | undefined;
   let captureOpen = false;
   const checkpointSensitiveValues = new Set<string>();
@@ -314,7 +314,7 @@ async function runStage(input: {
     const runEvents = new RunEventCapture(
       admin,
       { jobId: job.id, runId, attemptCount: job.attempt_count },
-      input.captureOrderedEvents,
+      captureOrderedEvents,
     );
     capture = runEvents;
     const executionBudget = await loadSessionExecutionBudget(admin, session.id);
@@ -617,7 +617,7 @@ async function runStage(input: {
               // This timer can finish after the agent stream closes while
               // validation is still running. Keep its checkpoint note in Run history.
               return persistRunMessage(admin, retryCheckpointContext.runId, session.workspace_id, {
-                kind: "progress",
+                kind: "worker_progress",
                 messageMd: "Saved committed source for Retry.",
               });
             })
@@ -702,7 +702,7 @@ async function runStage(input: {
       await runEvents.record(event);
       if (eventUsage) usage = eventUsage;
       if (event.type === "error") {
-        runFailureMessageRecorded = true;
+        runFailureEventRecorded = captureOrderedEvents;
       }
       if (event.type === "completion") {
         // Failed terminal results can carry usage before a following provider
@@ -735,10 +735,14 @@ async function runStage(input: {
 
     const artifactMarkdown = finalOutput;
     if (!artifactMarkdown) {
-      const message = `${stage.name} supplied no final deliverable, so no artifact was created. Progress and any partial output remain available in Run history.`;
+      const message =
+        `${stage.name} supplied no final deliverable, so no artifact was created.` +
+        (captureOrderedEvents
+          ? " Progress and any partial output remain available in Run history."
+          : "");
 
       await runEvents.record({ type: "error", message });
-      runFailureMessageRecorded = true;
+      runFailureEventRecorded = captureOrderedEvents;
       await runEvents.finish("complete");
       captureOpen = false;
       throw new MissingReviewableOutputError(message);
@@ -871,7 +875,7 @@ async function runStage(input: {
           !isSandboxConnectionSetupError(error),
       },
     );
-    if (result === "error" && runId && !runFailureMessageRecorded) {
+    if (result === "error" && runId && !runFailureEventRecorded) {
       await persistRunFailureDiagnostic(admin, { error, runId, workspaceId: session.workspace_id });
     }
     return { jobId: job.id, processed: true, result, runId };
@@ -933,7 +937,7 @@ async function publishArtifact(input: {
   // without requiring active execution or refreshing its activity timestamp.
   throwIfAborted(input.signal);
   await persistRunMessage(admin, runId, session.workspace_id, {
-    kind: "completion",
+    kind: "worker_completion",
     messageMd: `${stage.name} run completed`,
   });
 
@@ -1363,7 +1367,7 @@ async function persistRunFailureDiagnostic(
   try {
     const { error } = await admin.from("agent_run_messages").insert({
       agent_run_id: input.runId,
-      kind: "error",
+      kind: "worker_error",
       message_md: `**Error:** ${message}`,
       workspace_id: input.workspaceId,
     });

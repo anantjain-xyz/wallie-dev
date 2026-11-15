@@ -124,7 +124,7 @@ describe("Wallie run history data", () => {
     },
   );
 
-  it("leaves missing and malformed legacy causes unavailable instead of inferring from test output", () => {
+  it("leaves missing and malformed causes unavailable and skips superseded activity rows", () => {
     for (const terminal of [
       undefined,
       "not json",
@@ -148,7 +148,7 @@ describe("Wallie run history data", () => {
         });
       const data = sessionData(messages);
       expect(data.runs[0]?.failure).toBeNull();
-      expect(data.runs[0]?.messages.map((message) => message.id)).toEqual(["agent-error"]);
+      expect(data.runs[0]?.messages).toEqual([]);
       expect(JSON.stringify(data)).not.toContain("private");
     }
   });
@@ -157,14 +157,14 @@ describe("Wallie run history data", () => {
     const diagnostic = {
       created_at: persistedRun.finished_at,
       id: "diagnostic-1",
-      kind: "error",
+      kind: "worker_error",
       message_md: 'Agent exited with code 7; API_KEY="private-provider-value"',
     };
     const mapped = mapAgentRunMessageRow(diagnostic);
     const data = sessionData([{ ...diagnostic, agent_run_id: persistedRun.id }]);
 
-    expect(mapped.messageMd).toContain("Agent exited with code 7");
-    expect(mapped.messageMd).toContain("[redacted]");
+    expect(mapped?.messageMd).toContain("Agent exited with code 7");
+    expect(mapped?.messageMd).toContain("[redacted]");
     expect(JSON.stringify(data)).not.toContain("private-provider-value");
     expect(data.runs[0]?.failure).toBeNull();
   });
@@ -225,7 +225,7 @@ describe("Wallie run history data", () => {
   });
 
   it("deduplicates reconciled run ids while retaining cached messages", () => {
-    const cached = {
+    const cached: WallieRun = {
       ...run("run-1"),
       messages: [
         {

@@ -278,7 +278,7 @@ describe("runClaimedJob", () => {
       expect(admin.query.insert).toHaveBeenCalledExactlyOnceWith({
         agent_run_id: "run-attempt-1",
         workspace_id: "workspace-1",
-        kind: "error",
+        kind: "worker_error",
         message_md: "Worker attempt exceeded its 50ms deadline.",
       });
     },
@@ -369,7 +369,7 @@ describe("runClaimedJob", () => {
     expect(admin.query.insert).toHaveBeenCalledWith({
       agent_run_id: "run-attempt-1",
       workspace_id: "workspace-1",
-      kind: "error",
+      kind: "worker_error",
       message_md: "Worker attempt exceeded its 50ms deadline.",
     });
     expect(admin.rpc).toHaveBeenCalledWith(

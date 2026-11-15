@@ -48,7 +48,6 @@ export async function assertPublishedRunHistory(
   assert.equal(catalog.status, "success");
 
   assert(transcript);
-  assert.equal(transcript.mode, "events");
   assert.equal(transcript.runStatus, "success");
   assert.equal(transcript.attemptCount, run.attemptCount);
   const sequences = transcript.entries.map((entry) => entry.sequence);

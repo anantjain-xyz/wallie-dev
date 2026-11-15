@@ -119,30 +119,13 @@ export const runTranscriptBodySchema = z.discriminatedUnion("kind", [
       coverage: coverageSchema.optional(),
     }),
   }),
-  z.object({
-    kind: z.literal("legacy"),
-    payload: z.object({
-      kind: z.enum([
-        "user",
-        "assistant",
-        "text",
-        "progress",
-        "tool_use",
-        "completion",
-        "error",
-        "run_failure",
-        "unknown",
-      ]),
-      text: z.string(),
-    }),
-  }),
 ]);
 
 export type RunTranscriptBody = z.infer<typeof runTranscriptBodySchema>;
 export type RunTranscriptEntry = RunTranscriptBody & {
   id: string;
   createdAt: string;
-  sequence: number | null;
+  sequence: number;
   causationSequence: number | null;
   truncated: boolean;
 };
@@ -151,7 +134,6 @@ export type RunTranscriptPage = {
   runId: string;
   runStatus: Enums<"agent_run_status">;
   attemptCount: number | null;
-  mode: "events" | "legacy";
   expiredAt: string | null;
   entries: RunTranscriptEntry[];
   olderCursor: string | null;

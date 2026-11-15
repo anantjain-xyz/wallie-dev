@@ -55,9 +55,13 @@ export type WallieSessionRepository = {
 export type WallieRunMessage = {
   createdAt: string;
   id: string;
-  kind: string;
   messageMd: string;
-};
+  sequence?: number;
+} & (
+  | { kind: "text" | "progress" | "completion" | "error" | "run_failure" }
+  | { kind: "tool_call"; tool: string }
+  | { kind: "tool_result"; tool: string; outcome: "success" | "error" | "rejected" }
+);
 
 export type WallieRunUsage = {
   inputTokens: number | null;
@@ -73,6 +77,8 @@ export type WallieRun = {
   branchName: string | null;
   canCancel: boolean;
   canRetry: boolean;
+  /** Worker claim bound to the ordered event stream. */
+  captureAttemptCount?: number | null;
   createdAt: string;
   finishedAt: string | null;
   /** Recorded terminal failure, independent of the lazily loaded activity log. */

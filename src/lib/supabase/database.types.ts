@@ -4880,21 +4880,6 @@ export type Database = {
           p_causation_sequence?: number
           p_job_id: string
           p_kind: string
-          p_legacy_message_md?: string
-          p_payload: Json
-          p_run_id: string
-          p_sequence: number
-          p_truncated: boolean
-        }
-        Returns: boolean
-      }
-      append_agent_run_legacy_event: {
-        Args: {
-          p_attempt_count: number
-          p_causation_sequence?: number
-          p_job_id: string
-          p_kind: string
-          p_legacy_message_md?: string
           p_payload: Json
           p_run_id: string
           p_sequence: number
@@ -5897,23 +5882,6 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      list_run_legacy_transcript: {
-        Args: {
-          p_cursor_created_at?: string
-          p_cursor_id?: string
-          p_direction?: string
-          p_limit?: number
-          p_run_id: string
-          p_workspace_id: string
-        }
-        Returns: {
-          created_at: string
-          id: string
-          kind: string
-          message_excerpt: string
-          message_truncated: boolean
-        }[]
-      }
       list_workspace_run_catalog: {
         Args: {
           p_before_created_at?: string
@@ -5935,7 +5903,6 @@ export type Database = {
           failure_receipt: string
           finished_at: string
           has_events: boolean
-          has_legacy_messages: boolean
           input_tokens: number
           job_id: string
           last_activity_at: string
@@ -6673,6 +6640,10 @@ export type Database = {
           session_id: string
           workspace_id: string
         }[]
+      }
+      touch_agent_run_activity: {
+        Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
+        Returns: boolean
       }
       transition_artifact_review_thread: {
         Args: {

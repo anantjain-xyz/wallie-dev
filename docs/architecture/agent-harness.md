@@ -174,7 +174,7 @@ the target repository remains their runtime semantic owner.
   the exact run and attempt by increasing `sequence`. `causation_sequence`
   links tool results and unresolved-call gaps to their calls. It also links
   terminal usage to its completion. An identical replay keeps the original
-  event and legacy message.
+  event.
 - Payloads use typed, bounded fields for text, progress, tool calls and
   results, terminal outcomes, and usage. The worker redacts credentials before
   clipping and marks shortened fields with `truncated`. Codex captures command
@@ -199,10 +199,9 @@ the target repository remains their runtime semantic owner.
   [Claude Code streaming output](https://code.claude.com/docs/en/agent-sdk/streaming-output),
   [Cursor headless output](https://cursor.com/docs/cli/reference/output-format), and
   [OpenCode JSON output](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/cli/cmd/run.ts).
-- The append transaction also writes the compatible `agent_run_messages`
-  projection for Run history, including Cursor's tool outcome previews.
-  Existing runs keep their legacy messages, and post-run diagnostics
-  continue to use that history.
+- Sessions and Runs read captured activity from `agent_run_events`.
+  Workers record diagnostic messages separately. Pausing capture stops new
+  ordered events while publication and run activity tracking continue.
 - Before publication, Wallie commits remaining nonignored working-tree changes
   with repository hooks disabled, then captures an incremental Git bundle from
   the original base to the final head. Dirty submodules and changed gitlinks

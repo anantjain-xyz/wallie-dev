@@ -37,8 +37,8 @@ continuity release settings.
   The downloaded bytes matched the digest and Review showed the same checkpoint.
 - Node and native workerd exercised the same authenticated history assertions
   against isolated Supabase. The cancellation fixture rejected late success
-  under the retired and newer claims. Ordered capture could be paused while
-  old transcripts and new legacy activity stayed readable.
+  under the retired and newer claims. A run with capture paused published its
+  artifact with an empty transcript. Earlier ordered events stayed readable.
 - A fresh Vercel checkout smoke returned HTTP 402 at sandbox creation due to the
   account’s usage limit. The archived live continuity result stays linked in the
   matrix above.

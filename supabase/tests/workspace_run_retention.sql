@@ -29,26 +29,31 @@ insert into public.agent_runs(id, workspace_id, session_id, agent_job_id, run_ty
   ('53800000-0005-4000-8000-000000000001', '53800000-0001-4000-8000-000000000001', '53800000-0003-4000-8000-000000000001',
     '53800000-0004-4000-8000-000000000001', 'project', 'codex', 'test', 'success', 1, now()-interval '5 days', now(), now()-interval '4 days'),
   ('53800000-0005-4000-8000-000000000002', '53800000-0001-4000-8000-000000000001', '53800000-0003-4000-8000-000000000001',
-    null, 'project', 'codex', 'test', 'error', null, now()-interval '5 days', now()-interval '4 days', null),
+    null, 'project', 'codex', 'test', 'error', 1, now()-interval '5 days', now()-interval '4 days', null),
   ('53800000-0005-4000-8000-000000000003', '53800000-0001-4000-8000-000000000001', '53800000-0003-4000-8000-000000000001',
     null, 'project', 'codex', 'test', 'running', 1, now()-interval '5 days', now(), null),
   ('53800000-0005-4000-8000-000000000004', '53800000-0001-4000-8000-000000000001', '53800000-0003-4000-8000-000000000001',
     null, 'project', 'codex', 'test', 'canceled', 1, now()-interval '5 days', now(), now()),
   ('53800000-0005-4000-8000-000000000005', '53800000-0001-4000-8000-000000000002', '53800000-0003-4000-8000-000000000002',
-    null, 'project', 'codex', 'test', 'error', 1, now()-interval '5 days', now(), now()-interval '4 days');
-insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_md)
-select workspace_id, id, 'progress', 'Routine transcript body' from public.agent_runs
-where id in (
+    null, 'project', 'codex', 'test', 'error', 1, now()-interval '5 days', now(), now()-interval '4 days'),
+  ('53800000-0005-4000-8000-000000000006', '53800000-0001-4000-8000-000000000001', '53800000-0003-4000-8000-000000000001',
+    null, 'project', 'codex', 'test', 'success', 1, now()-interval '5 days', now(), now()-interval '4 days');
+insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_md) values
+  ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000001',
+    'worker_progress', 'Current worker diagnostic'),
+  ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000002',
+    'run_failure', '{"version":1,"category":"timeout","code":"timeout"}'),
+  ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000006',
+    'progress', 'Historical unsequenced activity');
+insert into public.agent_run_events(agent_run_id, workspace_id, attempt_count, sequence, kind, payload)
+select r.id, r.workspace_id, r.attempt_count, seq, 'text', '{"text":"Ordered transcript body"}'::jsonb
+from public.agent_runs r
+cross join lateral generate_series(1, case when r.id = '53800000-0005-4000-8000-000000000001' then 3 else 1 end) seq
+where r.id in (
   '53800000-0005-4000-8000-000000000001', '53800000-0005-4000-8000-000000000002',
   '53800000-0005-4000-8000-000000000003', '53800000-0005-4000-8000-000000000004',
   '53800000-0005-4000-8000-000000000005'
 );
-insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_md) values
-  ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000002',
-    'run_failure', '{"version":1,"category":"timeout","code":"timeout"}');
-insert into public.agent_run_events(agent_run_id, workspace_id, attempt_count, sequence, kind, payload)
-select '53800000-0005-4000-8000-000000000001', '53800000-0001-4000-8000-000000000001',
-  1, n, 'text', '{"text":"Ordered transcript body"}'::jsonb from generate_series(1, 3) n;
 
 insert into public.session_validation_evidence(
   run_id, workspace_id, session_id, job_id, attempt_count, repository_id,
@@ -93,7 +98,7 @@ select is((public.save_workspace_run_retention(
   'workspace owners can opt in to finite retention');
 create temp table initial_retention_sweep as select * from public.mark_expired_workspace_run_content();
 select is((select transcripts_expired from initial_retention_sweep), 2,
-  'the exact terminal, past-cutoff runs expire including legacy activity');
+  'the exact terminal, past-cutoff ordered transcripts expire');
 select is((select evidence_expired from initial_retention_sweep), 1,
   'optional validation evidence expires while required active-session evidence remains and existing redaction is preserved');
 select is((select count(*) from public.agent_run_transcript_expirations where workspace_id =
@@ -114,8 +119,15 @@ select is((select count(*) from public.agent_run_events where agent_run_id =
   '53800000-0005-4000-8000-000000000001'), 0::bigint,
   'expiry immediately hides ordered activity before physical deletion');
 select is((select count(*) from public.agent_run_messages where agent_run_id =
-  '53800000-0005-4000-8000-000000000002' and kind <> 'run_failure'), 0::bigint,
-  'expiry immediately hides legacy projections before physical deletion');
+  '53800000-0005-4000-8000-000000000006'), 0::bigint,
+  'historical activity is outside authenticated diagnostics access');
+select ok((select transcript_expired_at is null and not has_events
+  from public.list_workspace_run_catalog('53800000-0001-4000-8000-000000000001',
+    p_run_id => '53800000-0005-4000-8000-000000000006')),
+  'historical activity does not produce an ordered transcript expiry marker');
+select is((select count(*) from public.agent_run_messages where agent_run_id =
+  '53800000-0005-4000-8000-000000000001' and kind = 'worker_progress'), 1::bigint,
+  'current worker diagnostics stay readable after ordered activity expires');
 select ok((select transcript_expired_at is not null and not has_events and failure_receipt is not null
   from public.list_workspace_run_catalog('53800000-0001-4000-8000-000000000001',
     p_run_id => '53800000-0005-4000-8000-000000000002')),
@@ -140,11 +152,11 @@ set local role service_role;
 set local request.jwt.claim.role = 'service_role';
 
 select lives_ok($$insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_md) values
-  ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000001', 'error', 'Late diagnostic')$$,
+  ('53800000-0001-4000-8000-000000000001', '53800000-0005-4000-8000-000000000001', 'worker_error', 'Late diagnostic')$$,
   'a delayed diagnostic cannot fail a completed cancellation or cleanup path');
 select is((select count(*) from public.agent_run_messages where agent_run_id =
-  '53800000-0005-4000-8000-000000000001'), 1::bigint,
-  'a delayed diagnostic cannot repopulate expired transcript bytes');
+  '53800000-0005-4000-8000-000000000001' and kind = 'worker_error'), 1::bigint,
+  'a delayed diagnostic can coexist with an expired transcript');
 select is(public.purge_expired_run_transcripts(8, 2), 1, 'transcript cleanup commits only bounded pages');
 select is((select count(*) from public.agent_run_events where agent_run_id =
   '53800000-0005-4000-8000-000000000001'), 1::bigint, 'unprocessed pages remain durable after restart');
@@ -153,10 +165,13 @@ select is(public.purge_expired_run_transcripts(8, 2), 0, 'already-purged streams
 select is((select count(*) from public.agent_run_messages where agent_run_id =
   '53800000-0005-4000-8000-000000000002' and kind = 'run_failure'), 1::bigint,
   'structured failure summary survives retention');
-select is((select count(*) from public.agent_run_messages where agent_run_id in (
+select is((select count(*) from public.agent_run_events where agent_run_id in (
   '53800000-0005-4000-8000-000000000003', '53800000-0005-4000-8000-000000000004',
   '53800000-0005-4000-8000-000000000005')), 3::bigint,
   'running, recent terminal and unrelated workspace activity remain intact');
+select is((select count(*) from public.agent_run_messages where agent_run_id =
+  '53800000-0005-4000-8000-000000000001' and kind in ('worker_progress', 'worker_error')), 2::bigint,
+  'the transcript purge preserves current worker diagnostics');
 
 create temp table first_purge_claims as select * from public.claim_run_evidence_purges();
 select is((select count(*) from first_purge_claims), 2::bigint, 'only withheld assets enter Storage cleanup');

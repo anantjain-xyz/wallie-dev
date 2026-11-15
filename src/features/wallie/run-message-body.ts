@@ -1,9 +1,3 @@
-export type ParsedToolUseMessage = {
-  payload: string;
-  tool: string;
-};
-
-const TOOL_USE_TEMPLATE = /^\*\*Tool:\*\* ([^\n]+)\n\n```\n([\s\S]*)\n```\s*$/;
 const JSON_WHITESPACE = /[ \t\n\r]/;
 
 function isJsonWhitespace(char: string | undefined): boolean {
@@ -25,7 +19,7 @@ function isJsonLiteralEnd(char: string | undefined): boolean {
  * Pretty-print JSON while copying number (and other) literals from the source
  * so values outside `Number.MAX_SAFE_INTEGER` are not rounded by `JSON.parse`.
  */
-function prettyPrintJsonPayload(payload: string): string {
+export function formatToolPayload(payload: string): string {
   const source = payload.trim();
   try {
     JSON.parse(source);
@@ -132,33 +126,6 @@ function formatJsonPreservingLiterals(source: string): string {
   return out;
 }
 
-/**
- * Parse the persisted `tool_use` markdown template:
- * `**Tool:** <name>` plus a fenced payload. The payload match is greedy so an
- * inner fence in file contents does not steal the wrapper closer.
- */
-export function parseToolUseMessage(messageMd: string): ParsedToolUseMessage | null {
-  const parsed = matchToolUseMessage(messageMd);
-  return parsed ? { ...parsed, payload: prettyPrintJsonPayload(parsed.payload) } : null;
-}
-
-function matchToolUseMessage(messageMd: string): ParsedToolUseMessage | null {
-  const match = TOOL_USE_TEMPLATE.exec(messageMd.replace(/\r\n/g, "\n"));
-  if (!match) {
-    return null;
-  }
-
-  const tool = match[1]?.trim() ?? "";
-  if (!tool) {
-    return null;
-  }
-
-  return {
-    payload: match[2] ?? "",
-    tool,
-  };
-}
-
 export type ToolActivitySummary = {
   category: "read" | "search" | "list" | null;
   title: string;
@@ -166,13 +133,11 @@ export type ToolActivitySummary = {
 };
 
 /** Derive display text only. A persisted tool input does not prove execution or success. */
-export function summarizeToolUse(messageMd: string): ToolActivitySummary {
-  const parsed = matchToolUseMessage(messageMd);
-  if (!parsed) return { category: null, title: "Tool use", target: "" };
-
+export function summarizeToolUse(tool: string, payload: string): ToolActivitySummary {
+  if (!tool.trim()) return { category: null, title: "Tool use", target: "" };
   let input: Record<string, unknown> = {};
   try {
-    const value: unknown = JSON.parse(parsed.payload);
+    const value: unknown = JSON.parse(payload);
     if (value && typeof value === "object" && !Array.isArray(value)) {
       input = value as Record<string, unknown>;
     }
@@ -186,7 +151,7 @@ export function summarizeToolUse(messageMd: string): ToolActivitySummary {
     }
     return "";
   };
-  const name = parsed.tool.split(/[./]/).at(-1)?.toLowerCase().replace(/[_-]/g, "");
+  const name = tool.split(/[./]/).at(-1)?.toLowerCase().replace(/[_-]/g, "");
   const path = () => field("file_path", "filePath", "path", "filename");
   switch (name) {
     case "read":
@@ -215,7 +180,7 @@ export function summarizeToolUse(messageMd: string): ToolActivitySummary {
     default:
       return {
         category: null,
-        title: parsed.tool,
+        title: tool,
         target: field("description", "query", "url", "file_path", "filePath", "path", "name"),
       };
   }

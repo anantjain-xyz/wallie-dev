@@ -76,6 +76,8 @@ select ok(has_function_privilege('authenticated',
 select ok(not has_function_privilege(role_name,
   'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer)', 'EXECUTE'),
   role_name || ' has no catalog execute grant') from (values ('anon'), ('service_role')) roles(role_name);
+select ok(to_regprocedure('public.list_run_legacy_transcript(uuid,uuid,timestamptz,uuid,text,integer)') is null,
+  'the legacy transcript endpoint is retired');
 select ok(to_regclass('public.agent_runs_workspace_created_id_idx') is not null
   and to_regclass('public.agent_runs_session_created_id_idx') is not null
   and to_regclass('public.agent_run_events_capture_end_idx') is not null,
@@ -126,9 +128,9 @@ select is((select attempt_count from public.list_workspace_run_catalog('53400000
 select is((select job_id from public.list_workspace_run_catalog('53400000-0001-4000-8000-000000000001',
   p_run_id => '53400000-0004-4000-8000-000000000058')), '53400000-0005-4000-8000-000000000001'::uuid,
   'history retains the original job association');
-select ok((select attempt_count is null and not has_events and has_legacy_messages and not capture_ended and not capture_interrupted
+select ok((select attempt_count is null and not has_events and not capture_ended and not capture_interrupted
   from public.list_workspace_run_catalog('53400000-0001-4000-8000-000000000001',
-    p_run_id => '53400000-0004-4000-8000-000000000060')), 'legacy history remains readable without invented event coverage');
+    p_run_id => '53400000-0004-4000-8000-000000000060')), 'unsequenced historical activity does not imply ordered capture');
 select ok((select attempt_count = 2 and has_events and not capture_ended and not capture_interrupted and source_recovery_required
     and input_tokens = 17 and output_tokens = 3 and total_cost_usd = 0 and token_provenance = 'measured'
     and cost_provenance = 'measured'

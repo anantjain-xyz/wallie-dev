@@ -179,7 +179,7 @@ async function retireAttempt(
         .insert({
           agent_run_id: run.id,
           workspace_id: input.workspaceId,
-          kind: "error",
+          kind: "worker_error",
           message_md: input.historyMessage,
         })
         .abortSignal(input.signal);

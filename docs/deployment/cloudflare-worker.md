@@ -155,9 +155,10 @@ through privileged tooling. Never log source bundles, tokens, or login verifiers
 ## Ordered run capture
 
 Use the Worker variable `WALLIE_ORDERED_RUN_CAPTURE_ENABLED=false` to pause
-ordered capture on subsequently started attempts while retaining legacy
-activity. Keep the override in the deployment configuration until ordered
-capture resumes. A Worker with the variable unset uses ordered capture.
+ordered capture on subsequently started attempts. The worker still refreshes
+run activity and can publish artifacts. Keep the override in the deployment
+configuration until capture resumes. A Worker with the variable unset uses
+ordered capture.
 [Enrollment and rollback](worker-operations.md#ordered-run-capture).
 
 ## Rollback

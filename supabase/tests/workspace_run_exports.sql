@@ -40,10 +40,10 @@ from export_fixture f join public.sessions s on f.session_id = s.id;
 select public.pin_session_job_git_input(f.job_id, 1, f.run_id,
   '12b2c3d4-0001-4000-8000-000000000001', 'main', repeat('a', 40))
 from export_run f;
-select public.append_agent_run_event(f.job_id, f.run_id, 1, 1, 'text', '{"text":"Recorded answer"}', false,
-  null, 'Recorded answer') from export_run f;
+select public.append_agent_run_event(f.job_id, f.run_id, 1, 1, 'text', '{"text":"Recorded answer"}', false)
+from export_run f;
 select public.append_agent_run_event(f.job_id, f.run_id, 1, 3, 'tool_result',
-  '{"tool":"Read","output":"ok","status":"completed"}', false, 1, 'Cursor compatibility result')
+  '{"tool":"Read","output":"ok","status":"completed"}', false, 1)
 from export_run f;
 select public.append_agent_run_event(f.job_id, f.run_id, 1, 4, 'capture_gap',
   '{"reason":"missing_tool_result"}', true) from export_run f;
@@ -85,6 +85,9 @@ from export_checkpoint_claim c;
 
 insert into public.agent_run_messages(id, agent_run_id, workspace_id, kind, message_md)
 select '53810000-0002-4000-8000-000000000001', f.run_id, f.workspace_id, 'assistant', 'Legacy unsequenced note'
+from export_run f;
+insert into public.agent_run_messages(id, agent_run_id, workspace_id, kind, message_md)
+select '53810000-0002-4000-8000-000000000003', f.run_id, f.workspace_id, 'worker_error', 'Worker diagnostic'
 from export_run f;
 insert into public.session_artifacts(id, session_id, workspace_id, stage_slug, version, artifact_json)
 select '53810000-0003-4000-8000-000000000001', f.session_id, f.workspace_id, 'legacy', 1, '"# Legacy unlinked"'
@@ -143,7 +146,12 @@ reset role;
 select is((select count(*) from internal.run_export_entries e join export_run r on e.run_id = r.run_id
   where e.record_kind = 'event'), 4::bigint, 'all recorded exact-run event identities are enumerated');
 select is((select count(*) from internal.run_export_entries e join export_run r on e.run_id = r.run_id
-  where e.record_kind = 'legacy_message'), 1::bigint, 'the compatibility projection is deduplicated');
+  where e.record_kind = 'legacy_message' or e.record_id = '53810000-0002-4000-8000-000000000001'),
+  0::bigint, 'historical unsequenced activity is excluded from the roster');
+select is((select e.metadata->>'kind' from internal.run_export_entries e join export_run r on e.run_id = r.run_id
+  where e.record_kind = 'run_diagnostic' and e.record_id = '53810000-0002-4000-8000-000000000003'),
+  'worker_error', 'current worker diagnostics remain exportable');
+
 select is((select count(*) from internal.run_export_entries e join export_run r on e.run_id = r.run_id
   where e.record_kind = 'capture_gap' and e.metadata->>'reason' in ('missing_event_sequences', 'capture_interrupted')),
   2::bigint, 'the snapshot labels actual sequence holes and interrupted capture');
@@ -183,7 +191,7 @@ select throws_ok($$select public.commit_run_export_page(export_id, lease_token, 
 update public.run_exports set lease_expires_at = clock_timestamp() - interval '1 second'
 where id = (select export_id from export_claim);
 insert into public.agent_run_messages(id, agent_run_id, workspace_id, kind, message_md)
-select '53810000-0002-4000-8000-000000000002', f.run_id, f.workspace_id, 'assistant', 'Post-snapshot note'
+select '53810000-0002-4000-8000-000000000002', f.run_id, f.workspace_id, 'worker_progress', 'Post-snapshot note'
 from export_run f;
 create temp table resume_export_claim as select * from public.claim_run_export();
 select isnt((select lease_token from resume_export_claim), (select lease_token from export_claim),

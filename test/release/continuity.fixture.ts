@@ -87,7 +87,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   };
   try {
     const { remote, writer, baseSha } = await createGitFixture(root);
-    let phase: "plan" | "build" | "stale" | "revision" | "cancel" | "legacy" = "plan";
+    let phase: "plan" | "build" | "stale" | "revision" | "cancel" | "capture-paused" = "plan";
     const cancelStarted = deferred<string>();
     finishCanceledRun = deferred<void>();
     let planSha = "";
@@ -110,7 +110,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
           yield completedRunEvent;
           return;
         }
-        if (mode === "legacy") {
+        if (mode === "capture-paused") {
           yield initialRunEvent;
           yield completedRunEvent;
           return;
@@ -978,7 +978,6 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       runId: canceledRun,
     });
     expect(canceledHistory?.runStatus).toBe("canceled");
-    expect(canceledHistory?.mode).toBe("events");
     expect(
       canceledHistory?.entries.some(
         (entry) => entry.kind === "text" && entry.payload.text === initialText,
@@ -991,29 +990,24 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       ),
     ).toEqual([]);
 
-    phase = "legacy";
-    const legacyResult = await production.processPipelineJob({
+    phase = "capture-paused";
+    const pausedResult = await production.processPipelineJob({
       admin,
       job: replacement,
       captureOrderedEvents: false,
     });
-    expect(legacyResult.result).toBe("success");
-    assert(legacyResult.runId);
-    const legacyHistory = await loadRunTranscript({
+    expect(pausedResult.result).toBe("success");
+    assert(pausedResult.runId);
+    const pausedHistory = await loadRunTranscript({
       supabase: reviewer,
       workspaceId: ids.workspaceId,
-      runId: legacyResult.runId,
+      runId: pausedResult.runId,
     });
-    expect(legacyHistory?.mode).toBe("legacy");
-    expect(legacyHistory?.runStatus).toBe("success");
-    expect(
-      legacyHistory?.entries.some(
-        (entry) => entry.kind === "legacy" && entry.payload.text.includes(initialText),
-      ),
-    ).toBe(true);
+    expect(pausedHistory?.runStatus).toBe("success");
+    expect(pausedHistory?.entries).toEqual([]);
     expect(
       await checked(
-        admin.from("agent_run_events").select("sequence").eq("agent_run_id", legacyResult.runId),
+        admin.from("agent_run_events").select("sequence").eq("agent_run_id", pausedResult.runId),
       ),
     ).toEqual([]);
     await assertPublishedRunHistory(reviewer, historyScope, {
@@ -1132,7 +1126,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         publicationRecoveryPid: recovered.pid,
         canceledRunId: canceledRun,
         mixedClaimRejected: true,
-        captureDisabledLegacyRunId: legacyResult.runId,
+        capturePausedRunId: pausedResult.runId,
         nativeWorkflowRestart: {
           workflowId: nativeDispatch.workflow_id,
           runId: nativeCheckpoints[0]?.run_id,

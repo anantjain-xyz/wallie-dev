@@ -92,21 +92,18 @@ capacity, mutation locks, attempt accounting, and heartbeat ownership.
 
 ## Ordered run capture
 
-Deploy the ordered-capture migration before updating workers. Ordered capture
-defaults to `true`. Roll out the worker version to a canary and verify an exact
-run, transcript, checkpoint, and artifact before expanding enrollment.
+Deploy the events-only schema and its matching web and worker versions together.
+Ordered capture defaults to `true`. Verify an exact run, transcript, checkpoint,
+and artifact before expanding enrollment.
 
-To pause new ordered capture, set `WALLIE_ORDERED_RUN_CAPTURE_ENABLED=false` in
-the worker environment and restart the Node worker or deploy the Cloudflare
-revision with that variable. Attempts started by the new revision keep writing
-sanitized legacy messages and refreshing run activity. The worker selects one
-capture mode for each attempt. Runs and Review keep reading retained history
-under the workspace’s access and retention policies.
+Set `WALLIE_ORDERED_RUN_CAPTURE_ENABLED=false` in the worker environment to
+pause ordered capture for subsequently started attempts. Those attempts still
+refresh run activity and can publish artifacts. Runs and Review keep reading
+retained ordered events under the workspace’s access and retention policies.
 
-Set the variable back to `true` to resume ordered capture for subsequent
-attempts. Keep migrations and data in place during either transition. Use the
+Set the variable to `true` to resume capture for subsequent attempts. Use the
 [durable run history qualification](../development/durable-run-history-qualification.md)
-to verify both modes.
+to verify recovery and the capture switch.
 
 ## Controlled checkpoint continuity release
 

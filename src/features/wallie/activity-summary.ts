@@ -48,12 +48,10 @@ export function formatMessageSourceLabel(kind: string) {
       return "Error";
     case "completion":
       return "Completion";
-    case "status":
-      return "Status";
-    case "log":
-      return "Log";
-    case "tool_use":
+    case "tool_call":
       return "Tool use";
+    case "tool_result":
+      return "Tool result";
     default: {
       if (!normalized) return "Message";
       return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
@@ -97,11 +95,9 @@ export function runStatusLabel(input: { run: WallieRun; stalled: boolean }): str
 }
 
 function previewMessage(message: WallieRunMessage) {
-  if (message.kind === "tool_use") {
-    const tool = message.messageMd
-      .match(/^\*\*Tool:\*\* ([^\n]+)/)?.[1]
-      ?.trim()
-      .toLowerCase();
+  if (message.kind === "tool_result") return "Tool result recorded";
+  if (message.kind === "tool_call") {
+    const tool = message.tool.trim().toLowerCase();
     switch (tool) {
       case "read":
       case "read-file":
@@ -165,7 +161,9 @@ export function groupActivityMessages(messages: WallieRunMessage[]): ActivityMes
   };
   for (const message of messages) {
     const category =
-      message.kind === "tool_use" ? summarizeToolUse(message.messageMd).category : null;
+      message.kind === "tool_call"
+        ? summarizeToolUse(message.tool, message.messageMd).category
+        : null;
     if (category) {
       pending.push(message);
       counts[category] += 1;

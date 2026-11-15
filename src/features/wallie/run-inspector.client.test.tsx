@@ -57,7 +57,6 @@ const run: WorkspaceRunCatalogItem = {
   transcript: {
     expiredAt: null,
     hasEvents: true,
-    hasLegacyMessages: true,
     captureEnded: true,
     captureInterrupted: false,
   },
@@ -183,7 +182,7 @@ describe("RunInspector", () => {
     expect(screen.getByText(/does not confirm that the worker stopped/)).toBeTruthy();
   });
 
-  it("keeps legacy attempt and artifact uncertainty explicit", () => {
+  it("keeps unrecorded attempt and artifact uncertainty explicit", () => {
     show({ attemptCount: null, recovery: null }, { kind: "unrecorded" });
     expect(screen.getByText("Build · Attempt not recorded")).toBeTruthy();
     expect(screen.getByText("An exact artifact link was not recorded for this run.")).toBeTruthy();

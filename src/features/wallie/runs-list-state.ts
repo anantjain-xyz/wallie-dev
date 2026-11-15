@@ -3,6 +3,7 @@ import {
   type RunCatalogQuery,
 } from "@/features/wallie/run-catalog-contracts";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
+import { isWallieRunTerminalStatus } from "@/features/wallie/utils";
 import { workspaceRunsPath } from "@/lib/routes";
 
 export type RunsListSearchParams = Record<string, string | string[] | undefined>;
@@ -36,16 +37,12 @@ export function runCatalogActivityLabel(run: WorkspaceRunCatalogItem) {
   if (run.transcript.expiredAt) return "Transcript expired";
   if (run.transcript.hasEvents) {
     if (run.transcript.captureInterrupted) return "Capture interrupted";
-    if (
-      !run.transcript.captureEnded &&
-      (run.status === "success" || run.status === "error" || run.status === "canceled")
-    ) {
+    if (!run.transcript.captureEnded && isWallieRunTerminalStatus(run.status)) {
       return "Capture incomplete";
     }
     return "Structured activity";
   }
-  if (run.transcript.hasLegacyMessages) return "Legacy activity";
-  return run.status === "queued" ? "No activity yet" : "Activity unavailable";
+  return isWallieRunTerminalStatus(run.status) ? "Activity unavailable" : "No activity yet";
 }
 
 export function runCatalogRecoveryLabel(run: WorkspaceRunCatalogItem): string | null {

@@ -54,11 +54,12 @@ definition, not by the copy in the baseline.
   artifact version when that attempt has one recorded.
 - `GET /api/workspaces/{workspaceId}/runs/{runId}/transcript` returns the latest
   30 entries by default. Use `olderCursor` to read earlier activity and
-  `newerCursor` to resume after a disconnect. Cursors bind to the run, attempt,
-  and capture source. Start from the latest page after a `409` reset.
-- Run and legacy message notifications trigger authenticated page reads. Ordered
-  capture follows event sequence. Legacy activity is ordered by timestamp and
-  ID and is labeled when there is no structured capture receipt.
+  `newerCursor` to resume after a disconnect. Cursors bind to the workspace,
+  run, attempt, and event sequence. Start from the latest page after a `409`
+  reset.
+- Exact run notifications trigger authenticated transcript page reads. An active
+  run can receive its first event after the inspector opens. A terminal run
+  with no captured events shows that its transcript is unavailable.
 
 ## Execution ownership
 

@@ -47,7 +47,6 @@ const run: WorkspaceRunCatalogItem = {
   transcript: {
     expiredAt: null,
     hasEvents: true,
-    hasLegacyMessages: true,
     captureEnded: true,
     captureInterrupted: false,
   },
@@ -229,10 +228,17 @@ describe("Runs list state", () => {
     );
   });
 
-  it("never presents legacy or interrupted activity as complete structured capture", () => {
+  it("distinguishes unavailable, pending and interrupted capture", () => {
     expect(
       runCatalogActivityLabel({ ...run, transcript: { ...run.transcript, hasEvents: false } }),
-    ).toBe("Legacy activity");
+    ).toBe("Activity unavailable");
+    expect(
+      runCatalogActivityLabel({
+        ...run,
+        status: "running",
+        transcript: { ...run.transcript, hasEvents: false },
+      }),
+    ).toBe("No activity yet");
     expect(
       runCatalogActivityLabel({ ...run, transcript: { ...run.transcript, captureEnded: false } }),
     ).toBe("Capture incomplete");

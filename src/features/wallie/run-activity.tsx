@@ -13,7 +13,6 @@ import {
   connectionStateCopy,
   isConnectionInterrupted,
   runStatusLabel,
-  formatMessageSourceLabel,
   groupActivityMessages,
   isRunActivityStalled,
   lastActivityTimestamp,
@@ -22,7 +21,7 @@ import {
   messagesLoadingCopy,
   type WallieRealtimeConnectionState,
 } from "@/features/wallie/activity-summary";
-import { parseToolUseMessage, summarizeToolUse } from "@/features/wallie/run-message-body";
+import { formatToolPayload, summarizeToolUse } from "@/features/wallie/run-message-body";
 import type { WallieRun, WallieRunMessage, WallieRunUsage } from "@/features/wallie/types";
 import { LiveConnectionNotice } from "./live-connection-notice";
 import { cn } from "@/lib/utils";
@@ -140,7 +139,7 @@ export const WallieRunCard = memo(function WallieRunCard({
   const working = run.isActive && (run.status === "running" || run.status === "started");
   const operation = runStatusLabel({ run, stalled });
   const progress = run.messages.findLast(
-    (message) => ["text", "progress", "status"].includes(message.kind) && message.messageMd.trim(),
+    (message) => ["text", "progress"].includes(message.kind) && message.messageMd.trim(),
   );
   const latest = run.messages.at(-1);
 
@@ -308,7 +307,7 @@ export const WallieRunCard = memo(function WallieRunCard({
           <p className="mt-2 text-xs leading-5 text-muted">{formatWallieRunUsage(run.usage)}</p>
           {!isExpanded && run.isActive ? (
             <div className="mt-4 min-w-0 space-y-2 rounded-[6px] bg-control-muted p-3 sm:p-4">
-              {latest?.kind === "tool_use" && working && !stalled ? (
+              {latest?.kind === "tool_call" && working && !stalled ? (
                 <p className="text-xs text-muted">{currentOperationLabel({ run, stalled })}</p>
               ) : progress && run.status !== "queued" ? (
                 <p className="text-xs text-muted">Latest update</p>
@@ -496,14 +495,6 @@ const ActivityMessage = memo(function ActivityMessage({
   renderNow: string;
 }) {
   const [open, setOpen] = useState(false);
-  const tool = useMemo(
-    () => (message.kind === "tool_use" ? summarizeToolUse(message.messageMd) : null),
-    [message.kind, message.messageMd],
-  );
-  const parsed = useMemo(
-    () => (open && tool ? parseToolUseMessage(message.messageMd) : null),
-    [open, tool, message.messageMd],
-  );
   if (["text", "progress", "completion"].includes(message.kind)) {
     return (
       <div className="py-2 text-sm">
@@ -526,32 +517,33 @@ const ActivityMessage = memo(function ActivityMessage({
       </details>
     );
   }
+  if (message.kind !== "tool_call" && message.kind !== "tool_result") return null;
+
+  const summary =
+    message.kind === "tool_call"
+      ? summarizeToolUse(message.tool, message.messageMd)
+      : { title: `${message.tool} result`, target: message.outcome };
+
   return (
     <details className="min-w-0 text-sm" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="cursor-pointer rounded-[4px] py-2 text-muted hover:text-foreground focus-visible:outline-accent">
-        <span className="text-foreground">
-          {tool?.title ?? formatMessageSourceLabel(message.kind)}
-        </span>{" "}
+        <span className="text-foreground">{summary.title}</span>{" "}
         <span className="ml-2 break-words [overflow-wrap:anywhere]">
-          {compactActivityText(tool ? tool.target : message.messageMd, 100)}
+          {compactActivityText(summary.target, 100)}
         </span>
       </summary>
       {open ? (
         <div className="min-w-0 pb-2 pl-4">
           <div className="mb-2 flex flex-wrap gap-3 type-annotation text-muted">
-            <span>
-              {tool
-                ? `Tool: ${parsed?.tool ?? "Unknown"} · Recorded payload`
-                : formatMessageSourceLabel(message.kind)}
-            </span>
+            <span>Tool: {message.tool} · Recorded payload</span>
             <TimeDisplay initialNow={renderNow} value={message.createdAt} />
           </div>
           <pre
-            aria-label={tool ? "Tool payload" : "Message details"}
+            aria-label="Tool payload"
             className="artifact-pre max-h-80 overflow-auto"
             tabIndex={0}
           >
-            <code className="artifact-code-block">{parsed?.payload ?? message.messageMd}</code>
+            <code className="artifact-code-block">{formatToolPayload(message.messageMd)}</code>
           </pre>
         </div>
       ) : null}

@@ -37,7 +37,6 @@ beforeEach(() => {
   mocked.loadRunTranscript.mockResolvedValue({
     runId,
     runStatus: "canceled",
-    mode: "events",
     entries: [],
     newerCursor: "cursor",
   });
