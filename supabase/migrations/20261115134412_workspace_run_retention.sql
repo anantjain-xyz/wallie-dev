@@ -70,7 +70,6 @@ create index agent_run_transcript_expirations_pending_idx
 alter table public.agent_run_transcript_expirations enable row level security;
 revoke all on public.agent_run_transcript_expirations from public, anon, authenticated, service_role;
 grant select on public.agent_run_transcript_expirations to authenticated, service_role;
-grant insert, update on public.agent_run_transcript_expirations to service_role;
 create policy agent_run_transcript_expirations_read on public.agent_run_transcript_expirations
   for select to authenticated using (
     workspace_id in (select internal.current_user_workspace_ids())
@@ -125,7 +124,6 @@ create index session_validation_asset_withholdings_pending_idx
   where purged_at is null;
 grant update (purged_at, cleanup_claim_id, cleanup_available_at)
   on public.session_validation_asset_withholdings to service_role;
-grant delete on public.agent_run_events to service_role;
 
 -- Retention days are elapsed 24-hour periods, including through DST changes.
 create function internal.run_retention_duration(p_days integer)
@@ -135,11 +133,12 @@ $$;
 revoke all on function internal.run_retention_duration(integer) from public, anon, authenticated, service_role;
 grant execute on function internal.run_retention_duration(integer) to service_role;
 
+-- Only the policy-aware sweep can create transcript expiry markers.
 create function public.mark_expired_workspace_run_content(
   p_workspace_limit integer default 4,
   p_item_limit integer default 25
 ) returns table (transcripts_expired integer, evidence_expired integer)
-language plpgsql security invoker set search_path = '' as $$
+language plpgsql security definer set search_path = '' as $$
 declare
   target uuid;
   policy public.workspace_run_retention;
@@ -216,10 +215,12 @@ revoke all on function public.mark_expired_workspace_run_content(integer,integer
   from public, anon, authenticated, service_role;
 grant execute on function public.mark_expired_workspace_run_content(integer,integer) to service_role;
 
+-- The purge uses only persisted expiry markers. Workers keep read-only
+-- access to the ordered event table.
 create function public.purge_expired_run_transcripts(
   p_run_limit integer default 8,
   p_entry_limit integer default 250
-) returns integer language plpgsql security invoker set search_path = '' as $$
+) returns integer language plpgsql security definer set search_path = '' as $$
 declare
   expiry public.agent_run_transcript_expirations;
   max_entries integer := least(greatest(coalesce(p_entry_limit, 250), 1), 1000);

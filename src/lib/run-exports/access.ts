@@ -43,6 +43,7 @@ export async function authorizeRunExport(params: { workspaceId: string; exportId
     return { ok: false, response: exportError("Invalid run export request.", 400) } as const;
   }
   const access = await requireWorkspaceAccessById(target.data.workspaceId, {
+    includeSessionId: true,
     requireManager: true,
   });
   if (!access.ok) {

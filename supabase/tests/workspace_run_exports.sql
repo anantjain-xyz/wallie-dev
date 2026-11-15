@@ -329,7 +329,7 @@ select ok(not public.finish_run_export_cleanup(export_id, workspace_id),
 
 create temp table other_cleanup_request as select * from public.request_run_export(
   '53810000-0004-4000-8000-000000000001', 'a1b2c3d4-0002-4000-8000-000000000002',
-  '53810000-0005-4000-8000-000000006'
+  '53810000-0005-4000-8000-000000000006'
 );
 update public.run_exports set expires_at = clock_timestamp() - interval '1 second'
 where id = (select id from other_cleanup_request);

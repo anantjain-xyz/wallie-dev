@@ -76,6 +76,10 @@ insert into public.session_validation_asset_withholdings(asset_id, state)
 values ('53800000-0006-4000-8000-000000000003', 'redacted');
 
 set local role service_role;
+select ok(not has_table_privilege(current_user, 'public.agent_run_transcript_expirations', 'INSERT')
+  and not has_table_privilege(current_user, 'public.agent_run_transcript_expirations', 'UPDATE')
+  and not has_table_privilege(current_user, 'public.agent_run_events', 'DELETE'),
+  'workers cannot bypass the policy-aware expiry and purge operations');
 select is((select transcripts_expired from public.mark_expired_workspace_run_content()), 0,
   'workspaces must enable retention before historical transcripts expire');
 select throws_ok($$select public.save_workspace_run_retention(

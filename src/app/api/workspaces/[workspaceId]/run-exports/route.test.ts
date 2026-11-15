@@ -79,10 +79,15 @@ function pageQuery() {
 describe("workspace run export routes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mocks.requireWorkspaceAccessById.mockResolvedValue({
-      ok: true,
-      context: { user: { id: userId, sessionId }, workspace: { id: workspaceId } },
-    });
+    mocks.requireWorkspaceAccessById.mockImplementation(
+      async (_id: string, options?: { includeSessionId?: boolean }) => ({
+        ok: true,
+        context: {
+          user: options?.includeSessionId ? { id: userId, sessionId } : { id: userId },
+          workspace: { id: workspaceId },
+        },
+      }),
+    );
     mocks.rpc.mockImplementation(() => accessResult(job));
   });
 
@@ -156,6 +161,10 @@ describe("workspace run export routes", () => {
         dbResult([{ first_ordinal: 2, last_ordinal: 2, sha256, size_bytes: 124 }]),
       );
     const response = await getManifest(request(), context({ workspaceId, exportId }));
+    expect(mocks.requireWorkspaceAccessById).toHaveBeenCalledWith(workspaceId, {
+      includeSessionId: true,
+      requireManager: true,
+    });
     expect(mocks.rpc).toHaveBeenCalledWith("get_run_export_access", {
       p_workspace_id: workspaceId,
       p_export_id: exportId,
