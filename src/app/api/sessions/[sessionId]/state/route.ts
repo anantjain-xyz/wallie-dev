@@ -4,6 +4,10 @@ import type {
   SessionMutationErrorResponse,
   SessionPhaseMutationResult,
 } from "@/features/sessions/mutation-contracts";
+import {
+  querySessionPhaseState,
+  resolveSessionPhaseState,
+} from "@/features/sessions/phase-state.server";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -23,13 +27,7 @@ export async function GET(_request: Request, { params }: Params) {
     );
   }
 
-  const { data, error } = await supabase
-    .from("sessions")
-    .select(
-      "id, archived_at, phase_status, current_stage_id, current_artifact_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
-    )
-    .eq("id", sessionId)
-    .maybeSingle();
+  const { data, error } = await querySessionPhaseState(supabase, sessionId).maybeSingle();
 
   if (error) {
     return NextResponse.json<SessionMutationErrorResponse>(
@@ -43,22 +41,13 @@ export async function GET(_request: Request, { params }: Params) {
       { status: 404 },
     );
   }
-  if (!data.currentStage) {
+  const result = await resolveSessionPhaseState(supabase, data);
+  if (!result) {
     return NextResponse.json<SessionMutationErrorResponse>(
       { code: "mutation_failed", error: "Session stage not found" },
       { status: 500 },
     );
   }
 
-  return NextResponse.json<SessionPhaseMutationResult>({
-    archivedAt: data.archived_at,
-    currentArtifactId: data.current_artifact_id ?? null,
-    artifactVersion: data.current_artifact_version,
-    currentStage: data.currentStage,
-    currentStageId: data.current_stage_id,
-    id: data.id,
-    phaseStatus: data.phase_status,
-    rejectionCount: data.rejection_count,
-    updatedAt: data.updated_at,
-  });
+  return NextResponse.json<SessionPhaseMutationResult>(result);
 }

@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
+  loadPinnedFactoryExecution: vi.fn(),
 }));
 
+vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
+  loadPinnedFactoryExecution: mocked.loadPinnedFactoryExecution,
+}));
 vi.mock("@/lib/supabase/auth", () => ({
   getSupabaseUserOrNull: mocked.getSupabaseUserOrNull,
 }));
@@ -47,6 +51,29 @@ describe("GET /api/sessions/[sessionId]/state", () => {
     vi.clearAllMocks();
     mocked.createSupabaseServerClient.mockResolvedValue(buildClient());
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
+    mocked.loadPinnedFactoryExecution.mockResolvedValue(null);
+  });
+
+  it("refreshes an enrolled session with the compiled stage rather than its edited label", async () => {
+    mocked.loadPinnedFactoryExecution.mockResolvedValue({
+      stages: [
+        { id: "stage-earlier" },
+        {
+          id: "stage-new",
+          name: "Pinned stage",
+          slug: "pinned-stage",
+          description: "Compiled instructions",
+        },
+      ],
+    });
+    const response = await GET(new Request("http://localhost"), {
+      params: Promise.resolve({ sessionId: result.id }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      currentStageId: "stage-new",
+      currentStage: { slug: "pinned-stage", name: "Pinned stage", position: 2 },
+    });
   });
 
   it("returns the current stage snapshot for targeted realtime reconciliation", async () => {

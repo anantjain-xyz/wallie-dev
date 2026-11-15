@@ -11,6 +11,10 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 import { withServerTiming, type ServerTimingCollector } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
+import {
+  querySessionPhaseState,
+  resolveSessionPhaseState,
+} from "@/features/sessions/phase-state.server";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -289,28 +293,10 @@ async function loadMutationResult(
   },
 ) {
   const { data, error } = await timing.segment("mutation.result", () =>
-    supabase
-      .from("sessions")
-      .select(
-        "id, workspace_id, archived_at, phase_status, current_stage_id, current_artifact_id, current_artifact_version, rejection_count, updated_at, execute_pinned_definition, factory_definition_revision_id, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
-      )
-      .eq("id", sessionId)
-      .single(),
+    querySessionPhaseState(supabase, sessionId).single(),
   );
-
-  const pinned = data ? await loadPinnedFactoryExecution(supabase, data) : null;
-  const index = pinned?.stages.findIndex(({ id }) => id === data?.current_stage_id) ?? -1;
-  const stage = pinned?.stages[index];
-  const currentStage = pinned
-    ? stage && {
-        id: stage.id,
-        description: stage.description,
-        name: stage.name,
-        position: index + 1,
-        slug: stage.slug,
-      }
-    : data?.currentStage;
-  if (error || !data || !currentStage) {
+  const result = data && !error ? await resolveSessionPhaseState(supabase, data) : null;
+  if (!result) {
     if (feedbackReceipt) {
       return NextResponse.json(
         { ...feedbackReceipt, reconciliationRequired: true },
@@ -326,15 +312,7 @@ async function loadMutationResult(
 
   return NextResponse.json<SessionPhaseMutationResult>({
     ...feedbackReceipt,
-    archivedAt: data.archived_at,
-    currentArtifactId: data.current_artifact_id ?? null,
-    artifactVersion: data.current_artifact_version,
-    currentStage,
-    currentStageId: data.current_stage_id,
-    id: data.id,
-    phaseStatus: data.phase_status,
-    rejectionCount: data.rejection_count,
-    updatedAt: data.updated_at,
+    ...result,
   });
 }
 
