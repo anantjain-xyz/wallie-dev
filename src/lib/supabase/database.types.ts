@@ -1852,6 +1852,7 @@ export type Database = {
           checked_at: string
           created_at: string
           error_text: string | null
+          factory_definition_digest: string | null
           github_repository_id: string | null
           id: string
           sandbox_connection_revision: string | null
@@ -1870,6 +1871,7 @@ export type Database = {
           checked_at?: string
           created_at?: string
           error_text?: string | null
+          factory_definition_digest?: string | null
           github_repository_id?: string | null
           id?: string
           sandbox_connection_revision?: string | null
@@ -1888,6 +1890,7 @@ export type Database = {
           checked_at?: string
           created_at?: string
           error_text?: string | null
+          factory_definition_digest?: string | null
           github_repository_id?: string | null
           id?: string
           sandbox_connection_revision?: string | null
@@ -6860,6 +6863,42 @@ export type Database = {
         Args: { p_operation_id: string; p_transferred: boolean }
         Returns: undefined
       }
+      start_factory_definition_capability_check: {
+        Args: {
+          target_actor_user_id: string
+          target_agent_model: string
+          target_agent_provider: string
+          target_definition_digest: string
+          target_github_repository_id: string
+          target_sandbox_provider: string
+          target_workspace_id: string
+        }
+        Returns: {
+          agent_model: string | null
+          agent_provider: string | null
+          capabilities: Json
+          checked_at: string
+          created_at: string
+          error_text: string | null
+          factory_definition_digest: string | null
+          github_repository_id: string | null
+          id: string
+          sandbox_connection_revision: string | null
+          sandbox_id: string | null
+          sandbox_provider: string | null
+          sandbox_vercel_project_id: string | null
+          sandbox_vercel_team_id: string | null
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "sandbox_capability_checks"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       start_sandbox_capability_check: {
         Args: {
           target_github_repository_id: string
@@ -6872,6 +6911,7 @@ export type Database = {
           checked_at: string
           created_at: string
           error_text: string | null
+          factory_definition_digest: string | null
           github_repository_id: string | null
           id: string
           sandbox_connection_revision: string | null

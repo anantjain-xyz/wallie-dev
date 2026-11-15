@@ -36,6 +36,7 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
     )
     .eq("workspace_id", input.workspaceId)
     .eq("github_repository_id", input.repositoryId)
+    .is("factory_definition_digest", null)
     .order("checked_at", { ascending: false })
     .limit(1)
     .maybeSingle();

@@ -265,23 +265,22 @@ export async function loadWorkspaceSandboxConnection(
 export async function loadRequiredWorkspaceSandboxConnection(
   admin: AdminClient,
   workspaceId: string,
+  requestedProvider?: SandboxProvider,
 ): Promise<{ connection: SandboxConnection; provider: SandboxProvider }> {
-  const settings = await loadWorkspaceSandboxSettings(admin, workspaceId);
-  if (!getEnabledSandboxProviders().includes(settings.activeProvider)) {
+  const provider =
+    requestedProvider ?? (await loadWorkspaceSandboxSettings(admin, workspaceId)).activeProvider;
+  if (!getEnabledSandboxProviders().includes(provider)) {
     throw new SandboxConnectionInvalidError(
-      settings.activeProvider,
-      `${providerLabel(settings.activeProvider)} is disabled in this Wallie deployment.`,
+      provider,
+      `${providerLabel(provider)} is disabled in this Wallie deployment.`,
     );
   }
-  const record = await loadWorkspaceSandboxConnection(admin, workspaceId, settings.activeProvider);
-  if (!record) throw new SandboxConnectionMissingError(settings.activeProvider);
+  const record = await loadWorkspaceSandboxConnection(admin, workspaceId, provider);
+  if (!record) throw new SandboxConnectionMissingError(provider);
   if (!record.preview || record.preview.status !== "connected") {
-    throw new SandboxConnectionInvalidError(
-      settings.activeProvider,
-      record.preview?.lastValidationError,
-    );
+    throw new SandboxConnectionInvalidError(provider, record.preview?.lastValidationError);
   }
-  return { connection: record.connection, provider: settings.activeProvider };
+  return { connection: record.connection, provider };
 }
 
 export async function loadAllConnectedSandboxConnections(

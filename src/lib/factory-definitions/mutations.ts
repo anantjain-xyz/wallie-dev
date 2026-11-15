@@ -10,6 +10,7 @@ import {
   type FactoryDefinitionDiagnostic,
   type FactoryDefinitionSource,
 } from "./compiler";
+import { selectDefaultFactory, selectStoredFactoryDefinition } from "./storage";
 import { recompileStoredFactoryDefinition } from "./stored-definition";
 
 export type FactoryDefinitionMutation =
@@ -57,12 +58,7 @@ export async function mutateFactoryDefinition({
   actorUserId: string;
   command: FactoryDefinitionMutation;
 }): Promise<FactoryMutationResult> {
-  const { data: factory, error: factoryError } = await admin
-    .from("factories")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("is_default", true)
-    .maybeSingle();
+  const { data: factory, error: factoryError } = await selectDefaultFactory(admin, workspaceId);
   if (factoryError) return mutationError(factoryError);
   if (!factory) return mutationError({ code: "P0002" });
 
@@ -98,13 +94,14 @@ export async function mutateFactoryDefinition({
     }
 
     const isPublishing = command.action === "publish";
-    const { data: stored, error: readError } = await admin
-      .from(isPublishing ? "factory_definition_drafts" : "factory_definition_revisions")
-      .select("definition_json, canonical_digest")
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", factory.id)
-      .eq("id", isPublishing ? command.draftId : command.revisionId)
-      .maybeSingle();
+    const { data: stored, error: readError } = await selectStoredFactoryDefinition(
+      admin,
+      workspaceId,
+      factory.id,
+      isPublishing
+        ? { kind: "draft", id: command.draftId }
+        : { kind: "revision", id: command.revisionId },
+    );
     if (readError) return mutationError(readError);
     if (!stored) return mutationError({ code: "P0002" });
 

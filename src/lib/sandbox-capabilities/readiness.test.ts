@@ -25,6 +25,10 @@ const connection = {
 function adminWith(row: Record<string, unknown> | null) {
   const builder = {
     eq: () => builder,
+    is: (column: string, value: null) => {
+      expect([column, value]).toEqual(["factory_definition_digest", null]);
+      return builder;
+    },
     limit: () => builder,
     maybeSingle: async () => ({ data: row, error: null }),
     order: () => builder,

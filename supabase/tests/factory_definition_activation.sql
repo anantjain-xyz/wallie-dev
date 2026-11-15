@@ -104,6 +104,12 @@ from (values
   ('public.publish_factory_definition_draft(uuid,uuid,uuid,bigint,uuid,text[],text[])'),
   ('public.rollback_factory_definition(uuid,uuid,uuid,bigint,uuid,text[],text[])')
 ) as commands(signature);
+select ok(has_function_privilege('service_role',signature,'EXECUTE')
+  and not has_function_privilege('anon',signature,'EXECUTE')
+  and not has_function_privilege('authenticated',signature,'EXECUTE'),
+  'only a service caller can reserve a prospective capability check')
+from (values ('public.start_factory_definition_capability_check(uuid,uuid,uuid,text,text,text,text)'))
+  as commands(signature);
 select throws_ok($$select public.save_factory_definition_draft(s.workspace_id,s.factory_id,s.member_user_id,
   0,d.bytes,encode(sha256(convert_to(d.bytes,'UTF8')),'hex')) from factory_activation_scope s
   cross join (select pg_temp.factory_activation_bundle('Denied') bytes) d$$,
@@ -280,6 +286,81 @@ select throws_ok(pg_temp.factory_activation_command('rollback',3,(select revisio
   'PT422',null,'a prior revision cannot restore a removed named approver');
 select is((select count(*) from public.factory_definition_activations a join factory_activation_scope s on s.factory_id=a.factory_id),
   3::bigint,'all revoked or unsupported rollback attempts leave the active pointer unchanged');
+
+-- A candidate can exercise a different model and connected sandbox from live
+-- settings. Results remain isolated by digest, even for the same runtime tuple.
+insert into public.workspace_agent_config(workspace_id,key,value_json) values
+  ('54200000-0001-4000-8000-000000000001','agent_provider','"codex"'),
+  ('54200000-0001-4000-8000-000000000001','agent_model','"gpt-5"')
+on conflict (workspace_id,key) do update set value_json=excluded.value_json;
+insert into public.workspace_daytona_sandbox_connections(workspace_id,encrypted_api_key) values
+  ('54200000-0001-4000-8000-000000000001','prospective-activation-test-ciphertext');
+
+create temp table factory_activation_candidate_bodies as
+select label,jsonb_set(jsonb_set(pg_temp.factory_activation_bundle(label)::jsonb,
+  '{sandboxProvider}','"daytona"'),'{agent,model}','"gpt-5.1"')::text as definition_json
+from (values ('Checked candidate'), ('Another candidate')) candidates(label);
+create temp table factory_activation_candidates as
+select body.label,d.id,d.canonical_digest from factory_activation_candidate_bodies body
+cross join lateral pg_temp.factory_activation_save(3,body.definition_json) d;
+
+select throws_ok($$select public.start_factory_definition_capability_check(s.workspace_id,
+  '54200000-0006-4000-8000-000000000001',s.member_user_id,'daytona','codex','gpt-5.1',d.canonical_digest)
+  from factory_activation_scope s cross join factory_activation_candidates d where d.label='Checked candidate'$$,
+  '42501',null,'a regular member cannot reserve a prospective capability check');
+select throws_ok($$select public.start_factory_definition_capability_check(s.workspace_id,
+  '54200000-0006-4000-8000-000000000001',s.owner_id,'daytona','codex','gpt-5.2',d.canonical_digest)
+  from factory_activation_scope s cross join factory_activation_candidates d where d.label='Checked candidate'$$,
+  'P0002',null,'an available digest cannot reserve a check for a different runtime');
+
+create temp table factory_activation_candidate_check as
+select c.* from factory_activation_scope s cross join factory_activation_candidates d
+cross join lateral public.start_factory_definition_capability_check(s.workspace_id,
+  '54200000-0006-4000-8000-000000000001',s.owner_id,'daytona','codex','gpt-5.1',d.canonical_digest) c
+where d.label='Checked candidate';
+select ok((select c.status='running' and c.factory_definition_digest=d.canonical_digest
+   and c.sandbox_provider='daytona' and c.agent_provider='codex' and c.agent_model='gpt-5.1'
+   and c.sandbox_connection_revision=b.connection_revision
+  from factory_activation_candidate_check c join public.workspace_daytona_sandbox_connections b using(workspace_id)
+  cross join factory_activation_candidates d where d.label='Checked candidate'),
+  'the reservation records the exact candidate digest and connected prospective runtime');
+update public.sandbox_capability_checks set status='success',capabilities=(
+  select jsonb_object_agg(probe,jsonb_build_object('ok',true,'detail',null))
+  from unnest(pg_temp.factory_activation_probes()) as probe
+) where id=(select id from factory_activation_candidate_check);
+select throws_ok(pg_temp.factory_activation_command('publish',3,
+  (select id from factory_activation_candidates where label='Another candidate'),array['e2b','daytona']),
+  'PT422',null,'an exact runtime result from another digest cannot qualify the candidate');
+select is((select (public.load_workspace_onboarding_sandbox_checks(s.workspace_id)->0->>'id')::uuid
+    from factory_activation_scope s),
+  (select c.id from public.sandbox_capability_checks c join factory_activation_scope s using(workspace_id)
+    where c.factory_definition_digest is null order by c.checked_at desc,c.id desc limit 1),
+  'the onboarding check list still selects the current live receipt');
+
+create temp table factory_activation_live_candidate as
+select id from pg_temp.factory_activation_save(3,pg_temp.factory_activation_bundle('Live-compatible candidate'));
+select is((select a.activation_number from factory_activation_scope s cross join factory_activation_live_candidate d
+  cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,3,d.id,
+    array['e2b'],pg_temp.factory_activation_probes()) a),
+  4::bigint,'a newer prospective check does not mask the current live capability check');
+
+create temp table factory_activation_rebased_candidates as
+select body.label,d.id,d.canonical_digest from factory_activation_candidate_bodies body
+cross join lateral pg_temp.factory_activation_save(4,body.definition_json) d;
+select c.id from factory_activation_scope s cross join factory_activation_rebased_candidates d
+cross join lateral public.start_factory_definition_capability_check(s.workspace_id,
+  '54200000-0006-4000-8000-000000000001',s.owner_id,'daytona','codex','gpt-5.1',d.canonical_digest) c
+where d.label='Another candidate';
+update public.sandbox_capability_checks set status='error',error_text='Other candidate failed'
+where factory_definition_digest=(select canonical_digest from factory_activation_rebased_candidates where label='Another candidate');
+select is((select a.activation_number from factory_activation_scope s cross join factory_activation_rebased_candidates d
+  cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,4,d.id,
+    array['e2b','daytona'],pg_temp.factory_activation_probes()) a where d.label='Checked candidate'),
+  5::bigint,'the exact candidate capability check permits activation despite a newer unrelated failure');
+select ok((select s.active_provider='e2b' and a.value_json='"gpt-5"'::jsonb from public.workspace_sandbox_settings s
+  join public.workspace_agent_config a using(workspace_id)
+  where s.workspace_id='54200000-0001-4000-8000-000000000001' and a.key='agent_model'),
+  'activating the prospective runtime does not change live sandbox or model settings');
 
 select extensions.dblink_disconnect('factory_writer');
 select extensions.dblink_disconnect('factory_contender');

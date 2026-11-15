@@ -1,9 +1,100 @@
+-- Candidate probes share sandbox ownership and cleanup with live probes. A
+-- digest scopes their receipts to the immutable draft/revision being checked.
+alter table public.sandbox_capability_checks add column factory_definition_digest text
+  check (factory_definition_digest ~ '^[a-f0-9]{64}$');
+create index sandbox_capability_check_factory_definition_idx
+  on public.sandbox_capability_checks(workspace_id, github_repository_id, factory_definition_digest, checked_at desc, id desc)
+  where factory_definition_digest is not null;
+
+-- Candidate checks are visible to managers through the existing manage policy.
+alter policy sandbox_capability_checks_select_membership on public.sandbox_capability_checks using (
+  factory_definition_digest is null and workspace_id in (select internal.current_user_workspace_ids())
+);
+
+create function internal.factory_connected_sandbox_revision(p_workspace_id uuid, p_provider text)
+returns uuid language sql stable security invoker set search_path = '' as $$
+  select case p_provider
+    when 'vercel' then (select c.connection_revision from public.workspace_vercel_sandbox_connections c
+      where c.workspace_id = p_workspace_id and c.status = 'connected')
+    when 'e2b' then (select c.connection_revision from public.workspace_e2b_sandbox_connections c
+      where c.workspace_id = p_workspace_id and c.status = 'connected')
+    when 'daytona' then (select c.connection_revision from public.workspace_daytona_sandbox_connections c
+      where c.workspace_id = p_workspace_id and c.status = 'connected')
+  end;
+$$;
+revoke all on function internal.factory_connected_sandbox_revision(uuid,text) from public, anon, authenticated, service_role;
+
+create function public.start_factory_definition_capability_check(
+  target_workspace_id uuid, target_github_repository_id uuid, target_actor_user_id uuid,
+  target_sandbox_provider text, target_agent_provider text, target_agent_model text,
+  target_definition_digest text
+) returns public.sandbox_capability_checks
+language plpgsql security definer set search_path = '' as $$
+declare result public.sandbox_capability_checks; connection_revision uuid;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0));
+  perform internal.assert_workspace_accepts_work(target_workspace_id);
+  perform 1 from public.workspace_members m where m.workspace_id = target_workspace_id
+    and m.user_id = target_actor_user_id and m.kind = 'human' and m.is_active and m.role in ('owner', 'admin') for share;
+  if not found then
+    raise exception 'Active workspace manager required.' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.github_repositories r join public.github_installations i
+      on (i.id, i.workspace_id) = (r.github_installation_id, r.workspace_id)
+    where (r.id, r.workspace_id) = (target_github_repository_id, target_workspace_id)
+      and not r.is_archived and not i.suspended
+  ) then
+    raise exception 'The definition repository is unavailable.' using errcode = 'PT422';
+  end if;
+  if not exists (
+    select 1 from (
+      select d.factory_id, d.definition_json from public.factory_definition_drafts d
+        where (d.workspace_id, d.canonical_digest) = (target_workspace_id, target_definition_digest)
+      union all
+      select r.factory_id, r.definition_json from public.factory_definition_revisions r
+        where (r.workspace_id, r.canonical_digest) = (target_workspace_id, target_definition_digest)
+    ) saved join public.factories f on f.id = saved.factory_id and f.workspace_id = target_workspace_id
+    where f.is_default
+      and saved.definition_json::jsonb ->> 'sandboxProvider' = target_sandbox_provider
+      and saved.definition_json::jsonb #>> '{agent,provider}' = target_agent_provider
+      and saved.definition_json::jsonb #>> '{agent,model}' = target_agent_model
+      and saved.definition_json::jsonb ->> 'repositoryId' = target_github_repository_id::text
+  ) then
+    raise exception 'The selected factory definition is unavailable for this check.' using errcode = 'P0002';
+  end if;
+  if exists (
+    select 1 from public.workspace_sandbox_connection_mutations m
+      where m.workspace_id = target_workspace_id and m.provider = target_sandbox_provider
+        and m.expires_at > clock_timestamp()
+  ) then
+    raise exception 'The sandbox connection is being updated.' using errcode = 'PT409';
+  end if;
+  connection_revision := internal.factory_connected_sandbox_revision(target_workspace_id, target_sandbox_provider);
+  if connection_revision is null then
+    raise exception 'The sandbox credential is unavailable.' using errcode = 'PT422';
+  end if;
+  insert into public.sandbox_capability_checks(
+    workspace_id, github_repository_id, status, sandbox_provider, agent_provider, agent_model,
+    sandbox_connection_revision, factory_definition_digest
+  ) values (target_workspace_id, target_github_repository_id, 'running', target_sandbox_provider,
+    target_agent_provider, target_agent_model, connection_revision, target_definition_digest)
+  returning * into result;
+  return result;
+end;
+$$;
+revoke all on function public.start_factory_definition_capability_check(uuid,uuid,uuid,text,text,text,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.start_factory_definition_capability_check(uuid,uuid,uuid,text,text,text,text)
+  to service_role;
+
 -- Activation reads current operational authority. The command already holds
 -- the workspace lock and the factory mutex before calling this function.
 create function internal.assert_factory_activation_authority(
   p_workspace_id uuid,
   p_actor_user_id uuid,
   p_definition jsonb,
+  p_definition_digest text,
   p_enabled_sandbox_providers text[],
   p_required_probes text[]
 ) returns void
@@ -95,24 +186,23 @@ begin
 
   -- Connection updates already take the workspace lock. A separate connection
   -- row lock here would reverse their row/workspace lock order.
-  case v_sandbox_provider
-    when 'vercel' then
-      select c.connection_revision into v_connection_revision from public.workspace_vercel_sandbox_connections c
-        where c.workspace_id = p_workspace_id and c.status = 'connected';
-    when 'e2b' then
-      select c.connection_revision into v_connection_revision from public.workspace_e2b_sandbox_connections c
-        where c.workspace_id = p_workspace_id and c.status = 'connected';
-    when 'daytona' then
-      select c.connection_revision into v_connection_revision from public.workspace_daytona_sandbox_connections c
-        where c.workspace_id = p_workspace_id and c.status = 'connected';
-  end case;
+  v_connection_revision := internal.factory_connected_sandbox_revision(p_workspace_id, v_sandbox_provider);
   if v_connection_revision is null then
     raise exception 'The sandbox credential is unavailable.' using errcode = 'PT422';
   end if;
 
+  -- Prefer this immutable candidate's probe. Live receipts remain useful
+  -- when their selected runtime already matches and no candidate was checked.
   select c.* into v_capability from public.sandbox_capability_checks c
     where c.workspace_id = p_workspace_id and c.github_repository_id = v_repository_id
+      and c.factory_definition_digest = p_definition_digest
     order by c.checked_at desc, c.id desc limit 1 for share;
+  if not found then
+    select c.* into v_capability from public.sandbox_capability_checks c
+      where c.workspace_id = p_workspace_id and c.github_repository_id = v_repository_id
+        and c.factory_definition_digest is null
+      order by c.checked_at desc, c.id desc limit 1 for share;
+  end if;
   if not found or v_capability.status is distinct from 'success'
     or v_capability.sandbox_provider is distinct from v_sandbox_provider
     or v_capability.sandbox_connection_revision is distinct from v_connection_revision
@@ -159,7 +249,7 @@ begin
   end if;
 end;
 $$;
-revoke all on function internal.assert_factory_activation_authority(uuid, uuid, jsonb, text[], text[])
+revoke all on function internal.assert_factory_activation_authority(uuid, uuid, jsonb, text, text[], text[])
   from public, anon, authenticated, service_role;
 -- All writers take the workspace fence and then the factory lock. Admission can
 -- use the same workspace fence when it begins pinning active revisions.
@@ -243,7 +333,7 @@ begin
     raise exception 'The draft was saved against a different activation. Save a new draft before publishing.' using errcode = 'PT409';
   end if;
   perform internal.assert_factory_activation_authority(p_workspace_id, p_actor_user_id,
-    draft.definition_json::jsonb, p_enabled_sandbox_providers, p_required_probes);
+    draft.definition_json::jsonb, draft.canonical_digest, p_enabled_sandbox_providers, p_required_probes);
   insert into public.factory_definition_revisions(
     workspace_id, factory_id, source_draft_id, schema_version, definition_json, canonical_digest, created_by
   ) values (p_workspace_id, p_factory_id, draft.id, draft.schema_version, draft.definition_json,
@@ -275,7 +365,7 @@ begin
     raise exception 'This factory definition is already active.' using errcode = 'PT409';
   end if;
   perform internal.assert_factory_activation_authority(p_workspace_id, p_actor_user_id,
-    revision.definition_json::jsonb, p_enabled_sandbox_providers, p_required_probes);
+    revision.definition_json::jsonb, revision.canonical_digest, p_enabled_sandbox_providers, p_required_probes);
   insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
   values (p_workspace_id, p_factory_id, revision.id, p_expected_activation_number + 1, p_actor_user_id)
   returning * into result;
@@ -290,3 +380,56 @@ revoke all on function public.save_factory_definition_draft(uuid,uuid,uuid,bigin
 grant execute on function public.save_factory_definition_draft(uuid,uuid,uuid,bigint,text,text),
   public.publish_factory_definition_draft(uuid,uuid,uuid,bigint,uuid,text[],text[]),
   public.rollback_factory_definition(uuid,uuid,uuid,bigint,uuid,text[],text[]) to service_role;
+
+-- Prospective probes must not replace live onboarding results.
+create or replace function public.load_workspace_onboarding_sandbox_checks(
+  target_workspace_id uuid
+)
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'agent_model', latest.agent_model,
+        'agent_provider', latest.agent_provider,
+        'capabilities', latest.capabilities,
+        'checked_at', latest.checked_at,
+        'error_text', latest.error_text,
+        'github_repository_id', latest.github_repository_id,
+        'id', latest.id,
+        'sandbox_connection_revision', latest.sandbox_connection_revision,
+        'sandbox_provider', latest.sandbox_provider,
+        'sandbox_vercel_project_id', latest.sandbox_vercel_project_id,
+        'sandbox_vercel_team_id', latest.sandbox_vercel_team_id,
+        'status', latest.status
+      )
+      order by latest.checked_at desc, latest.id desc
+    ),
+    '[]'::jsonb
+  )
+  from (
+    select distinct on (check_row.github_repository_id)
+      check_row.agent_model,
+      check_row.agent_provider,
+      check_row.capabilities,
+      check_row.checked_at,
+      check_row.error_text,
+      check_row.github_repository_id,
+      check_row.id,
+      check_row.sandbox_connection_revision,
+      check_row.sandbox_provider,
+      check_row.sandbox_vercel_project_id,
+      check_row.sandbox_vercel_team_id,
+      check_row.status
+    from public.sandbox_capability_checks check_row
+    where check_row.workspace_id = target_workspace_id and check_row.factory_definition_digest is null
+    order by
+      check_row.github_repository_id,
+      check_row.checked_at desc,
+      check_row.id desc
+  ) latest;
+$$;

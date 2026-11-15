@@ -15,6 +15,12 @@ The default factory's active revision is the target of its highest activation nu
 
 Use `expectedActivationNumber: 0` when no definition is active. A stale activation or draft base returns `409`. Activation also returns `409` if a concurrent GitHub update holds the installation or repository lock. Invalid references, incompatible configuration, and unavailable authority or capability evidence return `422`. The caller can inspect compiler diagnostics by field path.
 
+## Checking a saved runtime
+
+Managers can run a capability check at `/api/workspaces/[workspaceId]/factory-definition/capability-check`. Submit `{"target":{"kind":"draft","id":"<draft UUID>"}}` or use `"revision"` and its UUID. The API returns `202` and runs the probe against the saved definition’s repository, agent, model, and sandbox provider. Poll the same endpoint with `draftId` or `revisionId`.
+
+The probe uses the current sandbox connection and current manager credential. Its receipt belongs to the saved definition digest. Onboarding and the existing worker continue to read workspace runtime checks. Activation prefers the latest receipt for the saved digest and can use an exact matching workspace receipt when the definition has no prospective check.
+
 ## Authority and transaction ordering
 
 Publication and rollback recompile stored bytes against the current workspace catalog and require the same canonical definition and digest. The service obtains enabled sandbox providers and probe requirements from the deployed provider contracts. The workspace currently has no per-factory skill or tool grants. Those references become selectable when the grant catalog ships in M03.
