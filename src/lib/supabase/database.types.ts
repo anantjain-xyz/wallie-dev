@@ -3573,18 +3573,21 @@ export type Database = {
       session_restart_lineages: {
         Row: {
           created_at: string
+          linear_issue_context_id: string | null
           session_id: string
           source_session_id: string
           workspace_id: string
         }
         Insert: {
           created_at?: string
+          linear_issue_context_id?: string | null
           session_id: string
           source_session_id: string
           workspace_id: string
         }
         Update: {
           created_at?: string
+          linear_issue_context_id?: string | null
           session_id?: string
           source_session_id?: string
           workspace_id?: string

@@ -4,6 +4,7 @@ create table public.session_restart_lineages (
   session_id uuid primary key references public.sessions(id) on delete cascade,
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
   source_session_id uuid not null check (source_session_id <> session_id),
+  linear_issue_context_id text,
   created_at timestamptz not null default clock_timestamp()
 );
 create index session_restart_lineages_workspace_idx on public.session_restart_lineages(workspace_id);
@@ -81,9 +82,13 @@ begin
     -- issue as context. The new session can still link to the original URL.
     perform internal.lock_factory_session_creation_attachments(target_workspace_id, creator_member_id, session_attachment_ids);
     perform internal.assert_workspace_accepts_work(target_workspace_id);
-    select source.linear_issue_id into source_issue_id from public.sessions source
-      where (source.workspace_id, source.id) = (target_workspace_id, source_session_id)
-      for key share;
+    select coalesce(source.linear_issue_id, prior.linear_issue_context_id) into source_issue_id
+    from public.sessions source
+    left join public.session_restart_lineages prior
+      on (prior.workspace_id, prior.session_id) = (source.workspace_id, source.id)
+    where (source.workspace_id, source.id) =
+      (target_workspace_id, restart_session_once_with_first_job.source_session_id)
+    for key share of source;
     if not found then
       raise exception 'Source session is unavailable in this workspace.' using errcode = 'PT404';
     end if;
@@ -93,8 +98,9 @@ begin
       case when source_issue_id = session_linear_issue_id then null else session_linear_issue_id end,
       session_linear_issue_url, session_github_repository_id,
       selected_pipeline_id, selected_stage_ids);
-    insert into public.session_restart_lineages (session_id, workspace_id, source_session_id)
-    values (result.session_id, target_workspace_id, source_session_id);
+    insert into public.session_restart_lineages (session_id, workspace_id, source_session_id, linear_issue_context_id)
+    values (result.session_id, target_workspace_id, restart_session_once_with_first_job.source_session_id,
+      case when source_issue_id = session_linear_issue_id then source_issue_id end);
   end if;
   return query select result.session_id::uuid, result.session_number::integer,
     result.workspace_slug::text, result.job_id::uuid, result.run_id::uuid;

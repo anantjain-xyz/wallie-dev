@@ -230,12 +230,13 @@ select workspace_id,factory_id,id,2,created_by from revision;
 
 update public.sessions set linear_issue_id='MANIFEST-544', linear_issue_url='https://linear.app/test/issue/MANIFEST-544'
 where id=(select session_id from dispatch_target);
-create function pg_temp.restart_manifest_session(source_id uuid, request uuid, fingerprint text)
+create function pg_temp.restart_manifest_session(source_id uuid, request uuid, fingerprint text,
+  issue_url text default 'https://linear.app/test/issue/MANIFEST-544')
 returns table(session_id uuid, job_id uuid, run_id uuid) language sql as $$
   select fresh.session_id,fresh.job_id,fresh.run_id from public.restart_session_once_with_first_job(
     'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
     request,fingerprint,source_id,'Deliberate restart','Try a fresh plan','claude-code','a-live-model','{}',
-    'MANIFEST-544','https://linear.app/test/issue/MANIFEST-544') fresh;
+    'MANIFEST-544',issue_url) fresh;
 $$;
 create temp table restarted as select fresh.* from dispatch_target old cross join lateral
   pg_temp.restart_manifest_session(old.session_id,'54400000-0000-4000-8000-000000000001',repeat('a',64)) fresh;
@@ -266,6 +267,14 @@ select throws_ok($$select * from pg_temp.restart_manifest_session(
   'a reused request cannot rewrite the source lineage');
 select throws_ok($$update public.session_restart_lineages set source_session_id=gen_random_uuid()$$,
   '23514','Session restart lineage is immutable.','restart origin cannot be rewritten');
+create temp table restarted_again as select fresh.* from restarted prior cross join lateral
+  pg_temp.restart_manifest_session(prior.session_id,'54400000-0000-4000-8000-000000000004',repeat('d',64),
+    'https://linear.app/test/issue/MANIFEST-544/updated-title') fresh;
+select ok(s.linear_issue_id is null and s.linear_issue_url='https://linear.app/test/issue/MANIFEST-544/updated-title'
+  and lineage.linear_issue_context_id='MANIFEST-544' and lineage.source_session_id=prior.session_id,
+  'repeated restarts keep the issue as context even when its canonical URL changes')
+from restarted_again newest join public.sessions s on s.id=newest.session_id
+join public.session_restart_lineages lineage on lineage.session_id=s.id cross join restarted prior;
 delete from public.sessions where id=(select session_id from dispatch_target);
 select is((select f.session_id from dispatch_target old cross join lateral
     pg_temp.restart_manifest_session(old.session_id,'54400000-0000-4000-8000-000000000001',repeat('a',64)) f),
