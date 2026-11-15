@@ -158,6 +158,7 @@ describe("SettingsCategoryNav hash routing", () => {
       category: "advanced" as const,
       links: [
         ["Usage", "#usage"],
+        ["Run history", "#run-history"],
         ["Maintenance", "#maintenance"],
         ["Rate limits", "#rate-limits"],
       ],
@@ -173,22 +174,23 @@ describe("SettingsCategoryNav hash routing", () => {
     }
   });
 
-  it("hides Maintenance when the member cannot manage the workspace", () => {
+  it("hides Run history and Maintenance for ordinary members", () => {
     searchParams = new URLSearchParams("category=advanced");
     const { queryByRole } = render(
       <SettingsCategoryNav activeCategory="advanced" canManage={false} workspaceSlug="acme" />,
     );
 
     expect(queryByRole("link", { name: "Maintenance" })).toBeNull();
+    expect(queryByRole("link", { name: "Run history" })).toBeNull();
   });
 
-  it("does not route non-managers to the maintenance hash", async () => {
+  it.each(["maintenance", "run-history"])("does not route non-managers to %s", async (anchor) => {
     searchParams = new URLSearchParams("category=integrations");
     render(
       <SettingsCategoryNav activeCategory="integrations" canManage={false} workspaceSlug="acme" />,
     );
 
-    window.history.replaceState(null, "", "/w/acme/settings?category=integrations#maintenance");
+    window.history.replaceState(null, "", `/w/acme/settings?category=integrations#${anchor}`);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
 
     await waitFor(() => {

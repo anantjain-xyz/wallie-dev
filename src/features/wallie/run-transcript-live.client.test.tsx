@@ -47,6 +47,7 @@ function page(sequences: number[], overrides: Partial<RunTranscriptPage> = {}): 
     runStatus: "running",
     attemptCount: 1,
     mode: "events",
+    expiredAt: null,
     entries: sequences.map(entry),
     newerCursor: String(sequences.at(-1) ?? 0),
     olderCursor: String(sequences.at(0) ?? 0),
@@ -81,6 +82,24 @@ afterEach(() => {
 });
 
 describe("exact run transcript", () => {
+  it("clears previously displayed activity after an expiry receipt", async () => {
+    const expired = page([], {
+      expiredAt: "2026-11-15T00:00:00Z",
+      mode: "legacy",
+      runStatus: "success",
+    });
+    const fetchTranscript = vi.fn().mockResolvedValue(Response.json(expired));
+    vi.stubGlobal("fetch", fetchTranscript);
+    mount(page([2], { runStatus: "success", hasOlder: true }));
+    const loadEarlier = screen.getByRole("button", { name: "Load earlier activity" });
+    await act(async () => fireEvent.click(loadEarlier));
+    expect(screen.queryByText("Recorded item 2")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load earlier activity" })).toBeNull();
+    expect(
+      screen.getByText("This transcript expired under the workspace retention policy."),
+    ).toBeTruthy();
+  });
+
   it("keeps the initial page bounded and retains keyboard focus while loading older activity", async () => {
     const fetchTranscript = vi.fn().mockResolvedValue(Response.json(page([1, 2])));
     vi.stubGlobal("fetch", fetchTranscript);

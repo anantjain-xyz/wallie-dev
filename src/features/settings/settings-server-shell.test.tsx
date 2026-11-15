@@ -105,13 +105,14 @@ describe("Settings server shell", () => {
     expect(html).not.toContain("Verify setup island");
   });
 
-  it("renders only usage, maintenance, and rate-limit content for advanced", async () => {
+  it("renders usage, run history, maintenance, and rate-limit content for advanced", async () => {
     const html = await renderSettingsCategory("advanced");
 
     expect(html).toContain("Total runs");
     expect(html).toContain(">3<");
     expect(html).toContain('id="maintenance"');
     expect(html).toContain(">Maintenance<");
+    expect(html).toContain(">Run history<");
     expect(html).toContain(
       "Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.",
     );
@@ -121,12 +122,13 @@ describe("Settings server shell", () => {
     expect(html).not.toContain("Workspace identity island");
   });
 
-  it("omits the Maintenance section when the member cannot manage the workspace", async () => {
+  it("omits private run controls and maintenance for ordinary members", async () => {
     const html = await renderSettingsCategory("advanced", false);
 
     expect(html).toContain("Total runs");
     expect(html).not.toContain('id="maintenance"');
     expect(html).not.toContain(">Maintenance<");
+    expect(html).not.toContain(">Run history<");
     expect(html).not.toContain(
       "Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.",
     );

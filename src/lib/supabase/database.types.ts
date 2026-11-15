@@ -200,6 +200,42 @@ export type Database = {
           },
         ]
       }
+      agent_run_transcript_expirations: {
+        Row: {
+          expired_at: string
+          purged_at: string | null
+          run_id: string
+          workspace_id: string
+        }
+        Insert: {
+          expired_at?: string
+          purged_at?: string | null
+          run_id: string
+          workspace_id: string
+        }
+        Update: {
+          expired_at?: string
+          purged_at?: string | null
+          run_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_run_transcript_expirations_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_run_transcript_expirations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_runs: {
         Row: {
           agent_job_id: string | null
@@ -1462,6 +1498,147 @@ export type Database = {
           },
           {
             foreignKeyName: "repository_onboarding_status_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      run_export_assets: {
+        Row: {
+          asset_id: string
+          content_type: string
+          export_id: string
+          sha256: string
+          size_bytes: number
+          workspace_id: string
+        }
+        Insert: {
+          asset_id: string
+          content_type: string
+          export_id: string
+          sha256: string
+          size_bytes: number
+          workspace_id: string
+        }
+        Update: {
+          asset_id?: string
+          content_type?: string
+          export_id?: string
+          sha256?: string
+          size_bytes?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "run_export_assets_export_id_workspace_id_fkey"
+            columns: ["export_id", "workspace_id"]
+            isOneToOne: false
+            referencedRelation: "run_exports"
+            referencedColumns: ["id", "workspace_id"]
+          },
+        ]
+      }
+      run_export_pages: {
+        Row: {
+          export_id: string
+          first_ordinal: number
+          last_ordinal: number
+          sha256: string
+          size_bytes: number
+          workspace_id: string
+        }
+        Insert: {
+          export_id: string
+          first_ordinal: number
+          last_ordinal: number
+          sha256: string
+          size_bytes: number
+          workspace_id: string
+        }
+        Update: {
+          export_id?: string
+          first_ordinal?: number
+          last_ordinal?: number
+          sha256?: string
+          size_bytes?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "run_export_pages_export_id_workspace_id_fkey"
+            columns: ["export_id", "workspace_id"]
+            isOneToOne: false
+            referencedRelation: "run_exports"
+            referencedColumns: ["id", "workspace_id"]
+          },
+        ]
+      }
+      run_exports: {
+        Row: {
+          cleaned_at: string | null
+          completed_at: string | null
+          expires_at: string
+          failure_code: string | null
+          id: string
+          item_count: number
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_ordinal: number
+          ready_at: string
+          request_id: string
+          requested_at: string
+          requested_by: string
+          snapshot_at: string | null
+          snapshot_visibility: unknown
+          source_expires_at: string | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          cleaned_at?: string | null
+          completed_at?: string | null
+          expires_at?: string
+          failure_code?: string | null
+          id?: string
+          item_count?: number
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          next_ordinal?: number
+          ready_at?: string
+          request_id: string
+          requested_at?: string
+          requested_by: string
+          snapshot_at?: string | null
+          snapshot_visibility?: unknown
+          source_expires_at?: string | null
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          cleaned_at?: string | null
+          completed_at?: string | null
+          expires_at?: string
+          failure_code?: string | null
+          id?: string
+          item_count?: number
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          next_ordinal?: number
+          ready_at?: string
+          request_id?: string
+          requested_at?: string
+          requested_by?: string
+          snapshot_at?: string | null
+          snapshot_visibility?: unknown
+          source_expires_at?: string | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "run_exports_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -3158,16 +3335,25 @@ export type Database = {
       session_validation_asset_withholdings: {
         Row: {
           asset_id: string
+          cleanup_available_at: string
+          cleanup_claim_id: string | null
+          purged_at: string | null
           recorded_at: string
           state: string
         }
         Insert: {
           asset_id: string
+          cleanup_available_at?: string
+          cleanup_claim_id?: string | null
+          purged_at?: string | null
           recorded_at?: string
           state: string
         }
         Update: {
           asset_id?: string
+          cleanup_available_at?: string
+          cleanup_claim_id?: string | null
+          purged_at?: string | null
           recorded_at?: string
           state?: string
         }
@@ -4285,6 +4471,38 @@ export type Database = {
           },
         ]
       }
+      workspace_run_retention: {
+        Row: {
+          evidence_days: number | null
+          last_swept_at: string | null
+          transcript_days: number | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          evidence_days?: number | null
+          last_swept_at?: string | null
+          transcript_days?: number | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          evidence_days?: number | null
+          last_swept_at?: string | null
+          transcript_days?: number | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_run_retention_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_sandbox_cleanup_receipts: {
         Row: {
           confirmed_at: string
@@ -4947,6 +5165,25 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_run_evidence_purges: {
+        Args: { p_limit?: number }
+        Returns: {
+          asset_id: string
+          claim_id: string
+          storage_path: string
+        }[]
+      }
+      claim_run_export: {
+        Args: never
+        Returns: {
+          export_id: string
+          lease_token: string
+          next_ordinal: number
+          snapshot_at: string
+          status: string
+          workspace_id: string
+        }[]
+      }
       claim_session_checkpoint_cleanup: {
         Args: { p_run_id?: string }
         Returns: string
@@ -4960,6 +5197,17 @@ export type Database = {
         Returns: string
       }
       claim_session_source_delivery: { Args: never; Returns: string }
+      commit_run_export_page: {
+        Args: {
+          p_entries: Json
+          p_export_id: string
+          p_first_ordinal: number
+          p_lease_token: string
+          p_page_sha256: string
+          p_page_size_bytes: number
+        }
+        Returns: boolean
+      }
       complete_cursor_auth_flow: {
         Args: {
           p_account_email?: string
@@ -4969,6 +5217,14 @@ export type Database = {
           p_encrypted_api_key: string
           p_flow_id: string
         }
+        Returns: boolean
+      }
+      complete_run_evidence_purges: {
+        Args: { p_claim_ids: string[] }
+        Returns: number
+      }
+      complete_run_export: {
+        Args: { p_export_id: string; p_lease_token: string }
         Returns: boolean
       }
       complete_session_job_attempt: {
@@ -5298,6 +5554,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      finish_run_export_cleanup: {
+        Args: { p_export_id: string; p_workspace_id: string }
+        Returns: boolean
+      }
       finish_session_checkpoint_cleanup: {
         Args: { p_claim_id: string; p_remote_absent: boolean; p_run_id: string }
         Returns: boolean
@@ -5359,6 +5619,40 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: Json
+      }
+      get_run_export_access: {
+        Args: {
+          p_export_id: string
+          p_session_id: string
+          p_user_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          cleaned_at: string | null
+          completed_at: string | null
+          expires_at: string
+          failure_code: string | null
+          id: string
+          item_count: number
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_ordinal: number
+          ready_at: string
+          request_id: string
+          requested_at: string
+          requested_by: string
+          snapshot_at: string | null
+          snapshot_visibility: unknown
+          source_expires_at: string | null
+          status: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "run_exports"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       get_session_detail_page: {
         Args: { target_session_number: number; target_workspace_slug: string }
@@ -5553,6 +5847,42 @@ export type Database = {
           validation_tree_sha: string
         }[]
       }
+      list_run_export_cleanup: {
+        Args: { p_limit?: number }
+        Returns: {
+          export_id: string
+          workspace_id: string
+        }[]
+      }
+      list_run_exports: {
+        Args: { p_limit?: number; p_user_id: string; p_workspace_id: string }
+        Returns: {
+          cleaned_at: string | null
+          completed_at: string | null
+          expires_at: string
+          failure_code: string | null
+          id: string
+          item_count: number
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_ordinal: number
+          ready_at: string
+          request_id: string
+          requested_at: string
+          requested_by: string
+          snapshot_at: string | null
+          snapshot_visibility: unknown
+          source_expires_at: string | null
+          status: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "run_exports"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       list_run_legacy_transcript: {
         Args: {
           p_cursor_created_at?: string
@@ -5609,6 +5939,7 @@ export type Database = {
           status: Database["public"]["Enums"]["agent_run_status"]
           token_provenance: string
           total_cost_usd: number
+          transcript_expired_at: string
           usage_finalized_at: string
         }[]
       }
@@ -5704,6 +6035,13 @@ export type Database = {
           target_user_id: string
         }
         Returns: undefined
+      }
+      mark_expired_workspace_run_content: {
+        Args: { p_item_limit?: number; p_workspace_limit?: number }
+        Returns: {
+          evidence_expired: number
+          transcripts_expired: number
+        }[]
       }
       persist_codex_auth_json: {
         Args: {
@@ -5841,6 +6179,23 @@ export type Database = {
           p_run_id: string
         }
         Returns: boolean
+      }
+      purge_expired_run_transcripts: {
+        Args: { p_entry_limit?: number; p_run_limit?: number }
+        Returns: number
+      }
+      read_run_export_page: {
+        Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
+        Returns: {
+          availability: string
+          metadata: Json
+          ordinal: number
+          payload: Json
+          record_id: string
+          record_kind: string
+          run_id: string
+          source_asset_id: string
+        }[]
       }
       record_pr_verification_observation: {
         Args: {
@@ -6017,6 +6372,10 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      release_run_export: {
+        Args: { p_export_id: string; p_lease_token: string }
+        Returns: boolean
+      }
       release_session_checkpoint_publication: {
         Args: { p_claim_id: string; p_run_id: string }
         Returns: boolean
@@ -6029,6 +6388,39 @@ export type Database = {
           id: string
           role: Database["public"]["Enums"]["member_role"]
         }[]
+      }
+      request_run_export: {
+        Args: {
+          p_request_id: string
+          p_requested_by: string
+          p_workspace_id: string
+        }
+        Returns: {
+          cleaned_at: string | null
+          completed_at: string | null
+          expires_at: string
+          failure_code: string | null
+          id: string
+          item_count: number
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_ordinal: number
+          ready_at: string
+          request_id: string
+          requested_at: string
+          requested_by: string
+          snapshot_at: string | null
+          snapshot_visibility: unknown
+          source_expires_at: string | null
+          status: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "run_exports"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rewrite_default_pipeline: {
         Args: {
@@ -6144,6 +6536,27 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "workspace_repository_profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_workspace_run_retention: {
+        Args: {
+          p_actor_user_id: string
+          p_evidence_days?: number
+          p_transcript_days?: number
+          p_workspace_id: string
+        }
+        Returns: {
+          evidence_days: number | null
+          last_swept_at: string | null
+          transcript_days: number | null
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "workspace_run_retention"
           isOneToOne: true
           isSetofReturn: false
         }

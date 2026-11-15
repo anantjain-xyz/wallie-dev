@@ -24,7 +24,9 @@ import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
+import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
+import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
@@ -291,7 +293,10 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["Linear reconciliation", () => reconcileLinearState(admin)],
       ["sandbox reaping", () => reapOrphanSandboxes(admin)],
       ["attachment cleanup", () => cleanupExpiredSessionAttachments(admin)],
+      ["run retention", () => drainRunRetention(admin)],
       ["workspace cleanup", () => resumePendingWorkspaceDeletions(admin)],
+      ["run exports", () => drainRunExports(admin)],
+      ["run export cleanup", () => cleanupRunExports(admin)],
     ] as const;
     for (const [name, task] of tasks) {
       try {

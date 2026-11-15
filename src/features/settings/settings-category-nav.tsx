@@ -32,6 +32,7 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   pipeline: { anchor: "pipeline", category: "integrations" },
   "rate-limits": { anchor: "rate-limits", category: "advanced" },
   repository: { anchor: "repository", category: "integrations" },
+  "run-history": { anchor: "run-history", category: "advanced" },
   runtime: { anchor: "runtime", category: "integrations" },
   sandbox: { anchor: "sandbox", category: "integrations" },
   secrets: { anchor: "runtime", category: "integrations" },
@@ -61,6 +62,7 @@ const SETTINGS_CATEGORY_SUBMENUS: Record<
   ],
   advanced: [
     { id: "usage", label: "Usage" },
+    { id: "run-history", label: "Run history" },
     { id: "maintenance", label: "Maintenance" },
     { id: "rate-limits", label: "Rate limits" },
   ],
@@ -88,11 +90,11 @@ export function preloadSettingsCategory(category: SettingsCategory) {
   }
 }
 
+const managerAnchors = new Set(["run-history", "maintenance"]);
+
 function settingsCategorySubmenu(category: SettingsCategory, canManage: boolean) {
   const submenu = SETTINGS_CATEGORY_SUBMENUS[category];
-  return category === "advanced" && !canManage
-    ? submenu.filter((item) => item.id !== "maintenance")
-    : submenu;
+  return canManage ? submenu : submenu.filter((item) => !managerAnchors.has(item.id));
 }
 
 export function SettingsCategoryNav({
@@ -110,7 +112,7 @@ export function SettingsCategoryNav({
       const hash = window.location.hash.replace(/^#/u, "");
       const route = resolveSettingsHashRoute(hash);
       if (!route) return;
-      if (route.anchor === "maintenance" && !canManage) return;
+      if (!canManage && managerAnchors.has(route.anchor)) return;
 
       const needsCategoryChange = route.category !== activeCategory;
       const needsAnchorRewrite = route.anchor !== hash;

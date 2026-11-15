@@ -7,6 +7,8 @@ import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
+import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
+import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import type { Env } from "../index";
 
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
@@ -24,7 +26,12 @@ vi.mock("@/worker/sandbox-reaper", () => ({ reapOrphanSandboxes: vi.fn() }));
 vi.mock("@/lib/storage/session-attachment-cleanup", () => ({
   cleanupExpiredSessionAttachments: vi.fn(),
 }));
+vi.mock("@/lib/run-retention/maintenance", () => ({ drainRunRetention: vi.fn() }));
 vi.mock("@/lib/workspaces/deletion", () => ({ resumePendingWorkspaceDeletions: vi.fn() }));
+vi.mock("@/lib/run-exports/worker", () => ({
+  cleanupRunExports: vi.fn(),
+  drainRunExports: vi.fn(),
+}));
 
 beforeEach(() => vi.resetAllMocks());
 
@@ -86,9 +93,12 @@ it.each([
         vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0],
       );
       expect(cleanupExpiredSessionAttachments).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(drainRunRetention).toHaveBeenCalledExactlyOnceWith(admin);
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );
+      expect(drainRunExports).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(cleanupRunExports).toHaveBeenCalledExactlyOnceWith(admin);
     } finally {
       await inspection.dispose();
     }

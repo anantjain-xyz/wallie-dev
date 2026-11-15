@@ -35,7 +35,8 @@ type NullableCatalogField =
   | "input_tokens"
   | "output_tokens"
   | "total_cost_usd"
-  | "usage_finalized_at";
+  | "usage_finalized_at"
+  | "transcript_expired_at";
 export type CatalogRow = Omit<GeneratedCatalogRow, NullableCatalogField> & {
   [Field in NullableCatalogField]: GeneratedCatalogRow[Field] | null;
 };
@@ -153,6 +154,7 @@ function toCatalogItem(
       finalized: Boolean(row.usage_finalized_at),
     },
     transcript: {
+      expiredAt: row.transcript_expired_at ?? null,
       hasEvents: row.has_events,
       hasLegacyMessages: row.has_legacy_messages,
       captureEnded: row.capture_ended,

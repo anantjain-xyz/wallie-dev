@@ -52,6 +52,7 @@ type SupabaseClaimsClientLike = {
 export type SupabaseAuthIdentity = {
   email?: string | null;
   id: string;
+  sessionId?: string | null;
 };
 
 export type SupabaseAuthVerification = {
@@ -139,7 +140,7 @@ function claimsVerificationMethod(header: Record<string, unknown>) {
 
 export async function verifySupabaseAuthIdentity(
   supabase: SupabaseClaimsClientLike,
-  options: { includeEmail?: boolean } = {},
+  options: { includeEmail?: boolean; includeSessionId?: boolean } = {},
 ): Promise<SupabaseAuthVerification> {
   const startedAt = performance.now();
 
@@ -177,6 +178,11 @@ export async function verifySupabaseAuthIdentity(
       identity.email = typeof data.claims.email === "string" ? data.claims.email : null;
     }
 
+    if (options.includeSessionId) {
+      identity.sessionId =
+        typeof data.claims.session_id === "string" ? data.claims.session_id : null;
+    }
+
     return {
       authUserRequests: method === "auth-user" ? 1 : 0,
       claimsVerifications: method === "claims-jwks" ? 1 : 0,
@@ -201,7 +207,7 @@ export async function verifySupabaseAuthIdentity(
 
 export async function getSupabaseAuthIdentityOrNull(
   supabase: SupabaseClaimsClientLike,
-  options?: { includeEmail?: boolean },
+  options?: { includeEmail?: boolean; includeSessionId?: boolean },
 ) {
   const { identity } = await verifySupabaseAuthIdentity(supabase, options);
   return identity;

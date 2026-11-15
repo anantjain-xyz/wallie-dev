@@ -48,7 +48,8 @@ class TranscriptAccessError extends Error {}
 class TranscriptSourceChanged extends Error {}
 
 export function RunTranscriptLive(props: Props) {
-  return <TranscriptPanel key={`${props.workspaceId}:${props.runId}`} {...props} />;
+  const key = `${props.workspaceId}:${props.runId}:${props.initialPage.expiredAt ?? ""}`;
+  return <TranscriptPanel key={key} {...props} />;
 }
 
 function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
@@ -101,6 +102,8 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
     (page: RunTranscriptPage, position: "head" | "older" | "newer" | "replace") => {
       if (accessLost.current) return;
       const before = current.current;
+      if (before.expiredAt && !page.expiredAt) return;
+      if (page.expiredAt) position = "replace";
       if (
         position !== "replace" &&
         (before.mode !== page.mode || before.attemptCount !== page.attemptCount)
@@ -292,7 +295,7 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
       </div>
       {needsLive ? <LiveConnectionNotice state={connection} onRetry={recovery.retry} /> : null}
       <TranscriptCoverage state={state} />
-      {state.hasOlder || earlierVisited ? (
+      {!state.expiredAt && (state.hasOlder || earlierVisited) ? (
         <button
           aria-disabled={!state.hasOlder || loadingOlder}
           className="ui-button mt-3 aria-disabled:opacity-60"
@@ -313,7 +316,11 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
           Could not load earlier activity. Try again.
         </p>
       ) : null}
-      {state.entries.length ? (
+      {state.expiredAt ? (
+        <p className="mt-3 type-body text-muted">
+          This transcript expired under the workspace retention policy.
+        </p>
+      ) : state.entries.length ? (
         <ol aria-label="Run activity" className="mt-3 divide-y divide-border">
           {state.entries.map((entry) => (
             <TranscriptLine entry={entry} key={entry.id} />
@@ -366,6 +373,7 @@ function compareTimestamp(a: string, b: string) {
 }
 
 function TranscriptCoverage({ state }: { state: TranscriptState }) {
+  if (state.expiredAt) return null;
   if (state.mode === "legacy") {
     if (state.entries.length === 0 && !isWallieRunTerminalStatus(state.runStatus)) return null;
     return (
