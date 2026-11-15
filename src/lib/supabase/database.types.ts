@@ -5496,6 +5496,48 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      list_workspace_run_catalog: {
+        Args: {
+          p_before_created_at?: string
+          p_before_id?: string
+          p_limit?: number
+          p_provider?: string
+          p_run_id?: string
+          p_session_id?: string
+          p_stage_id?: string
+          p_status?: Database["public"]["Enums"]["agent_run_status"]
+          p_workspace_id: string
+        }
+        Returns: {
+          attempt_count: number
+          capture_ended: boolean
+          capture_interrupted: boolean
+          cost_provenance: string
+          created_at: string
+          failure_receipt: string
+          finished_at: string
+          has_events: boolean
+          has_legacy_messages: boolean
+          input_tokens: number
+          job_id: string
+          last_activity_at: string
+          model_name: string
+          model_provider: string
+          output_tokens: number
+          run_id: string
+          session_id: string
+          session_number: number
+          session_title: string
+          source_recovery_required: boolean
+          stage_id: string
+          stage_name: string
+          started_at: string
+          status: Database["public"]["Enums"]["agent_run_status"]
+          token_provenance: string
+          total_cost_usd: number
+          usage_finalized_at: string
+        }[]
+      }
       load_session_claude_code_credential: {
         Args: { p_creator_member_id: string; p_workspace_id: string }
         Returns: {
