@@ -3155,6 +3155,32 @@ export type Database = {
           },
         ]
       }
+      session_validation_asset_withholdings: {
+        Row: {
+          asset_id: string
+          recorded_at: string
+          state: string
+        }
+        Insert: {
+          asset_id: string
+          recorded_at?: string
+          state: string
+        }
+        Update: {
+          asset_id?: string
+          recorded_at?: string
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_validation_asset_withholdings_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: true
+            referencedRelation: "session_validation_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_validation_assets: {
         Row: {
           content_type: string
@@ -5495,6 +5521,37 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      list_run_artifacts: {
+        Args: {
+          p_after_id?: string
+          p_after_kind?: string
+          p_artifact_id?: string
+          p_kind?: string
+          p_limit?: number
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          accepted_commit_sha: string
+          artifact_id: string
+          artifact_kind: string
+          attempt_count: number
+          availability: string
+          checkpoint_run_id: string
+          content_type: string
+          digest: string
+          digest_algorithm: string
+          downloadable: boolean
+          label: string
+          recorded_at: string
+          run_id: string
+          session_id: string
+          size_bytes: number
+          validation_commit_sha: string
+          validation_run_id: string
+          validation_tree_sha: string
+        }[]
       }
       list_run_legacy_transcript: {
         Args: {

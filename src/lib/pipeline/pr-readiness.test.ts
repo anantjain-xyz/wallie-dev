@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
@@ -17,6 +18,9 @@ const shaA = "a".repeat(40);
 const shaB = "b".repeat(40);
 const shaC = "c".repeat(40);
 const baseSha = "0".repeat(40);
+const workspaceId = "10000000-0000-4000-8000-000000000001";
+const runId = "10000000-0000-4000-8000-000000000002";
+const assetId = "10000000-0000-4000-8000-000000000003";
 
 const requirements = deliveryRequirementsSchema.parse({
   version: 1,
@@ -72,7 +76,7 @@ function githubInput(
       prNumber: 505,
       headSha: shaB,
       baseSha,
-      checkpointRunId: "run-1",
+      checkpointRunId: runId,
       artifactReviewRevision: 3,
       observedAt: new Date().toISOString(),
       ...observation,
@@ -89,7 +93,7 @@ function evaluatorInput(
     github: githubInput(),
     refreshQueueStatus: "current",
     repository: { archived: false, installationSuspended: false },
-    checkpoint: { runId: "run-1", outputSha: shaB },
+    checkpoint: { runId: runId, outputSha: shaB },
     epoch: { id: "epoch-1", prNumber: 505 },
     syncStatus: "synced",
     policyRevisionId: "policy-1",
@@ -423,12 +427,32 @@ describe("PR readiness truth table", () => {
 type AdminClient = {
   from: (table: string) => unknown;
   rpc: ReturnType<typeof vi.fn>;
+  storage: ReturnType<typeof privateStorage>["storage"];
 };
 
-function buildServiceAdminClient(tables: Record<string, unknown>, rpc: ReturnType<typeof vi.fn>) {
-  return { from: (name: string) => tables[name] ?? {}, rpc } as unknown as AdminClient & {
-    rpc: ReturnType<typeof vi.fn>;
-  };
+const reportBytes = new TextEncoder().encode("tests passed");
+
+function privateStorage(bytes = reportBytes) {
+  const download = vi.fn(() => ({
+    asStream: async () => ({
+      data: new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+      error: null,
+    }),
+  }));
+  return { storage: { from: vi.fn(() => ({ download })) }, download };
+}
+
+function buildServiceAdminClient(
+  tables: Record<string, unknown>,
+  rpc: ReturnType<typeof vi.fn>,
+  storage = privateStorage().storage,
+): AdminClient {
+  return { from: (name) => tables[name] ?? {}, rpc, storage };
 }
 
 function queryableTable(row: unknown) {
@@ -442,6 +466,7 @@ function queryableTable(row: unknown) {
         not: () => typeof builder;
         order: () => typeof builder;
         limit: () => Promise<{ data: unknown; error: null }>;
+        abortSignal: () => typeof builder;
         maybeSingle: () => Promise<{ data: unknown; error: null }>;
         then: (resolve: (value: { data: unknown; error: null }) => unknown) => unknown;
       } = {
@@ -450,6 +475,7 @@ function queryableTable(row: unknown) {
         is: () => builder,
         not: () => builder,
         order: () => builder,
+        abortSignal: () => builder,
         limit: async () => ({ data, error: null }),
         maybeSingle: async () => ({ data, error: null }),
         then: (resolve) => resolve({ data, error: null }),
@@ -472,7 +498,7 @@ function countableTable(count: number, rows: unknown[] = []) {
 
 const policyRevisionRow = {
   id: "policy-1",
-  workspace_id: "ws-1",
+  workspace_id: workspaceId,
   pipeline_id: "pipe-1",
   revision: 1,
   requirements,
@@ -482,7 +508,7 @@ const policyRevisionRow = {
 
 const githubObservationRow: Tables<"session_pr_verification_observations"> = {
   id: "obs-github",
-  workspace_id: "ws-1",
+  workspace_id: workspaceId,
   session_id: "sess-1",
   policy_revision_id: "policy-1",
   repository_id: "repo-1",
@@ -491,7 +517,7 @@ const githubObservationRow: Tables<"session_pr_verification_observations"> = {
   pr_number: 505,
   head_sha: shaB,
   base_sha: baseSha,
-  checkpoint_run_id: "run-1",
+  checkpoint_run_id: runId,
   artifact_review_revision: 3,
   source: "github",
   payload: githubPayload() as unknown as Record<string, never>,
@@ -524,14 +550,60 @@ const repositoryRow = {
   repo_id: 123,
   is_archived: false,
   github_installation_id: "inst-1",
-  workspace_id: "ws-1",
+  workspace_id: workspaceId,
+};
+
+const exactAttempt = {
+  run_id: runId,
+  workspace_id: workspaceId,
+  session_id: "sess-1",
+  job_id: "job-1",
+  attempt_count: 2,
+  repository_id: "repo-1",
+};
+
+const reportAsset = {
+  id: assetId,
+  workspace_id: workspaceId,
+  session_id: exactAttempt.session_id,
+  run_id: runId,
+  evidence_key: "tests/report",
+  kind: "report",
+  required: true,
+  storage_path: `${workspaceId}/${runId}/${assetId}`,
+  sha256: createHash("sha256").update(reportBytes).digest("hex"),
+  content_type: "text/plain",
+  size_bytes: reportBytes.byteLength,
+};
+
+const validationPlan = {
+  ...exactAttempt,
+  commit_sha: shaB,
+  validation_tree_sha: shaC,
+};
+
+const validationReceipt = {
+  ...validationPlan,
+  records: evaluatorInput().evidence?.records,
+  assets: [
+    {
+      id: reportAsset.id,
+      key: reportAsset.evidence_key,
+      kind: reportAsset.kind,
+      required: reportAsset.required,
+      storagePath: reportAsset.storage_path,
+      sha256: reportAsset.sha256,
+      contentType: reportAsset.content_type,
+      sizeBytes: reportAsset.size_bytes,
+    },
+  ],
 };
 
 function serviceTables(overrides: Record<string, unknown> = {}) {
   return {
     sessions: queryableTable({
       id: "sess-1",
-      workspace_id: "ws-1",
+      workspace_id: workspaceId,
       pipeline_id: "pipe-1",
       artifact_review_revision: 3,
       current_stage_id: "stage-2",
@@ -539,7 +611,7 @@ function serviceTables(overrides: Record<string, unknown> = {}) {
     delivery_policies: queryableTable({ current_revision_id: "policy-1" }),
     delivery_policy_revisions: queryableTable(policyRevisionRow),
     session_pr_sync: queryableTable({ status: "synced", current_epoch_id: "epoch-1" }),
-    session_git_heads: queryableTable({ checkpoint_run_id: "run-1" }),
+    session_git_heads: queryableTable({ checkpoint_run_id: runId }),
     session_pr_refresh_queue: queryableTable({
       status: "current",
       last_observation_id: "obs-github",
@@ -551,25 +623,14 @@ function serviceTables(overrides: Record<string, unknown> = {}) {
       pr_url: "https://github.com/acme/app/pull/505",
       repository_id: "repo-1",
     }),
-    session_git_checkpoints: queryableTable({ run_id: "run-1", output_sha: shaB }),
+    session_git_checkpoints: queryableTable({ ...exactAttempt, output_sha: shaB }),
     session_pr_verification_observations: queryableTable(githubObservationRow),
     github_repositories: queryableTable(repositoryRow),
     github_installations: queryableTable({ id: "inst-1", suspended: false }),
-    session_validation_evidence: queryableTable({
-      run_id: "run-1",
-      commit_sha: shaB,
-      validation_tree_sha: shaC,
-      records: evaluatorInput().evidence!.records,
-    }),
-    session_validation_assets: queryableTable([
-      {
-        id: "asset-1",
-        evidence_key: "tests/report",
-        kind: "report",
-        required: true,
-        size_bytes: 128,
-      },
-    ]),
+    session_validation_evidence: queryableTable(validationReceipt),
+    session_validation_plans: queryableTable(validationPlan),
+    session_validation_assets: queryableTable([reportAsset]),
+    session_validation_asset_withholdings: queryableTable(null),
     session_selected_stages: queryableTable([{ stage_id: "stage-1" }, { stage_id: "stage-2" }]),
     pipeline_stages: queryableTable([
       { id: "stage-1", position: 1 },
@@ -603,7 +664,7 @@ describe("session readiness service", () => {
     expect(outcome?.evaluation.state).toBe("ready");
     expect(outcome?.recorded).toBe(true);
     expect(rpc).toHaveBeenCalledWith("record_pr_verification_observation", {
-      p_workspace_id: "ws-1",
+      p_workspace_id: workspaceId,
       p_session_id: "sess-1",
       p_policy_revision_id: "policy-1",
       p_repository_id: "repo-1",
@@ -612,7 +673,7 @@ describe("session readiness service", () => {
       p_pr_number: 505,
       p_head_sha: shaB,
       p_base_sha: baseSha,
-      p_checkpoint_run_id: "run-1",
+      p_checkpoint_run_id: runId,
       p_artifact_review_revision: 3,
       p_source: "readiness",
       p_payload: expect.objectContaining({ githubAccess: "available" }),
@@ -625,12 +686,95 @@ describe("session readiness service", () => {
     });
   });
 
+  it("blocks readiness if the private report bytes differ from the immutable digest", async () => {
+    const { storage, download } = privateStorage(new TextEncoder().encode("tests failed"));
+    const rpc = vi.fn().mockResolvedValue({ data: { id: "result-1" }, error: null });
+    const admin = buildServiceAdminClient(serviceTables(), rpc, storage);
+    const outcome = await evaluateSessionPrReadiness(admin as never, "sess-1");
+    expect(download).toHaveBeenCalledExactlyOnceWith(
+      reportAsset.storage_path,
+      {},
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(outcome?.evaluation.state).toBe("blocked");
+    expect(outcome?.evaluation.blockers).toContainEqual({
+      code: "evidence_unavailable",
+      requirement: "tests",
+    });
+    expect(rpc).toHaveBeenCalledWith("record_pr_verification_result", {
+      p_observation_id: expect.any(String),
+      p_state: "blocked",
+      p_blockers: expect.arrayContaining([{ code: "evidence_unavailable", requirement: "tests" }]),
+    });
+  });
+
+  it.each([
+    { run_id: "10000000-0000-4000-8000-000000000004" },
+    { attempt_count: exactAttempt.attempt_count + 1 },
+    { job_id: "job-2" },
+    { repository_id: "repo-2" },
+  ])(
+    "rejects evidence from a different execution even with the same commit and tree (%j)",
+    async (identity) => {
+      const { storage, download } = privateStorage();
+      const admin = buildServiceAdminClient(
+        serviceTables({
+          session_validation_evidence: queryableTable({ ...validationReceipt, ...identity }),
+        }),
+        vi.fn(),
+        storage,
+      );
+      const outcome = await evaluateSessionPrReadiness(admin as never, "sess-1", { record: false });
+      expect(outcome?.evaluation.blockers).toContainEqual({
+        code: "evidence_missing",
+        requirement: "tests",
+      });
+      expect(download).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports a stale receipt and skips downloads when the frozen validation tree differs", async () => {
+    const { storage, download } = privateStorage();
+    const admin = buildServiceAdminClient(
+      serviceTables({
+        session_validation_plans: queryableTable({ ...validationPlan, validation_tree_sha: shaA }),
+      }),
+      vi.fn(),
+      storage,
+    );
+    const details = await loadSessionPrReadinessDetails(admin as never, "sess-1");
+    expect(details?.evaluation.blockers).toContainEqual({
+      code: "evidence_stale",
+      requirement: "tests",
+    });
+    expect(details?.evidence?.required).toEqual([{ key: "tests", status: "stale" }]);
+    expect(details?.evidence?.validationTreeSha).toBe(shaC);
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("skips bytes when the asset row does not match the receipt manifest", async () => {
+    const { storage, download } = privateStorage();
+    const admin = buildServiceAdminClient(
+      serviceTables({
+        session_validation_assets: queryableTable([{ ...reportAsset, sha256: "a".repeat(64) }]),
+      }),
+      vi.fn(),
+      storage,
+    );
+    const outcome = await evaluateSessionPrReadiness(admin as never, "sess-1", { record: false });
+    expect(outcome?.evaluation.blockers).toContainEqual({
+      code: "evidence_unavailable",
+      requirement: "tests",
+    });
+    expect(download).not.toHaveBeenCalled();
+  });
+
   it("keeps mid-pipeline approvals ungated and unrecorded", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
     const tables = serviceTables({
       sessions: queryableTable({
         id: "sess-1",
-        workspace_id: "ws-1",
+        workspace_id: workspaceId,
         pipeline_id: "pipe-1",
         artifact_review_revision: 3,
         current_stage_id: "stage-1",
@@ -715,7 +859,7 @@ describe("review readiness details", () => {
     expect(details?.evidence?.assets[0]).toMatchObject({
       key: "tests/report",
       kind: "report",
-      downloadUrl: "/api/sessions/sess-1/validation-evidence/assets/asset-1",
+      downloadUrl: `/api/sessions/sess-1/validation-evidence/assets/${assetId}`,
     });
     expect(details?.refresh).toMatchObject({ status: "current", canRefresh: true });
     expect(details?.artifactBlockingCount).toBe(0);
@@ -753,7 +897,7 @@ describe("review readiness details", () => {
       });
       const query = threads.select.mock.results[0]!.value;
       expect(query.eq.mock.calls).toEqual([
-        ["workspace_id", "ws-1"],
+        ["workspace_id", workspaceId],
         ["session_id", "sess-1"],
         ["kind", "blocking"],
         ["status", "open"],
@@ -945,7 +1089,7 @@ describe("worker readiness drain", () => {
       session_pr_refresh_queue: (() => {
         const queueRow = {
           session_id: "sess-active",
-          workspace_id: "ws-1",
+          workspace_id: workspaceId,
           status: "current",
           last_observation_id: "obs-github",
           session: { archived_at: null },

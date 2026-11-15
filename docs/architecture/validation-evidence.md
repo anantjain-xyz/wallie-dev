@@ -158,6 +158,42 @@ Final Markdown can reference retained reports with an evidence identity:
 
 This reuses the bounded text-report collector. It does not upload arbitrary local files or enable binary screenshot capture.
 
+## Run artifact catalog
+
+The catalog derives attempt identity from accepted checkpoints and immutable
+validation receipts. It reads the same Markdown and private evidence objects
+after sandbox teardown. A failed attempt can have a receipt for its own commit
+and tree. The catalog includes accepted checkpoint identity only when the
+receipt matches that checkpoint.
+
+| Request                                                                | Result                                                  |
+| ---------------------------------------------------------------------- | ------------------------------------------------------- |
+| `GET /api/workspaces/{workspaceId}/runs/{runId}/artifacts`             | Metadata, 20 entries by default and at most 50 per page |
+| `GET /api/workspaces/{workspaceId}/runs/{runId}/artifacts/{kind}/{id}` | One entry with current availability                     |
+| Add `?download=1` to the exact entry URL                               | Verified bytes as a private attachment, up to 1 MiB     |
+
+Pass `nextCursor` as `cursor` for the next page of the same run. The catalog
+returns SHA-256 for downloadable content. Retained checkpoints expose their
+bundle digest or Git commit identity. Checkpoint recovery bytes remain in
+worker storage.
+
+| Availability            | Meaning                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `recorded`              | A private object has a manifest. An exact lookup verifies it. |
+| `available`             | The exact content is ready to download.                       |
+| `retained`              | Checkpoint metadata is available to authorized members.       |
+| `missing`               | Storage could not find the recorded object.                   |
+| `expired` or `redacted` | A durable withholding blocks object access.                   |
+| `inaccessible`          | Access was denied or the content exceeds the download limit.  |
+| `integrity_mismatch`    | The recorded manifest or content failed verification.         |
+| `unavailable`           | A temporary read or transport failure prevented verification. |
+
+Apply the artifact catalog migration before deploying its readers. Authorized
+requests use workspace membership and row-level security. Existing evidence
+links and the run download both verify private object size and SHA-256. PR
+readiness checks only the required reports from the exact accepted receipt,
+including their bytes, before counting them as accessible.
+
 ## Verification
 
 Run the focused capture, persistence, API, and SQL tests, then `pnpm check` and

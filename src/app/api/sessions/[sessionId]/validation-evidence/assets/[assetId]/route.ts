@@ -1,19 +1,18 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { loadArtifactEvidenceRun } from "@/lib/validation-evidence/artifact-links";
 import {
   loadReviewContext,
   reviewErrorResponse,
   reviewJson,
   reviewSessionParamsSchema,
 } from "@/features/sessions/review/http";
+import { loadArtifactEvidenceRun } from "@/lib/validation-evidence/artifact-links";
+import { readPrivateValidationAsset } from "@/lib/validation-evidence/private-asset";
 
 export const preferredRegion = "home";
 type RouteContext = { params: Promise<{ sessionId: string; assetId: string }> };
 const paramsSchema = reviewSessionParamsSchema.extend({ assetId: z.string().uuid() });
 const querySchema = z.object({ artifactId: z.string().uuid().optional() });
-const MAX_ASSET_BYTES = 1024 * 1024;
 
 /** Reauthorize on each request; persisted evidence never contains a bearer URL. */
 export async function GET(request: Request, { params }: RouteContext) {
@@ -43,28 +42,16 @@ export async function GET(request: Request, { params }: RouteContext) {
     ) {
       return reviewJson({ error: "Evidence is unavailable for this artifact." }, 409);
     }
-    if (
-      !Number.isSafeInteger(asset.size_bytes) ||
-      asset.size_bytes < 0 ||
-      asset.size_bytes > MAX_ASSET_BYTES ||
-      !["text/plain", "application/json"].includes(asset.content_type) ||
-      !/^[a-f0-9]{64}$/.test(asset.sha256) ||
-      asset.storage_path !== `${session.workspace_id}/${asset.run_id}/${asset.id}`
-    ) {
+    const result = await readPrivateValidationAsset({
+      supabase,
+      workspaceId: session.workspace_id,
+      asset,
+      signal: request.signal,
+    });
+    if (result.status !== "available") {
       return reviewJson({ error: "Evidence asset is unavailable." }, 409);
     }
-
-    const { data, error: downloadError } = await supabase.storage
-      .from("session-validation-evidence")
-      .download(asset.storage_path);
-    if (downloadError || !data || data.size !== asset.size_bytes) {
-      return reviewJson({ error: "Evidence asset is unavailable." }, 409);
-    }
-    const bytes = new Uint8Array(await data.arrayBuffer());
-    if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256) {
-      return reviewJson({ error: "Evidence asset is unavailable." }, 409);
-    }
-    return new Response(bytes, {
+    return new Response(result.bytes, {
       headers: {
         "Cache-Control": "private, no-store",
         "Content-Type": "text/plain; charset=utf-8",

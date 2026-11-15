@@ -9,8 +9,9 @@ import {
 } from "@/lib/delivery-policy/contracts";
 import type { ValidationEvidenceRecord } from "@/lib/validation-evidence/contracts";
 import { evaluateValidationEvidence } from "@/lib/validation-evidence/evaluate";
+import { readPrivateValidationAsset } from "@/lib/validation-evidence/private-asset";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Database, Json } from "@/lib/supabase/database.types";
+import type { Database, Json, Tables } from "@/lib/supabase/database.types";
 import type { PrReadinessStatus } from "@/lib/pipeline/types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -468,6 +469,141 @@ type LoadedPrReadinessInput = {
   artifactBlockingTarget: PrReadinessArtifactBlockingTarget | null;
 };
 
+const MAX_EVIDENCE_ASSETS = 100;
+const ASSET_READ_CONCURRENCY = 4;
+const ASSET_READ_TIMEOUT_MS = 5_000;
+const storedEvidenceAssetManifestSchema = z
+  .array(
+    z.object({
+      id: z.string(),
+      key: z.string(),
+      kind: z.enum(["report", "screenshot", "preview", "log"]),
+      required: z.boolean(),
+      storagePath: z.string(),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      contentType: z.enum(["text/plain", "application/json"]),
+      sizeBytes: z.number().int().nonnegative(),
+    }),
+  )
+  .max(MAX_EVIDENCE_ASSETS);
+
+type RunEvidenceIdentity = Pick<
+  Tables<"session_validation_evidence">,
+  "workspace_id" | "session_id" | "run_id" | "job_id" | "attempt_count" | "repository_id"
+>;
+
+function sameRunEvidenceIdentity(actual: RunEvidenceIdentity, expected: RunEvidenceIdentity) {
+  return (
+    actual.workspace_id === expected.workspace_id &&
+    actual.session_id === expected.session_id &&
+    actual.run_id === expected.run_id &&
+    actual.job_id === expected.job_id &&
+    actual.attempt_count === expected.attempt_count &&
+    actual.repository_id === expected.repository_id
+  );
+}
+
+async function readRequiredEvidenceAssets({
+  admin,
+  workspaceId,
+  evidence,
+  assets,
+  requiredKeys,
+}: {
+  admin: AdminClient;
+  workspaceId: string;
+  evidence: Pick<
+    Tables<"session_validation_evidence">,
+    "assets" | "commit_sha" | "validation_tree_sha"
+  > & {
+    records: ValidationEvidenceRecord[];
+  };
+  assets: Tables<"session_validation_assets">[];
+  requiredKeys: string[];
+}) {
+  if (!requiredKeys.length) return new Set<string>();
+  const manifest = storedEvidenceAssetManifestSchema.safeParse(evidence.assets);
+  if (!manifest.success) return new Set<string>();
+
+  const receiptByKey = new Map(manifest.data.map((item) => [item.key, item]));
+  if (receiptByKey.size !== manifest.data.length) return new Set<string>();
+  const candidates = new Map(
+    assets
+      .filter((asset) => {
+        const receipt = receiptByKey.get(asset.evidence_key);
+        return (
+          receipt?.required &&
+          asset.required &&
+          asset.kind !== "log" &&
+          receipt.id === asset.id &&
+          receipt.kind === asset.kind &&
+          receipt.storagePath === asset.storage_path &&
+          receipt.sha256 === asset.sha256 &&
+          receipt.contentType === asset.content_type &&
+          receipt.sizeBytes === asset.size_bytes
+        );
+      })
+      .map((asset) => [asset.evidence_key, asset]),
+  );
+  // The receipt must already prove the exact unchanged code. Only download
+  // reports that could move one of the policy's required commands to passed.
+  const eligible = new Set(
+    evaluateValidationEvidence({
+      requiredKeys,
+      commitSha: evidence.commit_sha,
+      treeSha: evidence.validation_tree_sha,
+      records: evidence.records,
+      accessibleAssetKeys: new Set(candidates.keys()),
+    })
+      .filter(({ status }) => status === "passed")
+      .map(({ key }) => key),
+  );
+  const needed = new Set(
+    evidence.records
+      .filter((record) => eligible.has(record.key))
+      .flatMap((record) => record.reportKeys),
+  );
+  const queue = [...candidates.values()].filter((asset) => needed.has(asset.evidence_key));
+  const verified = new Set<string>();
+  if (!queue.length) return verified;
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<Set<string>>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(new Set());
+    }, ASSET_READ_TIMEOUT_MS);
+  });
+  const verify = async () => {
+    for (let asset = queue.shift(); asset && !controller.signal.aborted; asset = queue.shift()) {
+      try {
+        const result = await readPrivateValidationAsset({
+          supabase: admin,
+          workspaceId,
+          asset,
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted && result.status === "available")
+          verified.add(asset.evidence_key);
+      } catch {
+        // An inaccessible report cannot satisfy the command, even if its row exists.
+      }
+    }
+  };
+  try {
+    return await Promise.race([
+      Promise.all(
+        Array.from({ length: Math.min(queue.length, ASSET_READ_CONCURRENCY) }, verify),
+      ).then(() => verified),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
 async function loadSessionPolicy(
   admin: AdminClient,
   sessionId: string,
@@ -560,7 +696,11 @@ async function loadEvaluatorInput(
     headResult.data?.checkpoint_run_id
       ? admin
           .from("session_git_checkpoints")
-          .select("run_id, output_sha")
+          .select(
+            "workspace_id, session_id, run_id, job_id, attempt_count, repository_id, output_sha",
+          )
+          .eq("workspace_id", policy.workspace_id)
+          .eq("session_id", sessionId)
           .eq("run_id", headResult.data.checkpoint_run_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null as null }),
@@ -577,31 +717,81 @@ async function loadEvaluatorInput(
   if (epochResult.error || checkpointResult.error || githubResult.error)
     throw new Error("PR delivery identity is unavailable.");
 
-  const evidenceRunId = headResult.data?.checkpoint_run_id ?? null;
-  const evidenceResult = evidenceRunId
-    ? await admin
-        .from("session_validation_evidence")
-        .select("run_id, commit_sha, validation_tree_sha, records, created_at")
-        .eq("run_id", evidenceRunId)
-        .maybeSingle()
-    : { data: null, error: null as null };
-  if (evidenceResult.error) throw new Error("Validation evidence is unavailable.");
-  const evidenceRow = evidenceResult.data ?? null;
+  const checkpoint = checkpointResult.data;
+  const [evidenceResult, planResult] = checkpoint
+    ? await Promise.all([
+        admin
+          .from("session_validation_evidence")
+          .select(
+            "workspace_id, session_id, run_id, job_id, attempt_count, repository_id, commit_sha, validation_tree_sha, records, assets, created_at",
+          )
+          .eq("workspace_id", policy.workspace_id)
+          .eq("session_id", sessionId)
+          .eq("run_id", checkpoint.run_id)
+          .maybeSingle(),
+        policy.requirements.requiredEvidence.length
+          ? admin
+              .from("session_validation_plans")
+              .select(
+                "workspace_id, session_id, run_id, job_id, attempt_count, repository_id, commit_sha, validation_tree_sha",
+              )
+              .eq("run_id", checkpoint.run_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ])
+    : [
+        { data: null, error: null },
+        { data: null, error: null },
+      ];
+  if (evidenceResult.error || planResult.error)
+    throw new Error("Validation evidence is unavailable.");
+  const evidenceRow =
+    checkpoint && evidenceResult.data && sameRunEvidenceIdentity(evidenceResult.data, checkpoint)
+      ? evidenceResult.data
+      : null;
   const parsedRecords = evidenceRow
     ? storedEvidenceRecordsSchema.safeParse(evidenceRow.records)
     : null;
-  const accessibleAssetKeys = new Set<string>();
+  const plan = planResult.data;
+  const evidenceMatchesAcceptedSource = Boolean(
+    checkpoint &&
+    evidenceRow &&
+    evidenceRow.commit_sha === checkpoint.output_sha &&
+    (!plan ||
+      (sameRunEvidenceIdentity(plan, checkpoint) &&
+        plan.commit_sha === checkpoint.output_sha &&
+        plan.validation_tree_sha === evidenceRow.validation_tree_sha)),
+  );
+  let accessibleAssetKeys: ReadonlySet<string> = new Set();
   let evidenceAssets: LoadedPrReadinessInput["evidenceAssets"] = [];
-  if (evidenceRunId && parsedRecords?.success) {
+  if (evidenceRow && parsedRecords?.success) {
     const { data: assets, error: assetError } = await admin
       .from("session_validation_assets")
-      .select("id, evidence_key, kind, required, size_bytes")
-      .eq("run_id", evidenceRunId)
+      .select(
+        "id, workspace_id, session_id, run_id, evidence_key, kind, required, size_bytes, storage_path, sha256, content_type",
+      )
+      .eq("workspace_id", policy.workspace_id)
+      .eq("session_id", sessionId)
+      .eq("run_id", evidenceRow.run_id)
       .order("id", { ascending: true })
-      .limit(1000);
+      .limit(MAX_EVIDENCE_ASSETS);
     if (assetError) throw new Error("Validation evidence assets are unavailable.");
-    evidenceAssets = (assets ?? []) as LoadedPrReadinessInput["evidenceAssets"];
-    for (const asset of evidenceAssets) accessibleAssetKeys.add(asset.evidence_key);
+    const scopedAssets = (assets ?? []).filter(
+      (asset) =>
+        asset.workspace_id === evidenceRow.workspace_id &&
+        asset.session_id === evidenceRow.session_id &&
+        asset.run_id === evidenceRow.run_id,
+    );
+    evidenceAssets = scopedAssets;
+    if (evidenceMatchesAcceptedSource) {
+      accessibleAssetKeys = await readRequiredEvidenceAssets({
+        admin,
+        workspaceId: policy.workspace_id,
+        evidence: { ...evidenceRow, records: parsedRecords.data },
+        assets: scopedAssets,
+        requiredKeys: policy.requirements.requiredEvidence,
+      });
+    }
   }
 
   const githubObservation =
@@ -671,8 +861,8 @@ async function loadEvaluatorInput(
       refreshQueueStatus: (queueResult.data?.status ??
         null) as PrReadinessEvaluatorInput["refreshQueueStatus"],
       repository,
-      checkpoint: checkpointResult.data
-        ? { runId: checkpointResult.data.run_id, outputSha: checkpointResult.data.output_sha }
+      checkpoint: checkpoint
+        ? { runId: checkpoint.run_id, outputSha: checkpoint.output_sha }
         : null,
       epoch: epochResult.data
         ? {
@@ -688,7 +878,9 @@ async function loadEvaluatorInput(
           ? {
               commitSha: evidenceRow.commit_sha,
               validationTreeSha: evidenceRow.validation_tree_sha,
-              records: parsedRecords.data,
+              records: evidenceMatchesAcceptedSource
+                ? parsedRecords.data
+                : parsedRecords.data.map((record) => ({ ...record, status: "stale" })),
               accessibleAssetKeys,
             }
           : null,
@@ -1077,7 +1269,7 @@ export async function loadSessionPrReadinessDetails(
     requiredKeys: requirements.requiredEvidence,
     commitSha: loaded.input.checkpoint?.outputSha ?? "",
     treeSha: loaded.evidenceRow?.validation_tree_sha ?? "",
-    records,
+    records: loaded.input.evidence?.records ?? [],
     accessibleAssetKeys: loaded.accessibleAssetKeys,
   });
   const evidence = {

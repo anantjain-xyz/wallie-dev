@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ user: vi.fn(), server: vi.fn(), download: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  user: vi.fn(),
+  server: vi.fn(),
+  download: vi.fn(),
+  readStream: vi.fn(),
+}));
 vi.mock("@/lib/supabase/auth", () => ({ getSupabaseUserOrNull: mocks.user }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: mocks.server }));
 
@@ -76,6 +81,9 @@ function from(table: string) {
       maximum = value;
       return this;
     },
+    abortSignal() {
+      return this;
+    },
     async maybeSingle() {
       const value = result();
       return { ...value, data: value.data[0] ?? null };
@@ -136,7 +144,11 @@ beforeEach(() => {
     ],
   };
   mocks.user.mockResolvedValue({ id: userId });
-  mocks.download.mockResolvedValue({ data: new Blob([contents]), error: null });
+  mocks.download.mockReturnValue({ asStream: mocks.readStream });
+  mocks.readStream.mockImplementation(async () => ({
+    data: new Blob([contents]).stream(),
+    error: null,
+  }));
   storageFrom = vi.fn(() => ({ download: mocks.download }));
   mocks.server.mockResolvedValue({ from, storage: { from: storageFrom } });
 });
@@ -300,7 +312,14 @@ describe("validation evidence asset downloads", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("content-disposition")).toContain("attachment;");
     expect(storageFrom).toHaveBeenCalledExactlyOnceWith("session-validation-evidence");
-    expect(mocks.download).toHaveBeenCalledExactlyOnceWith(asset.storage_path);
+    expect(mocks.download).toHaveBeenCalledExactlyOnceWith(
+      asset.storage_path,
+      {},
+      {
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      },
+    );
     expect(calls).toEqual(
       expect.arrayContaining([
         { table: "session_validation_assets", op: "eq", args: ["id", assetId] },
@@ -336,21 +355,35 @@ describe("validation evidence asset downloads", () => {
   });
 
   it("fails closed for inaccessible or missing objects without exposing provider diagnostics", async () => {
-    mocks.download.mockResolvedValueOnce({ data: null, error: { message: "secret provider URL" } });
+    mocks.readStream.mockResolvedValueOnce({
+      data: null,
+      error: { message: "secret provider URL" },
+    });
     const response = await download();
     expect(response.status).toBe(409);
     expect(await response.text()).not.toContain("secret provider URL");
-    mocks.download.mockResolvedValueOnce({ data: null, error: null });
+    mocks.readStream.mockResolvedValueOnce({ data: null, error: null });
     expect((await download()).status).toBe(409);
   });
 
   it("rejects changed size and same-size tampering", async () => {
-    mocks.download.mockResolvedValueOnce({ data: new Blob(["short"]), error: null });
+    mocks.readStream.mockResolvedValueOnce({ data: new Blob(["short"]).stream(), error: null });
     expect((await download()).status).toBe(409);
-    mocks.download.mockResolvedValueOnce({
-      data: new Blob(["x".repeat(asset.size_bytes)]),
+    mocks.readStream.mockResolvedValueOnce({
+      data: new Blob(["x".repeat(asset.size_bytes)]).stream(),
       error: null,
     });
     expect((await download()).status).toBe(409);
   });
+
+  it.each(["expired", "redacted"])(
+    "blocks %s assets even on previously issued links",
+    async (state) => {
+      rows.session_validation_asset_withholdings = [{ asset_id: assetId, state }];
+      const response = await download({}, artifactId);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "Evidence asset is unavailable." });
+      expect(mocks.download).not.toHaveBeenCalled();
+    },
+  );
 });
