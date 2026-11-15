@@ -93,7 +93,7 @@ describe("exact-attempt accepted artifact", () => {
       stageSlug: "build",
       version: 2,
       createdAt: artifactRow.created_at,
-      href: "/w/wallie/sessions/42?artifactStage=build&artifactVersion=2",
+      href: `/w/wallie/sessions/42?artifactStage=build&artifactVersion=2&artifactId=${artifactId}`,
     });
     expect(requests).toHaveLength(2);
     expect(Object.fromEntries(requests[0].searchParams)).toEqual({

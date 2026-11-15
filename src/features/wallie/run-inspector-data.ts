@@ -61,6 +61,7 @@ export async function loadRunInspectorArtifact(input: {
     href: workspaceSessionDetailPath(workspaceSlug, run.sessionNumber, {
       artifactStage: artifact.data.stage_slug,
       artifactVersion: artifact.data.version,
+      artifactId: artifact.data.id,
     }),
   };
 }

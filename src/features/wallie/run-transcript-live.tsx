@@ -60,6 +60,7 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
     () => !isWallieRunTerminalStatus(initialPage.runStatus),
   );
   const current = useRef(state);
+  const repairedOlderCursor = useRef<string | null>(null);
   const metadata = useRef({
     attemptCount: initialPage.attemptCount,
     status: initialPage.runStatus,
@@ -113,20 +114,31 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
         (position === "older" && !isWallieRunTerminalStatus(page.runStatus))
           ? before.runStatus
           : page.runStatus;
-      const next: TranscriptState =
-        position === "replace"
-          ? { ...page, runStatus }
-          : {
-              ...before,
-              runStatus,
-              entries: mergeTranscriptEntries(before.entries, page.entries),
-              ...(position === "older"
-                ? { olderCursor: page.olderCursor, hasOlder: page.hasOlder }
-                : {}),
-              ...(position === "newer"
-                ? { newerCursor: page.newerCursor, hasNewer: page.hasNewer }
-                : {}),
-            };
+      let next: TranscriptState;
+      if (position === "replace") {
+        repairedOlderCursor.current = null;
+        next = { ...page, runStatus };
+      } else {
+        const entries = mergeTranscriptEntries(before.entries, page.entries);
+        next = { ...before, runStatus, entries };
+        if (position === "newer") {
+          next.newerCursor = page.newerCursor;
+          next.hasNewer = page.hasNewer;
+        } else if (
+          position === "head" &&
+          !before.hasOlder &&
+          page.olderCursor !== repairedOlderCursor.current &&
+          hasUnseenEarlierActivity(before.entries, entries, page)
+        ) {
+          // Keep a way to page into history that arrived behind the forward cursor.
+          next.olderCursor = page.olderCursor;
+          next.hasOlder = true;
+          repairedOlderCursor.current = page.olderCursor;
+        } else if (position === "older") {
+          next.olderCursor = page.olderCursor;
+          next.hasOlder = page.hasOlder;
+        }
+      }
       current.current = next;
       setState(next);
     },
@@ -312,6 +324,22 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
       )}
     </section>
   );
+}
+
+function hasUnseenEarlierActivity(
+  previous: readonly RunTranscriptEntry[],
+  merged: readonly RunTranscriptEntry[],
+  head: RunTranscriptPage,
+) {
+  const first = head.entries[0];
+  if (!head.hasOlder || !head.olderCursor || !first) return false;
+  if (first.sequence !== null) {
+    // Ordered capture starts at sequence 1. A lower rank means there are gaps
+    // below this bounded page, even if its newest event was already loaded.
+    return merged.findIndex((entry) => entry.id === first.id) < first.sequence - 1;
+  }
+  const knownIds = new Set(previous.map((entry) => entry.id));
+  return head.entries.some((entry) => !knownIds.has(entry.id));
 }
 
 export function mergeTranscriptEntries(

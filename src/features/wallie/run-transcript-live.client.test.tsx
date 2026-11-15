@@ -124,6 +124,50 @@ describe("exact run transcript", () => {
     expect(mocks.router.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("restores the earlier-page boundary when late records fall outside the refreshed tail", async () => {
+    const fetchTranscript = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(page([], { newerCursor: "40" })))
+      .mockResolvedValueOnce(
+        Response.json(
+          page(
+            Array.from({ length: 30 }, (_, i) => i + 11),
+            { hasOlder: true },
+          ),
+        ),
+      )
+      .mockResolvedValueOnce(Response.json(page(Array.from({ length: 10 }, (_, i) => i + 1))));
+    vi.stubGlobal("fetch", fetchTranscript);
+    mount(page([40]));
+    expect(screen.queryByRole("button", { name: "Load earlier activity" })).toBeNull();
+    await refresh();
+    expect(rows()).toHaveLength(30);
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Load earlier activity" })),
+    );
+    expect(fetchTranscript).toHaveBeenLastCalledWith(
+      "/api/workspaces/selected-workspace/runs/selected-run/transcript?cursor=11&direction=older",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(rows()).toEqual(Array.from({ length: 40 }, (_, i) => `Recorded item ${i + 1}`));
+  });
+
+  it("keeps the earlier-page control hidden when the full earlier range is already loaded", async () => {
+    const original = Array.from({ length: 30 }, (_, i) => i + 1);
+    const tail = Array.from({ length: 30 }, (_, i) => i + 2);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json(page([31])))
+        .mockResolvedValueOnce(Response.json(page(tail, { hasOlder: true }))),
+    );
+    mount(page(original));
+    await refresh();
+    expect(rows()).toHaveLength(31);
+    expect(screen.queryByRole("button", { name: "Load earlier activity" })).toBeNull();
+  });
+
   it("restarts when the exact run changes from legacy to structured capture", async () => {
     vi.stubGlobal(
       "fetch",
