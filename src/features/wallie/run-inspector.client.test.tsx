@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type { RunCatalogRecovery } from "@/features/wallie/run-catalog-recovery";
@@ -10,6 +10,15 @@ import type { RunInspectorArtifact } from "@/features/wallie/run-inspector-data"
 import { parseRunFailure } from "@/lib/pipeline/run-failure";
 
 const now = "2026-11-14T20:00:00.000Z";
+const workspaceId = "00000000-0000-4000-8000-000000000001";
+const artifact: RunInspectorArtifact = {
+  kind: "available",
+  id: "00000000-0000-4000-8000-000000000005",
+  stageSlug: "build",
+  version: 2,
+  createdAt: now,
+  href: "/w/wallie/sessions/42?artifactStage=build&artifactVersion=2&artifactId=00000000-0000-4000-8000-000000000005",
+};
 const recovery: RunCatalogRecovery = {
   metadataAvailable: true,
   queue: { state: "current", status: "success", attemptCount: 4, scheduledAt: null },
@@ -63,27 +72,21 @@ function show(
       artifact={artifact}
       initialNow={now}
       run={{ ...run, ...changes }}
+      workspaceId={workspaceId}
       workspaceSlug="wallie"
       transcript={<p>Exact attempt activity</p>}
     />,
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("RunInspector", () => {
   it("shows the durable attempt, source session and exact accepted artifact link", () => {
-    show(
-      {},
-      {
-        kind: "available",
-        id: "artifact",
-        stageSlug: "build",
-        version: 2,
-        createdAt: now,
-        href: "/w/wallie/sessions/42?artifactStage=build&artifactVersion=2",
-      },
-    );
+    show({}, artifact);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(run.sessionTitle);
     expect(screen.getByText("Build · Attempt 4")).toBeTruthy();
     expect(screen.getByText(run.id)).toBeTruthy();
@@ -94,11 +97,29 @@ describe("RunInspector", () => {
       screen.getByRole("link", { name: `#42 · ${run.sessionTitle}` }).getAttribute("href"),
     ).toBe(run.sessionRunHref);
     expect(screen.getByRole("link", { name: "Open artifact" }).getAttribute("href")).toBe(
-      "/w/wallie/sessions/42?artifactStage=build&artifactVersion=2",
+      artifact.href,
     );
     expect(screen.getByText("Exact attempt activity")).toBeTruthy();
     expect(screen.getByText("Cost unavailable")).toBeTruthy();
     expect(screen.queryByText("$0.00")).toBeNull();
+  });
+
+  it("loads only the accepted artifact when the run disclosure opens", async () => {
+    const fetch = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetch);
+    show({}, artifact);
+
+    const disclosure = screen.getByRole("button", { name: "Inspect artifact provenance" });
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(fetch).not.toHaveBeenCalled();
+
+    fireEvent.click(disclosure);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspaceId}/runs/${run.id}/artifacts/stage_markdown/${artifact.id}`,
+      expect.anything(),
+    );
+    expect(screen.getByText("Exact attempt activity")).toBeTruthy();
   });
 
   it("keeps cancellation visible even when a newer attempt exists", () => {
