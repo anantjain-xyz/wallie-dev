@@ -317,7 +317,8 @@ describe("POST /api/sessions", () => {
 
     const response = await POST(
       makeRequest({
-        githubRepositoryId: ARCHIVED_REPOSITORY_ID,
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        githubRepositoryId: REPOSITORY_ID,
         promptMd: "Start fresh",
         requestId: ATTACHMENT_ID,
         restartOfSessionId: STAGE_ID,
@@ -336,8 +337,30 @@ describe("POST /api/sessions", () => {
       }),
     );
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
-      expect.objectContaining({ githubRepositoryId: REPOSITORY_ID, restartOfSessionId: STAGE_ID }),
+      expect.objectContaining({
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        githubRepositoryId: REPOSITORY_ID,
+        restartOfSessionId: STAGE_ID,
+      }),
     );
+  });
+
+  it("refreshes the create dialog when the confirmed factory changed", async () => {
+    mocked.loadActiveFactoryExecution.mockResolvedValue({
+      repositoryId: REPOSITORY_ID,
+      canonicalDigest: "b".repeat(64),
+    });
+    const response = await POST(
+      makeRequest({
+        factoryDefinitionDigest: "a".repeat(64),
+        requestId: ATTACHMENT_ID,
+        promptMd: "Add SSO",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "session_options_changed" });
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
   it("passes the same fingerprint to the replay check and atomic creation", async () => {

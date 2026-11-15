@@ -201,11 +201,12 @@ function CreateSessionDialogBody({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const repositoryCacheKey = { userId, workspaceId };
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
+  const factoryDefinitionDigest = repositorySnapshot.data?.factoryDefinitionDigest;
   const repositoryOptions = repositorySnapshot.data?.repositoryOptions ?? [];
   const stageOptions = repositorySnapshot.data?.stageOptions ?? [];
   const excludedStageIdSet = new Set(excludedStageIds);
   const selectedStageIds = stageOptions
-    .filter((stage) => !excludedStageIdSet.has(stage.id))
+    .filter((stage) => factoryDefinitionDigest || !excludedStageIdSet.has(stage.id))
     .map((stage) => stage.id);
   const hasBlockingAttachments = imageDrafts.some((image) => image.status !== "ready");
   const hasActiveAttachmentOperation = imageDrafts.some(
@@ -432,14 +433,17 @@ function CreateSessionDialogBody({
   const defaultRepositoryAvailable = repositoryOptions.some(
     (repository) => repository.id === defaultGithubRepositoryId,
   );
+  const factoryRepositoryUnavailable = Boolean(
+    factoryDefinitionDigest && !defaultRepositoryAvailable,
+  );
   const fallbackRepositoryId = defaultRepositoryAvailable
     ? (defaultGithubRepositoryId ?? "")
     : (repositoryOptions[0]?.id ?? "");
-  const selectedGithubRepositoryId = repositoryOptions.some(
-    (repository) => repository.id === githubRepositoryId,
-  )
-    ? githubRepositoryId
-    : fallbackRepositoryId;
+  const selectedGithubRepositoryId =
+    !factoryDefinitionDigest &&
+    repositoryOptions.some((repository) => repository.id === githubRepositoryId)
+      ? githubRepositoryId
+      : fallbackRepositoryId;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -462,6 +466,11 @@ function CreateSessionDialogBody({
 
     if (repositorySnapshot.isStale) {
       setErrorMessage("Refresh session options first.");
+      return;
+    }
+
+    if (factoryRepositoryUnavailable) {
+      setErrorMessage("Reconnect the factory repository before starting a session.");
       return;
     }
 
@@ -495,6 +504,7 @@ function CreateSessionDialogBody({
     const attempt = {
       input: {
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
+        ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
@@ -825,8 +835,17 @@ function CreateSessionDialogBody({
 
             {repositorySnapshot.data ? (
               <MultiSelectField
-                description="Choose the pipeline stages this session should run."
-                disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
+                description={
+                  factoryDefinitionDigest
+                    ? "The active factory sets the repository and stage order."
+                    : "Choose the pipeline stages this session should run."
+                }
+                disabled={
+                  isSubmitting ||
+                  unconfirmed ||
+                  repositorySnapshot.isStale ||
+                  Boolean(factoryDefinitionDigest)
+                }
                 emptyMessage="No pipeline stages are configured."
                 error={
                   stageOptions.length === 0
@@ -851,9 +870,11 @@ function CreateSessionDialogBody({
                   value: stage.id,
                 }))}
                 summary={
-                  selectedStageIds.length === stageOptions.length
-                    ? `All ${stageOptions.length} stages.`
-                    : `${selectedStageIds.length} of ${stageOptions.length} stages.`
+                  factoryDefinitionDigest
+                    ? stageOptions.map((stage) => stage.name).join(" → ")
+                    : selectedStageIds.length === stageOptions.length
+                      ? `All ${stageOptions.length} stages.`
+                      : `${selectedStageIds.length} of ${stageOptions.length} stages.`
                 }
                 values={selectedStageIds}
               />
@@ -899,7 +920,8 @@ function CreateSessionDialogBody({
                 unconfirmed
                   ? isSubmitting
                   : isCreateSessionSubmitDisabled({
-                      hasRepositoryResult: repositorySnapshot.data !== null,
+                      hasRepositoryResult:
+                        repositorySnapshot.data !== null && !factoryRepositoryUnavailable,
                       hasBlockingAttachments,
                       isRepositoryStale: repositorySnapshot.isStale,
                       isSubmitting,
@@ -984,7 +1006,7 @@ export function RepositoryField({
     <div className="space-y-2">
       {options.length > 0 ? (
         <SelectField
-          disabled={disabled}
+          disabled={disabled || Boolean(snapshot.data.factoryDefinitionDigest)}
           label="Repository"
           options={options}
           onValueChange={onValueChange}
@@ -996,7 +1018,9 @@ export function RepositoryField({
           className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
           role="status"
         >
-          No repositories available. Starting without one.
+          {snapshot.data.factoryDefinitionDigest
+            ? "Reconnect the factory repository before starting a session."
+            : "No repositories available. Starting without one."}
         </div>
       )}
 

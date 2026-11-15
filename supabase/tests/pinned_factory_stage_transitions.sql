@@ -119,6 +119,11 @@ language sql as $$
 $$;
 
 create temp table plan_artifact as select pg_temp.publish_fixture(job_id,'The exact approved plan') as id from admitted;
+select is((select (job.stage_slug,job.stage_name,run.stage_slug,run.stage_name,artifact.stage_slug)::text
+  from admitted a join public.agent_jobs job on job.id=a.job_id join public.agent_runs run on run.id=a.run_id
+  cross join plan_artifact plan join public.session_artifacts artifact on artifact.id=plan.id),
+  '(sealed-plan,Plan,sealed-plan,Plan,sealed-plan)',
+  'starting and publishing after a live rename retains admitted job, run, and artifact labels');
 create temp table blocking_thread as
 with review_input as materialized (
   select s.workspace_id,s.id as session_id,s.current_stage_id,s.current_artifact_id,s.current_artifact_version
@@ -169,20 +174,44 @@ create temp table land_queue as select approved.* from admitted a cross join rep
   cross join lateral pg_temp.approve_fixture(a.session_id,'54450000-0002-4000-8000-000000000001',artifact.id) approved;
 select is((select current_stage_slug from land_queue),'sealed-land','second approval follows the original final stage');
 
-create temp table reroute as
-select result.* from admitted a join public.sessions s on s.id=a.session_id
-  join public.workspace_linear_routing routing on routing.workspace_id=s.workspace_id
-  cross join lateral public.apply_linear_session_transition(
-    s.id,s.workspace_id,s.linear_issue_id,s.updated_at,routing.updated_at,'test-rework',
-    clock_timestamp()+interval '1 second','linear-rework',clock_timestamp()+interval '2 seconds',
-    'Rework','cursor','live-model','project') result;
-select is((select outcome from reroute),'routed','Linear still finds the admitted slug after the live anchor is renamed');
+create function pg_temp.apply_route_fixture(span integer, status text)
+returns table(outcome text,job_ids uuid[],run_ids uuid[],job_id uuid,run_id uuid) language sql as $$
+  with route_input as materialized (
+    select s.id,s.workspace_id,s.linear_issue_id,s.updated_at,routing.updated_at as routing_updated_at
+    from admitted a join public.sessions s on s.id=a.session_id
+    join public.workspace_linear_routing routing on routing.workspace_id=s.workspace_id
+  )
+  select result.* from route_input s cross join lateral public.apply_linear_session_transition(
+    s.id,s.workspace_id,s.linear_issue_id,s.updated_at,s.routing_updated_at,'fixture-span-'||span,
+    now()+span*interval '1 second','linear-state-'||status,now()+span*interval '1 second',
+    status,'cursor','live-model','project') result;
+$$;
+create temp table reroute as select * from pg_temp.apply_route_fixture(1,'Rework');
+select is((select outcome from reroute),'routed','Linear uses the admitted slug when no live stage has that label');
 select is((select (run.stage_slug,run.model_provider,run.model_name)::text from public.agent_runs run
   join reroute r on r.run_id=run.id),'(sealed-build,codex,gpt-5.5)','Linear rework queues the admitted target and model');
 select is((select array_agg(completion.stage_slug) from public.session_phase_completions completion join admitted a using(session_id)),
   array['sealed-plan'],'reroute invalidates only completions at or beyond the admitted target position');
 select is((select count(*) from public.session_stage_approval_receipts receipt join admitted a using(session_id)),
   2::bigint,'reroute preserves exact historical approval evidence');
+
+update public.workspace_linear_routing
+set rework_stage_slug='edited-sealed-build',land_stage_slug='edited-sealed-land'
+where workspace_id='54450000-0001-4000-8000-000000000001';
+create temp table done_route as select * from pg_temp.apply_route_fixture(2,'Done');
+select is((select outcome from done_route),'routed','rewritten live land label still routes an admitted session on Done');
+select is((select run.stage_slug from public.agent_runs run join done_route r on r.run_id=run.id),
+  'sealed-land','rewritten live land label resolves to the admitted stage');
+create temp table renamed_rework as select * from pg_temp.apply_route_fixture(3,'Rework');
+select is((select run.stage_slug from public.agent_runs run join renamed_rework r on r.run_id=run.id),
+  'sealed-build','rewritten live rework label resolves to the admitted stage');
+
+insert into public.pipeline_stages(pipeline_id,workspace_id,position,slug,name) values
+  ('54450000-0003-4000-8000-000000000001','54450000-0001-4000-8000-000000000001',4,'sealed-build','Different live stage');
+update public.workspace_linear_routing set rework_stage_slug='sealed-build'
+where workspace_id='54450000-0001-4000-8000-000000000001';
+select is((select outcome from pg_temp.apply_route_fixture(4,'Rework')),'missing_stage',
+  'a configured live anchor outside the definition cannot fall through to an unrelated admitted label');
 
 select pg_temp.new_delivery_policy('code',2);
 select pg_temp.activate_fixture(2,(select jsonb_set(body,'{deliveryPolicyRevisionId}','null') from active_definition));
@@ -191,6 +220,18 @@ create temp table unconfigured as select * from public.create_session_with_first
   'Explicit absence of a delivery gate','Keep the exact delivery configuration','cursor','live-model');
 select lives_ok($$select internal.assert_delivery_readiness_gate(session_id,'54450000-0001-4000-8000-000000000001')
   from unconfigured$$,'an explicitly unconfigured pinned definition never inherits the new live delivery policy');
+
+insert into public.github_repositories(id,workspace_id,github_installation_id,repo_id,name,full_name,private,html_url,default_branch) values
+  ('54450000-0006-4000-8000-000000000002','54450000-0001-4000-8000-000000000001',
+   '54450000-0005-4000-8000-000000000001',54450012,'workspace-default','fixture/workspace-default',true,
+   'https://github.com/fixture/workspace-default','main');
+insert into public.workspace_repository_profiles(workspace_id,github_repository_id,is_primary) values
+  ('54450000-0001-4000-8000-000000000001','54450000-0006-4000-8000-000000000002',true);
+delete from public.github_repositories where id='54450000-0006-4000-8000-000000000001';
+select is((select public.get_session_detail_page(workspace_slug,session_number) #>> '{activity,sessionGithubRepositoryId}' from admitted),
+  '54450000-0006-4000-8000-000000000001','a disconnected repo keeps the exact admitted repository identity in session detail');
+select is((select public.get_session_detail_page(workspace_slug,session_number) #> '{activity,repository}' from admitted),
+  'null'::jsonb,'a disconnected admitted repository does not display the unrelated workspace default');
 
 select * from finish();
 rollback;

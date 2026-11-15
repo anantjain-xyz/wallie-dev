@@ -111,21 +111,25 @@ create function pg_temp.factory_activation_command(p_kind text,p_base bigint,p_t
 $$;
 
 create function pg_temp.factory_admission_command(p_request_id uuid, p_title text,
-  p_creator_member_id uuid default '54200000-0002-4000-8000-000000000001')
+  p_creator_member_id uuid default '54200000-0002-4000-8000-000000000001',
+  p_repository_id uuid default '54200000-0006-4000-8000-000000000001',
+  p_pipeline_id uuid default '54200000-0003-4000-8000-000000000001',
+  p_stage_ids uuid[] default '{54200000-0004-4000-8000-000000000002,54200000-0004-4000-8000-000000000001}')
 returns text language sql as $$
   select format($q$select session_id from public.create_session_once_with_first_job(
     '54200000-0001-4000-8000-000000000001', %L::uuid,
     %L::uuid, repeat('d',64), %L, '  Immutable original prompt  ', 'codex','gpt-5.1', '{}'::uuid[],
-    session_github_repository_id => '54200000-0006-4000-8000-000000000002',
-    selected_stage_ids => array['54200000-0004-4000-8000-000000000002','54200000-0004-4000-8000-000000000001']::uuid[]
-  )$q$, p_creator_member_id, p_request_id, '  ' || p_title || '  ');
+    session_github_repository_id => %L::uuid, selected_pipeline_id => %L::uuid, selected_stage_ids => %L::uuid[]
+  )$q$, p_creator_member_id, p_request_id, '  ' || p_title || '  ', p_repository_id, p_pipeline_id, p_stage_ids);
 $$;
 
-create function pg_temp.admit_factory_session(p_request_id uuid, p_title text)
+create function pg_temp.admit_factory_session(p_request_id uuid, p_title text,
+  p_repository_id uuid default '54200000-0006-4000-8000-000000000001')
 returns uuid language plpgsql as $$
 declare admitted_session_id uuid;
 begin
-  execute pg_temp.factory_admission_command(p_request_id, p_title) into strict admitted_session_id;
+  execute pg_temp.factory_admission_command(p_request_id, p_title, p_repository_id => p_repository_id)
+  into strict admitted_session_id;
   return admitted_session_id;
 end;
 $$;
@@ -167,10 +171,13 @@ select is((select count(*) from public.factory_definition_activations a join fac
   0::bigint,'saving a draft has no activation side effect');
 
 create temp table factory_admission_legacy as
-select pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000001','Before enrollment') as session_id;
+select pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000001','Before enrollment',
+  '54200000-0006-4000-8000-000000000002') as session_id;
 select ok((select s.factory_definition_provenance='legacy' and s.factory_definition_revision_id is null
   and not s.execute_pinned_definition and input.session_id is null
   and s.execution_policy_revision_id=(select original_revision from factory_admission_policy)
+  and s.github_repository_id='54200000-0006-4000-8000-000000000002'::uuid
+  and s.current_stage_id='54200000-0004-4000-8000-000000000001'::uuid
   from factory_admission_legacy fixture
   join public.sessions s on s.id=fixture.session_id
   left join public.session_factory_admission_inputs input on input.session_id=s.id),
@@ -184,7 +191,8 @@ select is((select activation_number from factory_activation_first),1::bigint,'pu
 select ok((select r.source_draft_id=d.id and r.definition_json=d.definition_json and r.canonical_digest=d.canonical_digest
   from factory_activation_first a join public.factory_definition_revisions r on r.id=a.revision_id
   cross join factory_activation_initial d),'publish copies the selected immutable draft byte for byte');
-select is(pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000001','Before enrollment'),
+select is(pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000001','Before enrollment',
+  '54200000-0006-4000-8000-000000000002'),
   (select session_id from factory_admission_legacy), 'creation replay after first publication returns the pre-enrollment session');
 select ok((select s.factory_definition_provenance='legacy' and s.factory_definition_revision_id is null
   and input.session_id is null from factory_admission_legacy fixture
@@ -229,8 +237,18 @@ values('54200000-0000-4000-8000-000000000002','platform_api_key','admission-test
 
 update public.github_repositories set is_archived=true where id='54200000-0006-4000-8000-000000000001';
 select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000005','Archived factory repository'),
-  'P0002','The factory definition repository is unavailable.','a live repository override cannot replace the unavailable pinned repository');
+  'P0002','The factory definition repository is unavailable.','admission rejects a disconnected compiled repository');
 update public.github_repositories set is_archived=false where id='54200000-0006-4000-8000-000000000001';
+
+select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000006','Different repository',
+  p_repository_id => '54200000-0006-4000-8000-000000000002'),
+  'P0003','The active factory no longer matches the requested session options.','a pinned create must confirm the compiled repository');
+select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000007','Different pipeline',
+  p_pipeline_id => '54200000-0003-4000-8000-000000000099'),
+  'P0003','The active factory no longer matches the requested session options.','a pinned create must confirm the compiled pipeline');
+select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000008','Missing stage',
+  p_stage_ids => array['54200000-0004-4000-8000-000000000002']::uuid[]),
+  'P0003','The active factory no longer matches the requested session options.','a pinned create must confirm every compiled stage');
 
 create temp table factory_activation_missing_stage as
 select id from pg_temp.factory_activation_save(1,jsonb_set(pg_temp.factory_activation_bundle('Unknown stage')::jsonb,
@@ -519,6 +537,18 @@ select ok((select s.active_provider='e2b' and a.value_json='"gpt-5"'::jsonb from
   join public.workspace_agent_config a using(workspace_id)
   where s.workspace_id='54200000-0001-4000-8000-000000000001' and a.key='agent_model'),
   'activating the prospective runtime does not change live sandbox or model settings');
+
+create temp table factory_activation_reordered as
+select saved.id from (select pg_temp.factory_activation_bundle('Reordered stages')::jsonb as body) draft
+cross join lateral pg_temp.factory_activation_save(5, jsonb_set(draft.body,'{stages}',
+  jsonb_build_array(draft.body #> '{stages,1}',draft.body #> '{stages,0}'))::text) saved;
+select is((select a.activation_number from factory_activation_scope s cross join factory_activation_reordered d
+  cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,5,d.id,
+    array['e2b'],pg_temp.factory_activation_probes()) a),6::bigint,'a revision can publish a new stage order');
+select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000009','Stale stage order'),
+  'P0003','The active factory no longer matches the requested session options.','fresh admission detects a reordered compiled stage selection');
+select is(pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000002','Admission racing publication'),
+  (select session_id from factory_admission_after_publish),'a committed creation replays even when its confirmed stage order has changed');
 
 select extensions.dblink_disconnect('factory_writer');
 select extensions.dblink_disconnect('factory_contender');

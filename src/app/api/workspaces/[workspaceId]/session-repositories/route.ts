@@ -4,6 +4,8 @@ import {
   loadSessionRepositoryOptionsWithPrimary,
   resolveDefaultSessionRepositoryId,
 } from "@/features/sessions/repository-options";
+import type { SessionRepositoryOptionsResult } from "@/features/sessions/client";
+import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import { loadDefaultPipelineForWorkspace } from "@/lib/pipeline/stages";
 import { workspaceIdParamsSchema } from "@/lib/workspaces";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -15,6 +17,10 @@ type RouteContext = {
     workspaceId: string;
   }>;
 };
+
+function sessionOptions(options: SessionRepositoryOptionsResult) {
+  return NextResponse.json(options, { headers: { "Cache-Control": "private, no-store" } });
+}
 
 export async function GET(_request: Request, context: RouteContext) {
   const params = await context.params;
@@ -32,17 +38,43 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
+  const { supabase, workspace } = access.context;
+  const pinned = await loadActiveFactoryExecution(supabase, workspace.id);
+  if (pinned) {
+    const { data: repository, error } = await supabase
+      .from("github_repositories")
+      .select("id, full_name")
+      .eq("workspace_id", workspace.id)
+      .eq("id", pinned.repositoryId)
+      .eq("is_archived", false)
+      .maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    return sessionOptions({
+      defaultGithubRepositoryId: pinned.repositoryId,
+      factoryDefinitionDigest: pinned.canonicalDigest,
+      pipelineId: pinned.pipelineId,
+      repositoryOptions: repository ? [{ id: repository.id, fullName: repository.full_name }] : [],
+      stageOptions: pinned.stages.map(({ description, id, name }, index) => ({
+        description,
+        id,
+        name,
+        position: index + 1,
+      })),
+    });
+  }
+
   const [onboardingResult, repositoryResult, pipeline] = await Promise.all([
-    access.context.supabase
+    supabase
       .from("workspace_onboarding")
       .select("selected_github_repository_id")
-      .eq("workspace_id", access.context.workspace.id)
+      .eq("workspace_id", workspace.id)
       .maybeSingle(),
     loadSessionRepositoryOptionsWithPrimary({
-      supabase: access.context.supabase,
-      workspaceId: access.context.workspace.id,
+      supabase,
+      workspaceId: workspace.id,
     }),
-    loadDefaultPipelineForWorkspace(access.context.supabase, access.context.workspace.id),
+    loadDefaultPipelineForWorkspace(supabase, workspace.id),
   ]);
 
   if (onboardingResult.error) {
@@ -55,23 +87,16 @@ export async function GET(_request: Request, context: RouteContext) {
     selectedGithubRepositoryId: onboardingResult.data?.selected_github_repository_id ?? null,
   });
 
-  return NextResponse.json(
-    {
-      defaultGithubRepositoryId,
-      pipelineId: pipeline?.id ?? null,
-      repositoryOptions: repositoryResult.repositoryOptions,
-      stageOptions:
-        pipeline?.stages.map((stage) => ({
-          description: stage.description,
-          id: stage.id,
-          name: stage.name,
-          position: stage.position,
-        })) ?? [],
-    },
-    {
-      headers: {
-        "Cache-Control": "private, no-store",
-      },
-    },
-  );
+  return sessionOptions({
+    defaultGithubRepositoryId,
+    pipelineId: pipeline?.id ?? null,
+    repositoryOptions: repositoryResult.repositoryOptions,
+    stageOptions:
+      pipeline?.stages.map(({ description, id, name, position }) => ({
+        description,
+        id,
+        name,
+        position,
+      })) ?? [],
+  });
 }

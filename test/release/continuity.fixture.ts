@@ -321,7 +321,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     );
 
     await setRelease(admin, true, "Enable isolated local continuity acceptance fixture");
-    const createFixtureSession = (title: string) =>
+    const createFixtureSession = (title: string, selectedStageIds = ids.stageIds) =>
       production.createSessionWithFirstJob({
         admin,
         creatorMemberId: ids.memberId,
@@ -331,7 +331,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         modelName: "gpt-5.5",
         modelProvider: "codex",
         pipelineId: ids.pipelineId,
-        selectedStageIds: ids.stageIds,
+        selectedStageIds,
         promptMd: "Implement the deterministic continuity fixture.",
         title,
         workspaceId: ids.workspaceId,
@@ -1226,7 +1226,10 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         p_required_probes: requiredProbes,
       }),
     );
-    const frozen = await createFixtureSession("Original pinned session title");
+    const frozen = await createFixtureSession("Original pinned session title", [
+      firstStageId,
+      nextStageId,
+    ]);
     await checked(
       admin
         .from("sessions")

@@ -149,6 +149,95 @@ begin
 end;
 $function$;
 
+-- The outer release, budget and retry wrappers still own start admission.
+-- Keep the labels they retain on the job and run aligned with execution.
+CREATE OR REPLACE FUNCTION internal.start_session_job_attempt_before_release(p_job_id uuid, p_attempt_count integer, p_expected_stage_id uuid, p_expected_artifact_version integer, p_model_provider text, p_model_name text, p_run_type text, p_branch_name text DEFAULT NULL::text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY INVOKER
+ SET search_path TO ''
+AS $function$
+declare
+  s public.sessions%rowtype;
+  j public.agent_jobs%rowtype;
+  stage public.pipeline_stages%rowtype;
+  historical_stage_id uuid;
+  execution_id uuid;
+begin
+  if nullif(btrim(p_model_provider), '') is null or nullif(btrim(p_model_name), '') is null then
+    raise exception 'Agent provider and model must not be blank' using errcode = '23514';
+  end if;
+  if p_run_type is null or p_run_type not in ('project', 'code') then
+    raise exception 'Run type must be project or code' using errcode = '22023';
+  end if;
+  select owner.* into s from public.sessions owner
+  join public.agent_jobs candidate on candidate.session_id = owner.id
+  where candidate.id = p_job_id for no key update of owner;
+  if not found then return null; end if;
+  select * into j from public.agent_jobs where id = p_job_id for update;
+  if not found or p_attempt_count is null or p_attempt_count <= 0
+     or j.attempt_count <> p_attempt_count or j.status not in ('started', 'running')
+     or j.session_id <> s.id or j.workspace_id <> s.workspace_id or s.archived_at is not null
+     or s.current_stage_id is distinct from p_expected_stage_id
+     or p_expected_artifact_version is null or s.current_artifact_version <> p_expected_artifact_version
+     or s.phase_status not in ('in_progress', 'rejected', 'awaiting_review')
+     or (j.stage_id is not null and j.stage_id <> s.current_stage_id) then return null; end if;
+  select effective.* into stage from internal.session_execution_stages(s) effective
+  where effective.id = s.current_stage_id;
+  if not found then return null; end if;
+
+  perform 1 from public.agent_runs where agent_job_id = j.id order by id for update;
+  select stage_id into historical_stage_id from public.agent_runs
+  where agent_job_id = j.id order by created_at desc, id desc limit 1;
+  if historical_stage_id is not null and historical_stage_id <> stage.id then return null; end if;
+  if exists (
+    select 1 from public.agent_runs r where r.agent_job_id = j.id
+      and (r.attempt_count = p_attempt_count
+        or (r.status in ('queued', 'started', 'running')
+            and (r.session_id <> s.id or r.workspace_id <> s.workspace_id
+              or (r.stage_id is not null and r.stage_id <> stage.id)
+              or (r.attempt_count is null and r.status <> 'queued')
+              or r.attempt_count > p_attempt_count)))
+  ) then return null; end if;
+  -- Retrying a previously published job is not a new review request. Explicit
+  -- reruns use a new job ID; a fresh job may legitimately start awaiting_review.
+  if s.phase_status = 'awaiting_review' and exists (
+    select 1 from public.agent_runs where agent_job_id = j.id and status = 'success'
+  ) then return null; end if;
+  if (select count(*) from public.agent_runs where agent_job_id = j.id
+      and attempt_count is null and status = 'queued') > 1 then return null; end if;
+
+  -- Older bound attempts have lost authority because the queue claimed a newer
+  -- attempt. Never reuse their run ID or sandbox identity for the replacement.
+  update public.agent_runs set status = 'error', finished_at = coalesce(finished_at, now())
+  where agent_job_id = j.id and attempt_count < p_attempt_count
+    and status in ('queued', 'started', 'running');
+  select id into execution_id from public.agent_runs
+  where agent_job_id = j.id and attempt_count is null and status = 'queued';
+  update public.agent_jobs set stage_id = stage.id, stage_slug = stage.slug, stage_name = stage.name
+  where id = j.id;
+  if execution_id is null then
+    insert into public.agent_runs(
+      workspace_id, session_id, agent_job_id, triggered_by_member_id, attempt_count,
+      stage_id, stage_slug, stage_name, model_provider, model_name, run_type,
+      branch_name, status, started_at, last_activity_at
+    ) values (
+      s.workspace_id, s.id, j.id, j.requested_by_member_id, p_attempt_count,
+      stage.id, stage.slug, stage.name, btrim(p_model_provider), btrim(p_model_name), p_run_type,
+      p_branch_name, 'running', now(), now()
+    ) returning id into execution_id;
+  else
+    update public.agent_runs set attempt_count = p_attempt_count,
+      stage_id = stage.id, stage_slug = stage.slug, stage_name = stage.name,
+      model_provider = btrim(p_model_provider), model_name = btrim(p_model_name), run_type = p_run_type,
+      branch_name = p_branch_name, status = 'running', started_at = now(), last_activity_at = now()
+    where id = execution_id;
+  end if;
+  update public.sessions set phase_status = 'in_progress' where id = s.id;
+  return execution_id;
+end;
+$function$;
+
 create or replace function internal.prepare_session_job_git_input(p_job_id uuid,p_checkpoint_run_id uuid default null)
 returns void language plpgsql security definer set search_path='' as $$
 declare s public.sessions%rowtype; j public.agent_jobs%rowtype; prior public.session_job_git_inputs%rowtype; selected record; stage public.pipeline_stages%rowtype;
@@ -772,6 +861,7 @@ declare
   route_key text;
   candidate text;
   target_slug text;
+  live_target_id uuid;
   normalized_name text := lower(regexp_replace(btrim(p_status_name), '\s+', ' ', 'g'));
   canceled_jobs uuid[] := '{}';
   canceled_runs uuid[] := '{}';
@@ -846,9 +936,14 @@ begin
   elsif route_key in ('merging','done') then target_slug := config.land_stage_slug; end if;
   if target_slug is not null then
     if s.execute_pinned_definition then
+      -- Linear routing refers to a live pipeline label. Resolve its stable
+      -- anchor first, then route through that stage's admitted configuration.
+      select stage.id into live_target_id from public.pipeline_stages stage
+      where stage.workspace_id = s.workspace_id and stage.pipeline_id = s.pipeline_id
+        and stage.slug = target_slug for share;
       select stage.* into target from internal.session_execution_stages(s) stage
       join public.session_selected_stages selected on selected.stage_id = stage.id and selected.session_id = s.id
-      where stage.slug = target_slug;
+      where case when live_target_id is not null then stage.id = live_target_id else stage.slug = target_slug end;
     else
       select stage.* into target from public.pipeline_stages stage
       join public.session_selected_stages selected on selected.stage_id = stage.id and selected.session_id = s.id
@@ -1212,19 +1307,24 @@ begin
     limit 1
   ),
   expanded_candidates(priority, repository_id) as (
-    values (1, v_session.github_repository_id)
+    values (1, case when v_session.execute_pinned_definition then
+      (internal.pinned_session_execution_definition(v_session)->>'repositoryId')::uuid
+      else v_session.github_repository_id end)
     union all
     select 2, github_repository_id
     from latest_pull_request_repository
+    where not v_session.execute_pinned_definition
     union all
     select 3, wrp.github_repository_id
     from public.workspace_repository_profiles wrp
     where wrp.workspace_id = v_workspace_id
       and wrp.is_primary
+      and not v_session.execute_pinned_definition
     union all
     select 4, wo.selected_github_repository_id
     from public.workspace_onboarding wo
     where wo.workspace_id = v_workspace_id
+      and not v_session.execute_pinned_definition
   ),
   first_configured as (
     select repository_id

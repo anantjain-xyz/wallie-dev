@@ -118,6 +118,7 @@ describe("createSessionFromClient", () => {
 
     const result = await createSessionFromClient({
       attachmentIds: [ATTACHMENT_ID],
+      factoryDefinitionDigest: "a".repeat(64),
       githubRepositoryId: `  ${REPOSITORY_ID}  `,
       linearIssueUrl: "  https://linear.app/team/issue/TEAM-42/some-slug  ",
       promptMd: "  Add SSO  ",
@@ -130,6 +131,7 @@ describe("createSessionFromClient", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions", {
       body: JSON.stringify({
         attachmentIds: [ATTACHMENT_ID],
+        factoryDefinitionDigest: "a".repeat(64),
         githubRepositoryId: REPOSITORY_ID,
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",
@@ -213,6 +215,7 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
     const fetchMock = mockFetch({
       body: {
         defaultGithubRepositoryId: REPOSITORY_ID,
+        factoryDefinitionDigest: "a".repeat(64),
         pipelineId: "55555555-5555-4555-8555-555555555555",
         repositoryOptions: [{ fullName: "acme/app", id: REPOSITORY_ID }],
         stageOptions: [
@@ -231,6 +234,7 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
     ).resolves.toEqual({
       defaultGithubRepositoryId: REPOSITORY_ID,
+      factoryDefinitionDigest: "a".repeat(64),
       pipelineId: "55555555-5555-4555-8555-555555555555",
       repositoryOptions: [{ fullName: "acme/app", id: REPOSITORY_ID }],
       stageOptions: [
@@ -263,6 +267,17 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
 
   it("rejects malformed repository option responses", async () => {
     mockFetch({ body: { repositoryOptions: null }, ok: true });
+
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
+    ).rejects.toThrow("Session options response was invalid.");
+  });
+
+  it("rejects an invalid active definition digest", async () => {
+    mockFetch({
+      body: { factoryDefinitionDigest: "invalid", repositoryOptions: [], stageOptions: [] },
+      ok: true,
+    });
 
     await expect(
       loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),

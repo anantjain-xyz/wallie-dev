@@ -56,6 +56,16 @@ function getErrorCode(error: unknown) {
   return null;
 }
 
+function sessionOptionsChangedResponse() {
+  return NextResponse.json(
+    {
+      code: "session_options_changed",
+      error: "The workspace pipeline changed. Refresh the stage options and try again.",
+    },
+    { status: 409 },
+  );
+}
+
 function mapWallieSessionRepository(row: {
   default_branch: string | null;
   default_programming_language: string | null;
@@ -256,6 +266,15 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+  if (
+    (normalized.factoryDefinitionDigest &&
+      normalized.factoryDefinitionDigest !== pinned?.canonicalDigest) ||
+    (pinned &&
+      normalized.githubRepositoryId &&
+      normalized.githubRepositoryId !== pinned.repositoryId)
+  ) {
+    return sessionOptionsChangedResponse();
+  }
   const [onboardingResult, firstRunPrereqsResult, linearIssueResult] = await Promise.all([
     access.context.supabase
       .from("workspace_onboarding")
@@ -384,6 +403,9 @@ export async function POST(request: Request) {
       attachmentIds: normalized.attachmentIds,
       ...(creationRequest ? { creationRequest } : {}),
       creatorMemberId: access.context.currentMember.id,
+      ...(normalized.factoryDefinitionDigest
+        ? { factoryDefinitionDigest: normalized.factoryDefinitionDigest }
+        : {}),
       githubRepositoryId,
       linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
       linearIssueUrl: linearIssue?.url ?? normalized.linearIssueUrl,
@@ -425,13 +447,7 @@ export async function POST(request: Request) {
     }
 
     if (getErrorCode(error) === "P0003") {
-      return NextResponse.json(
-        {
-          code: "session_options_changed",
-          error: "The workspace pipeline changed. Refresh the stage options and try again.",
-        },
-        { status: 409 },
-      );
+      return sessionOptionsChangedResponse();
     }
 
     if (getErrorCode(error) === "P0004") {

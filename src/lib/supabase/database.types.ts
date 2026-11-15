@@ -5962,6 +5962,33 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_confirmed_factory_session_once_with_first_job: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          expected_factory_definition_digest: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          source_session_id?: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
       create_session_once_with_first_job: {
         Args: {
           agent_model_name: string

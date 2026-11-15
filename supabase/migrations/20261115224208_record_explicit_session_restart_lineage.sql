@@ -26,6 +26,28 @@ revoke all on function internal.preserve_session_restart_lineage() from public, 
 create trigger preserve_session_restart_lineage before update or delete on public.session_restart_lineages
   for each row execute function internal.preserve_session_restart_lineage();
 
+-- These entry points need the workspace fence before canonical admission.
+-- Match attachment admission's ordering so a queued activation can't invert it.
+create function internal.lock_factory_session_creation_attachments(
+  p_workspace_id uuid, p_member_id uuid, p_attachment_ids uuid[]
+) returns void language plpgsql security invoker set search_path = '' as $$
+declare locked_count integer;
+begin
+  if coalesce(cardinality(p_attachment_ids), 0) = 0 then return; end if;
+  perform a.id from public.session_attachments a
+  where a.id = any(p_attachment_ids) and a.workspace_id = p_workspace_id
+    and a.uploaded_by_member_id = p_member_id and a.session_id is null
+    and a.status = 'ready' and a.expires_at > now()
+  order by a.id for update;
+  get diagnostics locked_count = row_count;
+  if locked_count <> cardinality(p_attachment_ids) then
+    raise exception 'Session attachments changed, expired, or are not available' using errcode = 'P0004';
+  end if;
+end;
+$$;
+revoke all on function internal.lock_factory_session_creation_attachments(uuid,uuid,uuid[])
+  from public, anon, authenticated, service_role;
+
 create function public.restart_session_once_with_first_job(
   target_workspace_id uuid, creator_member_id uuid, target_request_id uuid, target_request_hash text,
   source_session_id uuid, session_title text, session_prompt_md text, agent_model_provider text,
@@ -37,6 +59,7 @@ returns table(session_id uuid, session_number integer, workspace_slug text, job_
 language plpgsql security definer set search_path = '' as $$
 declare
   result record;
+  source_issue_id text;
 begin
   -- Share the existing creation-request lock so ordinary creation and an
   -- explicit restart cannot both commit under one request ID.
@@ -54,19 +77,22 @@ begin
       raise exception 'This creation request was already used for different session input' using errcode = 'P0005';
     end if;
   else
-    select * into strict result from public.create_session_once_with_first_job(
-      target_workspace_id, creator_member_id, target_request_id, target_request_hash,
-      session_title, session_prompt_md, agent_model_provider, agent_model_name, session_attachment_ids,
-      session_linear_issue_id, session_linear_issue_url, session_github_repository_id,
-      selected_pipeline_id, selected_stage_ids);
-    -- Canonical admission already holds the workspace fence. Hold the origin
-    -- until commit without requiring it to stay available for a later replay.
-    perform 1 from public.sessions source
+    -- Retain the existing Linear owner when the fresh session cites the same
+    -- issue as context. The new session can still link to the original URL.
+    perform internal.lock_factory_session_creation_attachments(target_workspace_id, creator_member_id, session_attachment_ids);
+    perform internal.assert_workspace_accepts_work(target_workspace_id);
+    select source.linear_issue_id into source_issue_id from public.sessions source
       where (source.workspace_id, source.id) = (target_workspace_id, source_session_id)
-        and source.id <> result.session_id for key share;
+      for key share;
     if not found then
       raise exception 'Source session is unavailable in this workspace.' using errcode = 'PT404';
     end if;
+    select * into strict result from public.create_session_once_with_first_job(
+      target_workspace_id, creator_member_id, target_request_id, target_request_hash,
+      session_title, session_prompt_md, agent_model_provider, agent_model_name, session_attachment_ids,
+      case when source_issue_id = session_linear_issue_id then null else session_linear_issue_id end,
+      session_linear_issue_url, session_github_repository_id,
+      selected_pipeline_id, selected_stage_ids);
     insert into public.session_restart_lineages (session_id, workspace_id, source_session_id)
     values (result.session_id, target_workspace_id, source_session_id);
   end if;

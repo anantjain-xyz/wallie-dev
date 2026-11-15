@@ -471,6 +471,14 @@ begin
     admitted_execution_policy_revision_id := (admitted_definition ->> 'executionPolicyRevisionId')::uuid;
     admitted_delivery_policy_revision_id := (admitted_definition ->> 'deliveryPolicyRevisionId')::uuid;
 
+    -- A create request can confirm the options it displayed. Validate that
+    -- ordered selection against the revision that won the admission fence.
+    if (session_github_repository_id is not null and session_github_repository_id is distinct from repository_id)
+      or (selected_pipeline_id is not null and selected_pipeline_id is distinct from pinned_pipeline_id)
+      or (selected_stage_ids is not null and selected_stage_ids is distinct from resolved_stage_ids) then
+      raise exception 'The active factory no longer matches the requested session options.' using errcode = 'P0003';
+    end if;
+
     -- GitHub disconnect can hold these rows while waiting on session locks.
     -- Admission retries the request rather than reversing that lock order.
     begin

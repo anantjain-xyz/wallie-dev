@@ -228,11 +228,14 @@ with revision as (
 insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
 select workspace_id,factory_id,id,2,created_by from revision;
 
+update public.sessions set linear_issue_id='MANIFEST-544', linear_issue_url='https://linear.app/test/issue/MANIFEST-544'
+where id=(select session_id from dispatch_target);
 create function pg_temp.restart_manifest_session(source_id uuid, request uuid, fingerprint text)
 returns table(session_id uuid, job_id uuid, run_id uuid) language sql as $$
   select fresh.session_id,fresh.job_id,fresh.run_id from public.restart_session_once_with_first_job(
     'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
-    request,fingerprint,source_id,'Deliberate restart','Try a fresh plan','claude-code','a-live-model','{}') fresh;
+    request,fingerprint,source_id,'Deliberate restart','Try a fresh plan','claude-code','a-live-model','{}',
+    'MANIFEST-544','https://linear.app/test/issue/MANIFEST-544') fresh;
 $$;
 create temp table restarted as select fresh.* from dispatch_target old cross join lateral
   pg_temp.restart_manifest_session(old.session_id,'54400000-0000-4000-8000-000000000001',repeat('a',64)) fresh;
@@ -245,6 +248,11 @@ select is(r.model_name,'gpt-5','the restarted first run uses the new definition 
 from restarted fresh join public.agent_runs r on r.id=fresh.run_id;
 select is(lineage.source_session_id,old.session_id,'the new session preserves the explicit source session ID')
 from restarted fresh join public.session_restart_lineages lineage using (session_id) cross join dispatch_target old;
+select ok(new_owner.linear_issue_id is null and old_owner.linear_issue_id='MANIFEST-544'
+  and new_owner.linear_issue_url=old_owner.linear_issue_url,
+  'same-issue restart preserves context while Linear routing remains on the source session')
+from restarted fresh cross join dispatch_target old join public.sessions old_owner on old_owner.id=old.session_id
+join public.sessions new_owner on new_owner.id=fresh.session_id;
 select is((select count(*) from public.session_job_git_inputs i join restarted fresh using (job_id)),0::bigint,
   'restart has no inherited Git input or prior approved checkpoint');
 select throws_ok($$select * from pg_temp.restart_manifest_session(
@@ -262,5 +270,28 @@ delete from public.sessions where id=(select session_id from dispatch_target);
 select is((select f.session_id from dispatch_target old cross join lateral
     pg_temp.restart_manifest_session(old.session_id,'54400000-0000-4000-8000-000000000001',repeat('a',64)) f),
   (select session_id from restarted),'a same-intent restart replay returns the committed child after deleting its origin');
+
+create temp table confirmation_revisions as
+select a.activation_number, a.workspace_id, a.factory_id, a.revision_id, a.created_by, r.canonical_digest
+from public.factory_definition_activations a join public.factory_definition_revisions r on r.id=a.revision_id
+where a.workspace_id='b1b2c3d4-0001-4000-8000-000000000001';
+create function pg_temp.confirm_factory(p_revision bigint) returns uuid language sql as $$
+  select admitted.session_id from confirmation_revisions revision
+  cross join lateral public.create_confirmed_factory_session_once_with_first_job(
+    revision.workspace_id, 'c1b2c3d4-0001-4000-8000-000000000001',
+    '54400000-0000-4000-8000-000000000003', repeat('c',64), revision.canonical_digest,
+    'Confirmed definition', 'Run the displayed revision', 'claude-code', 'a-live-model', '{}') admitted
+  where revision.activation_number=p_revision;
+$$;
+select throws_ok($$select pg_temp.confirm_factory(1)$$, 'P0003', 'The active factory definition changed.',
+  'a different revision with the same stable stages cannot be admitted from a stale confirmation');
+create temp table confirmed as select pg_temp.confirm_factory(2) as session_id;
+select is((select s.factory_definition_revision_id from public.sessions s join confirmed c on c.session_id=s.id),
+  (select revision_id from confirmation_revisions where activation_number=2),
+  'the confirmed revision is pinned to the committed session');
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,revision_id,3,created_by from confirmation_revisions where activation_number=1;
+select is(pg_temp.confirm_factory(2), (select session_id from confirmed),
+  'an accepted confirmation replays under its original revision after another activation');
 select * from finish();
 rollback;

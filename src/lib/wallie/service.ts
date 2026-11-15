@@ -262,6 +262,7 @@ export async function createSessionWithFirstJob(input: {
   attachmentIds?: string[];
   creationRequest?: { id: string; fingerprint: string };
   creatorMemberId: string;
+  factoryDefinitionDigest?: string;
   githubRepositoryId: string | null;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
@@ -292,6 +293,9 @@ export async function createSessionWithFirstJob(input: {
   if (input.restartOfSessionId && !input.creationRequest) {
     throw new Error("A creation request id is required to restart a session.");
   }
+  if (input.factoryDefinitionDigest && !input.creationRequest) {
+    throw new Error("A creation request id is required to confirm a factory definition.");
+  }
   const requestArgs = input.creationRequest
     ? {
         ...args,
@@ -300,12 +304,18 @@ export async function createSessionWithFirstJob(input: {
       }
     : null;
   const query = requestArgs
-    ? input.restartOfSessionId
-      ? admin.rpc("restart_session_once_with_first_job", {
+    ? input.factoryDefinitionDigest
+      ? admin.rpc("create_confirmed_factory_session_once_with_first_job", {
           ...requestArgs,
+          expected_factory_definition_digest: input.factoryDefinitionDigest,
           source_session_id: input.restartOfSessionId,
         })
-      : admin.rpc("create_session_once_with_first_job", requestArgs)
+      : input.restartOfSessionId
+        ? admin.rpc("restart_session_once_with_first_job", {
+            ...requestArgs,
+            source_session_id: input.restartOfSessionId,
+          })
+        : admin.rpc("create_session_once_with_first_job", requestArgs)
     : admin.rpc("create_session_with_first_job_and_attachments", args);
   const { data, error } = await query.single();
 

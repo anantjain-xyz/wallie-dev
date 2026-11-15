@@ -59,7 +59,7 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
   // Activation can reuse a current live check for the same runtime when there
   // is no candidate-specific check. Unrelated live settings stay out of scope.
   const data = input.definitionDigest
-    ? ((await latestCheck(input.definitionDigest)) ?? (await latestCheck(null, true)))
+    ? ((await latestCheck(input.definitionDigest, true)) ?? (await latestCheck(null, true)))
     : await latestCheck(null);
 
   const agentMatch =
