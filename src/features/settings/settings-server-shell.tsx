@@ -20,6 +20,7 @@ import {
   WorkspaceIdentityIsland,
   WorkspaceMembersIsland,
 } from "@/features/settings/islands/workspace-islands";
+import { RunHistoryControls } from "@/features/settings/run-history-controls";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
@@ -199,13 +200,22 @@ function AdvancedCategory(props: SettingsServerShellProps) {
         <UsageSection usage={props.usage} />
       </Suspense>
       {props.initialData.canManage ? (
-        <Section
-          anchorId="maintenance"
-          tagline="Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes."
-          title="Maintenance"
-        >
-          <MaintenanceIsland canManage workspaceId={props.initialData.workspace.id} />
-        </Section>
+        <>
+          <Section
+            anchorId="run-history"
+            tagline="Manage how long Wallie keeps run content and request private exports."
+            title="Run history"
+          >
+            <RunHistoryControls workspaceId={props.initialData.workspace.id} />
+          </Section>
+          <Section
+            anchorId="maintenance"
+            tagline="Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes."
+            title="Maintenance"
+          >
+            <MaintenanceIsland canManage workspaceId={props.initialData.workspace.id} />
+          </Section>
+        </>
       ) : null}
       <Suspense fallback={<SettingsSectionFallback label="rate limits" minHeight="min-h-96" />}>
         <AdvancedDetails {...props} />

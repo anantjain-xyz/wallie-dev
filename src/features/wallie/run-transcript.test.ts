@@ -12,8 +12,13 @@ type Client = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 const workspaceId = "53400000-0001-4000-8000-000000000001";
 const runId = "53400000-0004-4000-8000-000000000001";
 const timestamp = "2026-11-14T19:01:10.123456+00:00";
-const owner: { run_id: string; attempt_count: number | null; has_events: boolean; status: string } =
-  { run_id: runId, attempt_count: 2, has_events: true, status: "running" };
+const owner: {
+  run_id: string;
+  attempt_count: number | null;
+  has_events: boolean;
+  status: string;
+  transcript_expired_at?: string;
+} = { run_id: runId, attempt_count: 2, has_events: true, status: "running" };
 
 function client(pages: unknown[][] = [], currentOwner = owner) {
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
@@ -71,6 +76,35 @@ function legacy(index: number, overrides: Record<string, unknown> = {}) {
 }
 
 describe("run transcript pages", () => {
+  it("returns an explicit expiry receipt without reading transcript bodies", async () => {
+    const test = client([], {
+      ...owner,
+      status: "success",
+      has_events: false,
+      transcript_expired_at: timestamp,
+    });
+    await expect(loadRunTranscript(test.input)).resolves.toMatchObject({
+      expiredAt: timestamp,
+      entries: [],
+      hasOlder: false,
+      hasNewer: false,
+    });
+    expect(test.from).not.toHaveBeenCalled();
+    expect(test.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards page bytes when retention expires the transcript during the read", async () => {
+    const test = client([[event(1)]]);
+    test.rpc.mockResolvedValueOnce({ data: [owner], error: null }).mockResolvedValueOnce({
+      data: [{ ...owner, has_events: false, status: "success", transcript_expired_at: timestamp }],
+      error: null,
+    });
+    await expect(loadRunTranscript(test.input)).resolves.toMatchObject({
+      expiredAt: timestamp,
+      entries: [],
+    });
+  });
+
   it("loads only an exact attempt's newest bounded page in chronological display order", async () => {
     const test = client([[event(3), event(2), event(1)]]);
     const page = await loadRunTranscript({ ...test.input, query: { limit: 2 } });

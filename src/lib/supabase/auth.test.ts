@@ -98,7 +98,7 @@ describe("supabase auth helpers", () => {
   it("derives a minimal identity from asymmetric verified claims without a user request", async () => {
     const getClaims = vi.fn().mockResolvedValue({
       data: {
-        claims: { email: "person@example.com", sub: "user-123" },
+        claims: { email: "person@example.com", sub: "user-123", session_id: "verified-session" },
         header: { alg: "ES256", kid: "signing-key" },
       },
       error: null,
@@ -113,7 +113,10 @@ describe("supabase auth helpers", () => {
     await expect(getSupabaseAuthIdentityOrNull({ auth: { getClaims } })).resolves.toEqual({
       id: "user-123",
     });
-    expect(getClaims).toHaveBeenCalledTimes(2);
+    await expect(
+      getSupabaseAuthIdentityOrNull({ auth: { getClaims } }, { includeSessionId: true }),
+    ).resolves.toEqual({ id: "user-123", sessionId: "verified-session" });
+    expect(getClaims).toHaveBeenCalledTimes(3);
   });
 
   it("includes verified email only when the caller requires it", async () => {

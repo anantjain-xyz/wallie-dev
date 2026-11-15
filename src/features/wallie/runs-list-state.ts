@@ -33,6 +33,7 @@ export function runsListHasFilters(query: RunCatalogQuery) {
 }
 
 export function runCatalogActivityLabel(run: WorkspaceRunCatalogItem) {
+  if (run.transcript.expiredAt) return "Transcript expired";
   if (run.transcript.hasEvents) {
     if (run.transcript.captureInterrupted) return "Capture interrupted";
     if (

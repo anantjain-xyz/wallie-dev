@@ -68,6 +68,8 @@ export async function loadRunTranscript(input: Input): Promise<RunTranscriptPage
     attemptCount: owner.attempt_count ?? null,
   } satisfies z.infer<typeof scopeSchema>;
   const cursor = input.query?.cursor ? readCursor(input.query.cursor, scope, mode) : null;
+  if (owner.transcript_expired_at)
+    return expiredPage(scope, owner.status, owner.transcript_expired_at);
   const direction = input.query?.direction ?? "older";
   if (direction === "newer" && !cursor) throw new RunTranscriptCursorError();
   const limit = Math.min(
@@ -156,6 +158,8 @@ export async function loadRunTranscript(input: Input): Promise<RunTranscriptPage
   // empty transcript, and carries current terminal status across reconnects.
   const current = await readOwner(input);
   if (!current) return null;
+  if (current.transcript_expired_at)
+    return expiredPage(scope, current.status, current.transcript_expired_at);
   const currentMode = current.has_events && current.attempt_count !== null ? "events" : "legacy";
   if (currentMode !== mode || current.attempt_count !== owner.attempt_count)
     throw new RunTranscriptResetError();
@@ -170,11 +174,31 @@ export async function loadRunTranscript(input: Input): Promise<RunTranscriptPage
     runStatus: current.status,
     attemptCount: owner.attempt_count ?? null,
     mode,
+    expiredAt: null,
     entries,
     olderCursor: first ? writeCursor(first) : null,
     newerCursor: writeCursor(last ?? cursor ?? initialBoundary),
     hasOlder: forward ? Boolean(cursor && !isOrigin(cursor)) : hasMore,
     hasNewer: forward ? hasMore : Boolean(cursor),
+  };
+}
+
+function expiredPage(
+  scope: z.infer<typeof scopeSchema>,
+  status: RunTranscriptPage["runStatus"],
+  expiredAt: string,
+): RunTranscriptPage {
+  return {
+    runId: scope.runId,
+    runStatus: status,
+    attemptCount: scope.attemptCount,
+    mode: "legacy",
+    expiredAt,
+    entries: [],
+    olderCursor: null,
+    newerCursor: writeCursor({ ...scope, mode: "legacy", ...origin }),
+    hasOlder: false,
+    hasNewer: false,
   };
 }
 

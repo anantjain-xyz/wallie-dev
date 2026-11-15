@@ -6,6 +6,8 @@ import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publishe
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
+import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
+import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
@@ -100,6 +102,33 @@ async function main() {
   if (!draining) {
     cursorAuthProcessor = startCursorAuthProcessor(admin, config.workerId);
 
+    let exporting = false;
+    let cleaningExports = false;
+    maintenanceTimers.push(
+      setInterval(() => {
+        if (!exporting) {
+          exporting = true;
+          timerTasks.run("run exports", async () => {
+            try {
+              await drainRunExports(admin);
+            } finally {
+              exporting = false;
+            }
+          });
+        }
+        if (!cleaningExports) {
+          cleaningExports = true;
+          timerTasks.run("run export cleanup", async () => {
+            try {
+              await cleanupRunExports(admin);
+            } finally {
+              cleaningExports = false;
+            }
+          });
+        }
+      }, config.reconcileIntervalMs),
+    );
+
     // --- Stall detection interval ---
     maintenanceTimers.push(
       setInterval(() => {
@@ -147,6 +176,17 @@ async function main() {
               checked: result.checked,
               rateLimited: result.rateLimited,
             });
+          }
+        });
+      }, config.reconcileIntervalMs),
+    );
+
+    maintenanceTimers.push(
+      setInterval(() => {
+        timerTasks.run("run retention", async () => {
+          const result = await drainRunRetention(admin);
+          if (Object.values(result).some((count) => count > 0)) {
+            console.log("[worker] run retention results", result);
           }
         });
       }, config.reconcileIntervalMs),

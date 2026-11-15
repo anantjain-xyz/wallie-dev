@@ -152,6 +152,7 @@ export type RunTranscriptPage = {
   runStatus: Enums<"agent_run_status">;
   attemptCount: number | null;
   mode: "events" | "legacy";
+  expiredAt: string | null;
   entries: RunTranscriptEntry[];
   olderCursor: string | null;
   newerCursor: string;

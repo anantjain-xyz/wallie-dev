@@ -51,6 +51,7 @@ function runRow(index: number, changes: Partial<CatalogRow> = {}): CatalogRow {
     token_provenance: "measured",
     cost_provenance: "estimated",
     usage_finalized_at: timestamp,
+    transcript_expired_at: null,
     ...changes,
   };
 }

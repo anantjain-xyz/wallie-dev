@@ -33,14 +33,11 @@ type WorkspaceAccessResult =
       ok: false;
     });
 
-async function loadCurrentUser(supabase: SupabaseServerClient) {
-  return getSupabaseAuthIdentityOrNull(supabase);
-}
-
 export async function requireWorkspaceAccessById(
   workspaceId: string | null | undefined,
   options?: {
     allowDeleting?: boolean;
+    includeSessionId?: boolean;
     requireManager?: boolean;
     requireOwner?: boolean;
   },
@@ -54,7 +51,9 @@ export async function requireWorkspaceAccessById(
   }
 
   const supabase = await createSupabaseServerClient();
-  const user = await loadCurrentUser(supabase);
+  const user = await getSupabaseAuthIdentityOrNull(supabase, {
+    includeSessionId: options?.includeSessionId,
+  });
 
   if (!user) {
     return {

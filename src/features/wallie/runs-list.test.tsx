@@ -45,6 +45,7 @@ const run: WorkspaceRunCatalogItem = {
     finalized: true,
   },
   transcript: {
+    expiredAt: null,
     hasEvents: true,
     hasLegacyMessages: true,
     captureEnded: true,
