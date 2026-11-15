@@ -194,6 +194,17 @@ links and the run download both verify private object size and SHA-256. PR
 readiness checks only the required reports from the exact accepted receipt,
 including their bytes, before counting them as accessible.
 
+## Inspecting artifacts in Runs and Review
+
+- Choose **Inspect artifact provenance** on a run or beside the selected
+  artifact in Review. Both views open an accepted artifact by its recorded ID.
+- Review resolves the selected artifact through its accepted checkpoint.
+  Historical artifacts without a checkpoint show that their run was unrecorded.
+- The inspector separates agent-authored Markdown, retained source, and
+  harness-observed evidence. Files offer a private download after verification.
+- Browsing another catalog page or checking a private object takes an explicit
+  action. Opening the inspector does not load artifact versions or transcripts.
+
 ## Verification
 
 Run the focused capture, persistence, API, and SQL tests, then `pnpm check` and

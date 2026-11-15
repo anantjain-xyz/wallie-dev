@@ -10,6 +10,7 @@ import {
   PageSection,
 } from "@/components/ui/page-shell";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
+import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type { RunInspectorArtifact } from "@/features/wallie/run-inspector-data";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
@@ -18,12 +19,14 @@ import { workspaceRunsPath } from "@/lib/routes";
 export function RunInspector({
   run,
   artifact,
+  workspaceId,
   workspaceSlug,
   initialNow,
   transcript,
 }: {
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
+  workspaceId: string;
   workspaceSlug: string;
   initialNow: string;
   transcript: ReactNode;
@@ -66,6 +69,7 @@ export function RunInspector({
                 <Link
                   className="break-words text-foreground underline underline-offset-4"
                   href={run.sessionRunHref}
+                  prefetch={false}
                 >
                   #{run.sessionNumber} · {run.sessionTitle}
                 </Link>
@@ -149,7 +153,7 @@ export function RunInspector({
                     <TimeDisplay initialNow={initialNow} value={recovery.scheduledAt} />
                   </p>
                 ) : null}
-                <Link className="ui-button mt-4" href={run.sessionRunHref}>
+                <Link className="ui-button mt-4" href={run.sessionRunHref} prefetch={false}>
                   {recovery.action}
                 </Link>
               </div>
@@ -168,13 +172,22 @@ export function RunInspector({
                 </p>
               </div>
               {artifact.kind === "available" ? (
-                <Link className="ui-button" href={artifact.href}>
+                <Link className="ui-button" href={artifact.href} prefetch={false}>
                   Open artifact
                 </Link>
               ) : null}
             </div>
           </div>
         </PageSection>
+
+        <ArtifactEvidenceInspector
+          source={{
+            kind: "run",
+            workspaceId,
+            runId: run.id,
+            artifactId: artifact.kind === "available" ? artifact.id : null,
+          }}
+        />
 
         {transcript}
       </div>

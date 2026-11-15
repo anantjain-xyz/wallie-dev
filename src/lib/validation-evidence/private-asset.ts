@@ -59,7 +59,8 @@ function storageFailure(error: { status?: number; statusCode?: string }): Unavai
   if (
     error.statusCode === "NoSuchKey" ||
     error.statusCode === "not_found" ||
-    (error.status === 404 && (!error.statusCode || error.statusCode === "404"))
+    error.statusCode === "404" ||
+    (error.status === 404 && !error.statusCode)
   ) {
     return { status: "missing" };
   }

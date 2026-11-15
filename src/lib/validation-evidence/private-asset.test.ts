@@ -116,6 +116,22 @@ describe("private validation asset integrity", () => {
     });
   });
 
+  it("recognizes the Storage SDK's numeric object-not-found code on HTTP 400", async () => {
+    const { fetch, supabase } = setup();
+    fetch
+      .mockResolvedValueOnce(Response.json([]))
+      .mockResolvedValueOnce(
+        Response.json(
+          { code: "NoSuchKey", error: "not_found", statusCode: "404" },
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json([]));
+    expect(await readPrivateValidationAsset({ supabase, workspaceId, asset })).toEqual({
+      status: "missing",
+    });
+  });
+
   it("fails closed on a foreign or malformed manifest path before any request", async () => {
     const { fetch, supabase } = setup();
     expect(

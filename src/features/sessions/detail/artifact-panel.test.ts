@@ -2,6 +2,7 @@
 
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
@@ -344,6 +345,111 @@ describe("ArtifactPanel", () => {
     expect(
       vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("artifactId=")),
     ).toHaveLength(1);
+  });
+
+  it("opens provenance on demand for the exact deep-linked artifact and resets it when switching", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "22222222-2222-4222-8222-222222222222";
+    const runId = "33333333-3333-4333-8333-333333333333";
+    const current = { ...latestArtifact, id: "44444444-4444-4444-8444-444444444444" };
+    const historical = {
+      ...current,
+      id: "55555555-5555-4555-8555-555555555555",
+      sanitizedHtml: "<p>Historical artifact body</p>",
+    };
+    const artifactApi = `/api/sessions/${SESSION_ID}/artifacts`;
+    const selectedBodyUrl = `${artifactApi}?stage=build&artifactId=${historical.id}`;
+    const historicalProvenanceUrl = `${artifactApi}/${historical.id}/provenance`;
+    const currentProvenanceUrl = `${artifactApi}/${current.id}/provenance`;
+    const historyUrl = `${artifactApi}?stage=build`;
+    const historicalItemUrl = `/api/workspaces/${workspaceId}/runs/${runId}/artifacts/stage_markdown/${historical.id}`;
+    const query = `?artifactStage=build&artifactVersion=${historical.version}&artifactId=${historical.id}`;
+    window.history.replaceState(null, "", mockedNavigation.pathname + query);
+    mockedNavigation.searchParams = new URLSearchParams(query);
+    vi.mocked(fetch).mockImplementation((input) => {
+      switch (String(input)) {
+        case selectedBodyUrl:
+          return response({ artifact: historical });
+        case historicalProvenanceUrl:
+          return response({ workspaceId, workspaceSlug: "demo", runId });
+        case currentProvenanceUrl:
+          return response({ workspaceId, workspaceSlug: "demo", runId: null });
+        case historicalItemUrl:
+          return response({
+            artifact: {
+              id: historical.id,
+              kind: "stage_markdown",
+              label: "build v2",
+              digest: { algorithm: "sha256", value: "a".repeat(64) },
+              contentType: "text/markdown",
+              sizeBytes: 32,
+              availability: "available",
+              downloadable: true,
+              producer: { runId, sessionId: SESSION_ID, attemptCount: 2 },
+              checkpoint: { runId, commitSha: "b".repeat(40) },
+              validation: null,
+              recordedAt: historical.createdAt,
+            },
+          });
+        case historyUrl:
+          return response({
+            artifacts: [
+              metadataRow({
+                id: current.id,
+                version: current.version,
+                authorLabel: "Current author",
+              }),
+              metadataRow({
+                id: historical.id,
+                version: historical.version,
+                authorLabel: "Historical author",
+              }),
+            ],
+          });
+        default:
+          return response({ error: "Unexpected request" }, 500);
+      }
+    });
+    const calls = () => vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+
+    renderPanel({
+      latestArtifact: current,
+      currentArtifactId: current.id,
+      initialFormattedArtifactKey: `${SESSION_ID}:build:id:${current.id}`,
+    });
+    expect(await screen.findByText("Historical artifact body")).toBeTruthy();
+    expect(calls()).toEqual([selectedBodyUrl]);
+    const inspector = screen.getByRole("button", {
+      name: "Inspect artifact provenance",
+      expanded: false,
+    });
+    inspector.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(calls()).toEqual([selectedBodyUrl, historicalProvenanceUrl, historicalItemUrl]),
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
+    await user.click(await screen.findByRole("button", { name: /Version 2.*Current author/i }));
+    expect(screen.getByText("Latest formatted")).toBeTruthy();
+    expect(calls()).toEqual([
+      selectedBodyUrl,
+      historicalProvenanceUrl,
+      historicalItemUrl,
+      historyUrl,
+    ]);
+    await user.click(
+      screen.getByRole("button", { name: "Inspect artifact provenance", expanded: false }),
+    );
+    await waitFor(() =>
+      expect(calls()).toEqual([
+        selectedBodyUrl,
+        historicalProvenanceUrl,
+        historicalItemUrl,
+        historyUrl,
+        currentProvenanceUrl,
+      ]),
+    );
   });
 
   it("clears cached current output when current artifact authority becomes unavailable", async () => {

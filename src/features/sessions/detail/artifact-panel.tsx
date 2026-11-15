@@ -27,6 +27,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { InlineArtifactReview } from "@/features/sessions/review/inline-artifact-review";
 import type { ReviewSessionReadOnlyReason } from "@/features/sessions/review/comment-access";
+import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 
 export type DisplayedArtifactIdentity = Pick<
   SessionArtifactSummary,
@@ -1192,6 +1193,14 @@ function ArtifactPanelStage({
           </button>
         ) : null}
       </div>
+
+      {activeTab !== "versions" && visibleBody?.id ? (
+        <div className="mb-3">
+          <ArtifactEvidenceInspector
+            source={{ kind: "review", sessionId, artifactId: visibleBody.id }}
+          />
+        </div>
+      ) : null}
 
       {activeTab === "versions" ? (
         <div aria-labelledby="artifact-versions-tab" id="artifact-versions-panel" role="tabpanel">
