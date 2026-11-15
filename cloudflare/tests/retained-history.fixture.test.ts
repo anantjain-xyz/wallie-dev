@@ -153,6 +153,9 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
       });
       await attempt.waitForStatus("complete");
       expect(processPipelineJob).toHaveBeenCalledOnce();
+      expect(processPipelineJob).toHaveBeenCalledWith(
+        expect.objectContaining({ workerRuntime: "workerd" }),
+      );
       const owned = await checked(
         admin
           .from("agent_runs")

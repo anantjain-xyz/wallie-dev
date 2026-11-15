@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -149,46 +151,104 @@ export async function loadDefaultPipelineConfigurationForWorkspace(
   return loadPipelineConfigurationWithStages(admin, data.id);
 }
 
-export async function loadCompletedStageArtifacts(
+export type AttemptPredecessor =
+  | {
+      status: "approved";
+      stageId: string;
+      stageSlug: string;
+      approvalReceiptId: string;
+      artifactId: string;
+      artifactVersion: number;
+      artifactDigest: string;
+    }
+  | { status: "legacy_unverified"; stageId: string | null; stageSlug: string };
+
+type PredecessorApprovalRow =
+  Database["public"]["Functions"]["load_attempt_predecessor_approvals"]["Returns"][number];
+
+export async function loadAttemptPredecessors(
   admin: AdminClient,
   sessionId: string,
-): Promise<Record<string, string>> {
-  // Completion and artifact snapshots can retain old names after a stage is
-  // renamed. Associate by durable ID, then expose only the current prompt key.
-  const { data: completions, error: completionError } = await admin
-    .from("session_phase_completions")
-    .select("stage_id")
-    .eq("session_id", sessionId);
-  if (completionError) throw completionError;
-  const completedStageIds = [
-    ...new Set(
-      (completions ?? []).flatMap((completion) =>
-        completion.stage_id ? [completion.stage_id] : [],
-      ),
-    ),
-  ];
-  if (completedStageIds.length === 0) return {};
-  const [{ data: artifacts, error: artifactError }, { data: stages, error: stageError }] =
-    await Promise.all([
-      admin
-        .from("session_artifacts")
-        .select("stage_id, version, artifact_json")
-        .eq("session_id", sessionId)
-        .in("stage_id", completedStageIds)
-        .order("version", { ascending: true }),
-      admin.from("pipeline_stages").select("id, slug").in("id", completedStageIds),
-    ]);
-  if (artifactError) throw artifactError;
-  if (stageError) throw stageError;
+): Promise<{ promptArtifacts: Record<string, string>; predecessors: AttemptPredecessor[] }> {
+  const { data, error } = await admin.rpc("load_attempt_predecessor_approvals", {
+    p_session_id: sessionId,
+  });
+  if (error) throw error;
 
-  const currentSlugs = new Map((stages ?? []).map((stage) => [stage.id, stage.slug]));
+  // Reroutes can leave more than one historical completion label for the same
+  // stable stage. The receipt query orders verified approvals first.
+  const seenStages = new Set<string>();
+  const completions = (data ?? []).filter((row) => {
+    if (!row.stage_id) return true;
+    if (seenStages.has(row.stage_id)) return false;
+    seenStages.add(row.stage_id);
+    return true;
+  });
+  const legacy = await loadLegacyCompletedStageText(admin, sessionId, completions);
+  const promptArtifacts = new Map<string, string>();
+  const predecessors = completions.map((row): AttemptPredecessor => {
+    const stageSlug = row.current_stage_slug ?? row.stage_slug;
+    if (!row.approval_receipt_id) {
+      const text = row.stage_id ? legacy.get(row.stage_id) : undefined;
+      if (row.current_stage_slug && text !== undefined) promptArtifacts.set(stageSlug, text);
+      return { status: "legacy_unverified", stageId: row.stage_id ?? null, stageSlug };
+    }
+
+    const text = row.artifact_text;
+    if (
+      typeof text !== "string" ||
+      !row.stage_id ||
+      !row.artifact_id ||
+      !row.artifact_version ||
+      createHash("sha256").update(text, "utf8").digest("hex") !== row.artifact_digest
+    ) {
+      throw new Error(
+        `The approved artifact for stage "${stageSlug}" is unavailable or does not match its approval receipt.`,
+      );
+    }
+    if (row.current_stage_slug) promptArtifacts.set(stageSlug, text);
+    return {
+      status: "approved",
+      stageId: row.stage_id,
+      stageSlug,
+      approvalReceiptId: row.approval_receipt_id,
+      artifactId: row.artifact_id,
+      artifactVersion: row.artifact_version,
+      artifactDigest: row.artifact_digest,
+    };
+  });
+
+  return { promptArtifacts: Object.fromEntries(promptArtifacts), predecessors };
+}
+
+async function loadLegacyCompletedStageText(
+  admin: AdminClient,
+  sessionId: string,
+  completions: PredecessorApprovalRow[],
+): Promise<Map<string, string>> {
+  // Keep the legacy renderer's input available without treating the highest
+  // retained version as evidence of which artifact a reviewer approved.
+  const legacySlugs = new Map(
+    completions.flatMap((completion) =>
+      !completion.approval_receipt_id && completion.stage_id && completion.current_stage_slug
+        ? [[completion.stage_id, completion.current_stage_slug]]
+        : [],
+    ),
+  );
+  if (legacySlugs.size === 0) return new Map();
+  const { data: artifacts, error } = await admin
+    .from("session_artifacts")
+    .select("stage_id, version, artifact_json")
+    .eq("session_id", sessionId)
+    .in("stage_id", [...legacySlugs.keys()]);
+  if (error) throw error;
+
   const latestByStage = new Map<
     string,
     { artifact: NonNullable<typeof artifacts>[number]; count: number }
   >();
   for (const row of artifacts ?? []) {
-    // Orphaned historical labels cannot authorize prompt input for another stage.
-    if (!row.stage_id || !currentSlugs.has(row.stage_id)) continue;
+    if (!row.stage_id || !legacySlugs.has(row.stage_id)) continue;
     const latest = latestByStage.get(row.stage_id);
     if (!latest || row.version > latest.artifact.version) {
       latestByStage.set(row.stage_id, { artifact: row, count: 1 });
@@ -196,16 +256,16 @@ export async function loadCompletedStageArtifacts(
       latest.count++;
     }
   }
-  const result: Record<string, string> = {};
+
+  const result = new Map<string, string>();
   for (const [stageId, { artifact, count }] of latestByStage) {
-    const slug = currentSlugs.get(stageId)!;
     if (count > 1) {
       throw new Error(
-        `Completed stage "${slug}" has multiple artifacts at version ${artifact.version}. Reconcile or regenerate its history before continuing.`,
+        `Completed stage "${legacySlugs.get(stageId)}" has multiple artifacts at version ${artifact.version}. Reconcile or regenerate its history before continuing.`,
       );
     }
     const value = artifact.artifact_json;
-    result[slug] = typeof value === "string" ? value : JSON.stringify(value);
+    result.set(stageId, typeof value === "string" ? value : JSON.stringify(value));
   }
   return result;
 }

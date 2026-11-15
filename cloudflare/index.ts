@@ -186,6 +186,7 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
               captureOrderedEvents,
               timeoutMs: remaining,
               deadlineAt: dispatch.data.deadline_at,
+              workerRuntime: "workerd",
             });
           } finally {
             clearInterval(timer);

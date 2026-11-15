@@ -1,205 +1,177 @@
+import { createHash } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
-import { loadCompletedStageArtifacts } from "./stages";
+
+import type { Database, Json } from "@/lib/supabase/database.types";
+
+import { loadAttemptPredecessors } from "./stages";
+
+function completion(stageId: string | null, historicalSlug: string, currentSlug: string | null) {
+  return {
+    completion_id: `${historicalSlug}-completion`,
+    stage_id: stageId,
+    stage_slug: historicalSlug,
+    current_stage_slug: currentSlug,
+    approval_receipt_id: null,
+    artifact_id: null,
+    artifact_version: null,
+    artifact_digest: null,
+    artifact_text: null,
+  };
+}
+
+function approvedCompletion(text: string) {
+  return {
+    ...completion("plan-id", "plan", "discovery"),
+    approval_receipt_id: "approval-1",
+    artifact_id: "artifact-1",
+    artifact_version: 1,
+    artifact_digest: createHash("sha256").update(text).digest("hex"),
+    artifact_text: text,
+  };
+}
+
+type CompletionRow =
+  | ReturnType<typeof completion>
+  | (Omit<ReturnType<typeof approvedCompletion>, "artifact_text"> & {
+      artifact_text: string | null;
+    });
+
+const plan = completion("plan-id", "old-plan", "plan");
+const build = completion("build-id", "old-build", "build");
 
 function fixture(input: {
-  completedStageIds: Array<string | null>;
-  completionError?: Error;
-  stageError?: Error;
-  additionalArtifacts?: Array<{
-    stage_id: string | null;
-    stage_slug: string;
-    version: number;
-    artifact_json: string;
-  }>;
-  stageRows?: Array<{ id: string; slug: string }>;
+  completed: CompletionRow[];
+  completionError?: string;
+  artifactError?: string;
+  additionalArtifacts?: Array<{ stage_id: string; version: number; artifact_json: Json }>;
 }) {
   const artifacts = [
-    { stage_id: "plan-id", stage_slug: "plan", version: 1, artifact_json: "old plan" },
-    { stage_id: "plan-id", stage_slug: "plan", version: 2, artifact_json: "approved plan" },
-    {
-      stage_id: "build-id",
-      stage_slug: "build",
-      version: 1,
-      artifact_json: "obsolete downstream build",
-    },
-    { stage_id: "build-id", stage_slug: "build", version: 2, artifact_json: "new approved build" },
-    {
-      stage_id: "release-id",
-      stage_slug: "release",
-      version: 1,
-      artifact_json: "obsolete release",
-    },
-    {
-      stage_id: "orphan-id",
-      stage_slug: "plan",
-      version: 3,
-      artifact_json: "orphan output must not replace plan",
-    },
-    {
-      stage_id: null,
-      stage_slug: "plan",
-      version: 4,
-      artifact_json: "deleted stage output must not replace plan",
-    },
+    { stage_id: "plan-id", version: 1, artifact_json: "old plan" },
+    { stage_id: "plan-id", version: 2, artifact_json: "latest plan" },
+    { stage_id: "build-id", version: 1, artifact_json: "obsolete downstream build" },
+    { stage_id: "build-id", version: 2, artifact_json: "latest build" },
+    { stage_id: "orphan-id", version: 3, artifact_json: "orphan output" },
+    ...(input.additionalArtifacts ?? []),
   ];
-  artifacts.push(...(input.additionalArtifacts ?? []));
-  const stageRows = input.stageRows ?? [
-    { id: "plan-id", slug: "plan" },
-    { id: "build-id", slug: "build" },
-    { id: "release-id", slug: "release" },
-  ];
-  const reads: Array<{ table: string; column?: string; ids?: string[] }> = [];
-  const admin = {
-    from(table: string) {
-      const read: (typeof reads)[number] = { table };
-      reads.push(read);
-      const builder = {
-        select: () => builder,
-        eq: () => builder,
-        in: (column: string, ids: string[]) => {
-          read.column = column;
-          read.ids = ids;
-          return builder;
-        },
-        order: () => builder,
-        then: (resolve: (value: unknown) => unknown) =>
-          Promise.resolve(
-            resolve(
-              table === "session_phase_completions"
-                ? {
-                    data: input.completedStageIds.map((stage_id) => ({ stage_id })),
-                    error: input.completionError ?? null,
-                  }
-                : table === "pipeline_stages"
-                  ? {
-                      data: stageRows.filter((row) => read.ids?.includes(row.id)),
-                      error: input.stageError ?? null,
-                    }
-                  : {
-                      data: artifacts.filter(
-                        (row) => row.stage_id && read.ids?.includes(row.stage_id),
-                      ),
-                      error: null,
-                    },
-            ),
-          ),
-      };
-      return builder;
+  const reads: string[] = [];
+  const admin = createClient<Database>("http://localhost:9999", "test-service-role", {
+    global: {
+      fetch: async (request: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(request instanceof Request ? request.url : request);
+        reads.push(url.pathname);
+        if (url.pathname.endsWith("/load_attempt_predecessor_approvals")) {
+          expect(init?.body).toBe(JSON.stringify({ p_session_id: "session" }));
+          return input.completionError
+            ? Response.json({ message: input.completionError }, { status: 500 })
+            : Response.json(input.completed);
+        }
+        expect(url.pathname).toBe("/rest/v1/session_artifacts");
+        expect(url.searchParams.get("session_id")).toBe("eq.session");
+        if (input.artifactError) {
+          return Response.json({ message: input.artifactError }, { status: 500 });
+        }
+        const stageIds = new Set(url.searchParams.get("stage_id")?.slice(4, -1).split(","));
+        return Response.json(artifacts.filter((row) => stageIds.has(row.stage_id)));
+      },
     },
-  };
-  return { admin, reads };
+  });
+  return { load: () => loadAttemptPredecessors(admin, "session"), reads };
 }
-describe("loadCompletedStageArtifacts", () => {
-  it("excludes preserved downstream history after its completion is invalidated", async () => {
-    const { admin } = fixture({ completedStageIds: ["plan-id"] });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      plan: "approved plan",
-    });
-  });
-  it("exposes the latest artifact when the stage is completed again", async () => {
-    const { admin } = fixture({ completedStageIds: ["plan-id", "build-id"] });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      plan: "approved plan",
-      build: "new approved build",
-    });
-  });
-  it("returns no prior-stage context when all completions were invalidated", async () => {
-    const { admin, reads } = fixture({ completedStageIds: [] });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({});
-    expect(reads).toEqual([{ table: "session_phase_completions" }]);
-  });
-  it("does not fall back to historical output when the completion read fails", async () => {
-    const { admin, reads } = fixture({
-      completedStageIds: [],
-      completionError: new Error("database unavailable"),
-    });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).rejects.toThrow(
-      "database unavailable",
-    );
-    expect(reads).toEqual([{ table: "session_phase_completions" }]);
-  });
-  it("maps renamed completed-stage output only to its current slug, never another stage reusing its old slug", async () => {
-    const { admin, reads } = fixture({
-      completedStageIds: ["plan-id"],
-      stageRows: [
-        { id: "plan-id", slug: "discovery" },
-        { id: "build-id", slug: "plan" },
-      ],
-    });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      discovery: "approved plan",
-    });
-    expect(reads).toContainEqual({
-      table: "session_artifacts",
-      column: "stage_id",
-      ids: ["plan-id"],
-    });
-  });
-  it("keeps two completed stages distinct when their current names swap", async () => {
-    const { admin } = fixture({
-      completedStageIds: ["plan-id", "build-id"],
-      stageRows: [
-        { id: "plan-id", slug: "build" },
-        { id: "build-id", slug: "plan" },
-      ],
-    });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      build: "approved plan",
-      plan: "new approved build",
-    });
-  });
-  it("does not infer null or orphaned stage identity from a matching historical label", async () => {
-    const { admin } = fixture({ completedStageIds: [null, "orphan-id", "plan-id"] });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      plan: "approved plan",
-    });
-  });
-  it("does not guess a prompt key when the current-stage lookup fails", async () => {
-    const { admin } = fixture({
-      completedStageIds: ["plan-id"],
-      stageError: new Error("stage lookup failed"),
-    });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).rejects.toThrow(
-      "stage lookup failed",
-    );
-  });
-  it("fails closed when the highest retained version is duplicated for a completed stable stage", async () => {
-    const { admin } = fixture({
-      completedStageIds: ["plan-id"],
-      additionalArtifacts: [
+
+const approvalsPath = "/rest/v1/rpc/load_attempt_predecessor_approvals";
+
+describe("loadAttemptPredecessors", () => {
+  it("uses the reviewed artifact bytes after a rename, even when a newer retained artifact exists", async () => {
+    const exact = approvedCompletion("Approuvé\n");
+    const { load, reads } = fixture({ completed: [exact, plan, build] });
+    await expect(load()).resolves.toEqual({
+      promptArtifacts: { discovery: "Approuvé\n", build: "latest build" },
+      predecessors: [
         {
-          stage_id: "plan-id",
-          stage_slug: "old-plan",
-          version: 2,
-          artifact_json: "different legacy output",
+          status: "approved",
+          stageId: "plan-id",
+          stageSlug: "discovery",
+          approvalReceiptId: "approval-1",
+          artifactId: "artifact-1",
+          artifactVersion: 1,
+          artifactDigest: exact.artifact_digest,
         },
+        { status: "legacy_unverified", stageId: "build-id", stageSlug: "build" },
       ],
     });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).rejects.toThrow(
-      'Completed stage "plan" has multiple artifacts at version 2',
-    );
+    expect(reads).toEqual([approvalsPath, "/rest/v1/session_artifacts"]);
   });
-  it("allows a unique latest version above ambiguous older history", async () => {
-    const { admin } = fixture({
-      completedStageIds: ["plan-id"],
-      additionalArtifacts: [
-        {
-          stage_id: "plan-id",
-          stage_slug: "old-plan",
-          version: 1,
-          artifact_json: "different old output",
-        },
+
+  it("rejects changed bytes or a missing artifact without reading a guessed substitute", async () => {
+    const exact = approvedCompletion("Reviewed bytes");
+    for (const text of [null, "Changed bytes"]) {
+      const { load, reads } = fixture({ completed: [{ ...exact, artifact_text: text }] });
+      await expect(load()).rejects.toThrow("does not match its approval receipt");
+      expect(reads).toEqual([approvalsPath]);
+    }
+  });
+
+  it("records legacy completion as unverified and excludes invalidated downstream history", async () => {
+    const { load } = fixture({ completed: [plan] });
+    await expect(load()).resolves.toEqual({
+      promptArtifacts: { plan: "latest plan" },
+      predecessors: [{ status: "legacy_unverified", stageId: "plan-id", stageSlug: "plan" }],
+    });
+  });
+
+  it("records orphan labels without inferring their input text from another stage", async () => {
+    const { load } = fixture({
+      completed: [completion(null, "legacy", null), completion("orphan-id", "plan", null), plan],
+    });
+    await expect(load()).resolves.toEqual({
+      promptArtifacts: { plan: "latest plan" },
+      predecessors: [
+        { status: "legacy_unverified", stageId: null, stageSlug: "legacy" },
+        { status: "legacy_unverified", stageId: "orphan-id", stageSlug: "plan" },
+        { status: "legacy_unverified", stageId: "plan-id", stageSlug: "plan" },
       ],
     });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      plan: "approved plan",
+  });
+
+  it("keeps two distinct legacy versions separate after their current labels swap", async () => {
+    const { load } = fixture({
+      completed: [completion("plan-id", "plan", "build"), completion("build-id", "build", "plan")],
+    });
+    await expect(load()).resolves.toMatchObject({
+      promptArtifacts: { build: "latest plan", plan: "latest build" },
     });
   });
-  it("does not treat equal numeric versions from distinct stable stages as a tie", async () => {
-    const { admin } = fixture({ completedStageIds: ["plan-id", "build-id"] });
-    await expect(loadCompletedStageArtifacts(admin as never, "session")).resolves.toEqual({
-      plan: "approved plan",
-      build: "new approved build",
+
+  it("returns an empty snapshot without looking at artifacts when no stage remains complete", async () => {
+    const { load, reads } = fixture({ completed: [] });
+    await expect(load()).resolves.toEqual({ promptArtifacts: {}, predecessors: [] });
+    expect(reads).toEqual([approvalsPath]);
+  });
+
+  it("does not fall back when the completion snapshot cannot be loaded", async () => {
+    const { load, reads } = fixture({ completed: [], completionError: "snapshot unavailable" });
+    await expect(load()).rejects.toMatchObject({ message: "snapshot unavailable" });
+    expect(reads).toEqual([approvalsPath]);
+  });
+
+  it("does not guess a legacy artifact after an artifact read fails", async () => {
+    const { load } = fixture({ completed: [plan], artifactError: "legacy lookup failed" });
+    await expect(load()).rejects.toMatchObject({ message: "legacy lookup failed" });
+  });
+
+  it("rejects ties on the highest legacy version and tolerates duplicates below it", async () => {
+    const tiedLatest = fixture({
+      completed: [plan],
+      additionalArtifacts: [{ stage_id: "plan-id", version: 2, artifact_json: "duplicate" }],
+    });
+    await expect(tiedLatest.load()).rejects.toThrow("multiple artifacts at version 2");
+    const tiedOlder = fixture({
+      completed: [plan],
+      additionalArtifacts: [{ stage_id: "plan-id", version: 1, artifact_json: "duplicate" }],
+    });
+    await expect(tiedOlder.load()).resolves.toMatchObject({
+      promptArtifacts: { plan: "latest plan" },
     });
   });
 });

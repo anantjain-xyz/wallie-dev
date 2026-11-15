@@ -9,6 +9,8 @@ import { renderTemplate, type TemplateVariables } from "./render";
 
 export { renderTemplate, type TemplateVariables } from "./render";
 
+export const STAGE_PROMPT_RENDERER_VERSION = 1;
+
 const ARTIFACT_EVIDENCE_POLICY = trustedPromptValue(
   "wallie.artifactEvidencePolicy",
   `## Durable artifact evidence

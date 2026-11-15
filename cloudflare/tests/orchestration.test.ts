@@ -105,6 +105,7 @@ describe("native Workflow ownership", () => {
         captureOrderedEvents: true,
         timeoutMs: expect.any(Number),
         deadlineAt: expect.any(String),
+        workerRuntime: "workerd",
       });
       expect(vi.mocked(runClaimedJob).mock.calls[0]![2]!.timeoutMs).toBeLessThanOrEqual(60_000);
       expect(sendHeartbeat).toHaveBeenCalledExactlyOnceWith(f.admin, `cloudflare-${f.id}`, ["job"]);

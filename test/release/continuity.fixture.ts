@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -474,6 +474,14 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     );
     const firstEpoch = await canonical();
 
+    const planArtifact = await checked(
+      admin
+        .from("session_artifacts")
+        .select("id, version, artifact_json")
+        .eq("id", acceptedPlan.artifact_id)
+        .single(),
+    );
+    assert(typeof planArtifact.artifact_json === "string");
     const buildJobId = await approve();
     await writeFile(join(writer, "src/original.ts"), "unreviewed default branch replacement\n");
     await git(writer, "add", ".");
@@ -485,6 +493,30 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     const buildJob = await claimJob(admin, buildJobId);
     const buildResult = await production.processPipelineJob({ admin, job: buildJob });
     expect(buildResult.result).toBe("success");
+    const attemptManifest = await checked(
+      admin.from("session_attempt_manifests").select("*").eq("run_id", buildResult.runId!).single(),
+    );
+    expect(attemptManifest).toMatchObject({
+      job_id: buildJob.id,
+      attempt_count: buildJob.attempt_count,
+      definition_provenance: "legacy",
+      definition_revision_id: null,
+      worker_runtime: "node",
+      renderer_version: 1,
+      prompt_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      credential_owner_member_id: ids.memberId,
+      predecessors: [
+        expect.objectContaining({
+          status: "approved",
+          stageId: acceptedSession.current_stage_id,
+          artifactId: planArtifact.id,
+          artifactVersion: planArtifact.version,
+          artifactDigest: createHash("sha256")
+            .update(planArtifact.artifact_json, "utf8")
+            .digest("hex"),
+        }),
+      ],
+    });
     buildSha = (await checkpoint(buildResult.runId!)).output_sha;
     expect((await canonical()).id).toBe(firstEpoch.id);
 
