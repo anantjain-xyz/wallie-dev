@@ -79,3 +79,24 @@ export const serialFactoryDefinitionSchema = z
 
 export type SerialFactoryDefinitionInput = z.input<typeof serialFactoryDefinitionSchema>;
 export type SerialFactoryDefinition = z.output<typeof serialFactoryDefinitionSchema>;
+
+const stableUuid = z.string().uuid();
+export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
+  .omit({
+    pipeline: true,
+    repository: true,
+    executionPolicy: true,
+    deliveryPolicy: true,
+    skills: true,
+    tools: true,
+  })
+  .extend({
+    pipelineId: stableUuid,
+    repositoryId: stableUuid,
+    executionPolicyRevisionId: stableUuid.nullable(),
+    deliveryPolicyRevisionId: stableUuid.nullable(),
+    skillIds: z.array(referenceSchema),
+    toolIds: z.array(referenceSchema),
+    operatingRuleStageIds: z.array(stableUuid),
+    stages: z.array(stageSchema.extend({ previousStageIds: z.array(stableUuid) })).min(1),
+  });

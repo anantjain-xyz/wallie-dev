@@ -13,14 +13,17 @@ import { getOpenCodeAuthForUser } from "@/lib/opencode/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import { sandboxFailureText } from "@/lib/vercel-sandbox/errors";
 import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
-import type { AgentProvider, SandboxConnection } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
-import type { Database, Json } from "@/lib/supabase/database.types";
+import type { Database, TablesUpdate } from "@/lib/supabase/database.types";
 import {
   capabilityReportSucceeded,
   probeSandboxCapabilities,
 } from "@/lib/sandbox-capabilities/probe";
-import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
+import type {
+  SandboxCapabilityCheckState,
+  SandboxCapabilityReport,
+} from "@/lib/sandbox-capabilities/contracts";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -36,6 +39,23 @@ type StartedSandboxCapabilityCheck = {
   check: SandboxCapabilityCheckState;
   repository: RepositoryRow;
 };
+
+export type FactoryCapabilityCandidate = {
+  definitionDigest: string;
+  sandboxProvider: SandboxProvider;
+  agent: { provider: AgentProvider; model: string };
+};
+
+type FactoryCapabilityReservation = FactoryCapabilityCandidate & {
+  connectionRevision: string | null;
+};
+type FactoryCapabilityScope = FactoryCapabilityReservation & {
+  workspaceId: string;
+  repositoryId: string;
+};
+
+const checkColumns =
+  "id, github_repository_id, status, capabilities, error_text, checked_at, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id";
 
 function mapCheckRow(row: Record<string, unknown>): SandboxCapabilityCheckState {
   return {
@@ -127,22 +147,62 @@ async function insertRunningCheck(input: {
   admin: AdminClient;
   repositoryId: string;
   workspaceId: string;
+  candidate?: FactoryCapabilityCandidate & { actorUserId: string };
 }): Promise<SandboxCapabilityCheckState> {
-  const { data, error } = await input.admin.rpc("start_sandbox_capability_check", {
+  const scope = {
     target_github_repository_id: input.repositoryId,
     target_workspace_id: input.workspaceId,
-  });
+  };
+  const { candidate } = input;
+  const { data, error } = candidate
+    ? await input.admin.rpc("start_factory_definition_capability_check", {
+        ...scope,
+        target_actor_user_id: candidate.actorUserId,
+        target_sandbox_provider: candidate.sandboxProvider,
+        target_agent_provider: candidate.agent.provider,
+        target_agent_model: candidate.agent.model,
+        target_definition_digest: candidate.definitionDigest,
+      })
+    : await input.admin.rpc("start_sandbox_capability_check", scope);
 
   if (error) throw error;
   return mapCheckRow(data);
 }
 
+function updateReservedCheck(input: {
+  admin: AdminClient;
+  checkId: string;
+  patch: TablesUpdate<"sandbox_capability_checks">;
+  candidate?: FactoryCapabilityScope;
+  requireRunning?: boolean;
+}) {
+  const query = input.admin
+    .from("sandbox_capability_checks")
+    .update(input.patch)
+    .eq("id", input.checkId);
+  const { candidate } = input;
+  if (input.requireRunning || candidate) query.eq("status", "running");
+  if (!candidate) return query.is("factory_definition_digest", null);
+
+  query
+    .eq("workspace_id", candidate.workspaceId)
+    .eq("github_repository_id", candidate.repositoryId)
+    .eq("factory_definition_digest", candidate.definitionDigest)
+    .eq("sandbox_provider", candidate.sandboxProvider)
+    .eq("agent_provider", candidate.agent.provider)
+    .eq("agent_model", candidate.agent.model);
+  return candidate.connectionRevision === null
+    ? query.is("sandbox_connection_revision", null)
+    : query.eq("sandbox_connection_revision", candidate.connectionRevision);
+}
+
 async function updateCheck(input: {
   admin: AdminClient;
-  capabilities: unknown;
+  capabilities: Partial<SandboxCapabilityReport>;
   checkId: string | null;
   errorText: string | null;
   status: "success" | "error";
+  candidate?: FactoryCapabilityScope;
 }): Promise<SandboxCapabilityCheckState> {
   if (!input.checkId) {
     return {
@@ -161,18 +221,18 @@ async function updateCheck(input: {
     };
   }
 
-  const { data, error } = await input.admin
-    .from("sandbox_capability_checks")
-    .update({
-      capabilities: input.capabilities as Json,
+  const { data, error } = await updateReservedCheck({
+    admin: input.admin,
+    checkId: input.checkId,
+    candidate: input.candidate,
+    patch: {
+      capabilities: input.capabilities,
       checked_at: new Date().toISOString(),
       error_text: input.errorText,
       status: input.status,
-    })
-    .eq("id", input.checkId)
-    .select(
-      "id, github_repository_id, status, capabilities, error_text, checked_at, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    )
+    },
+  })
+    .select(checkColumns)
     .single();
 
   if (error) throw error;
@@ -186,13 +246,17 @@ async function updateCheckSandbox(input: {
   checkId: string | null;
   connection: SandboxConnection;
   sandboxId: string;
+  candidate?: FactoryCapabilityScope;
 }): Promise<void> {
   if (!input.checkId) throw new Error("Sandbox capability check reservation is required.");
 
   const vercel = input.connection.provider === "vercel" ? input.connection.credentials : null;
-  const { data, error } = await input.admin
-    .from("sandbox_capability_checks")
-    .update({
+  const { data, error } = await updateReservedCheck({
+    admin: input.admin,
+    checkId: input.checkId,
+    candidate: input.candidate,
+    requireRunning: true,
+    patch: {
       agent_model: input.agentModel,
       agent_provider: input.agentProvider,
       sandbox_id: input.sandboxId,
@@ -200,9 +264,8 @@ async function updateCheckSandbox(input: {
       sandbox_provider: input.connection.provider,
       sandbox_vercel_project_id: vercel?.projectId ?? null,
       sandbox_vercel_team_id: vercel?.teamId ?? null,
-    })
-    .eq("id", input.checkId)
-    .eq("status", "running")
+    },
+  })
     .select("id")
     .single();
 
@@ -214,12 +277,14 @@ export async function startSandboxCapabilityCheck(input: {
   admin: AdminClient;
   repositoryId?: string;
   workspaceId: string;
+  candidate?: FactoryCapabilityCandidate & { actorUserId: string };
 }): Promise<StartedSandboxCapabilityCheck> {
   const repository = await loadRepositoryForCapabilityCheck(input);
   const check = await insertRunningCheck({
     admin: input.admin,
     repositoryId: repository.id,
     workspaceId: input.workspaceId,
+    candidate: input.candidate,
   });
 
   return { check, repository };
@@ -229,15 +294,18 @@ export async function getLatestSandboxCapabilityCheck(input: {
   admin: AdminClient;
   repositoryId: string;
   workspaceId: string;
+  definitionDigest?: string;
 }): Promise<SandboxCapabilityCheckState | null> {
-  const { data, error } = await input.admin
+  const query = input.admin
     .from("sandbox_capability_checks")
-    .select(
-      "id, github_repository_id, status, capabilities, error_text, checked_at, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    )
+    .select(checkColumns)
     .eq("workspace_id", input.workspaceId)
-    .eq("github_repository_id", input.repositoryId)
+    .eq("github_repository_id", input.repositoryId);
+  if (input.definitionDigest === undefined) query.is("factory_definition_digest", null);
+  else query.eq("factory_definition_digest", input.definitionDigest);
+  const { data, error } = await query
     .order("checked_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -251,24 +319,43 @@ export async function completeSandboxCapabilityCheck(input: {
   repository: RepositoryRow;
   userId: string;
   workspaceId: string;
+  candidate?: FactoryCapabilityReservation;
 }): Promise<SandboxCapabilityCheckState> {
   let sandbox = null as Awaited<ReturnType<typeof createSessionSandbox>> | null;
+  const { candidate } = input;
+  const candidateScope = candidate && {
+    ...candidate,
+    workspaceId: input.workspaceId,
+    repositoryId: input.repository.id,
+  };
 
   try {
     if (!input.checkId) throw new Error("Sandbox capability check reservation is required.");
-    const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspaceId);
-    const provider = agentConfig.provider as AgentProvider;
-    const sandboxSelection = await loadRequiredWorkspaceSandboxConnection(
-      input.admin,
-      input.workspaceId,
-    );
+    const { provider, model } =
+      candidate?.agent ?? (await loadWorkspaceAgentConfig(input.admin, input.workspaceId));
+    const sandboxSelection = candidate
+      ? await loadRequiredWorkspaceSandboxConnection(
+          input.admin,
+          input.workspaceId,
+          candidate.sandboxProvider,
+        )
+      : await loadRequiredWorkspaceSandboxConnection(input.admin, input.workspaceId);
+    if (
+      candidate &&
+      (sandboxSelection.provider !== candidate.sandboxProvider ||
+        sandboxSelection.connection.revision !== candidate.connectionRevision)
+    ) {
+      throw new Error(
+        "The sandbox connection changed after this factory check was reserved. Run a new check.",
+      );
+    }
     const installationToken = await mintInstallationToken(input.admin, input.repository);
     if (provider === "codex") {
       await getCodexCredentialForUser(input.admin, input.userId);
     } else if (provider === "cursor") {
       await getCursorCredentialForUser(input.admin, input.userId);
     } else if (provider === "opencode") {
-      await getOpenCodeAuthForUser(input.admin, input.userId, agentConfig.model);
+      await getOpenCodeAuthForUser(input.admin, input.userId, model);
     } else {
       await getClaudeCodeCredentialForUser(input.admin, input.userId);
     }
@@ -288,11 +375,12 @@ export async function completeSandboxCapabilityCheck(input: {
       onSandboxCreated: async ({ sandboxId }) => {
         await updateCheckSandbox({
           admin: input.admin,
-          agentModel: agentConfig.model,
+          agentModel: model,
           agentProvider: provider,
           checkId: input.checkId,
           connection: sandboxSelection.connection,
           sandboxId,
+          candidate: candidateScope,
         });
       },
     });
@@ -315,6 +403,7 @@ export async function completeSandboxCapabilityCheck(input: {
       checkId: input.checkId,
       errorText: success ? null : "One or more sandbox capabilities failed.",
       status: success ? "success" : "error",
+      candidate: candidateScope,
     });
   } catch (error) {
     return await updateCheck({
@@ -323,6 +412,7 @@ export async function completeSandboxCapabilityCheck(input: {
       checkId: input.checkId,
       errorText: sandboxFailureText(error),
       status: "error",
+      candidate: candidateScope,
     });
   } finally {
     await sandbox?.stop();

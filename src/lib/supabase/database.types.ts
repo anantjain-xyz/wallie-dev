@@ -1852,6 +1852,7 @@ export type Database = {
           checked_at: string
           created_at: string
           error_text: string | null
+          factory_definition_digest: string | null
           github_repository_id: string | null
           id: string
           sandbox_connection_revision: string | null
@@ -1870,6 +1871,7 @@ export type Database = {
           checked_at?: string
           created_at?: string
           error_text?: string | null
+          factory_definition_digest?: string | null
           github_repository_id?: string | null
           id?: string
           sandbox_connection_revision?: string | null
@@ -1888,6 +1890,7 @@ export type Database = {
           checked_at?: string
           created_at?: string
           error_text?: string | null
+          factory_definition_digest?: string | null
           github_repository_id?: string | null
           id?: string
           sandbox_connection_revision?: string | null
@@ -6350,6 +6353,33 @@ export type Database = {
         }
         Returns: boolean
       }
+      publish_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       publish_session_job_attempt: {
         Args: {
           p_artifact_json: string
@@ -6632,6 +6662,33 @@ export type Database = {
         }
         Returns: Json
       }
+      rollback_factory_definition: {
+        Args: {
+          p_actor_user_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       save_delivery_policy: {
         Args: {
           p_actor_user_id: string
@@ -6674,6 +6731,33 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "execution_policy_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_canonical_digest: string
+          p_definition_json: string
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number | null
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_drafts"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -6779,6 +6863,42 @@ export type Database = {
         Args: { p_operation_id: string; p_transferred: boolean }
         Returns: undefined
       }
+      start_factory_definition_capability_check: {
+        Args: {
+          target_actor_user_id: string
+          target_agent_model: string
+          target_agent_provider: string
+          target_definition_digest: string
+          target_github_repository_id: string
+          target_sandbox_provider: string
+          target_workspace_id: string
+        }
+        Returns: {
+          agent_model: string | null
+          agent_provider: string | null
+          capabilities: Json
+          checked_at: string
+          created_at: string
+          error_text: string | null
+          factory_definition_digest: string | null
+          github_repository_id: string | null
+          id: string
+          sandbox_connection_revision: string | null
+          sandbox_id: string | null
+          sandbox_provider: string | null
+          sandbox_vercel_project_id: string | null
+          sandbox_vercel_team_id: string | null
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "sandbox_capability_checks"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       start_sandbox_capability_check: {
         Args: {
           target_github_repository_id: string
@@ -6791,6 +6911,7 @@ export type Database = {
           checked_at: string
           created_at: string
           error_text: string | null
+          factory_definition_digest: string | null
           github_repository_id: string | null
           id: string
           sandbox_connection_revision: string | null
