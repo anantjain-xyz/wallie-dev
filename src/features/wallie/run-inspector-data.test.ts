@@ -1,0 +1,243 @@
+import { createClient } from "@supabase/supabase-js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { RunCatalogWorkspaceUnavailableError } from "@/features/wallie/run-catalog";
+import {
+  loadRunInspectorArtifact,
+  loadRunInspectorData,
+} from "@/features/wallie/run-inspector-data";
+import { RunTranscriptResetError } from "@/features/wallie/run-transcript";
+import type { Database } from "@/lib/supabase/database.types";
+
+const mocks = vi.hoisted(() => ({ context: vi.fn(), catalog: vi.fn(), transcript: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+vi.mock("@/features/workspaces/workspace-layout-data", () => ({
+  loadWorkspaceLayoutContext: mocks.context,
+}));
+vi.mock("@/features/wallie/run-catalog", () => ({
+  loadWorkspaceRunCatalogItem: mocks.catalog,
+  RunCatalogWorkspaceUnavailableError: class extends Error {},
+}));
+vi.mock("@/features/wallie/run-transcript", () => ({
+  loadRunTranscript: mocks.transcript,
+  RunTranscriptResetError: class extends Error {},
+}));
+
+const workspaceId = "00000000-0000-4000-8000-000000000001";
+const run = {
+  id: "00000000-0000-4000-8000-000000000002",
+  sessionId: "00000000-0000-4000-8000-000000000003",
+  attemptCount: 4,
+  sessionNumber: 42,
+};
+const artifactId = "00000000-0000-4000-8000-000000000004";
+const artifactRow = {
+  id: artifactId,
+  stage_slug: "build",
+  version: 2,
+  created_at: "2026-11-14T20:00:00Z",
+};
+
+function fixture({
+  checkpoint = true,
+  artifact = true,
+  failure,
+}: {
+  checkpoint?: boolean;
+  artifact?: boolean;
+  failure?: string;
+} = {}) {
+  const requests: URL[] = [];
+  const supabase = createClient<Database>("https://database.example.test", "test-key", {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: async (input) => {
+        const url = new URL(
+          typeof input === "string" ? input : input instanceof URL ? input : input.url,
+        );
+        requests.push(url);
+        const table = url.pathname.split("/").at(-1);
+        const data =
+          table === "session_git_checkpoints"
+            ? checkpoint
+              ? [{ artifact_id: artifactId }]
+              : []
+            : artifact
+              ? [artifactRow]
+              : [];
+        return new Response(
+          JSON.stringify(table === failure ? { message: "private database error" } : data),
+          {
+            status: table === failure ? 403 : 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      },
+    },
+  });
+  return { requests, input: { supabase, workspaceId, workspaceSlug: "wallie", run } };
+}
+
+beforeEach(() => vi.clearAllMocks());
+
+describe("exact-attempt accepted artifact", () => {
+  it("reads only metadata through the caller's client and links the accepted stage/version", async () => {
+    const { requests, input } = fixture();
+    expect(await loadRunInspectorArtifact(input)).toEqual({
+      kind: "available",
+      id: artifactId,
+      stageSlug: "build",
+      version: 2,
+      createdAt: artifactRow.created_at,
+      href: "/w/wallie/sessions/42?artifactStage=build&artifactVersion=2",
+    });
+    expect(requests).toHaveLength(2);
+    expect(Object.fromEntries(requests[0].searchParams)).toEqual({
+      select: "artifact_id",
+      workspace_id: `eq.${workspaceId}`,
+      session_id: `eq.${run.sessionId}`,
+      run_id: `eq.${run.id}`,
+      attempt_count: "eq.4",
+    });
+    expect(Object.fromEntries(requests[1].searchParams)).toEqual({
+      select: "id,stage_slug,version,created_at",
+      workspace_id: `eq.${workspaceId}`,
+      session_id: `eq.${run.sessionId}`,
+      id: `eq.${artifactId}`,
+    });
+  });
+
+  it("does not guess an artifact from the latest session output when no exact checkpoint exists", async () => {
+    const { requests, input } = fixture({ checkpoint: false });
+    expect(await loadRunInspectorArtifact(input)).toEqual({ kind: "none" });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("does not look up an unrecorded attempt", async () => {
+    const { requests, input } = fixture();
+    expect(
+      await loadRunInspectorArtifact({ ...input, run: { ...run, attemptCount: null } }),
+    ).toEqual({ kind: "unrecorded" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each(["session_git_checkpoints", "session_artifacts"])(
+    "keeps a failed %s lookup distinct from no artifact",
+    async (failure) => {
+      const { input } = fixture({ failure });
+      expect(await loadRunInspectorArtifact(input)).toEqual({ kind: "unavailable" });
+    },
+  );
+
+  it("does not reveal an inaccessible artifact", async () => {
+    const { input } = fixture({ artifact: false });
+    expect(await loadRunInspectorArtifact(input)).toEqual({ kind: "unavailable" });
+  });
+});
+
+describe("run inspector composition", () => {
+  function prepare() {
+    const { input } = fixture();
+    mocks.context.mockResolvedValue({
+      supabase: input.supabase,
+      workspace: { id: workspaceId, slug: "wallie" },
+    });
+    mocks.catalog.mockResolvedValue({ ...run, status: "canceled", interrupted: false });
+    mocks.transcript.mockResolvedValue({
+      runId: run.id,
+      attemptCount: run.attemptCount,
+      runStatus: "canceled",
+      entries: [],
+    });
+    return input;
+  }
+
+  it("uses the newest exact transcript status so a cancellation between reads is not revived", async () => {
+    const input = prepare();
+    mocks.catalog.mockResolvedValueOnce({ ...run, status: "running", interrupted: false });
+    const data = await loadRunInspectorData("wallie", run.id);
+    expect(data.run).toMatchObject({ id: run.id, status: "canceled", interrupted: false });
+    expect(mocks.catalog).toHaveBeenCalledWith({
+      supabase: input.supabase,
+      workspaceId,
+      workspaceSlug: "wallie",
+      runId: run.id,
+    });
+    expect(mocks.transcript).toHaveBeenCalledWith({
+      supabase: input.supabase,
+      workspaceId,
+      runId: run.id,
+    });
+    expect(mocks.catalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads a queued run's newly claimed attempt before looking up its artifact", async () => {
+    prepare();
+    mocks.catalog.mockResolvedValueOnce({
+      ...run,
+      attemptCount: null,
+      status: "canceled",
+      interrupted: false,
+    });
+    const data = await loadRunInspectorData("wallie", run.id);
+    expect(data.run.attemptCount).toBe(4);
+    expect(data.artifact.kind).toBe("available");
+    expect(mocks.catalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an invalid run id before data reads", async () => {
+    prepare();
+    await expect(loadRunInspectorData("wallie", "invalid")).rejects.toThrow("NOT_FOUND");
+    expect(mocks.catalog).not.toHaveBeenCalled();
+    expect(mocks.transcript).not.toHaveBeenCalled();
+  });
+
+  it("returns not-found for absent or inaccessible runs", async () => {
+    prepare();
+    mocks.catalog.mockResolvedValue(null);
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("NOT_FOUND");
+    expect(mocks.transcript).not.toHaveBeenCalled();
+  });
+
+  it("returns not-found when membership is revoked between reads", async () => {
+    prepare();
+    mocks.transcript.mockResolvedValue(null);
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("restarts an initial transcript once when capture begins during the read", async () => {
+    prepare();
+    mocks.transcript.mockRejectedValueOnce(new RunTranscriptResetError());
+    const data = await loadRunInspectorData("wallie", run.id);
+    expect(data.run.id).toBe(run.id);
+    expect(mocks.transcript).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds source-transition retries and keeps revocation as not-found", async () => {
+    prepare();
+    mocks.transcript
+      .mockRejectedValueOnce(new RunTranscriptResetError())
+      .mockRejectedValueOnce(new RunTranscriptResetError());
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toBeInstanceOf(
+      RunTranscriptResetError,
+    );
+    expect(mocks.transcript).toHaveBeenCalledTimes(2);
+    mocks.transcript
+      .mockClear()
+      .mockRejectedValueOnce(new RunTranscriptResetError())
+      .mockResolvedValueOnce(null);
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("maps unavailable workspaces to not-found while preserving ordinary read failures", async () => {
+    prepare();
+    mocks.catalog.mockRejectedValueOnce(new RunCatalogWorkspaceUnavailableError());
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("NOT_FOUND");
+    mocks.catalog.mockRejectedValueOnce(new Error("Read failed"));
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("Read failed");
+  });
+});

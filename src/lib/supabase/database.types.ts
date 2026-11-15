@@ -5496,6 +5496,23 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      list_run_legacy_transcript: {
+        Args: {
+          p_cursor_created_at?: string
+          p_cursor_id?: string
+          p_direction?: string
+          p_limit?: number
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          kind: string
+          message_excerpt: string
+          message_truncated: boolean
+        }[]
+      }
       list_workspace_run_catalog: {
         Args: {
           p_before_created_at?: string

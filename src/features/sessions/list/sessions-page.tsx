@@ -12,7 +12,7 @@ import {
   buildSessionsListHref,
   sessionsPaginationLabel,
 } from "@/features/sessions/list/sessions-list-mutations";
-import { workspaceSessionsPath } from "@/lib/routes";
+import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
 type SessionsPageProps = {
   initialData: SessionListPageData;
@@ -43,7 +43,15 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <VisibleInteractionBoundary action="pipeline_to_sessions" />
-      <PageHeader className="mb-4 sm:mb-8" title="Sessions" />
+      <PageHeader
+        actions={
+          <Link className="ui-button" href={workspaceRunsPath(workspaceSlug)}>
+            Runs
+          </Link>
+        }
+        className="mb-4 sm:mb-8"
+        title="Sessions"
+      />
 
       <SessionsCommandBar
         queryState={initialData.queryState}

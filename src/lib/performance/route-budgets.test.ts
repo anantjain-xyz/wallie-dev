@@ -24,8 +24,10 @@ afterEach(() => {
 const routeStats = [
   ["/w/[workspaceSlug]", 700_000],
   ["/w/[workspaceSlug]/sessions", 700_000],
+  ["/w/[workspaceSlug]/runs", 700_000],
   ["/w/[workspaceSlug]/settings", 800_000],
   ["/w/[workspaceSlug]/sessions/[sessionNumber]", 900_000],
+  ["/w/[workspaceSlug]/runs/[runId]", 900_000],
   ["/w/[workspaceSlug]/onboarding", 680_000],
 ].map(([route, bytes]) => ({
   firstLoadChunkPaths: [`.next/${route}.js`],
@@ -49,17 +51,66 @@ describe("route bundle budgets", () => {
       ),
     });
 
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(8);
     expect(results.map((result) => result.name)).toEqual([
       "shared/root",
       "pipeline",
       "sessions",
+      "runs",
       "settings",
       "detail",
+      "run-detail",
       "onboarding",
     ]);
     expect(results.find((result) => result.name === "settings")?.overBudgetBytes).toBe(1);
   });
+
+  it.each([
+    { name: "runs", route: "/w/[workspaceSlug]/runs", ceiling: establishedMaximumBytes.sessions },
+    {
+      name: "run-detail",
+      route: "/w/[workspaceSlug]/runs/[runId]",
+      ceiling: establishedMaximumBytes.detail,
+    },
+  ])(
+    "enforces the $name route ceiling and requires its build diagnostic",
+    ({ name, route, ceiling }) => {
+      const stats = parseRouteBundleStats(JSON.stringify(routeStats));
+      const results = evaluateRouteBudgets({
+        budgets: establishedMaximumBytes,
+        sharedRootBytes: 450_000,
+        stats: stats.map((stat) =>
+          stat.route === route
+            ? {
+                ...stat,
+                firstLoadUncompressedJsBytes: 450_000 + ceiling + 1,
+              }
+            : stat,
+        ),
+      });
+      expect(results.find((result) => result.name === name)).toMatchObject({
+        route,
+        budgetBytes: ceiling,
+        currentBytes: ceiling + 1,
+        overBudgetBytes: 1,
+      });
+      expect(() =>
+        evaluateRouteBudgets({
+          budgets: establishedMaximumBytes,
+          sharedRootBytes: 450_000,
+          stats: stats.filter((stat) => stat.route !== route),
+        }),
+      ).toThrow(`Missing route bundle stat for ${route}.`);
+      expect(() =>
+        parseBudgetConfig(
+          JSON.stringify({
+            ...establishedMaximumBytes,
+            [name]: ceiling + 1,
+          }),
+        ),
+      ).toThrow("increased above its established ceiling");
+    },
+  );
 
   it("rejects malformed diagnostics and budget increases", () => {
     expect(() => parseRouteBundleStats('{"route":"/"}')).toThrow("must be an array");
@@ -111,7 +162,7 @@ describe("route bundle budgets", () => {
       error.mockRestore();
     }
 
-    expect(logs).toHaveLength(6);
+    expect(logs).toHaveLength(8);
     for (const name of Object.keys(establishedMaximumBytes)) {
       expect(logs.some((line) => line.includes(` ${name}:`))).toBe(true);
     }
