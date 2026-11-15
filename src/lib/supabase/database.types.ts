@@ -1103,6 +1103,204 @@ export type Database = {
           },
         ]
       }
+      factories: {
+        Row: {
+          created_at: string
+          id: string
+          is_default: boolean
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factories_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_definition_activations: {
+        Row: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          previous_activation_number?: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          previous_activation_number?: number | null
+          revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_definition_activation_workspace_id_factory_id_prev_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "previous_activation_number",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "factory_definition_activation_workspace_id_factory_id_revi_fkey"
+            columns: ["workspace_id", "factory_id", "revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_definition_activations_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      factory_definition_drafts: {
+        Row: {
+          base_activation_number: number | null
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          workspace_id: string
+        }
+        Insert: {
+          base_activation_number?: number | null
+          canonical_digest: string
+          created_at?: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id?: string
+          schema_version: number
+          workspace_id: string
+        }
+        Update: {
+          base_activation_number?: number | null
+          canonical_digest?: string
+          created_at?: string
+          created_by?: string
+          definition_json?: string
+          factory_id?: string
+          id?: string
+          schema_version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_definition_drafts_base_fk"
+            columns: ["workspace_id", "factory_id", "base_activation_number"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "factory_definition_drafts_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      factory_definition_revisions: {
+        Row: {
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          source_draft_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          canonical_digest: string
+          created_at?: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id?: string
+          schema_version: number
+          source_draft_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          canonical_digest?: string
+          created_at?: string
+          created_by?: string
+          definition_json?: string
+          factory_id?: string
+          id?: string
+          schema_version?: number
+          source_draft_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_definition_revisions_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_definition_revisions_workspace_id_factory_id_sourc_fkey"
+            columns: ["workspace_id", "factory_id", "source_draft_id"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_drafts"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       github_install_flows: {
         Row: {
           created_at: string
@@ -3587,6 +3785,8 @@ export type Database = {
           execution_exhaustion_detail: Json | null
           execution_policy_revision_id: string | null
           execution_repair_attempts: number
+          factory_definition_provenance: string
+          factory_definition_revision_id: string | null
           github_repository_id: string | null
           id: string
           linear_issue_id: string | null
@@ -3615,6 +3815,8 @@ export type Database = {
           execution_exhaustion_detail?: Json | null
           execution_policy_revision_id?: string | null
           execution_repair_attempts?: number
+          factory_definition_provenance?: string
+          factory_definition_revision_id?: string | null
           github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
@@ -3643,6 +3845,8 @@ export type Database = {
           execution_exhaustion_detail?: Json | null
           execution_policy_revision_id?: string | null
           execution_repair_attempts?: number
+          factory_definition_provenance?: string
+          factory_definition_revision_id?: string | null
           github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
@@ -3686,6 +3890,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "execution_policy_revisions"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_factory_definition_revision_fk"
+            columns: ["workspace_id", "factory_definition_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_revisions"
+            referencedColumns: ["workspace_id", "id"]
           },
           {
             foreignKeyName: "sessions_github_repository_id_fkey"
