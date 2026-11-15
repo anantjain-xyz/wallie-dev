@@ -239,16 +239,14 @@ describe("compileFactoryDefinition", () => {
     });
   });
 
-  it("reports forward, self, and unknown artifact references and a stage with no eligible reviewer", () => {
+  it("reports forward, self, and unknown artifact references", () => {
     const input = candidate();
     input.stages[0].promptTemplateMd =
       "{{artifact.previousStages.prepare-release}} {{artifact.previousStages.discover-risk}} {{artifact.previousStages.unknown-stage}}";
-    input.stages[0].anyoneCanApprove = false;
     const compiled = compile(input);
     expect(compiled).toMatchObject({
       ok: false,
       diagnostics: [
-        { path: ["stages", 0, "approverMemberIds"], code: "unreachable_stage" },
         {
           path: ["stages", 0, "promptTemplateMd"],
           code: "unreachable_stage",
@@ -265,6 +263,24 @@ describe("compileFactoryDefinition", () => {
           message: expect.stringContaining("unknown-stage"),
         },
       ],
+    });
+  });
+
+  it("preserves owner and admin approval when no specific approvers are assigned", () => {
+    const input = candidate();
+    input.stages[0].anyoneCanApprove = false;
+    expect(compile(input)).toMatchObject({
+      ok: true,
+      bundle: {
+        stages: [
+          { id: firstStageId, anyoneCanApprove: false, approverMemberIds: [] },
+          {
+            id: lastStageId,
+            anyoneCanApprove: false,
+            approverMemberIds: [approverId, otherApproverId],
+          },
+        ],
+      },
     });
   });
 

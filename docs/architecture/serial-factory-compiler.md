@@ -38,6 +38,7 @@ The caller supplies eligible pipelines, repositories, execution and delivery pol
 ## Stage order and prompt references
 
 - Stage prompts can reference artifacts from earlier stages. Shared operating rules can reference any stage. A conditional such as `{{#if artifact.previousStages.design-review}}…{{/if}}` lets shared rules wait until the artifact exists.
+- A stage with `anyoneCanApprove: false` and an empty approver list uses Wallie's existing owner and admin approval policy. Explicit approver IDs must resolve to eligible workspace members.
 - The compiler resolves these references to stage UUIDs and preserves prompt text. At execution, the existing renderer receives classified configuration and separately classified session, repository, feedback, and artifact values.
 - Invalid candidates return diagnostics with a field path, code, and message. Diagnostics identify missing or ambiguous components, unsupported options, duplicate stages, and unreachable stage references.
 

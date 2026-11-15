@@ -184,13 +184,6 @@ function compileSerialDefinition(
   const operatingRuleStageIds = promptStageIds(operatingRulesMd, ["operatingRulesMd"]);
   const stages = definition.stages.map((stage, index) => {
     const approverMemberIds = new Set<string>();
-    if (!stage.anyoneCanApprove && !stage.approverMemberIds.length) {
-      diagnostics.push({
-        path: ["stages", index, "approverMemberIds"],
-        code: "unreachable_stage",
-        message: "Choose an active human approver or allow any workspace member to approve.",
-      });
-    }
     stage.approverMemberIds.forEach((id, approverIndex) => {
       const member = find(catalog.approvers, id, [
         "stages",
