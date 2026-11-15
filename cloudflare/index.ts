@@ -6,6 +6,7 @@ import {
 } from "cloudflare:workers";
 import { timingSafeEqual } from "node:crypto";
 import { cloudflareEnvSchema } from "@/env/cloudflare";
+import { workerRunCaptureEnvSchema } from "@/env/worker";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runClaimedJob } from "@/worker/loop";
 import { processClaimedCursorAuthFlow } from "@/lib/cursor/auth-processor";
@@ -134,6 +135,8 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
   async run(event: WorkflowEvent<AttemptParams>, step: WorkflowStep) {
     const { jobId, attemptCount, workflowId } = event.payload;
     if (workflowId !== event.instanceId) throw new Error("Workflow identity mismatch.");
+    const { WALLIE_ORDERED_RUN_CAPTURE_ENABLED: captureOrderedEvents } =
+      workerRunCaptureEnvSchema.parse(this.env);
     const admin = createSupabaseAdminClient();
     try {
       await step.do(
@@ -180,6 +183,7 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
           try {
             await sendHeartbeat(admin, workerId, [jobId]);
             await runClaimedJob(admin, job.data, {
+              captureOrderedEvents,
               timeoutMs: remaining,
               deadlineAt: dispatch.data.deadline_at,
             });

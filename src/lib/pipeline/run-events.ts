@@ -95,6 +95,7 @@ export class RunEventCapture {
   constructor(
     private readonly admin: SupabaseClient<Database>,
     private readonly identity: AttemptIdentity,
+    private readonly captureOrderedEvents = true,
   ) {}
 
   addSensitiveValue(value: string): void {
@@ -190,7 +191,10 @@ export class RunEventCapture {
   ): Promise<number> {
     const sequence = ++this.sequence;
     const { jobId, runId, attemptCount } = this.identity;
-    const request = this.admin.rpc("append_agent_run_event", {
+    const rpc = this.captureOrderedEvents
+      ? "append_agent_run_event"
+      : "append_agent_run_legacy_event";
+    const request = this.admin.rpc(rpc, {
       p_job_id: jobId,
       p_run_id: runId,
       p_attempt_count: attemptCount,

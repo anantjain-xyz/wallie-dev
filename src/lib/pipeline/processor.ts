@@ -124,6 +124,7 @@ export type PipelinePhaseActionResult = {
 export async function processPipelineJob(input: {
   admin?: AdminClient;
   job: Tables<"agent_jobs">;
+  captureOrderedEvents?: boolean;
   deadlineAt?: string;
   signal?: AbortSignal;
 }): Promise<ProcessPipelineJobResult> {
@@ -154,6 +155,7 @@ export async function processPipelineJob(input: {
     admin,
     job,
     session,
+    captureOrderedEvents: input.captureOrderedEvents,
     deadlineAt: input.deadlineAt,
     signal: input.signal,
     stage,
@@ -170,6 +172,7 @@ export async function processPipelineJob(input: {
 async function runStage(input: {
   admin: AdminClient;
   job: Tables<"agent_jobs">;
+  captureOrderedEvents?: boolean;
   deadlineAt?: string;
   signal?: AbortSignal;
   session: SessionRow;
@@ -308,11 +311,11 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    const runEvents = new RunEventCapture(admin, {
-      jobId: job.id,
-      runId,
-      attemptCount: job.attempt_count,
-    });
+    const runEvents = new RunEventCapture(
+      admin,
+      { jobId: job.id, runId, attemptCount: job.attempt_count },
+      input.captureOrderedEvents,
+    );
     capture = runEvents;
     const executionBudget = await loadSessionExecutionBudget(admin, session.id);
     if (executionBudget?.exhaustionCode) {

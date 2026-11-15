@@ -28,6 +28,7 @@ $$;
 create temp table event_owner as select * from pg_temp.event_fixture(1);
 create temp table other_owner as select * from pg_temp.event_fixture(2);
 create temp table cursor_owner as select * from pg_temp.event_fixture(4);
+create temp table legacy_capture_owner as select * from pg_temp.event_fixture(5);
 create temp table foreign_workspace as
 with inserted as (
   insert into public.workspaces(slug, name) values ('ordered-run-event-proof', 'Other event workspace') returning id
@@ -42,7 +43,8 @@ select workspace_id, id, 'plan', 'Plan', 1, 'Plan the task' from foreign_pipelin
 insert into public.workspace_members(workspace_id, user_id, kind, role)
 select id, 'a1b2c3d4-0002-4000-8000-000000000002', 'human', 'member' from foreign_workspace;
 create temp table foreign_owner as select * from pg_temp.event_fixture(3, (select id from foreign_workspace));
-grant select on event_owner, other_owner, cursor_owner, foreign_owner, foreign_workspace to authenticated, service_role;
+grant select on event_owner, other_owner, cursor_owner, legacy_capture_owner, foreign_owner, foreign_workspace
+  to authenticated, service_role;
 
 create function pg_temp.reject_event_projection() returns trigger language plpgsql as $$
 begin
@@ -70,6 +72,14 @@ select ok(not has_table_privilege(role_name, 'public.agent_run_events', privileg
   role_name || ' cannot directly ' || privilege || ' event history')
 from (values ('anon'), ('authenticated'), ('service_role')) roles(role_name)
 cross join (values ('INSERT'), ('UPDATE'), ('DELETE')) privileges(privilege);
+
+select ok(has_function_privilege('service_role',
+  'public.append_agent_run_legacy_event(uuid,uuid,integer,integer,text,jsonb,boolean,integer,text)', 'EXECUTE'),
+  'service role uses the legacy projection RPC for opt-out');
+select ok(not has_function_privilege(role_name,
+  'public.append_agent_run_legacy_event(uuid,uuid,integer,integer,text,jsonb,boolean,integer,text)', 'EXECUTE'),
+  role_name || ' cannot write through the legacy projection RPC')
+from (values ('anon'), ('authenticated')) roles(role_name);
 
 set local role service_role;
 select ok(public.append_agent_run_event(job_id, run_id, 1, 2, 'progress', '{"text":"second"}', false, 1, 'second'),
@@ -192,6 +202,22 @@ select ok(not public.append_agent_run_event((select job_id from other_owner), ru
   'another job cannot attach events to this run') from event_owner;
 select ok(public.append_agent_run_event(job_id, run_id, 1, 1, 'text', '{"text":"other workspace"}', false, null, 'other workspace'),
   'service role records a separately owned workspace event') from foreign_owner;
+select ok(public.append_agent_run_legacy_event(job_id, run_id, 1, 1, 'text', '{"text":"legacy"}', false, null, 'legacy'),
+  'the opt-out path accepts a legacy activity projection') from legacy_capture_owner;
+select ok(public.append_agent_run_legacy_event(job_id, run_id, 1, 1, 'text', '{"text":"legacy"}', false, null, 'legacy'),
+  'legacy projection replay is idempotent') from legacy_capture_owner;
+select ok(not public.append_agent_run_legacy_event(job_id, run_id, 1, 1, 'text', '{"text":"changed"}', false, null, 'changed'),
+  'legacy projection replay cannot replace history') from legacy_capture_owner;
+select ok(public.append_agent_run_legacy_event(job_id, run_id, 1, 2, 'capture_end', '{"status":"complete"}', false),
+  'the opt-out path handles activity without a legacy projection') from legacy_capture_owner;
+select is((select count(*) from public.agent_run_events where agent_run_id = (select run_id from legacy_capture_owner)),
+  0::bigint, 'the opt-out path creates no ordered transcript');
+select is((select count(*) from public.agent_run_messages where agent_run_id = (select run_id from legacy_capture_owner)),
+  1::bigint, 'the opt-out path retains one legacy message');
+select ok((select last_activity_at > '2026-01-01T00:00:00Z' from public.agent_runs
+  where id = (select run_id from legacy_capture_owner)), 'legacy capture maintains activity');
+select ok(not public.append_agent_run_legacy_event(job_id, run_id, 1, 1, 'text', '{"text":"first"}', false, null, 'first'),
+  'the opt-out path cannot overwrite an existing ordered event') from event_owner;
 reset role;
 
 update public.agent_runs set status = 'error' where id = (select run_id from event_owner);
@@ -223,6 +249,17 @@ update public.agent_jobs set status = 'error' where id = (select job_id from oth
 set local role service_role;
 select ok(not public.append_agent_run_event(job_id, run_id, 1, 1, 'text', '{"text":"terminal job"}', false),
   'a terminal job refuses producer events even if its run remains active') from other_owner;
+reset role;
+
+update public.agent_runs set status = 'canceled' where id = (select run_id from legacy_capture_owner);
+update public.agent_jobs set attempt_count = 2 where id = (select job_id from legacy_capture_owner);
+set local role service_role;
+select ok(not public.append_agent_run_legacy_event(job_id, run_id, 1, 3, 'terminal',
+  '{"status":"completed"}', false, null, 'late completion'),
+  'a canceled legacy writer cannot append a terminal outcome') from legacy_capture_owner;
+select ok(not public.append_agent_run_legacy_event(job_id, run_id, 2, 3, 'terminal',
+  '{"status":"completed"}', false, null, 'late completion'),
+  'a replacement claim cannot append to the canceled legacy run') from legacy_capture_owner;
 reset role;
 
 set local role authenticated;

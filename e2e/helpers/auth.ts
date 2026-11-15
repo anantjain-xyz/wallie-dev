@@ -24,9 +24,18 @@ function getAllowlistedRedirectForGeneration(destination: string) {
   return `http://localhost:3000/auth/confirm?next=${encodeURIComponent(destination)}`;
 }
 
-export async function signInViaMagicLink(page: Page, destination = "/w/acme-corp/sessions") {
+export async function signInViaMagicLink(
+  page: Page,
+  destination = "/w/acme-corp/sessions",
+  {
+    baseURL = getPlaywrightBaseUrl(),
+    email = "anant@example.com",
+  }: { baseURL?: string; email?: string } = {},
+) {
   const { url: supabaseUrl, serviceKey } = getSupabaseConfig();
-  const playwrightBaseUrl = getPlaywrightBaseUrl();
+  const workspacePath = new URL(destination, baseURL).pathname.split("/").slice(0, 3).join("/");
+  const reachedWorkspace = (url: URL) =>
+    url.pathname === workspacePath || url.pathname.startsWith(`${workspacePath}/`);
 
   // Fixed allowlisted redirect for the admin generate_link call.
   const allowlistedRedirect = getAllowlistedRedirectForGeneration(destination);
@@ -42,7 +51,7 @@ export async function signInViaMagicLink(page: Page, destination = "/w/acme-corp
       },
       body: JSON.stringify({
         type: "magiclink",
-        email: "anant@example.com",
+        email,
         options: {
           redirectTo: allowlistedRedirect,
         },
@@ -79,17 +88,17 @@ export async function signInViaMagicLink(page: Page, destination = "/w/acme-corp
   // This avoids relying on GoTrue's implicit-flow fragment handling, which our /auth/confirm route doesn't accept.
   if (hashedToken) {
     const confirmUrl =
-      `${playwrightBaseUrl}/auth/confirm?next=${encodeURIComponent(destination)}` +
+      `${baseURL}/auth/confirm?next=${encodeURIComponent(destination)}` +
       `&token_hash=${encodeURIComponent(hashedToken)}&type=email`;
     await page.goto(confirmUrl);
-    await page.waitForURL(/\/w\/acme-corp/, { timeout: 15_000 });
+    await page.waitForURL(reachedWorkspace, { timeout: 15_000 });
     return;
   }
 
   // Fallback: navigate to the raw action_link if hashed_token is absent (e.g., older GoTrue).
   if (actionLink) {
     await page.goto(actionLink);
-    await page.waitForURL(/\/w\/acme-corp/, { timeout: 15_000 });
+    await page.waitForURL(reachedWorkspace, { timeout: 15_000 });
   }
 }
 

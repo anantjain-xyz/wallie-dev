@@ -2,9 +2,26 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 
+const nativeHistoryFixture = process.env.WALLIE_NATIVE_HISTORY_FIXTURE;
+
 export default defineConfig({
   plugins: [
-    cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, remoteBindings: false }),
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.jsonc" },
+      remoteBindings: false,
+      ...(nativeHistoryFixture
+        ? {
+            miniflare: {
+              bindings: {
+                WALLIE_NATIVE_HISTORY_FIXTURE: nativeHistoryFixture,
+                WALLIE_ORDERED_RUN_CAPTURE_ENABLED: "true",
+                WALLIE_WORKER_DISPATCH_ENABLED: "false",
+                WALLIE_WORKER_AUTH_ENABLED: "false",
+              },
+            },
+          }
+        : {}),
+    }),
   ],
   resolve: {
     alias: {

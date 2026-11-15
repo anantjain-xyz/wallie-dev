@@ -135,6 +135,10 @@ command:
 | `pnpm test:benchmark:interaction`        | Repeated interaction timing benchmark           |
 | `pnpm test:benchmark:content-visibility` | Content-visibility benchmark                    |
 
+The [durable run history qualification](durable-run-history-qualification.md)
+covers exact-attempt history after browser and worker restarts. It requires an
+isolated local Supabase stack.
+
 These scripts build first. Other specs in [`e2e/`](../../e2e/) may be run directly
 with Playwright when their journey is affected.
 

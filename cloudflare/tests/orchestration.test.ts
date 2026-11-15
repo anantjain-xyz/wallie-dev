@@ -102,6 +102,7 @@ describe("native Workflow ownership", () => {
       const instance = await bindings.SESSION_ATTEMPT.create({ id: f.id, params: f.params });
       await inspection.waitForStatus("complete");
       expect(runClaimedJob).toHaveBeenCalledExactlyOnceWith(f.admin, f.job, {
+        captureOrderedEvents: true,
         timeoutMs: expect.any(Number),
         deadlineAt: expect.any(String),
       });

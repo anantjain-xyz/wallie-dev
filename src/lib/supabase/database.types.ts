@@ -4888,6 +4888,20 @@ export type Database = {
         }
         Returns: boolean
       }
+      append_agent_run_legacy_event: {
+        Args: {
+          p_attempt_count: number
+          p_causation_sequence?: number
+          p_job_id: string
+          p_kind: string
+          p_legacy_message_md?: string
+          p_payload: Json
+          p_run_id: string
+          p_sequence: number
+          p_truncated: boolean
+        }
+        Returns: boolean
+      }
       apply_github_pull_request_event: {
         Args: {
           source_head_repository_matches?: boolean
