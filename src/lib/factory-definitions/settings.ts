@@ -495,49 +495,73 @@ export async function loadFactoryDefinitionHistoryForStages(
   >,
   extraDefinitions: readonly (CompiledFactoryDefinition | null | undefined)[] = [],
 ): Promise<CompiledFactoryDefinition[]> {
-  const definitions: CompiledFactoryDefinition[] = [];
-  for (const candidate of [
-    state.activeDefinition,
-    state.latestDraft?.definition,
-    state.currentActivation?.definition,
-    ...extraDefinitions,
-  ]) {
-    if (candidate) definitions.push(candidate);
+  type Candidate = { at: number; definition: CompiledFactoryDefinition };
+  const recency = (value: string | null | undefined): number => {
+    const parsed = value ? Date.parse(value) : Number.NaN;
+    return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+  };
+  const candidates: Candidate[] = [];
+  if (state.activeDefinition) {
+    candidates.push({
+      at: recency(state.latestDraft?.createdAt ?? state.currentActivation?.createdAt),
+      definition: state.activeDefinition,
+    });
   }
-  if (!state.factoryId) return definitions;
-
-  const [draftsResult, revisionsResult] = await Promise.all([
-    client
-      .from("factory_definition_drafts")
-      .select("id, created_at, definition_json")
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", state.factoryId)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(20),
-    client
-      .from("factory_definition_revisions")
-      .select("id, created_at, definition_json")
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", state.factoryId)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(20),
-  ]);
-  if (draftsResult.error) throw draftsResult.error;
-  if (revisionsResult.error) throw revisionsResult.error;
-
-  const combined = [...(draftsResult.data ?? []), ...(revisionsResult.data ?? [])].sort((a, b) => {
-    const timeDiff = Date.parse(b.created_at) - Date.parse(a.created_at);
-    if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
-    return b.id.localeCompare(a.id);
-  });
-
-  for (const row of combined) {
-    const parsed = parseCompiledDefinition(row.definition_json);
-    if (parsed) definitions.push(parsed);
+  if (state.currentActivation) {
+    candidates.push({
+      at: recency(state.currentActivation.createdAt),
+      definition: state.currentActivation.definition,
+    });
   }
-  return definitions;
+
+  if (state.factoryId) {
+    const [draftsResult, revisionsResult] = await Promise.all([
+      client
+        .from("factory_definition_drafts")
+        .select("id, created_at, definition_json")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", state.factoryId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(20),
+      client
+        .from("factory_definition_revisions")
+        .select("id, created_at, definition_json")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", state.factoryId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(20),
+    ]);
+    if (draftsResult.error) throw draftsResult.error;
+    if (revisionsResult.error) throw revisionsResult.error;
+
+    const rows = [...(draftsResult.data ?? []), ...(revisionsResult.data ?? [])].sort((a, b) => {
+      const timeDiff = recency(b.created_at) - recency(a.created_at);
+      if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
+      return b.id.localeCompare(a.id);
+    });
+    for (const row of rows) {
+      const parsed = parseCompiledDefinition(row.definition_json);
+      if (parsed) candidates.push({ at: recency(row.created_at), definition: parsed });
+    }
+  }
+
+  // Consumers keep the first version of each stage ID, so order newest first;
+  // a published activation must never reclaim a slug that a newer draft reused.
+  const ordered = candidates
+    .map((candidate, index) => ({ ...candidate, index }))
+    .sort((left, right) => right.at - left.at || left.index - right.index)
+    .map((candidate) => candidate.definition);
+
+  // Extra definitions are the caller's pre-mutation snapshot: older than
+  // anything persisted above, so they are consulted last.
+  return [
+    ...ordered,
+    ...extraDefinitions.filter((definition): definition is CompiledFactoryDefinition =>
+      Boolean(definition),
+    ),
+  ];
 }
 
 function mapDraftRpcError(error: { code?: string; message?: string } | null): {

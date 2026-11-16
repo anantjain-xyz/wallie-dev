@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { compileFactoryDefinition } from "@/lib/factory-definitions/compiler";
 import type { FactoryDefinitionCatalog } from "@/lib/factory-definitions/references";
 import {
+  loadFactoryDefinitionHistoryForStages,
   loadSettingsFactoryDefinitionState,
   mutateSettingsFactoryDefinition,
 } from "@/lib/factory-definitions/settings";
@@ -927,6 +928,104 @@ describe("factory definition Settings loader & mutations", () => {
         approverMemberIds: [otherMemberId],
       }),
     ]);
+  });
+
+  it("orders definition history newest first so a newer draft keeps its reused slug", async () => {
+    const otherStageId = "54500000-0001-4000-8000-000000000066";
+    const fixturesCatalog: FactoryDefinitionCatalog = catalog;
+    const makeStage = (id: string, slug: string, prompt: string) => ({
+      id,
+      slug,
+      name: slug,
+      description: "",
+      promptTemplateMd: prompt,
+      anyoneCanApprove: false,
+      approverMemberIds: [memberId],
+    });
+    const compile = (stages: ReturnType<typeof makeStage>[], rules: string) => {
+      const compiled = compileFactoryDefinition(
+        {
+          kind: "structured",
+          value: {
+            schemaVersion: 1,
+            kind: "serial",
+            pipeline: pipelineId,
+            repository: repositoryId,
+            sandboxProvider: "vercel",
+            agent: compiledFixture.bundle.agent,
+            executionPolicy: executionPolicyId,
+            deliveryPolicy: deliveryPolicyId,
+            operatingRulesMd: rules,
+            stages,
+          },
+        },
+        fixturesCatalog,
+      );
+      if (!compiled.ok) throw new Error("History fixture failed to compile.");
+      return compiled;
+    };
+
+    const published = compile([makeStage(stageId, "plan", "Plan published.")], "published");
+    const renamed = compile(
+      [makeStage(stageId, "design", "Plan renamed."), makeStage(otherStageId, "plan", "New plan.")],
+      "renamed",
+    );
+    const removed = compile([makeStage(otherStageId, "plan", "New plan.")], "removed");
+
+    const { admin } = makeClient(({ url }) => {
+      if (url.pathname.endsWith("/factory_definition_drafts")) {
+        return Response.json([
+          {
+            id: "54500000-0001-4000-8000-000000000077",
+            created_at: "2026-11-15T20:20:00.000Z",
+            definition_json: removed.definitionJson,
+          },
+          {
+            id: "54500000-0001-4000-8000-000000000078",
+            created_at: "2026-11-15T20:10:00.000Z",
+            definition_json: renamed.definitionJson,
+          },
+        ]);
+      }
+      if (url.pathname.endsWith("/factory_definition_revisions")) {
+        return Response.json([
+          {
+            id: "54500000-0001-4000-8000-000000000079",
+            created_at: "2026-11-15T20:00:00.000Z",
+            definition_json: published.definitionJson,
+          },
+        ]);
+      }
+      return Response.json([]);
+    });
+
+    const history = await loadFactoryDefinitionHistoryForStages(admin, workspaceId, {
+      factoryId,
+      currentActivation: {
+        id: "activation-1",
+        revisionId,
+        activationNumber: 1,
+        previousActivationNumber: null,
+        canonicalDigest: published.canonicalDigest,
+        createdAt: "2026-11-15T20:00:00.000Z",
+        definition: published.bundle,
+      },
+      latestDraft: {
+        id: "54500000-0001-4000-8000-000000000077",
+        baseActivationNumber: 1,
+        schemaVersion: 1,
+        canonicalDigest: removed.canonicalDigest,
+        createdAt: "2026-11-15T20:20:00.000Z",
+        definition: removed.bundle,
+      },
+      activeDefinition: removed.bundle,
+    });
+
+    const firstWithStage = history.find((definition) =>
+      definition.stages.some((stage) => stage.id === stageId),
+    );
+    expect(firstWithStage?.stages.find((stage) => stage.id === stageId)?.slug).toBe("design");
+    expect(history[0]?.operatingRulesMd).toBe("removed");
   });
 
   it("allows removing one stage after swapping two stages' slugs in a saved definition", async () => {

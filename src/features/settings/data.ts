@@ -20,6 +20,7 @@ import type { CompiledFactoryDefinition } from "@/lib/factory-definitions/compil
 import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
+import { getLatestSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/server";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -300,18 +301,29 @@ function mapSettingsSetupData(
   factoryDefinition = createEmptySettingsFactoryDefinitionState(),
   priorDefinitions: readonly CompiledFactoryDefinition[] = [],
   pipelineOverride?: WorkspaceOnboardingData["pipeline"],
+  definitionCapabilityCheck?: SettingsPageData["latestSandboxCapabilityCheck"],
 ): SettingsSetupData {
+  const latestSandboxCapabilityCheck =
+    definitionCapabilityCheck !== undefined
+      ? definitionCapabilityCheck
+      : onboardingData.setupHealth.latestSandboxCapabilityCheck;
   const base: SettingsSetupData = {
     agentConfig: onboardingData.agentConfig,
     factoryDefinition,
-    latestSandboxCapabilityCheck: onboardingData.setupHealth.latestSandboxCapabilityCheck,
+    latestSandboxCapabilityCheck,
     linearRouting: onboardingData.linearRouting,
     linearSecret: onboardingData.linearSecret,
     onboarding: onboardingData.onboarding,
     pipeline: pipelineOverride ?? onboardingData.pipeline,
     rateLimits: describeSettingsRateLimits(),
     sandboxSettings: onboardingData.sandboxSettings,
-    setupHealth: onboardingData.setupHealth,
+    setupHealth:
+      definitionCapabilityCheck === undefined
+        ? onboardingData.setupHealth
+        : {
+            ...onboardingData.setupHealth,
+            latestSandboxCapabilityCheck: definitionCapabilityCheck,
+          },
     vercelSandboxConnection: onboardingData.vercelSandboxConnection,
     workspaceMembers: onboardingData.workspaceMembers,
     workspaceSecrets: onboardingData.workspaceSecrets,
@@ -487,11 +499,33 @@ export async function loadSettingsPageData(
                   }),
                 )
               : undefined;
+          const activeDefinition = factoryDefinition.activeDefinition;
+          const definitionDigest =
+            factoryDefinition.latestDraft?.canonicalDigest ??
+            factoryDefinition.currentActivation?.canonicalDigest;
+          const definitionCapabilityCheck =
+            canManage && activeDefinition && definitionDigest
+              ? await sectionTiming.segment(
+                  "factory-definition-capability-check",
+                  () =>
+                    getLatestSandboxCapabilityCheck({
+                      admin: createSupabaseAdminClient(),
+                      definitionDigest,
+                      repositoryId: activeDefinition.repositoryId,
+                      workspaceId: workspace.id,
+                    }),
+                  (check) => ({
+                    payloadBytes: approximatePayloadSizeBytes(check),
+                    rows: check ? 1 : 0,
+                  }),
+                )
+              : undefined;
           return mapSettingsSetupData(
             data,
             factoryDefinition,
             priorDefinitions,
             definitionPipeline,
+            definitionCapabilityCheck,
           );
         },
       );

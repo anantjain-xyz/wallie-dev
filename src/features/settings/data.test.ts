@@ -20,11 +20,17 @@ vi.mock("@/features/onboarding/data", () => ({
 vi.mock("@/lib/factory-definitions/settings", async () => {
   const contracts = await import("@/lib/factory-definitions/settings-contracts");
   return {
+    loadFactoryDefinitionHistoryForStages: vi.fn(async () => []),
+    loadPipelineConfigurationForFactoryDefinition: vi.fn(async () => null),
     loadSettingsFactoryDefinitionState: mocked.loadSettingsFactoryDefinitionState.mockResolvedValue(
       contracts.createEmptySettingsFactoryDefinitionState(),
     ),
   };
 });
+
+vi.mock("@/lib/sandbox-capabilities/server", () => ({
+  getLatestSandboxCapabilityCheck: vi.fn(async () => null),
+}));
 
 vi.mock("@/features/workspaces/authenticated-context", () => ({
   loadAuthenticatedWorkspaceContext: mocked.loadAuthenticatedWorkspaceContext,
