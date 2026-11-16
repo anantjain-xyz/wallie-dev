@@ -22,7 +22,21 @@ import {
 } from "@/lib/factory-definitions/settings-contracts";
 
 type Phase = "loading" | "legacy" | "ready" | "error";
-type FormSection = "pipeline" | "agent" | "sandboxProvider" | "executionPolicy" | "deliveryPolicy";
+const formSections = [
+  "pipeline",
+  "agent",
+  "sandboxProvider",
+  "executionPolicy",
+  "deliveryPolicy",
+] as const;
+type FormSection = (typeof formSections)[number];
+
+type DirtySection = {
+  displayed: FactorySettingsSnapshot;
+  saveAgainst: FactorySettingsSnapshot;
+};
+
+type DirtySections = Readonly<Partial<Record<FormSection, DirtySection>>>;
 
 type FactorySettings = {
   phase: Phase;
@@ -31,8 +45,8 @@ type FactorySettings = {
   busy: boolean;
   conflict: string | null;
   error: string | null;
-  dirtySections: ReadonlySet<FormSection>;
-  setDirty: (section: FormSection, dirty: boolean) => void;
+  dirtySections: DirtySections;
+  setDirty: (section: FormSection, displayed: FactorySettingsSnapshot | null) => void;
   reload: () => Promise<void>;
   save: (
     baseline: FactorySettingsSnapshot,
@@ -67,7 +81,7 @@ export function FactorySettingsProvider({
   const [busy, setBusy] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dirtySections, setDirtySections] = useState<ReadonlySet<FormSection>>(() => new Set());
+  const [dirtySections, setDirtySections] = useState<DirtySections>({});
   const inFlight = useRef(false);
   const url = `/api/workspaces/${workspaceId}/factory-definition/settings`;
 
@@ -97,15 +111,18 @@ export function FactorySettingsProvider({
     return () => controller.abort();
   }, [load]);
 
-  const setDirty = useCallback((section: FormSection, dirty: boolean) => {
-    setDirtySections((current) => {
-      if (current.has(section) === dirty) return current;
-      const next = new Set(current);
-      if (dirty) next.add(section);
-      else next.delete(section);
-      return next;
-    });
-  }, []);
+  const setDirty = useCallback(
+    (section: FormSection, displayed: FactorySettingsSnapshot | null) => {
+      setDirtySections((current) => {
+        if (Boolean(current[section]) === Boolean(displayed)) return current;
+        const next = { ...current };
+        if (displayed) next[section] = { displayed, saveAgainst: displayed };
+        else delete next[section];
+        return next;
+      });
+    },
+    [],
+  );
 
   async function reload() {
     if (inFlight.current || phase === "loading") return;
@@ -119,7 +136,7 @@ export function FactorySettingsProvider({
     }
   }
 
-  async function mutate(body: FactorySettingsCommand) {
+  async function mutate(body: FactorySettingsCommand, submittedDraft?: FactorySettingsSnapshot) {
     if (!canManage || phase !== "ready" || inFlight.current) {
       throw new Error("Factory settings are busy. Try again.");
     }
@@ -140,6 +157,9 @@ export function FactorySettingsProvider({
       const next = await readFactorySettings(response);
       if (!next) throw new Error("The saved factory settings were missing from the response.");
       setSnapshot(next);
+      if (submittedDraft) {
+        setDirtySections((current) => advanceUnchangedSections(current, submittedDraft, next));
+      }
       setConflict(null);
       return next;
     } finally {
@@ -149,16 +169,19 @@ export function FactorySettingsProvider({
   }
 
   function save(baseline: FactorySettingsSnapshot, patch: FactorySettingsPatch) {
-    return mutate({
-      action: "save",
-      expectedActivationNumber: baseline.activationNumber,
-      expectedDraftId: baseline.draft?.id ?? null,
-      patch,
-    });
+    return mutate(
+      {
+        action: "save",
+        expectedActivationNumber: baseline.activationNumber,
+        expectedDraftId: baseline.draft?.id ?? null,
+        patch,
+      },
+      baseline,
+    );
   }
 
   async function publish(baseline: FactorySettingsSnapshot) {
-    if (!baseline.draft || dirtySections.size) return;
+    if (!baseline.draft || Object.keys(dirtySections).length) return;
     try {
       await mutate({
         action: "publish",
@@ -198,6 +221,7 @@ export function FactorySettingsPanel() {
   const { phase, snapshot, canManage, busy, conflict, error, dirtySections, reload, publish } =
     settings;
   const message = conflict ?? error;
+  const hasDirtySections = Object.keys(dirtySections).length > 0;
   const draft = snapshot?.draft;
   const published = snapshot?.published;
   return (
@@ -235,7 +259,9 @@ export function FactorySettingsPanel() {
                   )}
                 </p>
               ) : null}
-              {dirtySections.size ? <p className="text-warning">Unsaved edits</p> : null}
+              {Object.keys(dirtySections).length ? (
+                <p className="text-warning">Unsaved edits</p>
+              ) : null}
             </div>
           ) : null}
           <InlineActionMessage message={message ? { kind: "error", text: message } : null} />
@@ -251,7 +277,7 @@ export function FactorySettingsPanel() {
             {canManage && draft && snapshot ? (
               <button
                 className="ui-button-primary"
-                disabled={busy || Boolean(conflict) || dirtySections.size > 0}
+                disabled={busy || Boolean(conflict) || hasDirtySections}
                 onClick={() => void publish(snapshot)}
                 type="button"
               >
@@ -272,37 +298,67 @@ export type FactorySettingsFormRevision = {
   setDirty: (dirty: boolean) => void;
 };
 
+function factoryScopeKey(snapshot: FactorySettingsSnapshot) {
+  return `${snapshot.repositoryId}:${snapshot.pipeline.id}:${snapshot.activationNumber}:${snapshot.published?.id ?? "unpublished"}`;
+}
+
 function revisionKey(snapshot: FactorySettingsSnapshot) {
-  return `${snapshot.repositoryId}:${snapshot.activationNumber}:${snapshot.draft?.id ?? snapshot.published?.id ?? "unpublished"}`;
+  return `${factoryScopeKey(snapshot)}:${snapshot.draft?.id ?? ""}`;
+}
+
+function advanceUnchangedSections(
+  dirtySections: DirtySections,
+  submitted: FactorySettingsSnapshot,
+  accepted: FactorySettingsSnapshot,
+) {
+  if (factoryScopeKey(submitted) !== factoryScopeKey(accepted)) return dirtySections;
+
+  let updated: Partial<Record<FormSection, DirtySection>> | undefined;
+  const submittedKey = revisionKey(submitted);
+  for (const section of formSections) {
+    const edit = dirtySections[section];
+    if (!edit || revisionKey(edit.saveAgainst) !== submittedKey) continue;
+
+    const displayedValue = JSON.stringify(edit.displayed[section]);
+    if (
+      displayedValue !== JSON.stringify(submitted[section]) ||
+      displayedValue !== JSON.stringify(accepted[section])
+    ) {
+      continue;
+    }
+
+    // Keep the form mounted on its displayed snapshot while advancing its write version.
+    updated ??= { ...dirtySections };
+    updated[section] = { displayed: edit.displayed, saveAgainst: accepted };
+  }
+  return updated ?? dirtySections;
 }
 
 export function useFactorySettingsForm(section: FormSection) {
   const settings = useFactorySettings();
   const latest = settings?.snapshot;
   const reportDirty = settings?.setDirty;
-  const [dirtyBaseline, setDirtyBaseline] = useState<FactorySettingsSnapshot | null>(null);
-  const baseline = dirtyBaseline ?? latest;
+  const edit = settings?.dirtySections[section];
+  const displayed = edit?.displayed ?? latest;
+  const saveAgainst = edit?.saveAgainst ?? latest;
 
   const setDirty = useCallback(
     (dirty: boolean) => {
-      setDirtyBaseline(dirty ? (baseline ?? null) : null);
-      reportDirty?.(section, dirty);
+      reportDirty?.(section, dirty ? (displayed ?? null) : null);
     },
-    [baseline, reportDirty, section],
+    [displayed, reportDirty, section],
   );
 
-  useEffect(() => () => reportDirty?.(section, false), [reportDirty, section]);
+  useEffect(() => () => reportDirty?.(section, null), [reportDirty, section]);
 
-  const blocked = Boolean(settings && settings.phase !== "legacy" && !baseline);
-  const stale = Boolean(
-    dirtyBaseline && (!latest || revisionKey(latest) !== revisionKey(dirtyBaseline)),
-  );
+  const blocked = Boolean(settings && settings.phase !== "legacy" && !displayed);
+  const stale = Boolean(edit && (!latest || revisionKey(latest) !== revisionKey(edit.saveAgainst)));
   const revision: FactorySettingsFormRevision | null =
-    settings && baseline
+    settings && displayed && saveAgainst
       ? {
-          snapshot: baseline,
+          snapshot: displayed,
           busy: settings.busy,
-          save: (patch) => settings.save(baseline, patch),
+          save: (patch) => settings.save(saveAgainst, patch),
           setDirty,
         }
       : null;
