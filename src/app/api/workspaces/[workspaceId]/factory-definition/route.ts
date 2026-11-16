@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import { mutateFactoryDefinition } from "@/lib/factory-definitions/mutations";
+import {
+  factoryDefinitionExpectedActivationSchema,
+  factoryDefinitionSourceSchema,
+} from "@/lib/factory-definitions/schema";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
@@ -20,31 +24,26 @@ const historyQuerySchema = z
     limit: positiveDecimal.pipe(z.number().max(100)).default("25"),
   })
   .strict();
-const expectedActivationNumber = z
-  .number()
-  .int()
-  .nonnegative()
-  .max(Number.MAX_SAFE_INTEGER - 1);
-const definitionSourceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("structured"), value: z.record(z.unknown()) }).strict(),
-  z.object({ kind: z.literal("json"), text: z.string() }).strict(),
-]);
 const commandSchema = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("draft"),
-      expectedActivationNumber,
+      expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
       expectedDraftId: z.string().uuid().nullable().optional(),
-      source: definitionSourceSchema,
+      source: factoryDefinitionSourceSchema,
     })
     .strict(),
   z
-    .object({ action: z.literal("publish"), expectedActivationNumber, draftId: z.string().uuid() })
+    .object({
+      action: z.literal("publish"),
+      expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
+      draftId: z.string().uuid(),
+    })
     .strict(),
   z
     .object({
       action: z.literal("rollback"),
-      expectedActivationNumber,
+      expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
       revisionId: z.string().uuid(),
     })
     .strict(),

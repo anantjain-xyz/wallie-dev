@@ -20,6 +20,11 @@
     "firstLoadChunkPaths": [".next/static/chunks/settings.js"]
   },
   {
+    "route": "/w/[workspaceSlug]/settings/factory-definition",
+    "firstLoadUncompressedJsBytes": 1150000,
+    "firstLoadChunkPaths": [".next/static/chunks/factory-definition.js"]
+  },
+  {
     "route": "/w/[workspaceSlug]/sessions/[sessionNumber]",
     "firstLoadUncompressedJsBytes": 1350000,
     "firstLoadChunkPaths": [".next/static/chunks/detail.js"]

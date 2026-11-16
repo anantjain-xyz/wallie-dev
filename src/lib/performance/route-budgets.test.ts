@@ -26,6 +26,7 @@ const routeStats = [
   ["/w/[workspaceSlug]/sessions", 700_000],
   ["/w/[workspaceSlug]/runs", 700_000],
   ["/w/[workspaceSlug]/settings", 800_000],
+  ["/w/[workspaceSlug]/settings/factory-definition", 800_000],
   ["/w/[workspaceSlug]/sessions/[sessionNumber]", 900_000],
   ["/w/[workspaceSlug]/runs/[runId]", 900_000],
   ["/w/[workspaceSlug]/onboarding", 680_000],
@@ -51,13 +52,14 @@ describe("route bundle budgets", () => {
       ),
     });
 
-    expect(results).toHaveLength(8);
+    expect(results).toHaveLength(9);
     expect(results.map((result) => result.name)).toEqual([
       "shared/root",
       "pipeline",
       "sessions",
       "runs",
       "settings",
+      "factory-definition",
       "detail",
       "run-detail",
       "onboarding",
@@ -67,6 +69,11 @@ describe("route bundle budgets", () => {
 
   it.each([
     { name: "runs", route: "/w/[workspaceSlug]/runs", ceiling: establishedMaximumBytes.sessions },
+    {
+      name: "factory-definition",
+      route: "/w/[workspaceSlug]/settings/factory-definition",
+      ceiling: establishedMaximumBytes["factory-definition"],
+    },
     {
       name: "run-detail",
       route: "/w/[workspaceSlug]/runs/[runId]",
@@ -162,7 +169,7 @@ describe("route bundle budgets", () => {
       error.mockRestore();
     }
 
-    expect(logs).toHaveLength(8);
+    expect(logs).toHaveLength(9);
     for (const name of Object.keys(establishedMaximumBytes)) {
       expect(logs.some((line) => line.includes(` ${name}:`))).toBe(true);
     }

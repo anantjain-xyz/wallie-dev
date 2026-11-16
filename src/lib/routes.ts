@@ -68,6 +68,13 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
+export function workspaceFactoryDefinitionPath(
+  workspaceSlug: string,
+  query?: { revision: string } | { draft: string },
+) {
+  return withSearchParams(`${workspaceSettingsPath(workspaceSlug)}/factory-definition`, query);
+}
+
 export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] {
   return [
     {

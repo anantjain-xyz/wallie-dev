@@ -15,6 +15,11 @@ import type {
   SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
 
+export type CapabilityRepository = Pick<
+  SettingsPageData["github"]["repositories"][number],
+  "id" | "fullName" | "isArchived"
+>;
+
 type DefinitionTarget = { id: string; kind: "draft" | "revision"; repositoryId: string };
 
 type SandboxCapabilitySectionProps = {
@@ -23,7 +28,7 @@ type SandboxCapabilitySectionProps = {
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
   onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
   preferredRepositoryId?: string | null;
-  repositories: SettingsPageData["github"]["repositories"];
+  repositories: readonly CapabilityRepository[];
   sandboxConnected: boolean;
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
@@ -42,7 +47,7 @@ export function resolveSandboxRepositorySelection({
 }: {
   currentRepositoryId: string;
   preferredRepositoryId?: string | null;
-  repositories: SettingsPageData["github"]["repositories"];
+  repositories: readonly CapabilityRepository[];
 }) {
   const selectableRepositories = repositories.filter((repository) => !repository.isArchived);
   const hasPreferredRepository = selectableRepositories.some(
