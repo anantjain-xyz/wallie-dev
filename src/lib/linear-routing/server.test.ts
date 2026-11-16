@@ -7,16 +7,16 @@ import {
 import {
   loadLinearRoutingConfig,
   loadLinearRoutingSnapshot,
-  upsertLinearRoutingConfig,
+  saveLinearRoutingConfig,
 } from "@/lib/linear-routing/server";
 
 function buildAdmin(row: Record<string, unknown> | null) {
-  const upserts: Array<{
-    options: Record<string, unknown> | undefined;
-    values: Record<string, unknown>;
-  }> = [];
-
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const admin = {
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return Promise.resolve({ data: row, error: null });
+    },
     from(table: string) {
       if (table !== "workspace_linear_routing") {
         throw new Error(`unexpected table: ${table}`);
@@ -32,15 +32,11 @@ function buildAdmin(row: Record<string, unknown> | null) {
           };
           return query;
         },
-        upsert(values: Record<string, unknown>, options?: Record<string, unknown>) {
-          upserts.push({ options, values });
-          return Promise.resolve({ error: null });
-        },
       };
     },
   };
 
-  return { admin, upserts };
+  return { admin, calls };
 }
 
 describe("loadLinearRoutingConfig", () => {
@@ -97,72 +93,51 @@ describe("loadLinearRoutingConfig", () => {
   });
 });
 
-describe("upsertLinearRoutingConfig", () => {
-  it("persists normalized mappings with the workspace conflict target", async () => {
-    const { admin, upserts } = buildAdmin(null);
+describe("saveLinearRoutingConfig", () => {
+  const reworkStageId = "00000000-0000-4000-8000-000000000003";
+
+  it("saves normalized mappings and returns the resolved stage identities", async () => {
+    const statusMappings = { ...DEFAULT_LINEAR_ROUTING_CONFIG.statusMappings, backlog: ["Icebox"] };
+    const { admin, calls } = buildAdmin({
+      land_stage_slug: null,
+      rework_stage_slug: "implement",
+      rework_stage_id: reworkStageId,
+      status_mappings: statusMappings,
+    });
     const config: LinearRoutingUpdateInput = {
-      landStageSlug: "deploy",
+      expectedFactoryRevisionId: null,
+      landStageSlug: null,
       reworkStageSlug: "implement",
-      statusMappings: {
-        backlog: [" Icebox ", "icebox"],
-        canceled: ["Canceled"],
-        done: ["Done"],
-        in_progress: ["Started"],
-        in_review: ["Review"],
-        merging: ["Merging"],
-        rework: ["Changes Requested"],
-        todo: ["Ready"],
-      },
+      statusMappings: { ...statusMappings, backlog: [" Icebox ", "icebox"] },
     };
 
     await expect(
-      upsertLinearRoutingConfig({
+      saveLinearRoutingConfig({
+        actorUserId: "user-1",
         admin: admin as never,
         config,
         workspaceId: "workspace-1",
       }),
-    ).resolves.toMatchObject({
-      landStageSlug: "deploy",
+    ).resolves.toEqual({
+      landStageSlug: null,
+      reworkStageId,
       reworkStageSlug: "implement",
-      statusMappings: { backlog: ["Icebox"] },
+      statusMappings,
     });
-    expect(upserts).toEqual([
+    expect(calls).toEqual([
       {
-        options: { onConflict: "workspace_id" },
-        values: {
-          land_stage_slug: "deploy",
-          rework_stage_slug: "implement",
-          status_mappings: {
-            backlog: ["Icebox"],
-            canceled: ["Canceled"],
-            done: ["Done"],
-            in_progress: ["Started"],
-            in_review: ["Review"],
-            merging: ["Merging"],
-            rework: ["Changes Requested"],
-            todo: ["Ready"],
-          },
-          workspace_id: "workspace-1",
+        name: "save_linear_routing_config",
+        args: {
+          p_actor_user_id: "user-1",
+          p_workspace_id: "workspace-1",
+          p_land_slug: undefined,
+          p_rework_slug: "implement",
+          p_status_mappings: statusMappings,
+          p_check_revision: true,
+          p_expected_revision_id: undefined,
         },
       },
     ]);
-  });
-
-  it("persists a null land stage for manual merge routing", async () => {
-    const { admin, upserts } = buildAdmin(null);
-
-    await expect(
-      upsertLinearRoutingConfig({
-        admin: admin as never,
-        config: DEFAULT_LINEAR_ROUTING_CONFIG,
-        workspaceId: "workspace-1",
-      }),
-    ).resolves.toEqual(DEFAULT_LINEAR_ROUTING_CONFIG);
-
-    expect(upserts[0]?.values).toMatchObject({
-      land_stage_slug: null,
-      rework_stage_slug: "build",
-    });
   });
 });
 

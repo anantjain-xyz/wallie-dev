@@ -22,9 +22,13 @@ export function selectStoredFactoryDefinition(
   factoryId: string,
   target: FactoryDefinitionTarget,
 ) {
-  return admin
-    .from(target.kind === "draft" ? "factory_definition_drafts" : "factory_definition_revisions")
-    .select("definition_json, canonical_digest")
+  const query =
+    target.kind === "draft"
+      ? admin
+          .from("factory_definition_drafts")
+          .select("definition_json, canonical_digest, settings_metadata")
+      : admin.from("factory_definition_revisions").select("definition_json, canonical_digest");
+  return query
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)
     .eq("id", target.id)

@@ -12,14 +12,16 @@ import type { Database } from "@/lib/supabase/database.types";
 
 import { loadFactoryDefinitionCatalog } from "./authority";
 import type { FactoryDefinitionDiagnostic } from "./compiler";
-import { compiledFactoryDefinitionSchema } from "./schema";
-import { parseFactoryDefinitionJson } from "./serialization";
+import { catalogForStoredFactoryDefinition } from "./settings-persistence";
 import {
   selectDefaultFactory,
   selectStoredFactoryDefinition,
   type FactoryDefinitionTarget,
 } from "./storage";
-import { recompileStoredFactoryDefinition } from "./stored-definition";
+import {
+  readCompiledFactoryDefinition,
+  recompileStoredFactoryDefinition,
+} from "./stored-definition";
 
 type CheckScope = {
   admin: SupabaseClient<Database>;
@@ -39,15 +41,14 @@ export async function readFactoryDefinitionCapabilityCheck(
   try {
     const stored = await loadStoredDefinition(scope);
     if (!stored) return unavailableDefinition();
-    const candidate = parseFactoryDefinitionJson(stored.definition_json);
-    const parsed = compiledFactoryDefinitionSchema.safeParse(candidate.ok ? candidate.value : null);
-    if (!parsed.success) return invalidDefinition();
+    const bundle = readCompiledFactoryDefinition(stored.definition_json);
+    if (!bundle) return invalidDefinition();
     return {
       ok: true,
       check: await getLatestSandboxCapabilityCheck({
         admin: scope.admin,
         workspaceId: scope.workspaceId,
-        repositoryId: parsed.data.repositoryId,
+        repositoryId: bundle.repositoryId,
         definitionDigest: stored.canonical_digest,
       }),
     };
@@ -69,7 +70,7 @@ export async function startFactoryDefinitionCapabilityCheck(
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,
       stored.canonical_digest,
-      catalog,
+      catalogForStoredFactoryDefinition(catalog, stored),
     );
     if (!compiled.ok) return invalidDefinition(compiled.diagnostics);
     const { agent, repositoryId, sandboxProvider } = compiled.bundle;

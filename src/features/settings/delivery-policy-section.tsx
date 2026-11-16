@@ -3,6 +3,10 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import {
+  FactorySettingsForm,
+  type FactorySettingsFormRevision,
+} from "@/features/settings/factory-settings";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { readResponseJson, useApiAction } from "@/features/settings/use-api-action";
@@ -74,33 +78,46 @@ export function DeliveryPolicySection({
 }) {
   // A pipeline change must discard its predecessor's request, revision and draft.
   return (
-    <DeliveryPolicyControls
-      canManage={canManage}
-      key={`${workspaceId}:${pipelineId}`}
-      pipelineId={pipelineId}
-      workspaceId={workspaceId}
-    />
+    <FactorySettingsForm section="deliveryPolicy">
+      {(revision) => (
+        <DeliveryPolicyControls
+          canManage={canManage}
+          key={`${workspaceId}:${revision?.snapshot.pipeline.id ?? pipelineId}`}
+          pipelineId={revision?.snapshot.pipeline.id ?? pipelineId}
+          revision={revision}
+          workspaceId={workspaceId}
+        />
+      )}
+    </FactorySettingsForm>
   );
 }
 
 function DeliveryPolicyControls({
   canManage,
   pipelineId,
+  revision,
   workspaceId,
 }: {
   canManage: boolean;
   pipelineId: string;
+  revision: FactorySettingsFormRevision | null;
   workspaceId: string;
 }) {
   const descriptionId = useId();
   const [loadRevision, setLoadRevision] = useState(0);
-  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const factory = revision !== null;
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
+    factory ? "ready" : "loading",
+  );
   const [policy, setPolicy] = useState<DeliveryPolicy | null>(null);
-  const [draft, setDraft] = useState(() => toDraft(newRequirements));
+  const initialRequirements = revision?.snapshot.deliveryPolicy ?? newRequirements;
+  const [draft, setDraft] = useState(() => toDraft(initialRequirements));
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [conflict, setConflict] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   useEffect(() => {
+    if (factory) return;
     const controller = new AbortController();
     async function load() {
       try {
@@ -125,30 +142,17 @@ function DeliveryPolicyControls({
     }
     void load();
     return () => controller.abort();
-  }, [loadRevision, pipelineId, workspaceId]);
+  }, [factory, loadRevision, pipelineId, workspaceId]);
 
-  const save = useApiAction<{ policy: DeliveryPolicy }>({
-    call: async () => {
-      const parsed = deliveryRequirementsSchema.safeParse({
-        ...draft,
-        requiredChecks: names(draft.requiredChecks),
-        requiredEvidence: names(draft.requiredEvidence),
-        minimumApprovals: draft.minimumApprovals === "" ? null : Number(draft.minimumApprovals),
-        freshnessSeconds: draft.freshnessSeconds === "" ? null : Number(draft.freshnessSeconds),
-      });
-      if (!parsed.success) {
-        return Response.json(
-          { error: parsed.error.issues[0]?.message ?? "Check policy fields." },
-          { status: 400 },
-        );
-      }
+  const save = useApiAction<{ policy: DeliveryPolicy }, [DeliveryRequirements]>({
+    call: async (requirements) => {
       const response = await fetch(`/api/workspaces/${workspaceId}/delivery-policy`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pipelineId,
           expectedRevision: policy?.revision ?? 0,
-          requirements: parsed.data,
+          requirements,
         }),
       });
       if (response.status === 409) {
@@ -180,15 +184,50 @@ function DeliveryPolicyControls({
   }
 
   function update<K extends keyof PolicyDraft>(key: K, value: PolicyDraft[K]) {
-    setDraft((current) => ({ ...current, [key]: value }));
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    revision?.setDirty(JSON.stringify(next) !== JSON.stringify(toDraft(initialRequirements)));
     setMessage(null);
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  const isBusy = save.isBusy || Boolean(revision?.busy);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canManage || conflict || loadState !== "ready") return;
+    if (!canManage || conflict || isBusy || loadState !== "ready") return;
     setMessage(null);
-    void save.run();
+    const parsed = deliveryRequirementsSchema.safeParse({
+      ...draft,
+      requiredChecks: names(draft.requiredChecks),
+      requiredEvidence: names(draft.requiredEvidence),
+      minimumApprovals: draft.minimumApprovals === "" ? null : Number(draft.minimumApprovals),
+      freshnessSeconds: draft.freshnessSeconds === "" ? null : Number(draft.freshnessSeconds),
+    });
+    if (!parsed.success) {
+      setMessage({
+        kind: "error",
+        text: parsed.error.issues[0]?.message ?? "Check policy fields.",
+      });
+      return;
+    }
+    if (!revision) {
+      await save.run(parsed.data);
+      return;
+    }
+
+    setSavingDraft(true);
+    try {
+      const saved = await revision.save({ kind: "delivery-policy", requirements: parsed.data });
+      setDraft(toDraft(saved.deliveryPolicy ?? newRequirements));
+      revision.setDirty(false);
+    } catch (error) {
+      setMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Delivery policy could not be saved.",
+      });
+    } finally {
+      setSavingDraft(false);
+    }
   }
 
   return (
@@ -202,7 +241,12 @@ function DeliveryPolicyControls({
             Delivery policy
           </h3>
           <span className="text-xs text-muted">
-            {policy ? `Revision ${policy.revision}` : loadState === "ready" ? "Not configured" : ""}
+            {!factory &&
+              (policy
+                ? `Revision ${policy.revision}`
+                : loadState === "ready"
+                  ? "Not configured"
+                  : "")}
           </span>
         </div>
         <p className="text-[13px] leading-5 text-muted" id={descriptionId}>
@@ -223,7 +267,7 @@ function DeliveryPolicyControls({
               Only workspace owners and admins can change delivery policies.
             </p>
           ) : null}
-          <fieldset className="space-y-5" disabled={!canManage || save.isBusy || conflict}>
+          <fieldset className="space-y-5" disabled={!canManage || isBusy || conflict}>
             <legend className="sr-only">Delivery requirements</legend>
             <fieldset>
               <legend className="mb-2 text-[13px] font-medium text-foreground">
@@ -337,26 +381,30 @@ function DeliveryPolicyControls({
           </fieldset>
           <div className="flex flex-wrap gap-3">
             {canManage ? (
-              <button
-                className="ui-button-primary"
-                disabled={save.isBusy || conflict}
-                type="submit"
-              >
+              <button className="ui-button-primary" disabled={isBusy || conflict} type="submit">
                 <ActionButtonLabel
-                  idle={policy ? "Save new revision" : "Create delivery policy"}
-                  pending={save.isBusy}
+                  idle={
+                    factory
+                      ? "Save delivery policy draft"
+                      : policy
+                        ? "Save new revision"
+                        : "Create delivery policy"
+                  }
+                  pending={save.isBusy || savingDraft}
                   pendingLabel="Saving…"
                 />
               </button>
             ) : null}
-            <button
-              className="ui-button-secondary"
-              disabled={save.isBusy}
-              onClick={reload}
-              type="button"
-            >
-              Reload saved policy
-            </button>
+            {!factory ? (
+              <button
+                className="ui-button-secondary"
+                disabled={save.isBusy}
+                onClick={reload}
+                type="button"
+              >
+                Reload saved policy
+              </button>
+            ) : null}
           </div>
         </form>
       ) : null}

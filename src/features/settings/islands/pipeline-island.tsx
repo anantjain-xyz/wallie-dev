@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Status } from "@/components/ui/status";
 import { DeliveryPolicySection } from "@/features/settings/delivery-policy-section";
+import { useFactorySettings } from "@/features/settings/factory-settings";
 import type { SettingsPageData } from "@/features/settings/data";
 import {
   dispatchSettingsDataChanged,
@@ -28,6 +29,8 @@ export function preloadPipelineEditor() {
 
 export function PipelineIsland({ data }: { data: SettingsPageData }) {
   const [pipelineDirty, setPipelineDirty] = useState(false);
+  const factory = useFactorySettings();
+  const pipelineId = factory?.snapshot?.pipeline.id ?? data.pipeline?.id;
 
   return (
     <Section
@@ -51,10 +54,10 @@ export function PipelineIsland({ data }: { data: SettingsPageData }) {
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
       />
-      {data.pipeline ? (
+      {pipelineId ? (
         <DeliveryPolicySection
           canManage={data.canManage}
-          pipelineId={data.pipeline.id}
+          pipelineId={pipelineId}
           workspaceId={data.workspace.id}
         />
       ) : null}

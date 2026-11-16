@@ -6,6 +6,10 @@ import type {
   SettingsSetupData,
   WorkspaceUsageData,
 } from "@/features/settings/data";
+import {
+  FactorySettingsPanel,
+  FactorySettingsProvider,
+} from "@/features/settings/factory-settings";
 import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/islands/advanced-islands";
 import {
   GithubIntegrationIsland,
@@ -116,14 +120,19 @@ async function IntegrationDetails({
   }
   const data = completeSettingsData(initialData, setup.value);
   return (
-    <>
+    <FactorySettingsProvider
+      canManage={data.canManage}
+      key={data.workspace.id}
+      workspaceId={data.workspace.id}
+    >
+      <FactorySettingsPanel />
       <RepositoryIntegrationIsland initialData={data} />
       <PipelineIsland data={data} />
       <LinearIntegrationIsland initialData={data} />
       <VercelIntegrationIsland initialData={data} />
       <RuntimeIntegrationIsland codexStatus={searchState.codexStatus} initialData={data} />
       <VerifySetupIsland initialData={data} />
-    </>
+    </FactorySettingsProvider>
   );
 }
 

@@ -15,7 +15,10 @@ import type {
   SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
 
+type DefinitionTarget = { id: string; kind: "draft" | "revision"; repositoryId: string };
+
 type SandboxCapabilitySectionProps = {
+  definitionTarget?: DefinitionTarget;
   canManage: boolean;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
   onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
@@ -75,6 +78,7 @@ export function markSandboxCapabilityCheckPollingFailed(
 
 export function SandboxCapabilitySection({
   canManage,
+  definitionTarget,
   initialCheck,
   onCheckChange,
   preferredRepositoryId,
@@ -96,6 +100,14 @@ export function SandboxCapabilitySection({
     }),
   );
   const [check, setCheck] = useState(initialCheck);
+  const [loading, setLoading] = useState(Boolean(definitionTarget));
+  const endpoint = `/api/workspaces/${workspaceId}/${definitionTarget ? "factory-definition/" : ""}${definitionTarget ? "capability-check" : "sandbox-capability-check"}`;
+  const targetQuery = definitionTarget
+    ? new URLSearchParams({
+        [definitionTarget.kind === "draft" ? "draftId" : "revisionId"]: definitionTarget.id,
+      }).toString()
+    : null;
+  const repository = selectableRepositories.find(({ id }) => id === definitionTarget?.repositoryId);
   const latestCheckRef = useRef(check);
   const repositoryIdsKey = selectableRepositories.map((repository) => repository.id).join("|");
 
@@ -113,12 +125,37 @@ export function SandboxCapabilitySection({
     );
   }, [preferredRepositoryId, repositories, repositoryIdsKey]);
 
+  useEffect(() => {
+    if (!targetQuery) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`${endpoint}?${targetQuery}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const body = (await response.json()) as SandboxCapabilityCheckLatestResponse;
+        if (!response.ok) throw new Error("Could not load the factory capability check.");
+        if (!controller.signal.aborted) setCheck(body.check);
+      } catch {
+        if (!controller.signal.aborted) {
+          setFlashMessage({ kind: "error", text: "Could not load the factory capability check." });
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [endpoint, setFlashMessage, targetQuery]);
+
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
     call: () =>
-      fetch(`/api/workspaces/${workspaceId}/sandbox-capability-check`, {
-        body: JSON.stringify({
-          repositoryId: selectedRepositoryId || undefined,
-        }),
+      fetch(endpoint, {
+        body: JSON.stringify(
+          definitionTarget
+            ? { target: { kind: definitionTarget.kind, id: definitionTarget.id } }
+            : { repositoryId: selectedRepositoryId || undefined },
+        ),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       }),
@@ -145,7 +182,7 @@ export function SandboxCapabilitySection({
     const timer = window.setInterval(async () => {
       try {
         const response = await fetch(
-          `/api/workspaces/${workspaceId}/sandbox-capability-check?repositoryId=${encodeURIComponent(repositoryId)}`,
+          `${endpoint}?${targetQuery ?? new URLSearchParams({ repositoryId })}`,
           { cache: "no-store" },
         );
         const body = (await response.json().catch(() => null)) as
@@ -191,26 +228,36 @@ export function SandboxCapabilitySection({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [check?.githubRepositoryId, isPolling, onCheckChange, setFlashMessage, workspaceId]);
+  }, [check?.githubRepositoryId, endpoint, isPolling, onCheckChange, setFlashMessage, targetQuery]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3">
-        <SelectField
-          className="min-w-64 flex-1"
-          disabled={!canManage || repositoryOptions.length === 0}
-          fallbackLabel="No repositories available"
-          label="Repository"
-          onValueChange={setSelectedRepositoryId}
-          options={repositoryOptions}
-          value={selectedRepositoryId}
-        />
+        {definitionTarget ? (
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted">Repository</p>
+            <p className="break-words text-sm text-foreground">
+              {repository?.fullName ?? "Unavailable"}
+            </p>
+          </div>
+        ) : (
+          <SelectField
+            className="min-w-64 flex-1"
+            disabled={!canManage || repositoryOptions.length === 0}
+            fallbackLabel="No repositories available"
+            label="Repository"
+            onValueChange={setSelectedRepositoryId}
+            options={repositoryOptions}
+            value={selectedRepositoryId}
+          />
+        )}
         <button
           className="ui-button-primary"
           disabled={
             !canManage ||
             !sandboxConnected ||
-            repositoryOptions.length === 0 ||
+            (definitionTarget ? !repository : repositoryOptions.length === 0) ||
+            loading ||
             runCheck.isBusy ||
             isPolling
           }
@@ -230,7 +277,11 @@ export function SandboxCapabilitySection({
         </p>
       ) : null}
 
-      {check ? (
+      {loading ? (
+        <p className="text-[13px] leading-6 text-muted" role="status">
+          Loading capability check…
+        </p>
+      ) : check ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">

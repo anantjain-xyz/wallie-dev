@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
+import { FactorySettingsForm, useFactorySettings } from "@/features/settings/factory-settings";
+import { FactorySandboxProviderSettings } from "@/features/settings/factory-sandbox-provider-settings";
 import { ExecutionPolicySection } from "@/features/settings/execution-policy-section";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
@@ -146,11 +148,22 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
         vercelConnection={data.vercelSandboxConnection}
         workspaceId={data.workspace.id}
       />
+      {data.canManage ? (
+        <FactorySettingsForm section="sandboxProvider">
+          {(revision) =>
+            revision ? (
+              <FactorySandboxProviderSettings revision={revision} settings={data.sandboxSettings} />
+            ) : null
+          }
+        </FactorySettingsForm>
+      ) : null}
     </>
   );
 }
 
 export function LinearIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
+  const factory = useFactorySettings();
+  const published = factory?.snapshot?.published;
   const [pipeline, setPipeline] = useState(initialData.pipeline);
   const [routing, setRouting] = useState(initialData.linearRouting);
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
@@ -180,9 +193,20 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
     );
   }, [initialData.workspace.id, secrets]);
   const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
+  const liveStages = pipeline?.stages ?? [];
+  const stages = factory?.snapshot?.published ? factory.snapshot.publishedStages : liveStages;
+
+  function publishedSlug(id: string | undefined, slug: string | null) {
+    if (!published || !slug) return slug;
+    const stableId = id ?? liveStages.find((stage) => stage.slug === slug)?.id;
+    if (!stableId) return slug;
+    return stages.find((stage) => stage.id === stableId)?.slug ?? "(unavailable)";
+  }
   return (
     <LinearConfigurationSection
       canManage={initialData.canManage}
+      factoryRevisionId={factory?.snapshot ? (published?.id ?? null) : undefined}
+      loadingStages={factory?.phase === "loading" || factory?.phase === "error"}
       isLoadingSecrets={false}
       linearSecret={linearSecret}
       onRoutingSaved={(nextRouting) => {
@@ -191,9 +215,13 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
           updateLinearRoutingInSettingsData(current, nextRouting),
         );
       }}
-      routing={routing}
+      routing={{
+        ...routing,
+        landStageSlug: publishedSlug(routing.landStageId, routing.landStageSlug),
+        reworkStageSlug: publishedSlug(routing.reworkStageId, routing.reworkStageSlug) ?? "",
+      }}
       setSecrets={updateSecrets}
-      stages={pipeline?.stages ?? []}
+      stages={stages}
       workspaceId={initialData.workspace.id}
     />
   );

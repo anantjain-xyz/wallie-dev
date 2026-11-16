@@ -383,7 +383,12 @@ type WorkspaceMemberRow = Pick<
 >;
 type LinearRoutingRow = Pick<
   Tables<"workspace_linear_routing">,
-  "land_stage_slug" | "rework_stage_slug" | "status_mappings" | "updated_at"
+  | "land_stage_slug"
+  | "rework_stage_slug"
+  | "land_stage_id"
+  | "rework_stage_id"
+  | "status_mappings"
+  | "updated_at"
 >;
 
 type OnboardingSnapshotRpcName =
@@ -555,7 +560,9 @@ function createOnboardingSnapshot(
       timing.segment("snapshot.routing", () =>
         admin
           .from("workspace_linear_routing")
-          .select("status_mappings, rework_stage_slug, land_stage_slug, updated_at")
+          .select(
+            "status_mappings, rework_stage_slug, land_stage_slug, rework_stage_id, land_stage_id, updated_at",
+          )
           .eq("workspace_id", workspaceId)
           .maybeSingle(),
       ),
@@ -742,7 +749,9 @@ function derivePipeline(snapshot: OnboardingSnapshot): PipelineConfiguration | n
 function deriveLinearRouting(row: LinearRoutingRow | null): LinearRoutingConfig {
   if (!row) return DEFAULT_LINEAR_ROUTING_CONFIG;
   return coerceLinearRoutingConfig({
+    landStageId: row.land_stage_id,
     landStageSlug: row.land_stage_slug,
+    reworkStageId: row.rework_stage_id,
     reworkStageSlug: row.rework_stage_slug,
     statusMappings: row.status_mappings,
   });

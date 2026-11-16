@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { linearRoutingUpdateSchema } from "@/lib/linear-routing/contracts";
-import {
-  upsertLinearRoutingConfig,
-  validateLinearRoutingStages,
-} from "@/lib/linear-routing/server";
+import { saveLinearRoutingConfig } from "@/lib/linear-routing/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -34,24 +31,35 @@ export async function PUT(request: Request, context: RouteContext) {
     );
   }
 
-  const admin = createSupabaseAdminClient();
-  const stageValidation = await validateLinearRoutingStages({
-    admin,
-    config: parsed.data,
-    workspaceId: access.context.workspace.id,
-  });
-  if (!stageValidation.ok) {
-    return NextResponse.json(
-      { error: stageValidation.error ?? "Invalid routing stage slugs." },
-      { status: 400 },
-    );
+  try {
+    const routing = await saveLinearRoutingConfig({
+      actorUserId: access.context.user.id,
+      admin: createSupabaseAdminClient(),
+      config: parsed.data,
+      workspaceId: access.context.workspace.id,
+    });
+
+    return NextResponse.json({ routing }, { status: 200 });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : null;
+    switch (code) {
+      case "PT409":
+        return NextResponse.json(
+          { error: "The published pipeline changed. Reload the routing options before saving." },
+          { status: 409 },
+        );
+      case "PT422":
+        return NextResponse.json(
+          { error: "Route targets must be part of the active pipeline." },
+          { status: 400 },
+        );
+      case "42501":
+        return NextResponse.json(
+          { error: "Active workspace manager access is required." },
+          { status: 403 },
+        );
+      default:
+        throw error;
+    }
   }
-
-  const routing = await upsertLinearRoutingConfig({
-    admin,
-    config: parsed.data,
-    workspaceId: access.context.workspace.id,
-  });
-
-  return NextResponse.json({ routing }, { status: 200 });
 }
