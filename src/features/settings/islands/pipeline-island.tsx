@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Status } from "@/components/ui/status";
 import { DeliveryPolicySection } from "@/features/settings/delivery-policy-section";
 import type { SettingsPageData } from "@/features/settings/data";
+import { useFactoryDefinitionStore } from "@/features/settings/factory-definition-store";
 import {
   dispatchSettingsDataChanged,
   dispatchSettingsEvent,
@@ -13,6 +14,7 @@ import {
 } from "@/features/settings/settings-island-events";
 import { updatePipelineInSettingsData } from "@/features/settings/settings-data-updates";
 import { Section } from "@/features/settings/settings-ui";
+import { canRouteSettingsThroughFactoryDraft } from "@/lib/factory-definitions/settings-contracts";
 
 const loadPipelineEditor = () =>
   import("@/features/settings/pipeline-editor").then((module) => module.PipelineEditor);
@@ -28,18 +30,37 @@ export function preloadPipelineEditor() {
 
 export function PipelineIsland({ data }: { data: SettingsPageData }) {
   const [pipelineDirty, setPipelineDirty] = useState(false);
+  const { conflict, state: factoryState } = useFactoryDefinitionStore(
+    data.workspace.id,
+    data.factoryDefinition,
+  );
+  const factoryRouted =
+    Boolean(data.factoryDefinition) && canRouteSettingsThroughFactoryDraft(factoryState);
+  const activePipelineId = factoryState.activeDefinition?.pipelineId ?? data.pipeline?.id ?? null;
+
+  const statusBadge = pipelineDirty ? (
+    <Status label="Unsaved changes" value="needs_attention" />
+  ) : factoryRouted && conflict ? (
+    <Status label="Conflict" value="blocked" />
+  ) : factoryRouted && factoryState.latestDraft ? (
+    <Status label="Draft saved" value="in_progress" />
+  ) : factoryRouted && factoryState.currentActivation ? (
+    <Status
+      label={`Published #${factoryState.currentActivation.activationNumber}`}
+      value="healthy"
+    />
+  ) : null;
 
   return (
     <Section
       anchorId="pipeline"
-      statusBadge={
-        pipelineDirty ? <Status label="Unsaved changes" value="needs_attention" /> : null
-      }
+      statusBadge={statusBadge}
       tagline="Each stage runs, then awaits approval. Archiving affects future sessions; existing sessions keep their stages."
       title="Pipeline"
     >
       <PipelineEditor
         canManage={data.canManage}
+        factoryDefinition={data.factoryDefinition}
         onDirtyChange={setPipelineDirty}
         onPipelineSaved={(pipeline) => {
           dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, pipeline);
@@ -51,10 +72,11 @@ export function PipelineIsland({ data }: { data: SettingsPageData }) {
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
       />
-      {data.pipeline ? (
+      {activePipelineId ? (
         <DeliveryPolicySection
           canManage={data.canManage}
-          pipelineId={data.pipeline.id}
+          factoryDefinition={data.factoryDefinition}
+          pipelineId={activePipelineId}
           workspaceId={data.workspace.id}
         />
       ) : null}

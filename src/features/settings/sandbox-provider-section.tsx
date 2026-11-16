@@ -1,12 +1,29 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
+import {
+  reloadSettingsFactoryDefinition,
+  saveSettingsFactoryDraft,
+  useFactoryDefinitionReloadListener,
+  useFactoryDefinitionStore,
+  type SettingsFactoryReloadPayload,
+} from "@/features/settings/factory-definition-store";
+import {
+  dispatchSettingsDataChanged,
+  dispatchSettingsEvent,
+  SETTINGS_PIPELINE_CHANGED,
+} from "@/features/settings/settings-island-events";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
+import {
+  canRouteSettingsThroughFactoryDraft,
+  type SettingsFactoryDefinitionState,
+} from "@/lib/factory-definitions/settings-contracts";
+import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
 import type {
   DaytonaSandboxConnectionPreview,
   E2BSandboxConnectionPreview,
@@ -43,6 +60,7 @@ const PROVIDERS: Array<{ description: string; id: SandboxProvider; label: string
 
 type Props = {
   canManage: boolean;
+  factoryDefinition?: SettingsFactoryDefinitionState;
   onSettingsChange: (settings: SandboxSettingsResponse) => void;
   setFlashMessage: (message: FlashMessage) => void;
   settings: SandboxSettingsResponse;
@@ -53,6 +71,7 @@ type Props = {
 
 export function SandboxProviderSection({
   canManage,
+  factoryDefinition,
   onSettingsChange,
   setFlashMessage,
   settings,
@@ -60,6 +79,15 @@ export function SandboxProviderSection({
   vercelConnection,
   workspaceId,
 }: Props) {
+  const { conflict: factoryConflict, state: factoryState } = useFactoryDefinitionStore(
+    workspaceId,
+    factoryDefinition,
+  );
+  const factoryRouted =
+    variant === "settings" &&
+    Boolean(factoryDefinition) &&
+    canRouteSettingsThroughFactoryDraft(factoryState);
+
   const [apiKeys, setApiKeys] = useState<Record<"daytona" | "e2b", string>>({
     daytona: "",
     e2b: "",
@@ -80,8 +108,27 @@ export function SandboxProviderSection({
   });
   const [replacingProvider, setReplacingProvider] = useState<SandboxProvider | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [localConflict, setLocalConflict] = useState<string | null>(null);
   const [disconnectProvider, setDisconnectProvider] = useState<SandboxProvider | null>(null);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+
+  const handleFactoryReload = useCallback(
+    (payload: SettingsFactoryReloadPayload) => {
+      const nextProvider =
+        payload.sandboxProvider ?? payload.state.activeDefinition?.sandboxProvider;
+      if (nextProvider) {
+        onSettingsChange({
+          ...settings,
+          activeProvider: nextProvider,
+        });
+        setSelectedProvider(nextProvider);
+      }
+      setLocalConflict(null);
+    },
+    [onSettingsChange, settings],
+  );
+
+  useFactoryDefinitionReloadListener(workspaceId, factoryRouted, handleFactoryReload);
 
   async function request<T>(url: string, init: RequestInit): Promise<T> {
     const response = await fetch(url, {
@@ -187,9 +234,61 @@ export function SandboxProviderSection({
     }
   }
 
+  async function handleReloadDefinition() {
+    if (pending !== null) return;
+    setPending("reload");
+    try {
+      const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+      if (!result.ok) {
+        setFlashMessage({ kind: "error", text: result.error });
+        return;
+      }
+      if (result.data.pipeline) {
+        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+      }
+      dispatchSettingsDataChanged(workspaceId, (current) =>
+        projectSettingsDataWithFactoryDefinition(current, result.data.state),
+      );
+      setLocalConflict(null);
+      setFlashMessage({ kind: "info", text: "Reloaded saved factory definition." });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function activate(provider: SandboxProvider) {
+    if (factoryRouted && (localConflict || factoryConflict)) return;
     setPending(`activate:${provider}`);
     try {
+      if (factoryRouted) {
+        const result = await saveSettingsFactoryDraft(
+          workspaceId,
+          { kind: "sandbox-provider", sandboxProvider: provider },
+          factoryState,
+        );
+        if (!result.ok) {
+          if (result.status === 409) {
+            setLocalConflict(result.error);
+            return;
+          }
+          setFlashMessage({
+            kind: "error",
+            text: result.diagnostics?.[0]?.message ?? result.error,
+          });
+          return;
+        }
+        setLocalConflict(null);
+        onSettingsChange({
+          ...settings,
+          activeProvider: result.data.sandboxProvider ?? provider,
+        });
+        setFlashMessage({
+          kind: "success",
+          text: `${providerLabel(provider)} saved to draft. Publish draft to apply to new sessions.`,
+        });
+        return;
+      }
+
       const result = await request<SandboxSettingsResponse>(
         `/api/workspaces/${workspaceId}/sandbox-settings`,
         {
@@ -280,14 +379,49 @@ export function SandboxProviderSection({
   const selectedConfigured = Boolean(selectedStatus?.connection);
   const selectedReplacing =
     selectedConfigured && selectedProvider !== null && replacingProvider === selectedProvider;
+  const conflictMessage = factoryRouted ? (localConflict ?? factoryConflict) : null;
+  const hasConflict = Boolean(conflictMessage);
+  const draftChangedProvider =
+    factoryRouted &&
+    Boolean(factoryState.latestDraft) &&
+    factoryState.latestDraft?.definition.sandboxProvider !==
+      factoryState.currentActivation?.definition.sandboxProvider;
+
+  const sectionStatusBadge = !factoryRouted ? null : hasConflict ? (
+    <Status label="Conflict" value="blocked" />
+  ) : draftChangedProvider ? (
+    <Status label="Draft saved" value="in_progress" />
+  ) : factoryState.currentActivation ? (
+    <Status
+      label={`Published #${factoryState.currentActivation.activationNumber}`}
+      value="healthy"
+    />
+  ) : null;
 
   return (
     <Section
       anchorId="sandbox"
+      statusBadge={sectionStatusBadge}
       tagline="Choose where agents run. Switching keeps connections; jobs use only the selected provider."
       title="Sandbox"
     >
       <div className="space-y-5">
+        {conflictMessage ? (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+            role="alert"
+          >
+            <p>{conflictMessage}</p>
+            <button
+              className="ui-button shrink-0"
+              disabled={pending !== null}
+              onClick={() => void handleReloadDefinition()}
+              type="button"
+            >
+              {pending === "reload" ? "Reloading…" : "Reload saved definition"}
+            </button>
+          </div>
+        ) : null}
         <div className="space-y-6">
           <fieldset>
             <legend className="text-[13px] font-semibold text-foreground">Choose a provider</legend>
@@ -339,6 +473,7 @@ export function SandboxProviderSection({
               ) : null}
               {selectedConfigured && !selectedReplacing ? (
                 <SavedConnectionSummary
+                  activateDisabled={pending !== null || hasConflict}
                   canManage={canManage}
                   disabled={pending !== null}
                   disconnectError={disconnectError}
@@ -367,6 +502,7 @@ export function SandboxProviderSection({
                       </p>
                     </div>
                     <ProviderActions
+                      activateDisabled={pending !== null || hasConflict}
                       canManage={canManage}
                       disabled={pending !== null}
                       disconnectError={disconnectError}
@@ -402,6 +538,7 @@ export function SandboxProviderSection({
 }
 
 function SavedConnectionSummary({
+  activateDisabled,
   activeProvider,
   canManage,
   disabled,
@@ -415,6 +552,7 @@ function SavedConnectionSummary({
   provider,
   status,
 }: {
+  activateDisabled: boolean;
   activeProvider: SandboxProvider;
   canManage: boolean;
   disabled: boolean;
@@ -448,6 +586,7 @@ function SavedConnectionSummary({
           </p>
         </div>
         <ProviderActions
+          activateDisabled={activateDisabled}
           activeProvider={activeProvider}
           canManage={canManage}
           disabled={disabled}
@@ -512,6 +651,7 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 }
 
 function ProviderActions({
+  activateDisabled,
   activeProvider,
   canManage,
   disabled,
@@ -525,6 +665,7 @@ function ProviderActions({
   provider,
   status,
 }: {
+  activateDisabled: boolean;
   activeProvider: SandboxProvider;
   canManage: boolean;
   disabled: boolean;
@@ -547,7 +688,7 @@ function ProviderActions({
       {canManage && status.connected && !status.active ? (
         <button
           className="ui-button-primary"
-          disabled={disabled}
+          disabled={activateDisabled}
           onClick={onActivate}
           type="button"
         >

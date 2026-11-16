@@ -134,6 +134,7 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
       {feedback}
       <SandboxProviderSection
         canManage={data.canManage}
+        factoryDefinition={data.factoryDefinition}
         onSettingsChange={(settings) => {
           setData((current) => applySandboxSettingsToData(current, settings));
           dispatchSettingsEvent(SETTINGS_SANDBOX_CHANGED, settings);
@@ -248,6 +249,7 @@ export function RuntimeIntegrationIsland({
           <>
             <ExecutionPolicySection
               canManage={initialData.canManage}
+              factoryDefinition={initialData.factoryDefinition}
               workspaceId={initialData.workspace.id}
             />
             <div className="space-y-4 border-t border-border pt-6">
@@ -269,6 +271,7 @@ export function RuntimeIntegrationIsland({
             </div>
           </>
         }
+        factoryDefinition={initialData.factoryDefinition}
         initialAgentConfig={initialData.agentConfig}
         initialClaudeCodeStatus={{
           checkedAt: initialData.setupHealth.claudeCodeConnection.checkedAt,

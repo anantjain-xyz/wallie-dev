@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 import { Status } from "@/components/ui/status";
 import { useOptionalLiveRegion } from "@/components/ui/live-region";
@@ -28,10 +28,28 @@ import {
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
 import type { PipelineConfiguration } from "@/features/sessions/types";
+import {
+  reloadSettingsFactoryDefinition,
+  saveSettingsFactoryDraft,
+  useFactoryDefinitionReloadListener,
+  useFactoryDefinitionStore,
+  type SettingsFactoryReloadPayload,
+} from "@/features/settings/factory-definition-store";
+import {
+  dispatchSettingsDataChanged,
+  dispatchSettingsEvent,
+  SETTINGS_PIPELINE_CHANGED,
+} from "@/features/settings/settings-island-events";
+import {
+  canRouteSettingsThroughFactoryDraft,
+  type SettingsFactoryDefinitionState,
+} from "@/lib/factory-definitions/settings-contracts";
+import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 
 type PipelineEditorProps = {
   canManage: boolean;
+  factoryDefinition?: SettingsFactoryDefinitionState;
   onDirtyChange?: (dirty: boolean) => void;
   onPipelineSaved?: (pipeline: PipelineConfiguration) => void;
   pipeline: PipelineConfiguration | null;
@@ -63,6 +81,7 @@ function archivedDraftsFromPipeline(
 
 export function PipelineEditor({
   canManage,
+  factoryDefinition,
   onDirtyChange,
   onPipelineSaved,
   pipeline,
@@ -70,6 +89,13 @@ export function PipelineEditor({
   workspaceMembers,
 }: PipelineEditorProps) {
   const { announce } = useOptionalLiveRegion();
+  const {
+    conflict: factoryConflict,
+    setDirty: setFactorySectionDirty,
+    state: factoryState,
+  } = useFactoryDefinitionStore(workspaceId, factoryDefinition);
+  const factoryRouted =
+    Boolean(factoryDefinition) && canRouteSettingsThroughFactoryDraft(factoryState);
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
@@ -87,6 +113,8 @@ export function PipelineEditor({
   );
   const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localConflict, setLocalConflict] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -98,11 +126,42 @@ export function PipelineEditor({
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
   const removeStage = removeIndex === null ? null : stages[removeIndex];
-  const editable = canManage && !isPending;
+  const hasConflict = factoryRouted && (localConflict || Boolean(factoryConflict));
+  const editable = canManage && !isPending && !isReloading;
 
   useEffect(() => {
     onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+    if (factoryRouted) {
+      setFactorySectionDirty("pipeline", dirty);
+    }
+  }, [dirty, factoryRouted, onDirtyChange, setFactorySectionDirty]);
+
+  const handleFactoryReload = useCallback(
+    (payload: SettingsFactoryReloadPayload) => {
+      const reloadedPipeline = payload.pipeline;
+      if (reloadedPipeline) {
+        const nextStages = draftsFromPipeline(reloadedPipeline, workspaceMembers);
+        setName(reloadedPipeline.name);
+        setOperatingRules(reloadedPipeline.operatingRulesMd ?? "");
+        setStages(nextStages);
+        setArchivedStages(archivedDraftsFromPipeline(reloadedPipeline, workspaceMembers));
+        setBaseline(
+          serializePipelineDraft({
+            name: reloadedPipeline.name,
+            operatingRules: reloadedPipeline.operatingRulesMd ?? "",
+            stages: nextStages,
+          }),
+        );
+      }
+      setLocalConflict(false);
+      setHasAttemptedSave(false);
+      setError(null);
+      setSavedAt(null);
+    },
+    [workspaceMembers],
+  );
+
+  useFactoryDefinitionReloadListener(workspaceId, factoryRouted, handleFactoryReload);
 
   if (!pipeline) {
     return (
@@ -159,24 +218,76 @@ export function PipelineEditor({
     );
   }
 
-  async function savePipeline(stagesToSave: DraftPipelineStage[]) {
-    const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
-      body: JSON.stringify({ name, operatingRulesMd: operatingRules, stages: stagesToSave }),
-      headers: { "Content-Type": "application/json" },
-      method: "PUT",
-    });
-
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Couldn’t save pipeline. Edits kept.");
-      finishInteraction("save_settings", "error");
+  async function handleReloadDefinition() {
+    if (isReloading || isPending) return;
+    setIsReloading(true);
+    const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+    setIsReloading(false);
+    if (!result.ok) {
+      setError(result.error);
       return;
     }
+    if (result.data.pipeline) {
+      dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+    }
+    dispatchSettingsDataChanged(workspaceId, (current) =>
+      projectSettingsDataWithFactoryDefinition(current, result.data.state),
+    );
+    announce("Reloaded saved factory definition.");
+  }
 
-    const body = (await response.json().catch(() => null)) as {
-      pipeline?: PipelineConfiguration;
-    } | null;
-    const savedPipeline = body?.pipeline;
+  async function savePipeline(stagesToSave: DraftPipelineStage[]) {
+    let savedPipeline: PipelineConfiguration | undefined;
+
+    if (factoryRouted) {
+      const result = await saveSettingsFactoryDraft(
+        workspaceId,
+        {
+          kind: "pipeline",
+          name,
+          operatingRulesMd: operatingRules,
+          stages: stagesToSave.map((stage) => ({
+            id: stage.id,
+            slug: stage.slug,
+            name: stage.name,
+            description: stage.description,
+            promptTemplateMd: stage.promptTemplateMd,
+            anyoneCanApprove: stage.anyoneCanApprove,
+            approverMemberIds: stage.approverMemberIds,
+          })),
+        },
+        factoryState,
+      );
+
+      if (!result.ok) {
+        if (result.status === 409) {
+          setLocalConflict(true);
+        }
+        setError(result.diagnostics?.[0]?.message ?? result.error);
+        finishInteraction("save_settings", "error");
+        return;
+      }
+      savedPipeline = result.data.pipeline;
+    } else {
+      const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
+        body: JSON.stringify({ name, operatingRulesMd: operatingRules, stages: stagesToSave }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? "Couldn’t save pipeline. Edits kept.");
+        finishInteraction("save_settings", "error");
+        return;
+      }
+
+      const body = (await response.json().catch(() => null)) as {
+        pipeline?: PipelineConfiguration;
+      } | null;
+      savedPipeline = body?.pipeline;
+    }
+
     const nextStages = savedPipeline
       ? draftsFromPipeline(savedPipeline, workspaceMembers)
       : stagesToSave.map((stage) => ({ ...stage, slugManual: true }));
@@ -196,13 +307,14 @@ export function PipelineEditor({
         stages: nextStages,
       }),
     );
+    setLocalConflict(false);
     setHasAttemptedSave(false);
     setError(null);
     setSavedAt(new Date());
     if (savedPipeline) {
       onPipelineSaved?.(savedPipeline);
     }
-    announce("Pipeline saved.");
+    announce(factoryRouted ? "Pipeline draft saved." : "Pipeline saved.");
     finishInteraction("save_settings", "success");
   }
 
@@ -257,20 +369,31 @@ export function PipelineEditor({
   return (
     <div className="space-y-6">
       <PipelineValidationSummary validation={validation} />
-      {error ? (
+      {error || hasConflict ? (
         <div
           role="alert"
           className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
         >
-          <p>{error}</p>
-          <button
-            className="ui-button shrink-0"
-            disabled={isPending}
-            onClick={handleSave}
-            type="button"
-          >
-            Retry save
-          </button>
+          <p>{error ?? factoryConflict}</p>
+          {hasConflict ? (
+            <button
+              className="ui-button shrink-0"
+              disabled={isPending || isReloading}
+              onClick={() => void handleReloadDefinition()}
+              type="button"
+            >
+              {isReloading ? "Reloading…" : "Reload saved definition"}
+            </button>
+          ) : (
+            <button
+              className="ui-button shrink-0"
+              disabled={isPending}
+              onClick={handleSave}
+              type="button"
+            >
+              Retry save
+            </button>
+          )}
         </div>
       ) : null}
       {savedAt && !error && !dirty ? (
@@ -382,8 +505,8 @@ export function PipelineEditor({
         isPending={isPending}
         onAddStage={handleAddStage}
         onSave={handleSave}
-        saveDisabled={!dirty && !error}
-        saveLabel="Save pipeline"
+        saveDisabled={hasConflict || (!dirty && !error)}
+        saveLabel={factoryRouted ? "Save draft" : "Save pipeline"}
       />
 
       <RemoveStageDialog

@@ -6,6 +6,8 @@ import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
 export const SETTINGS_GITHUB_CHANGED = "wallie:settings-github-changed";
 export const SETTINGS_DATA_CHANGED = "wallie:settings-data-changed";
+export const SETTINGS_FACTORY_DEFINITION_CHANGED = "wallie:settings-factory-definition-changed";
+export const SETTINGS_FACTORY_DEFINITION_RELOADED = "wallie:settings-factory-definition-reloaded";
 export const SETTINGS_PIPELINE_CHANGED = "wallie:settings-pipeline-changed";
 export const SETTINGS_SANDBOX_CHANGED = "wallie:settings-sandbox-changed";
 export const SETTINGS_SECRETS_CHANGED = "wallie:settings-secrets-changed";

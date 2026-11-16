@@ -7,6 +7,12 @@ import {
   type WorkspaceOnboardingData,
 } from "@/features/onboarding/data";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import {
+  createEmptySettingsFactoryDefinitionState,
+  type SettingsFactoryDefinitionState,
+} from "@/lib/factory-definitions/settings-contracts";
+import { loadSettingsFactoryDefinitionState } from "@/lib/factory-definitions/settings";
+import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
@@ -52,6 +58,7 @@ export type RateLimitDisplay = {
 
 export type SettingsPageData = {
   agentConfig: AgentConfigMap;
+  factoryDefinition?: SettingsFactoryDefinitionState;
   rateLimits: RateLimitDisplay[];
   usage: WorkspaceUsageData;
   canManage: boolean;
@@ -161,6 +168,7 @@ function createEmptySettingsSetupData(
 ): SettingsSetupData {
   return {
     agentConfig: {},
+    factoryDefinition: createEmptySettingsFactoryDefinitionState(),
     latestSandboxCapabilityCheck: null,
     linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
     linearSecret: null,
@@ -282,9 +290,13 @@ function createEmptySettingsSetupData(
   };
 }
 
-function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): SettingsSetupData {
-  return {
+function mapSettingsSetupData(
+  onboardingData: WorkspaceOnboardingData,
+  factoryDefinition = createEmptySettingsFactoryDefinitionState(),
+): SettingsSetupData {
+  const base: SettingsSetupData = {
     agentConfig: onboardingData.agentConfig,
+    factoryDefinition,
     latestSandboxCapabilityCheck: onboardingData.setupHealth.latestSandboxCapabilityCheck,
     linearRouting: onboardingData.linearRouting,
     linearSecret: onboardingData.linearSecret,
@@ -297,6 +309,7 @@ function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): Settings
     workspaceMembers: onboardingData.workspaceMembers,
     workspaceSecrets: onboardingData.workspaceSecrets,
   };
+  return projectSettingsDataWithFactoryDefinition(base, factoryDefinition);
 }
 
 export async function loadSettingsPageData(
@@ -418,7 +431,28 @@ export async function loadSettingsPageData(
               rows: 1,
             }),
           );
-          return mapSettingsSetupData(data);
+          const availableRepositoryIds = data.github.installation
+            ? data.github.repositories
+                .filter((repository) => !repository.isArchived)
+                .map((repository) => repository.id)
+            : [];
+          const factoryDefinition = await sectionTiming.segment(
+            "factory-definition-state",
+            () =>
+              loadSettingsFactoryDefinitionState(supabase, workspace.id, {
+                agentConfig: data.agentConfig,
+                availableRepositoryIds,
+                pipelineId: data.pipeline?.id ?? null,
+                primaryRepositoryId: data.github.primaryProfile?.githubRepositoryId ?? null,
+                sandboxActiveProvider: data.sandboxSettings?.activeProvider,
+                selectedGithubRepositoryId: data.onboarding.selectedGithubRepositoryId,
+              }),
+            (value) => ({
+              payloadBytes: approximatePayloadSizeBytes(value),
+              rows: value.activeDefinition ? 1 : 0,
+            }),
+          );
+          return mapSettingsSetupData(data, factoryDefinition);
         },
       );
     }

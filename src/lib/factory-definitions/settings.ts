@@ -1,0 +1,832 @@
+import "server-only";
+
+import { randomUUID } from "node:crypto";
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import {
+  resolveAgentConfigValue,
+  type AgentConfigMap,
+} from "@/features/onboarding/runtime-readiness";
+import type { PipelineConfiguration } from "@/features/sessions/types";
+import {
+  agentProviderSupportsEffort,
+  normalizeAgentProviderName,
+  RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  type AgentEffort,
+} from "@/lib/agent-config/contracts";
+import { mapDeliveryPolicy, type DeliveryPolicy } from "@/lib/delivery-policy/contracts";
+import { mapExecutionPolicy, type ExecutionPolicy } from "@/lib/execution-policy/contracts";
+import { loadFactoryDefinitionCatalog } from "@/lib/factory-definitions/authority";
+import {
+  compileFactoryDefinition,
+  type CompiledFactoryDefinition,
+  type FactoryDefinitionDiagnostic,
+} from "@/lib/factory-definitions/compiler";
+import {
+  mutateFactoryDefinition,
+  type FactoryActivationSummary,
+} from "@/lib/factory-definitions/mutations";
+import {
+  compiledFactoryDefinitionSchema,
+  FACTORY_DEFINITION_SCHEMA_VERSION,
+  type SerialFactoryDefinitionInput,
+} from "@/lib/factory-definitions/schema";
+import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
+import {
+  type SettingsFactoryActivationSummary,
+  type SettingsFactoryCommand,
+  type SettingsFactoryDefinitionState,
+  type SettingsFactoryDraftSummary,
+} from "@/lib/factory-definitions/settings-contracts";
+import {
+  agentConfigFromFactoryDefinition,
+  pipelineFromFactoryDefinition,
+} from "@/lib/factory-definitions/settings-projection";
+import { selectDefaultFactory } from "@/lib/factory-definitions/storage";
+import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
+import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
+import type { SandboxProvider } from "@/lib/sandbox/types";
+import type { Database } from "@/lib/supabase/database.types";
+
+type ScopedClient = Pick<SupabaseClient<Database>, "from">;
+type AdminClient = SupabaseClient<Database>;
+
+export function buildSerialDefinitionFromCompiled(
+  compiled: CompiledFactoryDefinition,
+): SerialFactoryDefinitionInput {
+  return {
+    schemaVersion: FACTORY_DEFINITION_SCHEMA_VERSION,
+    kind: compiled.kind,
+    pipeline: compiled.pipelineId,
+    repository: compiled.repositoryId,
+    sandboxProvider: compiled.sandboxProvider,
+    agent: {
+      provider: compiled.agent.provider,
+      model: compiled.agent.model,
+      effort: compiled.agent.effort,
+      concurrencyLimit: compiled.agent.concurrencyLimit,
+      stallTimeoutMs: compiled.agent.stallTimeoutMs,
+      maxRetries: compiled.agent.maxRetries,
+      maxTurns: compiled.agent.maxTurns,
+    },
+    executionPolicy: compiled.executionPolicyRevisionId,
+    deliveryPolicy: compiled.deliveryPolicyRevisionId,
+    skills: [...compiled.skillIds],
+    tools: [...compiled.toolIds],
+    operatingRulesMd: compiled.operatingRulesMd,
+    stages: compiled.stages.map((stage) => ({
+      id: stage.id,
+      slug: stage.slug,
+      name: stage.name,
+      description: stage.description,
+      promptTemplateMd: stage.promptTemplateMd,
+      anyoneCanApprove: stage.anyoneCanApprove,
+      approverMemberIds: [...stage.approverMemberIds],
+    })),
+  };
+}
+
+export type SettingsFactoryLoadContext = {
+  agentConfig?: AgentConfigMap;
+  pipelineId?: string | null;
+  primaryRepositoryId?: string | null;
+  sandboxActiveProvider?: SandboxProvider;
+  selectedGithubRepositoryId?: string | null;
+  availableRepositoryIds?: readonly string[];
+};
+
+function parseCompiledDefinition(definitionJson: string): CompiledFactoryDefinition | null {
+  const decoded = parseFactoryDefinitionJson(definitionJson);
+  if (!decoded.ok) return null;
+  const parsed = compiledFactoryDefinitionSchema.safeParse(decoded.value);
+  return parsed.success ? parsed.data : null;
+}
+
+async function resolveDefaultRepositoryId(
+  client: ScopedClient,
+  workspaceId: string,
+  context?: SettingsFactoryLoadContext,
+): Promise<string | null> {
+  if (context?.availableRepositoryIds) {
+    const available = new Set(context.availableRepositoryIds);
+    for (const candidate of [context.selectedGithubRepositoryId, context.primaryRepositoryId]) {
+      if (candidate && available.has(candidate)) return candidate;
+    }
+    return context.availableRepositoryIds[0] ?? null;
+  }
+
+  const [installationResult, repositoriesResult, onboardingResult, primaryProfileResult] =
+    await Promise.all([
+      client
+        .from("github_installations")
+        .select("id")
+        .eq("workspace_id", workspaceId)
+        .eq("suspended", false)
+        .maybeSingle(),
+      client
+        .from("github_repositories")
+        .select("id, github_installation_id")
+        .eq("workspace_id", workspaceId)
+        .eq("is_archived", false)
+        .order("full_name", { ascending: true }),
+      client
+        .from("workspace_onboarding")
+        .select("selected_github_repository_id")
+        .eq("workspace_id", workspaceId)
+        .maybeSingle(),
+      client
+        .from("workspace_repository_profiles")
+        .select("github_repository_id")
+        .eq("workspace_id", workspaceId)
+        .eq("is_primary", true)
+        .maybeSingle(),
+    ]);
+
+  if (installationResult.error) throw installationResult.error;
+  if (repositoriesResult.error) throw repositoriesResult.error;
+  if (onboardingResult.error) throw onboardingResult.error;
+  if (primaryProfileResult.error) throw primaryProfileResult.error;
+
+  const activeInstallationId = installationResult.data?.id;
+  if (!activeInstallationId) return null;
+
+  const eligibleIds = (repositoriesResult.data ?? [])
+    .filter((repo) => repo.github_installation_id === activeInstallationId)
+    .map((repo) => repo.id);
+  const eligibleSet = new Set(eligibleIds);
+
+  for (const candidate of [
+    onboardingResult.data?.selected_github_repository_id,
+    primaryProfileResult.data?.github_repository_id,
+  ]) {
+    if (candidate && eligibleSet.has(candidate)) return candidate;
+  }
+  return eligibleIds[0] ?? null;
+}
+
+export async function loadSettingsFactoryDefinitionState(
+  client: ScopedClient,
+  workspaceId: string,
+  context?: SettingsFactoryLoadContext,
+): Promise<SettingsFactoryDefinitionState> {
+  const [factoryResult, pipelineResult, executionPolicyPointerResult] = await Promise.all([
+    selectDefaultFactory(client, workspaceId),
+    context?.pipelineId !== undefined
+      ? Promise.resolve({
+          data: context.pipelineId ? { id: context.pipelineId } : null,
+          error: null,
+        })
+      : client
+          .from("pipelines")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("is_default", true)
+          .maybeSingle(),
+    client
+      .from("execution_policies")
+      .select("current_revision_id, revision")
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
+  ]);
+
+  if (factoryResult.error) throw factoryResult.error;
+  if (pipelineResult.error) throw pipelineResult.error;
+  if (executionPolicyPointerResult.error) throw executionPolicyPointerResult.error;
+
+  const factoryId = factoryResult.data?.id ?? null;
+  const defaultPipelineId = pipelineResult.data?.id ?? null;
+  const liveExecutionPolicyRevision = executionPolicyPointerResult.data?.revision ?? 0;
+
+  const deliveryPointerPromise = defaultPipelineId
+    ? client
+        .from("delivery_policies")
+        .select("current_revision_id, revision")
+        .eq("workspace_id", workspaceId)
+        .eq("pipeline_id", defaultPipelineId)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null });
+
+  const activationPromise = factoryId
+    ? client
+        .from("factory_definition_activations")
+        .select("id, revision_id, activation_number, previous_activation_number, created_at")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .order("activation_number", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null });
+
+  const [deliveryPolicyPointerResult, activationResult, defaultRepositoryId] = await Promise.all([
+    deliveryPointerPromise,
+    activationPromise,
+    resolveDefaultRepositoryId(client, workspaceId, context),
+  ]);
+
+  if (deliveryPolicyPointerResult.error) throw deliveryPolicyPointerResult.error;
+  if (activationResult.error) throw activationResult.error;
+
+  const liveDeliveryPolicyRevision = deliveryPolicyPointerResult.data?.revision ?? 0;
+  const activationRow = activationResult.data;
+  const expectedActivationNumber = activationRow?.activation_number ?? 0;
+
+  const activationRevisionPromise = activationRow
+    ? client
+        .from("factory_definition_revisions")
+        .select("id, definition_json, canonical_digest, created_at")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId!)
+        .eq("id", activationRow.revision_id)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null });
+
+  let draftQuery = factoryId
+    ? client
+        .from("factory_definition_drafts")
+        .select(
+          "id, base_activation_number, schema_version, definition_json, canonical_digest, created_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+    : null;
+  if (draftQuery) {
+    draftQuery = expectedActivationNumber
+      ? draftQuery.eq("base_activation_number", expectedActivationNumber)
+      : draftQuery.is("base_activation_number", null);
+  }
+  const draftPromise = draftQuery
+    ? draftQuery
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null });
+
+  const [activationRevisionResult, draftResult] = await Promise.all([
+    activationRevisionPromise,
+    draftPromise,
+  ]);
+  if (activationRevisionResult.error) throw activationRevisionResult.error;
+  if (draftResult.error) throw draftResult.error;
+
+  let currentActivation: SettingsFactoryActivationSummary | null = null;
+  if (activationRow && activationRevisionResult.data) {
+    const parsedDef = parseCompiledDefinition(activationRevisionResult.data.definition_json);
+    if (parsedDef) {
+      currentActivation = {
+        id: activationRow.id,
+        revisionId: activationRow.revision_id,
+        activationNumber: activationRow.activation_number,
+        previousActivationNumber: activationRow.previous_activation_number,
+        canonicalDigest: activationRevisionResult.data.canonical_digest,
+        createdAt: activationRow.created_at,
+        definition: parsedDef,
+      };
+    }
+  }
+
+  let latestDraft: SettingsFactoryDraftSummary | null = null;
+  if (draftResult.data) {
+    const parsedDef = parseCompiledDefinition(draftResult.data.definition_json);
+    if (parsedDef) {
+      latestDraft = {
+        id: draftResult.data.id,
+        baseActivationNumber: draftResult.data.base_activation_number,
+        schemaVersion: draftResult.data.schema_version,
+        canonicalDigest: draftResult.data.canonical_digest,
+        createdAt: draftResult.data.created_at,
+        definition: parsedDef,
+      };
+    }
+  }
+
+  const activeDefinition = latestDraft?.definition ?? currentActivation?.definition ?? null;
+
+  const executionRevisionId = activeDefinition
+    ? activeDefinition.executionPolicyRevisionId
+    : (executionPolicyPointerResult.data?.current_revision_id ?? null);
+  const deliveryRevisionId = activeDefinition
+    ? activeDefinition.deliveryPolicyRevisionId
+    : (deliveryPolicyPointerResult.data?.current_revision_id ?? null);
+
+  const [executionRevisionResult, deliveryRevisionResult] = await Promise.all([
+    executionRevisionId
+      ? client
+          .from("execution_policy_revisions")
+          .select("*")
+          .eq("workspace_id", workspaceId)
+          .eq("id", executionRevisionId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    deliveryRevisionId
+      ? client
+          .from("delivery_policy_revisions")
+          .select("*")
+          .eq("workspace_id", workspaceId)
+          .eq("id", deliveryRevisionId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+
+  if (executionRevisionResult.error) throw executionRevisionResult.error;
+  if (deliveryRevisionResult.error) throw deliveryRevisionResult.error;
+
+  const executionPolicy: ExecutionPolicy | null = executionRevisionResult.data
+    ? mapExecutionPolicy(executionRevisionResult.data)
+    : null;
+  const deliveryPolicy: DeliveryPolicy | null = deliveryRevisionResult.data
+    ? mapDeliveryPolicy(deliveryRevisionResult.data)
+    : null;
+
+  return {
+    factoryId,
+    expectedActivationNumber,
+    currentActivation,
+    latestDraft,
+    activeDefinition,
+    defaultRepositoryId: activeDefinition?.repositoryId ?? defaultRepositoryId,
+    executionPolicy,
+    deliveryPolicy,
+    liveExecutionPolicyRevision,
+    liveDeliveryPolicyRevision,
+  };
+}
+
+async function loadBaselineFactoryDefinitionSource(
+  admin: AdminClient,
+  workspaceId: string,
+  state: SettingsFactoryDefinitionState,
+): Promise<
+  | { ok: true; source: SerialFactoryDefinitionInput; pipelineName: string }
+  | { ok: false; error: string }
+> {
+  const [pipeline, agentConfigResult, sandboxSettingsResult] = await Promise.all([
+    loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId),
+    admin.from("workspace_agent_config").select("key, value_json").eq("workspace_id", workspaceId),
+    admin
+      .from("workspace_sandbox_settings")
+      .select("active_provider")
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
+  ]);
+
+  if (agentConfigResult.error) throw agentConfigResult.error;
+  if (sandboxSettingsResult.error) throw sandboxSettingsResult.error;
+  if (!pipeline) {
+    return { ok: false, error: "Workspace has no default pipeline." };
+  }
+
+  if (state.activeDefinition) {
+    return {
+      ok: true,
+      source: buildSerialDefinitionFromCompiled(state.activeDefinition),
+      pipelineName: pipeline.name,
+    };
+  }
+
+  if (!state.defaultRepositoryId) {
+    return {
+      ok: false,
+      error: "Connect a GitHub repository before saving a factory definition draft.",
+    };
+  }
+
+  const agentConfig: AgentConfigMap = {};
+  for (const row of agentConfigResult.data ?? []) {
+    agentConfig[row.key as keyof AgentConfigMap] = row.value_json;
+  }
+
+  const provider =
+    normalizeAgentProviderName(
+      typeof agentConfig.agent_provider === "string" ? agentConfig.agent_provider : undefined,
+    ) ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
+  const rawModel = resolveAgentConfigValue("agent_model", agentConfig);
+  const model =
+    typeof rawModel === "string" && rawModel.trim()
+      ? rawModel
+      : RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model;
+  const rawEffort = resolveAgentConfigValue("agent_effort", agentConfig);
+  const effort = agentProviderSupportsEffort(provider)
+    ? typeof rawEffort === "string" && rawEffort.trim()
+      ? (rawEffort as AgentEffort)
+      : RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_effort
+    : null;
+
+  const sandboxParsed = sandboxProviderSchema.safeParse(
+    sandboxSettingsResult.data?.active_provider ?? "vercel",
+  );
+  const sandboxProvider = sandboxParsed.success ? sandboxParsed.data : "vercel";
+
+  return {
+    ok: true,
+    pipelineName: pipeline.name,
+    source: {
+      schemaVersion: FACTORY_DEFINITION_SCHEMA_VERSION,
+      kind: "serial",
+      pipeline: pipeline.id,
+      repository: state.defaultRepositoryId,
+      sandboxProvider,
+      agent: {
+        provider,
+        model,
+        effort,
+        concurrencyLimit: Number(resolveAgentConfigValue("concurrency_limit", agentConfig)),
+        stallTimeoutMs: Number(resolveAgentConfigValue("stall_timeout_ms", agentConfig)),
+        maxRetries: Number(resolveAgentConfigValue("max_retries", agentConfig)),
+        maxTurns: Number(resolveAgentConfigValue("max_turns", agentConfig)),
+      },
+      executionPolicy: state.executionPolicy?.id ?? null,
+      deliveryPolicy: state.deliveryPolicy?.id ?? null,
+      skills: [],
+      tools: [],
+      operatingRulesMd: pipeline.operatingRulesMd ?? "",
+      stages: pipeline.stages.map((stage) => ({
+        id: stage.id,
+        slug: stage.slug,
+        name: stage.name,
+        description: stage.description,
+        promptTemplateMd: stage.promptTemplateMd,
+        anyoneCanApprove: stage.anyoneCanApprove,
+        approverMemberIds: [...stage.approverMemberIds],
+      })),
+    },
+  };
+}
+
+export type SettingsFactoryMutationResult =
+  | {
+      ok: true;
+      result: {
+        state: SettingsFactoryDefinitionState;
+        activation?: FactoryActivationSummary;
+        pipeline?: PipelineConfiguration;
+        agentConfig?: AgentConfigMap;
+        executionPolicy?: ExecutionPolicy | null;
+        deliveryPolicy?: DeliveryPolicy | null;
+        sandboxProvider?: SandboxProvider;
+      };
+    }
+  | {
+      ok: false;
+      status: 400 | 403 | 404 | 409 | 422 | 500;
+      error: string;
+      diagnostics?: FactoryDefinitionDiagnostic[];
+    };
+
+export async function mutateSettingsFactoryDefinition({
+  admin,
+  workspaceId,
+  actorUserId,
+  command,
+}: {
+  admin: AdminClient;
+  workspaceId: string;
+  actorUserId: string;
+  command: SettingsFactoryCommand;
+}): Promise<SettingsFactoryMutationResult> {
+  const currentState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
+  if (!currentState.factoryId) {
+    return { ok: false, status: 404, error: "Default factory not found." };
+  }
+
+  if (command.expectedActivationNumber !== currentState.expectedActivationNumber) {
+    return {
+      ok: false,
+      status: 409,
+      error: "The active factory definition changed. Reload before retrying.",
+    };
+  }
+
+  if (command.action === "publish") {
+    const currentDraftId = currentState.latestDraft?.id ?? null;
+    if (!currentDraftId || command.draftId !== currentDraftId) {
+      return {
+        ok: false,
+        status: 409,
+        error: "A newer configuration draft or activation exists. Reload before publishing.",
+      };
+    }
+
+    const published = await mutateFactoryDefinition({
+      admin,
+      workspaceId,
+      actorUserId,
+      command: {
+        action: "publish",
+        expectedActivationNumber: command.expectedActivationNumber,
+        draftId: command.draftId,
+      },
+    });
+    if (!published.ok) {
+      return {
+        ok: false,
+        status: published.status,
+        error: published.error,
+        diagnostics: published.diagnostics,
+      };
+    }
+
+    if (!("activation" in published.result)) {
+      return { ok: false, status: 500, error: "Could not publish factory definition." };
+    }
+
+    const nextState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
+    const livePipeline = await loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId);
+    const pipeline =
+      nextState.activeDefinition && livePipeline
+        ? pipelineFromFactoryDefinition(livePipeline, nextState.activeDefinition)
+        : (livePipeline ?? undefined);
+
+    return {
+      ok: true,
+      result: {
+        state: nextState,
+        activation: published.result.activation,
+        ...(pipeline ? { pipeline } : {}),
+        ...(nextState.activeDefinition
+          ? {
+              agentConfig: agentConfigFromFactoryDefinition(nextState.activeDefinition),
+              sandboxProvider: nextState.activeDefinition.sandboxProvider,
+            }
+          : {}),
+        executionPolicy: nextState.executionPolicy,
+        deliveryPolicy: nextState.deliveryPolicy,
+      },
+    };
+  }
+
+  const currentDraftId = currentState.latestDraft?.id ?? null;
+  if (command.expectedDraftId !== currentDraftId) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Another configuration draft was saved. Reload before retrying.",
+    };
+  }
+
+  const baseline = await loadBaselineFactoryDefinitionSource(admin, workspaceId, currentState);
+  if (!baseline.ok) {
+    return { ok: false, status: 422, error: baseline.error };
+  }
+
+  const candidate: SerialFactoryDefinitionInput = {
+    ...baseline.source,
+    agent: { ...baseline.source.agent },
+    skills: [...(baseline.source.skills ?? [])],
+    tools: [...(baseline.source.tools ?? [])],
+    stages: baseline.source.stages.map((stage) => ({
+      ...stage,
+      approverMemberIds: [...(stage.approverMemberIds ?? [])],
+    })),
+  };
+
+  const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+  let nextPipelineName = baseline.pipelineName;
+  const { patch } = command;
+
+  switch (patch.kind) {
+    case "pipeline": {
+      const pipelineId = candidate.pipeline;
+      const { data: existingRows, error: stagesError } = await admin
+        .from("pipeline_stages")
+        .select("id, slug, position")
+        .eq("workspace_id", workspaceId)
+        .eq("pipeline_id", pipelineId);
+      if (stagesError) throw stagesError;
+
+      const rows = existingRows ?? [];
+      const submittedById = new Map(
+        patch.stages
+          .filter((stage): stage is typeof stage & { id: string } => Boolean(stage.id))
+          .map((stage) => [stage.id, stage]),
+      );
+
+      for (const stage of patch.stages) {
+        const conflict = rows.find((row) => {
+          if (row.slug !== stage.slug || row.id === (stage.id ?? null)) return false;
+          const submittedOwner = submittedById.get(row.id);
+          return !(submittedOwner && submittedOwner.slug !== row.slug);
+        });
+        if (conflict) {
+          return {
+            ok: false,
+            status: 422,
+            error: `The slug “${stage.slug}” belongs to an archived stage. Restore that stage instead.`,
+          };
+        }
+      }
+
+      // Pre-validate with temporary UUIDs so invalid candidates never create orphan stage rows.
+      const preflightCandidate: SerialFactoryDefinitionInput = {
+        ...candidate,
+        operatingRulesMd: patch.operatingRulesMd,
+        stages: patch.stages.map((stage) => ({
+          id: stage.id ?? randomUUID(),
+          slug: stage.slug,
+          name: stage.name,
+          description: stage.description ?? "",
+          promptTemplateMd: stage.promptTemplateMd ?? "",
+          anyoneCanApprove: stage.anyoneCanApprove ?? false,
+          approverMemberIds: [...(stage.approverMemberIds ?? [])],
+        })),
+      };
+      const preflight = compileFactoryDefinition(
+        { kind: "structured", value: preflightCandidate },
+        catalog,
+      );
+      if (!preflight.ok) {
+        return {
+          ok: false,
+          status: 422,
+          error: preflight.diagnostics[0]?.message ?? "Review the pipeline configuration.",
+          diagnostics: preflight.diagnostics,
+        };
+      }
+
+      const existingSlugs = new Set(rows.map((row) => row.slug));
+      let nextPosition = rows.reduce((max, row) => Math.max(max, row.position), 0) + 1;
+      const resolvedStages: SerialFactoryDefinitionInput["stages"] = [];
+
+      for (const stage of patch.stages) {
+        let stageId = stage.id ?? null;
+        if (!stageId) {
+          const anchorSlug = existingSlugs.has(stage.slug)
+            ? `${stage.slug.slice(0, 50)}-${randomUUID().slice(0, 8)}`
+            : stage.slug;
+          existingSlugs.add(anchorSlug);
+          const { data: inserted, error: insertError } = await admin
+            .from("pipeline_stages")
+            .insert({
+              workspace_id: workspaceId,
+              pipeline_id: pipelineId,
+              position: nextPosition++,
+              slug: anchorSlug,
+              name: stage.name,
+              description: stage.description ?? "",
+              prompt_template_md: stage.promptTemplateMd ?? "",
+              anyone_can_approve: stage.anyoneCanApprove ?? false,
+              archived_at: new Date().toISOString(),
+            })
+            .select("id")
+            .single();
+          if (insertError || !inserted) {
+            return { ok: false, status: 500, error: "Could not allocate a pipeline stage record." };
+          }
+          stageId = inserted.id;
+        }
+        resolvedStages.push({
+          id: stageId,
+          slug: stage.slug,
+          name: stage.name,
+          description: stage.description ?? "",
+          promptTemplateMd: stage.promptTemplateMd ?? "",
+          anyoneCanApprove: stage.anyoneCanApprove ?? false,
+          approverMemberIds: [...(stage.approverMemberIds ?? [])],
+        });
+      }
+
+      if (patch.name !== baseline.pipelineName) {
+        const { error: renameError } = await admin
+          .from("pipelines")
+          .update({ name: patch.name })
+          .eq("workspace_id", workspaceId)
+          .eq("id", pipelineId);
+        if (renameError) {
+          return { ok: false, status: 500, error: "Could not update the pipeline name." };
+        }
+        nextPipelineName = patch.name;
+      }
+
+      candidate.operatingRulesMd = patch.operatingRulesMd;
+      candidate.stages = resolvedStages;
+      break;
+    }
+
+    case "agent": {
+      candidate.agent = {
+        provider: patch.agent.provider,
+        model: patch.agent.model,
+        effort: agentProviderSupportsEffort(patch.agent.provider) ? patch.agent.effort : null,
+        concurrencyLimit: patch.agent.concurrencyLimit,
+        stallTimeoutMs: patch.agent.stallTimeoutMs,
+        maxRetries: patch.agent.maxRetries,
+        maxTurns: patch.agent.maxTurns,
+      };
+      break;
+    }
+
+    case "execution-policy": {
+      const { data: revisionRow, error: policyError } = await admin.rpc("save_execution_policy", {
+        p_workspace_id: workspaceId,
+        p_actor_user_id: actorUserId,
+        p_expected_revision: patch.expectedPolicyRevision,
+        p_requirements: patch.requirements,
+      });
+      if (policyError) {
+        if (policyError.code === "PT409") {
+          return {
+            ok: false,
+            status: 409,
+            error: "The execution policy changed. Reload before retrying.",
+          };
+        }
+        if (policyError.code === "42501") {
+          return { ok: false, status: 403, error: "Active workspace manager access is required." };
+        }
+        return { ok: false, status: 400, error: "Invalid execution policy." };
+      }
+      if (!revisionRow) {
+        return { ok: false, status: 500, error: "Could not save the execution policy." };
+      }
+      candidate.executionPolicy = revisionRow.id;
+      break;
+    }
+
+    case "delivery-policy": {
+      if (patch.pipelineId !== candidate.pipeline) {
+        return {
+          ok: false,
+          status: 422,
+          error: "Choose a delivery policy revision for the active pipeline.",
+        };
+      }
+      const { data: revisionRow, error: policyError } = await admin.rpc("save_delivery_policy", {
+        p_workspace_id: workspaceId,
+        p_pipeline_id: patch.pipelineId,
+        p_actor_user_id: actorUserId,
+        p_expected_revision: patch.expectedPolicyRevision,
+        p_requirements: patch.requirements,
+      });
+      if (policyError) {
+        if (policyError.code === "PT409") {
+          return {
+            ok: false,
+            status: 409,
+            error: "The delivery policy changed. Reload before retrying.",
+          };
+        }
+        if (policyError.code === "42501") {
+          return { ok: false, status: 403, error: "Active workspace manager access is required." };
+        }
+        return { ok: false, status: 400, error: "Invalid delivery policy." };
+      }
+      if (!revisionRow) {
+        return { ok: false, status: 500, error: "Could not save the delivery policy." };
+      }
+      candidate.deliveryPolicy = revisionRow.id;
+      break;
+    }
+
+    case "sandbox-provider": {
+      candidate.sandboxProvider = patch.sandboxProvider;
+      break;
+    }
+  }
+
+  const savedDraft = await mutateFactoryDefinition({
+    admin,
+    workspaceId,
+    actorUserId,
+    command: {
+      action: "draft",
+      expectedActivationNumber: command.expectedActivationNumber,
+      source: { kind: "structured", value: candidate },
+    },
+  });
+
+  if (!savedDraft.ok) {
+    return {
+      ok: false,
+      status: savedDraft.status,
+      error: savedDraft.diagnostics?.[0]?.message ?? savedDraft.error,
+      diagnostics: savedDraft.diagnostics,
+    };
+  }
+
+  const nextState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
+  const livePipeline = await loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId);
+  const pipeline =
+    nextState.activeDefinition && livePipeline
+      ? pipelineFromFactoryDefinition(
+          { ...livePipeline, name: nextPipelineName },
+          nextState.activeDefinition,
+        )
+      : (livePipeline ?? undefined);
+
+  return {
+    ok: true,
+    result: {
+      state: nextState,
+      ...(pipeline ? { pipeline } : {}),
+      ...(nextState.activeDefinition
+        ? {
+            agentConfig: agentConfigFromFactoryDefinition(nextState.activeDefinition),
+            sandboxProvider: nextState.activeDefinition.sandboxProvider,
+          }
+        : {}),
+      executionPolicy: nextState.executionPolicy,
+      deliveryPolicy: nextState.deliveryPolicy,
+    },
+  };
+}

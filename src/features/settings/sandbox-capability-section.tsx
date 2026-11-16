@@ -17,6 +17,7 @@ import type {
 
 type SandboxCapabilitySectionProps = {
   canManage: boolean;
+  draftTarget?: { id: string; repositoryId: string } | null;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
   onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
   preferredRepositoryId?: string | null;
@@ -75,6 +76,7 @@ export function markSandboxCapabilityCheckPollingFailed(
 
 export function SandboxCapabilitySection({
   canManage,
+  draftTarget = null,
   initialCheck,
   onCheckChange,
   preferredRepositoryId,
@@ -113,15 +115,28 @@ export function SandboxCapabilitySection({
     );
   }, [preferredRepositoryId, repositories, repositoryIdsKey]);
 
+  const checkingDraft = Boolean(draftTarget && selectedRepositoryId === draftTarget.repositoryId);
+  const [checkedDraftId, setCheckedDraftId] = useState<string | null>(null);
+
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
-    call: () =>
-      fetch(`/api/workspaces/${workspaceId}/sandbox-capability-check`, {
+    call: () => {
+      if (checkingDraft && draftTarget) {
+        setCheckedDraftId(draftTarget.id);
+        return fetch(`/api/workspaces/${workspaceId}/factory-definition/capability-check`, {
+          body: JSON.stringify({ target: { kind: "draft", id: draftTarget.id } }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        });
+      }
+      setCheckedDraftId(null);
+      return fetch(`/api/workspaces/${workspaceId}/sandbox-capability-check`, {
         body: JSON.stringify({
           repositoryId: selectedRepositoryId || undefined,
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
-      }),
+      });
+    },
     errorText: "Sandbox capability check failed.",
     onSuccess: (payload) => {
       setCheck(payload.check);
@@ -144,10 +159,10 @@ export function SandboxCapabilitySection({
     let cancelled = false;
     const timer = window.setInterval(async () => {
       try {
-        const response = await fetch(
-          `/api/workspaces/${workspaceId}/sandbox-capability-check?repositoryId=${encodeURIComponent(repositoryId)}`,
-          { cache: "no-store" },
-        );
+        const pollUrl = checkedDraftId
+          ? `/api/workspaces/${workspaceId}/factory-definition/capability-check?draftId=${encodeURIComponent(checkedDraftId)}`
+          : `/api/workspaces/${workspaceId}/sandbox-capability-check?repositoryId=${encodeURIComponent(repositoryId)}`;
+        const response = await fetch(pollUrl, { cache: "no-store" });
         const body = (await response.json().catch(() => null)) as
           | (SandboxCapabilityCheckLatestResponse & { error?: string })
           | null;
@@ -191,7 +206,14 @@ export function SandboxCapabilitySection({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [check?.githubRepositoryId, isPolling, onCheckChange, setFlashMessage, workspaceId]);
+  }, [
+    check?.githubRepositoryId,
+    checkedDraftId,
+    isPolling,
+    onCheckChange,
+    setFlashMessage,
+    workspaceId,
+  ]);
 
   return (
     <div className="space-y-6">

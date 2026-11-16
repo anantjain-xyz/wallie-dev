@@ -14,6 +14,7 @@ import {
   RuntimeIntegrationIsland,
   VercelIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
+import { FactoryDefinitionIsland } from "@/features/settings/islands/factory-definition-island";
 import { PipelineIsland } from "@/features/settings/islands/pipeline-island";
 import {
   DangerActionsIsland,
@@ -118,6 +119,7 @@ async function IntegrationDetails({
   return (
     <>
       <RepositoryIntegrationIsland initialData={data} />
+      <FactoryDefinitionIsland initialData={data} />
       <PipelineIsland data={data} />
       <LinearIntegrationIsland initialData={data} />
       <VercelIntegrationIsland initialData={data} />

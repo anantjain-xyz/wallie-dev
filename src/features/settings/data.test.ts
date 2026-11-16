@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   createWorkspaceOnboardingSnapshot: vi.fn(),
   loadAuthenticatedWorkspaceContext: vi.fn(),
+  loadSettingsFactoryDefinitionState: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error("not-found");
   }),
@@ -15,6 +16,15 @@ vi.mock("next/navigation", () => ({ notFound: mocked.notFound }));
 vi.mock("@/features/onboarding/data", () => ({
   createWorkspaceOnboardingSnapshot: mocked.createWorkspaceOnboardingSnapshot,
 }));
+
+vi.mock("@/lib/factory-definitions/settings", async () => {
+  const contracts = await import("@/lib/factory-definitions/settings-contracts");
+  return {
+    loadSettingsFactoryDefinitionState: mocked.loadSettingsFactoryDefinitionState.mockResolvedValue(
+      contracts.createEmptySettingsFactoryDefinitionState(),
+    ),
+  };
+});
 
 vi.mock("@/features/workspaces/authenticated-context", () => ({
   loadAuthenticatedWorkspaceContext: mocked.loadAuthenticatedWorkspaceContext,

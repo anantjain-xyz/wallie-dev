@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AgentConfigEntry,
@@ -18,18 +18,33 @@ import {
 } from "@/components/shared/agent-provider-options";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField, type SelectOption } from "@/components/ui/select";
+import { Status } from "@/components/ui/status";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
+import {
+  reloadSettingsFactoryDefinition,
+  saveSettingsFactoryDraft,
+  useFactoryDefinitionReloadListener,
+  useFactoryDefinitionStore,
+  type SettingsFactoryReloadPayload,
+} from "@/features/settings/factory-definition-store";
 import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
+import {
+  dispatchSettingsDataChanged,
+  dispatchSettingsEvent,
+  SETTINGS_PIPELINE_CHANGED,
+} from "@/features/settings/settings-island-events";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import {
   type AgentConfigKey,
+  type AgentEffort,
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
+  ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   STALL_TIMEOUT_MINUTE_LIMITS,
   agentProviderSupportsEffort,
@@ -43,12 +58,22 @@ import {
   pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
 import { discoverCursorModels } from "@/lib/cursor/client";
+import {
+  canRouteSettingsThroughFactoryDraft,
+  type SettingsFactoryDefinitionState,
+} from "@/lib/factory-definitions/settings-contracts";
+import {
+  agentConfigFromFactoryDefinition,
+  mapCompilerDiagnosticsToAgentFieldErrors,
+  projectSettingsDataWithFactoryDefinition,
+} from "@/lib/factory-definitions/settings-projection";
 
 type AgentConfigSectionProps = {
   anchorId?: string;
   canManage: boolean;
   codexConnectFlash?: string | null;
   extraContent?: ReactNode;
+  factoryDefinition?: SettingsFactoryDefinitionState;
   initialAgentConfig: AgentConfigMap;
   initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
   initialCodexStatus?: CodexConnectionStatus;
@@ -150,6 +175,7 @@ export function AgentConfigSection({
   canManage,
   codexConnectFlash,
   extraContent,
+  factoryDefinition,
   initialAgentConfig,
   initialClaudeCodeStatus,
   initialCodexStatus,
@@ -168,6 +194,14 @@ export function AgentConfigSection({
   title = "Coding agent",
   workspaceId,
 }: AgentConfigSectionProps) {
+  const {
+    conflict: factoryConflict,
+    setDirty: setFactorySectionDirty,
+    state: factoryState,
+  } = useFactoryDefinitionStore(workspaceId, factoryDefinition);
+  const factoryRouted =
+    Boolean(factoryDefinition) && canRouteSettingsThroughFactoryDraft(factoryState);
+
   const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialAgentConfig);
   const [drafts, setDrafts] = useState<Record<AgentConfigKey, string>>(() => ({
     agent_provider: agentConfigValueToDraft("agent_provider", initialAgentConfig.agent_provider),
@@ -185,6 +219,8 @@ export function AgentConfigSection({
     max_turns: agentConfigValueToDraft("max_turns", initialAgentConfig.max_turns),
   }));
   const [isSaving, setIsSaving] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
+  const [localConflict, setLocalConflict] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
   const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
   const [cursorModels, setCursorModels] = useState<SelectOption[]>([]);
@@ -309,7 +345,44 @@ export function AgentConfigSection({
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
-  const canSave = !isSaving && saveableFields.length > 0 && !hasErrors;
+  const conflictMessage = factoryRouted ? (localConflict ?? factoryConflict) : null;
+  const hasConflict = Boolean(conflictMessage);
+  const canSave =
+    !isSaving && !isReloading && !hasConflict && saveableFields.length > 0 && !hasErrors;
+
+  useEffect(() => {
+    if (factoryRouted) {
+      setFactorySectionDirty("agent", dirtyFields.length > 0);
+    }
+  }, [dirtyFields.length, factoryRouted, setFactorySectionDirty]);
+
+  const handleFactoryReload = useCallback(
+    (payload: SettingsFactoryReloadPayload) => {
+      const nextConfig =
+        payload.agentConfig ??
+        (payload.state.activeDefinition
+          ? agentConfigFromFactoryDefinition(payload.state.activeDefinition)
+          : initialAgentConfig);
+      setAgentConfig(nextConfig);
+      setDrafts({
+        agent_provider: agentConfigValueToDraft("agent_provider", nextConfig.agent_provider),
+        agent_model: agentConfigValueToDraft("agent_model", nextConfig.agent_model),
+        agent_effort: agentConfigValueToDraft("agent_effort", nextConfig.agent_effort),
+        concurrency_limit: agentConfigValueToDraft(
+          "concurrency_limit",
+          nextConfig.concurrency_limit,
+        ),
+        stall_timeout_ms: agentConfigValueToDraft("stall_timeout_ms", nextConfig.stall_timeout_ms),
+        max_retries: agentConfigValueToDraft("max_retries", nextConfig.max_retries),
+        max_turns: agentConfigValueToDraft("max_turns", nextConfig.max_turns),
+      });
+      setLocalConflict(null);
+      setServerFieldErrors({});
+    },
+    [initialAgentConfig],
+  );
+
+  useFactoryDefinitionReloadListener(workspaceId, factoryRouted, handleFactoryReload);
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
@@ -321,8 +394,26 @@ export function AgentConfigSection({
     });
   }
 
+  async function handleReloadDefinition() {
+    if (isReloading || isSaving) return;
+    setIsReloading(true);
+    const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+    setIsReloading(false);
+    if (!result.ok) {
+      setFlashMessage({ kind: "error", text: result.error });
+      return;
+    }
+    if (result.data.pipeline) {
+      dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+    }
+    dispatchSettingsDataChanged(workspaceId, (current) =>
+      projectSettingsDataWithFactoryDefinition(current, result.data.state),
+    );
+    setFlashMessage({ kind: "info", text: "Reloaded saved factory definition." });
+  }
+
   async function handleSaveAll() {
-    if (saveInFlightRef.current || saveableFields.length === 0) return;
+    if (saveInFlightRef.current || saveableFields.length === 0 || hasConflict) return;
     saveInFlightRef.current = true;
     setIsSaving(true);
     setServerFieldErrors({});
@@ -342,6 +433,110 @@ export function AgentConfigSection({
     }
 
     try {
+      if (factoryRouted) {
+        const valueFor = (key: AgentConfigKey, fallback: string | number) => {
+          if (key in config && config[key] !== undefined) return config[key];
+          const parsed = parseAgentConfigDraft(
+            key,
+            key === "concurrency_limit" ||
+              key === "stall_timeout_ms" ||
+              key === "max_retries" ||
+              key === "max_turns"
+              ? "number"
+              : key === "agent_model"
+                ? "text"
+                : "select",
+            drafts[key],
+          );
+          if (parsed.ok) return parsed.value;
+          return agentConfig[key] ?? fallback;
+        };
+
+        const rawEffort = drafts.agent_effort.trim();
+        const resolvedEffort: AgentEffort | null = agentProviderSupportsEffort(
+          selectedAgentProvider,
+        )
+          ? rawEffort
+            ? (String(
+                valueFor("agent_effort", RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_effort),
+              ) as AgentEffort)
+            : null
+          : null;
+
+        const result = await saveSettingsFactoryDraft(
+          workspaceId,
+          {
+            kind: "agent",
+            agent: {
+              provider: selectedAgentProvider,
+              model: String(
+                valueFor("agent_model", getRecommendedAgentModel(selectedAgentProvider)),
+              ),
+              effort: resolvedEffort,
+              concurrencyLimit: Number(
+                valueFor("concurrency_limit", RECOMMENDED_AGENT_CONFIG_DEFAULTS.concurrency_limit),
+              ),
+              stallTimeoutMs: Number(
+                valueFor("stall_timeout_ms", RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms),
+              ),
+              maxRetries: Number(
+                valueFor("max_retries", RECOMMENDED_AGENT_CONFIG_DEFAULTS.max_retries),
+              ),
+              maxTurns: Number(valueFor("max_turns", RECOMMENDED_AGENT_CONFIG_DEFAULTS.max_turns)),
+            },
+          },
+          factoryState,
+        );
+
+        if (!result.ok) {
+          if (result.status === 409) {
+            setLocalConflict(result.error);
+            return;
+          }
+          const mappedErrors = {
+            ...mapCompilerDiagnosticsToAgentFieldErrors(result.diagnostics),
+            ...(result.fieldErrors as AgentConfigFieldErrors | undefined),
+          };
+          if (Object.keys(mappedErrors).length > 0) {
+            setServerFieldErrors(mappedErrors);
+          }
+          throw new Error(result.diagnostics?.[0]?.message ?? result.error);
+        }
+
+        const nextConfig =
+          result.data.agentConfig ??
+          (result.data.state.activeDefinition
+            ? agentConfigFromFactoryDefinition(result.data.state.activeDefinition)
+            : agentConfig);
+        const entries = ALLOWED_AGENT_CONFIG_KEYS.filter(
+          (key) => nextConfig[key] !== undefined,
+        ).map((key) => ({ key, value: nextConfig[key] }));
+
+        setAgentConfig(nextConfig);
+        setDrafts({
+          agent_provider: agentConfigValueToDraft("agent_provider", nextConfig.agent_provider),
+          agent_model: agentConfigValueToDraft("agent_model", nextConfig.agent_model),
+          agent_effort: agentConfigValueToDraft("agent_effort", nextConfig.agent_effort),
+          concurrency_limit: agentConfigValueToDraft(
+            "concurrency_limit",
+            nextConfig.concurrency_limit,
+          ),
+          stall_timeout_ms: agentConfigValueToDraft(
+            "stall_timeout_ms",
+            nextConfig.stall_timeout_ms,
+          ),
+          max_retries: agentConfigValueToDraft("max_retries", nextConfig.max_retries),
+          max_turns: agentConfigValueToDraft("max_turns", nextConfig.max_turns),
+        });
+        setLocalConflict(null);
+        onAgentConfigSaved?.(entries);
+        setFlashMessage({
+          kind: "success",
+          text: "Agent settings saved to draft. Publish draft to apply to new sessions.",
+        });
+        return;
+      }
+
       const response = await fetch("/api/agent-config", {
         body: JSON.stringify({ config, workspaceId } satisfies BatchUpsertAgentConfigRequest),
         headers: { "Content-Type": "application/json" },
@@ -390,10 +585,45 @@ export function AgentConfigSection({
     }
   }
 
+  const draftHasAgentChanges =
+    factoryRouted &&
+    Boolean(factoryState.latestDraft) &&
+    JSON.stringify(factoryState.latestDraft?.definition.agent) !==
+      JSON.stringify(factoryState.currentActivation?.definition.agent);
+
+  const statusBadge = !factoryRouted ? null : dirtyFields.length > 0 ? (
+    <Status label="Unsaved changes" value="needs_attention" />
+  ) : hasConflict ? (
+    <Status label="Conflict" value="blocked" />
+  ) : draftHasAgentChanges ? (
+    <Status label="Draft saved" value="in_progress" />
+  ) : factoryState.currentActivation ? (
+    <Status
+      label={`Published #${factoryState.currentActivation.activationNumber}`}
+      value="healthy"
+    />
+  ) : null;
+
   return (
-    <Section anchorId={anchorId} tagline={tagline} title={title}>
+    <Section anchorId={anchorId} statusBadge={statusBadge} tagline={tagline} title={title}>
       {canManage ? (
         <div className="space-y-6">
+          {conflictMessage ? (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+              role="alert"
+            >
+              <p>{conflictMessage}</p>
+              <button
+                className="ui-button shrink-0"
+                disabled={isSaving || isReloading}
+                onClick={() => void handleReloadDefinition()}
+                type="button"
+              >
+                {isReloading ? "Reloading…" : "Reload saved definition"}
+              </button>
+            </div>
+          ) : null}
           <div className="space-y-6">
             {providerFieldStatuses.map((status) => (
               <AgentConfigField
@@ -462,7 +692,11 @@ export function AgentConfigSection({
               onClick={() => void handleSaveAll()}
               type="button"
             >
-              <ActionButtonLabel idle="Save changes" pending={isSaving} pendingLabel="Saving…" />
+              <ActionButtonLabel
+                idle={factoryRouted ? "Save draft" : "Save changes"}
+                pending={isSaving}
+                pendingLabel="Saving…"
+              />
             </button>
           </div>
 

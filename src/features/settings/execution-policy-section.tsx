@@ -1,8 +1,21 @@
 "use client";
 
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { Status } from "@/components/ui/status";
+import {
+  reloadSettingsFactoryDefinition,
+  saveSettingsFactoryDraft,
+  useFactoryDefinitionReloadListener,
+  useFactoryDefinitionStore,
+  type SettingsFactoryReloadPayload,
+} from "@/features/settings/factory-definition-store";
+import {
+  dispatchSettingsDataChanged,
+  dispatchSettingsEvent,
+  SETTINGS_PIPELINE_CHANGED,
+} from "@/features/settings/settings-island-events";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { readResponseJson, useApiAction } from "@/features/settings/use-api-action";
@@ -12,6 +25,11 @@ import {
   type ExecutionPolicy,
   type ExecutionRequirements,
 } from "@/lib/execution-policy/contracts";
+import {
+  canRouteSettingsThroughFactoryDraft,
+  type SettingsFactoryDefinitionState,
+} from "@/lib/factory-definitions/settings-contracts";
+import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
 
 type PolicyDraft = {
   version: 1;
@@ -53,32 +71,77 @@ function readPolicy(payload: unknown, workspaceId: string) {
 
 export function ExecutionPolicySection({
   canManage,
+  factoryDefinition,
   workspaceId,
 }: {
   canManage: boolean;
+  factoryDefinition?: SettingsFactoryDefinitionState;
   workspaceId: string;
 }) {
   return (
-    <ExecutionPolicyControls canManage={canManage} key={workspaceId} workspaceId={workspaceId} />
+    <ExecutionPolicyControls
+      canManage={canManage}
+      factoryDefinition={factoryDefinition}
+      key={workspaceId}
+      workspaceId={workspaceId}
+    />
   );
 }
 
 function ExecutionPolicyControls({
   canManage,
+  factoryDefinition,
   workspaceId,
 }: {
   canManage: boolean;
+  factoryDefinition?: SettingsFactoryDefinitionState;
   workspaceId: string;
 }) {
   const descriptionId = useId();
+  const {
+    conflict: factoryConflict,
+    setDirty: setFactorySectionDirty,
+    state: factoryState,
+  } = useFactoryDefinitionStore(workspaceId, factoryDefinition);
+  const hasServerFactoryState = Boolean(factoryDefinition);
+  const factoryRouted = hasServerFactoryState && canRouteSettingsThroughFactoryDraft(factoryState);
+  const initialPolicy = hasServerFactoryState ? factoryState.executionPolicy : null;
+
   const [loadRevision, setLoadRevision] = useState(0);
-  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
-  const [policy, setPolicy] = useState<ExecutionPolicy | null>(null);
-  const [draft, setDraft] = useState(() => toDraft(newRequirements));
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
+    hasServerFactoryState ? "ready" : "loading",
+  );
+  const [policy, setPolicy] = useState<ExecutionPolicy | null>(initialPolicy);
+  const [draft, setDraft] = useState(() => toDraft(initialPolicy?.requirements ?? newRequirements));
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [conflict, setConflict] = useState(false);
 
+  const baselineDraft = toDraft(policy?.requirements ?? newRequirements);
+  const isDirty =
+    draft.maxRepairAttempts !== baselineDraft.maxRepairAttempts ||
+    draft.maxExecutionMinutes !== baselineDraft.maxExecutionMinutes ||
+    draft.maxTotalTokens !== baselineDraft.maxTotalTokens ||
+    draft.maxCostUsd !== baselineDraft.maxCostUsd;
+
   useEffect(() => {
+    if (factoryRouted) {
+      setFactorySectionDirty("execution-policy", isDirty);
+    }
+  }, [factoryRouted, isDirty, setFactorySectionDirty]);
+
+  const handleFactoryReload = useCallback((payload: SettingsFactoryReloadPayload) => {
+    const nextPolicy = payload.state.executionPolicy;
+    setPolicy(nextPolicy);
+    setDraft(toDraft(nextPolicy?.requirements ?? newRequirements));
+    setConflict(false);
+    setLoadState("ready");
+    setMessage(null);
+  }, []);
+
+  useFactoryDefinitionReloadListener(workspaceId, hasServerFactoryState, handleFactoryReload);
+
+  useEffect(() => {
+    if (hasServerFactoryState) return;
     const controller = new AbortController();
     async function load() {
       try {
@@ -103,7 +166,7 @@ function ExecutionPolicyControls({
     }
     void load();
     return () => controller.abort();
-  }, [loadRevision, workspaceId]);
+  }, [hasServerFactoryState, loadRevision, workspaceId]);
 
   const save = useApiAction<{ policy: ExecutionPolicy }>({
     call: async () => {
@@ -123,6 +186,30 @@ function ExecutionPolicyControls({
           { status: 400 },
         );
       }
+
+      if (factoryRouted) {
+        const result = await saveSettingsFactoryDraft(
+          workspaceId,
+          {
+            kind: "execution-policy",
+            expectedPolicyRevision: factoryState.liveExecutionPolicyRevision,
+            requirements: parsed.data,
+          },
+          factoryState,
+        );
+        if (!result.ok) {
+          if (result.status === 409) {
+            setConflict(true);
+            return Response.json({ error: result.error }, { status: 409 });
+          }
+          return Response.json(
+            { error: result.diagnostics?.[0]?.message ?? result.error },
+            { status: result.status },
+          );
+        }
+        return Response.json({ policy: result.data.executionPolicy });
+      }
+
       const response = await fetch(`/api/workspaces/${workspaceId}/execution-policy`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -150,12 +237,36 @@ function ExecutionPolicyControls({
       setDraft(toDraft(saved.requirements));
     },
     setFlashMessage: setMessage,
-    successText: "Execution policy revision saved. New sessions will use this revision.",
+    successText: factoryRouted
+      ? "Execution policy saved to draft. Publish draft to apply to new sessions."
+      : "Execution policy revision saved. New sessions will use this revision.",
   });
 
-  function reload() {
-    setLoadState("loading");
+  async function reload() {
     setMessage(null);
+    if (hasServerFactoryState) {
+      setLoadState("loading");
+      const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+      if (!result.ok) {
+        setLoadState("error");
+        setMessage({ kind: "error", text: result.error });
+        return;
+      }
+      if (result.data.pipeline) {
+        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+      }
+      dispatchSettingsDataChanged(workspaceId, (current) =>
+        projectSettingsDataWithFactoryDefinition(current, result.data.state),
+      );
+      const nextPolicy = result.data.state.executionPolicy;
+      setPolicy(nextPolicy);
+      setDraft(toDraft(nextPolicy?.requirements ?? newRequirements));
+      setConflict(false);
+      setLoadState("ready");
+      return;
+    }
+
+    setLoadState("loading");
     setLoadRevision((revision) => revision + 1);
   }
 
@@ -164,12 +275,20 @@ function ExecutionPolicyControls({
     setMessage(null);
   }
 
+  const effectiveConflict = conflict || (factoryRouted && Boolean(factoryConflict));
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canManage || conflict || loadState !== "ready") return;
+    if (!canManage || effectiveConflict || loadState !== "ready") return;
     setMessage(null);
     void save.run();
   }
+
+  const draftMatchesPolicy =
+    factoryRouted &&
+    Boolean(factoryState.latestDraft) &&
+    factoryState.latestDraft?.definition.executionPolicyRevisionId !==
+      factoryState.currentActivation?.definition.executionPolicyRevisionId;
 
   return (
     <section
@@ -184,6 +303,17 @@ function ExecutionPolicyControls({
           <span className="text-xs text-muted">
             {policy ? `Revision ${policy.revision}` : loadState === "ready" ? "Not configured" : ""}
           </span>
+          {factoryRouted && loadState === "ready" ? (
+            isDirty ? (
+              <Status compact label="Unsaved" value="needs_attention" />
+            ) : effectiveConflict ? (
+              <Status compact label="Conflict" value="blocked" />
+            ) : draftMatchesPolicy ? (
+              <Status compact label="Draft" value="in_progress" />
+            ) : factoryState.currentActivation ? (
+              <Status compact label="Published" value="healthy" />
+            ) : null
+          ) : null}
         </div>
         <p className="text-[13px] leading-5 text-muted" id={descriptionId}>
           Each saved revision pins to new sessions only; existing sessions keep their pinned
@@ -205,7 +335,7 @@ function ExecutionPolicyControls({
               Only workspace owners and admins can change execution policies.
             </p>
           ) : null}
-          <fieldset className="space-y-5" disabled={!canManage || save.isBusy || conflict}>
+          <fieldset className="space-y-5" disabled={!canManage || save.isBusy || effectiveConflict}>
             <legend className="sr-only">Execution limits</legend>
             <div className="grid gap-5 md:grid-cols-2">
               <label className="block space-y-1.5 text-[13px] font-medium text-foreground">
@@ -279,11 +409,17 @@ function ExecutionPolicyControls({
             {canManage ? (
               <button
                 className="ui-button-primary"
-                disabled={save.isBusy || conflict}
+                disabled={save.isBusy || effectiveConflict}
                 type="submit"
               >
                 <ActionButtonLabel
-                  idle={policy ? "Save new revision" : "Create execution policy"}
+                  idle={
+                    factoryRouted
+                      ? "Save policy draft"
+                      : policy
+                        ? "Save new revision"
+                        : "Create execution policy"
+                  }
                   pending={save.isBusy}
                   pendingLabel="Saving…"
                 />
@@ -292,16 +428,16 @@ function ExecutionPolicyControls({
             <button
               className="ui-button-secondary"
               disabled={save.isBusy}
-              onClick={reload}
+              onClick={() => void reload()}
               type="button"
             >
-              Reload saved policy
+              {factoryRouted ? "Reload saved definition" : "Reload saved policy"}
             </button>
           </div>
         </form>
       ) : null}
       {loadState === "error" ? (
-        <button className="ui-button-secondary" onClick={reload} type="button">
+        <button className="ui-button-secondary" onClick={() => void reload()} type="button">
           Retry loading policy
         </button>
       ) : null}

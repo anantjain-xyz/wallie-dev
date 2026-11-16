@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
+import { useFactoryDefinitionStore } from "@/features/settings/factory-definition-store";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -31,6 +32,16 @@ function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]
 }
 
 export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySetupSectionProps) {
+  const { state: factoryState } = useFactoryDefinitionStore(
+    data.workspace.id,
+    data.factoryDefinition,
+  );
+  const draftTarget = factoryState.latestDraft
+    ? {
+        id: factoryState.latestDraft.id,
+        repositoryId: factoryState.latestDraft.definition.repositoryId,
+      }
+    : null;
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,
@@ -38,6 +49,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     onboarding: data.onboarding,
   });
   const preferredRepositoryId =
+    factoryState.activeDefinition?.repositoryId ??
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
   const activeSandbox = data.setupHealth.sandboxConnection;
@@ -87,6 +99,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
           </div>
           <SandboxCapabilitySection
             canManage={data.canManage}
+            draftTarget={draftTarget}
             initialCheck={data.setupHealth.latestSandboxCapabilityCheck}
             onCheckChange={(check) =>
               setData((current) => ({
