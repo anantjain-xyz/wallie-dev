@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 
 import { formatUtcTimestamp } from "@/components/shared/time-format";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
@@ -21,6 +21,8 @@ type RevisionHistoryProps = {
   nextBeforeActivationNumber: number | null;
   busy: boolean;
   canManage: boolean;
+  activationEligible: boolean;
+  candidateTests?: ReactNode;
   onSelect: (revisionId: string) => void;
   onLoadMore: () => void;
   onRollback: (revisionId: string, expectedActivationNumber: number) => Promise<void> | void;
@@ -46,6 +48,8 @@ export function FactoryRevisionHistory({
   nextBeforeActivationNumber,
   busy,
   canManage,
+  activationEligible,
+  candidateTests,
   onSelect,
   onLoadMore,
   onRollback,
@@ -66,9 +70,15 @@ export function FactoryRevisionHistory({
   const allowRollback =
     canManage && selectedIsRevision && !selectedIsActive && activeActivationNumber > 0;
   const controlsDisabled = busy || rollbackPending;
+  const canConfirm =
+    allowRollback &&
+    activationEligible &&
+    confirmation?.revisionId === selectedDocument.id &&
+    confirmation.revisionDigest === selectedDocument.digest &&
+    confirmation.activationNumber === activeActivationNumber;
 
   async function confirmRollback() {
-    if (!confirmation || !canManage || controlsDisabled) return;
+    if (!confirmation || !canConfirm || controlsDisabled) return;
 
     setRollbackError(null);
     setRollbackPending(true);
@@ -208,8 +218,9 @@ export function FactoryRevisionHistory({
           </details>
         </div>
       )}
+      {candidateTests}
       <DestructiveConfirmationDialog
-        actionDisabled={!canManage || busy}
+        actionDisabled={!canConfirm || busy}
         actionLabel="Activate revision"
         description="Future sessions will use this revision. Existing sessions keep their pinned configuration."
         errorMessage={rollbackError}
@@ -217,7 +228,7 @@ export function FactoryRevisionHistory({
         onOpenChange={(open) => {
           setRollbackError(null);
           setConfirmation(
-            open && allowRollback
+            open && allowRollback && activationEligible
               ? {
                   revisionId: selectedDocument.id,
                   revisionDigest: selectedDocument.digest,
@@ -233,7 +244,11 @@ export function FactoryRevisionHistory({
         title="Activate this revision?"
         trigger={
           allowRollback ? (
-            <button className="ui-button min-h-11" disabled={controlsDisabled} type="button">
+            <button
+              className="ui-button min-h-11"
+              disabled={controlsDisabled || !activationEligible}
+              type="button"
+            >
               Roll back to this revision
             </button>
           ) : undefined

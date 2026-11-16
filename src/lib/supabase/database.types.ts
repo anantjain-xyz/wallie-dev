@@ -7057,6 +7057,19 @@ export type Database = {
         Args: { p_entry_limit?: number; p_run_limit?: number }
         Returns: number
       }
+      read_factory_candidate_activation_eligibility: {
+        Args: {
+          p_actor_user_id: string
+          p_definition_digest: string
+          p_enabled_sandbox_providers: string[]
+          p_factory_id: string
+          p_required_probes: string[]
+          p_target_id: string
+          p_target_kind: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_run_export_page: {
         Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
         Returns: {

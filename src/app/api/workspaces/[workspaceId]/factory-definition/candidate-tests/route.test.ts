@@ -4,7 +4,9 @@ const mocked = vi.hoisted(() => ({
   admin: vi.fn(),
   after: vi.fn(),
   cancel: vi.fn(),
+  eligibility: vi.fn(),
   history: vi.fn(),
+  read: vi.fn(),
   requireManager: vi.fn(),
   start: vi.fn(),
 }));
@@ -17,10 +19,12 @@ vi.mock("@/lib/workspaces/access", () => ({ requireWorkspaceAccessById: mocked.r
 vi.mock("@/lib/factory-definitions/candidate-smoke", () => ({
   cancelFactoryDefinitionSmokeTest: mocked.cancel,
   listFactoryDefinitionSmokeTests: mocked.history,
+  readFactoryDefinitionSmokeEligibility: mocked.eligibility,
+  readFactoryDefinitionSmokeTest: mocked.read,
   startFactoryDefinitionSmokeTest: mocked.start,
 }));
 
-import { DELETE } from "./[testId]/route";
+import { DELETE, GET as GET_RECEIPT } from "./[testId]/route";
 import { GET, POST } from "./route";
 
 const workspaceId = "54700000-0000-4000-8000-000000000001";
@@ -50,14 +54,22 @@ function post(body: unknown) {
 
 it("reads receipt history through the workspace RLS client using exact candidate identity", async () => {
   mocked.history.mockResolvedValue({ ok: true, tests: [] });
+  const eligibility = { eligible: false, reason: "Run a smoke test.", activationNumber: 2 };
+  mocked.eligibility.mockResolvedValue({ ok: true, eligibility });
   const query = new URLSearchParams({ targetKind: "draft", targetId, digest });
   const response = await GET(new Request(`${url}?${query}`), context);
   expect(response.status).toBe(200);
   expect(response.headers.get("Cache-Control")).toBe("private, no-store");
   expect(mocked.requireManager).toHaveBeenCalledWith(workspaceId, { requireManager: true });
   expect(mocked.history).toHaveBeenCalledWith({ client, workspaceId, target, digest });
-  expect(mocked.admin).not.toHaveBeenCalled();
-  expect(await response.json()).toEqual({ tests: [] });
+  expect(mocked.eligibility).toHaveBeenCalledWith({
+    admin,
+    actorUserId: userId,
+    workspaceId,
+    target,
+    digest,
+  });
+  expect(await response.json()).toEqual({ tests: [], eligibility });
 });
 
 it("queues only an authorized reservation with an active runtime callback", async () => {
@@ -108,5 +120,24 @@ it("cancels only the exact test ID and digest through the manager boundary", asy
     testId,
     digest,
   });
+  expect(await response.json()).toEqual({ test });
+});
+
+it("loads full evidence only for a manager and an exact receipt", async () => {
+  const query = new URLSearchParams({ targetKind: "draft", targetId, digest });
+  const request = () => new Request(`${url}/${testId}?${query}`);
+  const item = { params: Promise.resolve({ workspaceId, testId }) };
+
+  mocked.requireManager.mockResolvedValueOnce({ ok: false, status: 403, error: "Access denied." });
+  expect((await GET_RECEIPT(request(), item)).status).toBe(403);
+  expect(mocked.read).not.toHaveBeenCalled();
+
+  const test = { id: testId, evidence: { completedStageCount: 2 } };
+  mocked.read.mockResolvedValueOnce({ ok: true, test });
+  const response = await GET_RECEIPT(request(), item);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(mocked.read).toHaveBeenCalledWith({ client, workspaceId, target, digest, testId });
+  expect(mocked.admin).not.toHaveBeenCalled();
   expect(await response.json()).toEqual({ test });
 });

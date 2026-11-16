@@ -8,12 +8,14 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
 import { InlineActionMessage, Section } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
 import {
@@ -47,6 +49,8 @@ type FactorySettings = {
   busy: boolean;
   conflict: string | null;
   error: string | null;
+  canPublish: boolean;
+  publishEligibility: string | null;
   dirtySections: DirtySections;
   setDirty: (section: FormSection, displayed: FactorySettingsSnapshot | null) => void;
   reload: () => Promise<void>;
@@ -85,7 +89,34 @@ export function FactorySettingsProvider({
   const [error, setError] = useState<string | null>(null);
   const [dirtySections, setDirtySections] = useState<DirtySections>({});
   const inFlight = useRef(false);
-  const url = `/api/workspaces/${workspaceId}/factory-definition/settings`;
+  const api = `/api/workspaces/${workspaceId}/factory-definition`;
+  const url = `${api}/settings`;
+  const draft = canManage ? snapshot?.draft : null;
+  const candidateTests = useCandidateTests({
+    api,
+    target: draft ? { ...draft, kind: "draft" } : null,
+    activationNumber: snapshot?.activationNumber ?? 0,
+    active: canManage,
+  });
+  const hasDirtySections = Object.keys(dirtySections).length > 0;
+  const canPublish = candidateTests.eligible && !hasDirtySections && !conflict;
+  let publishEligibility: string | null = null;
+  if (draft && !conflict) {
+    if (hasDirtySections) publishEligibility = "Save or discard your edits before publishing.";
+    else if (canPublish) publishEligibility = "Ready to publish this draft.";
+    else if (candidateTests.panel.error) {
+      publishEligibility =
+        "Could not verify publication eligibility. Reload or review the configuration tests.";
+    } else if (candidateTests.panel.eligibility) {
+      const { activationNumber, reason } = candidateTests.panel.eligibility;
+      publishEligibility =
+        activationNumber === snapshot?.activationNumber
+          ? (reason ?? "A current passing test is required to publish this draft.")
+          : "The active factory revision changed. Reload configuration before publishing.";
+    } else {
+      publishEligibility = "Checking publication eligibility…";
+    }
+  }
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -132,6 +163,7 @@ export function FactorySettingsProvider({
     setBusy(true);
     try {
       await load();
+      candidateTests.refresh();
     } finally {
       setBusy(false);
       inFlight.current = false;
@@ -183,7 +215,7 @@ export function FactorySettingsProvider({
   }
 
   async function publish(baseline: FactorySettingsSnapshot) {
-    if (!baseline.draft || Object.keys(dirtySections).length) return;
+    if (!baseline.draft || !canPublish) return;
     try {
       await mutate({
         action: "publish",
@@ -191,6 +223,7 @@ export function FactorySettingsProvider({
         draftId: baseline.draft.id,
       });
     } catch (caught) {
+      candidateTests.refresh();
       setError(caught instanceof Error ? caught.message : "The draft could not be published.");
     }
   }
@@ -204,6 +237,8 @@ export function FactorySettingsProvider({
         busy,
         conflict,
         error,
+        canPublish,
+        publishEligibility,
         dirtySections,
         setDirty,
         reload,
@@ -218,14 +253,26 @@ export function FactorySettingsProvider({
 
 export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
   const settings = useFactorySettings();
+  const publishEligibilityId = useId();
   if (!settings || (settings.phase === "legacy" && !editorHref)) return null;
 
-  const { phase, snapshot, canManage, busy, conflict, error, dirtySections, reload, publish } =
-    settings;
+  const {
+    phase,
+    snapshot,
+    canManage,
+    busy,
+    conflict,
+    error,
+    canPublish,
+    publishEligibility,
+    dirtySections,
+    reload,
+    publish,
+  } = settings;
   const message = conflict ?? error;
-  const hasDirtySections = Object.keys(dirtySections).length > 0;
   const draft = snapshot?.draft;
   const published = snapshot?.published;
+  const needsTest = Boolean(draft) && !canPublish;
   return (
     <Section
       anchorId="factory-configuration"
@@ -267,6 +314,11 @@ export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
             </div>
           ) : null}
           <InlineActionMessage message={message ? { kind: "error", text: message } : null} />
+          {publishEligibility && (
+            <p className="text-[13px] text-muted" id={publishEligibilityId} role="status">
+              {publishEligibility}
+            </p>
+          )}
           <div className="flex flex-wrap gap-3">
             {phase !== "legacy" ? (
               <button
@@ -279,14 +331,18 @@ export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
               </button>
             ) : null}
             {canManage && editorHref ? (
-              <Link className="ui-button" href={editorHref}>
-                Open definition editor
+              <Link
+                className="ui-button"
+                href={needsTest ? `${editorHref}#candidate-tests` : editorHref}
+              >
+                {needsTest ? "Review configuration tests" : "Open definition editor"}
               </Link>
             ) : null}
             {canManage && draft && snapshot ? (
               <button
+                aria-describedby={publishEligibility ? publishEligibilityId : undefined}
                 className="ui-button-primary"
-                disabled={busy || Boolean(conflict) || hasDirtySections}
+                disabled={busy || !canPublish}
                 onClick={() => void publish(snapshot)}
                 type="button"
               >

@@ -14,9 +14,11 @@ import {
   type EditorDiagnostic,
   type FactoryEditorHistory,
 } from "@/features/factory-definition/editor-requests";
+import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { StructuredFactoryDefinitionEditor } from "@/features/factory-definition/structured-editor";
+import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
 import {
   SandboxCapabilitySection,
   type CapabilityRepository,
@@ -35,7 +37,7 @@ import {
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
 import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
 
-type Selection = { revision: string } | { draft: string };
+type Selection = ({ revision: string } | { draft: string }) & { test?: string };
 type Input =
   | { kind: "structured"; value: SerialFactoryDefinition }
   | { kind: "json"; text: string };
@@ -119,6 +121,7 @@ export function FactoryDefinitionEditor({
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const inFlight = useRef(false);
+  const scrolledReceiptUrl = useRef<string | null>(null);
   const dirty = edit ? editChanged(edit) : false;
   const stale =
     edit !== null &&
@@ -127,8 +130,54 @@ export function FactoryDefinitionEditor({
       edit.draftId !== (snapshot.draft?.id ?? null));
   const busy = loading || pending !== null;
   const locked = busy || conflict || stale;
+  const conflictReason = stale
+    ? "Review the latest definition before testing."
+    : conflict
+      ? "Reload the definition before testing."
+      : null;
   const selectedRevision = selected?.kind === "revision" ? selected.id : null;
+  const draft = snapshot?.draft ?? null;
+  const selectedMatchesDraft =
+    draft !== null && selected?.kind === "draft" && selected.id === draft.id;
+  const historyCandidate = selectedMatchesDraft ? null : selected;
+  const isRollbackCandidate = Boolean(
+    selectedRevision && snapshot?.published && selectedRevision !== snapshot.published.id,
+  );
+  const activationNumber = snapshot?.activationNumber ?? 0;
+  const requestedDraft = selection && "draft" in selection ? selection.draft : null;
+  const requestedRevision = selection && "revision" in selection ? selection.revision : null;
+  const draftTests = useCandidateTests({
+    api,
+    target: draft,
+    activationNumber,
+    active: true,
+    initialTestId: draft && draft.id === requestedDraft ? selection?.test : undefined,
+  });
+  const revisionTests = useCandidateTests({
+    api,
+    target: historyCandidate,
+    activationNumber,
+    active: isRollbackCandidate,
+    initialTestId:
+      historyCandidate && historyCandidate.id === (requestedRevision ?? requestedDraft)
+        ? selection?.test
+        : undefined,
+  });
   const capabilityTarget = selected ?? snapshot?.draft ?? snapshot?.published;
+  const anchorCandidate =
+    historyCandidate && selection?.test ? historyCandidate : (draft ?? historyCandidate);
+  const anchorReady =
+    Boolean(anchorCandidate) &&
+    (!selection?.test || anchorCandidate?.id === (requestedRevision ?? requestedDraft));
+
+  useEffect(() => {
+    const { hash, href } = window.location;
+    if (!anchorReady || hash !== "#candidate-tests" || scrolledReceiptUrl.current === href) return;
+    const anchor = document.getElementById("candidate-tests");
+    if (!anchor) return;
+    anchor.scrollIntoView?.({ block: "start" });
+    scrolledReceiptUrl.current = href;
+  }, [anchorReady, requestedDraft, requestedRevision, selection?.test]);
 
   const loadWorkspace = useCallback(
     async (signal?: AbortSignal) => {
@@ -141,8 +190,6 @@ export function FactoryDefinitionEditor({
     [api, editorApi],
   );
 
-  const revisionLink = selection && "revision" in selection ? selection.revision : null;
-  const draftLink = selection && "draft" in selection ? selection.draft : null;
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
@@ -153,10 +200,10 @@ export function FactoryDefinitionEditor({
         setSnapshot(current.snapshot);
         setHistory(current.history);
         setEdit(editFrom(current.snapshot));
-        const target = revisionLink
-          ? { revision: revisionLink }
-          : draftLink
-            ? { draft: draftLink }
+        const target = requestedRevision
+          ? { revision: requestedRevision }
+          : requestedDraft
+            ? { draft: requestedDraft }
             : null;
         if (target) {
           const document = await readDefinition(editorApi, target, signal);
@@ -169,7 +216,7 @@ export function FactoryDefinitionEditor({
       }
     })();
     return () => controller.abort();
-  }, [draftLink, editorApi, loadWorkspace, revisionLink]);
+  }, [editorApi, loadWorkspace, requestedDraft, requestedRevision]);
 
   async function run(operation: Operation, task: () => Promise<void>) {
     if (inFlight.current || loading) return;
@@ -207,6 +254,8 @@ export function FactoryDefinitionEditor({
       setPreview(null);
       setConflict(false);
       if (!dirty) setEdit(editFrom(current.snapshot, edit?.input.kind));
+      draftTests.refresh();
+      revisionTests.refresh();
     });
   }
 
@@ -269,8 +318,8 @@ export function FactoryDefinitionEditor({
 
   async function publish() {
     const draft = snapshot?.draft;
-    if (!draft || dirty || locked) return;
-    await run("publish", async () => {
+    if (!draft || dirty || locked || !draftTests.eligible) return;
+    const error = await run("publish", async () => {
       await fetchFactoryEditor(
         `${api}/settings`,
         z.object({ snapshot: z.object({ activationNumber: z.number() }) }),
@@ -283,6 +332,7 @@ export function FactoryDefinitionEditor({
       await refreshAfterActivation();
       setFeedback({ kind: "success", text: "Draft published for new sessions." });
     });
+    if (error) draftTests.refresh();
   }
 
   async function selectRevision(revision: string) {
@@ -313,7 +363,15 @@ export function FactoryDefinitionEditor({
   }
 
   async function rollback(revisionId: string, expectedActivationNumber: number) {
-    if (dirty || locked) return;
+    if (
+      dirty ||
+      locked ||
+      !revisionTests.eligible ||
+      selectedRevision !== revisionId ||
+      expectedActivationNumber !== activationNumber
+    ) {
+      throw new Error("Review the current test result before activating this revision.");
+    }
     const error = await run("rollback", async () => {
       await fetchFactoryEditor(
         api,
@@ -323,7 +381,16 @@ export function FactoryDefinitionEditor({
       await refreshAfterActivation();
       setFeedback({ kind: "success", text: "Selected revision activated for new sessions." });
     });
-    if (error) throw error;
+    if (error) {
+      revisionTests.refresh();
+      throw error;
+    }
+  }
+
+  function receiptHref(document: FactoryEditorDocument, test: string) {
+    const query =
+      document.kind === "draft" ? { draft: document.id, test } : { revision: document.id, test };
+    return `${workspaceFactoryDefinitionPath(workspaceSlug, query)}#candidate-tests`;
   }
 
   function resetToLatest(keepEdits: boolean) {
@@ -540,7 +607,7 @@ export function FactoryDefinitionEditor({
                       {snapshot.draft ? (
                         <button
                           className="ui-button"
-                          disabled={locked || dirty}
+                          disabled={locked || dirty || !draftTests.eligible}
                           onClick={() => void publish()}
                           type="button"
                         >
@@ -561,6 +628,26 @@ export function FactoryDefinitionEditor({
                 )}
               </div>
             </PageSection>
+            {draft ? (
+              <div
+                className="scroll-mt-8"
+                id={historyCandidate && selection?.test ? undefined : "candidate-tests"}
+              >
+                <CandidateTestPanel
+                  {...draftTests.panel}
+                  activationNumber={activationNumber}
+                  eligibility={dirty || conflictReason ? null : draftTests.panel.eligibility}
+                  target={{ kind: "draft", id: draft.id, digest: draft.digest }}
+                  purpose="publish"
+                  allowStart={!locked && !dirty && draftTests.canTest}
+                  disableReason={
+                    conflictReason ??
+                    (dirty ? "Save your changes before testing the new draft." : null)
+                  }
+                  evidenceHref={(test) => receiptHref(draft, test)}
+                />
+              </div>
+            ) : null}
             <PageSection anchorId="semantic-diff" title="Semantic diff">
               {selected ? (
                 <button
@@ -606,7 +693,13 @@ export function FactoryDefinitionEditor({
                     sandboxConnected={snapshot.readySandboxProviders.includes(
                       capabilityTarget.bundle.sandboxProvider,
                     )}
-                    setFlashMessage={setFeedback}
+                    setFlashMessage={(message) => {
+                      setFeedback(message);
+                      if (message?.kind === "success") {
+                        draftTests.refresh();
+                        revisionTests.refresh();
+                      }
+                    }}
                     workspaceId={workspaceId}
                   />
                 </div>
@@ -622,6 +715,35 @@ export function FactoryDefinitionEditor({
             nextBeforeActivationNumber={history?.nextBeforeActivationNumber ?? null}
             busy={busy}
             canManage={!dirty && !stale && !conflict}
+            activationEligible={revisionTests.eligible}
+            candidateTests={
+              historyCandidate ? (
+                <div
+                  className="scroll-mt-8"
+                  id={!draft || selection?.test ? "candidate-tests" : undefined}
+                >
+                  <CandidateTestPanel
+                    {...revisionTests.panel}
+                    activationNumber={activationNumber}
+                    eligibility={dirty || conflictReason ? null : revisionTests.panel.eligibility}
+                    target={{
+                      kind: historyCandidate.kind,
+                      id: historyCandidate.id,
+                      digest: historyCandidate.digest,
+                    }}
+                    purpose={isRollbackCandidate ? "rollback" : "history"}
+                    allowStart={!locked && !dirty && revisionTests.canTest}
+                    disableReason={
+                      conflictReason ??
+                      (dirty && isRollbackCandidate
+                        ? "Save or discard your edits before testing a revision."
+                        : null)
+                    }
+                    evidenceHref={(test) => receiptHref(historyCandidate, test)}
+                  />
+                </div>
+              ) : null
+            }
             onSelect={(id) => void selectRevision(id)}
             onLoadMore={() => void loadMore()}
             onRollback={rollback}

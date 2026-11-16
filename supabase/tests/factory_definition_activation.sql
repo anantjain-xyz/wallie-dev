@@ -117,6 +117,21 @@ returns public.factory_definition_smoke_tests language sql as $$
   ) target;
 $$;
 
+create function pg_temp.factory_smoke_eligibility(p_kind text, p_target uuid,
+  p_digest text default null, p_actor uuid default null) returns jsonb language sql as $$
+  select public.read_factory_candidate_activation_eligibility(s.workspace_id,s.factory_id,
+    coalesce(p_actor,s.owner_id),p_kind,p_target,coalesce(p_digest,target.canonical_digest),
+    array['e2b'],pg_temp.factory_activation_probes())
+  from factory_activation_scope s
+  cross join lateral (
+    select d.canonical_digest from public.factory_definition_drafts d
+    where p_kind='draft' and (d.workspace_id,d.factory_id,d.id)=(s.workspace_id,s.factory_id,p_target)
+    union all
+    select r.canonical_digest from public.factory_definition_revisions r
+    where p_kind='revision' and (r.workspace_id,r.factory_id,r.id)=(s.workspace_id,s.factory_id,p_target)
+  ) target;
+$$;
+
 create function pg_temp.factory_smoke_finish(p_test_id uuid, p_runtime_profile text default null)
 returns boolean language sql as $$
   select public.finish_factory_definition_smoke_test(test.workspace_id,test.id,'passed',
@@ -243,6 +258,23 @@ select ok(not has_table_privilege('service_role','public.factory_definition_smok
   and not has_table_privilege('authenticated','public.factory_definition_smoke_tests','INSERT, UPDATE, DELETE'),
   'smoke test evidence can only be written by lifecycle RPCs');
 
+select ok(has_function_privilege('service_role',signature,'EXECUTE')
+  and not has_function_privilege('anon',signature,'EXECUTE')
+  and not has_function_privilege('authenticated',signature,'EXECUTE'),
+  'the eligibility authority RPC is callable only by service_role')
+from (values ('public.read_factory_candidate_activation_eligibility(uuid,uuid,uuid,text,uuid,text,text[],text[])'))
+  commands(signature);
+select throws_ok($$select pg_temp.factory_smoke_eligibility('draft',(select id from factory_activation_initial),
+  p_actor=>(select member_user_id from factory_activation_scope))$$,'42501',null,
+  'eligibility rejects a nonmanager even through the service RPC');
+select throws_ok($$select pg_temp.factory_smoke_eligibility('draft',(select id from factory_activation_initial),
+  p_digest=>repeat('0',64))$$,'PT409',null,'eligibility rejects a different digest for the same draft');
+select is(pg_temp.factory_smoke_eligibility('draft',(select id from factory_activation_initial)),
+  '{"eligible":false,"reason":"A current passing smoke test is required for the exact factory candidate.","activationNumber":0,"testId":null,"canTest":true}'::jsonb,
+  'the latest draft can be tested but cannot activate without a receipt');
+select is((select count(*) from public.factory_definition_smoke_tests t
+    join factory_activation_initial d on d.id=t.target_id),
+  0::bigint,'reading eligibility does not reserve a test');
 select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
   'PT422','A current passing smoke test is required for the exact factory candidate.','a direct activation command rejects missing smoke evidence');
 select throws_ok($$select pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial),
@@ -306,17 +338,30 @@ select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from 
   'PT422',null,'failed evidence cannot qualify activation');
 
 select pg_temp.seed_factory_smoke('draft',0,(select id from factory_activation_initial));
+select is(pg_temp.factory_smoke_eligibility('draft',(select id from factory_activation_initial)),
+  jsonb_build_object('eligible',true,'reason',null,'activationNumber',0,'canTest',true,'testId',(
+    select t.id from public.factory_definition_smoke_tests t
+    where t.target_id=(select id from factory_activation_initial) order by t.created_at desc,t.id desc limit 1
+  )),'eligibility identifies the exact receipt used by publication');
 create temp table factory_smoke_edited as
 select id from pg_temp.factory_activation_save(0,pg_temp.factory_activation_bundle(
   'Subsequently edited',p_execution_policy=>(select original_revision from factory_admission_policy)));
 select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_smoke_edited)),
   'PT422',null,'a passing receipt cannot be reused for a subsequently edited draft');
+select is(pg_temp.factory_smoke_eligibility('draft',(select id from factory_activation_initial)),
+  '{"eligible":false,"reason":"A newer draft is available. Reload the definition before publishing.","activationNumber":0,"testId":null,"canTest":false}'::jsonb,
+  'a superseded draft and its passing receipt are read-only');
+select is((pg_temp.factory_smoke_eligibility('draft',(select id from factory_smoke_edited))->>'eligible')::boolean,
+  false,'a newly saved candidate cannot use the superseded draft receipt');
 
 create temp table factory_activation_first as
 select a.* from factory_activation_scope s cross join factory_activation_initial d
 cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,0,d.id,
   array['e2b'],pg_temp.factory_activation_probes()) a;
 select is((select activation_number from factory_activation_first),1::bigint,'publishing creates the first activation');
+select is(pg_temp.factory_smoke_eligibility('revision',(select revision_id from factory_activation_first)),
+  '{"eligible":false,"reason":"This factory definition is already active.","activationNumber":1,"testId":null,"canTest":false}'::jsonb,
+  'the current revision is read-only and has no rollback eligibility');
 select ok((select r.source_draft_id=d.id and r.definition_json=d.definition_json and r.canonical_digest=d.canonical_digest
   from factory_activation_first a join public.factory_definition_revisions r on r.id=a.revision_id
   cross join factory_activation_initial d),'publish copies the selected immutable draft byte for byte');
@@ -503,6 +548,10 @@ select (pg_temp.factory_activation_save(2,pg_temp.factory_activation_bundle('Los
 select throws_ok(pg_temp.factory_activation_command('rollback',2,(select revision_id from factory_activation_first)),
   'PT422','A current passing smoke test is required for the exact factory candidate.','direct rollback also requires fresh evidence');
 select pg_temp.seed_factory_smoke('revision',2,revision_id) from factory_activation_first;
+select ok((select result @> '{"eligible":true,"activationNumber":2,"canTest":true}'::jsonb
+    and result->>'testId' is not null
+  from (select pg_temp.factory_smoke_eligibility('revision',(select revision_id from factory_activation_first)) result) check_result),
+  'a previously active revision qualifies when tested against the current activation base');
 commit;
 begin;
 set local request.jwt.claim.role = 'service_role';
@@ -590,6 +639,9 @@ select pg_temp.factory_activation_receipt();
 select throws_ok(pg_temp.factory_activation_command('rollback',3,(select revision_id from factory_activation_second)),
   'PT422','A current passing smoke test is required for the exact factory candidate.',
   'the smoke receipt bound to the old connection remains invalid after capabilities are rechecked');
+select is(pg_temp.factory_smoke_eligibility('revision',(select revision_id from factory_activation_second)),
+  '{"eligible":false,"reason":"A current passing smoke test is required for the exact factory candidate.","activationNumber":3,"testId":null,"canTest":true}'::jsonb,
+  'eligibility rejects the old connection receipt after capabilities are rechecked');
 select pg_temp.factory_activation_receipt(false);
 select throws_ok(pg_temp.factory_activation_command('rollback',3,(select revision_id from factory_activation_second)),
   'PT422',null,'a newer unsuccessful capability check cannot be bypassed using older receipts');

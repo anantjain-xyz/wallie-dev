@@ -64,7 +64,7 @@ afterEach(() => {
 function renderSettings() {
   return render(
     <FactorySettingsProvider canManage workspaceId={workspaceId}>
-      <FactorySettingsPanel />
+      <FactorySettingsPanel editorHref="/w/demo/settings/factory-definition" />
       <AgentConfigSection
         canManage
         extraContent={<ExecutionPolicySection canManage workspaceId={workspaceId} />}
@@ -76,11 +76,51 @@ function renderSettings() {
   );
 }
 
-function stubFactorySettings(handle: (command: FactorySettingsCommand | null) => Response) {
+const allDrafts = [firstDraft, secondDraft, acceptedDraft];
+const testId = "00000000-0000-4000-8000-000000000008";
+
+function stubFactorySettings(
+  handle: (command: FactorySettingsCommand | null) => Response,
+  passingDrafts = allDrafts,
+) {
+  const api = `/api/workspaces/${workspaceId}/factory-definition`;
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
-    if (url !== `/api/workspaces/${workspaceId}/factory-definition/settings`) {
-      return new Response(null, { status: 404 });
+    if (typeof url === "string" && url.startsWith(`${api}/candidate-tests?`)) {
+      const query = new URL(url, "http://wallie.test").searchParams;
+      const draft = passingDrafts.find(
+        ({ id, digest }) => id === query.get("targetId") && digest === query.get("digest"),
+      );
+      expect(query.get("targetKind")).toBe("draft");
+      const tests = draft
+        ? [
+            {
+              id: testId,
+              target: { kind: "draft", id: draft.id },
+              definitionDigest: draft.digest,
+              baseActivationNumber: 1,
+              policyVersion: 1,
+              status: "passed",
+              createdAt: "2026-11-16T18:00:00Z",
+              finishedAt: "2026-11-16T18:01:00Z",
+              evidence: null,
+              error: null,
+            },
+          ]
+        : [];
+      return Response.json({
+        tests,
+        eligibility: {
+          activationNumber: 1,
+          eligible: Boolean(draft),
+          reason: draft
+            ? null
+            : "A current passing smoke test is required for the exact factory candidate.",
+          testId: draft ? testId : null,
+          canTest: true,
+        },
+      });
     }
+    if (url !== `${api}/settings`) return new Response(null, { status: 404 });
 
     const command =
       init?.method === "POST"
@@ -140,6 +180,7 @@ it("saves two sections edited in the same tab and publishes their combined draft
     patch: { kind: "execution-policy", requirements: { maxRepairAttempts: 8 } },
   });
   expect(await screen.findByText(acceptedDraft.digest.slice(0, 12))).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
 
   fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
   expect(await screen.findByText("No saved draft")).toBeInTheDocument();
@@ -211,7 +252,7 @@ it("preserves two dirty sections on reload and saves only against the version ea
   const repairs = screen.getByRole("spinbutton", { name: /^Maximum repair attempts/ });
   expect(model).toHaveValue("gpt-5.5");
   expect(repairs).toHaveValue(2);
-  expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
   fireEvent.change(model, { target: { value: "gpt-local" } });
   fireEvent.change(repairs, { target: { value: "8" } });
   expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();
@@ -252,6 +293,7 @@ it("preserves two dirty sections on reload and saves only against the version ea
 
   fireEvent.click(screen.getByRole("button", { name: "Discard execution policy edits" }));
   expect(screen.getByRole("spinbutton", { name: /^Maximum repair attempts/ })).toHaveValue(2);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
   expect(await screen.findByText("No saved draft")).toBeInTheDocument();
   expect(commands[2]).toEqual({
@@ -259,4 +301,45 @@ it("preserves two dirty sections on reload and saves only against the version ea
     expectedActivationNumber: 1,
     draftId: acceptedDraft.id,
   });
+});
+
+it("requires a passing test for the current saved draft before publishing from Settings", async () => {
+  let snapshot = first;
+  const commands: FactorySettingsCommand[] = [];
+  stubFactorySettings(
+    (command) => {
+      if (command) {
+        commands.push(command);
+        if (command.action !== "save" || command.patch.kind !== "agent") {
+          throw new Error("Unexpected command");
+        }
+        snapshot = { ...snapshot, agent: command.patch.agent, draft: secondDraft };
+      }
+      return Response.json({ snapshot });
+    },
+    [firstDraft],
+  );
+  renderSettings();
+
+  const model = await screen.findByRole("textbox", { name: "Model" });
+  const publish = screen.getByRole("button", { name: "Publish draft" });
+  expect(await screen.findByText("Ready to publish this draft.")).toBeVisible();
+  expect(publish).toBeEnabled();
+
+  fireEvent.change(model, { target: { value: "gpt-local" } });
+  expect(publish).toBeDisabled();
+  expect(screen.queryByText("Ready to publish this draft.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Save agent draft" }));
+  expect(
+    await screen.findByText(
+      "A current passing smoke test is required for the exact factory candidate.",
+    ),
+  ).toBeVisible();
+  expect(publish).toBeDisabled();
+  expect(screen.getByRole("link", { name: "Review configuration tests" })).toHaveAttribute(
+    "href",
+    "/w/demo/settings/factory-definition#candidate-tests",
+  );
+  fireEvent.click(publish);
+  expect(commands).toHaveLength(1);
 });

@@ -63,11 +63,21 @@ const candidateSmokeTestSchema = z.object({
   error: z.string().nullable(),
 });
 
+export const candidateSmokeEligibilitySchema = z.object({
+  eligible: z.boolean(),
+  reason: z.string().nullable(),
+  activationNumber: factoryDefinitionExpectedActivationSchema,
+  testId: candidateSmokeIdSchema.nullable().optional(),
+  canTest: z.boolean().optional(),
+});
+
 export const candidateSmokeTestResponseSchema = z.object({ test: candidateSmokeTestSchema });
 export const candidateSmokeHistoryResponseSchema = z.object({
   tests: z.array(candidateSmokeTestSchema),
+  eligibility: candidateSmokeEligibilitySchema,
 });
 
+export type CandidateSmokeEligibility = z.infer<typeof candidateSmokeEligibilitySchema>;
 export { candidateSmokeTestSchema };
 export type CandidateSmokeStart = z.infer<typeof candidateSmokeStartSchema>;
 export type CandidateSmokeTest = z.infer<typeof candidateSmokeTestSchema>;

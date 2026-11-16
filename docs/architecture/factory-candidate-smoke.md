@@ -4,12 +4,15 @@ A smoke test exercises a saved factory draft or a previously active revision. It
 
 ## Run a test
 
-Workspace owners and admins can use `/api/workspaces/[workspaceId]/factory-definition/candidate-tests`.
+Workspace owners and admins can run tests in **Settings → Factory definition**. Save the draft first, then run its configuration test. Select a previously active revision to test it before rollback. The history shows each attempt, and **View evidence** loads the exact receipt. Its permalink opens that saved candidate and receipt together.
+
+API calls use `/api/workspaces/[workspaceId]/factory-definition/candidate-tests`.
 
 | Operation | Request                                                                                                                       |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | Start     | `POST` with `target: {kind, id}`, `expectedActivationNumber`, and `expectedDigest`. The target kind is `draft` or `revision`. |
-| Read      | `GET` with `targetKind`, `targetId`, and `digest`.                                                                            |
+| List      | `GET` with `targetKind`, `targetId`, and `digest` returns test summaries and current activation eligibility.                  |
+| Evidence  | `GET /[testId]` with the same target and digest returns the full receipt.                                                     |
 | Cancel    | `DELETE /[testId]?digest=<sha256>` while the exact request is running.                                                        |
 
 The shared compiler checks the saved definition. Postgres verifies the caller, eligible approvers, repository, credential, and current capability receipt before the background execution starts. Private stage and policy reservations can pass preflight from the draft. Their backing records are created only by a successful publish transaction.
