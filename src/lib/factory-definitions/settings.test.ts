@@ -311,6 +311,100 @@ describe("factory definition Settings loader & mutations", () => {
     expect(state.deliveryPolicy?.id).toBe(deliveryPolicyId);
   });
 
+  it("loads liveDeliveryPolicyRevision for the active definition pipeline when it differs from the default pipeline", async () => {
+    const otherPipelineId = "54500000-0001-4000-8000-000000000044";
+    const otherDeliveryPolicyId = "54500000-0001-4000-8000-000000000045";
+    const otherCatalog: FactoryDefinitionCatalog = {
+      ...catalog,
+      pipelines: [...catalog.pipelines, { id: otherPipelineId, workspaceId, aliases: ["Custom"] }],
+      deliveryPolicyRevisions: [
+        ...catalog.deliveryPolicyRevisions,
+        { id: otherDeliveryPolicyId, workspaceId, pipelineId: otherPipelineId },
+      ],
+    };
+    const otherPipelineDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: otherPipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: otherDeliveryPolicyId,
+          operatingRulesMd: "Custom pipeline.",
+          stages: [
+            {
+              id: stageId,
+              slug: "plan",
+              name: "Plan",
+              description: "Plan work",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+      otherCatalog,
+    );
+    if (!otherPipelineDef.ok) throw new Error("Other pipeline fixture failed to compile.");
+
+    const { admin } = makeClient(
+      defaultStateResponder({
+        activationNumber: 1,
+        extraHandler: ({ url }) => {
+          if (url.pathname.endsWith("/factory_definition_revisions")) {
+            return Response.json([
+              {
+                id: revisionId,
+                definition_json: otherPipelineDef.definitionJson,
+                canonical_digest: otherPipelineDef.canonicalDigest,
+                created_at: now,
+              },
+            ]);
+          }
+          if (url.pathname.endsWith("/delivery_policies")) {
+            const filter = url.searchParams.get("pipeline_id");
+            if (filter === `eq.${otherPipelineId}`) {
+              return Response.json([{ current_revision_id: otherDeliveryPolicyId, revision: 4 }]);
+            }
+            return Response.json([{ current_revision_id: deliveryPolicyId, revision: 1 }]);
+          }
+          if (url.pathname.endsWith("/delivery_policy_revisions")) {
+            return Response.json([
+              {
+                id: otherDeliveryPolicyId,
+                workspace_id: workspaceId,
+                pipeline_id: otherPipelineId,
+                revision: 4,
+                created_at: now,
+                requirements: {
+                  version: 1,
+                  deliveryMode: "code",
+                  requiredChecks: [],
+                  minimumApprovals: 0,
+                  requireCodeOwnerReview: false,
+                  requireResolvedThreads: true,
+                  requiredEvidence: [],
+                  freshnessSeconds: 3600,
+                  requireArtifactApprovalForDelivery: false,
+                },
+              },
+            ]);
+          }
+          return null;
+        },
+      }),
+    );
+
+    const state = await loadSettingsFactoryDefinitionState(admin, workspaceId);
+    expect(state.activeDefinition?.pipelineId).toBe(otherPipelineId);
+    expect(state.liveDeliveryPolicyRevision).toBe(4);
+  });
+
   it("rejects stale expectedActivationNumber or expectedDraftId with 409 conflict", async () => {
     const { admin } = makeClient(
       defaultStateResponder({

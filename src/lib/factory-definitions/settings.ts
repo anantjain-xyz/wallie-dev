@@ -231,7 +231,6 @@ export async function loadSettingsFactoryDefinitionState(
   if (deliveryPolicyPointerResult.error) throw deliveryPolicyPointerResult.error;
   if (activationResult.error) throw activationResult.error;
 
-  const liveDeliveryPolicyRevision = deliveryPolicyPointerResult.data?.revision ?? 0;
   const activationRow = activationResult.data;
   const expectedActivationNumber = activationRow?.activation_number ?? 0;
 
@@ -307,6 +306,16 @@ export async function loadSettingsFactoryDefinitionState(
 
   const activeDefinition = latestDraft?.definition ?? currentActivation?.definition ?? null;
 
+  const resolvedDeliveryPointerPromise =
+    activeDefinition && activeDefinition.pipelineId !== defaultPipelineId
+      ? client
+          .from("delivery_policies")
+          .select("current_revision_id, revision")
+          .eq("workspace_id", workspaceId)
+          .eq("pipeline_id", activeDefinition.pipelineId)
+          .maybeSingle()
+      : Promise.resolve(deliveryPolicyPointerResult);
+
   const executionRevisionId = activeDefinition
     ? activeDefinition.executionPolicyRevisionId
     : (executionPolicyPointerResult.data?.current_revision_id ?? null);
@@ -314,27 +323,32 @@ export async function loadSettingsFactoryDefinitionState(
     ? activeDefinition.deliveryPolicyRevisionId
     : (deliveryPolicyPointerResult.data?.current_revision_id ?? null);
 
-  const [executionRevisionResult, deliveryRevisionResult] = await Promise.all([
-    executionRevisionId
-      ? client
-          .from("execution_policy_revisions")
-          .select("*")
-          .eq("workspace_id", workspaceId)
-          .eq("id", executionRevisionId)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-    deliveryRevisionId
-      ? client
-          .from("delivery_policy_revisions")
-          .select("*")
-          .eq("workspace_id", workspaceId)
-          .eq("id", deliveryRevisionId)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-  ]);
+  const [resolvedDeliveryPointerResult, executionRevisionResult, deliveryRevisionResult] =
+    await Promise.all([
+      resolvedDeliveryPointerPromise,
+      executionRevisionId
+        ? client
+            .from("execution_policy_revisions")
+            .select("*")
+            .eq("workspace_id", workspaceId)
+            .eq("id", executionRevisionId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      deliveryRevisionId
+        ? client
+            .from("delivery_policy_revisions")
+            .select("*")
+            .eq("workspace_id", workspaceId)
+            .eq("id", deliveryRevisionId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
 
+  if (resolvedDeliveryPointerResult.error) throw resolvedDeliveryPointerResult.error;
   if (executionRevisionResult.error) throw executionRevisionResult.error;
   if (deliveryRevisionResult.error) throw deliveryRevisionResult.error;
+
+  const liveDeliveryPolicyRevision = resolvedDeliveryPointerResult.data?.revision ?? 0;
 
   const executionPolicy: ExecutionPolicy | null = executionRevisionResult.data
     ? mapExecutionPolicy(executionRevisionResult.data)
