@@ -159,8 +159,12 @@ class DaytonaSandboxHandle implements SandboxHandle {
     } catch {
       // The sandbox may already have been destroyed by its TTL.
     } finally {
-      await this.client[Symbol.asyncDispose]();
+      await this[Symbol.asyncDispose]();
     }
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.client[Symbol.asyncDispose]();
   }
 }
 

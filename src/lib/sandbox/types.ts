@@ -68,6 +68,8 @@ export interface SandboxHandle {
   readFile(path: string): Promise<string | null>;
   /** Stop and destroy the sandbox. Idempotent; safe to call multiple times. */
   stop(): Promise<void>;
+  /** Release local SDK resources when the sandbox has separate remote cleanup. */
+  [Symbol.asyncDispose]?(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
