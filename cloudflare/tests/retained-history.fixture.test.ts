@@ -6,9 +6,17 @@ import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { loadRunTranscript } from "@/features/wallie/run-transcript";
+import {
+  loadPinnedFactoryExecution,
+  loadPinnedSessionPrompt,
+} from "@/lib/factory-definitions/runtime-definition";
+import { pinSessionAttemptManifest } from "@/lib/pipeline/attempt-manifest";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { processPipelineJob } from "@/lib/pipeline/processor";
+import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { RunEventCapture } from "@/lib/pipeline/run-events";
+import { loadAttemptPredecessors } from "@/lib/pipeline/stages";
+import { renderStagePrompt } from "@/lib/prompt-templates";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
 import {
@@ -48,6 +56,9 @@ const fixtureSchema = z.object({
   jobId: z.string().uuid(),
   attemptCount: z.number().int().positive(),
   workflowId: z.string().min(1),
+  definitionRevisionId: z.string().uuid(),
+  definitionDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  modelName: z.string().min(1),
 });
 
 async function checked<T>(request: PromiseLike<{ data: T; error: unknown }>): Promise<T> {
@@ -75,19 +86,55 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin);
     const rpc = vi.spyOn(admin, "rpc");
     vi.mocked(processPipelineJob).mockImplementationOnce(
-      async ({ admin: worker, job, deadlineAt, captureOrderedEvents }) => {
+      async ({ admin: worker, job, deadlineAt, captureOrderedEvents, workerRuntime }) => {
         assert.equal(worker, admin);
         assert.equal(job.id, fixture.jobId);
         assert.equal(job.attempt_count, fixture.attemptCount);
         assert.equal(captureOrderedEvents, true);
+        assert.equal(workerRuntime, "workerd");
+        const session = await checked(
+          worker.from("sessions").select("*").eq("id", fixture.sessionId).single(),
+        );
+        assert(session);
+        expect(session.factory_definition_revision_id).toBe(fixture.definitionRevisionId);
+        const [definition, sourcePrompt, predecessors] = await Promise.all([
+          loadPinnedFactoryExecution(worker, session),
+          loadPinnedSessionPrompt(worker, session),
+          loadAttemptPredecessors(worker, session.id),
+        ]);
+        assert(definition);
+        expect(definition.canonicalDigest).toBe(fixture.definitionDigest);
+        expect(definition.agent.model).toBe(fixture.modelName);
+        const stage = definition.stages[0];
+        expect(stage.id).toBe(fixture.stageId);
+        expect(predecessors.predecessors).toEqual([]);
+        const prompt = renderStagePrompt(
+          {
+            promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
+            slug: trustedPromptValue("stage.slug", stage.slug),
+          },
+          {
+            attemptFeedback: null,
+            attemptNumber: 1,
+            operatingRulesMd: trustedPromptValue(
+              "pipeline.operatingRules",
+              definition.operatingRulesMd,
+            ),
+            sessionPrompt: untrustedPromptValue("session.prompt", sourcePrompt.promptMd),
+            sessionTitle: untrustedPromptValue("session.title", sourcePrompt.title),
+          },
+        );
+        expect(prompt).toContain("Published replacement template 1");
+        expect(prompt).toContain("Native Workflow pinned replacement");
+        expect(prompt).toContain("Published replacement operating rules");
         const runId = await checked(
           worker.rpc("start_session_job_attempt", {
             p_job_id: job.id,
             p_attempt_count: job.attempt_count,
             p_expected_stage_id: fixture.stageId,
             p_expected_artifact_version: 0,
-            p_model_provider: "codex",
-            p_model_name: "gpt-5.5",
+            p_model_provider: definition.agent.provider,
+            p_model_name: definition.agent.model,
             p_run_type: "project",
             p_branch_name: `wallie/native-retained-history/${job.id}`,
           }),
@@ -104,6 +151,19 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
           }),
         );
         assert.equal(pinned?.[0]?.input_sha, fixture.baseSha);
+        expect(
+          await pinSessionAttemptManifest({
+            admin: worker,
+            jobId: job.id,
+            runId,
+            attemptCount: job.attempt_count,
+            prompt,
+            checkoutSha: fixture.baseSha,
+            predecessors: predecessors.predecessors,
+            workerRuntime,
+            credentialOwnerMemberId: session.creator_member_id,
+          }),
+        ).toBe(true);
         const capture = new RunEventCapture(
           worker,
           {
@@ -162,9 +222,9 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
           .select("id,status")
           .eq("agent_job_id", fixture.jobId)
           .eq("attempt_count", fixture.attemptCount)
-          .single(),
+          .maybeSingle(),
       );
-      assert(owned);
+      assert(owned, "The native Workflow did not claim the expected run attempt.");
       const scope = { ...fixture, runId: owned.id };
       expect(owned.status).toBe("running");
       const captured = await loadRunTranscript({ supabase: reviewer, ...scope });

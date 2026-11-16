@@ -8,7 +8,8 @@ set local request.jwt.claim.role = 'service_role';
 -- seeded workspace or its personal credentials to exercise a revocation.
 insert into auth.users(id,email) values
   ('54200000-0000-4000-8000-000000000001','factory-activation-owner@example.com'),
-  ('54200000-0000-4000-8000-000000000002','factory-activation-reviewer@example.com');
+  ('54200000-0000-4000-8000-000000000002','factory-activation-reviewer@example.com'),
+  ('54200000-0000-4000-8000-000000000003','factory-activation-foreign-owner@example.com');
 insert into public.workspaces(id,slug,name) values
   ('54200000-0001-4000-8000-000000000001','factory-activation-test','Factory activation'),
   ('54200000-0001-4000-8000-000000000002','factory-activation-foreign','Other factory');
@@ -16,7 +17,9 @@ insert into public.workspace_members(id,workspace_id,user_id,kind,role) values
   ('54200000-0002-4000-8000-000000000001','54200000-0001-4000-8000-000000000001',
    '54200000-0000-4000-8000-000000000001','human','owner'),
   ('54200000-0002-4000-8000-000000000002','54200000-0001-4000-8000-000000000001',
-   '54200000-0000-4000-8000-000000000002','human','member');
+   '54200000-0000-4000-8000-000000000002','human','member'),
+  ('54200000-0002-4000-8000-000000000003','54200000-0001-4000-8000-000000000002',
+   '54200000-0000-4000-8000-000000000003','human','owner');
 insert into public.pipelines(id,workspace_id,name,is_default) values
   ('54200000-0003-4000-8000-000000000001','54200000-0001-4000-8000-000000000001','Factory pipeline',true);
 insert into public.pipeline_stages(id,pipeline_id,workspace_id,position,slug,name) values
@@ -547,6 +550,41 @@ create temp table factory_activation_rollback_race as
 select (pg_temp.factory_activation_save(2,pg_temp.factory_activation_bundle('Losing to rollback'))).id as loser_draft;
 select throws_ok(pg_temp.factory_activation_command('rollback',2,(select revision_id from factory_activation_first)),
   'PT422','A current passing smoke test is required for the exact factory candidate.','direct rollback also requires fresh evidence');
+create temp table factory_rollback_failed_smoke as
+select test.* from factory_activation_first original
+cross join lateral pg_temp.factory_smoke_start('revision',2,original.revision_id) test;
+select ok(public.finish_factory_definition_smoke_test(workspace_id,id,'failed',
+  '{"runtimeProfile":"e2b","stageCount":2,"completedStageCount":1}', 'Fixture stopped at step two.'),
+  'a failed rollback test records its partial execution') from factory_rollback_failed_smoke;
+select throws_ok(pg_temp.factory_activation_command('rollback',2,(select revision_id from factory_activation_first)),
+  'PT422','A current passing smoke test is required for the exact factory candidate.',
+  'an exact failed receipt cannot activate an older revision');
+select pg_temp.seed_factory_smoke('revision',2,revision_id) from factory_activation_first;
+update public.factory_definition_smoke_tests set finished_at=clock_timestamp()-interval '25 hours'
+where target_kind='revision' and target_id=(select revision_id from factory_activation_first)
+  and base_activation_number=2 and status='passed';
+select throws_ok(pg_temp.factory_activation_command('rollback',2,(select revision_id from factory_activation_first)),
+  'PT422','A current passing smoke test is required for the exact factory candidate.',
+  'an expired passing receipt cannot activate an older revision');
+
+update public.workspace_members set role='admin'
+where id='54200000-0002-4000-8000-000000000002';
+create temp table factory_rollback_revocable_smoke as
+select test.* from factory_activation_first original cross join factory_activation_scope scope
+cross join lateral pg_temp.factory_smoke_start('revision',2,original.revision_id,p_actor => scope.member_user_id) test;
+select ok(pg_temp.factory_smoke_finish(id),'a second manager records passing evidence before losing access')
+from factory_rollback_revocable_smoke;
+select ok((pg_temp.factory_smoke_eligibility('revision',target_id)->>'testId')::uuid=id,
+  'the second manager''s receipt qualifies while they can still manage the workspace')
+from factory_rollback_revocable_smoke;
+update public.workspace_members set role='member'
+where id='54200000-0002-4000-8000-000000000002';
+select throws_ok(pg_temp.factory_activation_command('rollback',2,(select revision_id from factory_activation_first)),
+  'PT422','A current passing smoke test is required for the exact factory candidate.',
+  'a current owner cannot reuse evidence from a tester whose manager role was revoked');
+select is((select max(a.activation_number)
+  from public.factory_definition_activations a join factory_activation_scope s on s.factory_id=a.factory_id),
+  2::bigint,'invalid rollback evidence leaves the active revision unchanged');
 select pg_temp.seed_factory_smoke('revision',2,revision_id) from factory_activation_first;
 select ok((select result @> '{"eligible":true,"activationNumber":2,"canTest":true}'::jsonb
     and result->>'testId' is not null
@@ -616,6 +654,10 @@ select is((select a.revision_id from public.factory_definition_activations a joi
 
 -- An uncommitted credential revocation races activation. The contender must
 -- wait, then reject the previously published definition with current state.
+select pg_temp.seed_factory_smoke('revision',3,revision_id) from factory_activation_second;
+commit;
+begin;
+set local request.jwt.claim.role = 'service_role';
 select extensions.dblink_exec('factory_writer','begin');
 select extensions.dblink_exec('factory_writer',$q$
   delete from public.user_codex_credentials where user_id='54200000-0000-4000-8000-000000000001'
@@ -732,13 +774,52 @@ select ok((select s.active_provider='e2b' and a.value_json='"gpt-5"'::jsonb from
 create temp table factory_activation_reordered as
 select saved.id from (select pg_temp.factory_activation_bundle('Reordered stages')::jsonb as body) draft
 cross join lateral pg_temp.factory_activation_save(5, jsonb_set(draft.body,'{stages}',
-  jsonb_build_array(draft.body #> '{stages,1}',draft.body #> '{stages,0}'))::text) saved;
+  jsonb_build_array(jsonb_set(draft.body #> '{stages,1}','{promptTemplateMd}',
+    to_jsonb('Review the published candidate.'::text)),draft.body #> '{stages,0}'))::text) saved;
 select pg_temp.seed_factory_smoke('draft',5,id) from factory_activation_reordered;
-select is((select a.activation_number from factory_activation_scope s cross join factory_activation_reordered d
-  cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,5,d.id,
-    array['e2b'],pg_temp.factory_activation_probes()) a),6::bigint,'a revision can publish a new stage order');
+commit;
+begin;
+set local request.jwt.claim.role = 'service_role';
+
+-- Exercise the opposite lock order from the earlier admission race. The
+-- session that already owns the fence must pin the complete prior revision.
+select extensions.dblink_exec('factory_admitter','begin');
+create temp table factory_admission_before_reorder as
+select * from extensions.dblink('factory_admitter',pg_temp.factory_admission_command(
+  '54200000-0007-4000-8000-000000000010','Admission before reordered activation'))
+as result(session_id uuid);
+select extensions.dblink_send_query('factory_writer',
+  pg_temp.factory_activation_command('publish',5,(select id from factory_activation_reordered)));
+select pg_temp.wait_factory_activation_lock('factory_writer');
+select extensions.dblink_exec('factory_admitter','commit');
+create temp table factory_activation_sixth as
+select * from extensions.dblink_get_result('factory_writer') as result(activation_number bigint,revision_id uuid);
+select count(*) from extensions.dblink_get_result('factory_writer') as result(activation_number bigint,revision_id uuid);
+select is((select activation_number from factory_activation_sixth),6::bigint,
+  'a publisher waiting on admission can then activate the reordered definition');
+select ok((select input.activation_number=5 and run.model_name='gpt-5.1'
+    and input.selected_stage_ids[1]='54200000-0004-4000-8000-000000000002'::uuid
+    and revision.definition_json::jsonb #>> '{stages,0,promptTemplateMd}'='Prepare {{session.title}}.'
+  from factory_admission_before_reorder admitted join public.session_factory_admission_inputs input using(session_id)
+  join public.factory_definition_revisions revision on revision.id=input.definition_revision_id
+  join public.agent_runs run on run.session_id=admitted.session_id),
+  'admission winning the race keeps the prior model, stage order and prompt bytes');
 select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-000000000009','Stale stage order'),
   'P0003','The active factory no longer matches the requested session options.','fresh admission detects a reordered compiled stage selection');
+create temp table factory_admission_after_reorder as
+select * from public.create_session_once_with_first_job(
+  '54200000-0001-4000-8000-000000000001','54200000-0002-4000-8000-000000000001',
+  '54200000-0007-4000-8000-000000000011', repeat('e',64),
+  'Admission after reordered activation','Review the new candidate','codex','gpt-5.1','{}'::uuid[],
+  selected_stage_ids => array['54200000-0004-4000-8000-000000000001','54200000-0004-4000-8000-000000000002']::uuid[]);
+select ok((select input.activation_number=6 and input.definition_revision_id=activation.revision_id
+    and run.model_name='gpt-5' and run.stage_slug='verify-delivery'
+    and revision.definition_json::jsonb #>> '{stages,0,promptTemplateMd}'='Review the published candidate.'
+  from factory_admission_after_reorder admitted join public.session_factory_admission_inputs input using(session_id)
+  join public.factory_definition_revisions revision on revision.id=input.definition_revision_id
+  join public.agent_runs run on run.id=admitted.run_id
+  cross join factory_activation_sixth activation),
+  'fresh admission sees the new activation, first stage, model and prompt together');
 select is(pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000002','Admission racing publication'),
   (select session_id from factory_admission_after_publish),'a committed creation replays even when its confirmed stage order has changed');
 
@@ -794,6 +875,10 @@ select throws_ok($$select pg_temp.publish_factory_settings((select id from facto
   'PT422',null,'the latest Settings draft still requires the canonical publication checks');
 
 update public.workspace_members set is_active = true where id='54200000-0002-4000-8000-000000000002';
+select set_config('wallie.test_legacy_session_number',
+  (select s.number::text from public.sessions s join factory_admission_legacy fixture on fixture.session_id=s.id),true);
+select set_config('wallie.test_pinned_session_number',
+  (select s.number::text from public.sessions s join factory_admission_before_reorder fixture on fixture.session_id=s.id),true);
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000002';
@@ -803,6 +888,15 @@ select is((select count(*) from public.factory_definition_drafts
 select is((select count(*) from public.factory_definition_smoke_tests
   where workspace_id='54200000-0001-4000-8000-000000000001'),
   0::bigint,'a workspace member cannot read candidate smoke evidence');
+select is(public.get_session_detail_page('factory-activation-test',
+    current_setting('wallie.test_legacy_session_number')::integer) #>> '{activity,sessionGithubRepositoryId}',
+  '54200000-0006-4000-8000-000000000002','a member still reads the legacy session against its original repository');
+select is(public.get_session_detail_page('factory-activation-test',
+    current_setting('wallie.test_legacy_session_number')::integer) #>> '{session,pipeline,stages,0,slug}',
+  'verify-delivery','the legacy session still reads its live pipeline stage rather than a compiled label');
+select is(public.get_session_detail_page('factory-activation-test',
+    current_setting('wallie.test_pinned_session_number')::integer) #>> '{session,pipeline,stages,0,slug}',
+  'compiled-handoff','a member reads the prior pinned stage order after the new activation');
 set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000001';
 select is((select count(*) from public.factory_definition_drafts
   where workspace_id='54200000-0001-4000-8000-000000000001' and settings_metadata ? 'newStageIds'),
@@ -810,6 +904,19 @@ select is((select count(*) from public.factory_definition_drafts
 select ok((select count(*) > 0 from public.factory_definition_smoke_tests
   where workspace_id='54200000-0001-4000-8000-000000000001'),
   'a workspace manager can read candidate smoke evidence');
+set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000003';
+select is(public.get_session_detail_page('factory-activation-test',
+    current_setting('wallie.test_legacy_session_number')::integer),
+  '{"access":{"hasAnyWorkspace":true}}'::jsonb,'an owner of another workspace cannot read the legacy session');
+select is(public.get_session_detail_page('factory-activation-test',
+    current_setting('wallie.test_pinned_session_number')::integer),
+  '{"access":{"hasAnyWorkspace":true}}'::jsonb,'an owner of another workspace cannot read the pinned session');
+select is((select count(*) from public.factory_definition_activations
+  where workspace_id='54200000-0001-4000-8000-000000000001'),
+  0::bigint,'an owner of another workspace cannot read activation history');
+select is((select count(*) from public.factory_definition_smoke_tests
+  where workspace_id='54200000-0001-4000-8000-000000000001'),
+  0::bigint,'an owner of another workspace cannot read candidate smoke evidence');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 
@@ -854,6 +961,7 @@ select extensions.dblink_disconnect('factory_writer');
 select extensions.dblink_disconnect('factory_contender');
 select extensions.dblink_disconnect('factory_admitter');
 delete from public.workspaces where id in ('54200000-0001-4000-8000-000000000001','54200000-0001-4000-8000-000000000002');
-delete from auth.users where id in ('54200000-0000-4000-8000-000000000001','54200000-0000-4000-8000-000000000002');
+delete from auth.users where id in ('54200000-0000-4000-8000-000000000001',
+  '54200000-0000-4000-8000-000000000002','54200000-0000-4000-8000-000000000003');
 select * from finish();
 commit;

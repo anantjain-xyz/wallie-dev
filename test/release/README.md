@@ -46,3 +46,32 @@ restores the prior enabled state/reason afterward. Release revisions remain
 monotonic. It creates a unique user/workspace and removes only their fixture data,
 Storage objects, sandboxes, and local files. Use an otherwise idle dedicated stack
 and do not run release-toggle tests concurrently against that stack.
+
+## Factory definition qualification
+
+Set `WALLIE_CONTINUITY_SUPABASE_WORKDIR` to the disposable local Supabase workdir. Run the continuity and browser fixtures in sequence. The continuity worker claims jobs across that stack, including jobs queued by the browser fixture.
+
+```sh
+pnpm check:db-tests --workdir "$WALLIE_CONTINUITY_SUPABASE_WORKDIR"
+WALLIE_CONTINUITY_EVIDENCE_PATH=.wallie/continuity-evidence.json pnpm check:continuity
+```
+
+| Fixture                                | What to inspect                                                                                                                                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `factory_definition_activation.sql`    | Publication, rollback, and enrollment serialize. An invalid receipt or revoked authority prevents activation.                                                                                       |
+| `pinned_factory_stage_transitions.sql` | Stage selection, approval, and retry use the pinned order after the live pipeline changes.                                                                                                          |
+| `session_attempt_manifests.sql`        | Manifests retain the exact input identities, including synthetic skill references, for each attempt.                                                                                                |
+| `continuity.fixture.ts`                | Compare the enrolled revisions and attempt inputs around publication and rollback. Verify that the Node worker and Cloudflare workflow record the reviewed artifact and the applicable predecessor. |
+
+To run the browser journey, set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` for the disposable local stack. Use the same local settings for the build and the app. Keep Playwright and `NEXT_PUBLIC_APP_URL` on `localhost` so the auth callback uses the same host. Leave `WALLIE_WORKER_WAKE_URL` and `OPENROUTER_API_KEY` unset. Install Playwright Chromium if needed.
+
+```sh
+pnpm build
+WALLIE_FACTORY_QUALIFICATION=1 pnpm exec playwright test e2e/factory-qualification.spec.ts
+```
+
+The browser fixture signs in as a synthetic workspace owner. It uses the local editor, evidence reads, activation, and session admission. Its candidate receipts use deterministic provider results. It records the queued run for each new session.
+
+The continuity fixture runs the Node processor with local provider and GitHub substitutes. In workerd, the native workflow dispatches and replays a fixture attempt with real pin loading, manifest recording, and checkpoint publication. The same review operation approves the resulting artifact. The `pinnedDefinition` record ties three activations to their test receipts, session pins, attempt IDs, and review artifacts.
+
+In M02 an ungranted skill edit fails compilation. Workspace skill and tool grants follow in M03.

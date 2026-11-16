@@ -12,7 +12,10 @@ import { expect, it, vi } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 
 import type { AgentEvent } from "@/lib/agent-runner/types";
+import type { CompiledFactoryDefinition } from "@/lib/factory-definitions/compiler";
+import { mutateFactoryDefinition } from "@/lib/factory-definitions/mutations";
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
+import { factoryDefinitionFromBundle } from "@/lib/factory-definitions/stored-definition";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createArtifactSourceAnchor } from "@/features/sessions/review/source-anchor";
@@ -68,6 +71,9 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
   const ids = fixtureIds();
   const workspaceSlug = `continuity-${ids.workspaceId}`;
   const browser = browserHistoryHandshake();
+  const frozenStarted = deferred<void>();
+  const releaseFrozen = deferred<void>();
+  let frozenWorker: Promise<unknown> | undefined;
   let plannedSession: { id: string; number: number; jobId: string; userEmail: string } | undefined;
   const repositoryName = `wallie-fixture/continuity-${ids.workspaceId}`;
   const repositoryNumericId = Math.floor(Date.now() / 1000);
@@ -97,6 +103,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       | "cancel"
       | "capture-paused"
       | "frozen-first"
+      | "frozen-next-failure"
       | "frozen-next" = "plan";
     const cancelStarted = deferred<string>();
     finishCanceledRun = deferred<void>();
@@ -113,22 +120,33 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         assert(input.sandbox && input.runId);
         const mode = phase;
         const sandbox = input.sandbox;
-        if (mode === "frozen-first" || mode === "frozen-next") {
+        if (mode === "frozen-first" || mode === "frozen-next-failure" || mode === "frozen-next") {
+          const stage = mode === "frozen-first" ? "frozen-first" : "frozen-next";
           expect(input.prompt).toContain("Frozen operating rules");
           expect(input.prompt).toContain("Original pinned session title");
-          expect(input.prompt).toContain(`Pinned template ${mode}`);
+          expect(input.prompt).toContain(`Pinned template ${stage}`);
           expect(input.prompt).not.toContain("Edited live template");
-          if (mode === "frozen-next") {
+          expect(input.prompt).not.toContain("Published replacement template");
+          if (stage === "frozen-next") {
             expect(input.prompt).toContain("Approved frozen-first artifact");
             expect(await sandbox.readFile(`${sandbox.repoPath}/src/frozen.ts`)).toBe(planCode);
+            if (mode === "frozen-next-failure") {
+              yield {
+                type: "error",
+                message: "Controlled pinned agent failure",
+              } satisfies AgentEvent;
+              return;
+            }
           } else {
+            frozenStarted.resolve();
+            await releaseFrozen.promise;
             await sandbox.writeFile(`${sandbox.repoPath}/src/frozen.ts`, planCode);
           }
           yield {
             type: "completion",
             taskComplete: true,
             summary: "Frozen execution completed",
-            finalOutput: `# Approved ${mode} artifact`,
+            finalOutput: `# Approved ${stage} artifact`,
           } satisfies AgentEvent;
           return;
         }
@@ -321,14 +339,18 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     );
 
     await setRelease(admin, true, "Enable isolated local continuity acceptance fixture");
-    const createFixtureSession = (title: string, selectedStageIds = ids.stageIds) =>
+    const createFixtureSession = (
+      title: string,
+      selectedStageIds = ids.stageIds,
+      modelName = "gpt-5.5",
+    ) =>
       production.createSessionWithFirstJob({
         admin,
         creatorMemberId: ids.memberId,
         githubRepositoryId: ids.repositoryId,
         linearIssueId: null,
         linearIssueUrl: null,
-        modelName: "gpt-5.5",
+        modelName,
         modelProvider: "codex",
         pipelineId: ids.pipelineId,
         selectedStageIds,
@@ -1076,7 +1098,396 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       checkpointSha: planSha,
     });
 
-    const nativeSession = await createFixtureSession("Native Workflow durable history");
+    const factory = await checked(
+      admin.from("factories").select("id").eq("workspace_id", ids.workspaceId).single(),
+    );
+    const [nextStageId, firstStageId] = ids.stageIds;
+    const frozenStages = [firstStageId, nextStageId].map((id, index) => ({
+      id,
+      slug: index === 0 ? "frozen-first" : "frozen-next",
+      name: index === 0 ? "Frozen First" : "Frozen Next",
+      description: "",
+      anyoneCanApprove: true,
+      approverMemberIds: [],
+      previousStageIds: index === 0 ? [] : [firstStageId],
+      promptTemplateMd:
+        index === 0
+          ? "Pinned template frozen-first {{session.title}}"
+          : "Pinned template frozen-next {{session.title}} {{artifact.previousStages.frozen-first}}",
+    }));
+    const originalBundle = {
+      schemaVersion: 1,
+      kind: "serial",
+      pipelineId: ids.pipelineId,
+      repositoryId: ids.repositoryId,
+      sandboxProvider: "e2b",
+      executionPolicyRevisionId: null,
+      deliveryPolicyRevisionId: null,
+      skillIds: [],
+      toolIds: [],
+      agent: {
+        provider: "codex",
+        model: "gpt-5.5",
+        effort: "high",
+        concurrencyLimit: 4,
+        stallTimeoutMs: 120_000,
+        maxRetries: 2,
+        maxTurns: 5,
+      },
+      operatingRulesMd: "Frozen operating rules",
+      operatingRuleStageIds: [],
+      stages: frozenStages,
+    } satisfies CompiledFactoryDefinition;
+    await checked(
+      admin.from("user_codex_credentials").insert({
+        user_id: userId,
+        credential_type: "codex_access_token",
+        encrypted_credential: "unused-local-fixture",
+      }),
+    );
+    const connection = await checked(
+      admin
+        .from("workspace_e2b_sandbox_connections")
+        .insert({
+          workspace_id: ids.workspaceId,
+          encrypted_api_key: "unused-local-fixture",
+        })
+        .select("connection_revision")
+        .single(),
+    );
+    const probes = getSandboxProviderContract("e2b").capabilityProbes;
+    const requiredProbes = [...new Set([...probes.required, ...probes.requiredByAgent.codex])];
+    const activationScope = {
+      p_workspace_id: ids.workspaceId,
+      p_factory_id: factory.id,
+      p_actor_user_id: userId,
+    };
+    const activationRequirements = {
+      p_enabled_sandbox_providers: ["e2b"],
+      p_required_probes: requiredProbes,
+    };
+    const recordCandidateTest = async ({
+      kind,
+      id,
+      definitionDigest,
+      bundle,
+      base,
+    }: {
+      kind: "draft" | "revision";
+      id: string;
+      definitionDigest: string;
+      bundle: CompiledFactoryDefinition;
+      base: number;
+    }) => {
+      await checked(
+        admin.from("sandbox_capability_checks").insert({
+          workspace_id: ids.workspaceId,
+          github_repository_id: ids.repositoryId,
+          status: "success",
+          agent_model: bundle.agent.model,
+          agent_provider: bundle.agent.provider,
+          sandbox_provider: bundle.sandboxProvider,
+          sandbox_connection_revision: connection.connection_revision,
+          factory_definition_digest: definitionDigest,
+          capabilities: Object.fromEntries(
+            requiredProbes.map((probe) => [probe, { ok: true, detail: null }]),
+          ),
+        }),
+      );
+      // The isolated fixture supplies provider results. Start and finish still
+      // record a receipt for the exact candidate through the production RPCs.
+      const smoke = await checked(
+        admin.rpc("start_factory_definition_smoke_test", {
+          ...activationScope,
+          ...activationRequirements,
+          p_expected_activation_number: base,
+          p_target_kind: kind,
+          p_target_id: id,
+          p_definition_digest: definitionDigest,
+        }),
+      );
+      expect(smoke.status, smoke.error_text ?? undefined).toBe("running");
+      expect(
+        await checked(
+          admin.rpc("finish_factory_definition_smoke_test", {
+            p_workspace_id: ids.workspaceId,
+            p_test_id: smoke.id,
+            p_status: "passed",
+            p_evidence: {
+              runtimeProfile: bundle.sandboxProvider,
+              stageCount: bundle.stages.length,
+              completedStageCount: bundle.stages.length,
+              stages: bundle.stages.map((stage) => ({
+                stageId: stage.id,
+                promptDigest: createHash("sha256")
+                  .update(`continuity fixture ${definitionDigest} ${stage.id}`)
+                  .digest("hex"),
+              })),
+            },
+          }),
+        ),
+      ).toBe(true);
+      return smoke.id;
+    };
+    const publishCandidate = async (bundle: CompiledFactoryDefinition, base: number) => {
+      const { definitionJson, canonicalDigest } = serializeFactoryDefinition({ ...bundle });
+      const draft = await checked(
+        admin.rpc("save_factory_definition_draft", {
+          ...activationScope,
+          p_expected_activation_number: base,
+          p_definition_json: definitionJson,
+          p_canonical_digest: canonicalDigest,
+        }),
+      );
+      const testId = await recordCandidateTest({
+        kind: "draft",
+        id: draft.id,
+        definitionDigest: canonicalDigest,
+        bundle,
+        base,
+      });
+      const activation = await checked(
+        admin.rpc("publish_factory_definition_draft", {
+          ...activationScope,
+          ...activationRequirements,
+          p_expected_activation_number: base,
+          p_draft_id: draft.id,
+        }),
+      );
+      return { activation, canonicalDigest, testId };
+    };
+    const readAdmission = (sessionId: string) =>
+      checked(
+        admin
+          .from("session_factory_admission_inputs")
+          .select("*")
+          .eq("session_id", sessionId)
+          .single(),
+      );
+    const readSession = (sessionId: string) =>
+      checked(admin.from("sessions").select("*").eq("id", sessionId).single());
+    const readAttempt = (runId: string) =>
+      checked(admin.from("session_attempt_manifests").select("*").eq("run_id", runId).single());
+    const original = await publishCandidate(originalBundle, 0);
+    const frozen = await createFixtureSession("Original pinned session title", [
+      firstStageId,
+      nextStageId,
+    ]);
+    await checked(
+      admin
+        .from("sessions")
+        .update({ title: "Edited live session title" })
+        .eq("id", frozen.sessionId),
+    );
+    await checked(
+      admin
+        .from("pipeline_stages")
+        .update({ prompt_template_md: "Edited live template" })
+        .eq("id", firstStageId),
+    );
+    await checked(
+      admin
+        .from("workspace_agent_config")
+        .update({ value_json: "cursor" })
+        .eq("workspace_id", ids.workspaceId)
+        .eq("key", "agent_provider"),
+    );
+    phase = "frozen-first";
+    const frozenExecution = production.processPipelineJob({
+      admin,
+      job: await claimJob(admin, frozen.jobId),
+    });
+    frozenWorker = frozenExecution;
+    await Promise.race([
+      frozenStarted.promise,
+      frozenExecution.then((result) => {
+        throw new Error(`Pinned agent stopped before the activation boundary: ${result.result}`);
+      }),
+    ]);
+    expect((await readSession(frozen.sessionId)).phase_status).toBe("in_progress");
+
+    const replacementBundle = {
+      ...originalBundle,
+      agent: { ...originalBundle.agent, model: "gpt-5.6-sol" },
+      operatingRulesMd: "Published replacement operating rules",
+      stages: [nextStageId, firstStageId].map((id, index) => ({
+        ...frozenStages[index],
+        id,
+        slug: index === 0 ? "replacement-first" : "replacement-next",
+        promptTemplateMd: `Published replacement template ${index + 1} {{session.title}}`,
+        previousStageIds: index === 0 ? [] : [nextStageId],
+      })),
+    } satisfies CompiledFactoryDefinition;
+    const skillEdit = await mutateFactoryDefinition({
+      admin,
+      workspaceId: ids.workspaceId,
+      actorUserId: userId,
+      command: {
+        action: "draft",
+        expectedActivationNumber: original.activation.activation_number,
+        source: {
+          kind: "structured",
+          value: {
+            ...factoryDefinitionFromBundle(replacementBundle),
+            skills: ["ungranted-skill@1"],
+          },
+        },
+      },
+    });
+    expect(skillEdit).toMatchObject({
+      ok: false,
+      status: 422,
+      diagnostics: expect.arrayContaining([expect.objectContaining({ path: ["skills", 0] })]),
+    });
+    const replacementActivation = await publishCandidate(replacementBundle, 1);
+    expect(replacementActivation.activation.activation_number).toBe(2);
+    expect(await readAdmission(frozen.sessionId)).toMatchObject({
+      activation_number: 1,
+      definition_revision_id: original.activation.revision_id,
+      model_name: "gpt-5.5",
+      selected_stage_ids: [firstStageId, nextStageId],
+    });
+    releaseFrozen.resolve();
+    const firstFrozen = await frozenExecution;
+    frozenWorker = undefined;
+    expect(firstFrozen.result).toBe("success");
+    assert(firstFrozen.runId);
+    const frozenSession = await checked(
+      admin.from("sessions").select("*").eq("id", frozen.sessionId).single(),
+    );
+    expect(frozenSession.current_stage_id).toBe(firstStageId);
+    assert(frozenSession.current_artifact_id);
+    const frozenApproval = await production.handleApproval({
+      admin,
+      approverMemberId: ids.memberId,
+      sessionId: frozen.sessionId,
+      expectedWorkspaceId: ids.workspaceId,
+      expectedStageId: firstStageId,
+      expectedArtifactId: frozenSession.current_artifact_id,
+      expectedReviewRevision: frozenSession.artifact_review_revision,
+      version: frozenSession.current_artifact_version!,
+    });
+    expect(frozenApproval.success).toBe(true);
+    expect(frozenApproval.session?.currentStageId).toBe(nextStageId);
+    assert(frozenApproval.jobId);
+    phase = "frozen-next-failure";
+    const failedPinnedAttempt = await production.processPipelineJob({
+      admin,
+      job: await claimJob(admin, frozenApproval.jobId),
+    });
+    expect(failedPinnedAttempt.result).toBe("error");
+    assert(failedPinnedAttempt.runId);
+    const queuedPinnedRetry = await checked(
+      admin
+        .from("agent_jobs")
+        .select("status,scheduled_at")
+        .eq("id", frozenApproval.jobId)
+        .single(),
+    );
+    expect(queuedPinnedRetry.status).toBe("queued");
+    expect(
+      await checked(
+        admin
+          .from("session_git_checkpoints")
+          .select("run_id")
+          .eq("run_id", failedPinnedAttempt.runId),
+      ),
+    ).toEqual([]);
+    await dueAt(queuedPinnedRetry.scheduled_at);
+    phase = "frozen-next";
+    const frozenNext = await production.processPipelineJob({
+      admin,
+      job: await claimJob(admin, frozenApproval.jobId),
+    });
+    expect(frozenNext.result).toBe("success");
+    assert(frozenNext.runId);
+    const [failedManifest, frozenManifest, firstManifest] = await Promise.all([
+      readAttempt(failedPinnedAttempt.runId),
+      readAttempt(frozenNext.runId),
+      readAttempt(firstFrozen.runId),
+    ]);
+    expect(frozenManifest).toMatchObject({
+      attempt_count: failedManifest.attempt_count + 1,
+      worker_runtime: "node",
+      model_provider: "codex",
+      model_name: "gpt-5.5",
+      definition_revision_id: original.activation.revision_id,
+      definition_digest: original.canonicalDigest,
+      definition_skill_ids: [],
+      source_checkpoint_run_id: firstFrozen.runId,
+      predecessors: [
+        expect.objectContaining({
+          status: "approved",
+          artifactId: frozenSession.current_artifact_id,
+          stageSlug: "frozen-first",
+        }),
+      ],
+    });
+    expect(failedManifest).toMatchObject({
+      definition_revision_id: frozenManifest.definition_revision_id,
+      definition_digest: frozenManifest.definition_digest,
+      model_name: frozenManifest.model_name,
+      predecessors: frozenManifest.predecessors,
+      input_sha: frozenManifest.input_sha,
+      definition_skill_ids: frozenManifest.definition_skill_ids,
+    });
+    expect(firstManifest.definition_revision_id).toBe(original.activation.revision_id);
+    const retriedReview = await readSession(frozen.sessionId);
+    expect(retriedReview.phase_status).toBe("awaiting_review");
+    const retryCheckpoint = await checked(
+      admin
+        .from("session_git_checkpoints")
+        .select("artifact_id")
+        .eq("run_id", frozenNext.runId)
+        .single(),
+    );
+    expect(retriedReview.current_artifact_id).toBe(retryCheckpoint.artifact_id);
+    assert(retriedReview.current_artifact_id && retriedReview.current_artifact_version);
+    const pinnedTerminalApproval = await production.handleApproval({
+      admin,
+      approverMemberId: ids.memberId,
+      sessionId: frozen.sessionId,
+      expectedWorkspaceId: ids.workspaceId,
+      expectedStageId: nextStageId,
+      expectedArtifactId: retriedReview.current_artifact_id,
+      expectedReviewRevision: retriedReview.artifact_review_revision,
+      version: retriedReview.current_artifact_version,
+    });
+    expect(pinnedTerminalApproval.success).toBe(true);
+    expect((await readSession(frozen.sessionId)).phase_status).toBe("approved");
+
+    const nativeSession = await createFixtureSession(
+      "Native Workflow pinned replacement",
+      [nextStageId, firstStageId],
+      "gpt-5.6-sol",
+    );
+    const replacementAdmission = await readAdmission(nativeSession.sessionId);
+    expect(replacementAdmission).toMatchObject({
+      activation_number: 2,
+      definition_revision_id: replacementActivation.activation.revision_id,
+      definition_digest: replacementActivation.canonicalDigest,
+      model_name: "gpt-5.6-sol",
+      selected_stage_ids: [nextStageId, firstStageId],
+    });
+    const rollbackTestId = await recordCandidateTest({
+      kind: "revision",
+      id: original.activation.revision_id,
+      definitionDigest: original.canonicalDigest,
+      bundle: originalBundle,
+      base: 2,
+    });
+    const rollback = await checked(
+      admin.rpc("rollback_factory_definition", {
+        ...activationScope,
+        ...activationRequirements,
+        p_expected_activation_number: 2,
+        p_revision_id: original.activation.revision_id,
+      }),
+    );
+    expect(rollback).toMatchObject({
+      activation_number: 3,
+      revision_id: original.activation.revision_id,
+    });
     const nativeStage = await checked(
       admin.from("sessions").select("current_stage_id").eq("id", nativeSession.sessionId).single(),
     );
@@ -1115,6 +1526,9 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
             jobId: nativeDispatch.job_id,
             attemptCount: nativeDispatch.attempt_count,
             workflowId: nativeDispatch.workflow_id,
+            definitionRevisionId: replacementAdmission.definition_revision_id,
+            definitionDigest: replacementAdmission.definition_digest,
+            modelName: replacementAdmission.model_name,
           }),
         },
         timeout: 55_000,
@@ -1132,202 +1546,41 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(nativeCheckpoints).toHaveLength(1);
     expect(nativeCheckpoints[0]?.attempt_count).toBe(nativeDispatch.attempt_count);
 
-    const factory = await checked(
-      admin.from("factories").select("id").eq("workspace_id", ids.workspaceId).single(),
-    );
-    const [nextStageId, firstStageId] = ids.stageIds;
-    const frozenStages = [firstStageId, nextStageId].map((id, index) => ({
-      id,
-      slug: index === 0 ? "frozen-first" : "frozen-next",
-      name: index === 0 ? "Frozen First" : "Frozen Next",
-      description: "",
-      anyoneCanApprove: true,
-      approverMemberIds: [],
-      previousStageIds: index === 0 ? [] : [firstStageId],
-      promptTemplateMd:
-        index === 0
-          ? "Pinned template frozen-first {{session.title}}"
-          : "Pinned template frozen-next {{session.title}} {{artifact.previousStages.frozen-first}}",
-    }));
-    const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
-      schemaVersion: 1,
-      kind: "serial",
-      pipelineId: ids.pipelineId,
-      repositoryId: ids.repositoryId,
-      sandboxProvider: "e2b",
-      executionPolicyRevisionId: null,
-      deliveryPolicyRevisionId: null,
-      skillIds: [],
-      toolIds: [],
-      agent: {
-        provider: "codex",
-        model: "gpt-5.5",
-        effort: "high",
-        concurrencyLimit: 4,
-        stallTimeoutMs: 120_000,
-        maxRetries: 2,
-        maxTurns: 5,
-      },
-      operatingRulesMd: "Frozen operating rules",
-      operatingRuleStageIds: [],
-      stages: frozenStages,
+    const nativeManifest = await readAttempt(nativeCheckpoints[0].run_id);
+    expect(nativeManifest).toMatchObject({
+      worker_runtime: "workerd",
+      definition_revision_id: replacementActivation.activation.revision_id,
+      definition_digest: replacementActivation.canonicalDigest,
+      model_name: "gpt-5.6-sol",
+      definition_skill_ids: [],
+      stage_id: nextStageId,
     });
-    await checked(
-      admin.from("user_codex_credentials").insert({
-        user_id: userId,
-        credential_type: "codex_access_token",
-        encrypted_credential: "unused-local-fixture",
-      }),
-    );
-    const connection = await checked(
-      admin
-        .from("workspace_e2b_sandbox_connections")
-        .insert({
-          workspace_id: ids.workspaceId,
-          encrypted_api_key: "unused-local-fixture",
-        })
-        .select("connection_revision")
-        .single(),
-    );
-    const probes = getSandboxProviderContract("e2b").capabilityProbes;
-    const requiredProbes = [...new Set([...probes.required, ...probes.requiredByAgent.codex])];
-    await checked(
-      admin.from("sandbox_capability_checks").insert({
-        workspace_id: ids.workspaceId,
-        github_repository_id: ids.repositoryId,
-        status: "success",
-        agent_model: "gpt-5.5",
-        agent_provider: "codex",
-        sandbox_provider: "e2b",
-        sandbox_connection_revision: connection.connection_revision,
-        factory_definition_digest: canonicalDigest,
-        capabilities: Object.fromEntries(
-          requiredProbes.map((probe) => [probe, { ok: true, detail: null }]),
-        ),
-      }),
-    );
-    const activationScope = {
-      p_workspace_id: ids.workspaceId,
-      p_factory_id: factory.id,
-      p_actor_user_id: userId,
-      p_expected_activation_number: 0,
-    };
-    const draft = await checked(
-      admin.rpc("save_factory_definition_draft", {
-        ...activationScope,
-        p_definition_json: definitionJson,
-        p_canonical_digest: canonicalDigest,
-      }),
-    );
-    const activationRequirements = {
-      p_enabled_sandbox_providers: ["e2b"],
-      p_required_probes: requiredProbes,
-    };
-    // Simulate provider evidence for this draft on the harness's isolated local database.
-    const smoke = await checked(
-      admin.rpc("start_factory_definition_smoke_test", {
-        ...activationScope,
-        ...activationRequirements,
-        p_target_kind: "draft",
-        p_target_id: draft.id,
-        p_definition_digest: canonicalDigest,
-      }),
-    );
-    expect(smoke.status, smoke.error_text ?? undefined).toBe("running");
-    const finalized = await checked(
-      admin.rpc("finish_factory_definition_smoke_test", {
-        p_workspace_id: ids.workspaceId,
-        p_test_id: smoke.id,
-        p_status: "passed",
-        p_evidence: {
-          runtimeProfile: "e2b",
-          stageCount: frozenStages.length,
-          completedStageCount: frozenStages.length,
-          stages: frozenStages.map((stage) => ({
-            stageId: stage.id,
-            promptDigest: createHash("sha256")
-              .update(`continuity fixture ${canonicalDigest} ${stage.id}`)
-              .digest("hex"),
-          })),
-        },
-      }),
-    );
-    expect(finalized).toBe(true);
-    const activation = await checked(
-      admin.rpc("publish_factory_definition_draft", {
-        ...activationScope,
-        ...activationRequirements,
-        p_draft_id: draft.id,
-      }),
-    );
-    const frozen = await createFixtureSession("Original pinned session title", [
+    const nativeReview = await readSession(nativeSession.sessionId);
+    expect(nativeReview.phase_status).toBe("awaiting_review");
+    expect(nativeReview.current_artifact_id).toBe(nativeCheckpoints[0].artifact_id);
+    assert(nativeReview.current_artifact_id && nativeReview.current_artifact_version);
+    const nativeApproval = await production.handleApproval({
+      admin,
+      approverMemberId: ids.memberId,
+      sessionId: nativeSession.sessionId,
+      expectedWorkspaceId: ids.workspaceId,
+      expectedStageId: nextStageId,
+      expectedArtifactId: nativeReview.current_artifact_id,
+      expectedReviewRevision: nativeReview.artifact_review_revision,
+      version: nativeReview.current_artifact_version,
+    });
+    expect(nativeApproval.success).toBe(true);
+    expect(nativeApproval.session?.currentStageId).toBe(firstStageId);
+    expect(await readAdmission(nativeSession.sessionId)).toEqual(replacementAdmission);
+    const rolledBackSession = await createFixtureSession("Enrolled after rollback", [
       firstStageId,
       nextStageId,
     ]);
-    await checked(
-      admin
-        .from("sessions")
-        .update({ title: "Edited live session title" })
-        .eq("id", frozen.sessionId),
-    );
-    await checked(
-      admin
-        .from("pipeline_stages")
-        .update({ prompt_template_md: "Edited live template" })
-        .eq("id", firstStageId),
-    );
-    await checked(
-      admin
-        .from("workspace_agent_config")
-        .update({ value_json: "cursor" })
-        .eq("workspace_id", ids.workspaceId)
-        .eq("key", "agent_provider"),
-    );
-    phase = "frozen-first";
-    const firstFrozen = await production.processPipelineJob({
-      admin,
-      job: await claimJob(admin, frozen.jobId),
-    });
-    expect(firstFrozen.result).toBe("success");
-    const frozenSession = await checked(
-      admin.from("sessions").select("*").eq("id", frozen.sessionId).single(),
-    );
-    expect(frozenSession.current_stage_id).toBe(firstStageId);
-    assert(frozenSession.current_artifact_id);
-    const frozenApproval = await production.handleApproval({
-      admin,
-      approverMemberId: ids.memberId,
-      sessionId: frozen.sessionId,
-      expectedWorkspaceId: ids.workspaceId,
-      expectedStageId: firstStageId,
-      expectedArtifactId: frozenSession.current_artifact_id,
-      expectedReviewRevision: frozenSession.artifact_review_revision,
-      version: frozenSession.current_artifact_version!,
-    });
-    expect(frozenApproval.success).toBe(true);
-    expect(frozenApproval.session?.currentStageId).toBe(nextStageId);
-    assert(frozenApproval.jobId);
-    phase = "frozen-next";
-    const frozenNext = await production.processPipelineJob({
-      admin,
-      job: await claimJob(admin, frozenApproval.jobId),
-    });
-    expect(frozenNext.result).toBe("success");
-    const frozenManifest = await checked(
-      admin.from("session_attempt_manifests").select("*").eq("run_id", frozenNext.runId!).single(),
-    );
-    expect(frozenManifest).toMatchObject({
-      model_provider: "codex",
+    expect(await readAdmission(rolledBackSession.sessionId)).toMatchObject({
+      activation_number: 3,
+      definition_revision_id: original.activation.revision_id,
       model_name: "gpt-5.5",
-      definition_revision_id: activation.revision_id,
-      source_checkpoint_run_id: firstFrozen.runId,
-      predecessors: [
-        expect.objectContaining({
-          status: "approved",
-          artifactId: frozenSession.current_artifact_id,
-          stageSlug: "frozen-first",
-        }),
-      ],
+      selected_stage_ids: [firstStageId, nextStageId],
     });
 
     evidence = {
@@ -1343,9 +1596,32 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       },
       initialBaseSha: baseSha,
       pinnedDefinition: {
-        revisionId: activation.revision_id,
+        originalActivation: original.activation.activation_number,
+        originalRevisionId: original.activation.revision_id,
+        originalDigest: original.canonicalDigest,
+        originalTestId: original.testId,
+        replacementActivation: replacementActivation.activation.activation_number,
+        replacementRevisionId: replacementActivation.activation.revision_id,
+        replacementDigest: replacementActivation.canonicalDigest,
+        replacementTestId: replacementActivation.testId,
+        rollbackActivation: rollback.activation_number,
+        rollbackRevisionId: rollback.revision_id,
+        rollbackTestId,
+        originalSessionId: frozen.sessionId,
+        originalOrder: [firstStageId, nextStageId],
+        originalModel: firstManifest.model_name,
         firstRun: firstFrozen.runId,
-        nextRun: frozenNext.runId,
+        failedRun: failedPinnedAttempt.runId,
+        retryRun: frozenNext.runId,
+        retryArtifactId: retryCheckpoint.artifact_id,
+        replacementSessionId: nativeSession.sessionId,
+        replacementOrder: replacementAdmission.selected_stage_ids,
+        replacementModel: nativeManifest.model_name,
+        replacementRun: nativeManifest.run_id,
+        replacementArtifactId: nativeReview.current_artifact_id,
+        replacementAdvancedStage: nativeApproval.session?.currentStageId,
+        rolledBackSessionId: rolledBackSession.sessionId,
+        ungrantedSkillEditRejected: true,
       },
       movingDefaultSha: movedMain,
       checkpoints: lineage.map((row) => ({
@@ -1430,6 +1706,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       staleWorkerFenced: true,
       capturedRecoveryWhilePaused: true,
       nodeAndWorkerdRetainedHistory: true,
+      pinnedActivationRetryAndRollback: true,
       captureDisabledLegacyHistory: true,
       immutableInlineFeedback: true,
     });
@@ -1438,6 +1715,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     await canceledWorker?.catch(() => undefined);
     staleRelease?.resolve();
     await staleWorker?.catch(() => undefined);
+    releaseFrozen.resolve();
+    await frozenWorker?.catch(() => undefined);
     await stopSandboxes?.();
     try {
       const restored = await setRelease(
