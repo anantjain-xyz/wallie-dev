@@ -6,8 +6,12 @@ const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   enforceRateLimit: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
+  loadPinnedFactoryExecution: vi.fn(),
 }));
 
+vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
+  loadPinnedFactoryExecution: mocked.loadPinnedFactoryExecution,
+}));
 vi.mock("@/lib/pipeline/cancel", () => ({ cancelSessionWork: mocked.cancelSessionWork }));
 vi.mock("@/lib/rate-limit", () => ({ enforceRateLimit: mocked.enforceRateLimit }));
 vi.mock("@/lib/supabase/admin", () => ({
@@ -76,6 +80,36 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
     mocked.enforceRateLimit.mockResolvedValue({ response: null, result: {} });
     mocked.cancelSessionWork.mockResolvedValue(undefined);
+    mocked.loadPinnedFactoryExecution.mockResolvedValue(null);
+  });
+
+  it("preserves the compiled stage label after stopping a pinned session", async () => {
+    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminClient("rejected"));
+    mocked.loadPinnedFactoryExecution.mockResolvedValue({
+      stages: [
+        { id: "stage-plan" },
+        {
+          id: "stage-build",
+          name: "Frozen Build",
+          slug: "frozen-build",
+          description: "Immutable build step",
+        },
+      ],
+    });
+    const response = await POST(new Request("http://localhost", { method: "POST" }), {
+      params: Promise.resolve({ sessionId: session.id }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      currentStageId: "stage-build",
+      currentStage: {
+        id: "stage-build",
+        name: "Frozen Build",
+        slug: "frozen-build",
+        description: "Immutable build step",
+        position: 2,
+      },
+    });
   });
 
   it("returns the post-cancel row instead of a hardcoded rejected phase", async () => {

@@ -7,7 +7,7 @@ import type { Database } from "@/lib/supabase/database.types";
 export type FactoryDefinitionTarget = { kind: "draft" | "revision"; id: string };
 type AdminClient = SupabaseClient<Database>;
 
-export function selectDefaultFactory(admin: AdminClient, workspaceId: string) {
+export function selectDefaultFactory(admin: Pick<AdminClient, "from">, workspaceId: string) {
   return admin
     .from("factories")
     .select("id")

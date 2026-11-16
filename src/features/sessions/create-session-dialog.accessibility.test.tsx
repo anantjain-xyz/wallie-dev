@@ -76,6 +76,70 @@ afterEach(() => {
 });
 
 describe("CreateSessionDialog accessibility", () => {
+  it.each([true, false])(
+    "preserves compiled selections when the pinned repository is available %s",
+    async (available) => {
+      const user = userEvent.setup();
+      const workspaceId = "00000000-0000-4000-8000-000000000001";
+      const repositoryId = "00000000-0000-4000-8000-000000000022";
+      const compileId = "00000000-0000-4000-8000-000000000012";
+      const shipId = "00000000-0000-4000-8000-000000000011";
+      const factoryDefinitionDigest = "d".repeat(64);
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        defaultGithubRepositoryId: repositoryId,
+        factoryDefinitionDigest,
+        pipelineId: "00000000-0000-4000-8000-000000000010",
+        repositoryOptions: available ? [{ fullName: "acme/pinned", id: repositoryId }] : [],
+        stageOptions: [
+          { description: "Compiled first", id: compileId, name: "Compile", position: 1 },
+          { description: "Compiled second", id: shipId, name: "Ship", position: 2 },
+        ],
+      });
+      clientMocks.createSessionFromClient.mockResolvedValue({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
+
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId={workspaceId}
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+
+      expect(await screen.findByRole("button", { name: "Stages Compile → Ship" })).toBeDisabled();
+      expect(
+        screen.getByText("The active factory sets the repository and stage order."),
+      ).toBeVisible();
+      await user.type(screen.getByLabelText("Prompt"), "Build this with the active factory");
+      const start = screen.getByRole("button", { name: "Start session" });
+      if (available) {
+        const repository = screen.getByRole("combobox", { name: "Repository" });
+        expect(repository).toBeDisabled();
+        expect(repository).toHaveTextContent("acme/pinned");
+        await user.click(start);
+        expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+          expect.objectContaining({
+            factoryDefinitionDigest,
+            githubRepositoryId: repositoryId,
+            selectedStageIds: [compileId, shipId],
+          }),
+        );
+      } else {
+        expect(
+          screen.getByText("Reconnect the factory repository before starting a session."),
+        ).toBeVisible();
+        expect(start).toBeDisabled();
+        expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it("announces the lazy loading state inside the shared modal", async () => {
     render(
       <OverlayProvider>

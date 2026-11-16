@@ -651,7 +651,9 @@ function SessionWalliePanelContent({
   );
   const retryDescription = (run: WallieRun) =>
     `Starts a new ${presentation?.currentStage.name} attempt. Requires setup for this run’s ${run.runType} mode. ` +
-    "Execution uses code mode if a repository is linked when the attempt starts, otherwise project mode. " +
+    (initialData.factoryPinned
+      ? "Uses the session’s pinned factory configuration. "
+      : "Execution uses code mode if a repository is linked when the attempt starts, otherwise project mode. ") +
     `Run ${run.id} (attempt ${run.attemptCount}) stays in history. Completed stages are not rerun.` +
     (presentation?.currentStage.phaseStatus === "awaiting_review"
       ? " The current review closes when the retry starts. The new artifact will need review."

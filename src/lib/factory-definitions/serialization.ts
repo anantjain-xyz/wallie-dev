@@ -6,7 +6,8 @@ type JsonValue = null | boolean | number | string | readonly JsonValue[] | JsonO
 type JsonParseResult = { ok: true; value: unknown } | { ok: false; message: string };
 
 export function isFactoryDefinitionText(value: string): boolean {
-  return value.isWellFormed() && !value.includes("\0");
+  // Unicode mode combines valid surrogate pairs before testing the category.
+  return !/\p{Surrogate}/u.test(value) && !value.includes("\0");
 }
 
 export function parseFactoryDefinitionJson(source: string): JsonParseResult {

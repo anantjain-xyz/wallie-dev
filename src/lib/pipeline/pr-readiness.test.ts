@@ -653,6 +653,71 @@ describe("session readiness service", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("uses the admitted delivery revision and final stage despite different live settings", async () => {
+    const pipelineId = "10000000-0000-4000-8000-000000000010";
+    const firstStage = "10000000-0000-4000-8000-000000000011";
+    const lastStage = "10000000-0000-4000-8000-000000000012";
+    const policyId = "10000000-0000-4000-8000-000000000013";
+    const factoryRevision = "10000000-0000-4000-8000-000000000014";
+    const definitionJson = JSON.stringify({
+      schemaVersion: 1,
+      kind: "serial",
+      pipelineId,
+      repositoryId: "10000000-0000-4000-8000-000000000015",
+      sandboxProvider: "e2b",
+      agent: {
+        provider: "codex",
+        model: "gpt-5.5",
+        effort: "high",
+        concurrencyLimit: 1,
+        stallTimeoutMs: 300000,
+        maxRetries: 2,
+        maxTurns: 5,
+      },
+      executionPolicyRevisionId: null,
+      deliveryPolicyRevisionId: policyId,
+      skillIds: [],
+      toolIds: [],
+      operatingRuleStageIds: [],
+      stages: [
+        { id: firstStage, slug: "plan", name: "Plan", previousStageIds: [] },
+        { id: lastStage, slug: "build", name: "Build", previousStageIds: [] },
+      ],
+    });
+    const forbiddenLiveRead = {
+      select: vi.fn(() => {
+        throw new Error("Unexpected live read");
+      }),
+    };
+    const tables = serviceTables({
+      sessions: queryableTable({
+        id: "sess-1",
+        workspace_id: workspaceId,
+        pipeline_id: pipelineId,
+        current_stage_id: lastStage,
+        artifact_review_revision: 3,
+        execute_pinned_definition: true,
+        pinned_delivery_policy_revision_id: policyId,
+        factory_definition_revision_id: factoryRevision,
+      }),
+      delivery_policies: forbiddenLiveRead,
+      pipeline_stages: forbiddenLiveRead,
+      delivery_policy_revisions: queryableTable({
+        ...policyRevisionRow,
+        id: policyId,
+        pipeline_id: pipelineId,
+      }),
+      factory_definition_revisions: queryableTable({
+        definition_json: definitionJson,
+        canonical_digest: createHash("sha256").update(definitionJson).digest("hex"),
+      }),
+    });
+    const admin = buildServiceAdminClient(tables, vi.fn());
+    const result = await evaluateSessionPrReadiness(admin as never, "sess-1", { record: false });
+    expect(result).toMatchObject({ finalStage: true, policy: { policy_revision_id: policyId } });
+    expect(forbiddenLiveRead.select).not.toHaveBeenCalled();
+  });
+
   it("records a ready decision for a final-stage code session through the service RPCs", async () => {
     const rpc = vi
       .fn()

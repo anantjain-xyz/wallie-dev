@@ -18,19 +18,24 @@ export async function shouldCaptureValidationEvidence(
   admin: AdminClient,
   workspaceId: string,
   pipelineId: string,
+  pinnedRevisionId?: string | null,
 ): Promise<boolean> {
-  const { data: policy, error } = await admin
-    .from("delivery_policies")
-    .select("current_revision_id")
-    .eq("workspace_id", workspaceId)
-    .eq("pipeline_id", pipelineId)
-    .maybeSingle();
-  if (error) throw new Error("Validation policy is unavailable.");
-  if (!policy) return true;
+  let revisionId = pinnedRevisionId;
+  if (revisionId === undefined) {
+    const { data: policy, error } = await admin
+      .from("delivery_policies")
+      .select("current_revision_id")
+      .eq("workspace_id", workspaceId)
+      .eq("pipeline_id", pipelineId)
+      .maybeSingle();
+    if (error) throw new Error("Validation policy is unavailable.");
+    revisionId = policy?.current_revision_id ?? null;
+  }
+  if (!revisionId) return true;
   const { data: revision, error: revisionError } = await admin
     .from("delivery_policy_revisions")
     .select("requirements")
-    .eq("id", policy.current_revision_id)
+    .eq("id", revisionId)
     .eq("workspace_id", workspaceId)
     .eq("pipeline_id", pipelineId)
     .single();
@@ -125,6 +130,7 @@ export async function validateCheckpoint(input: {
   admin: AdminClient;
   workspaceId: string;
   pipelineId: string;
+  pinnedDeliveryPolicyRevisionId?: string | null;
   runId: string;
   sandbox: import("@/lib/sandbox/types").SandboxHandle;
   checkpoint: import("@/lib/pipeline/source-checkpoint").SourceCheckpoint;
@@ -135,7 +141,14 @@ export async function validateCheckpoint(input: {
   const { captureSourceCheckpoint } = await import("@/lib/pipeline/source-checkpoint");
   let evidence: CapturedEvidence | null = null;
   try {
-    if (!(await shouldCaptureValidationEvidence(input.admin, input.workspaceId, input.pipelineId)))
+    if (
+      !(await shouldCaptureValidationEvidence(
+        input.admin,
+        input.workspaceId,
+        input.pipelineId,
+        input.pinnedDeliveryPolicyRevisionId,
+      ))
+    )
       return input.checkpoint;
     const plan = await pinValidationPlan({ ...input, commitSha: input.checkpoint.headSha });
     evidence = await captureValidationEvidence({

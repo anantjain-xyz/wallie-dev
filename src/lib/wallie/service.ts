@@ -26,12 +26,18 @@ import type {
   WallieVercelSandboxConnectionStatus,
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
+import { RECOMMENDED_AGENT_EFFORT } from "@/lib/agent-config/contracts";
+import {
+  loadPinnedFactoryExecution,
+  type PinnedFactoryExecution,
+} from "@/lib/factory-definitions/runtime-definition";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
 import {
   assertCurrentSandboxCapabilityCheck,
   SandboxCapabilityCheckStaleError,
 } from "@/lib/sandbox-capabilities/readiness";
 import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
+import type { SandboxProvider } from "@/lib/sandbox/types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
@@ -85,6 +91,8 @@ type SessionForRun = Pick<
   | "archived_at"
   | "created_at"
   | "current_stage_id"
+  | "execute_pinned_definition"
+  | "factory_definition_revision_id"
   | "id"
   | "number"
   | "phase_status"
@@ -96,7 +104,7 @@ type AgentRunRow = Tables<"agent_runs">;
 type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "workspace_id">;
 
 const sessionSelect =
-  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
+  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id";
 const runSelect =
   "id, workspace_id, session_id, agent_job_id, attempt_count, branch_name, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, token_provenance, cost_provenance, usage_finalized_at, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 export class WallieActionError extends Error {
@@ -173,12 +181,15 @@ export type SessionFirstRunPrerequisites = {
 
 export async function loadSessionFirstRunPrerequisites(input: {
   admin?: AdminClient;
+  pinned?: PinnedFactoryExecution | null;
   workspaceId: string;
 }): Promise<SessionFirstRunPrerequisites> {
   const admin = input.admin ?? createSupabaseAdminClient();
   const [agentConfig, vercelSandboxConnection] = await Promise.all([
-    loadWorkspaceAgentConfig(admin, input.workspaceId),
-    loadWallieVercelSandboxConnection(admin, input.workspaceId),
+    input.pinned
+      ? { ...input.pinned.agent, effort: input.pinned.agent.effort ?? RECOMMENDED_AGENT_EFFORT }
+      : loadWorkspaceAgentConfig(admin, input.workspaceId),
+    loadWallieVercelSandboxConnection(admin, input.workspaceId, input.pinned?.sandboxProvider),
   ]);
 
   return { agentConfig, vercelSandboxConnection };
@@ -207,7 +218,8 @@ export function assertSessionFirstRunReady(input: {
 
 export async function assertSessionSandboxCapabilityReady(input: {
   admin?: AdminClient;
-  agentConfig: SessionFirstRunPrerequisites["agentConfig"];
+  agentConfig: Pick<SessionFirstRunPrerequisites["agentConfig"], "model" | "provider">;
+  definitionDigest?: string;
   repository: WallieSessionRepository | null;
   sandboxConnection: WallieVercelSandboxConnectionStatus;
   workspaceId: string;
@@ -230,6 +242,7 @@ export async function assertSessionSandboxCapabilityReady(input: {
       admin: input.admin ?? createSupabaseAdminClient(),
       agent: input.agentConfig,
       connection: { provider, revision },
+      ...(input.definitionDigest === undefined ? {} : { definitionDigest: input.definitionDigest }),
       repositoryId: input.repository.id,
       workspaceId: input.workspaceId,
     });
@@ -249,6 +262,7 @@ export async function createSessionWithFirstJob(input: {
   attachmentIds?: string[];
   creationRequest?: { id: string; fingerprint: string };
   creatorMemberId: string;
+  factoryDefinitionDigest?: string;
   githubRepositoryId: string | null;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
@@ -256,6 +270,7 @@ export async function createSessionWithFirstJob(input: {
   modelProvider: string;
   pipelineId?: string | null;
   promptMd: string;
+  restartOfSessionId?: string;
   selectedStageIds?: string[];
   title: string;
   workspaceId: string;
@@ -275,12 +290,32 @@ export async function createSessionWithFirstJob(input: {
     session_title: input.title,
     target_workspace_id: input.workspaceId,
   };
-  const query = input.creationRequest
-    ? admin.rpc("create_session_once_with_first_job", {
+  if (input.restartOfSessionId && !input.creationRequest) {
+    throw new Error("A creation request id is required to restart a session.");
+  }
+  if (input.factoryDefinitionDigest && !input.creationRequest) {
+    throw new Error("A creation request id is required to confirm a factory definition.");
+  }
+  const requestArgs = input.creationRequest
+    ? {
         ...args,
         target_request_id: input.creationRequest.id,
         target_request_hash: input.creationRequest.fingerprint,
-      })
+      }
+    : null;
+  const query = requestArgs
+    ? input.factoryDefinitionDigest
+      ? admin.rpc("create_confirmed_factory_session_once_with_first_job", {
+          ...requestArgs,
+          expected_factory_definition_digest: input.factoryDefinitionDigest,
+          source_session_id: input.restartOfSessionId,
+        })
+      : input.restartOfSessionId
+        ? admin.rpc("restart_session_once_with_first_job", {
+            ...requestArgs,
+            source_session_id: input.restartOfSessionId,
+          })
+        : admin.rpc("create_session_once_with_first_job", requestArgs)
     : admin.rpc("create_session_with_first_job_and_attachments", args);
   const { data, error } = await query.single();
 
@@ -354,9 +389,10 @@ async function loadSessionForRun(
 async function loadWallieVercelSandboxConnection(
   admin: AdminClient,
   workspaceId: string,
+  requestedProvider?: SandboxProvider,
 ): Promise<WallieVercelSandboxConnectionStatus> {
   const overview = await loadWorkspaceSandboxOverview(admin, workspaceId);
-  const provider = overview.activeProvider;
+  const provider = requestedProvider ?? overview.activeProvider;
   const connection = overview.connections[provider];
 
   if (!overview.enabledProviders.includes(provider)) {
@@ -470,14 +506,19 @@ async function validateQueuedRunRequest(input: {
   }
 
   const workspace = input.workspace;
-  const [repositoryResolution, activeRun, vercelSandboxConnection] = await Promise.all([
+  const activeRun = await loadActiveRunForSession(input.admin, session.id);
+  if (activeRun) return { activeRun, session, runType: input.requestedRunType };
+
+  const definition = await loadPinnedFactoryExecution(input.admin, session);
+  const runType = definition ? inferWallieRunMode(definition.repositoryId) : input.requestedRunType;
+  const [repositoryResolution, vercelSandboxConnection] = await Promise.all([
     resolveEffectiveSessionRepository({
+      pinnedRepositoryId: definition?.repositoryId,
       sessionId: session.id,
       supabase: input.admin,
       workspaceId: workspace.id,
     }),
-    loadActiveRunForSession(input.admin, session.id),
-    loadWallieVercelSandboxConnection(input.admin, workspace.id),
+    loadWallieVercelSandboxConnection(input.admin, workspace.id, definition?.sandboxProvider),
   ]);
   const repository: WallieSessionRepository | null = repositoryResolution.repository
     ? {
@@ -490,17 +531,6 @@ async function validateQueuedRunRequest(input: {
         isPrivate: repositoryResolution.repository.isPrivate,
       }
     : null;
-  const runType = input.requestedRunType;
-
-  if (activeRun) {
-    return {
-      activeRun,
-      session,
-      repository,
-      runType,
-      workspace,
-    };
-  }
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: false,
@@ -515,22 +545,18 @@ async function validateQueuedRunRequest(input: {
     throw blockingError;
   }
 
-  const agentConfig = await loadWorkspaceAgentConfig(input.admin, workspace.id);
+  const agentConfig =
+    definition?.agent ?? (await loadWorkspaceAgentConfig(input.admin, workspace.id));
   await assertSessionSandboxCapabilityReady({
     admin: input.admin,
     agentConfig,
+    definitionDigest: definition?.canonicalDigest,
     repository,
     sandboxConnection: vercelSandboxConnection,
     workspaceId: workspace.id,
   });
 
-  return {
-    activeRun,
-    session,
-    repository,
-    runType,
-    workspace,
-  };
+  return { activeRun, session, runType };
 }
 
 async function inferSessionRunType(
@@ -549,21 +575,36 @@ export type QueuedRunConfig = {
   modelName: string;
   modelProvider: string;
   runType: WallieRunMode;
+  usesPinnedDefinition: boolean;
 };
 
 /**
  * Model and run mode the next queued run for `session` must carry. Both the
  * TypeScript enqueue path and the `reject_session_stage` RPC caller stamp their
- * run rows from this so the worker sees the same shape regardless of which
- * transition queued the work. The model lookup is the same one
- * pipeline/processor.ts performs at execution time; drift between the two
- * re-introduces the original placeholder-model bug.
+ * run rows from the same definition the worker uses. Compatibility sessions
+ * continue to read the workspace configuration and effective repository.
  */
 export async function resolveQueuedRunConfig(
   admin: AdminClient,
   session: Pick<SessionForEnqueue, "id" | "workspace_id">,
   runType?: WallieRunMode,
 ): Promise<QueuedRunConfig> {
+  const { data, error } = await admin
+    .from("sessions")
+    .select("execute_pinned_definition, factory_definition_revision_id, workspace_id")
+    .eq("id", session.id)
+    .eq("workspace_id", session.workspace_id)
+    .maybeSingle();
+  if (error) throw error;
+  const definition = data ? await loadPinnedFactoryExecution(admin, data) : null;
+  if (definition) {
+    return {
+      modelName: definition.agent.model,
+      modelProvider: definition.agent.provider,
+      runType: inferWallieRunMode(definition.repositoryId),
+      usesPinnedDefinition: true,
+    };
+  }
   const [agentConfig, resolvedRunType] = await Promise.all([
     loadWorkspaceAgentConfig(admin, session.workspace_id),
     runType ?? inferSessionRunType(admin, session),
@@ -572,6 +613,7 @@ export async function resolveQueuedRunConfig(
     modelName: agentConfig.model,
     modelProvider: agentConfig.provider,
     runType: resolvedRunType,
+    usesPinnedDefinition: false,
   };
 }
 
@@ -601,10 +643,10 @@ export async function enqueueSessionJobWithRun(
           p_requested_by_member_id: input.requestedByMemberId,
           p_retry_run_id: input.retryRunId,
         });
-  // A missing function means PostgREST never attempted the enqueue. Keep Retry
-  // available if the web deploy reaches production before the migration.
+  // Compatibility sessions keep the original fallback during schema rollover.
+  // Pinned Retry always uses the exact checkpoint-aware path.
   const { data, error } =
-    retryEnqueue && retryEnqueue.error?.code !== "PGRST202"
+    retryEnqueue && (runConfig.usesPinnedDefinition || retryEnqueue.error?.code !== "PGRST202")
       ? retryEnqueue
       : await admin.rpc("enqueue_session_job_with_run", {
           ...args,

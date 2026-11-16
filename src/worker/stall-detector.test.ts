@@ -72,12 +72,14 @@ function buildAdmin(
     failOutcome?: string;
     beforeRpc?: (name: string, args: RpcArgs) => void;
     publications?: Array<Record<string, unknown>>;
+    pinnedSettings?: Array<{ job_id: string; stall_timeout_ms: number; max_retries: number }>;
   } = {},
 ) {
   const rows: Record<string, Array<Record<string, unknown>>> = {
     agent_runs: input.runs ?? [run()],
     session_checkpoint_publications: input.publications ?? [],
     agent_jobs: input.jobs ?? [job()],
+    pinned_job_recovery_settings: input.pinnedSettings ?? [],
     workspace_agent_config: input.configs ?? [],
     worker_heartbeats: input.heartbeatJobIds?.length
       ? [{ active_job_ids: input.heartbeatJobIds, last_heartbeat_at: freshTime() }]
@@ -441,6 +443,31 @@ describe("sweepStalledRuns ownership recovery", () => {
     expect(admin.rpc).toHaveBeenCalledWith(
       "fail_stalled_session_job_attempt",
       expect.objectContaining({ p_max_retries: 0 }),
+    );
+  });
+
+  it("uses each pinned job's admitted stall timeout and retry cap in a mixed workspace", async () => {
+    const activity = new Date(Date.now() - 60_000).toISOString();
+    const { admin } = buildAdmin({
+      jobs: [job(), job({ id: "job-2" })],
+      runs: [
+        run({ last_activity_at: activity }),
+        run({ id: "run-2", agent_job_id: "job-2", last_activity_at: activity }),
+      ],
+      configs: [
+        { workspace_id: "ws-1", key: "stall_timeout_ms", value_json: 30_000 },
+        { workspace_id: "ws-1", key: "max_retries", value_json: 9 },
+      ],
+      pinnedSettings: [
+        { job_id: "job-1", stall_timeout_ms: 120_000, max_retries: 5 },
+        { job_id: "job-2", stall_timeout_ms: 45_000, max_retries: 0 },
+      ],
+      failOutcome: "error",
+    });
+    expect((await sweepStalledRuns(admin as never, TIMEOUT)).stalledJobIds).toEqual(["job-2"]);
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith(
+      "fail_stalled_session_job_attempt",
+      expect.objectContaining({ p_job_id: "job-2", p_max_retries: 0 }),
     );
   });
 

@@ -12,6 +12,7 @@ import type { SessionAttachmentUploadResponse } from "@/lib/storage/contracts";
 
 export type CreateSessionInput = {
   attachmentIds?: string[];
+  factoryDefinitionDigest?: string;
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
   promptMd?: string | null;
@@ -60,6 +61,7 @@ export type SessionArchiveResult = {
 
 export type SessionRepositoryOptionsResult = {
   defaultGithubRepositoryId: string | null;
+  factoryDefinitionDigest?: string;
   pipelineId: string | null;
   repositoryOptions: SessionRepositoryOption[];
   stageOptions: SessionCreationStageOption[];
@@ -164,6 +166,7 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
   const responsePayload = (await response.json().catch(() => null)) as {
     defaultGithubRepositoryId?: string | null;
     error?: string;
+    factoryDefinitionDigest?: string;
     pipelineId?: string | null;
     repositoryOptions?: SessionRepositoryOption[];
     stageOptions?: SessionCreationStageOption[];
@@ -175,13 +178,18 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
 
   if (
     !Array.isArray(responsePayload?.repositoryOptions) ||
-    !Array.isArray(responsePayload?.stageOptions)
+    !Array.isArray(responsePayload?.stageOptions) ||
+    (responsePayload.factoryDefinitionDigest !== undefined &&
+      (typeof responsePayload.factoryDefinitionDigest !== "string" ||
+        !/^[0-9a-f]{64}$/.test(responsePayload.factoryDefinitionDigest)))
   ) {
     throw new Error("Session options response was invalid.");
   }
 
+  const { factoryDefinitionDigest } = responsePayload;
   return {
     defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
+    ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
     pipelineId: responsePayload.pipelineId ?? null,
     repositoryOptions: responsePayload.repositoryOptions,
     stageOptions: responsePayload.stageOptions,
@@ -203,6 +211,9 @@ export async function createSessionFromClient(
 
   const payload = {
     ...(input.attachmentIds ? { attachmentIds: input.attachmentIds } : {}),
+    ...(input.factoryDefinitionDigest
+      ? { factoryDefinitionDigest: input.factoryDefinitionDigest }
+      : {}),
     ...(input.requestId ? { requestId: input.requestId } : {}),
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl,

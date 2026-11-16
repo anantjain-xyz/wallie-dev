@@ -225,6 +225,33 @@ describe("durable validation evidence", () => {
     );
     expect(mocks.capture).not.toHaveBeenCalled();
   });
+  it("does not read the live delivery policy for a pinned revision or explicit absence", async () => {
+    const admin = adminMock();
+    admin.query.single.mockResolvedValue({
+      data: {
+        requirements: {
+          version: 1,
+          deliveryMode: "analysis",
+          requiredChecks: [],
+          requiredEvidence: [],
+          minimumApprovals: 0,
+          requireCodeOwnerReview: false,
+          requireResolvedThreads: false,
+          freshnessSeconds: 60,
+          requireArtifactApprovalForDelivery: false,
+        },
+      },
+      error: null,
+    });
+    expect(await shouldCaptureValidationEvidence(admin as never, "ws", "pipeline", null)).toBe(
+      true,
+    );
+    expect(await shouldCaptureValidationEvidence(admin as never, "ws", "pipeline", "pinned")).toBe(
+      false,
+    );
+    expect(admin.from).toHaveBeenCalledExactlyOnceWith("delivery_policy_revisions");
+    expect(admin.query.eq).toHaveBeenCalledWith("id", "pinned");
+  });
   it("preserves source even if evidence persistence fails", async () => {
     const admin = adminMock();
     admin.rpc.mockReturnValue(Promise.resolve({ error: new Error("unavailable") }));

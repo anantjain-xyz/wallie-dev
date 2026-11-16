@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  loadActiveFactoryExecution: vi.fn(),
   loadDefaultPipelineForWorkspace: vi.fn(),
   loadSessionRepositoryOptionsWithPrimary: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
+}));
+
+vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
+  loadActiveFactoryExecution: mocked.loadActiveFactoryExecution,
 }));
 
 vi.mock("@/features/sessions/repository-options", async (importOriginal) => {
@@ -39,7 +44,7 @@ function grantAccess(selectedGithubRepositoryId: string | null = "repo-selected"
     })),
     select: vi.fn(() => onboardingQuery),
   };
-  const supabase = { from: vi.fn(() => onboardingQuery) };
+  const supabase = { from: vi.fn<(table: string) => unknown>(() => onboardingQuery) };
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     context: {
       supabase,
@@ -57,6 +62,7 @@ describe("session repositories route", () => {
   });
 
   beforeEach(() => {
+    mocked.loadActiveFactoryExecution.mockResolvedValue(null);
     mocked.loadDefaultPipelineForWorkspace.mockResolvedValue({
       id: "pipeline-1",
       isDefault: true,
@@ -107,6 +113,55 @@ describe("session repositories route", () => {
       workspaceId: WORKSPACE_ID,
     });
   });
+
+  it.each([{ id: "repo-pinned", full_name: "acme/pinned" }, null])(
+    "projects only the active definition options for repository row %j",
+    async (repository) => {
+      const supabase = grantAccess();
+      const pinnedQuery = {
+        select: vi.fn(() => pinnedQuery),
+        eq: vi.fn(() => pinnedQuery),
+        maybeSingle: vi.fn(async () => ({ data: repository, error: null })),
+      };
+      supabase.from.mockReturnValue(pinnedQuery);
+      mocked.loadActiveFactoryExecution.mockResolvedValueOnce({
+        canonicalDigest: "a".repeat(64),
+        pipelineId: "compiled-pipeline",
+        repositoryId: "repo-pinned",
+        stages: [
+          { id: "stage-2", name: "Compile", description: "First compiled stage" },
+          { id: "stage-1", name: "Ship", description: "Second compiled stage" },
+        ],
+      });
+
+      const response = await GET(new Request("http://localhost"), routeContext());
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      await expect(response.json()).resolves.toEqual({
+        defaultGithubRepositoryId: "repo-pinned",
+        factoryDefinitionDigest: "a".repeat(64),
+        pipelineId: "compiled-pipeline",
+        repositoryOptions: repository ? [{ fullName: "acme/pinned", id: "repo-pinned" }] : [],
+        stageOptions: [
+          { id: "stage-2", name: "Compile", description: "First compiled stage", position: 1 },
+          { id: "stage-1", name: "Ship", description: "Second compiled stage", position: 2 },
+        ],
+      });
+      expect(mocked.loadActiveFactoryExecution).toHaveBeenCalledExactlyOnceWith(
+        supabase,
+        WORKSPACE_ID,
+      );
+      expect(mocked.loadSessionRepositoryOptionsWithPrimary).not.toHaveBeenCalled();
+      expect(mocked.loadDefaultPipelineForWorkspace).not.toHaveBeenCalled();
+      expect(supabase.from).toHaveBeenCalledExactlyOnceWith("github_repositories");
+      expect(pinnedQuery.eq.mock.calls).toEqual([
+        ["workspace_id", WORKSPACE_ID],
+        ["id", "repo-pinned"],
+        ["is_archived", false],
+      ]);
+    },
+  );
 
   it("returns the authorized empty option set", async () => {
     grantAccess(null);

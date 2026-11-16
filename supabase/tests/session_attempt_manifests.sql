@@ -2,6 +2,8 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 set local request.jwt.claim.role = 'service_role';
+select public.set_git_continuity_release(true, revision, 'Pinned dispatch fixture')
+from public.get_git_continuity_release_state() where not enabled;
 
 insert into internal.workspace_issue_counters as counters (workspace_id, last_issue_number)
 select 'b1b2c3d4-0001-4000-8000-000000000001'::uuid, coalesce(max(number), 0)
@@ -10,16 +12,22 @@ on conflict (workspace_id) do update set last_issue_number = greatest(counters.l
 
 create function pg_temp.manifest_fixture(label text, existing_predecessor boolean default false)
 returns table(session_id uuid, job_id uuid, run_id uuid) language plpgsql as $$
-declare fixture record; owner public.sessions; started uuid; selected uuid[];
+declare fixture record; owner public.sessions; started uuid; build public.pipeline_stages;
 begin
-  if existing_predecessor then
-    select array[s.id] into strict selected from public.pipeline_stages s join public.pipelines p on p.id = s.pipeline_id
-      where p.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' and p.is_default and s.slug = 'build';
-  end if;
   select * into strict fixture from public.create_session_with_first_job(
     'b1b2c3d4-0001-4000-8000-000000000001', 'c1b2c3d4-0001-4000-8000-000000000001',
     label, 'Manifest fixture', 'codex', 'gpt-5.5',
-    session_github_repository_id => '12b2c3d4-0001-4000-8000-000000000001', selected_stage_ids => selected);
+    session_github_repository_id => '12b2c3d4-0001-4000-8000-000000000001');
+  if existing_predecessor then
+    -- These manifest checks start at build with prearranged approval history.
+    -- The transition suite exercises advancing there through the approval RPC.
+    select stage.* into strict build from public.pipeline_stages stage
+      join public.sessions session on session.pipeline_id = stage.pipeline_id
+      where session.id = fixture.session_id and stage.slug = 'build';
+    update public.sessions set current_stage_id = build.id where id = fixture.session_id;
+    update public.agent_jobs set stage_id = build.id, stage_slug = build.slug, stage_name = build.name where id = fixture.job_id;
+    update public.agent_runs set stage_id = build.id, stage_slug = build.slug, stage_name = build.name where id = fixture.run_id;
+  end if;
   select * into owner from public.sessions s where s.id = fixture.session_id;
   update public.agent_jobs j set git_continuity_release_revision = (select revision from public.get_git_continuity_release_state()),
     status = 'running', attempt_count = 1 where j.id = fixture.job_id;
@@ -59,10 +67,28 @@ select is(model_name, 'gpt-5.5', 'the manifest copies the actual run model') fro
 select is(credential_owner_member_id, 'c1b2c3d4-0001-4000-8000-000000000001'::uuid,
   'the manifest retains the actual credential selector') from first_manifest;
 
+insert into public.user_codex_credentials(user_id, credential_type, encrypted_credential)
+values ('a1b2c3d4-0001-4000-8000-000000000001', 'platform_api_key', 'manifest-test-ciphertext')
+on conflict (user_id) do nothing;
+insert into public.delivery_policy_revisions(id, workspace_id, pipeline_id, revision, requirements, created_by)
+values ('54100000-0000-4000-8000-000000000001', 'b1b2c3d4-0001-4000-8000-000000000001',
+  'd1b2c3d4-0001-4000-8000-000000000001', 54101,
+  '{"version":1,"deliveryMode":"code","requireCodeOwnerReview":false,"requireResolvedThreads":false,"requireArtifactApprovalForDelivery":false,"minimumApprovals":0,"freshnessSeconds":60,"requiredChecks":[],"requiredEvidence":[]}',
+  'c1b2c3d4-0001-4000-8000-000000000001');
 with definition as (
-  select f.workspace_id, f.id as factory_id,
-    '{"schemaVersion":1,"kind":"serial","skillIds":["skill-test"],"toolIds":["tool-test"],"executionPolicyRevisionId":null,"deliveryPolicyRevisionId":"54100000-0000-4000-8000-000000000001"}'::text as body
-  from public.factories f
+  select f.workspace_id, f.id as factory_id, jsonb_build_object(
+    'schemaVersion',1,'kind','serial','pipelineId',p.id,'repositoryId','12b2c3d4-0001-4000-8000-000000000001',
+    'sandboxProvider','e2b','executionPolicyRevisionId',null,'deliveryPolicyRevisionId','54100000-0000-4000-8000-000000000001',
+    'skillIds',jsonb_build_array('skill-test'),'toolIds',jsonb_build_array('tool-test'),
+    'operatingRulesMd','','operatingRuleStageIds','[]'::jsonb,
+    'agent',jsonb_build_object('provider','codex','model','gpt-5.5','effort','high','maxTurns',7,
+      'concurrencyLimit',1,'maxRetries',1,'stallTimeoutMs',720000),
+    'stages',(select jsonb_agg(jsonb_build_object('id',s.id,'slug',s.slug,'name',s.name,
+      'description','','promptTemplateMd','{{session.prompt}}','anyoneCanApprove',true,
+      'approverMemberIds','[]'::jsonb,'previousStageIds','[]'::jsonb) order by s.position)
+      from public.pipeline_stages s where s.pipeline_id=p.id and s.slug in ('plan','build'))
+  )::text as body
+  from public.factories f join public.pipelines p on p.workspace_id=f.workspace_id and p.is_default
   where f.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' and f.is_default
 ), revision as (
   insert into public.factory_definition_revisions (workspace_id, factory_id, schema_version, definition_json, canonical_digest, created_by)
@@ -148,5 +174,133 @@ select lives_ok($$delete from public.sessions where id = (select session_id from
   'owning-session deletion cascades immutable manifests');
 select is((select count(*) from public.session_attempt_manifests m join legacy using (run_id)), 0::bigint,
   'a deleted session retains no manifests');
+
+insert into public.workspace_agent_config(workspace_id,key,value_json) values
+  ('b1b2c3d4-0001-4000-8000-000000000001','concurrency_limit','20'),
+  ('b1b2c3d4-0001-4000-8000-000000000001','max_retries','9'),
+  ('b1b2c3d4-0001-4000-8000-000000000001','stall_timeout_ms','900000')
+on conflict (workspace_id,key) do update set value_json=excluded.value_json;
+insert into public.workspace_sandbox_settings(workspace_id,active_provider)
+values ('b1b2c3d4-0001-4000-8000-000000000001','vercel')
+on conflict (workspace_id) do update set active_provider=excluded.active_provider;
+create temp table dispatch_target as select * from public.create_session_with_first_job(
+  'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
+  'Pinned dispatch fixture','Try dispatch','claude-code','a-live-model');
+update public.agent_jobs set status='canceled' where status='queued' and id<>(select job_id from dispatch_target);
+select is((select count(*) from public.claim_next_agent_job(20)),0::bigint,
+  'the pinned concurrency cap blocks a new claim while the workspace is above it');
+update public.agent_jobs set status='canceled' where status in ('started','running');
+insert into public.workspace_sandbox_connection_mutations(workspace_id,provider)
+values ('b1b2c3d4-0001-4000-8000-000000000001','e2b');
+select is((select count(*) from public.claim_next_agent_job(20)),0::bigint,
+  'a mutation of the pinned sandbox provider fences claim even if the live provider is different');
+delete from public.workspace_sandbox_connection_mutations
+where workspace_id='b1b2c3d4-0001-4000-8000-000000000001' and provider='e2b';
+select is((select job_id from public.claim_next_worker_dispatch(20,20,300000)),
+  (select job_id from dispatch_target), 'native dispatch shares the pinned claim guard');
+
+set local role service_role;
+select results_eq(
+  $$select stall_timeout_ms, max_retries from public.pinned_job_recovery_settings where job_id = (
+    select j.id from public.agent_jobs j join public.sessions s on s.id=j.session_id where s.title='Pinned dispatch fixture')$$,
+  $$values (720000,1)$$, 'recovery reads only the dispatched job revision limits');
+reset role;
+set local role authenticated;
+select throws_ok($$select * from public.pinned_job_recovery_settings$$,'42501',null,
+  'browser clients cannot read the worker recovery settings view');
+reset role;
+
+select is(public.start_session_job_attempt(f.job_id,1,s.current_stage_id,s.current_artifact_version,
+  'codex','gpt-5.5','code','wallie/pinned-dispatch'),f.run_id,'the claimed pinned attempt starts')
+from dispatch_target f join public.sessions s on s.id=f.session_id;
+select is(public.fail_session_job_attempt(f.job_id,1,'Fixture failure',true,20,f.run_id),'error',
+  'the authoritative cap prevents the caller or edited workspace from retrying the attempt') from dispatch_target f;
+
+with revision as (
+  insert into public.factory_definition_revisions (workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+  select prior.workspace_id,prior.factory_id,1,updated.body,encode(sha256(convert_to(updated.body,'UTF8')),'hex'),prior.created_by
+  from public.factory_definition_revisions prior
+  join public.sessions old on old.factory_definition_revision_id=prior.id
+  cross join lateral (select jsonb_set(prior.definition_json::jsonb,'{agent,model}','"gpt-5"')::text as body) updated
+  where old.id=(select session_id from dispatch_target)
+  returning workspace_id,factory_id,id,created_by
+)
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,id,2,created_by from revision;
+
+update public.sessions set linear_issue_id='MANIFEST-544', linear_issue_url='https://linear.app/test/issue/MANIFEST-544'
+where id=(select session_id from dispatch_target);
+create function pg_temp.restart_manifest_session(source_id uuid, request uuid, fingerprint text,
+  issue_url text default 'https://linear.app/test/issue/MANIFEST-544')
+returns table(session_id uuid, job_id uuid, run_id uuid) language sql as $$
+  select fresh.session_id,fresh.job_id,fresh.run_id from public.restart_session_once_with_first_job(
+    'b1b2c3d4-0001-4000-8000-000000000001','c1b2c3d4-0001-4000-8000-000000000001',
+    request,fingerprint,source_id,'Deliberate restart','Try a fresh plan','claude-code','a-live-model','{}',
+    'MANIFEST-544',issue_url) fresh;
+$$;
+create temp table restarted as select fresh.* from dispatch_target old cross join lateral
+  pg_temp.restart_manifest_session(old.session_id,'54400000-0000-4000-8000-000000000001',repeat('a',64)) fresh;
+select ok(fresh.session_id<>old.session_id and fresh.job_id<>old.job_id and fresh.run_id<>old.run_id and
+  new_owner.factory_definition_revision_id<>old_owner.factory_definition_revision_id,
+  'an explicit restart admits distinct work against the newly activated definition')
+from restarted fresh cross join dispatch_target old join public.sessions old_owner on old_owner.id=old.session_id
+join public.sessions new_owner on new_owner.id=fresh.session_id;
+select is(r.model_name,'gpt-5','the restarted first run uses the new definition model')
+from restarted fresh join public.agent_runs r on r.id=fresh.run_id;
+select is(lineage.source_session_id,old.session_id,'the new session preserves the explicit source session ID')
+from restarted fresh join public.session_restart_lineages lineage using (session_id) cross join dispatch_target old;
+select ok(new_owner.linear_issue_id is null and old_owner.linear_issue_id='MANIFEST-544'
+  and new_owner.linear_issue_url=old_owner.linear_issue_url,
+  'same-issue restart preserves context while Linear routing remains on the source session')
+from restarted fresh cross join dispatch_target old join public.sessions old_owner on old_owner.id=old.session_id
+join public.sessions new_owner on new_owner.id=fresh.session_id;
+select is((select count(*) from public.session_job_git_inputs i join restarted fresh using (job_id)),0::bigint,
+  'restart has no inherited Git input or prior approved checkpoint');
+select throws_ok($$select * from pg_temp.restart_manifest_session(
+    '54400000-0000-4000-8000-000000000010','54400000-0000-4000-8000-000000000002',repeat('a',64))$$,
+  'PT404','Source session is unavailable in this workspace.','unavailable restart source rolls back admission');
+select is((select count(*) from public.sessions where title='Deliberate restart'),1::bigint,
+  'an origin failure leaves only the previously accepted restart');
+select throws_ok($$select * from pg_temp.restart_manifest_session(
+    (select session_id from legacy_target),'54400000-0000-4000-8000-000000000001',repeat('a',64))$$,
+  'P0005','This creation request was already used for different session input',
+  'a reused request cannot rewrite the source lineage');
+select throws_ok($$update public.session_restart_lineages set source_session_id=gen_random_uuid()$$,
+  '23514','Session restart lineage is immutable.','restart origin cannot be rewritten');
+create temp table restarted_again as select fresh.* from restarted prior cross join lateral
+  pg_temp.restart_manifest_session(prior.session_id,'54400000-0000-4000-8000-000000000004',repeat('d',64),
+    'https://linear.app/test/issue/MANIFEST-544/updated-title') fresh;
+select ok(s.linear_issue_id is null and s.linear_issue_url='https://linear.app/test/issue/MANIFEST-544/updated-title'
+  and lineage.linear_issue_context_id='MANIFEST-544' and lineage.source_session_id=prior.session_id,
+  'repeated restarts keep the issue as context even when its canonical URL changes')
+from restarted_again newest join public.sessions s on s.id=newest.session_id
+join public.session_restart_lineages lineage on lineage.session_id=s.id cross join restarted prior;
+delete from public.sessions where id=(select session_id from dispatch_target);
+select is((select f.session_id from dispatch_target old cross join lateral
+    pg_temp.restart_manifest_session(old.session_id,'54400000-0000-4000-8000-000000000001',repeat('a',64)) f),
+  (select session_id from restarted),'a same-intent restart replay returns the committed child after deleting its origin');
+
+create temp table confirmation_revisions as
+select a.activation_number, a.workspace_id, a.factory_id, a.revision_id, a.created_by, r.canonical_digest
+from public.factory_definition_activations a join public.factory_definition_revisions r on r.id=a.revision_id
+where a.workspace_id='b1b2c3d4-0001-4000-8000-000000000001';
+create function pg_temp.confirm_factory(p_revision bigint) returns uuid language sql as $$
+  select admitted.session_id from confirmation_revisions revision
+  cross join lateral public.create_confirmed_factory_session_once_with_first_job(
+    revision.workspace_id, 'c1b2c3d4-0001-4000-8000-000000000001',
+    '54400000-0000-4000-8000-000000000003', repeat('c',64), revision.canonical_digest,
+    'Confirmed definition', 'Run the displayed revision', 'claude-code', 'a-live-model', '{}') admitted
+  where revision.activation_number=p_revision;
+$$;
+select throws_ok($$select pg_temp.confirm_factory(1)$$, 'P0003', 'The active factory definition changed.',
+  'a different revision with the same stable stages cannot be admitted from a stale confirmation');
+create temp table confirmed as select pg_temp.confirm_factory(2) as session_id;
+select is((select s.factory_definition_revision_id from public.sessions s join confirmed c on c.session_id=s.id),
+  (select revision_id from confirmation_revisions where activation_number=2),
+  'the confirmed revision is pinned to the committed session');
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,revision_id,3,created_by from confirmation_revisions where activation_number=1;
+select is(pg_temp.confirm_factory(2), (select session_id from confirmed),
+  'an accepted confirmation replays under its original revision after another activation');
 select * from finish();
 rollback;

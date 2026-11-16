@@ -5,6 +5,10 @@ import { z } from "zod";
 
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  canApproveSessionStage,
+  loadSessionStageApprovers,
+} from "@/features/sessions/detail/review-capabilities";
 
 import { sessionReviewReadOnlyReason } from "./comment-access";
 import type { ReviewViewer } from "./types";
@@ -138,7 +142,9 @@ export async function loadReviewContext(sessionId: string, write = false) {
 
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id, pipeline_id, archived_at, phase_status, artifact_review_revision")
+    .select(
+      "id, workspace_id, pipeline_id, archived_at, phase_status, artifact_review_revision, execute_pinned_definition, factory_definition_revision_id",
+    )
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw sessionError;
@@ -199,30 +205,14 @@ export async function reviewViewer(
   stageId: string | null,
 ): Promise<ReviewViewer> {
   const { supabase, session, member } = context;
-  const { data: stage, error } = stageId
-    ? await supabase
-        .from("pipeline_stages")
-        .select("anyone_can_approve, approver_member_ids")
-        .eq("id", stageId)
-        .eq("workspace_id", session.workspace_id)
-        .eq("pipeline_id", session.pipeline_id)
-        .maybeSingle()
-    : { data: null, error: null };
-  if (error) throw error;
-  const approvers = stage?.approver_member_ids ?? [];
+  const stage = stageId ? await loadSessionStageApprovers(supabase, session, stageId) : null;
   return {
     memberId: member.id,
     readOnlyReason: sessionReviewReadOnlyReason({
       archivedAt: session.archived_at,
       phaseStatus: session.phase_status,
     }),
-    canReview: Boolean(
-      stage &&
-      (stage.anyone_can_approve ||
-        (approvers.length > 0
-          ? approvers.includes(member.id)
-          : member.role === "owner" || member.role === "admin")),
-    ),
+    canReview: canApproveSessionStage(stage, member),
   };
 }
 

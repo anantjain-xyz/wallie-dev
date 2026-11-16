@@ -10,6 +10,11 @@ import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { withServerTiming, type ServerTimingCollector } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
+import {
+  querySessionPhaseState,
+  resolveSessionPhaseState,
+} from "@/features/sessions/phase-state.server";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -94,7 +99,9 @@ export async function POST(request: Request, { params }: Params) {
     const { data: sessionRow, error: sessionError } = await timing.segment("lookup", () =>
       supabase
         .from("sessions")
-        .select("id, workspace_id, phase_status, current_stage_id, archived_at")
+        .select(
+          "id, workspace_id, phase_status, current_stage_id, archived_at, execute_pinned_definition, factory_definition_revision_id",
+        )
         .eq("id", sessionId)
         .maybeSingle(),
     );
@@ -153,12 +160,7 @@ export async function POST(request: Request, { params }: Params) {
       // here gives a clearer 403 ("not in approver list") instead of the RPC's
       // generic CAS-miss "stale or already reviewed" message.
       const authError = await timing.segment("authorization.approver", () =>
-        checkApproverAuthorization(
-          sessionRow.workspace_id,
-          sessionRow.current_stage_id,
-          memberRow.id,
-          memberRow.role,
-        ),
+        checkApproverAuthorization(sessionRow, memberRow.id, memberRow.role),
       );
       if (authError) {
         return errorResponse("forbidden", authError, 403);
@@ -291,16 +293,10 @@ async function loadMutationResult(
   },
 ) {
   const { data, error } = await timing.segment("mutation.result", () =>
-    supabase
-      .from("sessions")
-      .select(
-        "id, archived_at, phase_status, current_stage_id, current_artifact_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
-      )
-      .eq("id", sessionId)
-      .single(),
+    querySessionPhaseState(supabase, sessionId).single(),
   );
-
-  if (error || !data || !data.currentStage) {
+  const result = data && !error ? await resolveSessionPhaseState(supabase, data) : null;
+  if (!result) {
     if (feedbackReceipt) {
       return NextResponse.json(
         { ...feedbackReceipt, reconciliationRequired: true },
@@ -316,21 +312,12 @@ async function loadMutationResult(
 
   return NextResponse.json<SessionPhaseMutationResult>({
     ...feedbackReceipt,
-    archivedAt: data.archived_at,
-    currentArtifactId: data.current_artifact_id ?? null,
-    artifactVersion: data.current_artifact_version,
-    currentStage: data.currentStage,
-    currentStageId: data.current_stage_id,
-    id: data.id,
-    phaseStatus: data.phase_status,
-    rejectionCount: data.rejection_count,
-    updatedAt: data.updated_at,
+    ...result,
   });
 }
 
 async function checkApproverAuthorization(
-  workspaceId: string,
-  stageId: string,
+  session: Parameters<typeof loadPinnedFactoryExecution>[1] & { current_stage_id: string },
   memberId: string,
   memberRole: string,
 ): Promise<string | null> {
@@ -338,12 +325,23 @@ async function checkApproverAuthorization(
   // allow this read for the current user, but using admin keeps a single code
   // path regardless of who the caller is.
   const admin = createSupabaseAdminClient();
-  const { data: stage, error } = await admin
-    .from("pipeline_stages")
-    .select("anyone_can_approve, approver_member_ids, name")
-    .eq("id", stageId)
-    .eq("workspace_id", workspaceId)
-    .maybeSingle();
+  const pinned = await loadPinnedFactoryExecution(admin, session);
+  const pinnedStage = pinned?.stages.find(({ id }) => id === session.current_stage_id);
+  const { data: stage, error } = pinned
+    ? {
+        data: pinnedStage && {
+          anyone_can_approve: pinnedStage.anyoneCanApprove,
+          approver_member_ids: pinnedStage.approverMemberIds,
+          name: pinnedStage.name,
+        },
+        error: null,
+      }
+    : await admin
+        .from("pipeline_stages")
+        .select("anyone_can_approve, approver_member_ids, name")
+        .eq("id", session.current_stage_id)
+        .eq("workspace_id", session.workspace_id)
+        .maybeSingle();
 
   if (error) return error.message;
   if (!stage) return "Stage not found.";

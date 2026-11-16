@@ -11,6 +11,7 @@ const mocked = vi.hoisted(() => ({
   fetchLinearIssue: vi.fn(),
   findSessionCreationRequest: vi.fn(),
   generateSessionTitle: vi.fn(),
+  loadActiveFactoryExecution: vi.fn(),
   loadSessionFirstRunPrerequisites: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
@@ -29,6 +30,10 @@ vi.mock("@/lib/secrets/crypto", () => ({
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
+}));
+
+vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
+  loadActiveFactoryExecution: mocked.loadActiveFactoryExecution,
 }));
 
 vi.mock("@/lib/wallie/service", async () => {
@@ -230,6 +235,7 @@ describe("POST /api/sessions", () => {
     vi.clearAllMocks();
     mocked.generateSessionTitle.mockResolvedValue(null);
     mocked.findSessionCreationRequest.mockResolvedValue(null);
+    mocked.loadActiveFactoryExecution.mockResolvedValue(null);
     setupAccess();
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
@@ -302,6 +308,58 @@ describe("POST /api/sessions", () => {
     );
     expect(mocked.loadSessionFirstRunPrerequisites).not.toHaveBeenCalled();
     expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it("preflights a deliberate restart against the current factory revision", async () => {
+    const pinned = { repositoryId: REPOSITORY_ID, canonicalDigest: "a".repeat(64) };
+    mocked.loadActiveFactoryExecution.mockResolvedValue(pinned);
+
+    const response = await POST(
+      makeRequest({
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        githubRepositoryId: REPOSITORY_ID,
+        promptMd: "Start fresh",
+        requestId: ATTACHMENT_ID,
+        restartOfSessionId: STAGE_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocked.loadSessionFirstRunPrerequisites).toHaveBeenCalledWith(
+      expect.objectContaining({ pinned, workspaceId: WORKSPACE_ID }),
+    );
+    expect(mocked.assertSessionSandboxCapabilityReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definitionDigest: pinned.canonicalDigest,
+        repository: expect.objectContaining({ id: REPOSITORY_ID }),
+      }),
+    );
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        githubRepositoryId: REPOSITORY_ID,
+        restartOfSessionId: STAGE_ID,
+      }),
+    );
+  });
+
+  it("refreshes the create dialog when the confirmed factory changed", async () => {
+    mocked.loadActiveFactoryExecution.mockResolvedValue({
+      repositoryId: REPOSITORY_ID,
+      canonicalDigest: "b".repeat(64),
+    });
+    const response = await POST(
+      makeRequest({
+        factoryDefinitionDigest: "a".repeat(64),
+        requestId: ATTACHMENT_ID,
+        promptMd: "Add SSO",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "session_options_changed" });
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
