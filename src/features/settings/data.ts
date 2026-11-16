@@ -11,7 +11,11 @@ import {
   createEmptySettingsFactoryDefinitionState,
   type SettingsFactoryDefinitionState,
 } from "@/lib/factory-definitions/settings-contracts";
-import { loadSettingsFactoryDefinitionState } from "@/lib/factory-definitions/settings";
+import {
+  loadFactoryDefinitionHistoryForStages,
+  loadSettingsFactoryDefinitionState,
+} from "@/lib/factory-definitions/settings";
+import type { CompiledFactoryDefinition } from "@/lib/factory-definitions/compiler";
 import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
@@ -293,6 +297,7 @@ function createEmptySettingsSetupData(
 function mapSettingsSetupData(
   onboardingData: WorkspaceOnboardingData,
   factoryDefinition = createEmptySettingsFactoryDefinitionState(),
+  priorDefinitions: readonly CompiledFactoryDefinition[] = [],
 ): SettingsSetupData {
   const base: SettingsSetupData = {
     agentConfig: onboardingData.agentConfig,
@@ -309,7 +314,7 @@ function mapSettingsSetupData(
     workspaceMembers: onboardingData.workspaceMembers,
     workspaceSecrets: onboardingData.workspaceSecrets,
   };
-  return projectSettingsDataWithFactoryDefinition(base, factoryDefinition);
+  return projectSettingsDataWithFactoryDefinition(base, factoryDefinition, { priorDefinitions });
 }
 
 export async function loadSettingsPageData(
@@ -452,7 +457,18 @@ export async function loadSettingsPageData(
               rows: value.activeDefinition ? 1 : 0,
             }),
           );
-          return mapSettingsSetupData(data, factoryDefinition);
+          const priorDefinitions = factoryDefinition.activeDefinition
+            ? await sectionTiming.segment(
+                "factory-definition-stage-history",
+                () =>
+                  loadFactoryDefinitionHistoryForStages(supabase, workspace.id, factoryDefinition),
+                (definitions) => ({
+                  payloadBytes: approximatePayloadSizeBytes(definitions),
+                  rows: definitions.length,
+                }),
+              )
+            : [];
+          return mapSettingsSetupData(data, factoryDefinition, priorDefinitions);
         },
       );
     }

@@ -230,9 +230,10 @@ export function PipelineEditor({
     if (result.data.pipeline) {
       dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
     }
-    dispatchSettingsDataChanged(workspaceId, (current) =>
-      projectSettingsDataWithFactoryDefinition(current, result.data.state),
-    );
+    dispatchSettingsDataChanged(workspaceId, (current) => ({
+      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+    }));
     announce("Reloaded saved factory definition.");
   }
 

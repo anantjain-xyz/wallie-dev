@@ -36,12 +36,19 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     data.workspace.id,
     data.factoryDefinition,
   );
-  const draftTarget = factoryState.latestDraft
+  const definitionTarget = factoryState.latestDraft
     ? {
+        kind: "draft" as const,
         id: factoryState.latestDraft.id,
         repositoryId: factoryState.latestDraft.definition.repositoryId,
       }
-    : null;
+    : factoryState.currentActivation
+      ? {
+          kind: "revision" as const,
+          id: factoryState.currentActivation.revisionId,
+          repositoryId: factoryState.currentActivation.definition.repositoryId,
+        }
+      : null;
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,
@@ -99,7 +106,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
           </div>
           <SandboxCapabilitySection
             canManage={data.canManage}
-            draftTarget={draftTarget}
+            definitionTarget={definitionTarget}
             initialCheck={data.setupHealth.latestSandboxCapabilityCheck}
             onCheckChange={(check) =>
               setData((current) => ({

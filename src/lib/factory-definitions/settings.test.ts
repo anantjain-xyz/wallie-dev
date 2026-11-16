@@ -37,7 +37,6 @@ const actorUserId = "54500000-0001-4000-8000-000000000003";
 const pipelineId = "54500000-0001-4000-8000-000000000004";
 const repositoryId = "54500000-0001-4000-8000-000000000005";
 const stageId = "54500000-0001-4000-8000-000000000006";
-const newStageId = "54500000-0001-4000-8000-000000000007";
 const revisionId = "54500000-0001-4000-8000-000000000008";
 const draftId = "54500000-0001-4000-8000-000000000009";
 const executionPolicyId = "54500000-0001-4000-8000-000000000010";
@@ -360,25 +359,34 @@ describe("factory definition Settings loader & mutations", () => {
     expect(mocks.mutateFactoryDefinition).not.toHaveBeenCalled();
   });
 
-  it("allocates archived stage anchor rows only after preflight compilation succeeds", async () => {
-    let stageInserted = false;
+  it("allocates archived stage anchor rows inside the atomic draft RPC only after compilation succeeds", async () => {
+    let rpcCalled = false;
+    let rpcBody: unknown = null;
     const { admin } = makeClient(
       defaultStateResponder({
         activationNumber: 1,
-        extraHandler: ({ method, url }) => {
+        extraHandler: ({ method, url, body }) => {
           if (url.pathname.endsWith("/pipeline_stages") && method === "GET") {
             return Response.json([{ id: stageId, slug: "plan", position: 1 }]);
           }
-          if (url.pathname.endsWith("/pipeline_stages") && method === "POST") {
-            stageInserted = true;
-            return Response.json({ id: newStageId });
+          if (url.pathname.endsWith("/rpc/save_settings_factory_definition_draft")) {
+            rpcCalled = true;
+            rpcBody = body;
+            return Response.json({
+              id: draftId,
+              base_activation_number: 1,
+              schema_version: 1,
+              definition_json: compiledActive.definitionJson,
+              canonical_digest: compiledActive.canonicalDigest,
+              created_at: now,
+            });
           }
           return null;
         },
       }),
     );
 
-    // Invalid forward stage reference should fail preflight WITHOUT inserting into pipeline_stages
+    // Invalid forward stage reference should fail compilation WITHOUT calling the draft RPC
     const invalidRes = await mutateSettingsFactoryDefinition({
       admin,
       workspaceId,
@@ -415,22 +423,7 @@ describe("factory definition Settings loader & mutations", () => {
       },
     });
     expect(invalidRes).toMatchObject({ ok: false, status: 422 });
-    expect(stageInserted).toBe(false);
-    expect(mocks.mutateFactoryDefinition).not.toHaveBeenCalled();
-
-    // Valid new stage allocates an archived anchor row and persists the compiled draft
-    mocks.mutateFactoryDefinition.mockResolvedValue({
-      ok: true,
-      result: {
-        draft: {
-          id: draftId,
-          baseActivationNumber: 1,
-          schemaVersion: 1,
-          canonicalDigest: compiledActive.canonicalDigest,
-          createdAt: now,
-        },
-      },
-    });
+    expect(rpcCalled).toBe(false);
 
     const validRes = await mutateSettingsFactoryDefinition({
       admin,
@@ -468,47 +461,87 @@ describe("factory definition Settings loader & mutations", () => {
       },
     });
     expect(validRes.ok).toBe(true);
-    expect(stageInserted).toBe(true);
-    expect(mocks.mutateFactoryDefinition).toHaveBeenCalledWith({
+    expect(rpcCalled).toBe(true);
+    expect(rpcBody).toMatchObject({
+      p_workspace_id: workspaceId,
+      p_factory_id: factoryId,
+      p_actor_user_id: actorUserId,
+      p_expected_activation_number: 1,
+      p_new_pipeline_stages: [
+        expect.objectContaining({
+          slug: "build",
+          name: "Build",
+          promptTemplateMd: "Build {{artifact.previousStages.plan}}.",
+          anyoneCanApprove: true,
+        }),
+      ],
+    });
+    const compiledPayload = JSON.parse(
+      (rpcBody as { p_definition_json: string }).p_definition_json,
+    );
+    expect(compiledPayload.operatingRulesMd).toBe("Updated rules.");
+    expect(compiledPayload.stages.map((s: { slug: string }) => s.slug)).toEqual(["plan", "build"]);
+  });
+
+  it("propagates atomic 409 conflict when save_settings_factory_definition_draft detects a racing draft", async () => {
+    const { admin } = makeClient(
+      defaultStateResponder({
+        activationNumber: 1,
+        extraHandler: ({ url }) => {
+          if (url.pathname.endsWith("/rpc/save_settings_factory_definition_draft")) {
+            return Response.json(
+              {
+                code: "PT409",
+                message: "Another configuration draft was saved. Reload before retrying.",
+              },
+              { status: 409 },
+            );
+          }
+          return null;
+        },
+      }),
+    );
+
+    const conflict = await mutateSettingsFactoryDefinition({
       admin,
       workspaceId,
       actorUserId,
       command: {
         action: "draft",
         expectedActivationNumber: 1,
-        source: {
-          kind: "structured",
-          value: expect.objectContaining({
-            operatingRulesMd: "Updated rules.",
-            stages: expect.arrayContaining([
-              expect.objectContaining({ id: stageId, slug: "plan" }),
-              expect.objectContaining({ id: newStageId, slug: "build" }),
-            ]),
-          }),
-        },
+        expectedDraftId: null,
+        patch: { kind: "sandbox-provider", sandboxProvider: "e2b" },
       },
+    });
+    expect(conflict).toEqual({
+      ok: false,
+      status: 409,
+      error: "Another configuration draft was saved. Reload before retrying.",
     });
   });
 
-  it("saves execution policy revisions and updates the shared draft", async () => {
-    const newExecutionPolicyId = "54500000-0001-4000-8000-000000000099";
+  it("persists candidate execution and delivery policy revisions atomically without calling live pointer RPCs", async () => {
+    let legacyPolicyRpcCalled = false;
+    let draftRpcBody: Record<string, unknown> | null = null;
     const { admin } = makeClient(
       defaultStateResponder({
         activationNumber: 1,
-        extraHandler: ({ url }) => {
-          if (url.pathname.endsWith("/rpc/save_execution_policy")) {
+        extraHandler: ({ url, body }) => {
+          if (
+            url.pathname.endsWith("/rpc/save_execution_policy") ||
+            url.pathname.endsWith("/rpc/save_delivery_policy")
+          ) {
+            legacyPolicyRpcCalled = true;
+          }
+          if (url.pathname.endsWith("/rpc/save_settings_factory_definition_draft")) {
+            draftRpcBody = body as Record<string, unknown>;
             return Response.json({
-              id: newExecutionPolicyId,
-              workspace_id: workspaceId,
-              revision: 2,
+              id: draftId,
+              base_activation_number: 1,
+              schema_version: 1,
+              definition_json: compiledActive.definitionJson,
+              canonical_digest: compiledActive.canonicalDigest,
               created_at: now,
-              requirements: {
-                version: 1,
-                maxRepairAttempts: 5,
-                maxExecutionMs: 1_800_000,
-                maxTotalTokens: null,
-                maxCostUsd: null,
-              },
             });
           }
           return null;
@@ -516,20 +549,7 @@ describe("factory definition Settings loader & mutations", () => {
       }),
     );
 
-    mocks.mutateFactoryDefinition.mockResolvedValue({
-      ok: true,
-      result: {
-        draft: {
-          id: draftId,
-          baseActivationNumber: 1,
-          schemaVersion: 1,
-          canonicalDigest: compiledActive.canonicalDigest,
-          createdAt: now,
-        },
-      },
-    });
-
-    const result = await mutateSettingsFactoryDefinition({
+    const execResult = await mutateSettingsFactoryDefinition({
       admin,
       workspaceId,
       actorUserId,
@@ -551,22 +571,263 @@ describe("factory definition Settings loader & mutations", () => {
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(mocks.mutateFactoryDefinition).toHaveBeenCalledWith({
+    expect(execResult.ok).toBe(true);
+    expect(legacyPolicyRpcCalled).toBe(false);
+    expect(draftRpcBody).toMatchObject({
+      p_execution_policy_revision_id: expect.any(String),
+      p_expected_live_execution_policy_revision: 1,
+      p_execution_policy_requirements: {
+        version: 1,
+        maxRepairAttempts: 5,
+        maxExecutionMs: 1_800_000,
+        maxTotalTokens: null,
+        maxCostUsd: null,
+      },
+    });
+
+    const delivResult = await mutateSettingsFactoryDefinition({
       admin,
       workspaceId,
       actorUserId,
       command: {
         action: "draft",
         expectedActivationNumber: 1,
-        source: {
-          kind: "structured",
-          value: expect.objectContaining({
-            executionPolicy: newExecutionPolicyId,
-          }),
+        expectedDraftId: null,
+        patch: {
+          kind: "delivery-policy",
+          pipelineId,
+          expectedPolicyRevision: 1,
+          requirements: {
+            version: 1,
+            deliveryMode: "analysis",
+            requiredChecks: [],
+            minimumApprovals: 0,
+            requireCodeOwnerReview: false,
+            requireResolvedThreads: false,
+            requiredEvidence: [],
+            freshnessSeconds: 3600,
+            requireArtifactApprovalForDelivery: false,
+          },
         },
       },
     });
+
+    expect(delivResult.ok).toBe(true);
+    expect(legacyPolicyRpcCalled).toBe(false);
+    expect(draftRpcBody).toMatchObject({
+      p_delivery_policy_revision_id: expect.any(String),
+      p_delivery_policy_pipeline_id: pipelineId,
+      p_expected_live_delivery_policy_revision: 1,
+      p_delivery_policy_requirements: {
+        version: 1,
+        deliveryMode: "analysis",
+      },
+    });
+  });
+
+  it("preserves definition-owned stage contents in archivedStages when removing an edited stage", async () => {
+    const secondStageId = "54500000-0001-4000-8000-000000000022";
+    const otherMemberId = "54500000-0001-4000-8000-000000000023";
+    mocks.loadCatalog.mockResolvedValue({
+      ...catalog,
+      approvers: [
+        { id: memberId, workspaceId },
+        { id: otherMemberId, workspaceId },
+      ],
+    });
+
+    const editedTwoStageDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: pipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: deliveryPolicyId,
+          operatingRulesMd: "Published rules.",
+          stages: [
+            {
+              id: stageId,
+              slug: "plan",
+              name: "Plan",
+              description: "Plan work",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+            {
+              id: secondStageId,
+              slug: "verify",
+              name: "Verify (Definition Edited)",
+              description: "Definition description",
+              promptTemplateMd: "Definition-edited prompt {{artifact.previousStages.plan}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [otherMemberId],
+            },
+          ],
+        },
+      },
+      {
+        ...catalog,
+        approvers: [
+          { id: memberId, workspaceId },
+          { id: otherMemberId, workspaceId },
+        ],
+      },
+    );
+    if (!editedTwoStageDef.ok) throw new Error("Two-stage fixture failed to compile.");
+
+    const removedSecondStageDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: pipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: deliveryPolicyId,
+          operatingRulesMd: "Published rules.",
+          stages: [
+            {
+              id: stageId,
+              slug: "plan",
+              name: "Plan",
+              description: "Plan work",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+      catalog,
+    );
+    if (!removedSecondStageDef.ok) throw new Error("Single-stage fixture failed to compile.");
+
+    // Live pipeline_stages row still holds stale DB contents for secondStageId
+    mocks.loadDefaultPipeline.mockResolvedValue({
+      ...defaultPipelineConfig,
+      stages: [
+        ...defaultPipelineConfig.stages,
+        {
+          id: secondStageId,
+          pipelineId,
+          position: 2,
+          slug: "verify",
+          name: "Verify (Stale DB Row)",
+          description: "Stale DB description",
+          promptTemplateMd: "Stale DB prompt",
+          anyoneCanApprove: true,
+          approverMemberIds: [],
+        },
+      ],
+    });
+
+    let saved = false;
+    const { admin } = makeClient(
+      defaultStateResponder({
+        activationNumber: 1,
+        extraHandler: ({ method, url }) => {
+          if (url.pathname.endsWith("/pipeline_stages") && method === "GET") {
+            return Response.json([
+              { id: stageId, slug: "plan", position: 1 },
+              { id: secondStageId, slug: "verify", position: 2 },
+            ]);
+          }
+          if (url.pathname.endsWith("/factory_definition_drafts")) {
+            const rows = saved
+              ? [
+                  {
+                    id: draftId,
+                    base_activation_number: 1,
+                    schema_version: 1,
+                    definition_json: removedSecondStageDef.definitionJson,
+                    canonical_digest: removedSecondStageDef.canonicalDigest,
+                    created_at: "2026-11-15T20:05:00.000Z",
+                  },
+                  {
+                    id: "54500000-0001-4000-8000-000000000033",
+                    base_activation_number: 1,
+                    schema_version: 1,
+                    definition_json: editedTwoStageDef.definitionJson,
+                    canonical_digest: editedTwoStageDef.canonicalDigest,
+                    created_at: "2026-11-15T20:01:00.000Z",
+                  },
+                ]
+              : [
+                  {
+                    id: "54500000-0001-4000-8000-000000000033",
+                    base_activation_number: 1,
+                    schema_version: 1,
+                    definition_json: editedTwoStageDef.definitionJson,
+                    canonical_digest: editedTwoStageDef.canonicalDigest,
+                    created_at: "2026-11-15T20:01:00.000Z",
+                  },
+                ];
+            return Response.json(url.searchParams.get("limit") === "1" ? rows.slice(0, 1) : rows);
+          }
+          if (url.pathname.endsWith("/rpc/save_settings_factory_definition_draft")) {
+            saved = true;
+            return Response.json({
+              id: draftId,
+              base_activation_number: 1,
+              schema_version: 1,
+              definition_json: removedSecondStageDef.definitionJson,
+              canonical_digest: removedSecondStageDef.canonicalDigest,
+              created_at: "2026-11-15T20:05:00.000Z",
+            });
+          }
+          return null;
+        },
+      }),
+    );
+
+    const res = await mutateSettingsFactoryDefinition({
+      admin,
+      workspaceId,
+      actorUserId,
+      command: {
+        action: "draft",
+        expectedActivationNumber: 1,
+        expectedDraftId: "54500000-0001-4000-8000-000000000033",
+        patch: {
+          kind: "pipeline",
+          name: "Default",
+          operatingRulesMd: "Published rules.",
+          stages: [
+            {
+              id: stageId,
+              slug: "plan",
+              name: "Plan",
+              description: "Plan work",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.pipeline?.archivedStages).toEqual([
+      expect.objectContaining({
+        id: secondStageId,
+        name: "Verify (Definition Edited)",
+        description: "Definition description",
+        promptTemplateMd: "Definition-edited prompt {{artifact.previousStages.plan}}.",
+        anyoneCanApprove: false,
+        approverMemberIds: [otherMemberId],
+      }),
+    ]);
   });
 
   it("publishes the exact expected draft and rejects stale publish attempts", async () => {

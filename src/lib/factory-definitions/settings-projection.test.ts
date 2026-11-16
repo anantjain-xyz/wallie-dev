@@ -6,6 +6,7 @@ import { createEmptySettingsFactoryDefinitionState } from "@/lib/factory-definit
 import { buildSerialDefinitionFromCompiled } from "@/lib/factory-definitions/settings";
 import {
   mapCompilerDiagnosticsToAgentFieldErrors,
+  pipelineFromFactoryDefinition,
   projectSettingsDataWithFactoryDefinition,
 } from "@/lib/factory-definitions/settings-projection";
 
@@ -227,5 +228,56 @@ describe("factory definition settings projection", () => {
       agent_model: 'Choose a model supported by "codex".',
       agent_effort: 'Remove effort for "cursor".',
     });
+  });
+
+  it("preserves last definition-owned contents when projecting archived stages", () => {
+    const staleLivePipeline = {
+      id: pipelineId,
+      isDefault: true,
+      name: "Default",
+      operatingRulesMd: "Old rules",
+      stages: [
+        {
+          id: stage2Id,
+          pipelineId,
+          position: 1,
+          slug: "build",
+          name: "Build",
+          description: "Implement",
+          promptTemplateMd: "Build {{session.prompt}}",
+          anyoneCanApprove: true,
+          approverMemberIds: [],
+        },
+        {
+          id: stage1Id,
+          pipelineId,
+          position: 2,
+          slug: "verify",
+          name: "Verify (Stale DB)",
+          description: "Stale DB description",
+          promptTemplateMd: "Stale DB prompt",
+          anyoneCanApprove: true,
+          approverMemberIds: [],
+        },
+      ],
+      archivedStages: [],
+    };
+    const withoutVerify: CompiledFactoryDefinition = {
+      ...compiled,
+      stages: [compiled.stages[0]!],
+    };
+
+    const projected = pipelineFromFactoryDefinition(staleLivePipeline, withoutVerify, [compiled]);
+    expect(projected.archivedStages).toEqual([
+      expect.objectContaining({
+        id: stage1Id,
+        slug: "verify",
+        name: "Verify",
+        description: "Check",
+        promptTemplateMd: "Check {{artifact.previousStages.build}}",
+        anyoneCanApprove: false,
+        approverMemberIds: ["00000000-0000-4000-8000-000000000031"],
+      }),
+    ]);
   });
 });

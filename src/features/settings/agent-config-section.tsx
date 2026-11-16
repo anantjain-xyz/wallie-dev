@@ -406,9 +406,10 @@ export function AgentConfigSection({
     if (result.data.pipeline) {
       dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
     }
-    dispatchSettingsDataChanged(workspaceId, (current) =>
-      projectSettingsDataWithFactoryDefinition(current, result.data.state),
-    );
+    dispatchSettingsDataChanged(workspaceId, (current) => ({
+      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+    }));
     setFlashMessage({ kind: "info", text: "Reloaded saved factory definition." });
   }
 

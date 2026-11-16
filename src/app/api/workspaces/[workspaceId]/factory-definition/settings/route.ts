@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
 import { settingsFactoryCommandSchema } from "@/lib/factory-definitions/settings-command-schema";
 import {
+  loadFactoryDefinitionHistoryForStages,
   loadSettingsFactoryDefinitionState,
   mutateSettingsFactoryDefinition,
 } from "@/lib/factory-definitions/settings";
@@ -37,9 +38,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
       loadDefaultPipelineConfigurationForWorkspace(supabase, workspace.id),
     ]);
 
+    const priorDefinitions =
+      state.activeDefinition && livePipeline
+        ? await loadFactoryDefinitionHistoryForStages(supabase, workspace.id, state)
+        : [];
+
     const pipeline =
       state.activeDefinition && livePipeline
-        ? pipelineFromFactoryDefinition(livePipeline, state.activeDefinition)
+        ? pipelineFromFactoryDefinition(livePipeline, state.activeDefinition, priorDefinitions)
         : livePipeline;
 
     return Response.json(

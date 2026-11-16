@@ -53,9 +53,10 @@ export function FactoryDefinitionIsland({ initialData }: { initialData: Settings
     if (result.data.pipeline) {
       dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
     }
-    dispatchSettingsDataChanged(workspaceId, (current) =>
-      projectSettingsDataWithFactoryDefinition(current, result.data.state),
-    );
+    dispatchSettingsDataChanged(workspaceId, (current) => ({
+      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+    }));
     setMessage({ kind: "info", text: "Reloaded the latest factory definition." });
   }
 
@@ -76,9 +77,10 @@ export function FactoryDefinitionIsland({ initialData }: { initialData: Settings
     if (result.data.pipeline) {
       dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
     }
-    dispatchSettingsDataChanged(workspaceId, (current) =>
-      projectSettingsDataWithFactoryDefinition(current, result.data.state),
-    );
+    dispatchSettingsDataChanged(workspaceId, (current) => ({
+      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+    }));
     const activationNumber =
       result.data.activation?.activationNumber ??
       result.data.state.currentActivation?.activationNumber;

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   loadDefaultPipelineConfigurationForWorkspace: vi.fn(),
+  loadFactoryDefinitionHistoryForStages: vi.fn(),
   loadSettingsFactoryDefinitionState: vi.fn(),
   mutateSettingsFactoryDefinition: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("@/lib/pipeline/stages", () => ({
   loadDefaultPipelineConfigurationForWorkspace: mocked.loadDefaultPipelineConfigurationForWorkspace,
 }));
 vi.mock("@/lib/factory-definitions/settings", () => ({
+  loadFactoryDefinitionHistoryForStages: mocked.loadFactoryDefinitionHistoryForStages,
   loadSettingsFactoryDefinitionState: mocked.loadSettingsFactoryDefinitionState,
   mutateSettingsFactoryDefinition: mocked.mutateSettingsFactoryDefinition,
 }));
@@ -66,6 +68,7 @@ describe("GET factory definition settings", () => {
     };
     mocked.loadSettingsFactoryDefinitionState.mockResolvedValue(state);
     mocked.loadDefaultPipelineConfigurationForWorkspace.mockResolvedValue(pipeline);
+    mocked.loadFactoryDefinitionHistoryForStages.mockResolvedValue([]);
 
     const response = await GET(new Request(routeUrl), context());
     expect(response.status).toBe(200);

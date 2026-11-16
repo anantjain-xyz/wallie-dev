@@ -15,6 +15,7 @@ import {
   VercelIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
+import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 import type { CompiledFactoryDefinition } from "@/lib/factory-definitions/compiler";
 import type { SettingsFactoryDefinitionState } from "@/lib/factory-definitions/settings-contracts";
 import { projectSettingsDataWithFactoryDefinition } from "@/lib/factory-definitions/settings-projection";
@@ -735,5 +736,74 @@ describe("Settings shared factory definition forms", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       `/api/workspaces/${workspaceId}/sandbox-connections/e2b`,
     );
+  });
+
+  it("targets the published factory revision for capability checks when no draft exists", async () => {
+    const user = userEvent.setup();
+    const initialData = makeSettingsData();
+    initialData.github.repositories = [
+      {
+        archived: false,
+        defaultBranch: "main",
+        fullName: "acme/app",
+        htmlUrl: "https://github.com/acme/app",
+        id: repositoryId,
+        isArchived: false,
+        name: "app",
+        private: true,
+        repoId: 101,
+      } as unknown as SettingsPageData["github"]["repositories"][number],
+    ];
+
+    const runningCheck = {
+      agentModel: "gpt-5.6-sol",
+      agentProvider: "codex",
+      capabilities: {},
+      checkedAt: now,
+      errorText: null,
+      githubRepositoryId: repositoryId,
+      id: "check-1",
+      sandboxConnectionRevision: "rev-vercel",
+      sandboxProvider: "vercel",
+      status: "running",
+    };
+    const passedCheck = {
+      ...runningCheck,
+      status: "success",
+      capabilities: { git: { ok: true, detail: null } },
+    };
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ check: runningCheck }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ check: passedCheck }, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(
+        <OverlayProvider>
+          <VerifySetupSection data={initialData} setData={vi.fn()} setFlashMessage={vi.fn()} />
+        </OverlayProvider>,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Run capability check" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        `/api/workspaces/${workspaceId}/factory-definition/capability-check`,
+      );
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+        target: { kind: "revision", id: revisionId },
+      });
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(
+        `/api/workspaces/${workspaceId}/factory-definition/capability-check?revisionId=${revisionId}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -47,7 +47,7 @@ import { selectDefaultFactory } from "@/lib/factory-definitions/storage";
 import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox/types";
-import type { Database } from "@/lib/supabase/database.types";
+import type { Database, Json } from "@/lib/supabase/database.types";
 
 type ScopedClient = Pick<SupabaseClient<Database>, "from">;
 type AdminClient = SupabaseClient<Database>;
@@ -454,6 +454,98 @@ async function loadBaselineFactoryDefinitionSource(
   };
 }
 
+export async function loadFactoryDefinitionHistoryForStages(
+  client: ScopedClient,
+  workspaceId: string,
+  state: Pick<
+    SettingsFactoryDefinitionState,
+    "factoryId" | "currentActivation" | "latestDraft" | "activeDefinition"
+  >,
+  extraDefinitions: readonly (CompiledFactoryDefinition | null | undefined)[] = [],
+): Promise<CompiledFactoryDefinition[]> {
+  const definitions: CompiledFactoryDefinition[] = [];
+  for (const candidate of [
+    state.activeDefinition,
+    state.latestDraft?.definition,
+    state.currentActivation?.definition,
+    ...extraDefinitions,
+  ]) {
+    if (candidate) definitions.push(candidate);
+  }
+  if (!state.factoryId) return definitions;
+
+  const [draftsResult, revisionsResult] = await Promise.all([
+    client
+      .from("factory_definition_drafts")
+      .select("id, created_at, definition_json")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", state.factoryId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(20),
+    client
+      .from("factory_definition_revisions")
+      .select("id, created_at, definition_json")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", state.factoryId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(20),
+  ]);
+  if (draftsResult.error) throw draftsResult.error;
+  if (revisionsResult.error) throw revisionsResult.error;
+
+  const combined = [...(draftsResult.data ?? []), ...(revisionsResult.data ?? [])].sort((a, b) => {
+    const timeDiff = Date.parse(b.created_at) - Date.parse(a.created_at);
+    if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
+    return b.id.localeCompare(a.id);
+  });
+
+  for (const row of combined) {
+    const parsed = parseCompiledDefinition(row.definition_json);
+    if (parsed) definitions.push(parsed);
+  }
+  return definitions;
+}
+
+function mapDraftRpcError(error: { code?: string; message?: string } | null): {
+  ok: false;
+  status: 400 | 403 | 404 | 409 | 422 | 500;
+  error: string;
+} {
+  switch (error?.code) {
+    case "PT409":
+      return {
+        ok: false,
+        status: 409,
+        error: error.message ?? "Another configuration draft was saved. Reload before retrying.",
+      };
+    case "PT422":
+      return {
+        ok: false,
+        status: 422,
+        error: error.message ?? "Review the factory definition before retrying.",
+      };
+    case "42501":
+      return { ok: false, status: 403, error: "Active workspace manager access is required." };
+    case "P0002":
+      return {
+        ok: false,
+        status: 404,
+        error: "The requested factory definition record is unavailable.",
+      };
+    case "22023":
+    case "23514":
+      return {
+        ok: false,
+        status: 400,
+        error: error.message ?? "The factory definition draft command is invalid.",
+      };
+    default:
+      return { ok: false, status: 500, error: "Could not save the factory definition draft." };
+  }
+}
+
 export type SettingsFactoryMutationResult =
   | {
       ok: true;
@@ -531,11 +623,19 @@ export async function mutateSettingsFactoryDefinition({
       return { ok: false, status: 500, error: "Could not publish factory definition." };
     }
 
-    const nextState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
-    const livePipeline = await loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId);
+    const [nextState, livePipeline] = await Promise.all([
+      loadSettingsFactoryDefinitionState(admin, workspaceId),
+      loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId),
+    ]);
+    const priorDefinitions = await loadFactoryDefinitionHistoryForStages(
+      admin,
+      workspaceId,
+      nextState,
+      [currentState.activeDefinition, currentState.currentActivation?.definition],
+    );
     const pipeline =
       nextState.activeDefinition && livePipeline
-        ? pipelineFromFactoryDefinition(livePipeline, nextState.activeDefinition)
+        ? pipelineFromFactoryDefinition(livePipeline, nextState.activeDefinition, priorDefinitions)
         : (livePipeline ?? undefined);
 
     return {
@@ -582,7 +682,34 @@ export async function mutateSettingsFactoryDefinition({
   };
 
   const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+  const effectiveCatalog = {
+    ...catalog,
+    executionPolicyRevisions: [...catalog.executionPolicyRevisions],
+    deliveryPolicyRevisions: [...catalog.deliveryPolicyRevisions],
+  };
+
   let nextPipelineName = baseline.pipelineName;
+  let pendingPipelineRename: { id: string; name: string } | null = null;
+  let pendingNewStages: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    description: string;
+    promptTemplateMd: string;
+    anyoneCanApprove: boolean;
+  }> = [];
+  let pendingExecutionPolicy: {
+    revisionId: string;
+    requirements: Json;
+    expectedLiveRevision: number;
+  } | null = null;
+  let pendingDeliveryPolicy: {
+    revisionId: string;
+    pipelineId: string;
+    requirements: Json;
+    expectedLiveRevision: number;
+  } | null = null;
+
   const { patch } = command;
 
   switch (patch.kind) {
@@ -617,63 +744,26 @@ export async function mutateSettingsFactoryDefinition({
         }
       }
 
-      // Pre-validate with temporary UUIDs so invalid candidates never create orphan stage rows.
-      const preflightCandidate: SerialFactoryDefinitionInput = {
-        ...candidate,
-        operatingRulesMd: patch.operatingRulesMd,
-        stages: patch.stages.map((stage) => ({
-          id: stage.id ?? randomUUID(),
-          slug: stage.slug,
-          name: stage.name,
-          description: stage.description ?? "",
-          promptTemplateMd: stage.promptTemplateMd ?? "",
-          anyoneCanApprove: stage.anyoneCanApprove ?? false,
-          approverMemberIds: [...(stage.approverMemberIds ?? [])],
-        })),
-      };
-      const preflight = compileFactoryDefinition(
-        { kind: "structured", value: preflightCandidate },
-        catalog,
-      );
-      if (!preflight.ok) {
-        return {
-          ok: false,
-          status: 422,
-          error: preflight.diagnostics[0]?.message ?? "Review the pipeline configuration.",
-          diagnostics: preflight.diagnostics,
-        };
-      }
-
       const existingSlugs = new Set(rows.map((row) => row.slug));
-      let nextPosition = rows.reduce((max, row) => Math.max(max, row.position), 0) + 1;
       const resolvedStages: SerialFactoryDefinitionInput["stages"] = [];
+      const allocatedStages: typeof pendingNewStages = [];
 
       for (const stage of patch.stages) {
         let stageId = stage.id ?? null;
         if (!stageId) {
+          stageId = randomUUID();
           const anchorSlug = existingSlugs.has(stage.slug)
             ? `${stage.slug.slice(0, 50)}-${randomUUID().slice(0, 8)}`
             : stage.slug;
           existingSlugs.add(anchorSlug);
-          const { data: inserted, error: insertError } = await admin
-            .from("pipeline_stages")
-            .insert({
-              workspace_id: workspaceId,
-              pipeline_id: pipelineId,
-              position: nextPosition++,
-              slug: anchorSlug,
-              name: stage.name,
-              description: stage.description ?? "",
-              prompt_template_md: stage.promptTemplateMd ?? "",
-              anyone_can_approve: stage.anyoneCanApprove ?? false,
-              archived_at: new Date().toISOString(),
-            })
-            .select("id")
-            .single();
-          if (insertError || !inserted) {
-            return { ok: false, status: 500, error: "Could not allocate a pipeline stage record." };
-          }
-          stageId = inserted.id;
+          allocatedStages.push({
+            id: stageId,
+            slug: anchorSlug,
+            name: stage.name,
+            description: stage.description ?? "",
+            promptTemplateMd: stage.promptTemplateMd ?? "",
+            anyoneCanApprove: stage.anyoneCanApprove ?? false,
+          });
         }
         resolvedStages.push({
           id: stageId,
@@ -687,17 +777,11 @@ export async function mutateSettingsFactoryDefinition({
       }
 
       if (patch.name !== baseline.pipelineName) {
-        const { error: renameError } = await admin
-          .from("pipelines")
-          .update({ name: patch.name })
-          .eq("workspace_id", workspaceId)
-          .eq("id", pipelineId);
-        if (renameError) {
-          return { ok: false, status: 500, error: "Could not update the pipeline name." };
-        }
+        pendingPipelineRename = { id: pipelineId, name: patch.name };
         nextPipelineName = patch.name;
       }
 
+      pendingNewStages = allocatedStages;
       candidate.operatingRulesMd = patch.operatingRulesMd;
       candidate.stages = resolvedStages;
       break;
@@ -717,29 +801,24 @@ export async function mutateSettingsFactoryDefinition({
     }
 
     case "execution-policy": {
-      const { data: revisionRow, error: policyError } = await admin.rpc("save_execution_policy", {
-        p_workspace_id: workspaceId,
-        p_actor_user_id: actorUserId,
-        p_expected_revision: patch.expectedPolicyRevision,
-        p_requirements: patch.requirements,
+      if (patch.expectedPolicyRevision !== currentState.liveExecutionPolicyRevision) {
+        return {
+          ok: false,
+          status: 409,
+          error: "The execution policy changed. Reload before retrying.",
+        };
+      }
+      const candidateRevisionId = randomUUID();
+      effectiveCatalog.executionPolicyRevisions.push({
+        id: candidateRevisionId,
+        workspaceId,
       });
-      if (policyError) {
-        if (policyError.code === "PT409") {
-          return {
-            ok: false,
-            status: 409,
-            error: "The execution policy changed. Reload before retrying.",
-          };
-        }
-        if (policyError.code === "42501") {
-          return { ok: false, status: 403, error: "Active workspace manager access is required." };
-        }
-        return { ok: false, status: 400, error: "Invalid execution policy." };
-      }
-      if (!revisionRow) {
-        return { ok: false, status: 500, error: "Could not save the execution policy." };
-      }
-      candidate.executionPolicy = revisionRow.id;
+      candidate.executionPolicy = candidateRevisionId;
+      pendingExecutionPolicy = {
+        revisionId: candidateRevisionId,
+        requirements: patch.requirements as Json,
+        expectedLiveRevision: patch.expectedPolicyRevision,
+      };
       break;
     }
 
@@ -751,30 +830,26 @@ export async function mutateSettingsFactoryDefinition({
           error: "Choose a delivery policy revision for the active pipeline.",
         };
       }
-      const { data: revisionRow, error: policyError } = await admin.rpc("save_delivery_policy", {
-        p_workspace_id: workspaceId,
-        p_pipeline_id: patch.pipelineId,
-        p_actor_user_id: actorUserId,
-        p_expected_revision: patch.expectedPolicyRevision,
-        p_requirements: patch.requirements,
+      if (patch.expectedPolicyRevision !== currentState.liveDeliveryPolicyRevision) {
+        return {
+          ok: false,
+          status: 409,
+          error: "The delivery policy changed. Reload before retrying.",
+        };
+      }
+      const candidateRevisionId = randomUUID();
+      effectiveCatalog.deliveryPolicyRevisions.push({
+        id: candidateRevisionId,
+        workspaceId,
+        pipelineId: patch.pipelineId,
       });
-      if (policyError) {
-        if (policyError.code === "PT409") {
-          return {
-            ok: false,
-            status: 409,
-            error: "The delivery policy changed. Reload before retrying.",
-          };
-        }
-        if (policyError.code === "42501") {
-          return { ok: false, status: 403, error: "Active workspace manager access is required." };
-        }
-        return { ok: false, status: 400, error: "Invalid delivery policy." };
-      }
-      if (!revisionRow) {
-        return { ok: false, status: 500, error: "Could not save the delivery policy." };
-      }
-      candidate.deliveryPolicy = revisionRow.id;
+      candidate.deliveryPolicy = candidateRevisionId;
+      pendingDeliveryPolicy = {
+        revisionId: candidateRevisionId,
+        pipelineId: patch.pipelineId,
+        requirements: patch.requirements as Json,
+        expectedLiveRevision: patch.expectedPolicyRevision,
+      };
       break;
     }
 
@@ -784,33 +859,74 @@ export async function mutateSettingsFactoryDefinition({
     }
   }
 
-  const savedDraft = await mutateFactoryDefinition({
-    admin,
-    workspaceId,
-    actorUserId,
-    command: {
-      action: "draft",
-      expectedActivationNumber: command.expectedActivationNumber,
-      source: { kind: "structured", value: candidate },
-    },
-  });
-
-  if (!savedDraft.ok) {
+  const compiled = compileFactoryDefinition(
+    { kind: "structured", value: candidate },
+    effectiveCatalog,
+  );
+  if (!compiled.ok) {
     return {
       ok: false,
-      status: savedDraft.status,
-      error: savedDraft.diagnostics?.[0]?.message ?? savedDraft.error,
-      diagnostics: savedDraft.diagnostics,
+      status: 422,
+      error: compiled.diagnostics[0]?.message ?? "Review the factory definition before retrying.",
+      diagnostics: compiled.diagnostics,
     };
   }
 
-  const nextState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
-  const livePipeline = await loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId);
+  const { data: savedDraftRow, error: saveError } = await admin.rpc(
+    "save_settings_factory_definition_draft",
+    {
+      p_workspace_id: workspaceId,
+      p_factory_id: currentState.factoryId,
+      p_actor_user_id: actorUserId,
+      p_expected_activation_number: command.expectedActivationNumber,
+      p_definition_json: compiled.definitionJson,
+      p_canonical_digest: compiled.canonicalDigest,
+      ...(command.expectedDraftId ? { p_expected_draft_id: command.expectedDraftId } : {}),
+      ...(pendingExecutionPolicy
+        ? {
+            p_execution_policy_revision_id: pendingExecutionPolicy.revisionId,
+            p_execution_policy_requirements: pendingExecutionPolicy.requirements,
+            p_expected_live_execution_policy_revision: pendingExecutionPolicy.expectedLiveRevision,
+          }
+        : {}),
+      ...(pendingDeliveryPolicy
+        ? {
+            p_delivery_policy_revision_id: pendingDeliveryPolicy.revisionId,
+            p_delivery_policy_pipeline_id: pendingDeliveryPolicy.pipelineId,
+            p_delivery_policy_requirements: pendingDeliveryPolicy.requirements,
+            p_expected_live_delivery_policy_revision: pendingDeliveryPolicy.expectedLiveRevision,
+          }
+        : {}),
+      ...(pendingPipelineRename
+        ? {
+            p_pipeline_rename_id: pendingPipelineRename.id,
+            p_pipeline_rename_name: pendingPipelineRename.name,
+          }
+        : {}),
+      ...(pendingNewStages.length > 0 ? { p_new_pipeline_stages: pendingNewStages as Json } : {}),
+    },
+  );
+
+  if (saveError || !savedDraftRow) {
+    return mapDraftRpcError(saveError);
+  }
+
+  const [nextState, livePipeline] = await Promise.all([
+    loadSettingsFactoryDefinitionState(admin, workspaceId),
+    loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId),
+  ]);
+  const priorDefinitions = await loadFactoryDefinitionHistoryForStages(
+    admin,
+    workspaceId,
+    nextState,
+    [currentState.activeDefinition, currentState.currentActivation?.definition],
+  );
   const pipeline =
     nextState.activeDefinition && livePipeline
       ? pipelineFromFactoryDefinition(
           { ...livePipeline, name: nextPipelineName },
           nextState.activeDefinition,
+          priorDefinitions,
         )
       : (livePipeline ?? undefined);
 

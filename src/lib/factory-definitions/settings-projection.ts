@@ -33,12 +33,21 @@ export function agentConfigFromFactoryDefinition(
 export function pipelineFromFactoryDefinition(
   currentPipeline: PipelineConfiguration | null,
   definition: CompiledFactoryDefinition,
+  priorDefinitions: readonly CompiledFactoryDefinition[] = [],
 ): PipelineConfiguration {
   const existingStages = [
     ...(currentPipeline?.stages ?? []),
     ...(currentPipeline?.archivedStages ?? []),
   ];
   const activeStageIds = new Set(definition.stages.map((stage) => stage.id));
+  const priorStageById = new Map<string, CompiledFactoryDefinition["stages"][number]>();
+  for (const prior of priorDefinitions) {
+    for (const stage of prior.stages) {
+      if (!priorStageById.has(stage.id)) {
+        priorStageById.set(stage.id, stage);
+      }
+    }
+  }
 
   const stages: PipelineStage[] = definition.stages.map((stage, index) => ({
     anyoneCanApprove: stage.anyoneCanApprove,
@@ -54,13 +63,27 @@ export function pipelineFromFactoryDefinition(
 
   const archivedStages = existingStages
     .filter((stage) => !activeStageIds.has(stage.id))
-    .map((stage) => ({
-      ...stage,
-      archivedAt:
-        "archivedAt" in stage && typeof stage.archivedAt === "string"
-          ? stage.archivedAt
-          : "1970-01-01T00:00:00.000Z",
-    }));
+    .map((stage) => {
+      const definedStage = priorStageById.get(stage.id);
+      return {
+        ...stage,
+        ...(definedStage
+          ? {
+              anyoneCanApprove: definedStage.anyoneCanApprove,
+              approverMemberIds: [...definedStage.approverMemberIds],
+              description: definedStage.description,
+              name: definedStage.name,
+              pipelineId: definition.pipelineId,
+              promptTemplateMd: definedStage.promptTemplateMd,
+              slug: definedStage.slug,
+            }
+          : {}),
+        archivedAt:
+          "archivedAt" in stage && typeof stage.archivedAt === "string"
+            ? stage.archivedAt
+            : "1970-01-01T00:00:00.000Z",
+      };
+    });
 
   return {
     archivedStages,
@@ -128,7 +151,11 @@ export function projectSettingsDataWithFactoryDefinition<
     SettingsSetupData,
     "agentConfig" | "factoryDefinition" | "pipeline" | "sandboxSettings" | "setupHealth"
   >,
->(current: T, state: SettingsFactoryDefinitionState): T {
+>(
+  current: T,
+  state: SettingsFactoryDefinitionState,
+  options?: { priorDefinitions?: readonly CompiledFactoryDefinition[] },
+): T {
   if (!state.activeDefinition) {
     return {
       ...current,
@@ -137,7 +164,11 @@ export function projectSettingsDataWithFactoryDefinition<
   }
 
   const definition = state.activeDefinition;
-  const pipeline = pipelineFromFactoryDefinition(current.pipeline, definition);
+  const pipeline = pipelineFromFactoryDefinition(
+    current.pipeline,
+    definition,
+    options?.priorDefinitions,
+  );
   const agentConfig = agentConfigFromFactoryDefinition(definition);
   const configuredKeys = configuredAgentKeys(agentConfig);
 

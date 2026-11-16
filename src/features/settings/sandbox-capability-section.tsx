@@ -15,9 +15,15 @@ import type {
   SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
 
+type FactoryDefinitionCapabilityTarget = {
+  kind: "draft" | "revision";
+  id: string;
+  repositoryId: string;
+};
+
 type SandboxCapabilitySectionProps = {
   canManage: boolean;
-  draftTarget?: { id: string; repositoryId: string } | null;
+  definitionTarget?: FactoryDefinitionCapabilityTarget | null;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
   onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
   preferredRepositoryId?: string | null;
@@ -76,7 +82,7 @@ export function markSandboxCapabilityCheckPollingFailed(
 
 export function SandboxCapabilitySection({
   canManage,
-  draftTarget = null,
+  definitionTarget = null,
   initialCheck,
   onCheckChange,
   preferredRepositoryId,
@@ -115,20 +121,26 @@ export function SandboxCapabilitySection({
     );
   }, [preferredRepositoryId, repositories, repositoryIdsKey]);
 
-  const checkingDraft = Boolean(draftTarget && selectedRepositoryId === draftTarget.repositoryId);
-  const [checkedDraftId, setCheckedDraftId] = useState<string | null>(null);
+  const checkingDefinition = Boolean(
+    definitionTarget && selectedRepositoryId === definitionTarget.repositoryId,
+  );
+  const [checkedDefinitionTarget, setCheckedDefinitionTarget] = useState<{
+    kind: "draft" | "revision";
+    id: string;
+  } | null>(null);
 
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
     call: () => {
-      if (checkingDraft && draftTarget) {
-        setCheckedDraftId(draftTarget.id);
+      if (checkingDefinition && definitionTarget) {
+        const target = { kind: definitionTarget.kind, id: definitionTarget.id };
+        setCheckedDefinitionTarget(target);
         return fetch(`/api/workspaces/${workspaceId}/factory-definition/capability-check`, {
-          body: JSON.stringify({ target: { kind: "draft", id: draftTarget.id } }),
+          body: JSON.stringify({ target }),
           headers: { "Content-Type": "application/json" },
           method: "POST",
         });
       }
-      setCheckedDraftId(null);
+      setCheckedDefinitionTarget(null);
       return fetch(`/api/workspaces/${workspaceId}/sandbox-capability-check`, {
         body: JSON.stringify({
           repositoryId: selectedRepositoryId || undefined,
@@ -159,8 +171,10 @@ export function SandboxCapabilitySection({
     let cancelled = false;
     const timer = window.setInterval(async () => {
       try {
-        const pollUrl = checkedDraftId
-          ? `/api/workspaces/${workspaceId}/factory-definition/capability-check?draftId=${encodeURIComponent(checkedDraftId)}`
+        const pollUrl = checkedDefinitionTarget
+          ? `/api/workspaces/${workspaceId}/factory-definition/capability-check?${
+              checkedDefinitionTarget.kind === "draft" ? "draftId" : "revisionId"
+            }=${encodeURIComponent(checkedDefinitionTarget.id)}`
           : `/api/workspaces/${workspaceId}/sandbox-capability-check?repositoryId=${encodeURIComponent(repositoryId)}`;
         const response = await fetch(pollUrl, { cache: "no-store" });
         const body = (await response.json().catch(() => null)) as
@@ -208,7 +222,7 @@ export function SandboxCapabilitySection({
     };
   }, [
     check?.githubRepositoryId,
-    checkedDraftId,
+    checkedDefinitionTarget,
     isPolling,
     onCheckChange,
     setFlashMessage,

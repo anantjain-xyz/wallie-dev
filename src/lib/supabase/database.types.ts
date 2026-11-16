@@ -7310,6 +7310,44 @@ export type Database = {
         }
         Returns: boolean
       }
+      save_settings_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_canonical_digest: string
+          p_definition_json: string
+          p_delivery_policy_pipeline_id?: string
+          p_delivery_policy_requirements?: Json
+          p_delivery_policy_revision_id?: string
+          p_execution_policy_requirements?: Json
+          p_execution_policy_revision_id?: string
+          p_expected_activation_number: number
+          p_expected_draft_id?: string
+          p_expected_live_delivery_policy_revision?: number
+          p_expected_live_execution_policy_revision?: number
+          p_factory_id: string
+          p_new_pipeline_stages?: Json
+          p_pipeline_rename_id?: string
+          p_pipeline_rename_name?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number | null
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       save_workspace_repository_profile: {
         Args: {
           selected_build_command: string
