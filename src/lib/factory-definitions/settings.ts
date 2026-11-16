@@ -486,6 +486,18 @@ export async function loadPipelineConfigurationForFactoryDefinition(
   return loadDefaultPipelineConfigurationForWorkspace(client, workspaceId);
 }
 
+export function archivedStageIdsForDefinition(
+  pipeline: PipelineConfiguration | null,
+  definition: CompiledFactoryDefinition | null,
+): string[] {
+  if (!pipeline) return [];
+  const active = new Set((definition?.stages ?? []).map((stage) => stage.id));
+  const ids = [...pipeline.stages, ...(pipeline.archivedStages ?? [])]
+    .map((stage) => stage.id)
+    .filter((id) => !active.has(id));
+  return [...new Set(ids)];
+}
+
 export async function loadFactoryDefinitionHistoryForStages(
   client: ScopedClient,
   workspaceId: string,
@@ -494,6 +506,7 @@ export async function loadFactoryDefinitionHistoryForStages(
     "factoryId" | "currentActivation" | "latestDraft" | "activeDefinition"
   >,
   extraDefinitions: readonly (CompiledFactoryDefinition | null | undefined)[] = [],
+  options: { requiredStageIds?: readonly string[] } = {},
 ): Promise<CompiledFactoryDefinition[]> {
   type Candidate = { at: number; definition: CompiledFactoryDefinition };
   const recency = (value: string | null | undefined): number => {
@@ -515,35 +528,59 @@ export async function loadFactoryDefinitionHistoryForStages(
   }
 
   if (state.factoryId) {
-    const [draftsResult, revisionsResult] = await Promise.all([
-      client
-        .from("factory_definition_drafts")
-        .select("id, created_at, definition_json")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", state.factoryId)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .limit(20),
-      client
-        .from("factory_definition_revisions")
-        .select("id, created_at, definition_json")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", state.factoryId)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .limit(20),
-    ]);
-    if (draftsResult.error) throw draftsResult.error;
-    if (revisionsResult.error) throw revisionsResult.error;
+    const factoryId = state.factoryId;
+    const required = new Set(options.requiredStageIds ?? []);
+    const found = new Set<string>();
+    const collect = (definition: CompiledFactoryDefinition) => {
+      for (const stage of definition.stages) found.add(stage.id);
+    };
+    for (const candidate of candidates) collect(candidate.definition);
 
-    const rows = [...(draftsResult.data ?? []), ...(revisionsResult.data ?? [])].sort((a, b) => {
-      const timeDiff = recency(b.created_at) - recency(a.created_at);
-      if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
-      return b.id.localeCompare(a.id);
-    });
-    for (const row of rows) {
-      const parsed = parseCompiledDefinition(row.definition_json);
-      if (parsed) candidates.push({ at: recency(row.created_at), definition: parsed });
+    // Archived stages must keep their last definition-owned contents even
+    // after many later saves, so page until every required stage reappears
+    // (or history is exhausted).
+    const pageSize = 100;
+    const maxPages = 50;
+    for (let page = 0; page < maxPages; page += 1) {
+      const allRequiredFound = [...required].every((id) => found.has(id));
+      if (page > 0 && allRequiredFound) break;
+      const from = page * pageSize;
+      const to = from + pageSize - 1;
+      const [draftsResult, revisionsResult] = await Promise.all([
+        client
+          .from("factory_definition_drafts")
+          .select("id, created_at, definition_json")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+        client
+          .from("factory_definition_revisions")
+          .select("id, created_at, definition_json")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      ]);
+      if (draftsResult.error) throw draftsResult.error;
+      if (revisionsResult.error) throw revisionsResult.error;
+
+      const drafts = draftsResult.data ?? [];
+      const revisions = revisionsResult.data ?? [];
+      const rows = [...drafts, ...revisions].sort((a, b) => {
+        const timeDiff = recency(b.created_at) - recency(a.created_at);
+        if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
+        return b.id.localeCompare(a.id);
+      });
+      for (const row of rows) {
+        const parsed = parseCompiledDefinition(row.definition_json);
+        if (!parsed) continue;
+        collect(parsed);
+        candidates.push({ at: recency(row.created_at), definition: parsed });
+      }
+      if (drafts.length < pageSize && revisions.length < pageSize) break;
     }
   }
 
@@ -726,6 +763,9 @@ export async function mutateSettingsFactoryDefinition({
       workspaceId,
       nextState,
       [currentState.activeDefinition, currentState.currentActivation?.definition],
+      {
+        requiredStageIds: archivedStageIdsForDefinition(livePipeline, nextState.activeDefinition),
+      },
     );
     const pipeline =
       nextState.activeDefinition && livePipeline
@@ -821,6 +861,8 @@ export async function mutateSettingsFactoryDefinition({
         admin,
         workspaceId,
         currentState,
+        [],
+        { requiredStageIds: rows.map((row) => row.id) },
       );
       const effectiveSlugByStageId = new Map<string, string>();
       for (const row of rows) {
@@ -1037,6 +1079,9 @@ export async function mutateSettingsFactoryDefinition({
     workspaceId,
     nextState,
     [currentState.activeDefinition, currentState.currentActivation?.definition],
+    {
+      requiredStageIds: archivedStageIdsForDefinition(livePipeline, nextState.activeDefinition),
+    },
   );
   const pipeline =
     nextState.activeDefinition && livePipeline

@@ -12,6 +12,7 @@ import {
   type SettingsFactoryDefinitionState,
 } from "@/lib/factory-definitions/settings-contracts";
 import {
+  archivedStageIdsForDefinition,
   loadFactoryDefinitionHistoryForStages,
   loadPipelineConfigurationForFactoryDefinition,
   loadSettingsFactoryDefinitionState,
@@ -471,17 +472,6 @@ export async function loadSettingsPageData(
               rows: value.activeDefinition ? 1 : 0,
             }),
           );
-          const priorDefinitions = factoryDefinition.activeDefinition
-            ? await sectionTiming.segment(
-                "factory-definition-stage-history",
-                () =>
-                  loadFactoryDefinitionHistoryForStages(supabase, workspace.id, factoryDefinition),
-                (definitions) => ({
-                  payloadBytes: approximatePayloadSizeBytes(definitions),
-                  rows: definitions.length,
-                }),
-              )
-            : [];
           const definitionPipeline =
             factoryDefinition.activeDefinition &&
             factoryDefinition.activeDefinition.pipelineId !== data.pipeline?.id
@@ -499,6 +489,28 @@ export async function loadSettingsPageData(
                   }),
                 )
               : undefined;
+          const priorDefinitions = factoryDefinition.activeDefinition
+            ? await sectionTiming.segment(
+                "factory-definition-stage-history",
+                () =>
+                  loadFactoryDefinitionHistoryForStages(
+                    supabase,
+                    workspace.id,
+                    factoryDefinition,
+                    [],
+                    {
+                      requiredStageIds: archivedStageIdsForDefinition(
+                        definitionPipeline ?? data.pipeline,
+                        factoryDefinition.activeDefinition,
+                      ),
+                    },
+                  ),
+                (definitions) => ({
+                  payloadBytes: approximatePayloadSizeBytes(definitions),
+                  rows: definitions.length,
+                }),
+              )
+            : [];
           const activeDefinition = factoryDefinition.activeDefinition;
           const definitionDigest =
             factoryDefinition.latestDraft?.canonicalDigest ??

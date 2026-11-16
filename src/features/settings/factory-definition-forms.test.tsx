@@ -865,6 +865,97 @@ describe("Settings shared factory definition forms", () => {
     }
   });
 
+  it("keeps polling the original check target when a new draft is saved mid-check", async () => {
+    const initialDef = makeDefinition();
+    const runningCheck = {
+      agentModel: "gpt-5.6-sol",
+      agentProvider: "codex",
+      capabilities: {},
+      checkedAt: now,
+      errorText: null,
+      githubRepositoryId: repositoryId,
+      id: "check-running",
+      sandboxConnectionRevision: "rev-vercel",
+      sandboxProvider: "vercel" as const,
+      sandboxVercelProjectId: "prj_123",
+      sandboxVercelTeamId: "team_123",
+      status: "running" as const,
+    };
+    const baseData = makeSettingsData({
+      latestDraft: {
+        id: draftId,
+        baseActivationNumber: 1,
+        schemaVersion: 1,
+        canonicalDigest: "9e8d7c6b".repeat(8),
+        createdAt: now,
+        definition: initialDef,
+      },
+      activeDefinition: initialDef,
+    });
+    const dataWithCheck = {
+      ...baseData,
+      latestSandboxCapabilityCheck: runningCheck,
+      setupHealth: { ...baseData.setupHealth, latestSandboxCapabilityCheck: runningCheck },
+      github: {
+        ...baseData.github,
+        repositories: [
+          {
+            fullName: "acme/app",
+            id: repositoryId,
+            isArchived: false,
+          } as unknown as SettingsPageData["github"]["repositories"][number],
+        ],
+      },
+    };
+    const nextDraftId = "54500000-0002-4000-8000-0000000000ff";
+    const nextData = makeSettingsData({
+      latestDraft: {
+        id: nextDraftId,
+        baseActivationNumber: 1,
+        schemaVersion: 1,
+        canonicalDigest: "8f7e6d5c".repeat(8),
+        createdAt: now,
+        definition: makeDefinition({ operatingRulesMd: "Newer draft." }),
+      },
+      activeDefinition: makeDefinition({ operatingRulesMd: "Newer draft." }),
+    });
+    const passedCheck = {
+      ...runningCheck,
+      capabilities: { git: { ok: true, detail: null } },
+      status: "success" as const,
+    };
+
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ check: passedCheck }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { rerender } = render(
+        <OverlayProvider>
+          <VerifySetupSection data={dataWithCheck} setData={vi.fn()} setFlashMessage={vi.fn()} />
+        </OverlayProvider>,
+      );
+
+      rerender(
+        <OverlayProvider>
+          <VerifySetupSection
+            data={{ ...nextData, github: dataWithCheck.github }}
+            setData={vi.fn()}
+            setFlashMessage={vi.fn()}
+          />
+        </OverlayProvider>,
+      );
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        `/api/workspaces/${workspaceId}/factory-definition/capability-check?draftId=${draftId}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears busy state and surfaces errors when publish or reload fetch rejects", async () => {
     const user = userEvent.setup();
     const draftDef = makeDefinition();

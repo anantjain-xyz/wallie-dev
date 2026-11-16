@@ -133,17 +133,6 @@ export function SandboxCapabilitySection({
     id: string;
   } | null>(initialDefinitionTarget);
 
-  // A restored running receipt must keep polling its own definition target,
-  // not the legacy workspace endpoint.
-  useEffect(() => {
-    if (!definitionTarget || !initialCheck) return;
-    setCheckedDefinitionTarget((current) =>
-      current?.kind === definitionTarget.kind && current.id === definitionTarget.id
-        ? current
-        : { kind: definitionTarget.kind, id: definitionTarget.id },
-    );
-  }, [definitionTarget, initialCheck]);
-
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
     call: () => {
       if (checkingDefinition && definitionTarget) {

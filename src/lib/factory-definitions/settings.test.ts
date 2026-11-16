@@ -1033,6 +1033,82 @@ describe("factory definition Settings loader & mutations", () => {
     expect(anchor?.slug.endsWith("-")).toBe(false);
   });
 
+  it("pages past the newest 20 definitions to retain an archived stage's last contents", async () => {
+    const archivedStageId = "54500000-0001-4000-8000-000000000088";
+    const archivedDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: pipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: deliveryPolicyId,
+          operatingRulesMd: "archived rules",
+          stages: [
+            {
+              id: archivedStageId,
+              slug: "archived",
+              name: "Archived prompt",
+              description: "",
+              promptTemplateMd: "Archived prompt.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+      catalog,
+    );
+    if (!archivedDef.ok) throw new Error("Archived fixture failed to compile.");
+
+    const makeRow = (index: number, definitionJson: string) => ({
+      id: `54500000-0001-4000-8000-${String(index).padStart(12, "0")}`,
+      created_at: new Date(Date.UTC(2026, 10, 15, 20, 0, index)).toISOString(),
+      definition_json: definitionJson,
+    });
+    const olderRows = Array.from({ length: 100 }, (_, index) =>
+      makeRow(index, compiledActive.definitionJson),
+    );
+    const olderRevRows = Array.from({ length: 100 }, (_, index) =>
+      makeRow(index + 100, compiledActive.definitionJson),
+    );
+
+    const { admin } = makeClient(({ url }) => {
+      const from = Number(url.searchParams.get("offset") ?? 0);
+      if (url.pathname.endsWith("/factory_definition_drafts")) {
+        if (from === 0) return Response.json(olderRows);
+        if (from === 100) return Response.json([makeRow(200, archivedDef.definitionJson)]);
+        return Response.json([]);
+      }
+      if (url.pathname.endsWith("/factory_definition_revisions")) {
+        if (from === 0) return Response.json(olderRevRows);
+        return Response.json([]);
+      }
+      return Response.json([]);
+    });
+
+    const history = await loadFactoryDefinitionHistoryForStages(
+      admin,
+      workspaceId,
+      {
+        factoryId,
+        currentActivation: null,
+        latestDraft: null,
+        activeDefinition: null,
+      },
+      [],
+      { requiredStageIds: [archivedStageId] },
+    );
+
+    expect(
+      history.some((definition) => definition.stages.some((stage) => stage.id === archivedStageId)),
+    ).toBe(true);
+  });
+
   it("orders definition history newest first so a newer draft keeps its reused slug", async () => {
     const otherStageId = "54500000-0001-4000-8000-000000000066";
     const fixturesCatalog: FactoryDefinitionCatalog = catalog;
