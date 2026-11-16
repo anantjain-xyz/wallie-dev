@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { loadFactoryDefinitionCatalog } from "./authority";
@@ -138,7 +139,7 @@ export async function loadFactoryEditorSnapshot(
   const head = await loadEditorHead(client, workspaceId);
   if (!head) return null;
   const { activation, activationNumber, draft, factoryId } = head;
-  const [published, baseline] = await Promise.all([
+  const [published, baseline, sandbox] = await Promise.all([
     activation
       ? readEditorDocument(client, workspaceId, factoryId, {
           kind: "revision",
@@ -146,6 +147,7 @@ export async function loadFactoryEditorSnapshot(
         })
       : null,
     !activation && !draft ? loadEditorBaseline(client, workspaceId) : null,
+    loadWorkspaceSandboxOverview(client, workspaceId),
   ]);
   // If the workspace is deleted during the load, the observed activation can no longer be resolved.
   if (activation && !published) return null;
@@ -154,6 +156,9 @@ export async function loadFactoryEditorSnapshot(
     published,
     draft: draft ? editorDocument(draft, "draft") : null,
     baseline,
+    readySandboxProviders: sandbox.enabledProviders.filter(
+      (provider) => sandbox.connections[provider]?.status === "connected",
+    ),
   };
 }
 

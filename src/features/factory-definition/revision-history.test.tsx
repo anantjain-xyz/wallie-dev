@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PortalRootProvider } from "@/components/ui/portal-root";
@@ -116,13 +116,27 @@ it("links selected immutable source and confirms the revision against the displa
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Roll back to this revision" }));
-  expect(await screen.findByRole("alertdialog", { name: "Activate this revision?" })).toBeVisible();
+  const dialog = await screen.findByRole("alertdialog", { name: "Activate this revision?" });
+  expect(within(dialog).getByText("Current activation")).toBeVisible();
+  expect(within(dialog).getByText("#2")).toBeVisible();
+  expect(within(dialog).getByText("Selected revision digest")).toBeVisible();
+  expect(within(dialog).getByText(savedRevision.digest)).toBeVisible();
   expect(onRollback).toHaveBeenCalledTimes(0);
 
+  const newSelection = { ...savedRevision, id: currentId, digest: "e".repeat(64) };
   rerender(
-    <FactoryRevisionHistory {...baseProps} activeActivationNumber={3} onRollback={onRollback} />,
+    <FactoryRevisionHistory
+      {...baseProps}
+      activeActivationNumber={3}
+      activeRevisionId="5bd1bb28-7745-4e7a-a1ff-f87ef2226793"
+      onRollback={onRollback}
+      selectedDocument={newSelection}
+      selectedRevisionId={newSelection.id}
+    />,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Activate revision" }));
+  expect(within(dialog).getByText("#2")).toBeVisible();
+  expect(within(dialog).getByText(savedRevision.digest)).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Activate revision" }));
   await waitFor(() => expect(onRollback).toHaveBeenCalledWith(olderId, 2));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 });

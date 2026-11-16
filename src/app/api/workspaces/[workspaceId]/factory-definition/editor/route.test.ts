@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { compileFactoryDefinition } from "@/lib/factory-definitions/compiler";
 import {
@@ -132,6 +132,11 @@ function authorized({ initial = false } = {}) {
     delivery_policies: [],
     workspace_onboarding: [],
     workspace_sandbox_settings: [],
+    workspace_vercel_sandbox_connections: [{ status: "connected" }],
+    workspace_e2b_sandbox_connections: [{ status: "error" }],
+    workspace_daytona_sandbox_connections: [
+      { status: "connected", api_url: "https://app.daytona.io/api" },
+    ],
     workspace_agent_config: [],
     workspace_members: [],
   };
@@ -165,9 +170,11 @@ function preview(body: unknown) {
 }
 
 beforeEach(() => vi.resetAllMocks());
+afterEach(() => vi.unstubAllEnvs());
 
 describe("factory definition editor reads", () => {
-  it("returns the active immutable revision and shared draft for the current activation", async () => {
+  it("returns the current revision, shared draft, and only enabled, connected providers", async () => {
+    vi.stubEnv("WALLIE_ENABLED_SANDBOX_PROVIDERS", "vercel,e2b");
     const { requests } = authorized();
     const response = await GET(new Request(routeUrl), context());
     expect(response.status).toBe(200);
@@ -176,6 +183,7 @@ describe("factory definition editor reads", () => {
     expect(snapshot).toMatchObject({
       activationNumber: 4,
       baseline: null,
+      readySandboxProviders: ["vercel"],
       published: {
         id: revisionId,
         kind: "revision",
@@ -192,9 +200,10 @@ describe("factory definition editor reads", () => {
     expect(requireWorkspaceAccessById).toHaveBeenCalledWith(workspaceId, { requireManager: true });
     for (const request of requests) {
       expect(request.query.get("workspace_id")).toBe(`eq.${workspaceId}`);
-      if (request.table !== "factories") {
+      if (request.table.startsWith("factory_definition_")) {
         expect(request.query.get("factory_id")).toBe(`eq.${factoryId}`);
       }
+      expect(request.query.get("select")).not.toMatch(/encrypted_/u);
     }
     expect(
       requests

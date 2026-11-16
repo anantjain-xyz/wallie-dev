@@ -603,7 +603,9 @@ export function FactoryDefinitionEditor({
                     }}
                     initialCheck={null}
                     repositories={repositories}
-                    sandboxConnected
+                    sandboxConnected={snapshot.readySandboxProviders.includes(
+                      capabilityTarget.bundle.sandboxProvider,
+                    )}
                     setFlashMessage={setFeedback}
                     workspaceId={workspaceId}
                   />

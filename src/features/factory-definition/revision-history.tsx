@@ -30,6 +30,7 @@ type RevisionHistoryProps = {
 
 type RollbackConfirmation = {
   revisionId: string;
+  revisionDigest: string;
   activationNumber: number;
 };
 
@@ -217,7 +218,11 @@ export function FactoryRevisionHistory({
           setRollbackError(null);
           setConfirmation(
             open && allowRollback
-              ? { revisionId: selectedDocument.id, activationNumber: activeActivationNumber }
+              ? {
+                  revisionId: selectedDocument.id,
+                  revisionDigest: selectedDocument.digest,
+                  activationNumber: activeActivationNumber,
+                }
               : null,
           );
         }}
@@ -233,7 +238,22 @@ export function FactoryRevisionHistory({
             </button>
           ) : undefined
         }
-      />
+      >
+        {confirmation && (
+          <dl className="mt-4 space-y-2 text-xs">
+            <div>
+              <dt className="text-muted">Current activation</dt>
+              <dd className="font-mono text-foreground">#{confirmation.activationNumber}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Selected revision digest</dt>
+              <dd className="font-mono text-foreground [overflow-wrap:anywhere]">
+                {confirmation.revisionDigest}
+              </dd>
+            </div>
+          </dl>
+        )}
+      </DestructiveConfirmationDialog>
     </section>
   );
 }

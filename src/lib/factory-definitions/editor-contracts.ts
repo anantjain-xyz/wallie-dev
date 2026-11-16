@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
+
 import {
   compiledFactoryDefinitionSchema,
   factoryDefinitionExpectedActivationSchema,
@@ -27,6 +29,7 @@ export const factoryEditorSnapshotSchema = z.object({
   published: documentSchema.nullable(),
   draft: documentSchema.nullable(),
   baseline: z.object({ source: serialFactoryDefinitionSchema }).nullable(),
+  readySandboxProviders: z.array(sandboxProviderSchema),
 });
 export const factoryEditorSnapshotResponseSchema = z.object({
   snapshot: factoryEditorSnapshotSchema,

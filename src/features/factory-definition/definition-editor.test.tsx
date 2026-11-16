@@ -89,6 +89,7 @@ const published = document(5, "revision", source);
 const draft = document(6, "draft", source);
 const previous = document(7, "revision", {
   ...source,
+  sandboxProvider: "e2b",
   operatingRulesMd: "Earlier rule.",
 });
 const activation = (document: FactoryEditorDocument, number: number) => ({
@@ -100,7 +101,13 @@ const activation = (document: FactoryEditorDocument, number: number) => ({
 });
 
 function setup() {
-  let snapshot: FactoryEditorSnapshot = { activationNumber: 2, published, draft, baseline: null };
+  let snapshot: FactoryEditorSnapshot = {
+    activationNumber: 2,
+    published,
+    draft,
+    baseline: null,
+    readySandboxProviders: ["vercel"],
+  };
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
   const records = new Map([published, previous, draft].map((document) => [document.id, document]));
   vi.stubGlobal("fetch", async (url: string, options?: RequestInit) => {
@@ -170,6 +177,9 @@ function setup() {
   );
   return {
     requests,
+    updateReadyProviders(readySandboxProviders: FactoryEditorSnapshot["readySandboxProviders"]) {
+      snapshot = { ...snapshot, readySandboxProviders };
+    },
     updateDraft() {
       const next = document(10, "draft", { ...source, operatingRulesMd: "Externally updated." });
       snapshot = { ...snapshot, draft: next };
@@ -248,4 +258,21 @@ it("activates an immutable selected revision using the displayed activation guar
     path: endpoint,
     body: { action: "rollback", expectedActivationNumber: 2, revisionId: previous.id },
   });
+});
+
+it("checks readiness for the selected revision's provider and refreshes it with the editor", async () => {
+  const { updateReadyProviders } = setup();
+  const runCheck = () => screen.getByRole("button", { name: "Run capability check" });
+  await screen.findByRole("button", { name: "Run capability check" });
+  await waitFor(() => expect(runCheck()).toBeEnabled());
+
+  fireEvent.click(screen.getByRole("button", { name: /Activation #1/ }));
+  expect(
+    await screen.findByText("Connect a sandbox provider before running a capability check."),
+  ).toBeVisible();
+  expect(runCheck()).toBeDisabled();
+
+  updateReadyProviders(["vercel", "e2b"]);
+  fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
+  await waitFor(() => expect(runCheck()).toBeEnabled());
 });
