@@ -278,28 +278,36 @@ function DeliveryPolicyControls({
     setMessage(null);
     if (hasServerFactoryState) {
       setLoadState("loading");
-      const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
-      if (!result.ok) {
+      try {
+        const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+        if (!result.ok) {
+          setLoadState("error");
+          setMessage({ kind: "error", text: result.error });
+          return;
+        }
+        if (result.data.pipeline) {
+          dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+        }
+        dispatchSettingsDataChanged(workspaceId, (current) => ({
+          ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+          ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+        }));
+        const nextPolicy =
+          result.data.state.deliveryPolicy &&
+          result.data.state.deliveryPolicy.pipelineId === pipelineId
+            ? result.data.state.deliveryPolicy
+            : null;
+        setPolicy(nextPolicy);
+        setDraft(toDraft(nextPolicy?.requirements ?? newRequirements));
+        setConflict(false);
+        setLoadState("ready");
+      } catch (error) {
         setLoadState("error");
-        setMessage({ kind: "error", text: result.error });
-        return;
+        setMessage({
+          kind: "error",
+          text: error instanceof Error ? error.message : "Could not reload delivery policy.",
+        });
       }
-      if (result.data.pipeline) {
-        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
-      }
-      dispatchSettingsDataChanged(workspaceId, (current) => ({
-        ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
-        ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
-      }));
-      const nextPolicy =
-        result.data.state.deliveryPolicy &&
-        result.data.state.deliveryPolicy.pipelineId === pipelineId
-          ? result.data.state.deliveryPolicy
-          : null;
-      setPolicy(nextPolicy);
-      setDraft(toDraft(nextPolicy?.requirements ?? newRequirements));
-      setConflict(false);
-      setLoadState("ready");
       return;
     }
 

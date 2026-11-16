@@ -397,20 +397,28 @@ export function AgentConfigSection({
   async function handleReloadDefinition() {
     if (isReloading || isSaving) return;
     setIsReloading(true);
-    const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
-    setIsReloading(false);
-    if (!result.ok) {
-      setFlashMessage({ kind: "error", text: result.error });
-      return;
+    try {
+      const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+      if (!result.ok) {
+        setFlashMessage({ kind: "error", text: result.error });
+        return;
+      }
+      if (result.data.pipeline) {
+        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+      }
+      dispatchSettingsDataChanged(workspaceId, (current) => ({
+        ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+        ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+      }));
+      setFlashMessage({ kind: "info", text: "Reloaded saved factory definition." });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Could not reload factory definition state.",
+      });
+    } finally {
+      setIsReloading(false);
     }
-    if (result.data.pipeline) {
-      dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
-    }
-    dispatchSettingsDataChanged(workspaceId, (current) => ({
-      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
-      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
-    }));
-    setFlashMessage({ kind: "info", text: "Reloaded saved factory definition." });
   }
 
   async function handleSaveAll() {

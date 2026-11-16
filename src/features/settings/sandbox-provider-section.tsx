@@ -252,6 +252,11 @@ export function SandboxProviderSection({
       }));
       setLocalConflict(null);
       setFlashMessage({ kind: "info", text: "Reloaded saved factory definition." });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Could not reload factory definition state.",
+      });
     } finally {
       setPending(null);
     }

@@ -44,52 +44,69 @@ export function FactoryDefinitionIsland({ initialData }: { initialData: Settings
     if (isBusy) return;
     setBusyAction("reload");
     setMessage(null);
-    const result = await reloadSettingsFactoryDefinition(workspaceId, state);
-    setBusyAction(null);
-    if (!result.ok) {
-      setMessage({ kind: "error", text: result.error });
-      return;
+    try {
+      const result = await reloadSettingsFactoryDefinition(workspaceId, state);
+      if (!result.ok) {
+        setMessage({ kind: "error", text: result.error });
+        return;
+      }
+      if (result.data.pipeline) {
+        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+      }
+      dispatchSettingsDataChanged(workspaceId, (current) => ({
+        ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+        ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+      }));
+      setMessage({ kind: "info", text: "Reloaded the latest factory definition." });
+    } catch (error) {
+      setMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Could not reload factory definition state.",
+      });
+    } finally {
+      setBusyAction(null);
     }
-    if (result.data.pipeline) {
-      dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
-    }
-    dispatchSettingsDataChanged(workspaceId, (current) => ({
-      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
-      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
-    }));
-    setMessage({ kind: "info", text: "Reloaded the latest factory definition." });
   }
 
   async function handlePublish() {
     if (isBusy || !latestDraft || hasUnsaved || conflict) return;
     setBusyAction("publish");
     setMessage(null);
-    const result = await publishSettingsFactoryDraft(workspaceId, state);
-    setBusyAction(null);
-    if (!result.ok) {
-      const detail = result.diagnostics?.[0]?.message;
+    try {
+      const result = await publishSettingsFactoryDraft(workspaceId, state);
+      if (!result.ok) {
+        const detail = result.diagnostics?.[0]?.message;
+        setMessage({
+          kind: "error",
+          text: detail && detail !== result.error ? `${result.error} ${detail}` : result.error,
+        });
+        return;
+      }
+      if (result.data.pipeline) {
+        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+      }
+      dispatchSettingsDataChanged(workspaceId, (current) => ({
+        ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+        ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+      }));
+      const activationNumber =
+        result.data.activation?.activationNumber ??
+        result.data.state.currentActivation?.activationNumber;
+      setMessage({
+        kind: "success",
+        text: activationNumber
+          ? `Published activation #${activationNumber}. New sessions will use this revision.`
+          : "Published factory definition.",
+      });
+    } catch (error) {
       setMessage({
         kind: "error",
-        text: detail && detail !== result.error ? `${result.error} ${detail}` : result.error,
+        text:
+          error instanceof Error ? error.message : "Could not publish factory definition draft.",
       });
-      return;
+    } finally {
+      setBusyAction(null);
     }
-    if (result.data.pipeline) {
-      dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
-    }
-    dispatchSettingsDataChanged(workspaceId, (current) => ({
-      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
-      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
-    }));
-    const activationNumber =
-      result.data.activation?.activationNumber ??
-      result.data.state.currentActivation?.activationNumber;
-    setMessage({
-      kind: "success",
-      text: activationNumber
-        ? `Published activation #${activationNumber}. New sessions will use this revision.`
-        : "Published factory definition.",
-    });
   }
 
   const guidance = !canRoute

@@ -58,6 +58,14 @@ function getOrCreateStore(
   workspaceId: string,
   initialState?: SettingsFactoryDefinitionState,
 ): StoreEntry {
+  if (typeof window === "undefined") {
+    return {
+      conflict: null,
+      dirtySections: new Set(),
+      state: initialState ?? createEmptySettingsFactoryDefinitionState(),
+      subscribers: 0,
+    };
+  }
   const existing = stores.get(workspaceId);
   if (existing) return existing;
   const created: StoreEntry = {
@@ -71,6 +79,7 @@ function getOrCreateStore(
 }
 
 function notifyStore(workspaceId: string) {
+  if (typeof window === "undefined") return;
   const entry = stores.get(workspaceId);
   if (!entry) return;
   dispatchSettingsEvent(SETTINGS_FACTORY_DEFINITION_CHANGED, {
@@ -86,6 +95,7 @@ export function setFactorySectionDirty(
   section: FactoryDirtySection,
   dirty: boolean,
 ) {
+  if (typeof window === "undefined") return;
   const entry = stores.get(workspaceId);
   if (!entry) return;
   const had = entry.dirtySections.has(section);
@@ -193,43 +203,52 @@ export async function saveSettingsFactoryDraft(
     patch,
   };
 
-  const response = await fetch(`/api/workspaces/${workspaceId}/factory-definition/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(command),
-  });
-  const body = (await response.json().catch(() => null)) as
-    | (SettingsFactoryMutationPayload & { error?: never })
-    | {
-        error?: string;
-        diagnostics?: FactoryDefinitionDiagnostic[];
-        fieldErrors?: Record<string, string>;
-      }
-    | null;
+  try {
+    const response = await fetch(`/api/workspaces/${workspaceId}/factory-definition/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (SettingsFactoryMutationPayload & { error?: never })
+      | {
+          error?: string;
+          diagnostics?: FactoryDefinitionDiagnostic[];
+          fieldErrors?: Record<string, string>;
+        }
+      | null;
 
-  if (response.status === 409) {
-    const message =
-      (body && "error" in body && body.error) ||
-      "The factory definition changed. Reload before retrying.";
-    entry.conflict = message;
+    if (response.status === 409) {
+      const message =
+        (body && "error" in body && body.error) ||
+        "The factory definition changed. Reload before retrying.";
+      entry.conflict = message;
+      notifyStore(workspaceId);
+      return { ok: false, status: 409, error: message };
+    }
+
+    if (!response.ok || !body || !("state" in body)) {
+      return {
+        ok: false,
+        status: response.status,
+        error:
+          (body && "error" in body && body.error) || "Could not save factory definition draft.",
+        diagnostics: body && "diagnostics" in body ? body.diagnostics : undefined,
+        fieldErrors: body && "fieldErrors" in body ? body.fieldErrors : undefined,
+      };
+    }
+
+    entry.state = body.state;
+    entry.conflict = null;
     notifyStore(workspaceId);
-    return { ok: false, status: 409, error: message };
-  }
-
-  if (!response.ok || !body || !("state" in body)) {
+    return { ok: true, data: body };
+  } catch (error) {
     return {
       ok: false,
-      status: response.status,
-      error: (body && "error" in body && body.error) || "Could not save factory definition draft.",
-      diagnostics: body && "diagnostics" in body ? body.diagnostics : undefined,
-      fieldErrors: body && "fieldErrors" in body ? body.fieldErrors : undefined,
+      status: 0,
+      error: error instanceof Error ? error.message : "Could not save factory definition draft.",
     };
   }
-
-  entry.state = body.state;
-  entry.conflict = null;
-  notifyStore(workspaceId);
-  return { ok: true, data: body };
 }
 
 export async function publishSettingsFactoryDraft(
@@ -248,44 +267,52 @@ export async function publishSettingsFactoryDraft(
     draftId,
   };
 
-  const response = await fetch(`/api/workspaces/${workspaceId}/factory-definition/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(command),
-  });
-  const body = (await response.json().catch(() => null)) as
-    | (SettingsFactoryMutationPayload & { error?: never })
-    | {
-        error?: string;
-        diagnostics?: FactoryDefinitionDiagnostic[];
-        fieldErrors?: Record<string, string>;
-      }
-    | null;
+  try {
+    const response = await fetch(`/api/workspaces/${workspaceId}/factory-definition/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (SettingsFactoryMutationPayload & { error?: never })
+      | {
+          error?: string;
+          diagnostics?: FactoryDefinitionDiagnostic[];
+          fieldErrors?: Record<string, string>;
+        }
+      | null;
 
-  if (response.status === 409) {
-    const message =
-      (body && "error" in body && body.error) ||
-      "The active definition changed. Reload before publishing.";
-    entry.conflict = message;
+    if (response.status === 409) {
+      const message =
+        (body && "error" in body && body.error) ||
+        "The active definition changed. Reload before publishing.";
+      entry.conflict = message;
+      notifyStore(workspaceId);
+      return { ok: false, status: 409, error: message };
+    }
+
+    if (!response.ok || !body || !("state" in body)) {
+      return {
+        ok: false,
+        status: response.status,
+        error:
+          (body && "error" in body && body.error) || "Could not publish factory definition draft.",
+        diagnostics: body && "diagnostics" in body ? body.diagnostics : undefined,
+        fieldErrors: body && "fieldErrors" in body ? body.fieldErrors : undefined,
+      };
+    }
+
+    entry.state = body.state;
+    entry.conflict = null;
     notifyStore(workspaceId);
-    return { ok: false, status: 409, error: message };
-  }
-
-  if (!response.ok || !body || !("state" in body)) {
+    return { ok: true, data: body };
+  } catch (error) {
     return {
       ok: false,
-      status: response.status,
-      error:
-        (body && "error" in body && body.error) || "Could not publish factory definition draft.",
-      diagnostics: body && "diagnostics" in body ? body.diagnostics : undefined,
-      fieldErrors: body && "fieldErrors" in body ? body.fieldErrors : undefined,
+      status: 0,
+      error: error instanceof Error ? error.message : "Could not publish factory definition draft.",
     };
   }
-
-  entry.state = body.state;
-  entry.conflict = null;
-  notifyStore(workspaceId);
-  return { ok: true, data: body };
 }
 
 export async function reloadSettingsFactoryDefinition(
@@ -293,29 +320,36 @@ export async function reloadSettingsFactoryDefinition(
   fallbackState?: SettingsFactoryDefinitionState,
 ): Promise<{ ok: true; data: SettingsFactoryReloadPayload } | { ok: false; error: string }> {
   const entry = getOrCreateStore(workspaceId, fallbackState);
-  const response = await fetch(`/api/workspaces/${workspaceId}/factory-definition/settings`, {
-    cache: "no-store",
-  });
-  const body = (await response.json().catch(() => null)) as
-    | (SettingsFactoryReloadPayload & { error?: never })
-    | { error?: string }
-    | null;
+  try {
+    const response = await fetch(`/api/workspaces/${workspaceId}/factory-definition/settings`, {
+      cache: "no-store",
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (SettingsFactoryReloadPayload & { error?: never })
+      | { error?: string }
+      | null;
 
-  if (!response.ok || !body || !("state" in body)) {
+    if (!response.ok || !body || !("state" in body)) {
+      return {
+        ok: false,
+        error:
+          (body && "error" in body && body.error) || "Could not reload factory definition state.",
+      };
+    }
+
+    entry.state = body.state;
+    entry.conflict = null;
+    entry.dirtySections.clear();
+    notifyStore(workspaceId);
+    dispatchSettingsEvent(SETTINGS_FACTORY_DEFINITION_RELOADED, {
+      payload: body,
+      workspaceId,
+    } satisfies SettingsFactoryReloadEventDetail);
+    return { ok: true, data: body };
+  } catch (error) {
     return {
       ok: false,
-      error:
-        (body && "error" in body && body.error) || "Could not reload factory definition state.",
+      error: error instanceof Error ? error.message : "Could not reload factory definition state.",
     };
   }
-
-  entry.state = body.state;
-  entry.conflict = null;
-  entry.dirtySections.clear();
-  notifyStore(workspaceId);
-  dispatchSettingsEvent(SETTINGS_FACTORY_DEFINITION_RELOADED, {
-    payload: body,
-    workspaceId,
-  } satisfies SettingsFactoryReloadEventDetail);
-  return { ok: true, data: body };
 }

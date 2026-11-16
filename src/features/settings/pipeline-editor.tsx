@@ -221,20 +221,27 @@ export function PipelineEditor({
   async function handleReloadDefinition() {
     if (isReloading || isPending) return;
     setIsReloading(true);
-    const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
-    setIsReloading(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    try {
+      const result = await reloadSettingsFactoryDefinition(workspaceId, factoryState);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      if (result.data.pipeline) {
+        dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
+      }
+      dispatchSettingsDataChanged(workspaceId, (current) => ({
+        ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
+        ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
+      }));
+      announce("Reloaded saved factory definition.");
+    } catch (caught: unknown) {
+      setError(
+        caught instanceof Error ? caught.message : "Could not reload factory definition state.",
+      );
+    } finally {
+      setIsReloading(false);
     }
-    if (result.data.pipeline) {
-      dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, result.data.pipeline);
-    }
-    dispatchSettingsDataChanged(workspaceId, (current) => ({
-      ...projectSettingsDataWithFactoryDefinition(current, result.data.state),
-      ...(result.data.pipeline ? { pipeline: result.data.pipeline } : {}),
-    }));
-    announce("Reloaded saved factory definition.");
   }
 
   async function savePipeline(stagesToSave: DraftPipelineStage[]) {

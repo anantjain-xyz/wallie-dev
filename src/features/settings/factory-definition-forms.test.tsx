@@ -806,4 +806,42 @@ describe("Settings shared factory definition forms", () => {
       vi.useRealTimers();
     }
   });
+
+  it("clears busy state and surfaces errors when publish or reload fetch rejects", async () => {
+    const user = userEvent.setup();
+    const draftDef = makeDefinition();
+    const initialData = makeSettingsData({
+      latestDraft: {
+        id: draftId,
+        baseActivationNumber: 1,
+        schemaVersion: 1,
+        canonicalDigest: "9e8d7c6b".repeat(8),
+        createdAt: now,
+        definition: draftDef,
+      },
+      activeDefinition: draftDef,
+    });
+
+    const fetchMock = vi.fn().mockRejectedValue(new Error("Network offline"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <OverlayProvider>
+        <FactoryDefinitionIsland initialData={initialData} />
+      </OverlayProvider>,
+    );
+
+    const publishButton = screen.getByRole("button", { name: "Publish draft" });
+    const reloadButton = screen.getByRole("button", { name: "Reload" });
+
+    await user.click(publishButton);
+    expect(await screen.findByText("Network offline")).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+    expect(reloadButton).toBeEnabled();
+
+    await user.click(reloadButton);
+    expect(await screen.findByText("Network offline")).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+    expect(reloadButton).toBeEnabled();
+  });
 });
