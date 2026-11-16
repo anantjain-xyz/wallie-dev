@@ -930,6 +930,109 @@ describe("factory definition Settings loader & mutations", () => {
     ]);
   });
 
+  it("generates a valid anchor slug when the reused slug has a hyphen at the truncation boundary", async () => {
+    const longSlug = `${"a".repeat(49)}-tail`;
+    const longStageDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: pipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: deliveryPolicyId,
+          operatingRulesMd: "",
+          stages: [
+            {
+              id: stageId,
+              slug: longSlug,
+              name: "Long slug",
+              description: "",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+      catalog,
+    );
+    if (!longStageDef.ok) throw new Error("Long slug fixture failed to compile.");
+
+    let savedStages: unknown = null;
+    const { admin } = makeClient(
+      defaultStateResponder({
+        activationNumber: 1,
+        draft: {
+          id: draftId,
+          definition_json: longStageDef.definitionJson,
+          canonical_digest: longStageDef.canonicalDigest,
+        },
+        extraHandler: ({ method, url, body }) => {
+          if (url.pathname.endsWith("/pipeline_stages") && method === "GET") {
+            return Response.json([{ id: stageId, slug: longSlug, position: 1 }]);
+          }
+          if (url.pathname.endsWith("/rpc/save_settings_factory_definition_draft")) {
+            savedStages = (body as { p_new_pipeline_stages?: unknown }).p_new_pipeline_stages;
+            return Response.json({
+              id: draftId,
+              base_activation_number: 1,
+              schema_version: 1,
+              definition_json: longStageDef.definitionJson,
+              canonical_digest: longStageDef.canonicalDigest,
+              created_at: now,
+            });
+          }
+          return null;
+        },
+      }),
+    );
+
+    const res = await mutateSettingsFactoryDefinition({
+      admin,
+      workspaceId,
+      actorUserId,
+      command: {
+        action: "draft",
+        expectedActivationNumber: 1,
+        expectedDraftId: draftId,
+        patch: {
+          kind: "pipeline",
+          name: "Default",
+          operatingRulesMd: "",
+          stages: [
+            {
+              id: stageId,
+              slug: "plan",
+              name: "Plan",
+              description: "",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+            {
+              id: null,
+              slug: longSlug,
+              name: "Long slug",
+              description: "",
+              promptTemplateMd: "Build {{artifact.previousStages.plan}}.",
+              anyoneCanApprove: true,
+              approverMemberIds: [],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    const anchor = (savedStages as Array<{ slug: string }> | null)?.[0];
+    expect(anchor?.slug).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    expect(anchor?.slug.endsWith("-")).toBe(false);
+  });
+
   it("orders definition history newest first so a newer draft keeps its reused slug", async () => {
     const otherStageId = "54500000-0001-4000-8000-000000000066";
     const fixturesCatalog: FactoryDefinitionCatalog = catalog;

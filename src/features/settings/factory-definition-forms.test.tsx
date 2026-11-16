@@ -807,6 +807,64 @@ describe("Settings shared factory definition forms", () => {
     }
   });
 
+  it("continues polling a restored running definition check instead of the legacy endpoint", async () => {
+    const initialData = makeSettingsData();
+    const runningCheck = {
+      agentModel: "gpt-5.6-sol",
+      agentProvider: "codex",
+      capabilities: {},
+      checkedAt: now,
+      errorText: null,
+      githubRepositoryId: repositoryId,
+      id: "check-restored",
+      sandboxConnectionRevision: "rev-vercel",
+      sandboxProvider: "vercel" as const,
+      sandboxVercelProjectId: "prj_123",
+      sandboxVercelTeamId: "team_123",
+      status: "running" as const,
+    };
+    const initialWithCheck = {
+      ...initialData,
+      latestSandboxCapabilityCheck: runningCheck,
+      setupHealth: { ...initialData.setupHealth, latestSandboxCapabilityCheck: runningCheck },
+      github: {
+        ...initialData.github,
+        repositories: [
+          {
+            fullName: "acme/app",
+            id: repositoryId,
+            isArchived: false,
+          } as unknown as SettingsPageData["github"]["repositories"][number],
+        ],
+      },
+    };
+
+    const passedCheck = {
+      ...runningCheck,
+      capabilities: { git: { ok: true, detail: null } },
+      status: "success" as const,
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ check: passedCheck }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(
+        <OverlayProvider>
+          <VerifySetupSection data={initialWithCheck} setData={vi.fn()} setFlashMessage={vi.fn()} />
+        </OverlayProvider>,
+      );
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        `/api/workspaces/${workspaceId}/factory-definition/capability-check?revisionId=${revisionId}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears busy state and surfaces errors when publish or reload fetch rejects", async () => {
     const user = userEvent.setup();
     const draftDef = makeDefinition();

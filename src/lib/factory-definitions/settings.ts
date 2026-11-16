@@ -866,8 +866,9 @@ export async function mutateSettingsFactoryDefinition({
         let stageId = stage.id ?? null;
         if (!stageId) {
           stageId = randomUUID();
+          const anchorPrefix = stage.slug.slice(0, 50).replace(/-+$/, "") || "stage";
           const anchorSlug = existingSlugs.has(stage.slug)
-            ? `${stage.slug.slice(0, 50)}-${randomUUID().slice(0, 8)}`
+            ? `${anchorPrefix}-${randomUUID().slice(0, 8)}`
             : stage.slug;
           existingSlugs.add(anchorSlug);
           allocatedStages.push({
