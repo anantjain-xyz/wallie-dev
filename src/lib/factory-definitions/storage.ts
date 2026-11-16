@@ -16,6 +16,21 @@ export function selectDefaultFactory(admin: Pick<AdminClient, "from">, workspace
     .maybeSingle();
 }
 
+export function selectCurrentFactoryActivation(
+  client: Pick<AdminClient, "from">,
+  workspaceId: string,
+  factoryId: string,
+) {
+  return client
+    .from("factory_definition_activations")
+    .select("activation_number, revision_id")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .order("activation_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+}
+
 export function selectStoredFactoryDefinition(
   admin: AdminClient,
   workspaceId: string,
@@ -26,8 +41,10 @@ export function selectStoredFactoryDefinition(
     target.kind === "draft"
       ? admin
           .from("factory_definition_drafts")
-          .select("definition_json, canonical_digest, settings_metadata")
-      : admin.from("factory_definition_revisions").select("definition_json, canonical_digest");
+          .select("id, definition_json, canonical_digest, settings_metadata, created_at")
+      : admin
+          .from("factory_definition_revisions")
+          .select("id, definition_json, canonical_digest, source_draft_id, created_at");
   return query
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)

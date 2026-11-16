@@ -8,9 +8,18 @@ import {
 } from "@/lib/pipeline/stage-schema";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 
-import { isFactoryDefinitionText } from "./serialization";
+import { isFactoryDefinitionText } from "./text";
 
 export const FACTORY_DEFINITION_SCHEMA_VERSION = 1;
+export const factoryDefinitionExpectedActivationSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER - 1);
+export const factoryDefinitionSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("structured"), value: z.record(z.unknown()) }).strict(),
+  z.object({ kind: z.literal("json"), text: z.string() }).strict(),
+]);
 const validText = { message: "Use well-formed Unicode text without NUL characters." };
 const referenceSchema = z
   .string()

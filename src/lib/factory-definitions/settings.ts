@@ -31,7 +31,7 @@ import {
   readFactorySettingsMetadata,
   saveSettingsFactoryDraft,
 } from "./settings-persistence";
-import { selectDefaultFactory } from "./storage";
+import { selectCurrentFactoryActivation, selectDefaultFactory } from "./storage";
 import {
   factoryDefinitionFromBundle,
   factoryStageDefinition,
@@ -59,14 +59,7 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
   if (factory.error) throw factory.error;
   if (!factory.data) return null;
   const factoryId = factory.data.id;
-  const activation = await client
-    .from("factory_definition_activations")
-    .select("activation_number, revision_id")
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .order("activation_number", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const activation = await selectCurrentFactoryActivation(client, workspaceId, factoryId);
   if (activation.error) throw activation.error;
   const activationNumber = activation.data?.activation_number ?? 0;
 

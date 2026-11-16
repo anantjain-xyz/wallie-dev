@@ -23,6 +23,14 @@ Settings use `/api/workspaces/[workspaceId]/factory-definition/settings` to show
 - **Publish draft** activates the exact saved draft displayed in Settings. Staged policy revisions join the published configuration in the activation transaction.
 - Credentials and connection tests use the operational integration records. Linear routing changes apply immediately and use the published stage IDs.
 
+## Definition editor
+
+Open **Settings → Integrations → Open definition editor** as a workspace owner or admin. Structured fields and JSON source edit the same serial definition. **Validate and preview** runs the shared compiler and compares the result with the published revision. Switching from JSON to structured mode also runs the compiler to preserve the same interpretation of references.
+
+- Saving writes a shared draft against the activation and draft version shown when editing began. On a conflict, reload to inspect the latest version and choose whether to apply the retained edits or discard them.
+- Revision history retains the exact definition for each published revision. A revision permalink or source draft link opens that immutable record. Selecting a revision compares it with the current one.
+- Use the sandbox capability check on the saved draft or selected revision when activation requires a fresh receipt. Publishing a draft or rolling back to an earlier revision affects new sessions. Existing sessions retain their admission revision.
+
 ## Checking a saved runtime
 
 Managers can run a capability check at `/api/workspaces/[workspaceId]/factory-definition/capability-check`. Submit `{"target":{"kind":"draft","id":"<draft UUID>"}}` or use `"revision"` and its UUID. The API returns `202` and runs the probe against the saved definition’s repository, agent, model, and sandbox provider. Poll the same endpoint with `draftId` or `revisionId`.

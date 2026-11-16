@@ -28,6 +28,7 @@ import { RunHistoryControls } from "@/features/settings/run-history-controls";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
+import { workspaceFactoryDefinitionPath } from "@/lib/routes";
 import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 type SettingsServerShellProps = {
@@ -125,7 +126,11 @@ async function IntegrationDetails({
       key={data.workspace.id}
       workspaceId={data.workspace.id}
     >
-      <FactorySettingsPanel />
+      <FactorySettingsPanel
+        editorHref={
+          data.canManage ? workspaceFactoryDefinitionPath(data.workspace.slug) : undefined
+        }
+      />
       <RepositoryIntegrationIsland initialData={data} />
       <PipelineIsland data={data} />
       <LinearIntegrationIsland initialData={data} />

@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 
+import { isFactoryDefinitionText } from "./text";
+
 type JsonObject = { readonly [key: string]: JsonValue };
 type JsonValue = null | boolean | number | string | readonly JsonValue[] | JsonObject;
 
 type JsonParseResult = { ok: true; value: unknown } | { ok: false; message: string };
-
-export function isFactoryDefinitionText(value: string): boolean {
-  // Unicode mode combines valid surrogate pairs before testing the category.
-  return !/\p{Surrogate}/u.test(value) && !value.includes("\0");
-}
 
 export function parseFactoryDefinitionJson(source: string): JsonParseResult {
   let value: unknown;

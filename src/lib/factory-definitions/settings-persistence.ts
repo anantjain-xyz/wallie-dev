@@ -94,7 +94,7 @@ export function latestFactoryDraft(
 ) {
   const query = client
     .from("factory_definition_drafts")
-    .select("id, canonical_digest, definition_json, settings_metadata")
+    .select("id, canonical_digest, definition_json, settings_metadata, created_at")
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId);
   return (

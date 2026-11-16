@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import {
   createContext,
   Fragment,
@@ -214,9 +216,9 @@ export function FactorySettingsProvider({
   );
 }
 
-export function FactorySettingsPanel() {
+export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
   const settings = useFactorySettings();
-  if (!settings || settings.phase === "legacy") return null;
+  if (!settings || (settings.phase === "legacy" && !editorHref)) return null;
 
   const { phase, snapshot, canManage, busy, conflict, error, dirtySections, reload, publish } =
     settings;
@@ -266,14 +268,21 @@ export function FactorySettingsPanel() {
           ) : null}
           <InlineActionMessage message={message ? { kind: "error", text: message } : null} />
           <div className="flex flex-wrap gap-3">
-            <button
-              className="ui-button"
-              disabled={busy}
-              onClick={() => void reload()}
-              type="button"
-            >
-              Reload configuration
-            </button>
+            {phase !== "legacy" ? (
+              <button
+                className="ui-button"
+                disabled={busy}
+                onClick={() => void reload()}
+                type="button"
+              >
+                Reload configuration
+              </button>
+            ) : null}
+            {canManage && editorHref ? (
+              <Link className="ui-button" href={editorHref}>
+                Open definition editor
+              </Link>
+            ) : null}
             {canManage && draft && snapshot ? (
               <button
                 className="ui-button-primary"
