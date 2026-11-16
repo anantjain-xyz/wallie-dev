@@ -48,7 +48,10 @@ import {
   selectStoredFactoryDefinition,
 } from "@/lib/factory-definitions/storage";
 import { recompileStoredFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
-import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
+import {
+  loadDefaultPipelineConfigurationForWorkspace,
+  loadPipelineConfigurationWithStages,
+} from "@/lib/pipeline/stages";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox/types";
 import type { Database, Json } from "@/lib/supabase/database.types";
@@ -472,6 +475,17 @@ async function loadBaselineFactoryDefinitionSource(
   };
 }
 
+export async function loadPipelineConfigurationForFactoryDefinition(
+  client: AdminClient,
+  workspaceId: string,
+  definitionPipelineId: string | null | undefined,
+): Promise<PipelineConfiguration | null> {
+  if (definitionPipelineId) {
+    return loadPipelineConfigurationWithStages(client, definitionPipelineId);
+  }
+  return loadDefaultPipelineConfigurationForWorkspace(client, workspaceId);
+}
+
 export async function loadFactoryDefinitionHistoryForStages(
   client: ScopedClient,
   workspaceId: string,
@@ -677,10 +691,12 @@ export async function mutateSettingsFactoryDefinition({
       createdAt: activationRow.created_at,
     };
 
-    const [nextState, livePipeline] = await Promise.all([
-      loadSettingsFactoryDefinitionState(admin, workspaceId),
-      loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId),
-    ]);
+    const nextState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
+    const livePipeline = await loadPipelineConfigurationForFactoryDefinition(
+      admin,
+      workspaceId,
+      nextState.activeDefinition?.pipelineId,
+    );
     const priorDefinitions = await loadFactoryDefinitionHistoryForStages(
       admin,
       workspaceId,
@@ -985,10 +1001,12 @@ export async function mutateSettingsFactoryDefinition({
     return mapDraftRpcError(saveError);
   }
 
-  const [nextState, livePipeline] = await Promise.all([
-    loadSettingsFactoryDefinitionState(admin, workspaceId),
-    loadDefaultPipelineConfigurationForWorkspace(admin, workspaceId),
-  ]);
+  const nextState = await loadSettingsFactoryDefinitionState(admin, workspaceId);
+  const livePipeline = await loadPipelineConfigurationForFactoryDefinition(
+    admin,
+    workspaceId,
+    nextState.activeDefinition?.pipelineId,
+  );
   const priorDefinitions = await loadFactoryDefinitionHistoryForStages(
     admin,
     workspaceId,

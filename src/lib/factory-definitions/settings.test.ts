@@ -12,6 +12,7 @@ import type { Database } from "@/lib/supabase/database.types";
 const mocks = vi.hoisted(() => ({
   loadCatalog: vi.fn(),
   loadDefaultPipeline: vi.fn(),
+  loadPipelineByDefinition: vi.fn(),
   mutateFactoryDefinition: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ vi.mock("@/lib/factory-definitions/authority", () => ({
 
 vi.mock("@/lib/pipeline/stages", () => ({
   loadDefaultPipelineConfigurationForWorkspace: mocks.loadDefaultPipeline,
+  loadPipelineConfigurationWithStages: mocks.loadPipelineByDefinition,
 }));
 
 vi.mock("@/lib/factory-definitions/mutations", () => ({
@@ -249,6 +251,7 @@ describe("factory definition Settings loader & mutations", () => {
     vi.resetAllMocks();
     mocks.loadCatalog.mockResolvedValue(catalog);
     mocks.loadDefaultPipeline.mockResolvedValue(defaultPipelineConfig);
+    mocks.loadPipelineByDefinition.mockResolvedValue(defaultPipelineConfig);
   });
 
   it("loads the active revision and matching unpublished draft with pinned policies", async () => {
@@ -806,7 +809,7 @@ describe("factory definition Settings loader & mutations", () => {
     if (!removedSecondStageDef.ok) throw new Error("Single-stage fixture failed to compile.");
 
     // Live pipeline_stages row still holds stale DB contents for secondStageId
-    mocks.loadDefaultPipeline.mockResolvedValue({
+    const stalePipeline = {
       ...defaultPipelineConfig,
       stages: [
         ...defaultPipelineConfig.stages,
@@ -822,7 +825,9 @@ describe("factory definition Settings loader & mutations", () => {
           approverMemberIds: [],
         },
       ],
-    });
+    };
+    mocks.loadDefaultPipeline.mockResolvedValue(stalePipeline);
+    mocks.loadPipelineByDefinition.mockResolvedValue(stalePipeline);
 
     let saved = false;
     const { admin } = makeClient(
@@ -1028,6 +1033,125 @@ describe("factory definition Settings loader & mutations", () => {
 
     expect(res.ok).toBe(true);
     expect(rpcCalled).toBe(true);
+  });
+
+  it("loads the backing pipeline for the definition's pipeline when publishing", async () => {
+    const otherPipelineId = "54500000-0001-4000-8000-000000000044";
+    const otherDeliveryPolicyId = "54500000-0001-4000-8000-000000000045";
+    const otherCatalog: FactoryDefinitionCatalog = {
+      ...catalog,
+      pipelines: [...catalog.pipelines, { id: otherPipelineId, workspaceId, aliases: ["Custom"] }],
+      deliveryPolicyRevisions: [
+        ...catalog.deliveryPolicyRevisions,
+        { id: otherDeliveryPolicyId, workspaceId, pipelineId: otherPipelineId },
+      ],
+    };
+    const otherDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: otherPipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: otherDeliveryPolicyId,
+          operatingRulesMd: "Custom pipeline rules.",
+          stages: [
+            {
+              id: stageId,
+              slug: "plan",
+              name: "Plan",
+              description: "",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+      otherCatalog,
+    );
+    if (!otherDef.ok) throw new Error("Other pipeline fixture failed to compile.");
+
+    mocks.loadCatalog.mockResolvedValue(otherCatalog);
+    const { admin } = makeClient(
+      defaultStateResponder({
+        activationNumber: 1,
+        draft: {
+          id: draftId,
+          definition_json: otherDef.definitionJson,
+          canonical_digest: otherDef.canonicalDigest,
+        },
+        extraHandler: ({ url }) => {
+          if (url.pathname.endsWith("/factory_definition_revisions")) {
+            return Response.json([
+              {
+                id: revisionId,
+                definition_json: otherDef.definitionJson,
+                canonical_digest: otherDef.canonicalDigest,
+                created_at: now,
+              },
+            ]);
+          }
+          if (url.pathname.endsWith("/delivery_policies")) {
+            const filter = url.searchParams.get("pipeline_id");
+            return Response.json([
+              {
+                current_revision_id:
+                  filter === `eq.${otherPipelineId}` ? otherDeliveryPolicyId : deliveryPolicyId,
+                revision: filter === `eq.${otherPipelineId}` ? 4 : 1,
+              },
+            ]);
+          }
+          if (url.pathname.endsWith("/delivery_policy_revisions")) {
+            return Response.json([
+              {
+                id: otherDeliveryPolicyId,
+                workspace_id: workspaceId,
+                pipeline_id: otherPipelineId,
+                revision: 4,
+                created_at: now,
+                requirements: {
+                  version: 1,
+                  deliveryMode: "code",
+                  requiredChecks: [],
+                  minimumApprovals: 0,
+                  requireCodeOwnerReview: false,
+                  requireResolvedThreads: true,
+                  requiredEvidence: [],
+                  freshnessSeconds: 3600,
+                  requireArtifactApprovalForDelivery: false,
+                },
+              },
+            ]);
+          }
+          if (url.pathname.endsWith("/rpc/publish_settings_factory_definition_draft")) {
+            return Response.json({
+              id: "activation-2",
+              revision_id: "54500000-0001-4000-8000-000000000055",
+              activation_number: 2,
+              previous_activation_number: 1,
+              created_at: now,
+            });
+          }
+          return null;
+        },
+      }),
+    );
+
+    const published = await mutateSettingsFactoryDefinition({
+      admin,
+      workspaceId,
+      actorUserId,
+      command: { action: "publish", expectedActivationNumber: 1, draftId },
+    });
+
+    expect(published.ok).toBe(true);
+    expect(mocks.loadPipelineByDefinition).toHaveBeenCalledWith(admin, otherPipelineId);
+    expect(mocks.loadDefaultPipeline).not.toHaveBeenCalled();
   });
 
   it("publishes the exact expected draft atomically and rejects stale publish attempts", async () => {

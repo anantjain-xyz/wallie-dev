@@ -13,6 +13,7 @@ import {
 } from "@/lib/factory-definitions/settings-contracts";
 import {
   loadFactoryDefinitionHistoryForStages,
+  loadPipelineConfigurationForFactoryDefinition,
   loadSettingsFactoryDefinitionState,
 } from "@/lib/factory-definitions/settings";
 import type { CompiledFactoryDefinition } from "@/lib/factory-definitions/compiler";
@@ -298,6 +299,7 @@ function mapSettingsSetupData(
   onboardingData: WorkspaceOnboardingData,
   factoryDefinition = createEmptySettingsFactoryDefinitionState(),
   priorDefinitions: readonly CompiledFactoryDefinition[] = [],
+  pipelineOverride?: WorkspaceOnboardingData["pipeline"],
 ): SettingsSetupData {
   const base: SettingsSetupData = {
     agentConfig: onboardingData.agentConfig,
@@ -306,7 +308,7 @@ function mapSettingsSetupData(
     linearRouting: onboardingData.linearRouting,
     linearSecret: onboardingData.linearSecret,
     onboarding: onboardingData.onboarding,
-    pipeline: onboardingData.pipeline,
+    pipeline: pipelineOverride ?? onboardingData.pipeline,
     rateLimits: describeSettingsRateLimits(),
     sandboxSettings: onboardingData.sandboxSettings,
     setupHealth: onboardingData.setupHealth,
@@ -468,7 +470,29 @@ export async function loadSettingsPageData(
                 }),
               )
             : [];
-          return mapSettingsSetupData(data, factoryDefinition, priorDefinitions);
+          const definitionPipeline =
+            factoryDefinition.activeDefinition &&
+            factoryDefinition.activeDefinition.pipelineId !== data.pipeline?.id
+              ? await sectionTiming.segment(
+                  "factory-definition-pipeline",
+                  () =>
+                    loadPipelineConfigurationForFactoryDefinition(
+                      supabase,
+                      workspace.id,
+                      factoryDefinition.activeDefinition?.pipelineId,
+                    ),
+                  (pipeline) => ({
+                    payloadBytes: approximatePayloadSizeBytes(pipeline),
+                    rows: pipeline ? 1 : 0,
+                  }),
+                )
+              : undefined;
+          return mapSettingsSetupData(
+            data,
+            factoryDefinition,
+            priorDefinitions,
+            definitionPipeline,
+          );
         },
       );
     }

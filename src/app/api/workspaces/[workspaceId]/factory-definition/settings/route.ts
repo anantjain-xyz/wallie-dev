@@ -4,6 +4,7 @@ import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serializat
 import { settingsFactoryCommandSchema } from "@/lib/factory-definitions/settings-command-schema";
 import {
   loadFactoryDefinitionHistoryForStages,
+  loadPipelineConfigurationForFactoryDefinition,
   loadSettingsFactoryDefinitionState,
   mutateSettingsFactoryDefinition,
 } from "@/lib/factory-definitions/settings";
@@ -12,7 +13,6 @@ import {
   mapCompilerDiagnosticsToAgentFieldErrors,
   pipelineFromFactoryDefinition,
 } from "@/lib/factory-definitions/settings-projection";
-import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -33,10 +33,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
     if (!access.ok) return errorResponse(access.error, access.status);
     const { supabase, workspace } = access.context;
 
-    const [state, livePipeline] = await Promise.all([
-      loadSettingsFactoryDefinitionState(supabase, workspace.id),
-      loadDefaultPipelineConfigurationForWorkspace(supabase, workspace.id),
-    ]);
+    const state = await loadSettingsFactoryDefinitionState(supabase, workspace.id);
+    const livePipeline = await loadPipelineConfigurationForFactoryDefinition(
+      supabase,
+      workspace.id,
+      state.activeDefinition?.pipelineId,
+    );
 
     const priorDefinitions =
       state.activeDefinition && livePipeline

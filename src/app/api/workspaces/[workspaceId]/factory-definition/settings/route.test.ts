@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
-  loadDefaultPipelineConfigurationForWorkspace: vi.fn(),
   loadFactoryDefinitionHistoryForStages: vi.fn(),
+  loadPipelineConfigurationForFactoryDefinition: vi.fn(),
   loadSettingsFactoryDefinitionState: vi.fn(),
   mutateSettingsFactoryDefinition: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
@@ -15,11 +15,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
-vi.mock("@/lib/pipeline/stages", () => ({
-  loadDefaultPipelineConfigurationForWorkspace: mocked.loadDefaultPipelineConfigurationForWorkspace,
-}));
 vi.mock("@/lib/factory-definitions/settings", () => ({
   loadFactoryDefinitionHistoryForStages: mocked.loadFactoryDefinitionHistoryForStages,
+  loadPipelineConfigurationForFactoryDefinition:
+    mocked.loadPipelineConfigurationForFactoryDefinition,
   loadSettingsFactoryDefinitionState: mocked.loadSettingsFactoryDefinitionState,
   mutateSettingsFactoryDefinition: mocked.mutateSettingsFactoryDefinition,
 }));
@@ -67,7 +66,7 @@ describe("GET factory definition settings", () => {
       archivedStages: [],
     };
     mocked.loadSettingsFactoryDefinitionState.mockResolvedValue(state);
-    mocked.loadDefaultPipelineConfigurationForWorkspace.mockResolvedValue(pipeline);
+    mocked.loadPipelineConfigurationForFactoryDefinition.mockResolvedValue(pipeline);
     mocked.loadFactoryDefinitionHistoryForStages.mockResolvedValue([]);
 
     const response = await GET(new Request(routeUrl), context());
