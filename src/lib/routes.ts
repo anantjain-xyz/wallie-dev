@@ -70,7 +70,7 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
 
 export function workspaceFactoryDefinitionPath(
   workspaceSlug: string,
-  query?: { revision: string } | { draft: string },
+  query?: ({ revision: string } | { draft: string }) & { test?: string },
 ) {
   return withSearchParams(`${workspaceSettingsPath(workspaceSlug)}/factory-definition`, query);
 }

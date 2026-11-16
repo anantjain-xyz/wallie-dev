@@ -6,6 +6,8 @@ import type { Database } from "@/lib/supabase/database.types";
 import {
   cancelFactoryDefinitionSmokeTest,
   listFactoryDefinitionSmokeTests,
+  readFactoryDefinitionSmokeEligibility,
+  readFactoryDefinitionSmokeTest,
   startFactoryDefinitionSmokeTest,
 } from "./candidate-smoke";
 import { compileFactoryDefinition } from "./compiler";
@@ -82,7 +84,7 @@ const command = { target, expectedActivationNumber: 4, expectedDigest: definitio
 function fixture({
   status = "running",
   expired = false,
-}: { status?: "running" | "blocked"; expired?: boolean } = {}) {
+}: { status?: "running" | "blocked" | "passed"; expired?: boolean } = {}) {
   const now = Date.now();
   const row = {
     id: testId,
@@ -97,9 +99,9 @@ function fixture({
     created_by: actorUserId,
     created_at: new Date(now - 1_000).toISOString(),
     lease_expires_at: new Date(now + (expired ? -100 : 60_000)).toISOString(),
-    finished_at: status === "blocked" ? new Date(now).toISOString() : null,
+    finished_at: status === "running" ? null : new Date(now).toISOString(),
     status,
-    evidence: {},
+    evidence: status === "passed" ? { stageCount: 1 } : {},
     error_text: status === "blocked" ? "Verify the selected runtime before testing." : null,
   };
   let state: string = row.status;
@@ -112,6 +114,9 @@ function fixture({
         if (rpc) {
           calls.push({ rpc, body: JSON.parse(String(init?.body)) });
           if (rpc.startsWith("start_")) return Response.json(row);
+          if (rpc === "read_factory_candidate_activation_eligibility") {
+            return Response.json({ eligible: true, reason: null, activationNumber: 4, testId });
+          }
           if (rpc.startsWith("cancel_")) {
             state = "canceled";
             return Response.json({ ...row, status: state, finished_at: new Date().toISOString() });
@@ -126,15 +131,24 @@ function fixture({
           return Response.json([stored]);
         }
         expect(url.pathname).toMatch(/\/factory_definition_smoke_tests$/);
-        if (url.searchParams.get("id")) {
+        if (url.searchParams.has("status")) {
           expect(url.searchParams.get("id")).toBe(`eq.${testId}`);
           expect(url.searchParams.get("status")).toBe("eq.running");
           return Response.json(state === "running" ? [{ id: testId }] : []);
         }
         expect(url.searchParams.get("target_kind")).toBe(`eq.${target.kind}`);
         expect(url.searchParams.get("target_id")).toBe(`eq.${target.id}`);
-        expect(url.searchParams.get("definition_digest")).toBe(`eq.${stored.canonical_digest}`);
-        return Response.json([row]);
+        const exactDigest =
+          url.searchParams.get("definition_digest") === `eq.${stored.canonical_digest}`;
+        if (url.searchParams.has("id")) {
+          expect(url.searchParams.get("select")).toContain(",evidence");
+          return Response.json(
+            exactDigest && url.searchParams.get("id") === `eq.${testId}` ? [row] : [],
+          );
+        }
+        expect(exactDigest).toBe(true);
+        expect(url.searchParams.get("select")).not.toContain("evidence");
+        return Response.json([{ ...row, evidence: undefined }]);
       },
     },
   });
@@ -319,5 +333,46 @@ describe("candidate smoke orchestration", () => {
       ok: true,
       tests: [{ id: testId, status: "failed", definitionDigest: command.expectedDigest }],
     });
+  });
+
+  it("defers evidence and reads it only for the exact receipt candidate", async () => {
+    const { admin } = fixture({ status: "passed" });
+    const scope = { client: admin, workspaceId, target, digest: command.expectedDigest };
+    expect(await listFactoryDefinitionSmokeTests(scope)).toMatchObject({
+      ok: true,
+      tests: [{ id: testId, status: "passed", evidence: null }],
+    });
+    expect(await readFactoryDefinitionSmokeTest({ ...scope, testId })).toMatchObject({
+      ok: true,
+      test: { id: testId, evidence: { stageCount: 1 } },
+    });
+    expect(
+      await readFactoryDefinitionSmokeTest({ ...scope, testId, digest: "b".repeat(64) }),
+    ).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("asks the database for current activation eligibility without starting a test", async () => {
+    const { admin, calls } = fixture({ status: "passed" });
+    const scope = { admin, actorUserId, workspaceId, target, digest: command.expectedDigest };
+    expect(
+      await readFactoryDefinitionSmokeEligibility({ ...scope, digest: "b".repeat(64) }),
+    ).toMatchObject({ ok: false, status: 409 });
+    expect(calls).toEqual([]);
+
+    expect(await readFactoryDefinitionSmokeEligibility(scope)).toEqual({
+      ok: true,
+      eligibility: { eligible: true, reason: null, activationNumber: 4, testId },
+    });
+    expect(calls).toMatchObject([
+      {
+        rpc: "read_factory_candidate_activation_eligibility",
+        body: {
+          p_actor_user_id: actorUserId,
+          p_target_kind: target.kind,
+          p_target_id: target.id,
+          p_definition_digest: scope.digest,
+        },
+      },
+    ]);
   });
 });

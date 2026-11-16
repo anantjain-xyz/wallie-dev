@@ -5,8 +5,8 @@ import { FactoryDefinitionEditor } from "@/features/factory-definition/definitio
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 
 const selectionSchema = z.union([
-  z.object({ revision: z.string().uuid() }).strict(),
-  z.object({ draft: z.string().uuid() }).strict(),
+  z.object({ revision: z.string().uuid(), test: z.string().uuid().optional() }).strict(),
+  z.object({ draft: z.string().uuid(), test: z.string().uuid().optional() }).strict(),
 ]);
 
 export default async function FactoryDefinitionPage({
@@ -14,7 +14,11 @@ export default async function FactoryDefinitionPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ revision?: string | string[]; draft?: string | string[] }>;
+  searchParams: Promise<{
+    revision?: string | string[];
+    draft?: string | string[];
+    test?: string | string[];
+  }>;
 }) {
   const { workspaceSlug } = await params;
   const [{ currentMember, supabase, workspace }, query] = await Promise.all([

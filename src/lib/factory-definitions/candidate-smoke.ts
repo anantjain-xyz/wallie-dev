@@ -12,7 +12,9 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./authority";
 import {
+  candidateSmokeEligibilitySchema,
   candidateSmokeTestSchema,
+  type CandidateSmokeEligibility,
   type CandidateSmokeStart,
   type CandidateSmokeTest,
 } from "./candidate-smoke-contracts";
@@ -32,7 +34,10 @@ import {
   selectStoredFactoryDefinition,
   type FactoryDefinitionTarget,
 } from "./storage";
-import { recompileStoredFactoryDefinition } from "./stored-definition";
+import {
+  readCompiledFactoryDefinition,
+  recompileStoredFactoryDefinition,
+} from "./stored-definition";
 
 type Client = SupabaseClient<Database>;
 type Failure = FactoryDefinitionMutationFailure;
@@ -44,8 +49,8 @@ type FinalResult = {
   errorText?: string;
 };
 
-const testColumns =
-  "id,target_kind,target_id,definition_digest,base_activation_number,policy_version,status,created_at,lease_expires_at,finished_at,evidence,error_text";
+const testSummaryColumns =
+  "id,target_kind,target_id,definition_digest,base_activation_number,policy_version,status,created_at,lease_expires_at,finished_at,error_text";
 
 const expiredMessage = "The smoke test expired before it recorded a result. Run it again.";
 
@@ -62,9 +67,9 @@ function summarizeSmokeTest(
     | "created_at"
     | "lease_expires_at"
     | "finished_at"
-    | "evidence"
     | "error_text"
-  >,
+  > &
+    Partial<Pick<SmokeTestRow, "evidence">>,
 ): CandidateSmokeTest {
   const expired = row.status === "running" && Date.parse(row.lease_expires_at) <= Date.now();
   return candidateSmokeTestSchema.parse({
@@ -76,25 +81,27 @@ function summarizeSmokeTest(
     status: expired ? "failed" : row.status,
     createdAt: row.created_at,
     finishedAt: expired ? row.lease_expires_at : row.finished_at,
-    evidence: row.finished_at ? row.evidence : null,
+    evidence: row.finished_at ? (row.evidence ?? null) : null,
     error: expired ? expiredMessage : row.error_text,
   });
 }
+
+type SmokeTestSelection = {
+  client: Client;
+  workspaceId: string;
+  target: FactoryDefinitionTarget;
+  digest: string;
+};
 
 export async function listFactoryDefinitionSmokeTests({
   client,
   workspaceId,
   target,
   digest,
-}: {
-  client: Client;
-  workspaceId: string;
-  target: FactoryDefinitionTarget;
-  digest: string;
-}): Promise<Failure | { ok: true; tests: CandidateSmokeTest[] }> {
+}: SmokeTestSelection): Promise<Failure | { ok: true; tests: CandidateSmokeTest[] }> {
   const { data, error } = await client
     .from("factory_definition_smoke_tests")
-    .select(testColumns)
+    .select(testSummaryColumns)
     .eq("workspace_id", workspaceId)
     .eq("target_kind", target.kind)
     .eq("target_id", target.id)
@@ -104,6 +111,82 @@ export async function listFactoryDefinitionSmokeTests({
     .limit(20);
   if (error) return smokeTestError(error);
   return { ok: true, tests: data.map(summarizeSmokeTest) };
+}
+
+export async function readFactoryDefinitionSmokeTest({
+  client,
+  workspaceId,
+  target,
+  digest,
+  testId,
+}: SmokeTestSelection & { testId: string }): Promise<
+  Failure | { ok: true; test: CandidateSmokeTest }
+> {
+  const { data, error } = await client
+    .from("factory_definition_smoke_tests")
+    .select(`${testSummaryColumns},evidence`)
+    .eq("workspace_id", workspaceId)
+    .eq("id", testId)
+    .eq("target_kind", target.kind)
+    .eq("target_id", target.id)
+    .eq("definition_digest", digest)
+    .maybeSingle();
+  if (error) return smokeTestError(error);
+  if (!data) return { ok: false, status: 404, error: "The candidate smoke test is unavailable." };
+  return { ok: true, test: summarizeSmokeTest(data) };
+}
+
+export async function readFactoryDefinitionSmokeEligibility({
+  admin,
+  workspaceId,
+  actorUserId,
+  target,
+  digest,
+}: Scope & {
+  actorUserId: string;
+  target: FactoryDefinitionTarget;
+  digest: string;
+}): Promise<Failure | { ok: true; eligibility: CandidateSmokeEligibility }> {
+  const { data: factory, error: factoryError } = await selectDefaultFactory(admin, workspaceId);
+  if (factoryError || !factory) return smokeTestError(factoryError ?? { code: "P0002" });
+
+  const { data: stored, error: storedError } = await selectStoredFactoryDefinition(
+    admin,
+    workspaceId,
+    factory.id,
+    target,
+  );
+  if (storedError || !stored) return smokeTestError(storedError ?? { code: "P0002" });
+  if (stored.canonical_digest !== digest) {
+    return smokeTestError({
+      code: "PT409",
+      message: "The factory candidate digest changed. Reload the definition.",
+    });
+  }
+
+  // SQL checks the published or reserved identities against the current authorities.
+  // Reading an immutable bundle avoids loading the entire catalog on each status refresh.
+  const bundle = readCompiledFactoryDefinition(stored.definition_json);
+  if (!bundle) {
+    return smokeTestError({
+      code: "PT422",
+      message: "This candidate is incompatible with the current factory definition format.",
+    });
+  }
+  const { enabledSandboxProviders, requiredProbes } = factoryActivationRequirements(bundle);
+  const { data, error } = await admin.rpc("read_factory_candidate_activation_eligibility", {
+    p_workspace_id: workspaceId,
+    p_factory_id: factory.id,
+    p_actor_user_id: actorUserId,
+    p_target_kind: target.kind,
+    p_target_id: target.id,
+    p_definition_digest: digest,
+    p_enabled_sandbox_providers: enabledSandboxProviders,
+    p_required_probes: requiredProbes,
+  });
+  if (error) return smokeTestError(error);
+  const eligibility = candidateSmokeEligibilitySchema.safeParse(data);
+  return eligibility.success ? { ok: true, eligibility: eligibility.data } : smokeTestError(null);
 }
 
 export async function startFactoryDefinitionSmokeTest({

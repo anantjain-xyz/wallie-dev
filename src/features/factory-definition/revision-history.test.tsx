@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PortalRootProvider } from "@/components/ui/portal-root";
@@ -87,6 +87,7 @@ const baseProps = {
   nextBeforeActivationNumber: null,
   busy: false,
   canManage: true,
+  activationEligible: true,
   onSelect: () => undefined,
   onLoadMore: () => undefined,
   revisionHref: (id: string) => `/w/demo/settings/factory-definition?revision=${id}`,
@@ -95,7 +96,7 @@ const baseProps = {
 
 afterEach(cleanup);
 
-it("links selected immutable source and confirms the revision against the displayed activation", async () => {
+it("links immutable source and invalidates an open confirmation when the selection or base changes", async () => {
   const onRollback = vi.fn(async () => undefined);
   const { rerender } = render(<FactoryRevisionHistory {...baseProps} onRollback={onRollback} />, {
     wrapper: PortalRootProvider,
@@ -136,9 +137,8 @@ it("links selected immutable source and confirms the revision against the displa
   );
   expect(within(dialog).getByText("#2")).toBeVisible();
   expect(within(dialog).getByText(savedRevision.digest)).toBeVisible();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Activate revision" }));
-  await waitFor(() => expect(onRollback).toHaveBeenCalledWith(olderId, 2));
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(within(dialog).getByRole("button", { name: "Activate revision" })).toBeDisabled();
+  expect(onRollback).not.toHaveBeenCalled();
 });
 
 it("keeps rollback errors in the confirmation dialog", async () => {
@@ -154,4 +154,18 @@ it("keeps rollback errors in the confirmation dialog", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Reload before retrying.");
   expect(screen.getByRole("alertdialog")).toBeVisible();
+});
+
+it("disables confirmation when a newer read withdraws activation eligibility", async () => {
+  const onRollback = vi.fn(async () => undefined);
+  const { rerender } = render(<FactoryRevisionHistory {...baseProps} onRollback={onRollback} />, {
+    wrapper: PortalRootProvider,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Roll back to this revision" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Activate this revision?" });
+  rerender(
+    <FactoryRevisionHistory {...baseProps} activationEligible={false} onRollback={onRollback} />,
+  );
+  expect(within(dialog).getByRole("button", { name: "Activate revision" })).toBeDisabled();
+  expect(onRollback).not.toHaveBeenCalled();
 });

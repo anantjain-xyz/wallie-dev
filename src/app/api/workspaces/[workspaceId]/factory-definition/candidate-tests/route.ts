@@ -2,6 +2,7 @@ import { after } from "next/server";
 
 import {
   listFactoryDefinitionSmokeTests,
+  readFactoryDefinitionSmokeEligibility,
   startFactoryDefinitionSmokeTest,
 } from "@/lib/factory-definitions/candidate-smoke";
 import {
@@ -39,14 +40,18 @@ export async function GET(request: Request, { params }: RouteContext) {
     });
     if (!access.ok) return respond({ error: access.error }, access.status);
 
-    const result = await listFactoryDefinitionSmokeTests({
-      client: access.context.supabase,
-      workspaceId: access.context.workspace.id,
-      ...selection.data,
-    });
-    return result.ok
-      ? respond({ tests: result.tests })
-      : respond({ error: result.error }, result.status);
+    const scope = { workspaceId: access.context.workspace.id, ...selection.data };
+    const [history, read] = await Promise.all([
+      listFactoryDefinitionSmokeTests({ client: access.context.supabase, ...scope }),
+      readFactoryDefinitionSmokeEligibility({
+        admin: createSupabaseAdminClient(),
+        actorUserId: access.context.user.id,
+        ...scope,
+      }),
+    ]);
+    if (!history.ok) return respond({ error: history.error }, history.status);
+    if (!read.ok) return respond({ error: read.error }, read.status);
+    return respond({ tests: history.tests, eligibility: read.eligibility });
   } catch {
     return respond({ error: "Could not load candidate smoke tests." }, 500);
   }
