@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import {
   DEFAULT_LINEAR_ROUTING_CONFIG,
   coerceLinearRoutingConfig,
@@ -63,6 +64,19 @@ export async function validateLinearRoutingStages(input: {
   );
 
   const uniqueSlugs = [...new Set(requiredSlugs)];
+  const activeFactory = await loadActiveFactoryExecution(input.admin, input.workspaceId);
+  if (activeFactory) {
+    const found = new Set(activeFactory.stages.map((stage) => stage.slug));
+    const missing = uniqueSlugs.filter((slug) => !found.has(slug));
+    if (missing.length > 0) {
+      return {
+        error: `Unknown pipeline stage slug${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
+        ok: false,
+      };
+    }
+    return { ok: true };
+  }
+
   const { data, error } = await input.admin
     .from("pipelines")
     .select("id")

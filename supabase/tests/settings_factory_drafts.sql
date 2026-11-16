@@ -198,6 +198,15 @@ begin
 end;
 $$;
 
+create function pg_temp.sd_sqlstate_local(command text) returns text language plpgsql as $$
+begin
+  execute command;
+  return '00000';
+exception when others then
+  return sqlstate;
+end;
+$$;
+
 select extensions.dblink_connect('sd_writer',coalesce(nullif(current_setting('wallie.test_db_connection',true),''),
   'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'));
 select extensions.dblink_connect('sd_contender',coalesce(nullif(current_setting('wallie.test_db_connection',true),''),
@@ -321,6 +330,18 @@ select is(
   (select count(*) from public.execution_policy_revisions where id = '54500000-0010-4000-8000-000000000099'),
   0::bigint,
   'losing concurrent draft rolls back candidate execution policy revision'
+);
+
+-- Publishing an older draft via publish_settings_factory_definition_draft fails with PT409 when a newer draft exists.
+select is(
+  (select pg_temp.sd_sqlstate_local(format($q$
+    select id from public.publish_settings_factory_definition_draft(
+      %L::uuid, %L::uuid, '54500000-0000-4000-8000-000000000001'::uuid, 0,
+      %L::uuid, array['vercel'], array['git']
+    )
+  $q$, (select workspace_id from sd_latest), (select factory_id from sd_latest), (select expected_draft_id from sd_latest)))),
+  'PT409',
+  'publish_settings_factory_definition_draft rejects a superseded draft with PT409'
 );
 
 select extensions.dblink_disconnect('sd_writer');

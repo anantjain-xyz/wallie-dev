@@ -6910,6 +6910,33 @@ export type Database = {
         }
         Returns: boolean
       }
+      publish_settings_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       purge_expired_run_transcripts: {
         Args: { p_entry_limit?: number; p_run_limit?: number }
         Returns: number

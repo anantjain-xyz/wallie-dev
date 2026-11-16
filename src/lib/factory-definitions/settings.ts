@@ -17,16 +17,16 @@ import {
 } from "@/lib/agent-config/contracts";
 import { mapDeliveryPolicy, type DeliveryPolicy } from "@/lib/delivery-policy/contracts";
 import { mapExecutionPolicy, type ExecutionPolicy } from "@/lib/execution-policy/contracts";
-import { loadFactoryDefinitionCatalog } from "@/lib/factory-definitions/authority";
+import {
+  factoryActivationRequirements,
+  loadFactoryDefinitionCatalog,
+} from "@/lib/factory-definitions/authority";
 import {
   compileFactoryDefinition,
   type CompiledFactoryDefinition,
   type FactoryDefinitionDiagnostic,
 } from "@/lib/factory-definitions/compiler";
-import {
-  mutateFactoryDefinition,
-  type FactoryActivationSummary,
-} from "@/lib/factory-definitions/mutations";
+import type { FactoryActivationSummary } from "@/lib/factory-definitions/mutations";
 import {
   compiledFactoryDefinitionSchema,
   FACTORY_DEFINITION_SCHEMA_VERSION,
@@ -43,7 +43,11 @@ import {
   agentConfigFromFactoryDefinition,
   pipelineFromFactoryDefinition,
 } from "@/lib/factory-definitions/settings-projection";
-import { selectDefaultFactory } from "@/lib/factory-definitions/storage";
+import {
+  selectDefaultFactory,
+  selectStoredFactoryDefinition,
+} from "@/lib/factory-definitions/storage";
+import { recompileStoredFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import { loadDefaultPipelineConfigurationForWorkspace } from "@/lib/pipeline/stages";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox/types";
@@ -600,28 +604,64 @@ export async function mutateSettingsFactoryDefinition({
       };
     }
 
-    const published = await mutateFactoryDefinition({
+    const { data: stored, error: readError } = await selectStoredFactoryDefinition(
       admin,
       workspaceId,
-      actorUserId,
-      command: {
-        action: "publish",
-        expectedActivationNumber: command.expectedActivationNumber,
-        draftId: command.draftId,
-      },
-    });
-    if (!published.ok) {
+      currentState.factoryId,
+      { kind: "draft", id: command.draftId },
+    );
+    if (readError) {
+      return mapDraftRpcError(readError);
+    }
+    if (!stored) {
       return {
         ok: false,
-        status: published.status,
-        error: published.error,
-        diagnostics: published.diagnostics,
+        status: 404,
+        error: "The requested factory definition record is unavailable.",
       };
     }
 
-    if (!("activation" in published.result)) {
-      return { ok: false, status: 500, error: "Could not publish factory definition." };
+    const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+    const compiled = recompileStoredFactoryDefinition(
+      stored.definition_json,
+      stored.canonical_digest,
+      catalog,
+    );
+    if (!compiled.ok) {
+      return {
+        ok: false,
+        status: 422,
+        error: "Review the factory definition before retrying.",
+        diagnostics: compiled.diagnostics,
+      };
     }
+
+    const { enabledSandboxProviders, requiredProbes } = factoryActivationRequirements(
+      compiled.bundle,
+    );
+    const { data: activationRow, error: publishError } = await admin.rpc(
+      "publish_settings_factory_definition_draft",
+      {
+        p_workspace_id: workspaceId,
+        p_factory_id: currentState.factoryId,
+        p_actor_user_id: actorUserId,
+        p_expected_activation_number: command.expectedActivationNumber,
+        p_draft_id: command.draftId,
+        p_enabled_sandbox_providers: enabledSandboxProviders,
+        p_required_probes: requiredProbes,
+      },
+    );
+    if (publishError || !activationRow) {
+      return mapDraftRpcError(publishError);
+    }
+
+    const activation: FactoryActivationSummary = {
+      id: activationRow.id,
+      revisionId: activationRow.revision_id,
+      activationNumber: activationRow.activation_number,
+      previousActivationNumber: activationRow.previous_activation_number,
+      createdAt: activationRow.created_at,
+    };
 
     const [nextState, livePipeline] = await Promise.all([
       loadSettingsFactoryDefinitionState(admin, workspaceId),
@@ -642,7 +682,7 @@ export async function mutateSettingsFactoryDefinition({
       ok: true,
       result: {
         state: nextState,
-        activation: published.result.activation,
+        activation,
         ...(pipeline ? { pipeline } : {}),
         ...(nextState.activeDefinition
           ? {
@@ -723,6 +763,25 @@ export async function mutateSettingsFactoryDefinition({
       if (stagesError) throw stagesError;
 
       const rows = existingRows ?? [];
+      const priorDefinitionsForSlugs = await loadFactoryDefinitionHistoryForStages(
+        admin,
+        workspaceId,
+        currentState,
+      );
+      const effectiveSlugByStageId = new Map<string, string>();
+      for (const row of rows) {
+        effectiveSlugByStageId.set(row.id, row.slug);
+      }
+      const seenSlugInDefinitions = new Set<string>();
+      for (const prior of priorDefinitionsForSlugs) {
+        for (const priorStage of prior.stages) {
+          if (!seenSlugInDefinitions.has(priorStage.id)) {
+            seenSlugInDefinitions.add(priorStage.id);
+            effectiveSlugByStageId.set(priorStage.id, priorStage.slug);
+          }
+        }
+      }
+
       const submittedById = new Map(
         patch.stages
           .filter((stage): stage is typeof stage & { id: string } => Boolean(stage.id))
@@ -731,9 +790,10 @@ export async function mutateSettingsFactoryDefinition({
 
       for (const stage of patch.stages) {
         const conflict = rows.find((row) => {
-          if (row.slug !== stage.slug || row.id === (stage.id ?? null)) return false;
+          const effectiveSlug = effectiveSlugByStageId.get(row.id) ?? row.slug;
+          if (effectiveSlug !== stage.slug || row.id === (stage.id ?? null)) return false;
           const submittedOwner = submittedById.get(row.id);
-          return !(submittedOwner && submittedOwner.slug !== row.slug);
+          return !(submittedOwner && submittedOwner.slug !== effectiveSlug);
         });
         if (conflict) {
           return {

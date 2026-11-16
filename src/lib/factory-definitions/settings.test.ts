@@ -830,7 +830,114 @@ describe("factory definition Settings loader & mutations", () => {
     ]);
   });
 
-  it("publishes the exact expected draft and rejects stale publish attempts", async () => {
+  it("allows removing one stage after swapping two stages' slugs in a saved definition", async () => {
+    const secondStageId = "54500000-0001-4000-8000-000000000022";
+    const swappedDef = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          schemaVersion: 1,
+          kind: "serial",
+          pipeline: pipelineId,
+          repository: repositoryId,
+          sandboxProvider: "vercel",
+          agent: compiledFixture.bundle.agent,
+          executionPolicy: executionPolicyId,
+          deliveryPolicy: deliveryPolicyId,
+          operatingRulesMd: "Published rules.",
+          stages: [
+            {
+              id: stageId,
+              slug: "build",
+              name: "Build",
+              description: "",
+              promptTemplateMd: "Build {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+            {
+              id: secondStageId,
+              slug: "plan",
+              name: "Plan",
+              description: "",
+              promptTemplateMd: "Plan {{artifact.previousStages.build}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+      catalog,
+    );
+    if (!swappedDef.ok) throw new Error("Swapped fixture failed to compile.");
+
+    // Backing pipeline_stages rows still hold pre-swap slugs: stageId="plan", secondStageId="build"
+    let rpcCalled = false;
+    const { admin } = makeClient(
+      defaultStateResponder({
+        activationNumber: 1,
+        draft: {
+          id: draftId,
+          definition_json: swappedDef.definitionJson,
+          canonical_digest: swappedDef.canonicalDigest,
+        },
+        extraHandler: ({ method, url }) => {
+          if (url.pathname.endsWith("/pipeline_stages") && method === "GET") {
+            return Response.json([
+              { id: stageId, slug: "plan", position: 1 },
+              { id: secondStageId, slug: "build", position: 2 },
+            ]);
+          }
+          if (url.pathname.endsWith("/rpc/save_settings_factory_definition_draft")) {
+            rpcCalled = true;
+            return Response.json({
+              id: draftId,
+              base_activation_number: 1,
+              schema_version: 1,
+              definition_json: swappedDef.definitionJson,
+              canonical_digest: swappedDef.canonicalDigest,
+              created_at: now,
+            });
+          }
+          return null;
+        },
+      }),
+    );
+
+    // Removing stageId (currently "build" in definition) while keeping secondStageId ("plan" in definition) must succeed
+    const res = await mutateSettingsFactoryDefinition({
+      admin,
+      workspaceId,
+      actorUserId,
+      command: {
+        action: "draft",
+        expectedActivationNumber: 1,
+        expectedDraftId: draftId,
+        patch: {
+          kind: "pipeline",
+          name: "Default",
+          operatingRulesMd: "Published rules.",
+          stages: [
+            {
+              id: secondStageId,
+              slug: "plan",
+              name: "Plan",
+              description: "",
+              promptTemplateMd: "Plan {{session.prompt}}.",
+              anyoneCanApprove: false,
+              approverMemberIds: [memberId],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(rpcCalled).toBe(true);
+  });
+
+  it("publishes the exact expected draft atomically and rejects stale publish attempts", async () => {
+    let publishBody: unknown = null;
     const { admin } = makeClient(
       defaultStateResponder({
         activationNumber: 1,
@@ -838,6 +945,19 @@ describe("factory definition Settings loader & mutations", () => {
           id: draftId,
           definition_json: compiledActive.definitionJson,
           canonical_digest: compiledActive.canonicalDigest,
+        },
+        extraHandler: ({ url, body }) => {
+          if (url.pathname.endsWith("/rpc/publish_settings_factory_definition_draft")) {
+            publishBody = body;
+            return Response.json({
+              id: "activation-2",
+              revision_id: revisionId,
+              activation_number: 2,
+              previous_activation_number: 1,
+              created_at: now,
+            });
+          }
+          return null;
         },
       }),
     );
@@ -858,19 +978,6 @@ describe("factory definition Settings loader & mutations", () => {
       error: "A newer configuration draft or activation exists. Reload before publishing.",
     });
 
-    mocks.mutateFactoryDefinition.mockResolvedValue({
-      ok: true,
-      result: {
-        activation: {
-          id: "activation-2",
-          revisionId,
-          activationNumber: 2,
-          previousActivationNumber: 1,
-          createdAt: now,
-        },
-      },
-    });
-
     const published = await mutateSettingsFactoryDefinition({
       admin,
       workspaceId,
@@ -882,15 +989,14 @@ describe("factory definition Settings loader & mutations", () => {
       },
     });
     expect(published.ok).toBe(true);
-    expect(mocks.mutateFactoryDefinition).toHaveBeenCalledWith({
-      admin,
-      workspaceId,
-      actorUserId,
-      command: {
-        action: "publish",
-        expectedActivationNumber: 1,
-        draftId,
-      },
+    expect(publishBody).toEqual({
+      p_workspace_id: workspaceId,
+      p_factory_id: factoryId,
+      p_actor_user_id: actorUserId,
+      p_expected_activation_number: 1,
+      p_draft_id: draftId,
+      p_enabled_sandbox_providers: ["vercel", "e2b"],
+      p_required_probes: ["git"],
     });
   });
 });
