@@ -17,9 +17,10 @@ import {
 
 type LinearRoutingEditorProps = {
   canManage: boolean;
+  factoryRevisionId?: string | null;
   onSaved?: (routing: LinearRoutingConfig) => Promise<void> | void;
   routing: LinearRoutingConfig;
-  stages: PipelineStage[];
+  stages: Pick<PipelineStage, "id" | "name" | "slug">[];
   workspaceId: string;
 };
 
@@ -116,6 +117,7 @@ function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
 
 export function LinearRoutingEditor({
   canManage,
+  factoryRevisionId,
   onSaved,
   routing,
   stages,
@@ -124,6 +126,7 @@ export function LinearRoutingEditor({
   return (
     <LinearRoutingControls
       canManage={canManage}
+      factoryRevisionId={factoryRevisionId}
       onSaved={onSaved}
       routing={routing}
       stages={stages}
@@ -134,12 +137,18 @@ export function LinearRoutingEditor({
 
 export function LinearRoutingControls({
   canManage,
+  factoryRevisionId,
   onSaved,
   routing,
   stages,
   workspaceId,
 }: LinearRoutingEditorProps) {
-  const [draft, setDraft] = useState(() => routingDraftFromConfig(routing));
+  const [edits, setEdits] = useState<{
+    draft: LinearRoutingDraft;
+    factoryRevisionId: string | null | undefined;
+  } | null>(null);
+  const draft = edits?.draft ?? routingDraftFromConfig(routing);
+  const pipelineChanged = edits !== null && edits.factoryRevisionId !== factoryRevisionId;
   const [feedbackMessage, setFeedbackMessage] = useState<FlashMessage | null>(null);
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);
@@ -156,14 +165,17 @@ export function LinearRoutingControls({
       }
 
       return fetch(`/api/workspaces/${workspaceId}/linear-routing`, {
-        body: JSON.stringify(buildRoutingPayload(draft)),
+        body: JSON.stringify({
+          ...buildRoutingPayload(draft),
+          expectedFactoryRevisionId: edits ? edits.factoryRevisionId : factoryRevisionId,
+        }),
         headers: { "Content-Type": "application/json" },
         method: "PUT",
       });
     },
     errorText: "Linear routing save failed.",
     onSuccess: async (payload) => {
-      setDraft(routingDraftFromConfig(payload.routing));
+      setEdits(null);
       await onSaved?.(payload.routing);
     },
     setFlashMessage: setFeedbackMessage,
@@ -172,7 +184,10 @@ export function LinearRoutingControls({
 
   function updateDraft(updater: (current: LinearRoutingDraft) => LinearRoutingDraft) {
     setFeedbackMessage(null);
-    setDraft(updater);
+    setEdits((current) => ({
+      draft: updater(current?.draft ?? draft),
+      factoryRevisionId: current ? current.factoryRevisionId : factoryRevisionId,
+    }));
   }
 
   function updateStatus(key: LinearRouteKey, value: string) {
@@ -284,9 +299,21 @@ export function LinearRoutingControls({
 
       {canManage ? (
         <div className="flex flex-col items-end gap-2 border-t border-border pt-4">
+          {pipelineChanged ? (
+            <button
+              className="ui-button"
+              onClick={() => {
+                setEdits(null);
+                setFeedbackMessage(null);
+              }}
+              type="button"
+            >
+              Reset edits to use the published pipeline
+            </button>
+          ) : null}
           <button
             className="ui-button-primary"
-            disabled={saveRouting.isBusy || stages.length === 0}
+            disabled={saveRouting.isBusy || stages.length === 0 || pipelineChanged}
             onClick={handleSaveRouting}
             type="button"
           >

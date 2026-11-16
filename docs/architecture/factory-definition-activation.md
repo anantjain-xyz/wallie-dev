@@ -15,6 +15,14 @@ The default factory's active revision is the target of its highest activation nu
 
 Use `expectedActivationNumber: 0` when no definition is active. A stale activation or draft base returns `409`. Activation also returns `409` if a concurrent GitHub update holds the installation or repository lock. Invalid references, incompatible configuration, and unavailable authority or capability evidence return `422`. The caller can inspect compiler diagnostics by field path.
 
+## Shared draft in workspace settings
+
+Settings use `/api/workspaces/[workspaceId]/factory-definition/settings` to show the published activation and the latest draft for that activation. The existing pipeline, coding agent, sandbox provider, execution policy, and delivery policy controls save sections of the same draft.
+
+- Each section saves against the activation number and draft ID that supplied its values. A stale save returns `409`. **Reload configuration** refreshes those identities and retains unsaved fields.
+- **Publish draft** activates the exact saved draft displayed in Settings. Staged policy revisions join the published configuration in the activation transaction.
+- Credentials and connection tests use the operational integration records. Linear routing changes apply immediately and use the published stage IDs.
+
 ## Checking a saved runtime
 
 Managers can run a capability check at `/api/workspaces/[workspaceId]/factory-definition/capability-check`. Submit `{"target":{"kind":"draft","id":"<draft UUID>"}}` or use `"revision"` and its UUID. The API returns `202` and runs the probe against the saved definition’s repository, agent, model, and sandbox provider. Poll the same endpoint with `draftId` or `revisionId`.

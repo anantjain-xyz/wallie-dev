@@ -20,6 +20,10 @@ import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
+import {
+  FactorySettingsFormConflict,
+  useFactorySettingsForm,
+} from "@/features/settings/factory-settings";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
 import type { OpenCodeConnectionStatus } from "@/features/settings/opencode-connection-panel";
@@ -42,6 +46,10 @@ import {
   parseAgentConfigDraft,
   pendingAgentProviderPersistValue,
 } from "@/lib/agent-config/drafts";
+import {
+  factorySettingsAgentSchema,
+  type FactorySettingsSnapshot,
+} from "@/lib/factory-definitions/settings-contracts";
 import { discoverCursorModels } from "@/lib/cursor/client";
 
 type AgentConfigSectionProps = {
@@ -145,6 +153,30 @@ function AgentConfigField({
   );
 }
 
+function draftAgentConfig(agent: FactorySettingsSnapshot["agent"]): AgentConfigMap {
+  return {
+    agent_provider: agent.provider,
+    agent_model: agent.model,
+    agent_effort: agent.effort,
+    concurrency_limit: agent.concurrencyLimit,
+    stall_timeout_ms: agent.stallTimeoutMs,
+    max_retries: agent.maxRetries,
+    max_turns: agent.maxTurns,
+  };
+}
+
+function toDrafts(config: AgentConfigMap): Record<AgentConfigKey, string> {
+  return {
+    agent_provider: agentConfigValueToDraft("agent_provider", config.agent_provider),
+    agent_model: agentConfigValueToDraft("agent_model", config.agent_model),
+    agent_effort: agentConfigValueToDraft("agent_effort", config.agent_effort),
+    concurrency_limit: agentConfigValueToDraft("concurrency_limit", config.concurrency_limit),
+    stall_timeout_ms: agentConfigValueToDraft("stall_timeout_ms", config.stall_timeout_ms),
+    max_retries: agentConfigValueToDraft("max_retries", config.max_retries),
+    max_turns: agentConfigValueToDraft("max_turns", config.max_turns),
+  };
+}
+
 export function AgentConfigSection({
   anchorId = "coding-agent",
   canManage,
@@ -168,27 +200,27 @@ export function AgentConfigSection({
   title = "Coding agent",
   workspaceId,
 }: AgentConfigSectionProps) {
-  const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialAgentConfig);
-  const [drafts, setDrafts] = useState<Record<AgentConfigKey, string>>(() => ({
-    agent_provider: agentConfigValueToDraft("agent_provider", initialAgentConfig.agent_provider),
-    agent_model: agentConfigValueToDraft("agent_model", initialAgentConfig.agent_model),
-    agent_effort: agentConfigValueToDraft("agent_effort", initialAgentConfig.agent_effort),
-    concurrency_limit: agentConfigValueToDraft(
-      "concurrency_limit",
-      initialAgentConfig.concurrency_limit,
-    ),
-    stall_timeout_ms: agentConfigValueToDraft(
-      "stall_timeout_ms",
-      initialAgentConfig.stall_timeout_ms,
-    ),
-    max_retries: agentConfigValueToDraft("max_retries", initialAgentConfig.max_retries),
-    max_turns: agentConfigValueToDraft("max_turns", initialAgentConfig.max_turns),
-  }));
+  const { blocked, revision, stale } = useFactorySettingsForm("agent");
+  const baselineAgent = revision?.snapshot.agent;
+  const baselineAgentKey = baselineAgent ? JSON.stringify(baselineAgent) : null;
+  const [previousBaselineKey, setPreviousBaselineKey] = useState(baselineAgentKey);
+  const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(() =>
+    baselineAgent ? draftAgentConfig(baselineAgent) : initialAgentConfig,
+  );
+  const [drafts, setDrafts] = useState(() => toDrafts(agentConfig));
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
   const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
   const [cursorModels, setCursorModels] = useState<SelectOption[]>([]);
   const [cursorConnected, setCursorConnected] = useState(initialCursorStatus?.connected ?? false);
+
+  if (previousBaselineKey !== baselineAgentKey) {
+    const next = baselineAgent ? draftAgentConfig(baselineAgent) : initialAgentConfig;
+    setPreviousBaselineKey(baselineAgentKey);
+    setAgentConfig(next);
+    setDrafts(toDrafts(next));
+    setServerFieldErrors({});
+  }
 
   const selectedAgentProvider: AgentProvider =
     normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
@@ -280,11 +312,14 @@ export function AgentConfigSection({
     const currentValue = agentConfigValueToDraft(field.configKey, agentConfig[field.configKey]);
     const isDirty = draft !== currentValue;
     const draftIsEmpty = draft.trim() === "";
-    const validation = draftIsEmpty
-      ? null
-      : parseAgentConfigDraft(field.configKey, field.type, draft);
+    const clearDraftEffort = revision && field.configKey === "agent_effort" && draftIsEmpty;
+    const validation = clearDraftEffort
+      ? { ok: true as const, value: null }
+      : draftIsEmpty
+        ? null
+        : parseAgentConfigDraft(field.configKey, field.type, draft);
     const validationError =
-      (isDirty && draftIsEmpty
+      (isDirty && draftIsEmpty && !clearDraftEffort
         ? `${field.label} is required.`
         : validation && !validation.ok
           ? validation.error
@@ -309,10 +344,15 @@ export function AgentConfigSection({
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
-  const canSave = !isSaving && saveableFields.length > 0 && !hasErrors;
+  const editorBusy = isSaving || Boolean(revision?.busy);
+  const canSave = !editorBusy && saveableFields.length > 0 && !hasErrors;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
-    setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
+    const updated = applyAgentConfigDraftChange(drafts, key, next);
+    setDrafts(updated);
+    if (revision) {
+      revision.setDirty(JSON.stringify(updated) !== JSON.stringify(toDrafts(agentConfig)));
+    }
     setServerFieldErrors((current) => {
       if (!current[key]) return current;
       const nextErrors = { ...current };
@@ -322,7 +362,7 @@ export function AgentConfigSection({
   }
 
   async function handleSaveAll() {
-    if (saveInFlightRef.current || saveableFields.length === 0) return;
+    if (saveInFlightRef.current || !canSave) return;
     saveInFlightRef.current = true;
     setIsSaving(true);
     setServerFieldErrors({});
@@ -342,6 +382,26 @@ export function AgentConfigSection({
     }
 
     try {
+      if (revision) {
+        const merged = { ...agentConfig, ...config };
+        const agent = factorySettingsAgentSchema.parse({
+          provider: merged.agent_provider,
+          model: merged.agent_model,
+          effort: agentProviderSupportsEffort(selectedAgentProvider) ? merged.agent_effort : null,
+          concurrencyLimit: merged.concurrency_limit,
+          stallTimeoutMs: merged.stall_timeout_ms,
+          maxRetries: merged.max_retries,
+          maxTurns: merged.max_turns,
+        });
+        const saved = await revision.save({ kind: "agent", agent });
+        const accepted = draftAgentConfig(saved.agent);
+        setAgentConfig(accepted);
+        setDrafts(toDrafts(accepted));
+        revision.setDirty(false);
+        setFlashMessage({ kind: "success", text: "Coding agent draft saved." });
+        return;
+      }
+
       const response = await fetch("/api/agent-config", {
         body: JSON.stringify({ config, workspaceId } satisfies BatchUpsertAgentConfigRequest),
         headers: { "Content-Type": "application/json" },
@@ -392,109 +452,107 @@ export function AgentConfigSection({
 
   return (
     <Section anchorId={anchorId} tagline={tagline} title={title}>
-      {canManage ? (
-        <div className="space-y-6">
-          <div className="space-y-6">
-            {providerFieldStatuses.map((status) => (
-              <AgentConfigField
-                key={status.field.configKey}
-                description={status.field.description}
-                disabled={isSaving}
-                draft={status.draft}
-                emptyOption={status.field.emptyOption}
-                error={status.validationError}
-                label={status.field.label}
-                onChange={(next) => handleFieldChange(status.field.configKey, next)}
-                options={status.field.options}
-                placeholder={status.field.placeholder}
-                type={status.field.type}
+      <div className={canManage ? "space-y-6" : "space-y-4"}>
+        {canManage && !blocked ? (
+          <>
+            {stale && revision ? (
+              <FactorySettingsFormConflict
+                discard={() => {
+                  setDrafts(toDrafts(agentConfig));
+                  setServerFieldErrors({});
+                  revision.setDirty(false);
+                }}
+                section="agent"
               />
-            ))}
-          </div>
-
-          <ProviderAccessPanel
-            connectFlash={codexConnectFlash}
-            initialClaudeCodeStatus={initialClaudeCodeStatus}
-            initialCodexStatus={initialCodexStatus}
-            initialCursorStatus={initialCursorStatus}
-            initialOpenCodeStatus={initialOpenCodeStatus}
-            onClaudeCodeStatusChange={onClaudeCodeStatusChange}
-            onCodexStatusChange={onCodexStatusChange}
-            onCursorStatusChange={(status) => {
-              setCursorConnected(status.connected);
-              onCursorStatusChange?.(status);
-            }}
-            onOpenCodeStatusChange={onOpenCodeStatusChange}
-            provider={selectedAgentProvider}
-            sandboxConnectionHref={sandboxConnectionHref}
-            sandboxConnectionLabel={sandboxConnectionLabel}
-            sandboxConnectionReady={sandboxConnectionReady}
-            workspaceId={workspaceId}
-          />
-
-          <div className="space-y-6">
-            {executionFieldStatuses.map((status) => (
-              <AgentConfigField
-                key={status.field.configKey}
-                description={status.field.description}
-                disabled={isSaving}
-                draft={status.draft}
-                emptyOption={status.field.emptyOption}
-                error={status.validationError}
-                label={status.field.label}
-                onChange={(next) => handleFieldChange(status.field.configKey, next)}
-                options={status.field.options}
-                placeholder={status.field.placeholder}
-                type={status.field.type}
-              />
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-            <p className="text-xs text-muted">
-              {dirtyFields.length === 0
-                ? "No unsaved changes."
-                : `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}.`}
-            </p>
-            <button
-              className="ui-button-primary"
-              disabled={!canSave}
-              onClick={() => void handleSaveAll()}
-              type="button"
-            >
-              <ActionButtonLabel idle="Save changes" pending={isSaving} pendingLabel="Saving…" />
-            </button>
-          </div>
-
-          {extraContent}
-        </div>
-      ) : (
-        <div className="space-y-4">
+            ) : null}
+            <div className="space-y-6">
+              {providerFieldStatuses.map((status) => (
+                <AgentConfigField
+                  key={status.field.configKey}
+                  description={status.field.description}
+                  disabled={editorBusy}
+                  draft={status.draft}
+                  emptyOption={status.field.emptyOption}
+                  error={status.validationError}
+                  label={status.field.label}
+                  onChange={(next) => handleFieldChange(status.field.configKey, next)}
+                  options={status.field.options}
+                  placeholder={status.field.placeholder}
+                  type={status.field.type}
+                />
+              ))}
+            </div>
+          </>
+        ) : (
           <p className="text-[13px] leading-6 text-muted">
-            Workspace admins can configure coding agent settings from this page.
+            {canManage
+              ? "Coding agent settings will appear when factory configuration is available."
+              : "Workspace admins can configure coding agent settings from this page."}
           </p>
-          <ProviderAccessPanel
-            connectFlash={codexConnectFlash}
-            initialClaudeCodeStatus={initialClaudeCodeStatus}
-            initialCodexStatus={initialCodexStatus}
-            initialCursorStatus={initialCursorStatus}
-            initialOpenCodeStatus={initialOpenCodeStatus}
-            onClaudeCodeStatusChange={onClaudeCodeStatusChange}
-            onCodexStatusChange={onCodexStatusChange}
-            onCursorStatusChange={(status) => {
-              setCursorConnected(status.connected);
-              onCursorStatusChange?.(status);
-            }}
-            onOpenCodeStatusChange={onOpenCodeStatusChange}
-            provider={selectedAgentProvider}
-            sandboxConnectionHref={sandboxConnectionHref}
-            sandboxConnectionLabel={sandboxConnectionLabel}
-            sandboxConnectionReady={sandboxConnectionReady}
-            workspaceId={workspaceId}
-          />
-          {extraContent}
-        </div>
-      )}
+        )}
+
+        <ProviderAccessPanel
+          connectFlash={codexConnectFlash}
+          initialClaudeCodeStatus={initialClaudeCodeStatus}
+          initialCodexStatus={initialCodexStatus}
+          initialCursorStatus={initialCursorStatus}
+          initialOpenCodeStatus={initialOpenCodeStatus}
+          onClaudeCodeStatusChange={onClaudeCodeStatusChange}
+          onCodexStatusChange={onCodexStatusChange}
+          onCursorStatusChange={(status) => {
+            setCursorConnected(status.connected);
+            onCursorStatusChange?.(status);
+          }}
+          onOpenCodeStatusChange={onOpenCodeStatusChange}
+          provider={selectedAgentProvider}
+          sandboxConnectionHref={sandboxConnectionHref}
+          sandboxConnectionLabel={sandboxConnectionLabel}
+          sandboxConnectionReady={sandboxConnectionReady}
+          workspaceId={workspaceId}
+        />
+        {canManage && !blocked ? (
+          <>
+            <div className="space-y-6">
+              {executionFieldStatuses.map((status) => (
+                <AgentConfigField
+                  key={status.field.configKey}
+                  description={status.field.description}
+                  disabled={editorBusy}
+                  draft={status.draft}
+                  emptyOption={status.field.emptyOption}
+                  error={status.validationError}
+                  label={status.field.label}
+                  onChange={(next) => handleFieldChange(status.field.configKey, next)}
+                  options={status.field.options}
+                  placeholder={status.field.placeholder}
+                  type={status.field.type}
+                />
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+              <p className="text-xs text-muted">
+                {dirtyFields.length === 0
+                  ? "No unsaved changes."
+                  : `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}.`}
+              </p>
+              <button
+                className="ui-button-primary"
+                disabled={!canSave}
+                onClick={() => void handleSaveAll()}
+                type="button"
+              >
+                <ActionButtonLabel
+                  idle={revision ? "Save agent draft" : "Save changes"}
+                  pending={isSaving}
+                  pendingLabel="Saving…"
+                />
+              </button>
+            </div>
+          </>
+        ) : null}
+        {extraContent}
+      </div>
     </Section>
   );
 }

@@ -1226,6 +1226,7 @@ export type Database = {
           factory_id: string
           id: string
           schema_version: number
+          settings_metadata: Json
           workspace_id: string
         }
         Insert: {
@@ -1237,6 +1238,7 @@ export type Database = {
           factory_id: string
           id?: string
           schema_version: number
+          settings_metadata?: Json
           workspace_id: string
         }
         Update: {
@@ -1248,6 +1250,7 @@ export type Database = {
           factory_id?: string
           id?: string
           schema_version?: number
+          settings_metadata?: Json
           workspace_id?: string
         }
         Relationships: [
@@ -4854,7 +4857,9 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          land_stage_id: string | null
           land_stage_slug: string | null
+          rework_stage_id: string | null
           rework_stage_slug: string
           status_mappings: Json
           updated_at: string
@@ -4863,7 +4868,9 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          land_stage_id?: string | null
           land_stage_slug?: string | null
+          rework_stage_id?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
@@ -4872,7 +4879,9 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          land_stage_id?: string | null
           land_stage_slug?: string | null
+          rework_stage_id?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
@@ -6910,6 +6919,33 @@ export type Database = {
         }
         Returns: boolean
       }
+      publish_settings_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       purge_expired_run_transcripts: {
         Args: { p_entry_limit?: number; p_run_limit?: number }
         Returns: number
@@ -7287,11 +7323,40 @@ export type Database = {
           factory_id: string
           id: string
           schema_version: number
+          settings_metadata: Json
           workspace_id: string
         }
         SetofOptions: {
           from: "*"
           to: "factory_definition_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_linear_routing_config: {
+        Args: {
+          p_actor_user_id: string
+          p_check_revision?: boolean
+          p_expected_revision_id?: string
+          p_land_slug?: string
+          p_rework_slug: string
+          p_status_mappings: Json
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          land_stage_id: string | null
+          land_stage_slug: string | null
+          rework_stage_id: string | null
+          rework_stage_slug: string
+          status_mappings: Json
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "workspace_linear_routing"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -7309,6 +7374,36 @@ export type Database = {
           p_upload_operation_id: string
         }
         Returns: boolean
+      }
+      save_settings_factory_definition_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_canonical_digest: string
+          p_definition_json: string
+          p_expected_activation_number: number
+          p_expected_draft_id?: string
+          p_factory_id: string
+          p_settings_metadata: Json
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number | null
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          settings_metadata: Json
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       save_workspace_repository_profile: {
         Args: {

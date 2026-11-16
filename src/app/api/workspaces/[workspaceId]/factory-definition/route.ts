@@ -34,6 +34,7 @@ const commandSchema = z.discriminatedUnion("action", [
     .object({
       action: z.literal("draft"),
       expectedActivationNumber,
+      expectedDraftId: z.string().uuid().nullable().optional(),
       source: definitionSourceSchema,
     })
     .strict(),

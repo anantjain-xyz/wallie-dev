@@ -550,6 +550,102 @@ select throws_ok(pg_temp.factory_admission_command('54200000-0007-4000-8000-0000
 select is(pg_temp.admit_factory_session('54200000-0007-4000-8000-000000000002','Admission racing publication'),
   (select session_id from factory_admission_after_publish),'a committed creation replays even when its confirmed stage order has changed');
 
+-- Settings stages and policies belong to the candidate until its guarded publication.
+create temp table factory_settings_fixture as
+select '54200000-0004-4000-8000-000000000003'::uuid as stage_id, gen_random_uuid() as execution_id,
+  gen_random_uuid() as delivery_id,
+  '{"version":1,"maxRepairAttempts":1,"maxExecutionMs":600000,"maxTotalTokens":null,"maxCostUsd":null}'::jsonb as execution_requirements,
+  '{"version":1,"deliveryMode":"analysis","requireCodeOwnerReview":false,"requireResolvedThreads":false,
+    "requireArtifactApprovalForDelivery":false,"minimumApprovals":0,"freshnessSeconds":600,
+    "requiredChecks":[],"requiredEvidence":[]}'::jsonb as delivery_requirements;
+create temp table factory_settings_legacy as
+select e.current_revision_id as execution_id, e.revision as execution_revision,
+  d.id as delivery_id, d.revision as delivery_revision
+from factory_activation_scope s join public.execution_policies e using (workspace_id)
+cross join factory_settings_fixture fixture
+cross join lateral public.save_delivery_policy(s.workspace_id,'54200000-0003-4000-8000-000000000001',
+  s.owner_id,0,fixture.delivery_requirements) d;
+
+create function pg_temp.save_factory_settings(p_name text, p_expected_draft_id uuid default null)
+returns public.factory_definition_drafts language sql as $$
+  select public.save_settings_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,6,
+    candidate.bytes,encode(sha256(convert_to(candidate.bytes,'UTF8')),'hex'),
+    jsonb_build_object('pipelineName',p_name,'newStageIds',jsonb_build_array(fixture.stage_id),
+      'executionPolicy',jsonb_build_object('id',fixture.execution_id,'requirements',fixture.execution_requirements),
+      'deliveryPolicy',jsonb_build_object('id',fixture.delivery_id,'requirements',fixture.delivery_requirements)),
+    p_expected_draft_id)
+  from factory_activation_scope s cross join factory_settings_fixture fixture
+  cross join lateral (select jsonb_set(jsonb_set(
+    pg_temp.factory_activation_bundle(p_name,p_execution_policy => fixture.execution_id)::jsonb,
+    '{deliveryPolicyRevisionId}',to_jsonb(fixture.delivery_id)),'{stages,0,id}',to_jsonb(fixture.stage_id))::text as bytes) candidate;
+$$;
+create function pg_temp.publish_factory_settings(p_draft_id uuid, p_providers text[] default array['e2b'])
+returns public.factory_definition_activations language sql as $$
+  select public.publish_settings_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,6,
+    p_draft_id,p_providers,pg_temp.factory_activation_probes()) from factory_activation_scope s;
+$$;
+
+select ok(bool_and(has_function_privilege('service_role',signature,'EXECUTE')
+  and not has_function_privilege('anon',signature,'EXECUTE')
+  and not has_function_privilege('authenticated',signature,'EXECUTE')),
+  'only a service caller can invoke the Settings draft mutation RPCs')
+from (values ('public.save_settings_factory_definition_draft(uuid,uuid,uuid,bigint,text,text,jsonb,uuid)'),
+  ('public.publish_settings_factory_definition_draft(uuid,uuid,uuid,bigint,uuid,text[],text[])')) commands(signature);
+create temp table factory_settings_first as select * from pg_temp.save_factory_settings('First Settings draft');
+select throws_ok($$select pg_temp.save_factory_settings('Stale editor')$$,
+  'PT409','The factory draft changed. Reload before saving.','a stale editor cannot append over a newer shared draft');
+create temp table factory_settings_latest as
+select * from pg_temp.save_factory_settings('Latest Settings draft',(select id from factory_settings_first));
+select throws_ok($$select pg_temp.publish_factory_settings((select id from factory_settings_first))$$,
+  'PT409','The factory draft changed. Reload before publishing.','only the latest shared draft can be published from Settings');
+select throws_ok($$select pg_temp.publish_factory_settings((select id from factory_settings_latest),array['daytona'])$$,
+  'PT422',null,'the latest Settings draft still requires the canonical publication checks');
+
+update public.workspace_members set is_active = true where id='54200000-0002-4000-8000-000000000002';
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000002';
+select is((select count(*) from public.factory_definition_drafts
+  where workspace_id='54200000-0001-4000-8000-000000000001' and settings_metadata ? 'newStageIds'),
+  0::bigint,'a workspace member cannot read the candidate settings');
+set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000001';
+select is((select count(*) from public.factory_definition_drafts
+  where workspace_id='54200000-0001-4000-8000-000000000001' and settings_metadata ? 'newStageIds'),
+  2::bigint,'a workspace manager can read the saved candidate settings');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+
+select ok((select not exists (select 1 from public.pipeline_stages s where s.id=fixture.stage_id)
+    and not exists (select 1 from public.execution_policy_revisions r where r.id=fixture.execution_id)
+    and not exists (select 1 from public.delivery_policy_revisions r where r.id=fixture.delivery_id)
+    and (select name from public.pipelines where id='54200000-0003-4000-8000-000000000001')='Factory pipeline'
+  from factory_settings_fixture fixture), 'save and failed publish leave no live stage, policy, or name changes');
+create temp table factory_settings_published as
+select * from pg_temp.publish_factory_settings((select id from factory_settings_latest));
+select ok((select a.activation_number=7 and r.source_draft_id=d.id and r.definition_json=d.definition_json
+  from factory_settings_published a join public.factory_definition_revisions r on r.id=a.revision_id
+  cross join factory_settings_latest d), 'the successful publication activates the exact latest draft');
+select ok((select stage.archived_at is not null and stage.prompt_template_md=''
+    and execution.requirements=fixture.execution_requirements and delivery.requirements=fixture.delivery_requirements
+  from factory_settings_fixture fixture join public.pipeline_stages stage on stage.id=fixture.stage_id
+  join public.execution_policy_revisions execution on execution.id=fixture.execution_id
+  join public.delivery_policy_revisions delivery on delivery.id=fixture.delivery_id),
+  'the publication materializes an archived stage anchor and the exact candidate policies');
+select is((select name from public.pipelines where id='54200000-0003-4000-8000-000000000001'),
+  'Latest Settings draft','the pipeline name appears only after successful publication');
+select ok((select e.current_revision_id=legacy.execution_id and d.current_revision_id=legacy.delivery_id
+  from factory_activation_scope s join public.execution_policies e using(workspace_id)
+  join public.delivery_policies d using(workspace_id) cross join factory_settings_legacy legacy),
+  'a factory publication preserves the execution and delivery pointers used by legacy sessions');
+select is((select (public.save_execution_policy(s.workspace_id,s.owner_id,legacy.execution_revision,
+    fixture.execution_requirements)).revision
+  from factory_activation_scope s cross join factory_settings_legacy legacy cross join factory_settings_fixture fixture),
+  (select execution_revision+2 from factory_settings_legacy),'an immediate execution policy save advances over factory history');
+select is((select (public.save_delivery_policy(s.workspace_id,'54200000-0003-4000-8000-000000000001',
+    s.owner_id,legacy.delivery_revision,fixture.delivery_requirements)).revision
+  from factory_activation_scope s cross join factory_settings_legacy legacy cross join factory_settings_fixture fixture),
+  (select delivery_revision+2 from factory_settings_legacy),'an immediate delivery policy save advances over factory history');
+
 select extensions.dblink_disconnect('factory_writer');
 select extensions.dblink_disconnect('factory_contender');
 select extensions.dblink_disconnect('factory_admitter');

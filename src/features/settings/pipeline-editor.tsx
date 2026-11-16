@@ -27,6 +27,10 @@ import {
   type PipelineDraftValidationResult,
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
+import {
+  FactorySettingsForm,
+  type FactorySettingsFormRevision,
+} from "@/features/settings/factory-settings";
 import type { PipelineConfiguration } from "@/features/sessions/types";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 
@@ -61,14 +65,29 @@ function archivedDraftsFromPipeline(
   );
 }
 
-export function PipelineEditor({
+export function PipelineEditor(props: PipelineEditorProps) {
+  return (
+    <FactorySettingsForm section="pipeline">
+      {(revision) => (
+        <PipelineEditorControlsForm
+          {...props}
+          pipeline={revision?.snapshot.pipeline ?? props.pipeline}
+          revision={revision}
+        />
+      )}
+    </FactorySettingsForm>
+  );
+}
+
+function PipelineEditorControlsForm({
+  revision,
   canManage,
   onDirtyChange,
   onPipelineSaved,
   pipeline,
   workspaceId,
   workspaceMembers,
-}: PipelineEditorProps) {
+}: PipelineEditorProps & { revision: FactorySettingsFormRevision | null }) {
   const { announce } = useOptionalLiveRegion();
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
@@ -98,11 +117,13 @@ export function PipelineEditor({
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
   const removeStage = removeIndex === null ? null : stages[removeIndex];
-  const editable = canManage && !isPending;
+  const editable = canManage && !isPending && !revision?.busy;
+  const setDraftDirty = revision?.setDirty;
 
   useEffect(() => {
     onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+    setDraftDirty?.(dirty);
+  }, [dirty, onDirtyChange, setDraftDirty]);
 
   if (!pipeline) {
     return (
@@ -160,6 +181,27 @@ export function PipelineEditor({
   }
 
   async function savePipeline(stagesToSave: DraftPipelineStage[]) {
+    if (revision) {
+      await revision.save({
+        kind: "pipeline",
+        name,
+        operatingRulesMd: operatingRules,
+        stages: stagesToSave.map((stage) => ({
+          id: stage.id,
+          slug: stage.slug,
+          name: stage.name,
+          description: stage.description,
+          promptTemplateMd: stage.promptTemplateMd,
+          anyoneCanApprove: stage.anyoneCanApprove,
+          approverMemberIds: stage.approverMemberIds,
+        })),
+      });
+      revision.setDirty(false);
+      announce("Pipeline draft saved.");
+      finishInteraction("save_settings", "success");
+      return;
+    }
+
     const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
       body: JSON.stringify({ name, operatingRulesMd: operatingRules, stages: stagesToSave }),
       headers: { "Content-Type": "application/json" },
@@ -207,7 +249,7 @@ export function PipelineEditor({
   }
 
   function handleSave() {
-    if (saveInFlightRef.current) return;
+    if (saveInFlightRef.current || revision?.busy) return;
 
     setError(null);
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
@@ -265,7 +307,7 @@ export function PipelineEditor({
           <p>{error}</p>
           <button
             className="ui-button shrink-0"
-            disabled={isPending}
+            disabled={isPending || revision?.busy}
             onClick={handleSave}
             type="button"
           >
@@ -379,11 +421,11 @@ export function PipelineEditor({
 
       <PipelineEditorControls
         canManage={canManage}
-        isPending={isPending}
+        isPending={isPending || Boolean(revision?.busy)}
         onAddStage={handleAddStage}
         onSave={handleSave}
-        saveDisabled={!dirty && !error}
-        saveLabel="Save pipeline"
+        saveDisabled={Boolean(revision?.busy) || (!dirty && !error)}
+        saveLabel={revision ? "Save pipeline draft" : "Save pipeline"}
       />
 
       <RemoveStageDialog

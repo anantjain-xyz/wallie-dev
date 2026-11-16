@@ -174,12 +174,12 @@ create temp table land_queue as select approved.* from admitted a cross join rep
   cross join lateral pg_temp.approve_fixture(a.session_id,'54450000-0002-4000-8000-000000000001',artifact.id) approved;
 select is((select current_stage_slug from land_queue),'sealed-land','second approval follows the original final stage');
 
-create function pg_temp.apply_route_fixture(span integer, status text)
+create function pg_temp.apply_route_fixture(span integer, status text, target_session_id uuid default null)
 returns table(outcome text,job_ids uuid[],run_ids uuid[],job_id uuid,run_id uuid) language sql as $$
   with route_input as materialized (
     select s.id,s.workspace_id,s.linear_issue_id,s.updated_at,routing.updated_at as routing_updated_at
-    from admitted a join public.sessions s on s.id=a.session_id
-    join public.workspace_linear_routing routing on routing.workspace_id=s.workspace_id
+    from public.sessions s join public.workspace_linear_routing routing using(workspace_id)
+    where s.id=coalesce(target_session_id,(select session_id from admitted))
   )
   select result.* from route_input s cross join lateral public.apply_linear_session_transition(
     s.id,s.workspace_id,s.linear_issue_id,s.updated_at,s.routing_updated_at,'fixture-span-'||span,
@@ -213,8 +213,70 @@ where workspace_id='54450000-0001-4000-8000-000000000001';
 select is((select outcome from pg_temp.apply_route_fixture(4,'Rework')),'missing_stage',
   'a configured live anchor outside the definition cannot fall through to an unrelated admitted label');
 
+-- Publish new labels without altering the stage identities already admitted.
+-- Remove Plan and add a stage that the earlier session does not have.
+create temp table routing_settings_draft as
+select draft.* from public.factories f cross join active_definition original
+cross join lateral (select jsonb_set(original.body,'{stages}',jsonb_build_array(
+  jsonb_set(original.body #> '{stages,1}','{slug}','"ship-rework"'),
+  jsonb_set(original.body #> '{stages,2}','{slug}','"ship-land"'),
+  jsonb_set(original.body #> '{stages,2}','{slug}','"recently-added"') ||
+    '{"id":"54450000-0004-4000-8000-000000000004","name":"Recently added"}'::jsonb))::text as body) source
+cross join lateral public.save_settings_factory_definition_draft(f.workspace_id,f.id,
+  '54450000-0000-4000-8000-000000000001',1,source.body,encode(sha256(convert_to(source.body,'UTF8')),'hex'),
+  '{"newStageIds":["54450000-0004-4000-8000-000000000004"]}') draft
+where f.workspace_id='54450000-0001-4000-8000-000000000001' and f.is_default;
+insert into public.workspace_e2b_sandbox_connections(workspace_id,encrypted_api_key)
+values ('54450000-0001-4000-8000-000000000001','pinned-route-test-ciphertext');
+insert into public.sandbox_capability_checks(workspace_id,github_repository_id,status,capabilities,
+  sandbox_provider,agent_provider,agent_model,sandbox_connection_revision,factory_definition_digest,checked_at)
+select d.workspace_id,'54450000-0006-4000-8000-000000000001','success','{"git":{"ok":true,"detail":null}}',
+  'e2b','codex','gpt-5.5',c.connection_revision,d.canonical_digest,clock_timestamp()
+from routing_settings_draft d join public.workspace_e2b_sandbox_connections c using(workspace_id);
+create temp table routing_settings_activation as
+select activation.* from routing_settings_draft d
+cross join lateral public.publish_settings_factory_definition_draft(d.workspace_id,d.factory_id,
+  '54450000-0000-4000-8000-000000000001',1,d.id,array['e2b'],array['git']) activation;
+
+create function pg_temp.save_published_routes(rework_slug text, land_slug text)
+returns public.workspace_linear_routing language sql as $$
+  select public.save_linear_routing_config(a.workspace_id,'54450000-0000-4000-8000-000000000001',
+    rework_slug,r.status_mappings,p_land_slug => land_slug,p_check_revision => true,
+    p_expected_revision_id => a.revision_id)
+  from routing_settings_activation a join public.workspace_linear_routing r using(workspace_id);
+$$;
+select throws_ok($$select pg_temp.save_published_routes('sealed-plan','ship-land')$$,
+  'PT422',null,'routing settings reject a stage removed from the published definition');
+select ok((select r.rework_stage_id='54450000-0004-4000-8000-000000000002'::uuid
+  and r.land_stage_id='54450000-0004-4000-8000-000000000003'::uuid
+  from pg_temp.save_published_routes('ship-rework','ship-land') r),
+  'routing settings capture the stable identities behind the published labels');
+select is((select outcome from pg_temp.apply_route_fixture(3,'Rework')),'duplicate',
+  'the same Rework span remains consumed when its target gets a published label and stable ID');
+select is((select job.status::text from renamed_rework route join public.agent_jobs job on job.id=route.job_id),
+  'queued','binding the same target preserves the queued job from the original span');
+create temp table published_rework as select * from pg_temp.apply_route_fixture(5,'Rework');
+select is((select run.stage_slug from published_rework a join public.agent_runs run on run.id=a.run_id),
+  'sealed-build','a renamed published Rework target reaches an older admitted stage');
+create temp table published_done as select * from pg_temp.apply_route_fixture(6,'Done');
+select is((select run.stage_slug from published_done a join public.agent_runs run on run.id=a.run_id),
+  'sealed-land','a renamed published Done target reaches an older admitted land stage');
+select pg_temp.save_published_routes('ship-rework','recently-added');
+select is((select outcome from pg_temp.apply_route_fixture(6,'Done')),
+  'missing_stage','an older session refuses a Done target present only in the newer published definition');
+select ok((select s.archived_at is null and s.current_stage_id='54450000-0004-4000-8000-000000000003'::uuid
+  from admitted a join public.sessions s on s.id=a.session_id),
+  'the missing target does not archive the session or change its admitted stage');
+create temp table admitted_with_added_stage as select * from public.create_session_with_first_job(
+  '54450000-0001-4000-8000-000000000001','54450000-0002-4000-8000-000000000001',
+  'Admitted after stage addition','Use the newly published route','codex','gpt-5.5',
+  'PINNED-NEW','https://linear.app/test/issue/PINNED-NEW');
+select is((select outcome from admitted_with_added_stage a
+  cross join lateral pg_temp.apply_route_fixture(8,'Done',a.session_id)),
+  'routed','an admitted session whose definition includes the new target can route to it');
+
 select pg_temp.new_delivery_policy('code',2);
-select pg_temp.activate_fixture(2,(select jsonb_set(body,'{deliveryPolicyRevisionId}','null') from active_definition));
+select pg_temp.activate_fixture(3,(select jsonb_set(body,'{deliveryPolicyRevisionId}','null') from active_definition));
 create temp table unconfigured as select * from public.create_session_with_first_job(
   '54450000-0001-4000-8000-000000000001','54450000-0002-4000-8000-000000000001',
   'Explicit absence of a delivery gate','Keep the exact delivery configuration','cursor','live-model');

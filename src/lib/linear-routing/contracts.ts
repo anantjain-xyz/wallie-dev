@@ -66,6 +66,7 @@ export const linearStatusMappingsSchema = z.object({
 });
 
 export const linearRoutingUpdateSchema = z.object({
+  expectedFactoryRevisionId: z.string().uuid().nullable().optional(),
   landStageSlug: stageSlugSchema.nullable(),
   reworkStageSlug: stageSlugSchema,
   statusMappings: linearStatusMappingsSchema,
@@ -75,6 +76,8 @@ export type LinearStatusMappings = z.infer<typeof linearStatusMappingsSchema>;
 export type LinearRoutingUpdateInput = z.infer<typeof linearRoutingUpdateSchema>;
 
 export type LinearRoutingConfig = {
+  landStageId?: string;
+  reworkStageId?: string;
   landStageSlug: string | null;
   reworkStageSlug: string;
   statusMappings: LinearStatusMappings;
@@ -112,9 +115,16 @@ export function normalizeStatusMappings(
 }
 
 export function coerceLinearRoutingConfig(value: unknown): LinearRoutingConfig {
-  const parsed = linearRoutingUpdateSchema.safeParse(value);
+  const parsed = linearRoutingUpdateSchema
+    .extend({
+      landStageId: z.string().uuid().nullish(),
+      reworkStageId: z.string().uuid().nullish(),
+    })
+    .safeParse(value);
   if (parsed.success) {
     return {
+      ...(parsed.data.landStageId ? { landStageId: parsed.data.landStageId } : {}),
+      ...(parsed.data.reworkStageId ? { reworkStageId: parsed.data.reworkStageId } : {}),
       landStageSlug: parsed.data.landStageSlug,
       reworkStageSlug: parsed.data.reworkStageSlug,
       statusMappings: normalizeStatusMappings(parsed.data.statusMappings) as LinearStatusMappings,

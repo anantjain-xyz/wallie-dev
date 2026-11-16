@@ -13,17 +13,21 @@ import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
 type LinearConfigurationSectionProps = {
   canManage: boolean;
+  factoryRevisionId?: string | null;
+  loadingStages?: boolean;
   isLoadingSecrets: boolean;
   linearSecret: WorkspaceSecretPreview | null;
   onRoutingSaved?: (routing: SettingsPageData["linearRouting"]) => void;
   routing: SettingsPageData["linearRouting"];
   setSecrets: Dispatch<SetStateAction<WorkspaceSecretPreview[]>>;
-  stages: PipelineStage[];
+  stages: Pick<PipelineStage, "id" | "name" | "slug">[];
   workspaceId: string;
 };
 
 export function LinearConfigurationSection({
   canManage,
+  factoryRevisionId,
+  loadingStages,
   isLoadingSecrets,
   linearSecret,
   onRoutingSaved,
@@ -75,7 +79,8 @@ export function LinearConfigurationSection({
             </p>
           </div>
           <LinearRoutingEditor
-            canManage={canManage}
+            canManage={canManage && !loadingStages}
+            factoryRevisionId={factoryRevisionId}
             onSaved={onRoutingSaved}
             routing={routing}
             stages={stages}

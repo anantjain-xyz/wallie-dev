@@ -1,6 +1,10 @@
-import { compileFactoryDefinition, type FactoryDefinitionCompileResult } from "./compiler";
+import {
+  compileFactoryDefinition,
+  type CompiledFactoryDefinition,
+  type FactoryDefinitionCompileResult,
+} from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
-import { compiledFactoryDefinitionSchema } from "./schema";
+import { compiledFactoryDefinitionSchema, type SerialFactoryDefinition } from "./schema";
 import { parseFactoryDefinitionJson } from "./serialization";
 
 /** Check stored semantics against a fresh catalog without accepting changed identities. */
@@ -9,10 +13,43 @@ export function recompileStoredFactoryDefinition(
   canonicalDigest: string,
   catalog: FactoryDefinitionCatalog,
 ): FactoryDefinitionCompileResult {
+  const bundle = readCompiledFactoryDefinition(definitionJson);
+  if (!bundle) return incompatibleStoredDefinition();
+  const recompiled = compileFactoryDefinition(
+    { kind: "structured", value: factoryDefinitionFromBundle(bundle) },
+    catalog,
+  );
+  if (!recompiled.ok) return recompiled;
+  if (
+    recompiled.definitionJson !== definitionJson ||
+    recompiled.canonicalDigest !== canonicalDigest
+  ) {
+    return incompatibleStoredDefinition();
+  }
+  return recompiled;
+}
+
+export function readCompiledFactoryDefinition(definitionJson: string) {
   const decoded = parseFactoryDefinitionJson(definitionJson);
   const parsed = compiledFactoryDefinitionSchema.safeParse(decoded.ok ? decoded.value : null);
-  if (!parsed.success) return incompatibleStoredDefinition();
+  return parsed.success ? parsed.data : null;
+}
 
+export function factoryStageDefinition({
+  id,
+  slug,
+  name,
+  description,
+  promptTemplateMd,
+  anyoneCanApprove,
+  approverMemberIds,
+}: SerialFactoryDefinition["stages"][number]) {
+  return { id, slug, name, description, promptTemplateMd, anyoneCanApprove, approverMemberIds };
+}
+
+export function factoryDefinitionFromBundle(
+  bundle: CompiledFactoryDefinition,
+): SerialFactoryDefinition {
   const {
     schemaVersion,
     kind,
@@ -26,53 +63,21 @@ export function recompileStoredFactoryDefinition(
     skillIds,
     toolIds,
     stages,
-  } = parsed.data;
-  const recompiled = compileFactoryDefinition(
-    {
-      kind: "structured",
-      value: {
-        schemaVersion,
-        kind,
-        sandboxProvider,
-        agent,
-        operatingRulesMd,
-        pipeline: pipelineId,
-        repository: repositoryId,
-        executionPolicy: executionPolicyRevisionId,
-        deliveryPolicy: deliveryPolicyRevisionId,
-        skills: skillIds,
-        tools: toolIds,
-        stages: stages.map(
-          ({
-            id,
-            slug,
-            name,
-            description,
-            promptTemplateMd,
-            anyoneCanApprove,
-            approverMemberIds,
-          }) => ({
-            id,
-            slug,
-            name,
-            description,
-            promptTemplateMd,
-            anyoneCanApprove,
-            approverMemberIds,
-          }),
-        ),
-      },
-    },
-    catalog,
-  );
-  if (!recompiled.ok) return recompiled;
-  if (
-    recompiled.definitionJson !== definitionJson ||
-    recompiled.canonicalDigest !== canonicalDigest
-  ) {
-    return incompatibleStoredDefinition();
-  }
-  return recompiled;
+  } = bundle;
+  return {
+    schemaVersion,
+    kind,
+    sandboxProvider,
+    agent,
+    operatingRulesMd,
+    pipeline: pipelineId,
+    repository: repositoryId,
+    executionPolicy: executionPolicyRevisionId,
+    deliveryPolicy: deliveryPolicyRevisionId,
+    skills: skillIds,
+    tools: toolIds,
+    stages: stages.map(factoryStageDefinition),
+  };
 }
 
 function incompatibleStoredDefinition(): FactoryDefinitionCompileResult {

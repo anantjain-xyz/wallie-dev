@@ -5,8 +5,7 @@ import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
-  upsertLinearRoutingConfig: vi.fn(),
-  validateLinearRoutingStages: vi.fn(),
+  saveLinearRoutingConfig: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -18,8 +17,7 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 vi.mock("@/lib/linear-routing/server", () => ({
-  upsertLinearRoutingConfig: mocked.upsertLinearRoutingConfig,
-  validateLinearRoutingStages: mocked.validateLinearRoutingStages,
+  saveLinearRoutingConfig: mocked.saveLinearRoutingConfig,
 }));
 
 import * as linearRoutingRoute from "./route";
@@ -60,45 +58,35 @@ describe("PUT /api/workspaces/[workspaceId]/linear-routing", () => {
     expect(Object.keys(linearRoutingRoute).sort()).toEqual(["PUT"]);
   });
 
-  it("validates stages before saving routing config", async () => {
+  it("saves routing against the revision shown to the manager", async () => {
     grantAccess();
     const admin = {};
+    const config = { ...DEFAULT_LINEAR_ROUTING_CONFIG, expectedFactoryRevisionId: null };
     mocked.createSupabaseAdminClient.mockReturnValue(admin);
-    mocked.validateLinearRoutingStages.mockResolvedValue({ ok: true });
-    mocked.upsertLinearRoutingConfig.mockResolvedValue(DEFAULT_LINEAR_ROUTING_CONFIG);
+    mocked.saveLinearRoutingConfig.mockResolvedValue(DEFAULT_LINEAR_ROUTING_CONFIG);
 
-    const response = await PUT(requestWith(DEFAULT_LINEAR_ROUTING_CONFIG), routeContext());
+    const response = await PUT(requestWith(config), routeContext());
 
     expect(response.status).toBe(200);
-    expect(mocked.validateLinearRoutingStages).toHaveBeenCalledWith({
+    expect(mocked.saveLinearRoutingConfig).toHaveBeenCalledWith({
+      actorUserId: "user-1",
       admin,
-      config: DEFAULT_LINEAR_ROUTING_CONFIG,
-      workspaceId: WORKSPACE_ID,
-    });
-    expect(mocked.upsertLinearRoutingConfig).toHaveBeenCalledWith({
-      admin,
-      config: DEFAULT_LINEAR_ROUTING_CONFIG,
+      config,
       workspaceId: WORKSPACE_ID,
     });
   });
 
-  it("rejects unknown routing stage slugs", async () => {
+  it.each([
+    ["PT422", 400],
+    ["PT409", 409],
+    ["42501", 403],
+  ])("maps routing save error %s to HTTP %d", async (code, status) => {
     grantAccess();
     mocked.createSupabaseAdminClient.mockReturnValue({});
-    mocked.validateLinearRoutingStages.mockResolvedValue({
-      error: "Unknown pipeline stage slug: ship",
-      ok: false,
-    });
+    mocked.saveLinearRoutingConfig.mockRejectedValue({ code });
 
-    const response = await PUT(
-      requestWith({ ...DEFAULT_LINEAR_ROUTING_CONFIG, landStageSlug: "ship" }),
-      routeContext(),
-    );
+    const response = await PUT(requestWith(DEFAULT_LINEAR_ROUTING_CONFIG), routeContext());
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Unknown pipeline stage slug: ship",
-    });
-    expect(mocked.upsertLinearRoutingConfig).not.toHaveBeenCalled();
+    expect(response.status).toBe(status);
   });
 });

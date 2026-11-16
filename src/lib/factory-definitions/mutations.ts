@@ -10,11 +10,27 @@ import {
   type FactoryDefinitionDiagnostic,
   type FactoryDefinitionSource,
 } from "./compiler";
+import {
+  archiveRemovedFactoryStages,
+  catalogForStoredFactoryDefinition,
+  latestFactoryDraft,
+  loadActivatedFactoryArchiveBase,
+  readFactorySettingsMetadata,
+  saveSettingsFactoryDraft,
+} from "./settings-persistence";
 import { selectDefaultFactory, selectStoredFactoryDefinition } from "./storage";
-import { recompileStoredFactoryDefinition } from "./stored-definition";
+import {
+  readCompiledFactoryDefinition,
+  recompileStoredFactoryDefinition,
+} from "./stored-definition";
 
 export type FactoryDefinitionMutation =
-  | { action: "draft"; expectedActivationNumber: number; source: FactoryDefinitionSource }
+  | {
+      action: "draft";
+      expectedActivationNumber: number;
+      expectedDraftId?: string | null;
+      source: FactoryDefinitionSource;
+    }
   | { action: "publish"; expectedActivationNumber: number; draftId: string }
   | { action: "rollback"; expectedActivationNumber: number; revisionId: string };
 
@@ -34,7 +50,7 @@ type FactoryDraftSummary = {
   createdAt: string;
 };
 
-type MutationFailure = {
+export type FactoryDefinitionMutationFailure = {
   ok: false;
   status: 400 | 403 | 404 | 409 | 422 | 500;
   error: string;
@@ -43,7 +59,7 @@ type MutationFailure = {
 
 type FactoryMutationResult =
   | { ok: true; result: { draft: FactoryDraftSummary } | { activation: FactoryActivationSummary } }
-  | MutationFailure;
+  | FactoryDefinitionMutationFailure;
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -71,12 +87,57 @@ export async function mutateFactoryDefinition({
   try {
     const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
     if (command.action === "draft") {
-      const compiled = compileFactoryDefinition(command.source, catalog);
+      const draft = await latestFactoryDraft(
+        admin,
+        workspaceId,
+        factory.id,
+        command.expectedActivationNumber,
+      );
+      if (draft.error) return mutationError(draft.error);
+      const current = draft.data;
+      const currentId = current?.id ?? null;
+      if (command.expectedDraftId !== undefined && currentId !== command.expectedDraftId) {
+        return mutationError({
+          code: "PT409",
+          message: "The factory draft changed. Reload before saving.",
+        });
+      }
+      const compiled = compileFactoryDefinition(
+        command.source,
+        current ? catalogForStoredFactoryDefinition(catalog, current) : catalog,
+      );
       if (!compiled.ok) return invalidDefinition(compiled.diagnostics);
-      const { data, error } = await admin.rpc("save_factory_definition_draft", {
-        ...scope,
-        p_definition_json: compiled.definitionJson,
-        p_canonical_digest: compiled.canonicalDigest,
+      const metadata = readFactorySettingsMetadata(current?.settings_metadata);
+      const activated =
+        !current && command.expectedActivationNumber > 0
+          ? await loadActivatedFactoryArchiveBase(
+              admin,
+              workspaceId,
+              factory.id,
+              command.expectedActivationNumber,
+            )
+          : null;
+      const base = current ?? activated;
+      const baseBundle = base && readCompiledFactoryDefinition(base.definition_json);
+      if (baseBundle?.pipelineId === compiled.bundle.pipelineId) {
+        const priorArchive = current
+          ? metadata.archivedStages
+          : readFactorySettingsMetadata(activated?.source?.settings_metadata).archivedStages;
+        metadata.archivedStages = archiveRemovedFactoryStages(
+          baseBundle,
+          compiled.bundle.stages,
+          priorArchive ?? [],
+        );
+      } else {
+        delete metadata.pipelineName;
+        delete metadata.archivedStages;
+      }
+      const { data, error } = await saveSettingsFactoryDraft({
+        client: admin,
+        scope,
+        expectedDraftId: currentId,
+        compiled,
+        metadata,
       });
       if (error || !data) return mutationError(error);
       return {
@@ -108,7 +169,7 @@ export async function mutateFactoryDefinition({
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,
       stored.canonical_digest,
-      catalog,
+      catalogForStoredFactoryDefinition(catalog, stored),
     );
     if (!compiled.ok) return invalidDefinition(compiled.diagnostics);
     const { enabledSandboxProviders, requiredProbes } = factoryActivationRequirements(
@@ -145,7 +206,9 @@ function mapActivation(row: Tables<"factory_definition_activations">): FactoryAc
   };
 }
 
-function invalidDefinition(diagnostics: FactoryDefinitionDiagnostic[]): MutationFailure {
+export function invalidDefinition(
+  diagnostics: FactoryDefinitionDiagnostic[],
+): FactoryDefinitionMutationFailure {
   return {
     ok: false,
     status: 422,
@@ -154,7 +217,9 @@ function invalidDefinition(diagnostics: FactoryDefinitionDiagnostic[]): Mutation
   };
 }
 
-function mutationError(error: { code: string; message?: string } | null): MutationFailure {
+export function mutationError(
+  error: { code: string; message?: string } | null,
+): FactoryDefinitionMutationFailure {
   switch (error?.code) {
     case "PT409":
       return {

@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
+import { useFactorySettings } from "@/features/settings/factory-settings";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -31,6 +32,17 @@ function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]
 }
 
 export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySetupSectionProps) {
+  const settings = useFactorySettings();
+  const snapshot = settings?.snapshot;
+  const definition = snapshot?.draft ?? snapshot?.published;
+  const definitionTarget =
+    data.canManage && snapshot && definition
+      ? {
+          id: definition.id,
+          kind: snapshot.draft ? ("draft" as const) : ("revision" as const),
+          repositoryId: snapshot.repositoryId,
+        }
+      : undefined;
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,
@@ -42,7 +54,10 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     data.setupHealth.selectedRepository.repositoryId;
   const activeSandbox = data.setupHealth.sandboxConnection;
   const sandboxConnected =
-    activeSandbox?.connected ?? data.setupHealth.vercelSandboxConnection.connected;
+    definitionTarget && snapshot
+      ? data.sandboxSettings.enabledProviders.includes(snapshot.sandboxProvider) &&
+        data.sandboxSettings.connections[snapshot.sandboxProvider]?.status === "connected"
+      : (activeSandbox?.connected ?? data.setupHealth.vercelSandboxConnection.connected);
 
   return (
     <Section
@@ -82,21 +97,30 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
           <div className="mb-4 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
             <p className="mt-1 text-xs leading-5 text-muted">
-              Run the check against the selected repository.
+              {definitionTarget
+                ? `Run the check against the ${definitionTarget.kind === "draft" ? "saved draft" : "published factory configuration"}.`
+                : "Run the check against the selected repository."}
             </p>
           </div>
           <SandboxCapabilitySection
-            canManage={data.canManage}
-            initialCheck={data.setupHealth.latestSandboxCapabilityCheck}
-            onCheckChange={(check) =>
-              setData((current) => ({
-                ...current,
-                latestSandboxCapabilityCheck: check,
-                setupHealth: {
-                  ...current.setupHealth,
-                  latestSandboxCapabilityCheck: check,
-                },
-              }))
+            key={definitionTarget?.id ?? "workspace"}
+            canManage={
+              data.canManage && settings?.phase !== "loading" && settings?.phase !== "error"
+            }
+            definitionTarget={definitionTarget}
+            initialCheck={definitionTarget ? null : data.setupHealth.latestSandboxCapabilityCheck}
+            onCheckChange={
+              definitionTarget
+                ? undefined
+                : (check) =>
+                    setData((current) => ({
+                      ...current,
+                      latestSandboxCapabilityCheck: check,
+                      setupHealth: {
+                        ...current.setupHealth,
+                        latestSandboxCapabilityCheck: check,
+                      },
+                    }))
             }
             preferredRepositoryId={preferredRepositoryId}
             repositories={data.github.repositories}

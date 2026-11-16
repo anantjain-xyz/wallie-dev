@@ -108,7 +108,12 @@ describe("factory definition commands", () => {
 
   it("saves compiler bytes and the explicit workspace and actor scope", async () => {
     const { admin } = fixture(({ url, body }) => {
-      expect(url.pathname).toMatch(/\/rpc\/save_factory_definition_draft$/);
+      if (url.pathname.endsWith("/factory_definition_drafts")) {
+        expect(url.searchParams.get("base_activation_number")).toBe("is.null");
+        return Response.json([]);
+      }
+      if (url.pathname.endsWith("/pipeline_stages")) return Response.json([{ id: stageId }]);
+      expect(url.pathname).toMatch(/\/rpc\/save_settings_factory_definition_draft$/);
       expect(body).toEqual({
         p_workspace_id: workspaceId,
         p_factory_id: factoryId,
@@ -116,6 +121,7 @@ describe("factory definition commands", () => {
         p_expected_activation_number: 0,
         p_definition_json: stored.definition_json,
         p_canonical_digest: stored.canonical_digest,
+        p_settings_metadata: { newStageIds: [] },
       });
       return Response.json({
         id: draftId,
@@ -144,6 +150,93 @@ describe("factory definition commands", () => {
         },
       },
     });
+  });
+
+  it("carries the exact published stage archive into the next declarative draft", async () => {
+    const removedId = "54200000-0001-4000-8000-000000000010";
+    const retainedArchiveId = "54200000-0001-4000-8000-000000000011";
+    const policyId = "54200000-0001-4000-8000-000000000012";
+    const policyCatalog = { ...catalog, executionPolicyRevisions: [{ id: policyId, workspaceId }] };
+    mocks.loadCatalog.mockResolvedValue(policyCatalog);
+    const originalStage = source.value.stages[0];
+    const activated = compileFactoryDefinition(
+      {
+        kind: "structured",
+        value: {
+          ...source.value,
+          executionPolicy: policyId,
+          stages: [{ ...originalStage, id: removedId, slug: "review", name: "Review" }],
+        },
+      },
+      policyCatalog,
+    );
+    if (!activated.ok) throw new Error("The activated factory fixture must compile.");
+    const archived = {
+      ...originalStage,
+      pipelineId,
+      archivedAt: "2000-01-01T00:00:00Z",
+      position: 2,
+      anyoneCanApprove: false,
+      description: "",
+    };
+    const { admin } = fixture(({ url, body }) => {
+      if (url.pathname.endsWith("/factory_definition_drafts")) return Response.json([]);
+      if (url.pathname.endsWith("/factory_definition_activations")) {
+        expect(url.searchParams.get("activation_number")).toBe("eq.3");
+        expect(url.searchParams.get("workspace_id")).toBe("eq." + workspaceId);
+        expect(url.searchParams.get("factory_id")).toBe("eq." + factoryId);
+        return Response.json([
+          {
+            revision: {
+              definition_json: activated.definitionJson,
+              source: {
+                settings_metadata: {
+                  pipelineName: "Published name",
+                  archivedStages: [archived, { ...archived, id: retainedArchiveId, slug: "align" }],
+                  executionPolicy: {
+                    id: policyId,
+                    requirements: {
+                      version: 1,
+                      maxRepairAttempts: 2,
+                      maxExecutionMs: 60_000,
+                      maxTotalTokens: null,
+                      maxCostUsd: null,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ]);
+      }
+      if (url.pathname.endsWith("/pipeline_stages")) return Response.json([{ id: stageId }]);
+      expect(url.pathname).toMatch(/\/rpc\/save_settings_factory_definition_draft$/);
+      expect(body).toMatchObject({
+        p_expected_activation_number: 3,
+        p_settings_metadata: {
+          archivedStages: [
+            expect.objectContaining({ id: removedId, name: "Review", slug: "review" }),
+            expect.objectContaining({ id: retainedArchiveId, slug: "align" }),
+          ],
+        },
+      });
+      expect(body).not.toHaveProperty("p_settings_metadata.executionPolicy");
+      expect(body).not.toHaveProperty("p_settings_metadata.pipelineName");
+      return Response.json({ id: draftId });
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: {
+          action: "draft",
+          expectedActivationNumber: 3,
+          expectedDraftId: null,
+          source: { kind: "structured", value: { ...source.value, executionPolicy: policyId } },
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true, result: { draft: { id: draftId } } });
   });
 
   it("publishes only a scoped stored draft and passes server-derived capability requirements", async () => {
