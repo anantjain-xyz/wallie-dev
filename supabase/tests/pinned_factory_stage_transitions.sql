@@ -233,6 +233,15 @@ insert into public.sandbox_capability_checks(workspace_id,github_repository_id,s
 select d.workspace_id,'54450000-0006-4000-8000-000000000001','success','{"git":{"ok":true,"detail":null}}',
   'e2b','codex','gpt-5.5',c.connection_revision,d.canonical_digest,clock_timestamp()
 from routing_settings_draft d join public.workspace_e2b_sandbox_connections c using(workspace_id);
+create temp table routing_settings_smoke as
+select smoke.* from routing_settings_draft d
+cross join lateral public.start_factory_definition_smoke_test(d.workspace_id,d.factory_id,
+  '54450000-0000-4000-8000-000000000001',1,'draft',d.id,d.canonical_digest,array['e2b'],array['git']) smoke;
+select public.finish_factory_definition_smoke_test(test.workspace_id,test.id,'passed',
+  jsonb_build_object('runtimeProfile','e2b','stageCount',3,'completedStageCount',3,
+    'stages',(select jsonb_agg(jsonb_build_object('stageId',s.value->>'id','promptDigest',repeat('d',64)) order by s.position)
+      from jsonb_array_elements(d.definition_json::jsonb->'stages') with ordinality as s(value,position))))
+from routing_settings_smoke test cross join routing_settings_draft d;
 create temp table routing_settings_activation as
 select activation.* from routing_settings_draft d
 cross join lateral public.publish_settings_factory_definition_draft(d.workspace_id,d.factory_id,

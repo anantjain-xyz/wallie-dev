@@ -1325,6 +1325,71 @@ export type Database = {
           },
         ]
       }
+      factory_definition_smoke_tests: {
+        Row: {
+          base_activation_number: number
+          created_at: string
+          created_by: string
+          definition_digest: string
+          error_text: string | null
+          evidence: Json
+          factory_id: string
+          finished_at: string | null
+          id: string
+          lease_expires_at: string
+          policy_version: number
+          sandbox_connection_revision: string | null
+          status: string
+          target_id: string
+          target_kind: string
+          workspace_id: string
+        }
+        Insert: {
+          base_activation_number: number
+          created_at?: string
+          created_by: string
+          definition_digest: string
+          error_text?: string | null
+          evidence?: Json
+          factory_id: string
+          finished_at?: string | null
+          id?: string
+          lease_expires_at: string
+          policy_version?: number
+          sandbox_connection_revision?: string | null
+          status: string
+          target_id: string
+          target_kind: string
+          workspace_id: string
+        }
+        Update: {
+          base_activation_number?: number
+          created_at?: string
+          created_by?: string
+          definition_digest?: string
+          error_text?: string | null
+          evidence?: Json
+          factory_id?: string
+          finished_at?: string | null
+          id?: string
+          lease_expires_at?: string
+          policy_version?: number
+          sandbox_connection_revision?: string | null
+          status?: string
+          target_id?: string
+          target_kind?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_definition_smoke_tests_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       github_install_flows: {
         Row: {
           created_at: string
@@ -5741,6 +5806,38 @@ export type Database = {
         }
         Returns: string
       }
+      cancel_factory_definition_smoke_test: {
+        Args: {
+          p_actor_user_id: string
+          p_definition_digest: string
+          p_test_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number
+          created_at: string
+          created_by: string
+          definition_digest: string
+          error_text: string | null
+          evidence: Json
+          factory_id: string
+          finished_at: string | null
+          id: string
+          lease_expires_at: string
+          policy_version: number
+          sandbox_connection_revision: string | null
+          status: string
+          target_id: string
+          target_kind: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_smoke_tests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       cancel_session_job_attempts: {
         Args: {
           p_expected_run_id?: string
@@ -6227,6 +6324,16 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      finish_factory_definition_smoke_test: {
+        Args: {
+          p_error_text?: string
+          p_evidence: Json
+          p_status: string
+          p_test_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       finish_github_pr_refresh: {
         Args: {
@@ -7524,6 +7631,43 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "sandbox_capability_checks"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      start_factory_definition_smoke_test: {
+        Args: {
+          p_actor_user_id: string
+          p_definition_digest: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_target_id: string
+          p_target_kind: string
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number
+          created_at: string
+          created_by: string
+          definition_digest: string
+          error_text: string | null
+          evidence: Json
+          factory_id: string
+          finished_at: string | null
+          id: string
+          lease_expires_at: string
+          policy_version: number
+          sandbox_connection_revision: string | null
+          status: string
+          target_id: string
+          target_kind: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_smoke_tests"
           isOneToOne: true
           isSetofReturn: false
         }

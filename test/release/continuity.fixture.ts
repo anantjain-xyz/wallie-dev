@@ -1136,6 +1136,19 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       admin.from("factories").select("id").eq("workspace_id", ids.workspaceId).single(),
     );
     const [nextStageId, firstStageId] = ids.stageIds;
+    const frozenStages = [firstStageId, nextStageId].map((id, index) => ({
+      id,
+      slug: index === 0 ? "frozen-first" : "frozen-next",
+      name: index === 0 ? "Frozen First" : "Frozen Next",
+      description: "",
+      anyoneCanApprove: true,
+      approverMemberIds: [],
+      previousStageIds: index === 0 ? [] : [firstStageId],
+      promptTemplateMd:
+        index === 0
+          ? "Pinned template frozen-first {{session.title}}"
+          : "Pinned template frozen-next {{session.title}} {{artifact.previousStages.frozen-first}}",
+    }));
     const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
       schemaVersion: 1,
       kind: "serial",
@@ -1157,19 +1170,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       },
       operatingRulesMd: "Frozen operating rules",
       operatingRuleStageIds: [],
-      stages: [firstStageId, nextStageId].map((id, index) => ({
-        id,
-        slug: index === 0 ? "frozen-first" : "frozen-next",
-        name: index === 0 ? "Frozen First" : "Frozen Next",
-        description: "",
-        anyoneCanApprove: true,
-        approverMemberIds: [],
-        previousStageIds: index === 0 ? [] : [firstStageId],
-        promptTemplateMd:
-          index === 0
-            ? "Pinned template frozen-first {{session.title}}"
-            : "Pinned template frozen-next {{session.title}} {{artifact.previousStages.frozen-first}}",
-      })),
+      stages: frozenStages,
     });
     await checked(
       admin.from("user_codex_credentials").insert({
@@ -1218,12 +1219,45 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         p_canonical_digest: canonicalDigest,
       }),
     );
+    const activationRequirements = {
+      p_enabled_sandbox_providers: ["e2b"],
+      p_required_probes: requiredProbes,
+    };
+    // Simulate provider evidence for this draft on the harness's isolated local database.
+    const smoke = await checked(
+      admin.rpc("start_factory_definition_smoke_test", {
+        ...activationScope,
+        ...activationRequirements,
+        p_target_kind: "draft",
+        p_target_id: draft.id,
+        p_definition_digest: canonicalDigest,
+      }),
+    );
+    expect(smoke.status, smoke.error_text ?? undefined).toBe("running");
+    const finalized = await checked(
+      admin.rpc("finish_factory_definition_smoke_test", {
+        p_workspace_id: ids.workspaceId,
+        p_test_id: smoke.id,
+        p_status: "passed",
+        p_evidence: {
+          runtimeProfile: "e2b",
+          stageCount: frozenStages.length,
+          completedStageCount: frozenStages.length,
+          stages: frozenStages.map((stage) => ({
+            stageId: stage.id,
+            promptDigest: createHash("sha256")
+              .update(`continuity fixture ${canonicalDigest} ${stage.id}`)
+              .digest("hex"),
+          })),
+        },
+      }),
+    );
+    expect(finalized).toBe(true);
     const activation = await checked(
       admin.rpc("publish_factory_definition_draft", {
         ...activationScope,
+        ...activationRequirements,
         p_draft_id: draft.id,
-        p_enabled_sandbox_providers: ["e2b"],
-        p_required_probes: requiredProbes,
       }),
     );
     const frozen = await createFixtureSession("Original pinned session title", [

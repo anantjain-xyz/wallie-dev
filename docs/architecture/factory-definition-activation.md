@@ -31,6 +31,8 @@ Open **Settings → Integrations → Open definition editor** as a workspace own
 - Revision history retains the exact definition for each published revision. A revision permalink or source draft link opens that immutable record. Selecting a revision compares it with the current one.
 - Use the sandbox capability check on the saved draft or selected revision when activation requires a fresh receipt. Publishing a draft or rolling back to an earlier revision affects new sessions. Existing sessions retain their admission revision.
 
+A current passing [candidate smoke test](factory-candidate-smoke.md) is required before publishing a draft or rolling back to a revision.
+
 ## Checking a saved runtime
 
 Managers can run a capability check at `/api/workspaces/[workspaceId]/factory-definition/capability-check`. Submit `{"target":{"kind":"draft","id":"<draft UUID>"}}` or use `"revision"` and its UUID. The API returns `202` and runs the probe against the saved definition’s repository, agent, model, and sandbox provider. Poll the same endpoint with `draftId` or `revisionId`.

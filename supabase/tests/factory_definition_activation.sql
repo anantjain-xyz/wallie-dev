@@ -100,6 +100,55 @@ returns public.factory_definition_drafts language sql as $$
     p_definition,encode(sha256(convert_to(p_definition,'UTF8')),'hex')) from factory_activation_scope s;
 $$;
 
+-- Fixture completions represent provider output. They exercise the same durable
+-- reservation, authorization and finalization paths as the editor API.
+create function pg_temp.factory_smoke_start(p_kind text, p_base bigint, p_target uuid,
+  p_providers text[] default array['e2b'], p_digest text default null, p_actor uuid default null)
+returns public.factory_definition_smoke_tests language sql as $$
+  select public.start_factory_definition_smoke_test(s.workspace_id,s.factory_id,coalesce(p_actor,s.owner_id),
+    p_base,p_kind,p_target,coalesce(p_digest,target.canonical_digest),p_providers,pg_temp.factory_activation_probes())
+  from factory_activation_scope s
+  cross join lateral (
+    select d.canonical_digest from public.factory_definition_drafts d
+    where p_kind='draft' and (d.workspace_id,d.factory_id,d.id)=(s.workspace_id,s.factory_id,p_target)
+    union all
+    select r.canonical_digest from public.factory_definition_revisions r
+    where p_kind='revision' and (r.workspace_id,r.factory_id,r.id)=(s.workspace_id,s.factory_id,p_target)
+  ) target;
+$$;
+
+create function pg_temp.factory_smoke_finish(p_test_id uuid, p_runtime_profile text default null)
+returns boolean language sql as $$
+  select public.finish_factory_definition_smoke_test(test.workspace_id,test.id,'passed',
+    jsonb_build_object(
+      'runtimeProfile',coalesce(p_runtime_profile,target.body->>'sandboxProvider'),
+      'stageCount',jsonb_array_length(target.body->'stages'),
+      'completedStageCount',jsonb_array_length(target.body->'stages'),
+      'stages',(select jsonb_agg(jsonb_build_object('stageId',s.value->>'id','promptDigest',repeat('d',64)) order by s.position)
+        from jsonb_array_elements(target.body->'stages') with ordinality as s(value,position) where s.position <= 32)))
+  from public.factory_definition_smoke_tests test
+  cross join lateral (
+    select d.definition_json::jsonb body from public.factory_definition_drafts d
+    where test.target_kind='draft' and d.id=test.target_id
+    union all
+    select r.definition_json::jsonb body from public.factory_definition_revisions r
+    where test.target_kind='revision' and r.id=test.target_id
+  ) target
+  where test.id=p_test_id;
+$$;
+
+create function pg_temp.seed_factory_smoke(p_kind text, p_base bigint, p_target uuid,
+  p_providers text[] default array['e2b']) returns boolean language plpgsql as $$
+declare test public.factory_definition_smoke_tests;
+begin
+  test := pg_temp.factory_smoke_start(p_kind,p_base,p_target,p_providers);
+  if test.status is distinct from 'running' then
+    raise exception 'Expected an authorized smoke fixture, got % (%)', test.status, test.error_text;
+  end if;
+  return pg_temp.factory_smoke_finish(test.id);
+end;
+$$;
+
 -- Build a parameterized query locally, then run it either in this transaction
 -- or over dblink. Remote sessions cannot access this session's temp fixture.
 create function pg_temp.factory_activation_command(p_kind text,p_base bigint,p_target uuid,
@@ -182,6 +231,86 @@ select ok((select s.factory_definition_provenance='legacy' and s.factory_definit
   join public.sessions s on s.id=fixture.session_id
   left join public.session_factory_admission_inputs input on input.session_id=s.id),
   'normal creation before activation makes an explicit legacy session without an admission receipt');
+
+select ok(bool_and(has_function_privilege('service_role',signature,'EXECUTE')
+  and not has_function_privilege('anon',signature,'EXECUTE')
+  and not has_function_privilege('authenticated',signature,'EXECUTE')),
+  'only a service caller can invoke smoke test lifecycle RPCs')
+from (values ('public.start_factory_definition_smoke_test(uuid,uuid,uuid,bigint,text,uuid,text,text[],text[])'),
+  ('public.finish_factory_definition_smoke_test(uuid,uuid,text,jsonb,text)'),
+  ('public.cancel_factory_definition_smoke_test(uuid,uuid,uuid,text)')) commands(signature);
+select ok(not has_table_privilege('service_role','public.factory_definition_smoke_tests','INSERT, UPDATE, DELETE')
+  and not has_table_privilege('authenticated','public.factory_definition_smoke_tests','INSERT, UPDATE, DELETE'),
+  'smoke test evidence can only be written by lifecycle RPCs');
+
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422','A current passing smoke test is required for the exact factory candidate.','a direct activation command rejects missing smoke evidence');
+select throws_ok($$select pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial),
+  p_actor=>(select member_user_id from factory_activation_scope))$$,
+  '42501',null,'a workspace member cannot reserve smoke runtime');
+select throws_ok($$select pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial),
+  p_digest=>repeat('0',64))$$,'PT409',null,'a mismatched candidate digest cannot reserve smoke runtime');
+select is((select t.status from pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial),
+  p_providers=>array['daytona']) t),'blocked','an unavailable provider creates blocked evidence before runtime');
+
+create temp table factory_smoke_canceled as
+select * from pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial));
+select ok((select t.status='running' and t.target_id=d.id and t.definition_digest=d.canonical_digest
+    and t.policy_version=1 and t.sandbox_connection_revision=c.connection_revision
+  from factory_smoke_canceled t cross join factory_activation_initial d
+  join public.workspace_e2b_sandbox_connections c on c.workspace_id=d.workspace_id),
+  'the smoke reservation records digest, target, policy, and connection revision');
+select throws_ok($$select pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial))$$,
+  'PT409',null,'a live reservation cannot start a second execution');
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422',null,'a running smoke cannot qualify activation');
+select is((select stopped.status from factory_smoke_canceled t cross join factory_activation_scope s
+  cross join lateral public.cancel_factory_definition_smoke_test(t.workspace_id,t.id,s.owner_id,t.definition_digest) stopped),
+  'canceled','cancellation records a durable terminal result');
+select ok(not pg_temp.factory_smoke_finish((select id from factory_smoke_canceled)),
+  'a late successful reply cannot overwrite a canceled result');
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422',null,'canceled evidence cannot qualify activation');
+
+create temp table factory_smoke_fake as
+select * from pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial));
+select ok(pg_temp.factory_smoke_finish((select id from factory_smoke_fake),'fake'),
+  'the fake profile may record a successful test for inspection');
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422',null,'fake evidence cannot qualify activation against a real provider');
+select ok(pg_temp.seed_factory_smoke('draft',0,(select id from factory_activation_initial)),
+  'a passing test for the exact provider and candidate is stored');
+update public.factory_definition_smoke_tests set finished_at=clock_timestamp()-interval '25 hours'
+  where status='passed' and target_id=(select id from factory_activation_initial)
+    and evidence->>'runtimeProfile'='e2b';
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422',null,'stale smoke evidence cannot qualify activation');
+
+create temp table factory_smoke_unsupported as
+select * from pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial));
+select ok((select public.finish_factory_definition_smoke_test(workspace_id,id,'unsupported',
+  '{}'::jsonb,'This smoke profile is unsupported.') from factory_smoke_unsupported),
+  'unsupported runtime results are durable');
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422',null,'unsupported evidence cannot qualify activation');
+
+create temp table factory_smoke_failed as
+select * from pg_temp.factory_smoke_start('draft',0,(select id from factory_activation_initial));
+select throws_ok($$select public.finish_factory_definition_smoke_test(workspace_id,id,'passed',
+  '{"runtimeProfile":"e2b","stageCount":2,"completedStageCount":1,"stages":[]}'::jsonb) from factory_smoke_failed$$,
+  '22023',null,'incomplete serial execution cannot be finalized as passing');
+select ok((select public.finish_factory_definition_smoke_test(workspace_id,id,'failed',
+  '{}'::jsonb,'The isolated command failed.') from factory_smoke_failed),
+  'failed execution is retained with a terminal status');
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_activation_initial)),
+  'PT422',null,'failed evidence cannot qualify activation');
+
+select pg_temp.seed_factory_smoke('draft',0,(select id from factory_activation_initial));
+create temp table factory_smoke_edited as
+select id from pg_temp.factory_activation_save(0,pg_temp.factory_activation_bundle(
+  'Subsequently edited',p_execution_policy=>(select original_revision from factory_admission_policy)));
+select throws_ok(pg_temp.factory_activation_command('publish',0,(select id from factory_smoke_edited)),
+  'PT422',null,'a passing receipt cannot be reused for a subsequently edited draft');
 
 create temp table factory_activation_first as
 select a.* from factory_activation_scope s cross join factory_activation_initial d
@@ -271,6 +400,7 @@ create temp table factory_activation_publish_race as
 select (pg_temp.factory_activation_save(1,pg_temp.factory_activation_bundle(
   'Concurrent winner','54200000-0002-4000-8000-000000000002'))).id as winner_draft,
   (pg_temp.factory_activation_save(1,pg_temp.factory_activation_bundle('Concurrent loser'))).id as loser_draft;
+select pg_temp.seed_factory_smoke('draft',1,winner_draft) from factory_activation_publish_race;
 commit;
 begin;
 set local request.jwt.claim.role = 'service_role';
@@ -370,6 +500,9 @@ select is((select count(*) from public.factory_definition_revisions r join facto
 
 create temp table factory_activation_rollback_race as
 select (pg_temp.factory_activation_save(2,pg_temp.factory_activation_bundle('Losing to rollback'))).id as loser_draft;
+select throws_ok(pg_temp.factory_activation_command('rollback',2,(select revision_id from factory_activation_first)),
+  'PT422','A current passing smoke test is required for the exact factory candidate.','direct rollback also requires fresh evidence');
+select pg_temp.seed_factory_smoke('revision',2,revision_id) from factory_activation_first;
 commit;
 begin;
 set local request.jwt.claim.role = 'service_role';
@@ -448,11 +581,15 @@ select count(*) from extensions.dblink_get_result('factory_contender') as result
 
 insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential) values
   ('54200000-0000-4000-8000-000000000001','platform_api_key','reconnected-activation-test-ciphertext');
+select pg_temp.seed_factory_smoke('revision',3,revision_id) from factory_activation_second;
 update public.workspace_e2b_sandbox_connections set encrypted_api_key='rotated-activation-test-ciphertext',
   connection_revision=gen_random_uuid() where workspace_id='54200000-0001-4000-8000-000000000001';
 select throws_ok(pg_temp.factory_activation_command('rollback',3,(select revision_id from factory_activation_second)),
   'PT422',null,'a rotated sandbox connection invalidates the exact tested capability receipt');
 select pg_temp.factory_activation_receipt();
+select throws_ok(pg_temp.factory_activation_command('rollback',3,(select revision_id from factory_activation_second)),
+  'PT422','A current passing smoke test is required for the exact factory candidate.',
+  'the smoke receipt bound to the old connection remains invalid after capabilities are rechecked');
 select pg_temp.factory_activation_receipt(false);
 select throws_ok(pg_temp.factory_activation_command('rollback',3,(select revision_id from factory_activation_second)),
   'PT422',null,'a newer unsuccessful capability check cannot be bypassed using older receipts');
@@ -515,6 +652,7 @@ select is((select (public.load_workspace_onboarding_sandbox_checks(s.workspace_i
 
 create temp table factory_activation_live_candidate as
 select id from pg_temp.factory_activation_save(3,pg_temp.factory_activation_bundle('Live-compatible candidate'));
+select pg_temp.seed_factory_smoke('draft',3,id) from factory_activation_live_candidate;
 select is((select a.activation_number from factory_activation_scope s cross join factory_activation_live_candidate d
   cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,3,d.id,
     array['e2b'],pg_temp.factory_activation_probes()) a),
@@ -529,6 +667,7 @@ cross join lateral public.start_factory_definition_capability_check(s.workspace_
 where d.label='Another candidate';
 update public.sandbox_capability_checks set status='error',error_text='Other candidate failed'
 where factory_definition_digest=(select canonical_digest from factory_activation_rebased_candidates where label='Another candidate');
+select pg_temp.seed_factory_smoke('draft',4,id,array['e2b','daytona']) from factory_activation_rebased_candidates where label='Checked candidate';
 select is((select a.activation_number from factory_activation_scope s cross join factory_activation_rebased_candidates d
   cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,4,d.id,
     array['e2b','daytona'],pg_temp.factory_activation_probes()) a where d.label='Checked candidate'),
@@ -542,6 +681,7 @@ create temp table factory_activation_reordered as
 select saved.id from (select pg_temp.factory_activation_bundle('Reordered stages')::jsonb as body) draft
 cross join lateral pg_temp.factory_activation_save(5, jsonb_set(draft.body,'{stages}',
   jsonb_build_array(draft.body #> '{stages,1}',draft.body #> '{stages,0}'))::text) saved;
+select pg_temp.seed_factory_smoke('draft',5,id) from factory_activation_reordered;
 select is((select a.activation_number from factory_activation_scope s cross join factory_activation_reordered d
   cross join lateral public.publish_factory_definition_draft(s.workspace_id,s.factory_id,s.owner_id,5,d.id,
     array['e2b'],pg_temp.factory_activation_probes()) a),6::bigint,'a revision can publish a new stage order');
@@ -608,10 +748,16 @@ set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000002';
 select is((select count(*) from public.factory_definition_drafts
   where workspace_id='54200000-0001-4000-8000-000000000001' and settings_metadata ? 'newStageIds'),
   0::bigint,'a workspace member cannot read the candidate settings');
+select is((select count(*) from public.factory_definition_smoke_tests
+  where workspace_id='54200000-0001-4000-8000-000000000001'),
+  0::bigint,'a workspace member cannot read candidate smoke evidence');
 set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000001';
 select is((select count(*) from public.factory_definition_drafts
   where workspace_id='54200000-0001-4000-8000-000000000001' and settings_metadata ? 'newStageIds'),
   2::bigint,'a workspace manager can read the saved candidate settings');
+select ok((select count(*) > 0 from public.factory_definition_smoke_tests
+  where workspace_id='54200000-0001-4000-8000-000000000001'),
+  'a workspace manager can read candidate smoke evidence');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 
@@ -620,6 +766,12 @@ select ok((select not exists (select 1 from public.pipeline_stages s where s.id=
     and not exists (select 1 from public.delivery_policy_revisions r where r.id=fixture.delivery_id)
     and (select name from public.pipelines where id='54200000-0003-4000-8000-000000000001')='Factory pipeline'
   from factory_settings_fixture fixture), 'save and failed publish leave no live stage, policy, or name changes');
+select ok(pg_temp.seed_factory_smoke('draft',6,(select id from factory_settings_latest)),
+  'candidate smoke accepts privately reserved stages and policy revisions');
+select ok((select not exists (select 1 from public.pipeline_stages s where s.id=fixture.stage_id)
+    and not exists (select 1 from public.execution_policy_revisions r where r.id=fixture.execution_id)
+    and not exists (select 1 from public.delivery_policy_revisions r where r.id=fixture.delivery_id)
+  from factory_settings_fixture fixture), 'smoke does not materialize any private candidate records');
 create temp table factory_settings_published as
 select * from pg_temp.publish_factory_settings((select id from factory_settings_latest));
 select ok((select a.activation_number=7 and r.source_draft_id=d.id and r.definition_json=d.definition_json
