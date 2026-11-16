@@ -154,7 +154,10 @@ export function CandidateTestPanel({
     : tests[0];
   const running = mutable && latest?.status === "running" ? latest : null;
   let readiness = "Checking activation eligibility…";
-  if (disableReason) readiness = disableReason;
+  if (eligibility && eligibility.activationNumber !== activationNumber) {
+    readiness =
+      "The active factory revision changed. Reload the definition before testing or activating this candidate.";
+  } else if (disableReason) readiness = disableReason;
   else if (error) readiness = "Activation eligibility is unavailable.";
   else if (pending === "start") readiness = "Waiting for the test to start…";
   else if (running) readiness = "Wait for the configuration test to finish.";

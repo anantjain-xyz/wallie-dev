@@ -636,7 +636,6 @@ export function FactoryDefinitionEditor({
                 <CandidateTestPanel
                   {...draftTests.panel}
                   activationNumber={activationNumber}
-                  eligibility={dirty || conflictReason ? null : draftTests.panel.eligibility}
                   target={{ kind: "draft", id: draft.id, digest: draft.digest }}
                   purpose="publish"
                   allowStart={!locked && !dirty && draftTests.canTest}
@@ -725,7 +724,6 @@ export function FactoryDefinitionEditor({
                   <CandidateTestPanel
                     {...revisionTests.panel}
                     activationNumber={activationNumber}
-                    eligibility={dirty || conflictReason ? null : revisionTests.panel.eligibility}
                     target={{
                       kind: historyCandidate.kind,
                       id: historyCandidate.id,

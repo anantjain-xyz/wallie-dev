@@ -258,6 +258,10 @@ function setup({
     updateReadyProviders(readySandboxProviders: FactoryEditorSnapshot["readySandboxProviders"]) {
       snapshot = { ...snapshot, readySandboxProviders };
     },
+    advanceActivation() {
+      snapshot = { ...snapshot, activationNumber: snapshot.activationNumber + 1 };
+      fireEvent(window, new Event("focus"));
+    },
     updateDraft() {
       const next = document(10, "draft", { ...source, operatingRulesMd: "Externally updated." });
       snapshot = { ...snapshot, draft: next };
@@ -350,6 +354,42 @@ it("activates an immutable selected revision using the displayed activation guar
     path: endpoint,
     body: { action: "rollback", expectedActivationNumber: 2, revisionId: previous.id },
   });
+});
+
+it("explains a newer activation and preserves unsaved input when the reviewer reloads", async () => {
+  const { advanceActivation, requests } = setup();
+  fireEvent.click(await screen.findByRole("button", { name: /Activation #1/ }));
+  const draftTests = within(screen.getByRole("region", { name: "Draft configuration tests" }));
+  const revisionTests = within(
+    await screen.findByRole("region", { name: "Revision configuration tests" }),
+  );
+  const publish = screen.getByRole("button", { name: "Publish draft" });
+  const rollback = screen.getByRole("button", { name: "Roll back to this revision" });
+  const draftRetest = draftTests.getByRole("button", { name: "Retest configuration" });
+  const revisionRetest = await revisionTests.findByRole("button", { name: "Retest configuration" });
+  await waitFor(() => {
+    expect(draftRetest).toBeEnabled();
+    expect(revisionRetest).toBeEnabled();
+    expect(publish).toBeEnabled();
+    expect(rollback).toBeEnabled();
+  });
+
+  advanceActivation();
+
+  const reloadHint = /active factory revision changed.*reload the definition/i;
+  expect(await draftTests.findByText(reloadHint)).toBeVisible();
+  expect(await revisionTests.findByText(reloadHint)).toBeVisible();
+  expect(draftRetest).toBeDisabled();
+  expect(revisionRetest).toBeDisabled();
+  expect(publish).toBeDisabled();
+  expect(rollback).toBeDisabled();
+
+  const model = screen.getByRole("textbox", { name: "Model" });
+  fireEvent.change(model, { target: { value: "gpt-5.6" } });
+  fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
+  expect(await screen.findByRole("button", { name: "Apply edits to latest draft" })).toBeVisible();
+  expect(model).toHaveValue("gpt-5.6");
+  expect(requests).toHaveLength(0);
 });
 
 it("checks readiness for the selected revision's provider and refreshes it with the editor", async () => {

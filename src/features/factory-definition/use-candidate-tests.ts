@@ -15,6 +15,13 @@ import { factoryEditorPost, fetchFactoryEditor } from "./editor-requests";
 type History = z.infer<typeof candidateSmokeHistoryResponseSchema>;
 type Candidate = Pick<FactoryEditorDocument, "id" | "kind" | "digest">;
 type Action = { kind: "start" } | { kind: "cancel"; testId: string };
+type PendingAction = {
+  scope: string;
+  kind: "pending";
+  command: Action["kind"];
+  controller: AbortController;
+};
+type ActionState = PendingAction | { scope: string; kind: "failed"; error: string };
 
 function pageIsVisible() {
   return document.visibilityState !== "hidden";
@@ -50,12 +57,8 @@ export function useCandidateTests({
     version: number;
   } | null>(null);
   const [refreshCount, setRefreshCount] = useState(0);
-  const [action, setAction] = useState<{
-    scope: string;
-    pending: Action["kind"] | null;
-    error: string | null;
-  } | null>(null);
-  const mutation = useRef<{ scope: string; controller: AbortController } | null>(null);
+  const [action, setAction] = useState<ActionState | null>(null);
+  const mutation = useRef<PendingAction | null>(null);
   const [selection, setSelection] = useState<{ scope: string; id: string | null } | null>(null);
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const selectedTestId =
@@ -69,7 +72,7 @@ export function useCandidateTests({
   const current = history?.scope === scope ? history : null;
   const currentAction = action?.scope === scope ? action : null;
   const tests = current?.value?.tests ?? [];
-  const pending = currentAction?.pending ?? null;
+  const pending = currentAction?.kind === "pending" ? currentAction.command : null;
   const selectedTestSummary = tests.find(({ id }) => id === selectedTestId);
   const selectedStatus = selectedTestSummary?.status;
 
@@ -153,8 +156,11 @@ export function useCandidateTests({
     () => () => {
       const current = mutation.current;
       if (current && current.scope === scope) {
-        current.controller.abort();
         mutation.current = null;
+        current.controller.abort();
+        setAction((previous) => (previous === current ? null : previous));
+        // The server may have accepted the request before the client aborted it.
+        setRefreshCount((value) => value + 1);
       }
     },
     [scope],
@@ -165,16 +171,18 @@ export function useCandidateTests({
   }
 
   async function mutate(command: Action) {
-    if (!scope || !target || !active || !canTest || mutation.current) return;
+    if (!scope || !target || !active || mutation.current) return;
     const running = tests.find(
       ({ status, baseActivationNumber }) =>
         status === "running" && baseActivationNumber === activationNumber,
     );
-    if (command.kind === "start" ? running : running?.id !== command.testId) return;
+    if (command.kind === "start" ? !canTest || running : running?.id !== command.testId) return;
     const controller = new AbortController();
     const { signal } = controller;
-    mutation.current = { scope, controller };
-    setAction({ scope, pending: command.kind, error: null });
+    const request: PendingAction = { scope, kind: "pending", command: command.kind, controller };
+    mutation.current = request;
+    setAction(request);
+    let failure: string | null = null;
     try {
       if (command.kind === "start") {
         await fetchFactoryEditor(endpoint, candidateSmokeTestResponseSchema, {
@@ -192,18 +200,12 @@ export function useCandidateTests({
           { method: "DELETE", signal },
         );
       }
-      if (!signal.aborted) setAction({ scope, pending: null, error: null });
     } catch (error) {
-      if (!signal.aborted) {
-        setAction({
-          scope,
-          pending: null,
-          error: requestError(error, "Could not update the test."),
-        });
-      }
+      failure = requestError(error, "Could not update the test.");
     } finally {
-      if (!signal.aborted) {
+      if (mutation.current === request) {
         mutation.current = null;
+        setAction(failure === null ? null : { scope, kind: "failed", error: failure });
         refresh();
       }
     }
@@ -234,7 +236,7 @@ export function useCandidateTests({
       eligibility: eligibility ? { ...eligibility, eligible } : null,
       loading: Boolean(listUrl && !current),
       error: current?.error ?? null,
-      actionError: currentAction?.error ?? null,
+      actionError: currentAction?.kind === "failed" ? currentAction.error : null,
       pending,
       onStart: () => void mutate({ kind: "start" }),
       onCancel: (testId: string) => void mutate({ kind: "cancel", testId }),
