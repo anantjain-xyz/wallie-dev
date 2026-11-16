@@ -1,6 +1,6 @@
 # Factory session inputs
 
-Session creation acquires the workspace fence before reading the active factory definition. It stores the definition revision and activation number in the same transaction as the session, first job, and queued run.
+Session creation acquires the workspace fence before reading the active factory definition. When a revision is active, session creation writes its revision ID and activation number to `session_factory_admission_inputs` in the same transaction as the session, first job, and queued run.
 
 | Record                             | Captured inputs                                                                                                                                                                                                                                                                                 |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -22,11 +22,11 @@ New enrolled sessions execute their compiled revision. The stage order, names, p
 
 ## Enrollment and compatibility
 
-| Session at admission                           | Execution inputs                                   | Evidence                                                                                 |
-| ---------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| No active definition                           | Legacy pipeline and workspace settings             | The session has a `legacy` admission record. Older attempts may have no manifest.        |
-| Revision recorded before the execution cutover | Legacy pipeline and workspace settings             | The recorded activation identifies what was active at admission.                         |
-| Admitted for pinned execution                  | Exact compiled revision and original session input | The admission record identifies the revision. Each new attempt records its own manifest. |
+| Session at admission                           | Execution inputs                                   | Evidence                                                                                  |
+| ---------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| No active definition                           | Legacy pipeline and workspace settings             | `sessions.factory_definition_provenance` is `legacy`. Older attempts may lack a manifest. |
+| Revision recorded before the execution cutover | Legacy pipeline and workspace settings             | The recorded activation identifies what was active at admission.                          |
+| Admitted for pinned execution                  | Exact compiled revision and original session input | The admission record identifies the revision. Each new attempt records its own manifest.  |
 
 Publication and rollback serialize with admission. The transaction that acquires the workspace lock first determines which activation a new session sees. An idempotent creation retry returns the original enrollment. Existing pinned sessions continue to use their saved revision across publication and rollback.
 
