@@ -1,4 +1,5 @@
 import type { AgentProvider, SandboxProvider } from "@/lib/sandbox/types";
+import type { FactoryAgentPromptSnapshot } from "@/lib/factory-agents/contracts";
 
 export type FactoryReferenceEntry = {
   id: string;
@@ -24,6 +25,7 @@ export type FactoryDefinitionCatalog = {
   tools: readonly FactoryComponentReference[];
   approvers: readonly FactoryReferenceEntry[];
   sandboxProviders: readonly SandboxProvider[];
+  agentPromptRevisions?: readonly (FactoryReferenceEntry & FactoryAgentPromptSnapshot)[];
 };
 
 type FactoryReferenceResult<T> =

@@ -1,4 +1,5 @@
 import { agentProviderSupportsEffort, modelMatchesProvider } from "@/lib/agent-config/contracts";
+import type { FactoryAgentPromptSnapshot } from "@/lib/factory-agents/contracts";
 
 import { inspectFactoryPromptReferences } from "./prompt-references";
 import {
@@ -33,6 +34,7 @@ export type CompiledFactoryDefinition = Pick<
   SerialFactoryDefinition,
   "schemaVersion" | "kind" | "agent" | "sandboxProvider" | "operatingRulesMd"
 > & {
+  implementationAgent?: FactoryAgentPromptSnapshot;
   pipelineId: string;
   repositoryId: string;
   executionPolicyRevisionId: string | null;
@@ -108,6 +110,11 @@ function compileSerialDefinition(
   }
 
   const pipeline = find(catalog.pipelines, definition.pipeline, ["pipeline"]);
+  const implementationAgent = definition.implementationAgent
+    ? find(catalog.agentPromptRevisions ?? [], definition.implementationAgent, [
+        "implementationAgent",
+      ])
+    : null;
   const repository = find(catalog.repositories, definition.repository, ["repository"]);
   const executionPolicy =
     definition.executionPolicy === null
@@ -209,6 +216,16 @@ function compileSerialDefinition(
     schemaVersion,
     kind,
     agent,
+    ...(implementationAgent
+      ? {
+          implementationAgent: {
+            agentId: normalizeFactoryId(implementationAgent.agentId),
+            promptRevisionId: normalizeFactoryId(implementationAgent.promptRevisionId),
+            promptMd: implementationAgent.promptMd,
+            promptSha256: implementationAgent.promptSha256,
+          },
+        }
+      : {}),
     sandboxProvider,
     pipelineId: normalizeFactoryId(pipeline.id),
     repositoryId: normalizeFactoryId(repository.id),

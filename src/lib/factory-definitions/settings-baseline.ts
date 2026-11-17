@@ -12,6 +12,7 @@ import {
   normalizeAgentProviderName,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS as defaults,
 } from "@/lib/agent-config/contracts";
+import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import { mapStageRow } from "@/lib/pipeline/stages";
 import { loadWorkspaceSandboxSettings } from "@/lib/sandbox-connections/server";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -29,6 +30,7 @@ export async function loadSettingsBaseline(
   pipelineId: string,
   stageRows: Tables<"pipeline_stages">[],
   operatingRulesMd: string,
+  factoryId: string,
 ): Promise<CompiledFactoryDefinition | null> {
   const [installation, repositories, onboarding] = await Promise.all([
     client
@@ -53,7 +55,7 @@ export async function loadSettingsBaseline(
   });
   if (!repositoryId) return null;
 
-  const [repository, execution, delivery, sandbox, agent] = await Promise.all([
+  const [repository, execution, delivery, sandbox, agent, implementationAgent] = await Promise.all([
     client
       .from("github_repositories")
       .select("id")
@@ -75,11 +77,20 @@ export async function loadSettingsBaseline(
       .maybeSingle(),
     loadWorkspaceSandboxSettings(client, workspaceId),
     client.from("workspace_agent_config").select("key,value_json").eq("workspace_id", workspaceId),
+    client
+      .from("factory_agent_prompt_revisions")
+      .select("id, agent_id, prompt_md, prompt_sha256, factory_agents!inner(is_default)")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .eq("factory_agents.is_default", true)
+      .eq("revision_number", 1)
+      .single(),
   ]);
   if (repository.error) throw repository.error;
   if (execution.error) throw execution.error;
   if (delivery.error) throw delivery.error;
   if (agent.error) throw agent.error;
+  if (implementationAgent.error) throw implementationAgent.error;
   if (!repository.data) return null;
 
   const config = {
@@ -90,6 +101,12 @@ export async function loadSettingsBaseline(
   return {
     schemaVersion: FACTORY_DEFINITION_SCHEMA_VERSION,
     kind: "serial",
+    implementationAgent: factoryAgentPromptSnapshotSchema.parse({
+      agentId: implementationAgent.data.agent_id,
+      promptRevisionId: implementationAgent.data.id,
+      promptMd: implementationAgent.data.prompt_md,
+      promptSha256: implementationAgent.data.prompt_sha256,
+    }),
     pipelineId,
     repositoryId,
     operatingRulesMd,

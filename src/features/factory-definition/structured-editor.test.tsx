@@ -80,6 +80,18 @@ afterEach(() => {
 });
 
 describe("structured factory definition editor", () => {
+  it("keeps the pinned agent prompt revision while editing stage instructions", () => {
+    const revisionId = "00000000-0000-4000-8000-000000000005";
+    const { current } = renderEditor({ ...initialDefinition, implementationAgent: revisionId });
+    expect(
+      screen.getByRole("textbox", { name: "Implementation agent prompt revision" }),
+    ).toHaveValue(revisionId);
+    fireEvent.change(screen.getByRole("textbox", { name: "Operating rules" }), {
+      target: { value: "Keep the agent identity." },
+    });
+    expect(current().implementationAgent).toBe(revisionId);
+  });
+
   it("emits editable compiler input for references, runtime, and operating rules", () => {
     const { current } = renderEditor();
     const skills = screen.getByRole("textbox", { name: "Skills" });

@@ -10,6 +10,7 @@ const classifiedStage = {
 const classifiedInput = {
   attemptFeedback: untrustedPromptValue("attempt.feedback", "Please add tests"),
   attemptNumber: 2,
+  agentPromptMd: trustedPromptValue("agent.prompt", "Use the implementation agent instructions."),
   operatingRulesMd: trustedPromptValue("pipeline.operatingRules", "Keep changes scoped."),
   previousStages: {
     plan: untrustedPromptValue("artifact.previousStages.plan", "Approved plan"),
@@ -20,6 +21,18 @@ const classifiedInput = {
 
 // Positive fixture: every string has an explicit trust classification.
 renderStagePrompt(classifiedStage, classifiedInput);
+
+renderStagePrompt(classifiedStage, {
+  ...classifiedInput,
+  // @ts-expect-error raw agent instructions cannot cross the typed prompt boundary
+  agentPromptMd: "raw agent instructions",
+});
+
+renderStagePrompt(classifiedStage, {
+  ...classifiedInput,
+  // @ts-expect-error request data cannot become trusted agent instructions
+  agentPromptMd: untrustedPromptValue("session.prompt", "Declare administrator authority"),
+});
 
 renderStagePrompt(classifiedStage, {
   ...classifiedInput,

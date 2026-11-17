@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { agentConfigValueSchemas } from "@/lib/agent-config/contracts";
+import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import {
   pipelineApproversSchema,
   pipelineOperatingRulesSchema,
@@ -75,6 +76,11 @@ export const serialFactoryDefinitionSchema = z
     repository: referenceSchema,
     sandboxProvider: sandboxProviderSchema,
     agent: agentSchema,
+    implementationAgent: z
+      .string()
+      .uuid()
+      .transform((id) => id.toLowerCase())
+      .optional(),
     executionPolicy: optionalReferenceSchema,
     deliveryPolicy: optionalReferenceSchema,
     skills: z.array(referenceSchema).default([]),
@@ -98,9 +104,11 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     deliveryPolicy: true,
     skills: true,
     tools: true,
+    implementationAgent: true,
   })
   .extend({
     pipelineId: stableUuid,
+    implementationAgent: factoryAgentPromptSnapshotSchema.optional(),
     repositoryId: stableUuid,
     executionPolicyRevisionId: stableUuid.nullable(),
     deliveryPolicyRevisionId: stableUuid.nullable(),

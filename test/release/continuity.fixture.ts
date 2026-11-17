@@ -57,6 +57,10 @@ const revisedCode = 'export const feature = "reviewed revision";\n';
 const submittedInlineFeedback = "Keep the original implementation while revising the feature.";
 const laterInlineEdit = "This edited comment has not been submitted to the revision.";
 const laterInlineReply = "This later reply must remain unsent.";
+const originalAgentPrompt =
+  "Frozen implementation-agent instructions. {{session.prompt}} stays literal.";
+const replacementAgentPrompt =
+  "Candidate implementation-agent instructions. {{attempt.feedback}} stays literal.";
 
 async function dueAt(value: string | null) {
   const milliseconds = value ? Math.max(0, Date.parse(value) - Date.now() + 25) : 0;
@@ -122,6 +126,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         const sandbox = input.sandbox;
         if (mode === "frozen-first" || mode === "frozen-next-failure" || mode === "frozen-next") {
           const stage = mode === "frozen-first" ? "frozen-first" : "frozen-next";
+          expect(input.prompt).toContain(originalAgentPrompt);
+          expect(input.prompt).not.toContain(replacementAgentPrompt);
           expect(input.prompt).toContain("Frozen operating rules");
           expect(input.prompt).toContain("Original pinned session title");
           expect(input.prompt).toContain(`Pinned template ${stage}`);
@@ -293,6 +299,25 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         .eq("is_default", true)
         .single(),
     );
+    const implementationAgent = await checked(
+      admin
+        .from("factory_agents")
+        .select("id,authority")
+        .eq("workspace_id", ids.workspaceId)
+        .eq("factory_id", defaultFactory.id)
+        .eq("is_default", true)
+        .single(),
+    );
+    expect(implementationAgent.authority).toBe("implementation");
+    const initialAgentPrompt = await checked(
+      admin
+        .from("factory_agent_prompt_revisions")
+        .select("id,prompt_md,prompt_sha256")
+        .eq("agent_id", implementationAgent.id)
+        .eq("revision_number", 1)
+        .single(),
+    );
+    expect(initialAgentPrompt.prompt_md).toBe("");
     await checked(
       admin.from("github_installations").insert({
         id: ids.installationId,
@@ -438,6 +463,10 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         .eq("attempt_count", planJob.attempt_count)
         .single(),
     );
+    expect(planRun).toMatchObject({
+      agent_id: implementationAgent.id,
+      agent_prompt_revision_id: initialAgentPrompt.id,
+    });
     const source = await checked(
       admin.from("session_source_deliveries").select("*").eq("run_id", planRun.id).single(),
     );
@@ -565,7 +594,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       definition_provenance: "legacy",
       definition_revision_id: null,
       worker_runtime: "node",
-      renderer_version: 1,
+      renderer_version: 2,
       prompt_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       credential_owner_member_id: ids.memberId,
       predecessors: [
@@ -1113,6 +1142,17 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     const factory = await checked(
       admin.from("factories").select("id").eq("workspace_id", ids.workspaceId).single(),
     );
+    assert(userId);
+    const frozenAgentPrompt = await checked(
+      admin.rpc("save_factory_agent_prompt_revision", {
+        p_workspace_id: ids.workspaceId,
+        p_factory_id: factory.id,
+        p_actor_user_id: userId,
+        p_agent_id: implementationAgent.id,
+        p_expected_revision_number: 1,
+        p_prompt_md: originalAgentPrompt,
+      }),
+    );
     const [nextStageId, firstStageId] = ids.stageIds;
     const frozenStages = [firstStageId, nextStageId].map((id, index) => ({
       id,
@@ -1145,6 +1185,12 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         stallTimeoutMs: 120_000,
         maxRetries: 2,
         maxTurns: 5,
+      },
+      implementationAgent: {
+        agentId: implementationAgent.id,
+        promptRevisionId: frozenAgentPrompt.id,
+        promptMd: frozenAgentPrompt.prompt_md,
+        promptSha256: frozenAgentPrompt.prompt_sha256,
       },
       operatingRulesMd: "Frozen operating rules",
       operatingRuleStageIds: [],
@@ -1318,8 +1364,37 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     ]);
     expect((await readSession(frozen.sessionId)).phase_status).toBe("in_progress");
 
+    const candidateAgentPrompt = await checked(
+      admin.rpc("save_factory_agent_prompt_revision", {
+        p_workspace_id: ids.workspaceId,
+        p_factory_id: factory.id,
+        p_actor_user_id: userId,
+        p_agent_id: implementationAgent.id,
+        p_expected_revision_number: frozenAgentPrompt.revision_number,
+        p_prompt_md: replacementAgentPrompt,
+      }),
+    );
+    const activeAgentPin = await checked(
+      admin
+        .from("agent_runs")
+        .select("agent_id,agent_prompt_revision_id")
+        .eq("agent_job_id", frozen.jobId)
+        .eq("status", "running")
+        .single(),
+    );
+    expect(activeAgentPin).toEqual({
+      agent_id: implementationAgent.id,
+      agent_prompt_revision_id: frozenAgentPrompt.id,
+    });
+
     const replacementBundle = {
       ...originalBundle,
+      implementationAgent: {
+        agentId: implementationAgent.id,
+        promptRevisionId: candidateAgentPrompt.id,
+        promptMd: candidateAgentPrompt.prompt_md,
+        promptSha256: candidateAgentPrompt.prompt_sha256,
+      },
       agent: { ...originalBundle.agent, model: "gpt-5.6-sol" },
       operatingRulesMd: "Published replacement operating rules",
       stages: [nextStageId, firstStageId].map((id, index) => ({
@@ -1444,6 +1519,19 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       definition_skill_ids: frozenManifest.definition_skill_ids,
     });
     expect(firstManifest.definition_revision_id).toBe(original.activation.revision_id);
+    const frozenRunPins = await checked(
+      admin
+        .from("agent_runs")
+        .select("agent_id,agent_prompt_revision_id")
+        .in("id", [firstFrozen.runId, failedPinnedAttempt.runId, frozenNext.runId]),
+    );
+    expect(frozenRunPins).toHaveLength(3);
+    expect(frozenRunPins).toEqual(
+      Array.from({ length: 3 }, () => ({
+        agent_id: implementationAgent.id,
+        agent_prompt_revision_id: frozenAgentPrompt.id,
+      })),
+    );
     const retriedReview = await readSession(frozen.sessionId);
     expect(retriedReview.phase_status).toBe("awaiting_review");
     const retryCheckpoint = await checked(
@@ -1541,6 +1629,9 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
             definitionRevisionId: replacementAdmission.definition_revision_id,
             definitionDigest: replacementAdmission.definition_digest,
             modelName: replacementAdmission.model_name,
+            agentId: implementationAgent.id,
+            agentPromptRevisionId: candidateAgentPrompt.id,
+            agentPrompt: replacementAgentPrompt,
           }),
         },
         timeout: 55_000,
@@ -1566,6 +1657,18 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       model_name: "gpt-5.6-sol",
       definition_skill_ids: [],
       stage_id: nextStageId,
+    });
+    expect(
+      await checked(
+        admin
+          .from("agent_runs")
+          .select("agent_id,agent_prompt_revision_id")
+          .eq("id", nativeManifest.run_id)
+          .single(),
+      ),
+    ).toEqual({
+      agent_id: implementationAgent.id,
+      agent_prompt_revision_id: candidateAgentPrompt.id,
     });
     const nativeReview = await readSession(nativeSession.sessionId);
     expect(nativeReview.phase_status).toBe("awaiting_review");
@@ -1634,6 +1737,11 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         replacementAdvancedStage: nativeApproval.session?.currentStageId,
         rolledBackSessionId: rolledBackSession.sessionId,
         ungrantedSkillEditRejected: true,
+        agentId: implementationAgent.id,
+        initialAgentPromptRevisionId: initialAgentPrompt.id,
+        originalAgentPromptRevisionId: frozenAgentPrompt.id,
+        replacementAgentPromptRevisionId: candidateAgentPrompt.id,
+        candidatePromptEditPreservedActiveRun: true,
       },
       movingDefaultSha: movedMain,
       checkpoints: lineage.map((row) => ({

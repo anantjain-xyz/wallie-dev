@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -92,6 +93,44 @@ function utilityFor(sandbox: FakeSandbox): CandidateSmokeUtility {
 beforeEach(() => vi.resetAllMocks());
 
 describe("candidate smoke execution", () => {
+  it("binds every stage's smoke digest to the immutable literal agent prompt", async () => {
+    const instructions = "Private agent instructions {{artifact.previousStages.future-stage}}";
+    const originalSandbox = new FakeSandbox();
+    const candidateSandbox = new FakeSandbox();
+    try {
+      const original = await runCandidateSmokeExecution({
+        bundle,
+        profile: "fake",
+        acquire: async () => utilityFor(originalSandbox),
+      });
+      const candidate = await runCandidateSmokeExecution({
+        bundle: {
+          ...bundle,
+          implementationAgent: {
+            agentId: "00000000-0000-4000-8000-000000000006",
+            promptRevisionId: "00000000-0000-4000-8000-000000000007",
+            promptMd: instructions,
+            promptSha256: createHash("sha256").update(instructions).digest("hex"),
+          },
+        },
+        profile: "fake",
+        acquire: async () => utilityFor(candidateSandbox),
+      });
+
+      expect(original.status).toBe("passed");
+      expect(candidate.status).toBe("passed");
+      expect(candidate.evidence.completedStageCount).toBe(2);
+      expect(candidate.evidence.stages.map(({ promptDigest }) => promptDigest)).not.toEqual(
+        original.evidence.stages.map(({ promptDigest }) => promptDigest),
+      );
+      expect(JSON.stringify(candidateSandbox.calls)).not.toContain(instructions);
+      expect(JSON.stringify(candidate)).not.toContain(instructions);
+    } finally {
+      await originalSandbox.stop();
+      await candidateSandbox.stop();
+    }
+  });
+
   it("executes every stage in order in the fake utility and keeps candidate text out of commands", async () => {
     const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
     let finalState: string | null = null;

@@ -30,6 +30,14 @@ function fixtureClient() {
           : [{ id: "another-page" }],
       delivery_policy_revisions: [{ id: "delivery", pipeline_id: "pipeline" }],
       workspace_members: [{ id: "reviewer" }],
+      factory_agent_prompt_revisions: [
+        {
+          id: "81b90000-0000-4000-8000-000000000004",
+          agent_id: "81b90000-0000-4000-8000-000000000005",
+          prompt_md: "",
+          prompt_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      ],
     };
     const record = table ? records[table] : undefined;
     return Response.json(record ?? [], { status: record ? 200 : 404 });
@@ -74,6 +82,15 @@ describe("factory activation authority inputs", () => {
     expect(repos?.searchParams.get("is_archived")).toBe("eq.false");
     expect(repos?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
     expect(pipelines?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    const agents = requests.find((url) => url.pathname.endsWith("/factory_agent_prompt_revisions"));
+    expect(agents?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(catalog.agentPromptRevisions).toMatchObject([
+      {
+        agentId: "81b90000-0000-4000-8000-000000000005",
+        promptRevisionId: "81b90000-0000-4000-8000-000000000004",
+        promptMd: "",
+      },
+    ]);
     expect(members?.searchParams.get("kind")).toBe("eq.human");
     expect(members?.searchParams.get("is_active")).toBe("eq.true");
   });

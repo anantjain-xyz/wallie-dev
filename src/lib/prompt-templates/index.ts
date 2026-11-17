@@ -9,7 +9,7 @@ import { renderTemplate, type TemplateVariables } from "./render";
 
 export { renderTemplate, type TemplateVariables } from "./render";
 
-export const STAGE_PROMPT_RENDERER_VERSION = 1;
+export const STAGE_PROMPT_RENDERER_VERSION = 2;
 
 const ARTIFACT_EVIDENCE_POLICY = trustedPromptValue(
   "wallie.artifactEvidencePolicy",
@@ -94,6 +94,8 @@ export function renderStagePrompt(
     slug: TrustedPromptValue;
   },
   input: {
+    // Static instructions from the run's immutable agent prompt revision.
+    agentPromptMd?: TrustedPromptValue;
     sessionTitle: UntrustedPromptValue;
     sessionPrompt: UntrustedPromptValue;
     attemptNumber: number;
@@ -131,7 +133,9 @@ export function renderStagePrompt(
       ? `${renderedStage}\n\n${attachmentInstructions}\n${attachmentData}`
       : renderedStage;
 
+  const agentPrompt = input.agentPromptMd ? verifyPromptBoundary(input.agentPromptMd) : "";
   return [
+    ...(agentPrompt.trim() ? [agentPrompt] : []),
     renderedPrompt,
     verifyPromptBoundary(ARTIFACT_EVIDENCE_POLICY),
     verifyPromptBoundary(GIT_PUBLICATION_POLICY),

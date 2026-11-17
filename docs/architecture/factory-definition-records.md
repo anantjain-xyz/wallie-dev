@@ -26,3 +26,36 @@ Sessions created before enrollment or without an active definition report `legac
 A legacy session retains its existing session ID, workspace number, pipeline, stage links, artifacts, and run history. Its legacy marker records that the session predates definition enrollment. The current factory definition supplies no evidence about the configuration that produced that history.
 
 See [Factory definition activation](factory-definition-activation.md) for draft, publish, and rollback commands.
+
+## Named agents and prompt revisions
+
+Each factory owns stable named agents. The `implementation` agent starts with
+an empty prompt so existing stage templates retain their behavior. Every agent
+has implementation authority. Agent identity, authority, and prompt revisions
+are immutable.
+
+```mermaid
+flowchart LR
+  A[Factory agent] --> P[Immutable prompt revision]
+  P --> D[Factory candidate]
+  D --> R[Published definition]
+  R --> S[Pinned session]
+  S --> E[Run agent and prompt pin]
+```
+
+- Creating an agent or editing its prompt records a new candidate revision.
+- A definition's optional `implementationAgent` input selects a prompt revision
+  UUID. Compilation embeds the agent ID, revision ID, prompt bytes, and SHA-256.
+- Activation uses the existing candidate smoke and publish flow. Running
+  sessions and retries retain their selected prompt revision.
+- Definitions that omit the reference use the default agent's initial empty
+  prompt. Saving a newer agent prompt leaves that binding intact.
+- Agent instructions are static trusted text. Template-like text inside them
+  remains literal. Session requests, artifacts, and feedback retain their typed
+  untrusted boundaries.
+
+The factory-scoped `agents` API lists authorized identities and prompt history.
+Its create and prompt-revision commands require factory-manager authority.
+Concurrent prompt writes use an expected revision number. The definition
+editor accepts a revision reference while the agent configuration screens are
+introduced by their own milestone.

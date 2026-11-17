@@ -115,6 +115,7 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
       pipeline.id,
       stageRows,
       pipeline.operating_rules_md,
+      factoryId,
     ));
   if (!bundle) return null;
 

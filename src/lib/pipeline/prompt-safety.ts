@@ -3,6 +3,7 @@ import "server-only";
 const PROMPT_VALUE_TOKEN: unique symbol = Symbol("wallie.prompt-value");
 
 export type TrustedPromptSource =
+  | "agent.prompt"
   | "pipeline.operatingRules"
   | "run.validationPlanInstructions"
   | "session.attachmentInstructions"

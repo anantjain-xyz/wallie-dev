@@ -238,7 +238,9 @@ export type Database = {
       }
       agent_runs: {
         Row: {
+          agent_id: string
           agent_job_id: string | null
+          agent_prompt_revision_id: string
           attempt_count: number | null
           branch_name: string | null
           cost_provenance: string
@@ -275,7 +277,9 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          agent_id: string
           agent_job_id?: string | null
+          agent_prompt_revision_id: string
           attempt_count?: number | null
           branch_name?: string | null
           cost_provenance?: string
@@ -312,7 +316,9 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          agent_id?: string
           agent_job_id?: string | null
+          agent_prompt_revision_id?: string
           attempt_count?: number | null
           branch_name?: string | null
           cost_provenance?: string
@@ -362,6 +368,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pinned_job_recovery_settings"
             referencedColumns: ["job_id"]
+          },
+          {
+            foreignKeyName: "agent_runs_agent_prompt_revision_fkey"
+            columns: ["workspace_id", "agent_id", "agent_prompt_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_agent_prompt_revisions"
+            referencedColumns: ["workspace_id", "agent_id", "id"]
           },
           {
             foreignKeyName: "agent_runs_execution_policy_revision_id_fkey"
@@ -1178,6 +1191,94 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_agent_prompt_revisions: {
+        Row: {
+          agent_id: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          prompt_md: string
+          prompt_sha256: string
+          revision_number: number
+          workspace_id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          created_by?: string | null
+          factory_id: string
+          id?: string
+          prompt_md: string
+          prompt_sha256: string
+          revision_number: number
+          workspace_id: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          created_by?: string | null
+          factory_id?: string
+          id?: string
+          prompt_md?: string
+          prompt_sha256?: string
+          revision_number?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_agent_prompt_revision_workspace_id_factory_id_agen_fkey"
+            columns: ["workspace_id", "factory_id", "agent_id"]
+            isOneToOne: false
+            referencedRelation: "factory_agents"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_agents: {
+        Row: {
+          authority: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Insert: {
+          authority?: string
+          created_at?: string
+          created_by?: string | null
+          factory_id: string
+          id?: string
+          is_default?: boolean
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Update: {
+          authority?: string
+          created_at?: string
+          created_by?: string | null
+          factory_id?: string
+          id?: string
+          is_default?: boolean
+          name?: string
+          slug?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_agents_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
           },
         ]
       }
@@ -6333,6 +6434,33 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_factory_agent: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_name: string
+          p_prompt_md?: string
+          p_slug: string
+          p_workspace_id: string
+        }
+        Returns: {
+          agent_id: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          prompt_md: string
+          prompt_sha256: string
+          revision_number: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_agent_prompt_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_session_once_with_first_job: {
         Args: {
           agent_model_name: string
@@ -7754,6 +7882,33 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "execution_policy_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_agent_prompt_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_agent_id: string
+          p_expected_revision_number: number
+          p_factory_id: string
+          p_prompt_md: string
+          p_workspace_id: string
+        }
+        Returns: {
+          agent_id: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          prompt_md: string
+          prompt_sha256: string
+          revision_number: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_agent_prompt_revisions"
           isOneToOne: true
           isSetofReturn: false
         }

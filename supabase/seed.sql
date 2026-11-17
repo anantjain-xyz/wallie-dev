@@ -44,16 +44,27 @@ DECLARE
   v_retry    text := CASE WHEN p_attempt > 1 THEN ' (attempt ' || p_attempt || ')' ELSE '' END;
   v_progress text;
   v_summary  text;
+  v_agent_id uuid;
+  v_prompt_revision_id uuid;
 BEGIN
+  SELECT agent.id, revision.id INTO STRICT v_agent_id, v_prompt_revision_id
+  FROM public.sessions session
+  JOIN public.factory_agents agent
+    ON (agent.workspace_id, agent.factory_id) = (session.workspace_id, session.factory_id)
+      AND agent.is_default
+  JOIN public.factory_agent_prompt_revisions revision
+    ON revision.agent_id = agent.id AND revision.revision_number = 1
+  WHERE (session.workspace_id, session.id) = (p_workspace_id, p_session_id);
+
   -- A queued run has not started yet: no started_at / finished_at / activity.
   -- Every other run is terminal (success), finishing at p_finished_at.
   INSERT INTO public.agent_runs
     (id, workspace_id, session_id, agent_job_id, triggered_by_member_id,
-     stage_id, stage_slug, stage_name, run_type, model_provider, model_name,
+     stage_id, stage_slug, stage_name, run_type, model_provider, model_name, agent_id, agent_prompt_revision_id,
      status, attempt_count, last_activity_at, started_at, finished_at, created_at)
   VALUES
     (v_run_id, p_workspace_id, p_session_id, null, p_member_id,
-     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-8[1m]',
+     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-8[1m]', v_agent_id, v_prompt_revision_id,
      v_status, p_attempt,
      CASE WHEN v_queued THEN null ELSE coalesce(p_finished_at, p_started_at) END,
      CASE WHEN v_queued THEN null ELSE p_started_at END,
@@ -244,6 +255,14 @@ BEGIN
   -- its inherited memberships explicitly.
   INSERT INTO public.factories (id, workspace_id, name, slug, is_default, status)
   VALUES (default_factory_id, ws_id, 'Default factory', 'default', true, 'active');
+
+  INSERT INTO public.factory_agents(id, workspace_id, factory_id, name, slug, is_default)
+  VALUES ('f1b2c3d4-0001-4000-8000-000000000001', ws_id, default_factory_id,
+    'Implementation agent', 'implementation', true);
+  INSERT INTO public.factory_agent_prompt_revisions(
+    id, workspace_id, factory_id, agent_id, revision_number, prompt_md, prompt_sha256
+  ) VALUES ('f2b2c3d4-0001-4000-8000-000000000001', ws_id, default_factory_id,
+    'f1b2c3d4-0001-4000-8000-000000000001', 1, '', encode(sha256(convert_to('', 'UTF8')), 'hex'));
 
   -- -------------------------------------------------------------------------
   -- 4. Workspace members
