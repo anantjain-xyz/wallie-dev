@@ -264,6 +264,59 @@ values
   ('55000000-1400-4000-8000-000000000002', '55000000-0000-4000-8000-000000000001', 'plan', 1,
     '{"markdown":"payments"}');
 
+-- Immutable feedback snapshots carry review text and anchors outside the live
+-- review tables. Seed one batch per factory and prove the read policy follows
+-- the owning session's factory. Execution triggers are bypassed only for this
+-- read-policy fixture; the batch/thread/job guards are covered elsewhere.
+reset role;
+set local session_replication_role = replica;
+insert into public.artifact_feedback_batches(
+  id, workspace_id, session_id, requested_by_member_id, actor_label, request_id,
+  artifact_id, stage_id, artifact_version, review_revision, selected_thread_ids,
+  whole_stage_feedback, rendered_feedback_text, job_id, run_id, rejection_count, job_created
+)
+select fixture.batch_id, '55000000-0000-4000-8000-000000000001', fixture.session_id,
+  'c1b2c3d4-1000-4000-8000-000000000001', 'scope owner', fixture.request_id,
+  artifact.id, fixture.stage_id, 1, 0, '{}'::uuid[],
+  fixture.feedback, fixture.feedback, fixture.job_id, fixture.run_id, 1, true
+from (values
+  ('55000000-1600-4000-8000-000000000001'::uuid, '55000000-1400-4000-8000-000000000001'::uuid,
+    '55000000-9999-4000-8000-000000000011'::uuid, '55000000-1100-4000-8000-000000000001'::uuid,
+    '55000000-1700-4000-8000-000000000001'::uuid, '55000000-1800-4000-8000-000000000001'::uuid,
+    'default feedback'),
+  ('55000000-1600-4000-8000-000000000002'::uuid, '55000000-1400-4000-8000-000000000002'::uuid,
+    '55000000-9999-4000-8000-000000000012'::uuid, '55000000-1100-4000-8000-000000000002'::uuid,
+    '55000000-1700-4000-8000-000000000002'::uuid, '55000000-1800-4000-8000-000000000002'::uuid,
+    'payments feedback')
+) fixture(batch_id, session_id, request_id, stage_id, job_id, run_id, feedback)
+join lateral (
+  select id from public.session_artifacts
+  where session_id = fixture.session_id
+  order by version
+  limit 1
+) artifact on true;
+insert into public.artifact_feedback_batch_threads(
+  batch_id, workspace_id, session_id, artifact_id, thread_id, thread_revision, kind, anchor, comments
+)
+select batch.id, batch.workspace_id, batch.session_id, batch.artifact_id,
+  '55000000-9998-4000-8000-000000000001', 1, 'discussion', '{}'::jsonb,
+  '[{"body":"snapshot"}]'::jsonb
+from public.artifact_feedback_batches batch
+where batch.id in (
+  '55000000-1600-4000-8000-000000000001',
+  '55000000-1600-4000-8000-000000000002'
+);
+insert into public.artifact_feedback_batch_jobs(job_id, batch_id, workspace_id, session_id)
+select fixture.job_id, fixture.batch_id, '55000000-0000-4000-8000-000000000001', fixture.session_id
+from (values
+  ('55000000-1700-4000-8000-000000000001'::uuid, '55000000-1600-4000-8000-000000000001'::uuid,
+    '55000000-1400-4000-8000-000000000001'::uuid),
+  ('55000000-1700-4000-8000-000000000002'::uuid, '55000000-1600-4000-8000-000000000002'::uuid,
+    '55000000-1400-4000-8000-000000000002'::uuid)
+) fixture(job_id, batch_id, session_id);
+set local session_replication_role = origin;
+set local role service_role;
+
 select is(
   (select factory_id from public.sessions where id = '55000000-1400-4000-8000-000000000001'),
   (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'default'),
@@ -311,6 +364,51 @@ select is(
   null::jsonb,
   'the session detail RPC hides a sibling-factory session'
 );
+select is(
+  (select count(*) from jsonb_array_elements(
+    public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001') -> 'lanes'
+  ) lane
+  cross join lateral jsonb_array_elements(lane -> 'cards') card
+  where card ->> 'id' = '55000000-1400-4000-8000-000000000001'),
+  1::bigint,
+  'the pipeline dashboard shows the member factory session'
+);
+select is(
+  (select count(*) from jsonb_array_elements(
+    public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001') -> 'lanes'
+  ) lane
+  cross join lateral jsonb_array_elements(lane -> 'cards') card
+  where card ->> 'id' = '55000000-1400-4000-8000-000000000002'),
+  0::bigint,
+  'the pipeline dashboard hides sibling-factory sessions'
+);
+select is(
+  (select count(*) from public.artifact_feedback_batches
+    where id = '55000000-1600-4000-8000-000000000001'),
+  1::bigint,
+  'the member reads the feedback snapshot in their factory'
+);
+select is_empty($$select id from public.artifact_feedback_batches
+  where id = '55000000-1600-4000-8000-000000000002'$$,
+  'the member cannot read a sibling-factory feedback snapshot');
+select is(
+  (select count(*) from public.artifact_feedback_batch_threads
+    where batch_id = '55000000-1600-4000-8000-000000000001'),
+  1::bigint,
+  'the member reads the feedback thread snapshot in their factory'
+);
+select is_empty($$select batch_id from public.artifact_feedback_batch_threads
+  where batch_id = '55000000-1600-4000-8000-000000000002'$$,
+  'the member cannot read a sibling-factory feedback thread snapshot');
+select is(
+  (select count(*) from public.artifact_feedback_batch_jobs
+    where batch_id = '55000000-1600-4000-8000-000000000001'),
+  1::bigint,
+  'the member reads the feedback job provenance in their factory'
+);
+select is_empty($$select job_id from public.artifact_feedback_batch_jobs
+  where batch_id = '55000000-1600-4000-8000-000000000002'$$,
+  'the member cannot read sibling-factory feedback job provenance');
 select throws_ok($$select public.create_artifact_review_thread(
   '55000000-0000-4000-8000-000000000001',
   '55000000-1400-4000-8000-000000000002',
