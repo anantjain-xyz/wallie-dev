@@ -207,6 +207,16 @@ join lateral (
     and factory.slug = case when fixture.name = 'payments' then 'payments' else 'default' end
 ) built on true;
 
+-- The workspace primary repository belongs to the default factory. Session
+-- detail must not fall back to it when a payments-only member inspects a
+-- legacy payments session that has no repository of its own.
+insert into public.workspace_repository_profiles(workspace_id, github_repository_id, is_primary)
+values (
+  '55000000-0000-4000-8000-000000000001',
+  '55000000-1300-4000-8000-000000000001',
+  true
+);
+
 select throws_ok($$insert into public.sessions(
   id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id,
   github_repository_id
@@ -244,7 +254,11 @@ from (values
     '55000000-1000-4000-8000-000000000002'::uuid, '55000000-1100-4000-8000-000000000002'::uuid, 2,
     'Payments factory pinned session',
     'c1b2c3d4-1000-4000-8000-000000000001'::uuid, 'pinned',
-    '55000000-1500-4000-8000-000000000001'::uuid)
+    '55000000-1500-4000-8000-000000000001'::uuid),
+  ('55000000-1400-4000-8000-000000000004'::uuid, '55000000-0000-4000-8000-000000000001'::uuid,
+    '55000000-1000-4000-8000-000000000002'::uuid, '55000000-1100-4000-8000-000000000002'::uuid, 4,
+    'Payments legacy session without a repository',
+    'c1b2c3d4-1000-4000-8000-000000000001'::uuid, 'legacy', null::uuid)
 ) fixture(session_id, workspace_id, pipeline_id, current_stage_id, number, title, creator_member_id,
   provenance, revision_id)
 join lateral (
@@ -340,6 +354,31 @@ select ok(
       and subject_member_id = 'c1b2c3d4-1000-4000-8000-000000000002') >= 2,
   'membership grants are audited, including the default-factory inheritance'
 );
+
+-- Scope the second member to payments only so the default-factory repository is
+-- not authorized for them.
+select lives_ok($$select public.revoke_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and is_default),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  (select id from public.workspace_members where workspace_id = '55000000-0000-4000-8000-000000000001'
+    and user_id = 'b1b2c3d4-0002-4000-8000-000000000002'))$$,
+  'a member can be scoped to a single factory');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = 'b1b2c3d4-0002-4000-8000-000000000002';
+select is(
+  public.get_session_detail_page('factory-scope-primary', 4) -> 'session' ->> 'id',
+  '55000000-1400-4000-8000-000000000004',
+  'a payments-only member can inspect a legacy payments session'
+);
+select is(
+  public.get_session_detail_page('factory-scope-primary', 4) -> 'activity' ->> 'repository',
+  null::text,
+  'the session detail RPC does not leak the default-factory repository through the primary fallback'
+);
+reset role;
 
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
@@ -445,7 +484,7 @@ select results_eq($$
   select count(*) from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001'
   union all select count(*) from public.sessions where workspace_id = '55000000-0000-4000-8000-000000000001'
   union all select count(*) from public.session_artifacts where workspace_id = '55000000-0000-4000-8000-000000000001'
-  $$, array[2, 2, 2]::bigint[],
+  $$, array[2, 3, 2]::bigint[],
   'a workspace manager retains authorized access to both factories and all sessions');
 reset role;
 

@@ -266,6 +266,29 @@ begin
   if new.kind <> 'human' or new.is_active = old.is_active then
     return new;
   end if;
+
+  -- Serialize the manager check/promotion (and reactivation grant) with the
+  -- factory membership commands, which hold the factory row lock before they
+  -- mutate memberships. Lock in id order so concurrent deactivations touching
+  -- the same factories cannot deadlock with each other.
+  perform 1
+  from public.factories factory
+  where factory.workspace_id = new.workspace_id
+    and (
+      factory.is_default
+      or exists (
+        select 1
+        from public.factory_members manager
+        where manager.workspace_id = new.workspace_id
+          and manager.factory_id = factory.id
+          and manager.member_id = new.id
+          and manager.role = 'manager'
+          and manager.revoked_at is null
+      )
+    )
+  order by factory.id
+  for update;
+
   insert into public.factory_audit_events(
     workspace_id, factory_id, action, subject_member_id, detail
   )
@@ -1609,20 +1632,32 @@ begin
       (internal.pinned_session_execution_definition(v_session)->>'repositoryId')::uuid
       else v_session.github_repository_id end)
     union all
-    select 2, github_repository_id
-    from latest_pull_request_repository
+    select 2, spr.github_repository_id
+    from latest_pull_request_repository spr
+    join public.github_repositories repository
+      on repository.id = spr.github_repository_id
+     and repository.workspace_id = v_workspace_id
     where not v_session.execute_pinned_definition
+      and internal.can_access_factory(repository.workspace_id, repository.factory_id)
     union all
     select 3, wrp.github_repository_id
     from public.workspace_repository_profiles wrp
+    join public.github_repositories repository
+      on repository.id = wrp.github_repository_id
+     and repository.workspace_id = v_workspace_id
     where wrp.workspace_id = v_workspace_id
       and wrp.is_primary
       and not v_session.execute_pinned_definition
+      and internal.can_access_factory(repository.workspace_id, repository.factory_id)
     union all
     select 4, wo.selected_github_repository_id
     from public.workspace_onboarding wo
+    join public.github_repositories repository
+      on repository.id = wo.selected_github_repository_id
+     and repository.workspace_id = v_workspace_id
     where wo.workspace_id = v_workspace_id
       and not v_session.execute_pinned_definition
+      and internal.can_access_factory(repository.workspace_id, repository.factory_id)
   ),
   first_configured as (
     select repository_id
