@@ -550,5 +550,30 @@ select is(
   1::bigint,
   'restoring records an audit event');
 
+-- Workspace owners and admins keep operator admission even without an explicit
+-- factory grant, matching internal.can_access_factory. Another manager takes
+-- over payments first so the owner's grant can be removed legally.
+select lives_ok($$select public.grant_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-1000-4000-8000-000000000002', 'manager')$$,
+  'an active member can take over payments management');
+select lives_ok($$select public.revoke_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  (select id from public.workspace_members where workspace_id = '55000000-0000-4000-8000-000000000001'
+    and user_id = 'b1b2c3d4-0001-4000-8000-000000000001'))$$,
+  'the owner can leave a factory while another manager remains');
+select lives_ok($$insert into public.sessions(
+  id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id
+) values (
+  '55000000-1400-4000-8000-000000000012', '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  12, 'Operator admission', 'c1b2c3d4-1000-4000-8000-000000000001',
+  '55000000-1000-4000-8000-000000000002', '55000000-1100-4000-8000-000000000002'
+)$$, 'workspace owners can start sessions without an explicit factory grant');
+
 select * from finish();
 rollback;
