@@ -45,7 +45,8 @@ insert into auth.users(id, email) values
   ('b1b2c3d4-0001-4000-8000-000000000001', 'scope-owner@example.test'),
   ('b1b2c3d4-0002-4000-8000-000000000002', 'scope-member@example.test'),
   ('b1b2c3d4-0003-4000-8000-000000000003', 'scope-single@example.test'),
-  ('b1b2c3d4-0004-4000-8000-000000000004', 'scope-foreign@example.test');
+  ('b1b2c3d4-0004-4000-8000-000000000004', 'scope-foreign@example.test'),
+  ('b1b2c3d4-0005-4000-8000-000000000005', 'scope-reactivated@example.test');
 set local role service_role;
 insert into public.workspace_members(id, workspace_id, user_id, kind, role) values
   ('c1b2c3d4-1000-4000-8000-000000000001', '55000000-0000-4000-8000-000000000001',
@@ -56,6 +57,9 @@ insert into public.workspace_members(id, workspace_id, user_id, kind, role) valu
     'b1b2c3d4-0003-4000-8000-000000000003', 'human', 'member'),
   ('c1b2c3d4-1000-4000-8000-000000000004', '55000000-0000-4000-8000-000000000002',
     'b1b2c3d4-0004-4000-8000-000000000004', 'human', 'owner');
+insert into public.workspace_members(id, workspace_id, user_id, kind, role, is_active) values
+  ('c1b2c3d4-1000-4000-8000-000000000005', '55000000-0000-4000-8000-000000000001',
+    'b1b2c3d4-0005-4000-8000-000000000005', 'human', 'member', false);
 set local role service_role;
 
 select is(
@@ -76,6 +80,33 @@ select is(
     )),
   'manager',
   'workspace owners inherit factory manager access'
+);
+
+select is(
+  (select count(*) from public.factory_members
+    where workspace_id = '55000000-0000-4000-8000-000000000001'
+      and member_id = 'c1b2c3d4-1000-4000-8000-000000000005'),
+  0::bigint,
+  'an inactive member does not inherit the default factory'
+);
+update public.workspace_members set is_active = true
+where id = 'c1b2c3d4-1000-4000-8000-000000000005';
+select is(
+  (select member.role from public.factory_members member
+    join public.factories factory on factory.id = member.factory_id and factory.workspace_id = member.workspace_id
+    where member.member_id = 'c1b2c3d4-1000-4000-8000-000000000005'
+      and factory.is_default and member.revoked_at is null),
+  'member',
+  'reactivating a legacy workspace member repairs the inherited default grant'
+);
+select is(
+  (select count(*) from public.factory_audit_events
+    where workspace_id = '55000000-0000-4000-8000-000000000001'
+      and subject_member_id = 'c1b2c3d4-1000-4000-8000-000000000005'
+      and action = 'membership.granted'
+      and detail ->> 'source' = 'default_factory_reactivation'),
+  1::bigint,
+  'the repaired inherited grant is audited'
 );
 
 -- Factory lifecycle is an audited operator action. The creator becomes manager.
@@ -176,6 +207,27 @@ join lateral (
     and factory.slug = case when fixture.name = 'payments' then 'payments' else 'default' end
 ) built on true;
 
+select throws_ok($$insert into public.sessions(
+  id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id,
+  github_repository_id
+) values (
+  '55000000-1400-4000-8000-000000000010', '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'default'),
+  10, 'Cross-factory repository', 'c1b2c3d4-1000-4000-8000-000000000001',
+  '55000000-1000-4000-8000-000000000001', '55000000-1100-4000-8000-000000000001',
+  '55000000-1300-4000-8000-000000000002'
+)$$, '42501', null,
+  'admission rejects a repository from a sibling factory');
+select throws_ok($$insert into public.sessions(
+  id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id
+) values (
+  '55000000-1400-4000-8000-000000000011', '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'default'),
+  11, 'Cross-factory pipeline', 'c1b2c3d4-1000-4000-8000-000000000001',
+  '55000000-1000-4000-8000-000000000002', '55000000-1100-4000-8000-000000000002'
+)$$, '42501', null,
+  'admission rejects a pipeline from a sibling factory');
+
 insert into public.sessions(
   id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id,
   factory_definition_provenance, factory_definition_revision_id
@@ -249,6 +301,24 @@ select results_eq($$
   $$, array[1, 1, 1, 1, 1, 0]::bigint[],
   'a single-factory member cannot enumerate sibling-factory or foreign-workspace resources');
 
+select is(
+  jsonb_array_length(public.get_session_list_page('factory-scope-primary') -> 'sessions'),
+  1,
+  'the session list RPC returns only the member factory'
+);
+select is(
+  public.get_session_detail_page('factory-scope-primary', 2),
+  null::jsonb,
+  'the session detail RPC hides a sibling-factory session'
+);
+select throws_ok($$select public.create_artifact_review_thread(
+  '55000000-0000-4000-8000-000000000001',
+  '55000000-1400-4000-8000-000000000002',
+  '55000000-1100-4000-8000-000000000002',
+  '55000000-9999-4000-8000-000000000001', 1, '{}'::jsonb, 'comment', 'sibling write')$$,
+  '42501', null,
+  'review mutations reject a sibling-factory session');
+
 select results_eq($$update public.sessions set title = 'Allowed rename'
   where id = '55000000-1400-4000-8000-000000000001'
   returning id$$,
@@ -266,7 +336,7 @@ select throws_ok($$insert into public.pipelines(workspace_id, factory_id, name)
   'a single-factory member cannot create resources in a sibling factory');
 select results_eq($$
   select count(*) from public.factory_members where workspace_id = '55000000-0000-4000-8000-000000000001'
-  $$, array[3]::bigint[],
+  $$, array[4]::bigint[],
   'a member sees only membership rows in factories they can access');
 reset role;
 
@@ -314,6 +384,11 @@ select results_eq($$
   union all select count(*) from public.session_artifacts where workspace_id = '55000000-0000-4000-8000-000000000001'
   $$, array[0, 0, 0]::bigint[],
   'a removed member immediately loses the migrated session and its evidence');
+select is(
+  public.get_session_detail_page('factory-scope-primary', 1),
+  null::jsonb,
+  'the session detail RPC also closes after membership revocation'
+);
 reset role;
 
 set local role authenticated;
@@ -348,6 +423,71 @@ select throws_ok($$select public.revoke_factory_membership(
     and user_id = 'b1b2c3d4-0001-4000-8000-000000000001'))$$,
   '23514', null,
   'a factory cannot lose its last manager');
+
+-- Deactivating the sole manager promotes the longest-standing active member;
+-- workspace removal itself must keep working.
+select lives_ok($$select public.create_factory(
+  '55000000-0000-4000-8000-000000000001',
+  'b1b2c3d4-0001-4000-8000-000000000001', 'Dedicated', 'dedicated')$$,
+  'a dedicated factory supports the deactivation test');
+select lives_ok($$select public.grant_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'dedicated'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-1000-4000-8000-000000000005', 'manager')$$,
+  'the reactivated member becomes a dedicated factory manager');
+select lives_ok($$select public.grant_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'dedicated'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-1000-4000-8000-000000000003', 'member')$$,
+  'an active member is available for promotion');
+select lives_ok($$select public.grant_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'dedicated'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-1000-4000-8000-000000000001', 'member')$$,
+  'the workspace owner can step down from factory management');
+select lives_ok($$update public.workspace_members set is_active = false
+  where id = 'c1b2c3d4-1000-4000-8000-000000000005'$$,
+  'workspace deactivation does not block the sole factory manager');
+select is(
+  (select count(*) from public.factory_members manager
+    join public.workspace_members manager_member on manager_member.id = manager.member_id
+    where manager.factory_id = (select id from public.factories
+        where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'dedicated')
+      and manager.role = 'manager'
+      and manager.revoked_at is null
+      and manager_member.is_active
+      and manager_member.kind = 'human'),
+  1::bigint,
+  'deactivation promotes an active member so the factory retains a manager');
+select is(
+  (select count(*) from public.factory_audit_events
+    where workspace_id = '55000000-0000-4000-8000-000000000001'
+      and action = 'membership.granted'
+      and detail ->> 'source' = 'workspace_member_deactivation'),
+  1::bigint,
+  'the deactivation promotion is audited');
+
+-- Writes to membership history have no service grant; the database owner
+-- exercises the FK cleanup path triggered by account deletion.
+reset role;
+select lives_ok($$update public.factory_members set granted_by_member_id = null
+  where workspace_id = '55000000-0000-4000-8000-000000000001'
+    and factory_id = (select id from public.factories
+      where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments')
+    and member_id = 'c1b2c3d4-1000-4000-8000-000000000002'$$,
+  'account deletion may clear grant attribution through ON DELETE SET NULL');
+select throws_ok($$update public.factory_members
+  set granted_by_member_id = 'c1b2c3d4-1000-4000-8000-000000000003'
+  where workspace_id = '55000000-0000-4000-8000-000000000001'
+    and factory_id = (select id from public.factories
+      where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments')
+    and member_id = 'c1b2c3d4-1000-4000-8000-000000000002'$$,
+  '23514', null,
+  'grant attribution stays immutable outside FK cleanup');
+set local role service_role;
 
 select lives_ok($$select public.archive_factory(
   '55000000-0000-4000-8000-000000000001',

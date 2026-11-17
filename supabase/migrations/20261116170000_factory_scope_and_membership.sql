@@ -151,14 +151,20 @@ create trigger enforce_factory_member_refs
 create function internal.preserve_factory_membership_identity()
 returns trigger language plpgsql security invoker set search_path = '' as $$
 begin
-  if (new.workspace_id, new.factory_id, new.member_id, new.granted_by_member_id, new.granted_at)
+  -- Account deletion clears attribution through ON DELETE SET NULL. Permit that
+  -- cleanup while keeping the grant identity immutable.
+  if (new.workspace_id, new.factory_id, new.member_id, new.granted_at)
       is distinct from
-     (old.workspace_id, old.factory_id, old.member_id, old.granted_by_member_id, old.granted_at) then
+     (old.workspace_id, old.factory_id, old.member_id, old.granted_at)
+     or (new.granted_by_member_id is distinct from old.granted_by_member_id
+         and new.granted_by_member_id is not null) then
     raise exception 'Factory membership identity is immutable.' using errcode = '23514';
   end if;
   if old.revoked_at is not null and
-     (new.revoked_at, new.revoked_by_member_id, new.revoke_reason) is distinct from
-     (old.revoked_at, old.revoked_by_member_id, old.revoke_reason) then
+     ((new.revoked_at, new.revoke_reason) is distinct from
+       (old.revoked_at, old.revoke_reason)
+      or (new.revoked_by_member_id is distinct from old.revoked_by_member_id
+          and new.revoked_by_member_id is not null)) then
     raise exception 'A revoked factory membership is final.' using errcode = '23514';
   end if;
   return new;
@@ -251,9 +257,11 @@ create trigger workspace_members_grant_default_factory
 
 -- Deactivation blocks access immediately through the access helpers. Record the
 -- suspension/reinstatement so the operator trail explains the access change
--- without rewriting the original grant.
+-- without rewriting the original grant. Reactivation through an invitation is an
+-- UPDATE, so it must restore the inherited default-factory grant here.
 create function internal.audit_workspace_member_factory_suspension()
 returns trigger language plpgsql security definer set search_path = '' as $$
+declare granted_factory uuid; promoted_member uuid;
 begin
   if new.kind <> 'human' or new.is_active = old.is_active then
     return new;
@@ -268,6 +276,91 @@ begin
   from public.factory_members member
   where member.member_id = new.id
     and member.revoked_at is null;
+
+  -- A workspace deactivation must not strand a factory without an active
+  -- manager. Promote the longest-standing active member; if none remains,
+  -- workspace owners/admins retain operator access.
+  if not new.is_active then
+    for granted_factory in
+      select manager.factory_id
+      from public.factory_members manager
+      where manager.member_id = new.id
+        and manager.workspace_id = new.workspace_id
+        and manager.role = 'manager'
+        and manager.revoked_at is null
+        and not exists (
+          select 1
+          from public.factory_members other
+          join public.workspace_members other_member
+            on other_member.id = other.member_id
+          where other.workspace_id = manager.workspace_id
+            and other.factory_id = manager.factory_id
+            and other.role = 'manager'
+            and other.revoked_at is null
+            and other.member_id <> new.id
+            and other_member.is_active
+            and other_member.kind = 'human'
+        )
+    loop
+      promoted_member := null;
+      update public.factory_members membership
+      set role = 'manager'
+      from (
+        select candidate.id
+        from public.factory_members candidate
+        join public.workspace_members candidate_member
+          on candidate_member.id = candidate.member_id
+        where candidate.workspace_id = new.workspace_id
+          and candidate.factory_id = granted_factory
+          and candidate.revoked_at is null
+          and candidate.member_id <> new.id
+          and candidate_member.is_active
+          and candidate_member.kind = 'human'
+        order by (candidate_member.role in ('owner', 'admin')) asc,
+          candidate.granted_at, candidate.id
+        limit 1
+      ) promotion
+      where membership.id = promotion.id
+      returning membership.member_id into promoted_member;
+
+      if promoted_member is not null then
+        insert into public.factory_audit_events(
+          workspace_id, factory_id, action, subject_member_id, detail
+        ) values (
+          new.workspace_id, granted_factory, 'membership.granted', promoted_member,
+          jsonb_build_object('role', 'manager', 'source', 'workspace_member_deactivation')
+        );
+      end if;
+    end loop;
+  end if;
+
+  if new.is_active then
+    for granted_factory in
+      insert into public.factory_members(workspace_id, factory_id, member_id, role)
+      select factory.workspace_id, factory.id, new.id,
+        case when new.role in ('owner', 'admin') then 'manager' else 'member' end
+      from public.factories factory
+      where factory.workspace_id = new.workspace_id
+        and factory.is_default
+        and not exists (
+          select 1 from public.factory_members current
+          where current.workspace_id = factory.workspace_id
+            and current.factory_id = factory.id
+            and current.member_id = new.id
+        )
+      returning factory_id
+    loop
+      insert into public.factory_audit_events(
+        workspace_id, factory_id, action, subject_member_id, detail
+      ) values (
+        new.workspace_id, granted_factory, 'membership.granted', new.id,
+        jsonb_build_object(
+          'role', case when new.role in ('owner', 'admin') then 'manager' else 'member' end,
+          'source', 'default_factory_reactivation'
+        )
+      );
+    end loop;
+  end if;
   return new;
 end;
 $$;
@@ -342,6 +435,9 @@ grant execute on function internal.assert_factory_accepts_work(uuid, uuid) to se
 create function internal.assign_resource_factory()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
+  -- Take the workspace fence before the factory lock so admission (and the
+  -- existing session workspace trigger) always use workspace -> factory order.
+  perform internal.assert_workspace_accepts_work(new.workspace_id);
   if new.factory_id is null then
     select factory.id into new.factory_id
     from public.factories factory
@@ -398,16 +494,45 @@ create trigger sessions_preserve_factory_scope before update of factory_id on pu
 create function internal.guard_factory_session_admission()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
+  -- Workspace operators already have factory access. Ordinary creators need an
+  -- explicit active grant in the exact factory that will own the session.
   if new.creator_member_id is not null and not exists (
-    select 1 from public.factory_members member
-    join public.workspace_members workspace_member on workspace_member.id = member.member_id
-    where member.workspace_id = new.workspace_id
-      and member.factory_id = new.factory_id
-      and member.member_id = new.creator_member_id
-      and member.revoked_at is null
-      and workspace_member.is_active
+    select 1 from public.workspace_members creator
+    where creator.id = new.creator_member_id
+      and creator.workspace_id = new.workspace_id
+      and creator.kind = 'human'
+      and creator.is_active
+      and (
+        creator.role in ('owner', 'admin')
+        or exists (
+          select 1 from public.factory_members member
+          where member.workspace_id = new.workspace_id
+            and member.factory_id = new.factory_id
+            and member.member_id = creator.id
+            and member.revoked_at is null
+        )
+      )
   ) then
-    raise exception 'Session creator is not an active factory member.' using errcode = '42501';
+    raise exception 'Session creator is not authorized for this factory.' using errcode = '42501';
+  end if;
+  -- Links selected during admission must already live in the session factory.
+  -- This stops a caller from steering default-factory work at a restricted
+  -- sibling repository or pipeline by supplying a known UUID.
+  if new.pipeline_id is not null and not exists (
+    select 1 from public.pipelines pipeline
+    where pipeline.id = new.pipeline_id
+      and pipeline.workspace_id = new.workspace_id
+      and pipeline.factory_id = new.factory_id
+  ) then
+    raise exception 'Session pipeline is outside the factory scope.' using errcode = '42501';
+  end if;
+  if new.github_repository_id is not null and not exists (
+    select 1 from public.github_repositories repository
+    where repository.id = new.github_repository_id
+      and repository.workspace_id = new.workspace_id
+      and repository.factory_id = new.factory_id
+  ) then
+    raise exception 'Session repository is outside the factory scope.' using errcode = '42501';
   end if;
   return new;
 end;
@@ -1071,11 +1196,14 @@ begin
     if existing.role = 'manager' and p_role <> 'manager' then
       select not exists (
         select 1 from public.factory_members manager
+        join public.workspace_members manager_member on manager_member.id = manager.member_id
         where manager.workspace_id = p_workspace_id
           and manager.factory_id = p_factory_id
           and manager.role = 'manager'
           and manager.revoked_at is null
           and manager.member_id <> p_member_id
+          and manager_member.is_active
+          and manager_member.kind = 'human'
       ) into last_manager;
       if last_manager then
         raise exception 'A factory must retain at least one manager.' using errcode = '23514';
@@ -1144,11 +1272,14 @@ begin
   if target.role = 'manager' then
     select not exists (
       select 1 from public.factory_members manager
+      join public.workspace_members manager_member on manager_member.id = manager.member_id
       where manager.workspace_id = p_workspace_id
         and manager.factory_id = p_factory_id
         and manager.role = 'manager'
         and manager.revoked_at is null
         and manager.member_id <> p_member_id
+        and manager_member.is_active
+        and manager_member.kind = 'human'
     ) into last_manager;
     if last_manager then
       raise exception 'A factory must retain at least one manager.' using errcode = '23514';
@@ -1231,3 +1362,654 @@ $$;
 revoke all on function public.read_factory_scope(uuid, uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.read_factory_scope(uuid, uuid) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Security-definer read/write RPCs inherit the same factory fence
+-- ---------------------------------------------------------------------------
+
+-- Review mutations must not accept known sibling-factory session IDs.
+create or replace function internal.artifact_review_actor(p_workspace_id uuid, p_session_id uuid)
+returns public.workspace_members language plpgsql security definer set search_path='' as $$
+declare actor public.workspace_members; reviewed public.sessions;
+begin
+  if auth.uid() is null then raise exception 'Active human membership required.' using errcode='42501'; end if;
+  select * into reviewed from public.sessions s where s.id=p_session_id and s.workspace_id=p_workspace_id
+    and s.archived_at is null for no key update;
+  if not found then raise exception 'Review session is unavailable.' using errcode='42501'; end if;
+  if reviewed.phase_status='approved' then
+    raise exception 'This session is closed for review changes.' using errcode='PT409';
+  end if;
+  select m.* into actor from public.workspace_members m where m.workspace_id=p_workspace_id
+    and m.user_id=auth.uid() and m.kind='human' and m.is_active for share;
+  if not found then raise exception 'Active human membership required.' using errcode='42501'; end if;
+  -- Active membership is not enough: the reviewer must also hold the exact
+  -- factory that owns the session, so a sibling-factory ID cannot be mutated.
+  if not internal.can_access_factory(reviewed.workspace_id, reviewed.factory_id) then
+    raise exception 'Review session is unavailable.' using errcode='42501';
+  end if;
+  return actor;
+end;
+$$;
+
+-- Image attachments on the session page follow the owning session scope.
+create or replace function public.get_session_prompt_attachments(
+  target_workspace_slug text,
+  target_session_number integer
+)
+returns table (
+  id uuid,
+  original_filename text,
+  content_type text,
+  size_bytes bigint,
+  attachment_position smallint
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    attachment.id,
+    attachment.original_filename,
+    attachment.content_type,
+    attachment.size_bytes,
+    attachment.position
+  from public.workspaces workspace
+  join public.sessions session
+    on session.workspace_id = workspace.id
+   and session.number = target_session_number
+  join public.session_attachments attachment
+    on attachment.session_id = session.id
+   and attachment.workspace_id = workspace.id
+   and attachment.status = 'attached'
+  where workspace.slug = target_workspace_slug
+    and workspace.id in (select internal.current_user_workspace_ids())
+    and internal.can_access_factory(session.workspace_id, session.factory_id)
+  order by attachment.position
+$$;
+
+-- Session detail and list RPCs are security definer; expose no row outside the
+-- caller's factory scope even after membership revocation.
+CREATE OR REPLACE FUNCTION public.get_session_detail_page(target_workspace_slug text, target_session_number integer)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_workspace_id uuid;
+  v_has_any_workspace boolean;
+  v_session public.sessions%rowtype;
+  v_current_stage public.pipeline_stages%rowtype;
+  v_creator_display_name text;
+  v_stages jsonb := '[]'::jsonb;
+  v_phase_completions jsonb := '[]'::jsonb;
+  v_artifacts jsonb := '[]'::jsonb;
+  v_pull_requests jsonb := '[]'::jsonb;
+  v_effective_repository_id uuid;
+  v_repository jsonb := null;
+begin
+  select w.id
+  into v_workspace_id
+  from public.workspaces w
+  join public.workspace_members wm
+    on wm.workspace_id = w.id
+  where w.slug = target_workspace_slug
+    and wm.user_id = auth.uid()
+    and wm.is_active
+    and wm.kind = 'human'
+  limit 1;
+
+  if v_workspace_id is null then
+    select exists (
+      select 1
+      from public.workspace_members wm
+      where wm.user_id = auth.uid()
+        and wm.is_active
+        and wm.kind = 'human'
+    )
+    into v_has_any_workspace;
+
+    return jsonb_build_object(
+      'access', jsonb_build_object(
+        'hasAnyWorkspace', v_has_any_workspace
+      )
+    );
+  end if;
+
+  select *
+  into v_session
+  from public.sessions s
+  where s.workspace_id = v_workspace_id
+    and s.number = target_session_number;
+
+  if not found then
+    return null;
+  end if;
+
+  if not internal.can_access_factory(v_session.workspace_id, v_session.factory_id) then
+    return null;
+  end if;
+
+  select *
+  into v_current_stage
+  from internal.session_execution_stages(v_session) ps
+  where ps.id = v_session.current_stage_id;
+
+  select coalesce(
+    nullif(btrim(wm.full_name), ''),
+    nullif(btrim(wm.username), ''),
+    nullif(btrim(wm.email), ''),
+    'Unknown member'
+  )
+  into v_creator_display_name
+  from public.workspace_members wm
+  where wm.id = v_session.creator_member_id
+    and wm.workspace_id = v_workspace_id;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'description', ps.description,
+        'id', ps.id,
+        'name', ps.name,
+        'position', ps.position,
+        'slug', ps.slug
+      )
+      order by ps.position asc
+    ),
+    '[]'::jsonb
+  )
+  into v_stages
+  from internal.session_execution_stages(v_session) ps
+  join public.session_selected_stages selection
+    on selection.stage_id = ps.id
+   and selection.session_id = v_session.id
+   and selection.workspace_id = v_workspace_id
+  where ps.pipeline_id = v_session.pipeline_id
+    and ps.workspace_id = v_workspace_id;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'completedAt', spc.completed_at,
+        'id', spc.id,
+        'stageId', spc.stage_id,
+        'stageSlug', spc.stage_slug
+      )
+      order by spc.completed_at asc
+    ),
+    '[]'::jsonb
+  )
+  into v_phase_completions
+  from public.session_phase_completions spc
+  where spc.session_id = v_session.id
+    and spc.workspace_id = v_workspace_id;
+
+  if v_current_stage.id is not null and v_session.current_artifact_version > 0 then
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'id', sa.id,
+          'createdAt', sa.created_at,
+          'payload', sa.artifact_json,
+          'stageSlug', v_current_stage.slug,
+          'version', sa.version
+        )
+        order by sa.version desc
+      ),
+      '[]'::jsonb
+    )
+    into v_artifacts
+    from public.session_artifacts sa
+    where sa.session_id = v_session.id
+      and sa.workspace_id = v_workspace_id
+      and sa.stage_id = v_current_stage.id
+      and sa.version = v_session.current_artifact_version
+      and sa.id = v_session.current_artifact_id;
+  end if;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', spr.id,
+        'pullRequestNumber', spr.pull_request_number,
+        'pullRequestUrl', spr.pull_request_url
+      )
+      order by spr.created_at desc
+    ),
+    '[]'::jsonb
+  )
+  into v_pull_requests
+  from public.session_pull_requests spr
+  where spr.workspace_id = v_workspace_id
+    and spr.session_id = v_session.id;
+
+  with latest_pull_request_repository as (
+    select spr.github_repository_id
+    from public.session_pull_requests spr
+    where spr.workspace_id = v_workspace_id
+      and spr.session_id = v_session.id
+      and spr.github_repository_id is not null
+    order by spr.created_at desc
+    limit 1
+  ),
+  expanded_candidates(priority, repository_id) as (
+    values (1, case when v_session.execute_pinned_definition then
+      (internal.pinned_session_execution_definition(v_session)->>'repositoryId')::uuid
+      else v_session.github_repository_id end)
+    union all
+    select 2, github_repository_id
+    from latest_pull_request_repository
+    where not v_session.execute_pinned_definition
+    union all
+    select 3, wrp.github_repository_id
+    from public.workspace_repository_profiles wrp
+    where wrp.workspace_id = v_workspace_id
+      and wrp.is_primary
+      and not v_session.execute_pinned_definition
+    union all
+    select 4, wo.selected_github_repository_id
+    from public.workspace_onboarding wo
+    where wo.workspace_id = v_workspace_id
+      and not v_session.execute_pinned_definition
+  ),
+  first_configured as (
+    select repository_id
+    from expanded_candidates
+    where repository_id is not null
+    order by priority
+    limit 1
+  ),
+  resolved as (
+    select gr.*
+    from expanded_candidates ec
+    join public.github_repositories gr
+      on gr.id = ec.repository_id
+     and gr.workspace_id = v_workspace_id
+    where ec.repository_id is not null
+    order by ec.priority
+    limit 1
+  )
+  select
+    coalesce((select id from resolved), (select repository_id from first_configured)),
+    (
+      select jsonb_build_object(
+        'defaultBranch', default_branch,
+        'defaultProgrammingLanguage', default_programming_language,
+        'fullName', full_name,
+        'htmlUrl', html_url,
+        'id', id,
+        'isArchived', is_archived,
+        'isPrivate', private
+      )
+      from resolved
+    )
+  into v_effective_repository_id, v_repository;
+
+  return jsonb_build_object(
+    'activity', jsonb_build_object(
+      'repository', v_repository,
+      'sessionGithubRepositoryId', v_effective_repository_id,
+      'sessionId', v_session.id,
+      'workspaceId', v_workspace_id
+    ),
+    'creatorDisplayName', v_creator_display_name,
+    'session', jsonb_build_object(
+      'archivedAt', v_session.archived_at,
+      'artifacts', v_artifacts,
+      'createdAt', v_session.created_at,
+      'currentArtifactId', v_session.current_artifact_id,
+      'currentArtifactVersion', v_session.current_artifact_version,
+      'currentStageId', v_session.current_stage_id,
+      'currentStageSlug', coalesce(v_current_stage.slug, 'unknown'),
+      'id', v_session.id,
+      'linearIssueId', v_session.linear_issue_id,
+      'linearIssueUrl', v_session.linear_issue_url,
+      'number', v_session.number,
+      'phaseCompletions', v_phase_completions,
+      'phaseStatus', v_session.phase_status,
+      'pipeline', jsonb_build_object('stages', v_stages),
+      'promptMd', v_session.prompt_md,
+      'pullRequests', v_pull_requests,
+      'title', v_session.title,
+      'updatedAt', v_session.updated_at
+    ),
+    'workspaceSlug', target_workspace_slug
+  );
+end;
+$function$;
+
+create or replace function public.get_session_list_page(
+  target_workspace_slug text,
+  session_scope text default 'all',
+  stage_filter_slug text default null,
+  search_query text default null,
+  page_limit integer default 50,
+  cursor_updated_at timestamptz default null,
+  cursor_id uuid default null,
+  sort_key text default 'updated',
+  cursor_number integer default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_workspace_id uuid;
+  v_factory_ids uuid[];
+  v_limit integer := least(greatest(coalesce(page_limit, 50), 1), 100);
+  v_scope text := case
+    when session_scope in ('all', 'active', 'archived') then session_scope
+    else 'all'
+  end;
+  v_sort text := case
+    when sort_key in ('updated', 'oldest', 'number') then sort_key
+    else 'updated'
+  end;
+  v_stage_slug text := nullif(stage_filter_slug, '');
+  v_search_raw text := nullif(
+    regexp_replace(coalesce(search_query, ''), '^[[:space:]]+|[[:space:]]+$', '', 'g'),
+    ''
+  );
+  v_search_digits text := null;
+  v_search_number integer := null;
+  v_search_query tsquery := null;
+  v_search_like_pattern text := null;
+  v_rows jsonb := '[]'::jsonb;
+  v_stage_facets jsonb := '[]'::jsonb;
+  v_scope_facets jsonb := jsonb_build_object('active', 0, 'archived', 0, 'all', 0);
+  v_has_any_session boolean := false;
+  v_has_more boolean := false;
+begin
+  if v_search_raw ~ '^#?[0-9]+$' then
+    v_search_digits := ltrim(ltrim(v_search_raw, '#'), '0');
+    -- Bound the cast first: malformed and arbitrarily large input stays text search.
+    if length(v_search_digits) between 1 and 10 then
+      if v_search_digits::bigint <= 2147483647 then
+        v_search_number := v_search_digits::integer;
+        v_search_raw := v_search_digits;
+      end if;
+    end if;
+  end if;
+
+  if v_search_raw is not null then
+    v_search_query := websearch_to_tsquery('simple', v_search_raw);
+    v_search_like_pattern := '%' ||
+      replace(
+        replace(
+          replace(lower(v_search_raw), '\', '\\'),
+          '%',
+          '\%'
+        ),
+        '_',
+        '\_'
+      ) ||
+      '%';
+  end if;
+
+  select w.id
+  into v_workspace_id
+  from public.workspaces w
+  join public.workspace_members wm
+    on wm.workspace_id = w.id
+  where w.slug = target_workspace_slug
+    and wm.user_id = auth.uid()
+    and wm.is_active
+    and wm.kind = 'human'
+  limit 1;
+
+  if v_workspace_id is null then
+    return null;
+  end if;
+
+  select coalesce(array_agg(factory.id), '{}'::uuid[])
+  into v_factory_ids
+  from public.factories factory
+  where factory.workspace_id = v_workspace_id
+    and internal.can_access_factory(factory.workspace_id, factory.id);
+
+  select exists (
+    select 1
+    from public.sessions s
+    where s.workspace_id = v_workspace_id
+      and s.factory_id = any(v_factory_ids)
+  )
+  into v_has_any_session;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'count', session_count,
+        'name', name,
+        'position', position,
+        'slug', slug
+      )
+      order by position asc, name asc
+    ),
+    '[]'::jsonb
+  )
+  into v_stage_facets
+  from (
+    select
+      (array_agg(name order by updated_at desc, created_at desc, id desc))[1] as name,
+      (array_agg(position order by updated_at desc, created_at desc, id desc))[1] as position,
+      slug,
+      count(*)::integer as session_count
+    from (
+      select
+        ps.created_at,
+        ps.id,
+        ps.name,
+        ps.position,
+        ps.slug,
+        ps.updated_at
+      from public.sessions s
+      join public.pipeline_stages ps
+        on ps.id = s.current_stage_id
+      where s.workspace_id = v_workspace_id
+        and s.factory_id = any(v_factory_ids)
+        and (v_scope <> 'active' or s.archived_at is null)
+        and (v_scope <> 'archived' or s.archived_at is not null)
+        and (
+          v_search_raw is null
+          or s.number = v_search_number
+          or s.search_document @@ v_search_query
+          or s.search_text like v_search_like_pattern escape '\'
+        )
+    ) stage_rows
+    group by slug
+  ) facets;
+
+  -- Scope counts ignore the scope filter itself so every option keeps a total.
+  select jsonb_build_object(
+    'active', count(*) filter (where s.archived_at is null)::integer,
+    'archived', count(*) filter (where s.archived_at is not null)::integer,
+    'all', count(*)::integer
+  )
+  into v_scope_facets
+  from public.sessions s
+  join public.pipeline_stages ps
+    on ps.id = s.current_stage_id
+  where s.workspace_id = v_workspace_id
+    and s.factory_id = any(v_factory_ids)
+    and (v_stage_slug is null or ps.slug = v_stage_slug)
+    and (
+      v_search_raw is null
+      or s.number = v_search_number
+      or s.search_document @@ v_search_query
+      or s.search_text like v_search_like_pattern escape '\'
+    );
+
+  with filtered as (
+    select
+      s.id,
+      s.archived_at,
+      s.created_at,
+      s.current_artifact_version,
+      s.current_stage_id,
+      s.linear_issue_id,
+      s.linear_issue_url,
+      s.number,
+      s.phase_status,
+      s.pipeline_id,
+      s.rejection_count,
+      s.title,
+      s.updated_at,
+      s.workspace_id,
+      ps.name as current_stage_name,
+      ps.position as current_stage_position,
+      ps.slug as current_stage_slug,
+      gr.full_name as repository_full_name,
+      coalesce(prs.pull_request_count, 0)::integer as pull_request_count,
+      coalesce(prs.pull_requests, '[]'::jsonb) as pull_requests
+    from public.sessions s
+    join public.pipeline_stages ps
+      on ps.id = s.current_stage_id
+    left join public.github_repositories gr
+      on gr.id = s.github_repository_id
+     and gr.workspace_id = v_workspace_id
+    left join lateral (
+      select
+        count(*)::integer as pull_request_count,
+        jsonb_agg(
+          jsonb_build_object(
+            'branchName', spr.branch_name,
+            'id', spr.id,
+            'isDraft', spr.is_draft,
+            'pullRequestNumber', spr.pull_request_number,
+            'pullRequestState', spr.pull_request_state,
+            'pullRequestUrl', spr.pull_request_url,
+            'repositoryFullName', repo.full_name,
+            'repositoryHtmlUrl', repo.html_url,
+            'updatedAt', spr.updated_at
+          )
+          order by spr.created_at desc
+        ) as pull_requests
+      from public.session_pull_requests spr
+      left join public.github_repositories repo
+        on repo.id = spr.github_repository_id
+       and repo.workspace_id = v_workspace_id
+      where spr.workspace_id = v_workspace_id
+        and spr.session_id = s.id
+    ) prs on true
+    where s.workspace_id = v_workspace_id
+      and s.factory_id = any(v_factory_ids)
+      and (v_scope <> 'active' or s.archived_at is null)
+      and (v_scope <> 'archived' or s.archived_at is not null)
+      and (v_stage_slug is null or ps.slug = v_stage_slug)
+      and (
+        v_search_raw is null
+        or s.number = v_search_number
+        or s.search_document @@ v_search_query
+        or s.search_text like v_search_like_pattern escape '\'
+      )
+      and (
+        cursor_id is null
+        or (
+          v_search_number is not null
+          and cursor_number = v_search_number
+          and s.number <> v_search_number
+        )
+        or (
+          coalesce(s.number = v_search_number, false)
+            = coalesce(cursor_number = v_search_number, false)
+          and (
+            (
+              v_sort = 'updated'
+              and cursor_updated_at is not null
+              and (
+                s.updated_at < cursor_updated_at
+                or (s.updated_at = cursor_updated_at and s.id < cursor_id)
+              )
+            )
+            or (
+              v_sort = 'oldest'
+              and cursor_updated_at is not null
+              and (
+                s.updated_at > cursor_updated_at
+                or (s.updated_at = cursor_updated_at and s.id > cursor_id)
+              )
+            )
+            or (
+              v_sort = 'number'
+              and cursor_number is not null
+              and (
+                s.number < cursor_number
+                or (s.number = cursor_number and s.id < cursor_id)
+              )
+            )
+          )
+        )
+      )
+    order by
+      coalesce(s.number = v_search_number, false) desc,
+      case when v_sort = 'updated' then s.updated_at end desc nulls last,
+      case when v_sort = 'updated' then s.id::text end desc nulls last,
+      case when v_sort = 'oldest' then s.updated_at end asc nulls last,
+      case when v_sort = 'oldest' then s.id::text end asc nulls last,
+      case when v_sort = 'number' then s.number end desc nulls last,
+      case when v_sort = 'number' then s.id::text end desc nulls last
+    limit v_limit + 1
+  ),
+  numbered as (
+    select filtered.*, row_number() over () as rn
+    from filtered
+  ),
+  with_latest_run as (
+    select numbered.*, lr.latest_run_status
+    from numbered
+    left join lateral (
+      select ar.status as latest_run_status
+      from public.agent_runs ar
+      where ar.workspace_id = v_workspace_id
+        and ar.session_id = numbered.id
+      order by ar.created_at desc, ar.id desc
+      limit 1
+    ) lr on true
+  )
+  select
+    coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'archivedAt', archived_at,
+          'createdAt', created_at,
+          'currentArtifactVersion', current_artifact_version,
+          'currentStageId', current_stage_id,
+          'currentStageName', current_stage_name,
+          'currentStagePosition', current_stage_position,
+          'currentStageSlug', current_stage_slug,
+          'id', id,
+          'linearIssueId', linear_issue_id,
+          'linearIssueUrl', linear_issue_url,
+          'number', number,
+          'phaseStatus', phase_status,
+          'latestRunStatus', latest_run_status,
+          'pipelineId', pipeline_id,
+          'pullRequestCount', pull_request_count,
+          'pullRequests', pull_requests,
+          'rejectionCount', rejection_count,
+          'repositoryFullName', repository_full_name,
+          'title', title,
+          'updatedAt', updated_at,
+          'workspaceId', workspace_id
+        )
+        order by rn
+      ) filter (where rn <= v_limit),
+      '[]'::jsonb
+    ),
+    count(*) > v_limit
+  into v_rows, v_has_more
+  from with_latest_run;
+
+  return jsonb_build_object(
+    'hasAnySession', v_has_any_session,
+    'hasMore', v_has_more,
+    'scopeFacets', v_scope_facets,
+    'sessions', v_rows,
+    'stageFacets', v_stage_facets,
+    'workspaceId', v_workspace_id
+  );
+end;
+$$;
