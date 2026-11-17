@@ -410,10 +410,22 @@ async function main() {
         .single(),
     );
     phase = "create-enrolled-session";
+    const defaultFactory = await required(
+      admin
+        .from("factories")
+        .select("id")
+        .eq("workspace_id", identity.workspaceId)
+        .eq("is_default", true)
+        .single(),
+    );
     const pipeline = await required(
       admin
         .from("pipelines")
-        .insert({ workspace_id: identity.workspaceId, name: `Continuity release ${randomUUID()}` })
+        .insert({
+          workspace_id: identity.workspaceId,
+          factory_id: defaultFactory.id,
+          name: `Continuity release ${randomUUID()}`,
+        })
         .select("id")
         .single(),
     );

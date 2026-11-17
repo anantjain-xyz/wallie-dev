@@ -285,6 +285,14 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         email: account.data.user.email,
       }),
     );
+    const defaultFactory = await checked(
+      admin
+        .from("factories")
+        .select("id")
+        .eq("workspace_id", ids.workspaceId)
+        .eq("is_default", true)
+        .single(),
+    );
     await checked(
       admin.from("github_installations").insert({
         id: ids.installationId,
@@ -301,6 +309,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       admin.from("github_repositories").insert({
         id: ids.repositoryId,
         workspace_id: ids.workspaceId,
+        factory_id: defaultFactory.id,
         github_installation_id: ids.installationId,
         repo_id: repositoryNumericId,
         name: repositoryName.split("/")[1],
@@ -312,9 +321,12 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       }),
     );
     await checked(
-      admin
-        .from("pipelines")
-        .insert({ id: ids.pipelineId, workspace_id: ids.workspaceId, name: "Continuity fixture" }),
+      admin.from("pipelines").insert({
+        id: ids.pipelineId,
+        workspace_id: ids.workspaceId,
+        factory_id: defaultFactory.id,
+        name: "Continuity fixture",
+      }),
     );
     await checked(
       admin.from("pipeline_stages").insert(

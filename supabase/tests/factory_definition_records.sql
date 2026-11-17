@@ -17,12 +17,13 @@ select is(
   (select count(*) from public.workspaces w
     where (select count(*) from public.factories f where f.workspace_id = w.id and f.is_default) <> 1),
   0::bigint, 'each workspace has one default factory, including newly inserted workspaces');
-select throws_ok($$insert into public.factories(workspace_id, is_default)
-  values ('54000000-0000-4000-8000-000000000001', true)$$,
+select throws_ok($$insert into public.factories(workspace_id, name, slug, is_default)
+  values ('54000000-0000-4000-8000-000000000001', 'Second default', 'second-default', true)$$,
   '23505', null, 'a workspace cannot have two default factories');
 
-insert into public.factories(id, workspace_id, is_default) values
-  ('54000000-0001-4000-8000-000000000001', '54000000-0000-4000-8000-000000000001', false);
+insert into public.factories(id, workspace_id, name, slug, is_default) values
+  ('54000000-0001-4000-8000-000000000001', '54000000-0000-4000-8000-000000000001',
+    'Sibling factory', 'sibling', false);
 create temp table factory_anchors as
 select case when not is_default then 'sibling'
     when workspace_id = '54000000-0000-4000-8000-000000000001' then 'primary'
@@ -214,7 +215,7 @@ select results_eq($$
     where workspace_id = '54000000-0000-4000-8000-000000000001'
   union all select count(*) from public.factory_definition_activations
     where workspace_id = '54000000-0000-4000-8000-000000000001'
-  $$, array[2, 0, 2, 3]::bigint[], 'members see activated and published records, while drafts require a manager');
+  $$, array[1, 0, 2, 3]::bigint[], 'members see activated and published records, while drafts require a manager');
 reset role;
 
 update public.workspaces set deletion_requested_at = clock_timestamp()

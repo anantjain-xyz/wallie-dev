@@ -55,11 +55,20 @@ async function setupDraftWorkspace(admin: Admin, workspaceId: string, userId: st
       .select("id")
       .single(),
   );
+  const factory = await checked(
+    admin
+      .from("factories")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("is_default", true)
+      .single(),
+  );
   const repository = await checked(
     admin
       .from("github_repositories")
       .insert({
         workspace_id: workspaceId,
+        factory_id: factory.id,
         github_installation_id: installation.id,
         repo_id: repoNumber,
         name: "fixture",

@@ -10,7 +10,7 @@ import type {
   GitHubRepositorySummary,
 } from "@/features/github/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Tables } from "@/lib/supabase/database.types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 
 type GitHubRepository = {
   archived: boolean;
@@ -309,25 +309,26 @@ export async function syncGitHubRepositoriesForWorkspace(
   const currentRepoIds = new Set(repositories.map((repo) => repo.id));
 
   if (repositories.length > 0) {
-    const { error: upsertError } = await admin.from("github_repositories").upsert(
-      repositories.map((repo) => ({
-        default_branch: repo.default_branch ?? null,
-        default_programming_language: repo.language ?? null,
-        description: repo.description ?? null,
-        full_name: repo.full_name,
-        github_installation_id: installationRow.id,
-        html_url: repo.html_url,
-        id: existingRepoIdByGitHubRepoId.get(repo.id) ?? randomUUID(),
-        is_archived: repo.archived,
-        name: repo.name,
-        private: repo.private,
-        repo_id: repo.id,
-        workspace_id: values.workspaceId,
-      })),
-      {
-        onConflict: "github_installation_id,repo_id",
-      },
-    );
+    // The insert trigger resolves the workspace default factory. Omitting the
+    // column keeps an existing repository bound to its current factory on
+    // conflict, so a legacy GitHub sync can never move scoped work.
+    const repositoryRows = repositories.map((repo) => ({
+      default_branch: repo.default_branch ?? null,
+      default_programming_language: repo.language ?? null,
+      description: repo.description ?? null,
+      full_name: repo.full_name,
+      github_installation_id: installationRow.id,
+      html_url: repo.html_url,
+      id: existingRepoIdByGitHubRepoId.get(repo.id) ?? randomUUID(),
+      is_archived: repo.archived,
+      name: repo.name,
+      private: repo.private,
+      repo_id: repo.id,
+      workspace_id: values.workspaceId,
+    })) as unknown as Database["public"]["Tables"]["github_repositories"]["Insert"][];
+    const { error: upsertError } = await admin.from("github_repositories").upsert(repositoryRows, {
+      onConflict: "github_installation_id,repo_id",
+    });
 
     if (upsertError) {
       throw upsertError;
