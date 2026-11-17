@@ -147,6 +147,7 @@ create temp table scope_fixtures as
 select factory.slug, factory.id as factory_id, factory.workspace_id
 from public.factories factory
 where factory.workspace_id = '55000000-0000-4000-8000-000000000001';
+grant select on scope_fixtures to authenticated;
 
 -- A pinned session in the payments factory proves archive and membership
 -- removal never rewrite historical work. Definition tables have no write grant
@@ -277,6 +278,13 @@ join public.workspace_members member
   on member.workspace_id = fixture.workspace_id
  and member.user_id = 'b1b2c3d4-0001-4000-8000-000000000001'
 where member.id = fixture.creator_member_id;
+
+insert into public.agent_runs(id, workspace_id, session_id, run_type, model_provider, model_name, status, created_at)
+values
+  ('55000000-1450-4000-8000-000000000001', '55000000-0000-4000-8000-000000000001',
+    '55000000-1400-4000-8000-000000000001', 'project', 'codex', 'fixture', 'success', '2026-11-01 00:00Z'),
+  ('55000000-1450-4000-8000-000000000002', '55000000-0000-4000-8000-000000000001',
+    '55000000-1400-4000-8000-000000000002', 'project', 'codex', 'fixture', 'success', '2026-11-02 00:00Z');
 
 insert into public.session_artifacts(session_id, workspace_id, stage_slug, version, artifact_json)
 values
@@ -429,6 +437,24 @@ select is(
   'the pipeline dashboard hides sibling-factory sessions'
 );
 select is(
+  public.get_session_list_page('factory-scope-primary',
+    target_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
+  ) -> 'scopeFacets' -> 'all',
+  '0'::jsonb,
+  'an explicitly restricted factory has no session facet counts'
+);
+select is(
+  public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001',
+    target_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
+  ) -> 'lanes',
+  '[]'::jsonb,
+  'an explicitly restricted factory has no board lanes'
+);
+select is_empty($$select run_id from public.list_workspace_run_catalog(
+  '55000000-0000-4000-8000-000000000001',
+  p_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
+)$$, 'an explicitly restricted factory has no runs');
+select is(
   (select count(*) from public.artifact_feedback_batches
     where id = '55000000-1600-4000-8000-000000000001'),
   1::bigint,
@@ -493,6 +519,27 @@ select results_eq($$
   union all select count(*) from public.session_artifacts where workspace_id = '55000000-0000-4000-8000-000000000001'
   $$, array[2, 3, 2]::bigint[],
   'a workspace manager retains authorized access to both factories and all sessions');
+select is(
+  public.get_session_list_page('factory-scope-primary', page_limit => 1,
+    target_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
+  ) -> 'scopeFacets' -> 'all',
+  '2'::jsonb,
+  'session facets count the selected factory before pagination'
+);
+select is(
+  (select sum((lane ->> 'totalCount')::integer) from jsonb_array_elements(
+    public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001',
+      target_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
+    ) -> 'lanes'
+  ) lane),
+  2::bigint,
+  'board counts include only the selected factory'
+);
+select results_eq($$select run_id from public.list_workspace_run_catalog(
+  '55000000-0000-4000-8000-000000000001', p_limit => 1,
+  p_factory_id => (select factory_id from scope_fixtures where slug = 'default')
+)$$, array['55000000-1450-4000-8000-000000000001']::uuid[],
+  'the runs catalog applies the factory filter before the page limit');
 reset role;
 
 set local role service_role;

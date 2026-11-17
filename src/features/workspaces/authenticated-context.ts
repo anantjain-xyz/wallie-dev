@@ -24,6 +24,14 @@ export type AuthenticatedWorkspaceContext = {
   workspace: WorkspaceSummary & { avatar_path: string | null };
 };
 
+export function isWorkspaceOperator(member: AuthenticatedWorkspaceContext["currentMember"]) {
+  return (
+    member.kind === "human" &&
+    member.is_active &&
+    (member.role === "owner" || member.role === "admin")
+  );
+}
+
 export const loadAuthenticatedWorkspaceContext = cache(
   async (workspaceSlug: string): Promise<AuthenticatedWorkspaceContext> => {
     return withServerTiming("workspace.auth-context", { workspaceSlug }, async (timing) => {

@@ -16,22 +16,26 @@ type DialogContentProps = Omit<
   "aria-describedby" | "aria-labelledby" | "title"
 > & {
   bodyClassName?: string;
+  closeLabel?: string;
   description?: ReactNode;
   dismissible?: boolean;
   hideCloseButton?: boolean;
   title: ReactNode;
+  variant?: "navigation";
 };
 
 export function DialogContent({
   bodyClassName,
   children,
   className,
+  closeLabel = "Close dialog",
   description,
   dismissible = true,
   hideCloseButton = false,
   onEscapeKeyDown,
   onPointerDownOutside,
   title,
+  variant,
   ...props
 }: DialogContentProps) {
   const container = useOverlayContainer();
@@ -45,7 +49,10 @@ export function DialogContent({
     <DialogPrimitive.Portal container={container}>
       <DialogPrimitive.Overlay className="ui-overlay-backdrop" />
       <DialogPrimitive.Content
-        className={cn("ui-dialog-content", className)}
+        className={cn(
+          variant === "navigation" ? "ui-nav-sheet-content" : "ui-dialog-content",
+          className,
+        )}
         onEscapeKeyDown={(event) => {
           onEscapeKeyDown?.(event);
           if (!dismissible) event.preventDefault();
@@ -71,7 +78,14 @@ export function DialogContent({
           </header>
           <div className={cn("mt-5", bodyClassName)}>{children}</div>
           {!hideCloseButton && dismissible ? (
-            <DialogPrimitive.Close aria-label="Close dialog" className="ui-dialog-close">
+            <DialogPrimitive.Close
+              aria-label={closeLabel}
+              className={cn(
+                "ui-dialog-close",
+                variant === "navigation" &&
+                  "top-[max(0.25rem,env(safe-area-inset-top))] min-h-11 min-w-11",
+              )}
+            >
               <XIcon />
             </DialogPrimitive.Close>
           ) : null}

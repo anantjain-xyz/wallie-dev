@@ -57,6 +57,15 @@ Workspace operators can still manage factories with no explicit manager.
 Factory definitions can only reference pipelines and repositories in the same
 factory. Session repository lookup and Git pinning also enforce this scope.
 
+## Activity views
+
+Pipeline, Sessions, and Runs resolve the authorized default factory when a URL
+omits `factory`. A factory ID scopes rows and counts to that factory.
+`factory=all` reads across the viewer's authorized factories. An unavailable
+scope displays an empty state with the factory selector so the viewer can
+choose their next scope. Switching factories resets stage and pagination
+filters. Session and run detail links keep their existing IDs and URLs.
+
 ## Commands
 
 | Command                                                                | Purpose                                                                                    |

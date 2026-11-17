@@ -54,6 +54,8 @@ export type PipelineBoardState = {
 };
 
 export type PipelineDashboardData = {
+  factoryId?: string;
+  showCreationOnboarding?: boolean;
   hasAnySession: boolean;
   lanes: PipelineDashboardLane[];
   onboarding: OnboardingResumeState | null;

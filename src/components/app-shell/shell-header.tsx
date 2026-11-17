@@ -16,29 +16,35 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
-  type RefObject,
 } from "react";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
-import { RouteEntrance, WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
-import { CheckIcon } from "@/components/shared/icons/check-icon";
-import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
-import { PlusIcon } from "@/components/shared/icons/plus-icon";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { RouteEntrance } from "@/components/app-shell/navigation-motion";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  NavigationMenuIcon,
+  WorkspaceNavLinks,
+  WorkspaceSidebar,
+} from "@/components/app-shell/workspace-sidebar";
+import { PlusIcon } from "@/components/shared/icons/plus-icon";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Tooltip } from "@/components/ui/tooltip";
+import {
+  FACTORY_QUERY_PARAM,
+  isFactoryAggregatePath,
+  withFactoryQuery,
+} from "@/features/factories/factory-selection";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
 } from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
-import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } from "@/lib/routes";
+import {
+  type WorkspaceNavItem,
+  workspaceBasePath,
+  workspaceOnboardingPath,
+  workspaceSessionsPath,
+} from "@/lib/routes";
 import {
   finishInteraction,
   interactionRouteTemplateForPath,
@@ -49,7 +55,9 @@ import { cn } from "@/lib/utils";
 import type { SessionCreationPreview } from "@/features/sessions/pending-session-creation";
 
 type ShellHeaderProps = {
+  canStartDefaultFactorySession?: boolean;
   children?: ReactNode;
+  factorySelector?: ReactNode;
   navItems: WorkspaceNavItem[];
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
@@ -243,7 +251,9 @@ export function prefetchShellNavHrefOnIntent(
 }
 
 export function ShellHeader({
+  canStartDefaultFactorySession = true,
   children,
+  factorySelector,
   navItems,
   onboarding,
   pathnameOverride,
@@ -260,7 +270,14 @@ export function ShellHeader({
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
   const headerRef = useRef<HTMLElement>(null);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const wideContent = pathname.startsWith(`${workspaceSessionsPath(workspace.slug)}/`);
+  const sidebarMediaQuery = wideContent ? "(min-width: 80rem)" : "(min-width: 64rem)";
+  const locationKey = `${pathname}?${searchParams?.toString() ?? ""}`;
+  const [drawerLocation, setDrawerLocation] = useState<string | null>(null);
+  const drawerOpen = drawerLocation === locationKey;
+  if (drawerLocation !== null && !drawerOpen) setDrawerLocation(null);
 
   useEffect(() => {
     const header = headerRef.current;
@@ -275,17 +292,20 @@ export function ShellHeader({
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(header);
-    const desktop = window.matchMedia("(min-width: 64rem)");
-    const closeCompactMenu = () => {
-      if (desktop.matches) setWorkspaceMenuOpen(false);
-    };
-    desktop.addEventListener("change", closeCompactMenu);
     return () => {
       observer.disconnect();
-      desktop.removeEventListener("change", closeCompactMenu);
       root.style.removeProperty("--shell-scroll-padding");
     };
   }, []);
+
+  useEffect(() => {
+    const desktop = window.matchMedia(sidebarMediaQuery);
+    const closeDrawer = () => {
+      if (desktop.matches) setDrawerLocation(null);
+    };
+    desktop.addEventListener("change", closeDrawer);
+    return () => desktop.removeEventListener("change", closeDrawer);
+  }, [sidebarMediaQuery]);
 
   // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
   // that auto-opens the dialog regardless of which page in the workspace the
@@ -297,6 +317,7 @@ export function ShellHeader({
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
   const createOpen =
+    canStartDefaultFactorySession &&
     !shouldResumeSetup &&
     (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
   const [creationPreview, setCreationPreview] = useState<{
@@ -324,7 +345,6 @@ export function ShellHeader({
     setMountedCreateScope(createScope);
   }
   const createButtonRef = useRef<HTMLButtonElement>(null);
-  const mobileCreateButtonRef = useRef<HTMLButtonElement>(null);
   const createDialogPreloadStartedKey = useRef<string | null>(null);
   const prefetchedNavKeysRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -349,13 +369,7 @@ export function ShellHeader({
         creationPreviewRef.current.pathname === pathname
       )
         return;
-      for (const ref of [createButtonRef, mobileCreateButtonRef]) {
-        const element = ref.current;
-        if (element && element.getClientRects().length > 0) {
-          element.focus();
-          return;
-        }
-      }
+      createButtonRef.current?.focus();
     });
   }, [createFromUrl, createScope, createUrlKey, pathname, router, searchParams]);
 
@@ -368,14 +382,18 @@ export function ShellHeader({
 
   const pipelineHref = workspaceBasePath(workspace.slug);
   const activeNavItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
+  const factory = searchParams?.getAll(FACTORY_QUERY_PARAM);
+  const scopedPipelineHref = withFactoryQuery(pipelineHref, factory);
 
-  function handleNavClick(event: MouseEvent<HTMLAnchorElement>, item: WorkspaceNavItem) {
-    if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
-    if (
-      isUnmodifiedPrimaryClick(event) &&
-      pathname === pipelineHref &&
-      item.href.endsWith("/sessions")
-    ) {
+  function handleNavClick(
+    event: MouseEvent<HTMLAnchorElement>,
+    item: WorkspaceNavItem,
+    mobile: boolean,
+  ) {
+    if (!isUnmodifiedPrimaryClick(event)) return;
+    visibleCreationPreview?.dismiss();
+    if (mobile) setDrawerLocation(null);
+    if (pathname === pipelineHref && item.id === "sessions") {
       startInteraction("pipeline_to_sessions", "/w/[workspaceSlug]", "/w/[workspaceSlug]/sessions");
     }
   }
@@ -396,54 +414,37 @@ export function ShellHeader({
     };
   }
 
-  function renderNavLinks() {
-    return navItems.map((item) => {
-      const active = isActiveNavItem(pathname, workspace.slug, item);
-
-      return (
-        <Link
-          key={item.href}
-          href={item.href}
-          // From the pipeline, load the real page ahead of the click. The default
-          // stops at loading.tsx, and prefetching every page from every page
-          // competes with opening a session.
-          prefetch={!active && pathname === pipelineHref ? true : undefined}
-          aria-current={active ? "page" : undefined}
-          className={cn("ui-shell-nav-link", active && "ui-shell-nav-link-active")}
-          onClick={(event) => {
-            handleNavClick(event, item);
-          }}
-          {...navPrefetchHandlers(item.href)}
-        >
-          {item.label}
-        </Link>
-      );
-    });
+  function navLinkProps(item: WorkspaceNavItem, mobile = false) {
+    const href = isFactoryAggregatePath(item.href, workspace.slug)
+      ? withFactoryQuery(item.href, factory)
+      : item.href;
+    return {
+      href,
+      // From the pipeline, load the real page ahead of the click. The default
+      // stops at loading.tsx, and prefetching every page from every page
+      // competes with opening a session.
+      prefetch: item !== activeNavItem && pathname === pipelineHref ? true : undefined,
+      onClick: (event: MouseEvent<HTMLAnchorElement>) => handleNavClick(event, item, mobile),
+      ...navPrefetchHandlers(href),
+    };
   }
 
-  function renderPrimaryAction(
-    buttonRef: RefObject<HTMLButtonElement | null>,
-    options?: { compact?: boolean },
-  ) {
+  function renderPrimaryAction() {
     if (shouldResumeSetup) {
       return (
-        <Link
-          className={cn("ui-button-primary min-h-9", options?.compact && "px-2.5 text-[13px]")}
-          href={onboardingHref}
-        >
-          {options?.compact ? "Setup" : "Resume setup"}
+        <Link className="ui-button-primary min-h-9 px-2.5 text-[13px]" href={onboardingHref}>
+          <span className="lg:hidden">Setup</span>
+          <span className="hidden lg:inline">Resume setup</span>
         </Link>
       );
     }
+    if (!canStartDefaultFactorySession) return null;
 
     return (
       <button
-        ref={buttonRef}
+        ref={createButtonRef}
         type="button"
-        className={cn(
-          "ui-button-primary inline-flex items-center gap-2",
-          options?.compact ? "size-9 justify-center px-0" : "min-h-9 px-3",
-        )}
+        className="ui-button-primary inline-flex size-9 items-center justify-center gap-2 px-0 lg:min-h-9 lg:w-auto lg:px-3"
         aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
@@ -453,114 +454,116 @@ export function ShellHeader({
         onPointerEnter={preloadCreateDialog}
       >
         <PlusIcon className="h-3.5 w-3.5" />
-        {options?.compact ? null : <span>New session</span>}
+        <span className="hidden lg:inline">New session</span>
       </button>
     );
   }
 
   return (
     <>
-      <div className="flex min-h-[100svh] min-w-0">
-        <div className="flex min-w-0 flex-1 flex-col bg-sheet">
-          <header
-            className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
-            data-shell-header=""
-            ref={headerRef}
-          >
-            {/* Compact navigation can wrap above the actions when text is enlarged. */}
-            <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-x-1.5 py-0.5 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] lg:hidden">
-              <p className="min-w-0 max-w-[28%] flex-1 truncate text-[13px] font-semibold text-foreground">
+      <div className="flex min-h-[100svh] min-w-0 flex-col bg-sheet">
+        <header
+          className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
+          data-shell-header=""
+          ref={headerRef}
+        >
+          <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-0.5 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] lg:gap-x-4 lg:pl-[max(1.25rem,env(safe-area-inset-left))] lg:pr-[max(1.25rem,env(safe-area-inset-right))]">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 lg:gap-x-4">
+              <p className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground lg:hidden">
                 {workspace.name}
               </p>
-              <nav aria-label="Workspace navigation" className="max-w-full shrink-0">
-                <DropdownMenu open={workspaceMenuOpen} onOpenChange={setWorkspaceMenuOpen}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={`Workspace navigation: ${activeNavItem?.label ?? "Pages"}`}
-                      className="ui-shell-nav-link ui-shell-nav-link-active min-h-11 max-w-full gap-1.5 whitespace-normal px-2"
-                    >
-                      {activeNavItem?.label ?? "Pages"}
-                      <ChevronDownIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    label="Workspace pages"
-                    className="w-48 min-w-0 max-w-[calc(100vw-1rem)]"
-                    onCloseAutoFocus={(event) => {
-                      if (!window.matchMedia("(min-width: 64rem)").matches) return;
-                      event.preventDefault();
-                      headerRef.current
-                        ?.querySelector<HTMLAnchorElement>(
-                          '.ui-shell-nav-link[aria-current="page"]',
-                        )
-                        ?.focus();
-                    }}
-                  >
-                    {navItems.map((item) => {
-                      const active = isActiveNavItem(pathname, workspace.slug, item);
-                      return (
-                        <DropdownMenuItem key={item.href} asChild className="min-h-11">
-                          <Link
-                            href={item.href}
-                            prefetch={!active && pathname === pipelineHref ? true : undefined}
-                            aria-current={active ? "page" : undefined}
-                            onClick={(event) => handleNavClick(event, item)}
-                            {...navPrefetchHandlers(item.href)}
-                          >
-                            {item.label}
-                            {active ? <CheckIcon className="ml-auto h-3.5 w-3.5" /> : null}
-                          </Link>
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </nav>
-              <div className="ml-auto flex shrink-0 items-center gap-1">
-                {renderPrimaryAction(mobileCreateButtonRef, { compact: true })}
-                <ThemeToggle />
-                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} mobileHeader />
-              </div>
-            </div>
-
-            {/* Desktop header: workspace identity, primary navigation, and global actions. */}
-            <div className="hidden h-12 min-w-0 items-center justify-between gap-3 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] lg:flex">
-              <div className="flex min-w-0 items-center gap-6">
-                <Tooltip content={workspace.name}>
-                  <Link
-                    href={pipelineHref}
-                    onClick={(event) => {
-                      if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
-                    }}
-                    {...navPrefetchHandlers(pipelineHref)}
-                    className="flex min-w-0 max-w-48 items-center gap-2 rounded-[6px] py-1 hover:opacity-80"
-                  >
-                    <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
-                    <span className="truncate text-[13px] font-medium text-foreground">
-                      {workspace.name}
-                    </span>
-                  </Link>
-                </Tooltip>
-                <WorkspaceNavigation
-                  pathname={pathname}
-                  className="flex shrink-0 items-center gap-1"
+              <Tooltip content={workspace.name}>
+                <Link
+                  href={scopedPipelineHref}
+                  onClick={(event) => {
+                    if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
+                  }}
+                  {...navPrefetchHandlers(scopedPipelineHref)}
+                  className="hidden min-w-0 max-w-48 items-center gap-2 rounded-[6px] py-1 hover:opacity-80 lg:flex"
                 >
-                  {renderNavLinks()}
-                </WorkspaceNavigation>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {renderPrimaryAction(createButtonRef)}
-                <ThemeToggle />
-                <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
-              </div>
+                  <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
+                  <span className="truncate text-[13px] font-medium text-foreground">
+                    {workspace.name}
+                  </span>
+                </Link>
+              </Tooltip>
+              {activeNavItem ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "hidden min-w-0 truncate border-l border-border pl-4 text-[13px] font-medium text-muted",
+                    wideContent ? "xl:inline" : "lg:inline",
+                  )}
+                >
+                  {activeNavItem.label}
+                </span>
+              ) : null}
+              <Dialog
+                open={drawerOpen}
+                onOpenChange={(open) => setDrawerLocation(open ? locationKey : null)}
+              >
+                <DialogTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`Workspace navigation: ${activeNavItem?.label ?? "Pages"}`}
+                    className={cn(
+                      "ui-shell-nav-link ui-shell-nav-link-active min-h-11 max-w-full gap-1.5 whitespace-normal px-2 text-left",
+                      wideContent ? "xl:hidden" : "lg:hidden",
+                    )}
+                  >
+                    <NavigationMenuIcon />
+                    <span className="min-w-0 break-words">{activeNavItem?.label ?? "Pages"}</span>
+                  </button>
+                </DialogTrigger>
+                <DialogContent
+                  bodyClassName="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-1"
+                  closeLabel="Close navigation"
+                  onCloseAutoFocus={(event) => {
+                    if (!window.matchMedia(sidebarMediaQuery).matches) return;
+                    event.preventDefault();
+                    const activeLink =
+                      sidebarRef.current?.querySelector<HTMLAnchorElement>('[aria-current="page"]');
+                    (activeLink ?? mainRef.current)?.focus();
+                  }}
+                  title="Workspace pages"
+                  variant="navigation"
+                >
+                  <nav aria-label="Workspace navigation" className="flex flex-1 flex-col gap-4">
+                    <WorkspaceNavLinks
+                      activeItem={activeNavItem}
+                      getLinkProps={(item) => navLinkProps(item, true)}
+                      items={navItems}
+                      mobile
+                    />
+                  </nav>
+                </DialogContent>
+              </Dialog>
             </div>
-          </header>
+            <div className="ml-auto flex shrink-0 items-center gap-1 lg:gap-2">
+              {renderPrimaryAction()}
+              <ThemeToggle />
+              <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
+            </div>
+            {factorySelector && isFactoryAggregatePath(pathname, workspace.slug) ? (
+              <div className="min-w-0 basis-full pb-1 sm:basis-auto sm:pb-0">{factorySelector}</div>
+            ) : null}
+          </div>
+        </header>
 
+        <div className="flex min-w-0 flex-1">
+          <WorkspaceSidebar
+            activeItem={activeNavItem}
+            getLinkProps={navLinkProps}
+            items={navItems}
+            pathname={pathname}
+            sidebarRef={sidebarRef}
+            wideContent={wideContent}
+          />
           <main
             id="main-content"
             tabIndex={-1}
             className="min-w-0 flex-1 outline-none pb-[env(safe-area-inset-bottom)]"
+            ref={mainRef}
           >
             <RouteEntrance pathname={pathname} />
             {visibleCreationPreview?.content}
@@ -574,7 +577,7 @@ export function ShellHeader({
         </div>
       </div>
 
-      {mountedCreateScope === createScope ? (
+      {canStartDefaultFactorySession && mountedCreateScope === createScope ? (
         <CreateSessionLoadingCloseContext.Provider
           value={{ onClose: handleCreateClose, open: createOpen }}
         >

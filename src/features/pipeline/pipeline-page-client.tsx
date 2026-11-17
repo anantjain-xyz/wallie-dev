@@ -33,6 +33,7 @@ import {
   sessionPhaseStatusValue,
   type StatusValue,
 } from "@/components/ui/status";
+import { withFactoryQuery } from "@/features/factories/factory-selection";
 import { pipelineLayout } from "@/features/pipeline/layout";
 import {
   createPipelineBoardState,
@@ -217,7 +218,7 @@ export function PipelinePageClient({
   return (
     <SessionDetailLinkPrefetchBoundary>
       <PipelinePageContent
-        key={initialData.workspace.id}
+        key={`${initialData.workspace.id}:${initialData.factoryId ?? "all"}`}
         enableRealtime={enableRealtime}
         initialData={initialData}
         initialNow={initialNow}
@@ -232,6 +233,11 @@ function PipelinePageContent({
   initialNow,
 }: PipelinePageClientProps) {
   const router = useRouter();
+  const { factoryId } = initialData;
+  const dashboardHref = withFactoryQuery(
+    `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
+    factoryId,
+  );
   const [accessLost, setAccessLost] = useState(false);
   const accessLostRef = useRef(false);
   const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
@@ -301,13 +307,7 @@ function PipelinePageContent({
       };
       recoveryChanges.current = changes;
       try {
-        const response = await fetch(
-          `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
-          {
-            cache: "no-store",
-            signal,
-          },
-        );
+        const response = await fetch(dashboardHref, { cache: "no-store", signal });
         if (signal.aborted || generation !== refreshGeneration.current) return;
         if ([401, 403, 404, 409].includes(response.status)) {
           leaveUnavailableWorkspace(response.status);
@@ -338,13 +338,7 @@ function PipelinePageContent({
         }
       }
     },
-    [
-      initialData.workspace.id,
-      initialData.onboarding,
-      leaveUnavailableWorkspace,
-      recovery,
-      startRefresh,
-    ],
+    [dashboardHref, initialData.onboarding, leaveUnavailableWorkspace, recovery, startRefresh],
   );
 
   useEffect(() => {
@@ -417,7 +411,9 @@ function PipelinePageContent({
       const startedAtGeneration = refreshGeneration.current;
       const { data, error } = await supabase
         .from("session_pull_requests")
-        .select("id, pull_request_number, pull_request_url")
+        .select(
+          "id, pull_request_number, pull_request_url, github_repository_id, github_repositories(factory_id), sessions(factory_id)",
+        )
         .eq("workspace_id", initialData.workspace.id)
         .eq("session_id", sessionId)
         .not("pull_request_url", "is", null)
@@ -434,18 +430,25 @@ function PipelinePageContent({
         return;
       }
 
-      const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
-        id: row.id,
-        pullRequestNumber: row.pull_request_number,
-        pullRequestUrl: row.pull_request_url,
-      }));
+      const pullRequests: PipelineDashboardPullRequest[] = (data ?? [])
+        .filter(
+          (row) =>
+            !row.github_repository_id ||
+            (row.github_repositories &&
+              row.sessions?.factory_id === row.github_repositories.factory_id),
+        )
+        .map((row) => ({
+          id: row.id,
+          pullRequestNumber: row.pull_request_number,
+          pullRequestUrl: row.pull_request_url,
+        }));
 
       recoveryChanges.current?.pullRequests.set(sessionId, pullRequests);
       dispatch({ pullRequests, sessionId, type: "update-pull-requests" });
     }
 
     return recovery.register({
-      key: `pipeline:${initialData.workspace.id}`,
+      key: `pipeline:${initialData.workspace.id}${factoryId ? `:${factoryId}` : ""}`,
       role: "page",
       required: true,
       refresh: refreshBoard,
@@ -457,34 +460,40 @@ function PipelinePageContent({
             if (cancelled || !isCurrent()) return;
             const supabase = createSupabaseBrowserClient(supabaseConfig);
             const channel = supabase
-              .channel(`sessions:${initialData.workspace.id}`)
+              .channel(`sessions:${initialData.workspace.id}${factoryId ? `:${factoryId}` : ""}`)
               .on(
                 "postgres_changes",
                 {
                   event: "*",
-                  filter: `workspace_id=eq.${initialData.workspace.id}`,
+                  filter: factoryId
+                    ? `factory_id=eq.${factoryId}`
+                    : `workspace_id=eq.${initialData.workspace.id}`,
                   schema: "public",
                   table: "sessions",
                 },
                 (payload) => {
                   if (!isCurrent()) return;
-                  eventRevision.current += 1;
                   if (payload.eventType === "DELETE") {
                     const oldId = (payload.old as { id?: string } | null)?.id;
                     if (oldId) {
                       if (
                         !boardRef.current.cardsById[oldId] &&
                         !boardRef.current.offPageCardLaneKeys[oldId]
-                      )
+                      ) {
+                        if (factoryId) return;
                         recovery.invalidate();
+                      }
+                      eventRevision.current += 1;
                       recoveryChanges.current?.sessions.set(oldId, null);
                       dispatch({ cardId: oldId, type: "remove" });
                     }
                     return;
                   }
 
-                  setHasObservedSession(true);
                   const row = payload.new as Tables<"sessions">;
+                  if (factoryId && row.factory_id !== factoryId) return;
+                  eventRevision.current += 1;
+                  setHasObservedSession(true);
                   if (row.archived_at) {
                     if (
                       !boardRef.current.cardsById[row.id] &&
@@ -636,6 +645,7 @@ function PipelinePageContent({
   }, [
     accessLost,
     enableRealtime,
+    factoryId,
     initialData.workspace.id,
     recovery,
     refreshBoard,
@@ -664,20 +674,17 @@ function PipelinePageContent({
       setLaneErrors((current) => ({ ...current, [requestedLaneKey]: "" }));
 
       try {
-        const response = await fetch(
-          `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
-          {
-            body: JSON.stringify({
-              cursor: lane.cursor,
-              pipelineId: lane.pipeline.id,
-              seenIds: lane.cardIds,
-              stageId: lane.id,
-            }),
-            headers: { "content-type": "application/json" },
-            method: "POST",
-            signal: controller.signal,
-          },
-        );
+        const response = await fetch(dashboardHref, {
+          body: JSON.stringify({
+            cursor: lane.cursor,
+            pipelineId: lane.pipeline.id,
+            seenIds: lane.cardIds,
+            stageId: lane.id,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+          signal: controller.signal,
+        });
         if (controller.signal.aborted) return;
         if ([401, 403].includes(response.status)) {
           leaveUnavailableWorkspace(response.status);
@@ -722,7 +729,7 @@ function PipelinePageContent({
         }
       }
     },
-    [initialData.workspace.id, leaveUnavailableWorkspace, recovery, refreshPending],
+    [dashboardHref, leaveUnavailableWorkspace, recovery, refreshPending],
   );
 
   const hasActiveSessions = board.lanes.some((lane) => lane.totalCount > 0);
@@ -828,12 +835,18 @@ function PipelinePageContent({
 
       {!hasActiveSessions ? (
         <div>
-          <SessionsZeroState
-            onboarding={onboarding}
-            variant={hasEverHadSession ? "archived" : "first-run"}
-            workspaceSlug={initialData.workspace.slug}
-            newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
-          />
+          {initialData.showCreationOnboarding === false ? (
+            <section className="ui-sheet border-dashed px-6 py-14 text-center">
+              <p className="text-sm font-semibold text-foreground">No active sessions</p>
+            </section>
+          ) : (
+            <SessionsZeroState
+              onboarding={onboarding}
+              variant={hasEverHadSession ? "archived" : "first-run"}
+              workspaceSlug={initialData.workspace.slug}
+              newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
+            />
+          )}
         </div>
       ) : (
         <>

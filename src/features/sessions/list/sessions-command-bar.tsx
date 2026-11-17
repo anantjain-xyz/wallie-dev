@@ -41,9 +41,11 @@ import {
   type SessionListSortKey,
 } from "@/features/sessions/types";
 import { workspaceSessionsPath } from "@/lib/routes";
+import { withFactoryQuery } from "@/features/factories/factory-selection";
 import { cn } from "@/lib/utils";
 
 export type SessionsCommandBarProps = {
+  factoryQuery?: string;
   queryState: SessionListQueryState;
   scopeFacets: SessionScopeFacets;
   stageFacets: readonly SessionStageFacet[];
@@ -70,6 +72,7 @@ function hasActiveFilters(queryState: SessionListQueryState) {
 }
 
 export function SessionsCommandBar({
+  factoryQuery,
   queryState,
   scopeFacets,
   stageFacets,
@@ -111,11 +114,12 @@ export function SessionsCommandBar({
   }, [isPending, queryState]);
 
   useEffect(() => {
+    if (factoryQuery !== undefined) return;
     // Migrate legacy localStorage preferences for subsequent server requests.
     // Restoring them here would fetch the list twice on the first visit.
     const stored = readSessionListPreferences(workspaceSlug);
     if (stored) writeSessionListPreferences(workspaceSlug, stored);
-  }, [workspaceSlug]);
+  }, [factoryQuery, workspaceSlug]);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -138,12 +142,14 @@ export function SessionsCommandBar({
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : current.stageSlug,
     };
     latestQueryRef.current = merged;
-    writeSessionListPreferences(workspaceSlug, {
-      scope: merged.scope,
-      sort: merged.sort,
-      stageSlug: merged.stageSlug,
-    });
-    const href = buildSessionsListHref(basePath, merged);
+    if (factoryQuery === undefined) {
+      writeSessionListPreferences(workspaceSlug, {
+        scope: merged.scope,
+        sort: merged.sort,
+        stageSlug: merged.stageSlug,
+      });
+    }
+    const href = withFactoryQuery(buildSessionsListHref(basePath, merged), factoryQuery);
     startNavigation(href);
     startTransition(() => {
       setOptimisticQuery(merged);

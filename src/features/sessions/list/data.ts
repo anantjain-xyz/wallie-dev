@@ -112,12 +112,16 @@ function encodeCursor(
 export async function loadSessionListPageData(
   workspaceSlug: string,
   searchParams: SessionListSearchParams,
+  factoryId?: string,
 ): Promise<SessionListPageData> {
   const urlQueryState = parseSessionListQueryState(searchParams);
   const cookieStore = await cookies();
-  const stored = parseSessionListPreferencesCookie(
-    cookieStore.get(sessionListPreferencesCookieName(workspaceSlug))?.value,
-  );
+  const stored =
+    searchParams.factory === undefined
+      ? parseSessionListPreferencesCookie(
+          cookieStore.get(sessionListPreferencesCookieName(workspaceSlug))?.value,
+        )
+      : null;
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
     if (value !== undefined) search.set(key, Array.isArray(value) ? (value[0] ?? "") : value);
@@ -167,6 +171,7 @@ export async function loadSessionListPageData(
             sort_key: queryState.sort,
             stage_filter_slug: queryState.stageSlug ?? undefined,
             target_workspace_slug: workspaceSlug,
+            ...(factoryId ? { target_factory_id: factoryId } : {}),
           }),
         (result) => {
           const payload = result.data as SessionListRpcPayload | null;

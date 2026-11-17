@@ -1,9 +1,12 @@
 import { titleFromSlug } from "@/lib/utils";
 
+export const workspaceNavSections = ["Work", "Improve", "Configure", "Platform", "Footer"] as const;
+
 export type WorkspaceNavItem = {
-  description: string;
   href: string;
+  id: "pipeline" | "sessions" | "runs" | "factory-definition" | "settings";
   label: string;
+  section: (typeof workspaceNavSections)[number];
 };
 
 type QueryValue = boolean | number | string | undefined;
@@ -75,24 +78,35 @@ export function workspaceFactoryDefinitionPath(
   return withSearchParams(`${workspaceSettingsPath(workspaceSlug)}/factory-definition`, query);
 }
 
-export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] {
-  return [
+export function getWorkspaceNavItems(
+  workspaceSlug: string,
+  { canManageFactoryDefinition = false } = {},
+): WorkspaceNavItem[] {
+  const items: WorkspaceNavItem[] = [
+    { id: "pipeline", href: workspaceBasePath(workspaceSlug), label: "Pipeline", section: "Work" },
     {
-      label: "Pipeline",
-      href: workspaceBasePath(workspaceSlug),
-      description: "The active six-phase pipeline across every session.",
-    },
-    {
-      label: "Sessions",
+      id: "sessions",
       href: workspaceSessionsPath(workspaceSlug),
-      description: "All sessions regardless of phase. Search and filter by phase or PRs.",
+      label: "Sessions",
+      section: "Work",
     },
-    {
-      label: "Settings",
-      href: workspaceSettingsPath(workspaceSlug),
-      description: "Workspace-level settings and integration entry points.",
-    },
+    { id: "runs", href: workspaceRunsPath(workspaceSlug), label: "Runs", section: "Work" },
   ];
+  if (canManageFactoryDefinition) {
+    items.push({
+      id: "factory-definition",
+      href: workspaceFactoryDefinitionPath(workspaceSlug),
+      label: "Factory definition",
+      section: "Configure",
+    });
+  }
+  items.push({
+    id: "settings",
+    href: workspaceSettingsPath(workspaceSlug),
+    label: "Settings",
+    section: "Footer",
+  });
+  return items;
 }
 
 export function workspaceLabel(workspaceSlug: string) {

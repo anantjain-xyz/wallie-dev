@@ -6655,6 +6655,7 @@ export type Database = {
         Args: {
           cursor_seen_ids?: string[]
           page_limit?: number
+          target_factory_id?: string
           target_pipeline_id?: string
           target_stage_id?: string
           target_workspace_id: string
@@ -6735,6 +6736,7 @@ export type Database = {
           session_scope?: string
           sort_key?: string
           stage_filter_slug?: string
+          target_factory_id?: string
           target_workspace_slug: string
         }
         Returns: Json
@@ -6955,6 +6957,7 @@ export type Database = {
         Args: {
           p_before_created_at?: string
           p_before_id?: string
+          p_factory_id?: string
           p_limit?: number
           p_provider?: string
           p_run_id?: string

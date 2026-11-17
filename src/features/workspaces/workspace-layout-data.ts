@@ -10,7 +10,7 @@ import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 
 export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) => {
   return withServerTiming("workspace.layout", { workspaceSlug }, async (timing) => {
-    const { supabase, user, workspace } = await timing.segment(
+    const { currentMember, supabase, user, workspace } = await timing.segment(
       "auth-workspace-context",
       () => loadAuthenticatedWorkspaceContext(workspaceSlug),
       (context) => ({
@@ -49,6 +49,7 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
     if (onboardingError) throw onboardingError;
 
     return {
+      currentMember,
       onboarding: mapOnboardingResumeState(onboardingRow),
       supabase,
       user,

@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  factorySwitchHref,
+  isFactoryAggregatePath,
+  resolveFactorySelection,
+  withFactoryQuery,
+  type FactorySelectionOption,
+} from "@/features/factories/factory-selection";
+
+const factory = {
+  id: "default-id",
+  isDefault: true,
+  name: "Default factory",
+  status: "active",
+} satisfies FactorySelectionOption;
+const secondary = {
+  id: "secondary-id",
+  isDefault: false,
+  name: "Payments",
+  status: "archived",
+} satisfies FactorySelectionOption;
+
+describe("factory scope on aggregate routes", () => {
+  it("resolves the authorized default or explicit visible factory", () => {
+    const factories = [factory, secondary];
+    expect(resolveFactorySelection(factories, undefined)).toEqual({ kind: "factory", factory });
+    expect(resolveFactorySelection(factories, secondary.id)).toEqual({
+      kind: "factory",
+      factory: secondary,
+    });
+    expect(resolveFactorySelection(factories, "all")).toEqual({ kind: "all" });
+  });
+
+  it("does not substitute another scope for an unavailable or ambiguous factory", () => {
+    expect(resolveFactorySelection([secondary], undefined)).toEqual({ kind: "unavailable" });
+    expect(resolveFactorySelection([secondary], "restricted")).toEqual({ kind: "unavailable" });
+    expect(resolveFactorySelection([secondary], ["all", secondary.id])).toEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("only treats exact list/board destinations as aggregate", () => {
+    expect(isFactoryAggregatePath("/w/acme", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/sessions", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/runs", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/sessions/42", "acme")).toBe(false);
+    expect(isFactoryAggregatePath("/w/acme/runs/c66", "acme")).toBe(false);
+    expect(isFactoryAggregatePath("/w/acme/settings", "acme")).toBe(false);
+  });
+
+  it("resets only scope-specific filters and preserves unrelated state", () => {
+    const result = factorySwitchHref(
+      "/w/acme/sessions",
+      "q=auth&sort=oldest&cursor=old&stage=custom&create=1&sessionId=session&stageId=stage",
+      secondary.id,
+    );
+    expect(result).toBe("/w/acme/sessions?q=auth&sort=oldest&factory=secondary-id");
+  });
+
+  it("carries explicit scope including duplicates without changing other query values", () => {
+    expect(withFactoryQuery("/w/acme/runs", null)).toBe("/w/acme/runs");
+    expect(withFactoryQuery("/w/acme/sessions?sort=number", ["all", secondary.id])).toBe(
+      "/w/acme/sessions?sort=number&factory=all&factory=secondary-id",
+    );
+  });
+});

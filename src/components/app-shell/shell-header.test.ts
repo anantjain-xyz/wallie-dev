@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
 import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -100,6 +101,7 @@ describe("ShellHeader", () => {
     mocked.prefetch.mockClear();
     mocked.replace.mockClear();
     mocked.searchParams = new URLSearchParams();
+    window.localStorage.clear();
   });
 
   afterAll(() => {
@@ -137,6 +139,14 @@ describe("ShellHeader", () => {
     expect(html).not.toContain("Loading session form…");
   });
 
+  it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
+    mocked.searchParams = new URLSearchParams("create=1");
+    mountShell({ canStartDefaultFactorySession: false });
+
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("renders the theme toggle with a hydration-safe accessible label", () => {
     const html = renderShell();
 
@@ -149,7 +159,7 @@ describe("ShellHeader", () => {
 
     expect(html).not.toContain("Wallie");
     expect(html).toContain("Acme Corp");
-    expect(html).not.toContain("data-shell-rail");
+    expect(html).toContain("data-shell-rail");
     expect(html).toContain(">A<");
     expect(html).not.toContain('title="Acme Corp"');
   });
@@ -171,24 +181,27 @@ describe("ShellHeader", () => {
     expect(html).toContain('aria-label="Account: owner@example.com"');
   });
 
-  it("exposes a named compact workspace menu alongside desktop navigation", () => {
+  it("exposes a named workspace drawer alongside desktop navigation", () => {
     const html = renderShell();
 
     expect(html).toContain('aria-label="Workspace navigation"');
     expect(html).toContain('aria-label="Workspace navigation: Pipeline"');
-    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("data-shell-header");
     expect(html).toContain(">Pipeline</");
     expect(html).toContain('href="/w/acme-corp/sessions"');
+    expect(html).toContain('href="/w/acme-corp/runs"');
     expect(html).toContain('href="/w/acme-corp/settings"');
+    expect(html).not.toContain("Factory definition");
   });
 
   it.each([
     ["/w/acme-corp", "Pipeline"],
     ["/w/acme-corp/sessions", "Sessions"],
     ["/w/acme-corp/settings/profile", "Settings"],
-  ])("names the compact menu after the current destination at %s", (pathname, label) => {
+    ["/w/acme-corp/runs/run-id", "Runs"],
+  ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
     mocked.pathname = pathname;
 
     const html = renderShell();
@@ -197,13 +210,61 @@ describe("ShellHeader", () => {
     expect(html).toContain('aria-current="page"');
   });
 
-  it("renders navigation without a repeated page label above main content", () => {
+  it("keeps the main content in the document scroll", () => {
     const html = renderShell();
 
-    expect(html).not.toContain(">Pipeline</p>");
     expect(html).toContain('id="main-content"');
     expect(html).toContain("Page body");
-    expect(html).not.toContain("overflow-y-auto");
+    expect(html.match(/<main[^>]*>/u)?.[0]).not.toContain("overflow-y-auto");
+  });
+
+  it("shows the definition route under Configure only when authorized", () => {
+    mocked.pathname = "/w/acme-corp/settings/factory-definition";
+    mountShell({
+      navItems: getWorkspaceNavItems(workspace.slug, { canManageFactoryDefinition: true }),
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+    const configure = within(nav).getByRole("list", { name: "Configure" });
+    expect(within(configure).getByRole("link", { name: "Factory definition" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(nav).getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
+    expect(within(nav).queryByRole("list", { name: "Improve" })).toBeNull();
+    expect(within(nav).queryByRole("list", { name: "Platform" })).toBeNull();
+  });
+
+  it("keeps scope on aggregate links and preserves workspace Settings URLs", () => {
+    mocked.searchParams = new URLSearchParams("factory=all");
+    mountShell();
+
+    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+    expect(within(nav).getByRole("link", { name: "Pipeline" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp?factory=all",
+    );
+    expect(within(nav).getByRole("link", { name: "Runs" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/runs?factory=all",
+    );
+    expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/settings",
+    );
+  });
+
+  it("restores desktop collapse when the shell mounts again", () => {
+    const first = mountShell();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    first.unmount();
+    mountShell();
+
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByRole("link", { name: "Runs" })).toBeVisible();
   });
 
   it("prefetches desktop navigation links on mouse/pen hover or focus and skips touch pointers", () => {
@@ -237,14 +298,14 @@ describe("ShellHeader", () => {
     expect(mocked.prefetch).toHaveBeenCalledTimes(2);
   });
 
-  it("prefetches compact navigation menu links on mouse hover or focus and skips touch pointers", async () => {
+  it("prefetches drawer links on mouse hover or focus and skips touch pointers", async () => {
     mountShell();
 
-    const menuTrigger = screen.getByRole("button", { name: "Workspace navigation: Pipeline" });
-    fireEvent.keyDown(menuTrigger, { key: "Enter" });
+    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Pipeline" });
+    fireEvent.click(drawerTrigger);
 
-    const menu = await screen.findByRole("menu", { name: "Workspace pages" });
-    const compactSessionsLink = within(menu).getByRole("menuitem", { name: "Sessions" });
+    const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
+    const compactSessionsLink = within(drawer).getByRole("link", { name: "Sessions" });
     expect(compactSessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
 
     fireEvent.pointerEnter(compactSessionsLink, { pointerType: "touch" });

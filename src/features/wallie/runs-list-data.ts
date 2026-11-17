@@ -25,6 +25,7 @@ export type RunsListData = {
 export async function loadRunsListData(
   workspaceSlug: string,
   searchParams: RunsListSearchParams,
+  factoryId?: string,
 ): Promise<RunsListData> {
   const { supabase, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
   const parsed = parseRunsListQuery(searchParams);
@@ -38,6 +39,7 @@ export async function loadRunsListData(
       workspaceId: workspace.id,
       workspaceSlug: workspace.slug,
       query: parsed.data,
+      ...(factoryId ? { factoryId } : {}),
     });
     return { ...common, state: { kind: "ready", page } };
   } catch (error) {

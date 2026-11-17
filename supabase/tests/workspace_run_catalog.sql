@@ -65,16 +65,16 @@ insert into public.agent_run_events(agent_run_id, workspace_id, attempt_count, s
   ('53400000-0004-4000-8000-000000000058', '53400000-0001-4000-8000-000000000001', 1, 3, 'capture_end', '{"status":"interrupted"}');
 
 select ok((select not prosecdef and proconfig @> array['search_path=""'] from pg_proc
-  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer)'::regprocedure),
+  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)'::regprocedure),
   'catalog uses invoker RLS and an empty search path');
 select ok((select proconfig @> array['plan_cache_mode=force_custom_plan'] from pg_proc
-  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer)'::regprocedure),
+  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)'::regprocedure),
   'bound optional filters and cursor values receive a custom query plan');
 select ok(has_function_privilege('authenticated',
-  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer)', 'EXECUTE'),
+  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)', 'EXECUTE'),
   'authenticated callers can read the catalog');
 select ok(not has_function_privilege(role_name,
-  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer)', 'EXECUTE'),
+  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)', 'EXECUTE'),
   role_name || ' has no catalog execute grant') from (values ('anon'), ('service_role')) roles(role_name);
 select ok(to_regprocedure('public.list_run_legacy_transcript(uuid,uuid,timestamptz,uuid,text,integer)') is null,
   'the legacy transcript endpoint is retired');

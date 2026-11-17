@@ -6,6 +6,7 @@ import { useTransition } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
+import { FACTORY_QUERY_PARAM, withFactoryQuery } from "@/features/factories/factory-selection";
 import type { RunCatalogQuery } from "@/features/wallie/run-catalog-contracts";
 import { RUN_PROVIDER_LABELS, runsListFilterHref } from "@/features/wallie/runs-list-state";
 import { workspaceRunsPath } from "@/lib/routes";
@@ -14,11 +15,13 @@ type Option = { id: string; label: string };
 
 export function RunsListFilters({
   workspaceSlug,
+  factoryQuery,
   query,
   sessions,
   stages,
 }: {
   workspaceSlug: string;
+  factoryQuery?: string;
   query: RunCatalogQuery;
   sessions: Option[];
   stages: Option[];
@@ -37,11 +40,15 @@ export function RunsListFilters({
           workspaceSlug,
           new FormData(event.currentTarget),
           query.limit,
+          factoryQuery,
         );
         startTransition(() => router.push(href));
       }}
     >
       {query.limit ? <input name="limit" type="hidden" value={query.limit} /> : null}
+      {factoryQuery ? (
+        <input name={FACTORY_QUERY_PARAM} type="hidden" value={factoryQuery} />
+      ) : null}
       <fieldset className="flex min-w-0 flex-wrap items-end gap-2" disabled={pending}>
         <legend className="sr-only">Run filters</legend>
         <FilterSelect label="Status" name="status" value={query.status}>
@@ -92,7 +99,7 @@ export function RunsListFilters({
         </button>
         <Link
           className={`ui-button ${FILTER_CONTROL_CLASS}`}
-          href={workspaceRunsPath(workspaceSlug)}
+          href={withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)}
         >
           Clear
         </Link>

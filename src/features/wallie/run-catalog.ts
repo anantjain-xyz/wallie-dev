@@ -49,6 +49,7 @@ type CatalogContext = {
 const scopedRunCursorSchema = runCursorSchema.extend({
   version: z.literal(1),
   workspaceId: z.string().uuid(),
+  factoryId: z.string().uuid().optional(),
   filters: runCatalogFiltersSchema,
 });
 
@@ -67,10 +68,12 @@ export class RunCatalogWorkspaceUnavailableError extends Error {
 }
 
 export async function loadWorkspaceRunCatalogPage(
-  input: CatalogContext & { query: RunCatalogQuery },
+  input: CatalogContext & { query: RunCatalogQuery; factoryId?: string },
 ) {
   const { cursor: encoded, limit = RUN_CATALOG_PAGE_SIZE, ...filters } = input.query;
-  const cursor = encoded ? readCatalogCursor(encoded, input.workspaceId, filters) : null;
+  const cursor = encoded
+    ? readCatalogCursor(encoded, input.workspaceId, filters, input.factoryId)
+    : null;
   const boundedLimit = Math.min(RUN_CATALOG_MAX_PAGE_SIZE, Math.max(1, limit));
   const result = await readCatalog(input, {
     p_limit: boundedLimit + 1,
@@ -78,6 +81,7 @@ export async function loadWorkspaceRunCatalogPage(
     ...(filters.status ? { p_status: filters.status } : {}),
     ...(filters.provider ? { p_provider: filters.provider } : {}),
     ...(filters.stageId ? { p_stage_id: filters.stageId } : {}),
+    ...(input.factoryId ? { p_factory_id: input.factoryId } : {}),
     ...(cursor ? { p_before_created_at: cursor.createdAt, p_before_id: cursor.id } : {}),
   });
   const { rows, nextCursor } = splitRunPage(result, boundedLimit, (row) => ({
@@ -86,7 +90,9 @@ export async function loadWorkspaceRunCatalogPage(
   }));
   return {
     runs: await withRecovery(input, rows),
-    nextCursor: nextCursor ? writeCatalogCursor(nextCursor, input.workspaceId, filters) : null,
+    nextCursor: nextCursor
+      ? writeCatalogCursor(nextCursor, input.workspaceId, filters, input.factoryId)
+      : null,
   };
 }
 
@@ -174,6 +180,7 @@ function readCatalogCursor(
   encoded: string,
   workspaceId: string,
   filters: RunCatalogFilters,
+  factoryId: string | undefined,
 ): WallieRunCursor {
   try {
     const parsed = scopedRunCursorSchema.parse(
@@ -181,6 +188,7 @@ function readCatalogCursor(
     );
     if (
       parsed.workspaceId === workspaceId &&
+      parsed.factoryId === factoryId &&
       parsed.filters.sessionId === filters.sessionId &&
       parsed.filters.status === filters.status &&
       parsed.filters.provider === filters.provider &&
@@ -198,8 +206,9 @@ function writeCatalogCursor(
   cursor: WallieRunCursor,
   workspaceId: string,
   filters: RunCatalogFilters,
+  factoryId: string | undefined,
 ) {
-  return Buffer.from(JSON.stringify({ ...cursor, version: 1, workspaceId, filters })).toString(
-    "base64url",
-  );
+  return Buffer.from(
+    JSON.stringify({ ...cursor, version: 1, workspaceId, factoryId, filters }),
+  ).toString("base64url");
 }

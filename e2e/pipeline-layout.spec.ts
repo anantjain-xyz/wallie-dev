@@ -168,14 +168,15 @@ for (const width of [320, 390, 768]) {
     }
 
     await trigger.click();
-    const menu = page.getByRole("menu", { name: "Workspace pages" });
-    await expect(menu).toBeVisible();
+    const drawer = page.getByRole("dialog", { name: "Workspace pages" });
+    await expect(drawer).toBeVisible();
     for (const [name, href] of [
       ["Pipeline", "/w/proof"],
       ["Sessions", "/w/proof/sessions"],
+      ["Runs", "/w/proof/runs"],
       ["Settings", "/w/proof/settings"],
     ]) {
-      const destination = menu.getByRole("menuitem", { name, exact: true });
+      const destination = drawer.getByRole("link", { name, exact: true });
       await expect(destination).toHaveAttribute("href", href);
       await expect(destination).toBeInViewport({ ratio: 1 });
       expect(await destination.evaluate((item) => item.scrollWidth <= item.clientWidth)).toBe(true);
@@ -184,7 +185,7 @@ for (const width of [320, 390, 768]) {
         .toBeGreaterThanOrEqual(44);
       await destination.click({ trial: true });
     }
-    await expect(menu.getByRole("menuitem", { name: "Pipeline", exact: true })).toHaveAttribute(
+    await expect(drawer.getByRole("link", { name: "Pipeline", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -201,29 +202,29 @@ test("compact navigation supports keyboard access and enlarged labels without cl
   await page.goto("/dev/pipeline-layout?empty=1");
   await page.addStyleTag({
     content:
-      'html { font-size: 200%; } [data-shell-header] button, [role="menuitem"] { font-size: 26px; }',
+      'html { font-size: 200%; } [data-shell-header] button, [role="dialog"] a { font-size: 26px; }',
   });
   const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
   await expect(trigger).toBeInViewport({ ratio: 1 });
   await trigger.focus();
-  await trigger.press("ArrowDown");
-  const menu = page.getByRole("menu", { name: "Workspace pages" });
-  const pipeline = menu.getByRole("menuitem", { name: "Pipeline", exact: true });
-  const sessions = menu.getByRole("menuitem", { name: "Sessions", exact: true });
-  const settings = menu.getByRole("menuitem", { name: "Settings", exact: true });
-  await expect(pipeline).toBeFocused();
-  await pipeline.press("ArrowDown");
-  await expect(sessions).toBeFocused();
-  await sessions.press("End");
-  await expect(settings).toBeFocused();
-  for (const destination of [pipeline, sessions, settings]) {
-    await expect(destination).toBeInViewport({ ratio: 1 });
+  await trigger.press("Enter");
+  const drawer = page.getByRole("dialog", { name: "Workspace pages" });
+  const close = drawer.getByRole("button", { name: "Close navigation", exact: true });
+  const links = drawer.getByRole("link");
+  await expect
+    .poll(() => drawer.evaluate((dialog) => dialog.contains(document.activeElement)))
+    .toBe(true);
+  await close.focus();
+  for (const destination of await links.all()) {
+    await page.keyboard.press("Tab");
+    await expect(destination).toBeFocused();
+    await expect(destination).toBeInViewport();
     expect(await destination.evaluate((item) => item.scrollWidth <= item.clientWidth)).toBe(true);
   }
-  await settings.press("Home");
-  await expect(pipeline).toBeFocused();
-  await pipeline.press("Escape");
-  await expect(menu).toBeHidden();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
   await expect(trigger).toBeFocused();
   const header = page.locator("[data-shell-header]");
   for (const control of [
@@ -251,17 +252,19 @@ test("compact navigation supports keyboard access and enlarged labels without cl
   );
 });
 
-test("resizing an open compact menu to desktop restores focus to the active tab", async ({
+test("resizing an open navigation drawer restores focus to the active desktop link", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dev/pipeline-layout");
   const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
-  await trigger.press("ArrowDown");
-  const menu = page.getByRole("menu", { name: "Workspace pages" });
-  await expect(menu.getByRole("menuitem", { name: "Pipeline", exact: true })).toBeFocused();
+  await trigger.press("Enter");
+  const drawer = page.getByRole("dialog", { name: "Workspace pages" });
+  await expect
+    .poll(() => drawer.evaluate((dialog) => dialog.contains(document.activeElement)))
+    .toBe(true);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(menu).toBeHidden();
+  await expect(drawer).toBeHidden();
   await expect(
     page.getByRole("navigation", { name: "Workspace navigation" }).getByRole("link", {
       name: "Pipeline",

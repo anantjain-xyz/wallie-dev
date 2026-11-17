@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell/app-shell";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
+import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 
 type WorkspaceAppLayoutProps = {
@@ -12,11 +15,21 @@ type WorkspaceAppLayoutProps = {
 
 export default async function WorkspaceAppLayout({ children, params }: WorkspaceAppLayoutProps) {
   const { workspaceSlug } = await params;
-  const { onboarding, user, viewerAvatarUrl, workspace, workspaceAvatarUrl } =
-    await loadWorkspaceLayoutContext(workspaceSlug);
+  const [
+    { currentMember, onboarding, user, viewerAvatarUrl, workspace, workspaceAvatarUrl },
+    factories,
+  ] = await Promise.all([
+    loadWorkspaceLayoutContext(workspaceSlug),
+    loadWorkspaceFactoryOptions(workspaceSlug),
+  ]);
 
   return (
     <AppShell
+      canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
+      canStartDefaultFactorySession={factories.some(
+        (factory) => factory.isDefault && factory.status === "active",
+      )}
+      factorySelector={<FactorySelector factories={factories} workspaceSlug={workspaceSlug} />}
       onboarding={onboarding}
       viewerAvatarUrl={viewerAvatarUrl}
       viewerEmail={user.email ?? null}

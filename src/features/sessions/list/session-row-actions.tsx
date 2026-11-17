@@ -46,6 +46,7 @@ export type SessionRowIslandSession = Pick<
 type SessionRowIslandProps = {
   connections: ReactNode;
   detailHref: string;
+  readOnly?: boolean;
   repositoryLabel: string | null;
   scope: SessionFilterKey;
   session: SessionRowIslandSession;
@@ -68,6 +69,7 @@ function archiveOverrideFromSession(
 export function SessionRowIsland({
   connections,
   detailHref,
+  readOnly = false,
   repositoryLabel,
   scope,
   session,
@@ -538,7 +540,7 @@ export function SessionRowIsland({
       </div>
 
       <div className="sessions-ledger-cell sessions-ledger-cell-actions" role="cell">
-        {!isEditing ? (
+        {!isEditing && !readOnly ? (
           <>
             <ActionMenu
               className="h-8 w-8 shrink-0"
