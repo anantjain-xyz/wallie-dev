@@ -59,6 +59,20 @@ export function compileFactoryDefinition(
   source: FactoryDefinitionSource,
   catalog: FactoryDefinitionCatalog,
 ): FactoryDefinitionCompileResult {
+  const parsed = readFactoryDefinitionSource(source);
+  return parsed.ok ? compileSerialDefinition(parsed.definition, catalog) : parsed;
+}
+
+export function factoryAgentPromptRevisionIdForSource(source: FactoryDefinitionSource) {
+  const parsed = readFactoryDefinitionSource(source);
+  return parsed.ok ? parsed.definition.implementationAgent : undefined;
+}
+
+function readFactoryDefinitionSource(
+  source: FactoryDefinitionSource,
+):
+  | { ok: true; definition: SerialFactoryDefinition }
+  | { ok: false; diagnostics: FactoryDefinitionDiagnostic[] } {
   const input =
     source.kind === "json"
       ? parseFactoryDefinitionJson(source.text)
@@ -81,7 +95,7 @@ export function compileFactoryDefinition(
       ),
     };
   }
-  return compileSerialDefinition(parsed.data, catalog);
+  return { ok: true, definition: parsed.data };
 }
 
 function compileSerialDefinition(

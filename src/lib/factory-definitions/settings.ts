@@ -303,6 +303,7 @@ export async function mutateFactorySettings({
   const catalog = await loadFactoryDefinitionCatalog(client, {
     workspaceId,
     factoryId: context.factoryId,
+    agentPromptRevisionId: context.bundle.implementationAgent?.promptRevisionId,
   });
   if (command.action === "save") {
     const edited = applySettingsPatch(context, command.patch);

@@ -29,7 +29,15 @@ async function collectCatalogRows<T>(fetchPage: (from: number, to: number) => Ca
 
 export async function loadFactoryDefinitionCatalog(
   admin: AdminClient,
-  { workspaceId, factoryId }: { workspaceId: string; factoryId: string },
+  {
+    workspaceId,
+    factoryId,
+    agentPromptRevisionId,
+  }: {
+    workspaceId: string;
+    factoryId: string;
+    agentPromptRevisionId?: string;
+  },
 ): Promise<FactoryDefinitionCatalog> {
   const [
     pipelines,
@@ -91,15 +99,7 @@ export async function loadFactoryDefinitionCatalog(
         .order("id")
         .range(from, to),
     ),
-    collectCatalogRows((from, to) =>
-      admin
-        .from("factory_agent_prompt_revisions")
-        .select("id, agent_id, prompt_md, prompt_sha256")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
-        .order("id")
-        .range(from, to),
-    ),
+    loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
   ]);
   if (installation.error) throw installation.error;
 
@@ -132,6 +132,24 @@ export async function loadFactoryDefinitionCatalog(
     tools: [],
     sandboxProviders: getEnabledSandboxProviders(),
   };
+}
+
+async function loadSelectedAgentPromptRevision(
+  admin: AdminClient,
+  workspaceId: string,
+  factoryId: string,
+  revisionId: string | undefined,
+) {
+  if (!revisionId) return [];
+  const { data, error } = await admin
+    .from("factory_agent_prompt_revisions")
+    .select("id, agent_id, prompt_md, prompt_sha256")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .eq("id", revisionId)
+    .limit(1);
+  if (error) throw error;
+  return data;
 }
 
 export function factoryActivationRequirements(bundle: CompiledFactoryDefinition): {

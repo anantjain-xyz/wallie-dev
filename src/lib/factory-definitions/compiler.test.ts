@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { compileFactoryDefinition } from "./compiler";
+import { compileFactoryDefinition, factoryAgentPromptRevisionIdForSource } from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
 import type { SerialFactoryDefinitionInput } from "./schema";
 import { factoryDefinitionFromBundle, recompileStoredFactoryDefinition } from "./stored-definition";
@@ -90,6 +90,32 @@ function compile(value: unknown, references: FactoryDefinitionCatalog = catalog)
 }
 
 describe("compileFactoryDefinition", () => {
+  it("reads a selected prompt revision only from valid structured or JSON sources", () => {
+    const value = { ...candidate(), implementationAgent: promptRevisionId.toUpperCase() };
+    expect(factoryAgentPromptRevisionIdForSource({ kind: "structured", value })).toBe(
+      promptRevisionId,
+    );
+    expect(
+      factoryAgentPromptRevisionIdForSource({ kind: "json", text: JSON.stringify(value) }),
+    ).toBe(promptRevisionId);
+    expect(
+      factoryAgentPromptRevisionIdForSource({ kind: "structured", value: candidate() }),
+    ).toBeUndefined();
+    expect(
+      factoryAgentPromptRevisionIdForSource({
+        kind: "structured",
+        value: { ...value, implementationAgent: "invalid-uuid" },
+      }),
+    ).toBeUndefined();
+    expect(factoryAgentPromptRevisionIdForSource({ kind: "json", text: "{" })).toBeUndefined();
+    expect(
+      factoryAgentPromptRevisionIdForSource({
+        kind: "json",
+        text: '{"implementationAgent":"one","implementationAgent":"two"}',
+      }),
+    ).toBeUndefined();
+  });
+
   it("pins named-agent prompt bytes and keeps template-looking instructions literal", () => {
     const promptMd =
       "Use {{session.prompt}} and {{artifact.previousStages.future-stage}} literally.";

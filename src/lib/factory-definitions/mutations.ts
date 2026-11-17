@@ -7,6 +7,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./authority";
 import {
   compileFactoryDefinition,
+  factoryAgentPromptRevisionIdForSource,
   type FactoryDefinitionDiagnostic,
   type FactoryDefinitionSource,
 } from "./compiler";
@@ -85,10 +86,6 @@ export async function mutateFactoryDefinition({
     p_expected_activation_number: command.expectedActivationNumber,
   };
   try {
-    const catalog = await loadFactoryDefinitionCatalog(admin, {
-      workspaceId,
-      factoryId: factory.id,
-    });
     if (command.action === "draft") {
       const draft = await latestFactoryDraft(
         admin,
@@ -105,6 +102,11 @@ export async function mutateFactoryDefinition({
           message: "The factory draft changed. Reload before saving.",
         });
       }
+      const catalog = await loadFactoryDefinitionCatalog(admin, {
+        workspaceId,
+        factoryId: factory.id,
+        agentPromptRevisionId: factoryAgentPromptRevisionIdForSource(command.source),
+      });
       const compiled = compileFactoryDefinition(
         command.source,
         current ? catalogForStoredFactoryDefinition(catalog, current) : catalog,
@@ -169,6 +171,12 @@ export async function mutateFactoryDefinition({
     if (readError) return mutationError(readError);
     if (!stored) return mutationError({ code: "P0002" });
 
+    const catalog = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId: factory.id,
+      agentPromptRevisionId: readCompiledFactoryDefinition(stored.definition_json)
+        ?.implementationAgent?.promptRevisionId,
+    });
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,
       stored.canonical_digest,
