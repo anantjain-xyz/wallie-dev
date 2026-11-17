@@ -28,7 +28,7 @@ async function collectCatalogRows<T>(fetchPage: (from: number, to: number) => Ca
 
 export async function loadFactoryDefinitionCatalog(
   admin: AdminClient,
-  workspaceId: string,
+  { workspaceId, factoryId }: { workspaceId: string; factoryId: string },
 ): Promise<FactoryDefinitionCatalog> {
   const [pipelines, repositories, installation, executionPolicies, deliveryPolicies, approvers] =
     await Promise.all([
@@ -37,6 +37,7 @@ export async function loadFactoryDefinitionCatalog(
           .from("pipelines")
           .select("id, name")
           .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
           .order("id")
           .range(from, to),
       ),
@@ -45,6 +46,7 @@ export async function loadFactoryDefinitionCatalog(
           .from("github_repositories")
           .select("id, full_name, github_installation_id")
           .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
           .eq("is_archived", false)
           .order("id")
           .range(from, to),

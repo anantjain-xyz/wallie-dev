@@ -221,7 +221,7 @@ export async function loadWallieSessionData(input: {
     .eq("workspace_id", input.workspaceId);
   const executionSettings = input.supabase
     .from("sessions")
-    .select("execute_pinned_definition, factory_definition_revision_id, workspace_id")
+    .select("execute_pinned_definition, factory_definition_revision_id, factory_id, workspace_id")
     .eq("id", input.session.id)
     .eq("workspace_id", input.workspaceId)
     .maybeSingle()
@@ -231,8 +231,9 @@ export async function loadWallieSessionData(input: {
       const [vercelSandboxConnection, stallTimeoutMs, repository] = await Promise.all([
         loadWallieVercelSandboxConnection(admin, input.workspaceId, pinned?.sandboxProvider),
         pinned?.agent.stallTimeoutMs ?? loadWallieStallTimeoutMs(admin, input.workspaceId),
-        pinned
+        pinned && sessionPin
           ? resolveEffectiveSessionRepository({
+              factoryId: sessionPin.factory_id,
               pinnedRepositoryId: pinned.repositoryId,
               sessionId: input.session.id,
               supabase: input.supabase,

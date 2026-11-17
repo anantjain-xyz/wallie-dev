@@ -85,7 +85,10 @@ export async function mutateFactoryDefinition({
     p_expected_activation_number: command.expectedActivationNumber,
   };
   try {
-    const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+    const catalog = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId: factory.id,
+    });
     if (command.action === "draft") {
       const draft = await latestFactoryDraft(
         admin,

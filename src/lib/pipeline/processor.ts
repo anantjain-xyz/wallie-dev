@@ -285,6 +285,7 @@ async function runStage(input: {
       gitInputPromise.then((gitInput) => {
         const repositoryId = pinned?.repositoryId ?? gitInput?.repository_id;
         return resolveEffectiveSessionRepository({
+          factoryId: session.factory_id,
           pinnedRepositoryId: repositoryId,
           sessionId: session.id,
           supabase: admin,

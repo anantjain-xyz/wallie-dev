@@ -299,7 +299,10 @@ export async function mutateFactorySettings({
     p_actor_user_id: actorUserId,
     p_expected_activation_number: command.expectedActivationNumber,
   };
-  const catalog = await loadFactoryDefinitionCatalog(client, workspaceId);
+  const catalog = await loadFactoryDefinitionCatalog(client, {
+    workspaceId,
+    factoryId: context.factoryId,
+  });
   if (command.action === "save") {
     const edited = applySettingsPatch(context, command.patch);
     if (!edited) {

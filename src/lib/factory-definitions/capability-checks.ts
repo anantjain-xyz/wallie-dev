@@ -39,8 +39,9 @@ export async function readFactoryDefinitionCapabilityCheck(
   scope: CheckScope,
 ): Promise<CheckFailure | { ok: true; check: SandboxCapabilityCheckState | null }> {
   try {
-    const stored = await loadStoredDefinition(scope);
-    if (!stored) return unavailableDefinition();
+    const target = await loadStoredDefinition(scope);
+    if (!target) return unavailableDefinition();
+    const { stored } = target;
     const bundle = readCompiledFactoryDefinition(stored.definition_json);
     if (!bundle) return invalidDefinition();
     return {
@@ -64,9 +65,13 @@ export async function startFactoryDefinitionCapabilityCheck(
 > {
   const { admin, workspaceId, actorUserId } = scope;
   try {
-    const stored = await loadStoredDefinition(scope);
-    if (!stored) return unavailableDefinition();
-    const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+    const target = await loadStoredDefinition(scope);
+    if (!target) return unavailableDefinition();
+    const { stored } = target;
+    const catalog = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId: target.factoryId,
+    });
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,
       stored.canonical_digest,
@@ -114,7 +119,7 @@ async function loadStoredDefinition({ admin, workspaceId, target }: CheckScope) 
     target,
   );
   if (error) throw error;
-  return data;
+  return data ? { stored: data, factoryId: factory.id } : null;
 }
 
 function invalidDefinition(diagnostics?: FactoryDefinitionDiagnostic[]): CheckFailure {

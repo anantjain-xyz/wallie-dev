@@ -234,6 +234,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
 function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessions"> {
   return {
     artifact_review_revision: 0,
+    factory_id: "factory-1",
     id: "sess-1",
     workspace_id: "ws-1",
     number: 1,
@@ -355,6 +356,7 @@ interface MockOptions {
   githubRepositories?: Array<{
     default_branch: string | null;
     default_programming_language?: string | null;
+    factory_id?: string;
     full_name: string;
     github_installation_id?: string;
     html_url?: string;
@@ -609,6 +611,11 @@ function buildAdminMock(opts: MockOptions) {
                 : true,
             )
             .filter((repository) => (filters.id ? repository.id === filters.id : true))
+            .filter((repository) =>
+              filters.factory_id
+                ? (repository.factory_id ?? "factory-1") === filters.factory_id
+                : true,
+            )
             .sort((a, b) => a.full_name.localeCompare(b.full_name))[0];
 
           return {
@@ -4963,28 +4970,28 @@ function buildReviewMock(opts: ReviewMockOptions = {}) {
   };
 
   const githubRepositoriesTable = {
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({
-            data: opts.sessionPullRequestRepositoryId
-              ? {
-                  default_branch: "main",
-                  default_programming_language: null,
-                  full_name: "acme/app",
-                  github_installation_id: "inst-1",
-                  html_url: "https://github.com/acme/app",
-                  id: opts.sessionPullRequestRepositoryId,
-                  is_archived: false,
-                  private: false,
-                  workspace_id: "ws-1",
-                }
-              : null,
-            error: null,
-          }),
+    select: () => {
+      const chain = {
+        eq: () => chain,
+        maybeSingle: async () => ({
+          data: opts.sessionPullRequestRepositoryId
+            ? {
+                default_branch: "main",
+                default_programming_language: null,
+                full_name: "acme/app",
+                github_installation_id: "inst-1",
+                html_url: "https://github.com/acme/app",
+                id: opts.sessionPullRequestRepositoryId,
+                is_archived: false,
+                private: false,
+                workspace_id: "ws-1",
+              }
+            : null,
+          error: null,
         }),
-      }),
-    }),
+      };
+      return chain;
+    },
   };
 
   const workspaceRepositoryProfilesTable = {
@@ -5011,7 +5018,10 @@ function buildReviewMock(opts: ReviewMockOptions = {}) {
     select: () => {
       const builder = {
         eq: () => builder,
-        maybeSingle: async () => ({ data: { github_repository_id: null }, error: null }),
+        maybeSingle: async () => ({
+          data: { factory_id: "factory-1", github_repository_id: null },
+          error: null,
+        }),
       };
       return builder;
     },

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   assertSessionFirstRunReady,
+  cancelWallieRun,
   createSessionWithFirstJob,
   enqueueSessionJobWithRun,
   loadPinnedSessionJobGitInput,
@@ -465,6 +466,7 @@ function buildSupabaseMocks(opts: {
   repositories?: Array<{
     default_branch?: string | null;
     default_programming_language?: string | null;
+    factory_id?: string;
     full_name: string;
     github_installation_id?: string;
     html_url?: string;
@@ -480,6 +482,7 @@ function buildSupabaseMocks(opts: {
   const sessionRow = {
     archived_at: opts.archivedAt ?? null,
     current_stage_id: "stage-product",
+    factory_id: "factory-1",
     github_repository_id: null,
     id: "sess-1",
     workspace_id: "ws-1",
@@ -490,8 +493,23 @@ function buildSupabaseMocks(opts: {
     created_at: baseTimestamp,
   };
 
+  const existingRun =
+    opts.existingRun === undefined
+      ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
+      : opts.existingRun;
   const supabase = {
     from: (table: string) => {
+      if (table === "agent_runs") {
+        return {
+          select: () =>
+            createMaybeSingleQuery((filters) =>
+              Promise.resolve({
+                data: existingRun?.id === filters.get("id") ? existingRun : null,
+                error: null,
+              }),
+            ),
+        };
+      }
       if (table === "sessions") {
         return {
           select: () => ({
@@ -571,12 +589,7 @@ function buildSupabaseMocks(opts: {
 
               if (filters.has("id")) {
                 return {
-                  data:
-                    receiptRunId === filters.get("id")
-                      ? (queuedRun ?? null)
-                      : opts.existingRun === undefined
-                        ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
-                        : opts.existingRun,
+                  data: receiptRunId === filters.get("id") ? (queuedRun ?? null) : existingRun,
                   error: null,
                 };
               }
@@ -638,7 +651,8 @@ function buildSupabaseMocks(opts: {
                 const row = (opts.repositories ?? []).find(
                   (candidate) =>
                     candidate.id === filters.get("id") &&
-                    (candidate.workspace_id ?? "ws-1") === filters.get("workspace_id"),
+                    (candidate.workspace_id ?? "ws-1") === filters.get("workspace_id") &&
+                    (candidate.factory_id ?? "factory-1") === filters.get("factory_id"),
                 );
 
                 return {
@@ -681,6 +695,52 @@ function buildSupabaseMocks(opts: {
     supabase: supabase as unknown as Parameters<typeof retryWallieRun>[0]["supabase"],
   };
 }
+
+describe("authenticated run actions", () => {
+  it.each([
+    ["cancel", cancelWallieRun],
+    ["retry", retryWallieRun],
+  ])("checks run visibility before privileged work for %s", async (_name, action) => {
+    const { supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      enqueueCalls: [],
+      existingRun: null,
+    });
+    const admin = { from: vi.fn(), rpc: vi.fn() };
+
+    await expect(
+      action({
+        admin: admin as never,
+        requestedByMemberId: "mem-1",
+        runId: "run-1",
+        supabase,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({ code: "run_not_found", statusCode: 404 });
+    expect(admin.from).not.toHaveBeenCalled();
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("returns an authorized terminal run without cancelling session work", async () => {
+    const run = buildAgentRunRow({ finished_at: baseTimestamp, status: "error" });
+    const { admin, rpc, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      enqueueCalls: [],
+      existingRun: run,
+    });
+
+    await expect(
+      cancelWallieRun({
+        admin,
+        requestedByMemberId: "mem-1",
+        runId: run.id,
+        supabase,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).resolves.toEqual({ canceled: false, run });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
 
 describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
   function pinnedRetry() {

@@ -183,7 +183,20 @@ update public.agent_runs set stage_id='49400000-0003-4000-8000-000000000001',sta
 update public.agent_jobs set git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()), status='running',attempt_count=1 where id=(select job_id from git_other);
 select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,0,'codex','gpt-5.5','project','wallie/git-other')
 from git_other f join public.sessions s on s.id=f.session_id;
-select public.pin_session_job_git_input(f.job_id,1,f.run_id,'12b2c3d4-0001-4000-8000-000000000001','main',repeat('b',40)) from git_other f;
+insert into public.factories(id,workspace_id,name,slug,is_default,status)
+values('49400000-0004-4000-8000-000000000001','b1b2c3d4-0001-4000-8000-000000000001',
+  'Sibling Git factory','sibling-git-factory',false,'active');
+insert into public.github_repositories(id,workspace_id,factory_id,github_installation_id,repo_id,name,full_name,private,html_url)
+select '49400000-0005-4000-8000-000000000001',workspace_id,'49400000-0004-4000-8000-000000000001',
+  github_installation_id,49400005,'git-sibling','acme-corp/git-sibling',true,'https://github.com/acme-corp/git-sibling'
+from public.github_repositories where id='12b2c3d4-0001-4000-8000-000000000001';
+select throws_ok($$select public.pin_session_job_git_input(job_id,1,run_id,
+  '49400000-0005-4000-8000-000000000001','main',repeat('b',40)) from git_other$$,
+  '23514','Git lineage repository does not match the session.','an unbound session rejects a sibling factory repository');
+select is((select count(*) from public.pin_session_job_git_input(
+  (select job_id from git_other),1,(select run_id from git_other),
+  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('b',40))),1::bigint,
+  'an unbound session can pin a repository from its factory');
 select public.prepare_session_source_delivery((select run_id from git_other),
   '12b2c3d4-0001-4000-8000-000000000001','main',repeat('b',40),repeat('c',40),
   'Code','Artifact','',encode(extensions.digest('source'::bytea,'sha256'),'hex'),encode('source'::bytea,'base64'));

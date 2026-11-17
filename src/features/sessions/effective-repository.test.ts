@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import { resolveEffectiveSessionRepository } from "./effective-repository";
 
+const FACTORY_ID = "factory-1";
 const WORKSPACE_ID = "ws-1";
 const SESSION_ID = "sess-1";
 
 type Repo = {
   default_branch: string | null;
   default_programming_language: string | null;
+  factory_id: string;
   full_name: string;
   github_installation_id: string;
   html_url: string;
@@ -21,6 +23,7 @@ function repo(id: string, fullName: string, overrides: Partial<Repo> = {}): Repo
   return {
     default_branch: "main",
     default_programming_language: "TypeScript",
+    factory_id: FACTORY_ID,
     full_name: fullName,
     github_installation_id: "ghi-1",
     html_url: `https://github.com/${fullName}`,
@@ -128,7 +131,8 @@ function buildSupabaseMock(input: {
                   repositories.find(
                     (candidate) =>
                       candidate.id === filters.get("id") &&
-                      candidate.workspace_id === filters.get("workspace_id"),
+                      candidate.workspace_id === filters.get("workspace_id") &&
+                      candidate.factory_id === filters.get("factory_id"),
                   ) ?? null,
                 error: input.repositoryError ?? null,
               }),
@@ -160,6 +164,7 @@ describe("resolveEffectiveSessionRepository", () => {
     const from = vi.spyOn(supabase, "from");
 
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: supabase as never,
       workspaceId: WORKSPACE_ID,
@@ -180,7 +185,7 @@ describe("resolveEffectiveSessionRepository", () => {
     expect(from.mock.calls).toEqual([["github_repositories"]]);
   });
 
-  it.each(["missing", "another workspace"])(
+  it.each(["missing", "another workspace", "another factory"])(
     "preserves an unresolved job pin from %s without using any available fallback",
     async (state) => {
       const supabase = buildSupabaseMock({
@@ -196,11 +201,15 @@ describe("resolveEffectiveSessionRepository", () => {
           ...(state === "another workspace"
             ? [repo("repo-job", "other-workspace/private", { workspace_id: "ws-2" })]
             : []),
+          ...(state === "another factory"
+            ? [repo("repo-job", "sibling-factory/private", { factory_id: "factory-2" })]
+            : []),
         ],
       });
       const from = vi.spyOn(supabase, "from");
 
       const resolution = await resolveEffectiveSessionRepository({
+        factoryId: FACTORY_ID,
         sessionId: SESSION_ID,
         supabase: supabase as never,
         workspaceId: WORKSPACE_ID,
@@ -228,6 +237,7 @@ describe("resolveEffectiveSessionRepository", () => {
     const from = vi.spyOn(supabase, "from");
 
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: supabase as never,
       workspaceId: WORKSPACE_ID,
@@ -253,6 +263,7 @@ describe("resolveEffectiveSessionRepository", () => {
 
     await expect(
       resolveEffectiveSessionRepository({
+        factoryId: FACTORY_ID,
         sessionId: SESSION_ID,
         supabase: supabase as never,
         workspaceId: WORKSPACE_ID,
@@ -264,6 +275,7 @@ describe("resolveEffectiveSessionRepository", () => {
 
   it("uses the pinned session repository before pull request and workspace fallbacks", async () => {
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({
         primaryRepositoryId: "repo-primary",
@@ -284,6 +296,7 @@ describe("resolveEffectiveSessionRepository", () => {
 
   it("uses the latest session pull request repository before the workspace primary", async () => {
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({
         primaryRepositoryId: "repo-primary",
@@ -299,6 +312,7 @@ describe("resolveEffectiveSessionRepository", () => {
 
   it("uses the workspace profile repository before onboarding fallback", async () => {
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({
         onboardingRepositoryId: "repo-onboarding",
@@ -314,6 +328,7 @@ describe("resolveEffectiveSessionRepository", () => {
 
   it("falls back to onboarding selected repository", async () => {
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({
         onboardingRepositoryId: "repo-onboarding",
@@ -326,18 +341,42 @@ describe("resolveEffectiveSessionRepository", () => {
     expect(resolution.repository?.fullName).toBe("acme/setup");
   });
 
-  it("preserves the configured repository id when it does not resolve in the workspace", async () => {
+  it("skips a sibling factory profile and uses the session factory's onboarding repository", async () => {
     const resolution = await resolveEffectiveSessionRepository({
+      factoryId: FACTORY_ID,
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({
-        primaryRepositoryId: "repo-other-workspace",
-        repositories: [repo("repo-other-workspace", "acme/other", { workspace_id: "ws-2" })],
+        onboardingRepositoryId: "repo-onboarding",
+        primaryRepositoryId: "repo-sibling",
+        repositories: [
+          repo("repo-sibling", "acme/other", { factory_id: "factory-2", private: true }),
+          repo("repo-onboarding", "acme/setup"),
+        ],
       }) as never,
       workspaceId: WORKSPACE_ID,
     });
 
-    expect(resolution.repository).toBeNull();
-    expect(resolution.repositoryId).toBe("repo-other-workspace");
-    expect(resolution.source).toBe("workspace_primary_profile");
+    expect(resolution).toMatchObject({
+      repository: { fullName: "acme/setup" },
+      repositoryId: "repo-onboarding",
+      source: "workspace_onboarding",
+    });
   });
+
+  it.each([{ factory_id: "factory-2" }, { workspace_id: "ws-2" }])(
+    "omits out-of-scope fallback metadata for %o",
+    async (repoScope) => {
+      const resolution = await resolveEffectiveSessionRepository({
+        factoryId: FACTORY_ID,
+        sessionId: SESSION_ID,
+        supabase: buildSupabaseMock({
+          primaryRepositoryId: "repo-other",
+          repositories: [repo("repo-other", "acme/other", repoScope)],
+        }) as never,
+        workspaceId: WORKSPACE_ID,
+      });
+
+      expect(resolution).toEqual({ repository: null, repositoryId: null, source: null });
+    },
+  );
 });

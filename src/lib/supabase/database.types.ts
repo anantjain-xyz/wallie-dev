@@ -1126,30 +1126,113 @@ export type Database = {
       }
       factories: {
         Row: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
           created_at: string
           id: string
           is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
           workspace_id: string
         }
         Insert: {
+          archived_at?: string | null
+          archived_by?: string | null
+          archived_reason?: string | null
           created_at?: string
           id?: string
           is_default?: boolean
+          name: string
+          slug: string
+          status?: string
+          updated_at?: string
           workspace_id: string
         }
         Update: {
+          archived_at?: string | null
+          archived_by?: string | null
+          archived_reason?: string | null
           created_at?: string
           id?: string
           is_default?: boolean
+          name?: string
+          slug?: string
+          status?: string
+          updated_at?: string
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "factories_archived_by_fkey"
+            columns: ["archived_by"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "factories_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_audit_events: {
+        Row: {
+          action: string
+          actor_member_id: string | null
+          created_at: string
+          detail: Json
+          factory_id: string
+          id: number
+          subject_member_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          action: string
+          actor_member_id?: string | null
+          created_at?: string
+          detail?: Json
+          factory_id: string
+          id?: never
+          subject_member_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          action?: string
+          actor_member_id?: string | null
+          created_at?: string
+          detail?: Json
+          factory_id?: string
+          id?: never
+          subject_member_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_audit_events_actor_member_id_fkey"
+            columns: ["actor_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_audit_events_subject_member_id_fkey"
+            columns: ["subject_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_audit_events_workspace_factory_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
           },
         ]
       }
@@ -1390,6 +1473,74 @@ export type Database = {
           },
         ]
       }
+      factory_members: {
+        Row: {
+          factory_id: string
+          granted_at: string
+          granted_by_member_id: string | null
+          id: string
+          member_id: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          role: string
+          workspace_id: string
+        }
+        Insert: {
+          factory_id: string
+          granted_at?: string
+          granted_by_member_id?: string | null
+          id?: string
+          member_id: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          role: string
+          workspace_id: string
+        }
+        Update: {
+          factory_id?: string
+          granted_at?: string
+          granted_by_member_id?: string | null
+          id?: string
+          member_id?: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          role?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_members_granted_by_member_id_fkey"
+            columns: ["granted_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_members_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_members_revoked_by_member_id_fkey"
+            columns: ["revoked_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_members_workspace_factory_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       github_install_flows: {
         Row: {
           created_at: string
@@ -1526,6 +1677,7 @@ export type Database = {
           default_branch: string | null
           default_programming_language: string | null
           description: string | null
+          factory_id: string
           full_name: string
           github_installation_id: string
           html_url: string
@@ -1542,6 +1694,7 @@ export type Database = {
           default_branch?: string | null
           default_programming_language?: string | null
           description?: string | null
+          factory_id: string
           full_name: string
           github_installation_id: string
           html_url: string
@@ -1558,6 +1711,7 @@ export type Database = {
           default_branch?: string | null
           default_programming_language?: string | null
           description?: string | null
+          factory_id?: string
           full_name?: string
           github_installation_id?: string
           html_url?: string
@@ -1576,6 +1730,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "github_installations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "github_repositories_workspace_factory_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
           },
           {
             foreignKeyName: "github_repositories_workspace_id_fkey"
@@ -1652,6 +1813,7 @@ export type Database = {
       pipelines: {
         Row: {
           created_at: string
+          factory_id: string
           id: string
           is_default: boolean
           name: string
@@ -1661,6 +1823,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          factory_id: string
           id?: string
           is_default?: boolean
           name?: string
@@ -1670,6 +1833,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          factory_id?: string
           id?: string
           is_default?: boolean
           name?: string
@@ -1678,6 +1842,13 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "pipelines_workspace_factory_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
           {
             foreignKeyName: "pipelines_workspace_id_fkey"
             columns: ["workspace_id"]
@@ -4274,6 +4445,7 @@ export type Database = {
           execution_repair_attempts: number
           factory_definition_provenance: string
           factory_definition_revision_id: string | null
+          factory_id: string
           github_repository_id: string | null
           id: string
           linear_issue_id: string | null
@@ -4306,6 +4478,7 @@ export type Database = {
           execution_repair_attempts?: number
           factory_definition_provenance?: string
           factory_definition_revision_id?: string | null
+          factory_id: string
           github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
@@ -4338,6 +4511,7 @@ export type Database = {
           execution_repair_attempts?: number
           factory_definition_provenance?: string
           factory_definition_revision_id?: string | null
+          factory_id?: string
           github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
@@ -4410,6 +4584,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pipelines"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_workspace_factory_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
           },
           {
             foreignKeyName: "sessions_workspace_id_fkey"
@@ -5692,6 +5873,33 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      archive_factory: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_reason?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       archive_session_job_attempts: {
         Args: {
           p_completed?: boolean
@@ -6097,6 +6305,33 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      create_factory: {
+        Args: {
+          p_actor_user_id: string
+          p_name: string
+          p_slug: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       create_session_once_with_first_job: {
         Args: {
@@ -6537,6 +6772,33 @@ export type Database = {
           total_output_tokens: number
           total_runs: number
         }[]
+      }
+      grant_factory_membership: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_member_id: string
+          p_role?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          factory_id: string
+          granted_at: string
+          granted_by_member_id: string | null
+          id: string
+          member_id: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          role: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       list_artifact_review_comments: {
         Args: {
@@ -7070,6 +7332,21 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_scope: {
+        Args: { p_actor_user_id: string; p_workspace_id: string }
+        Returns: {
+          factory_id: string
+          is_default: boolean
+          member_count: number
+          name: string
+          pipeline_count: number
+          repository_count: number
+          role: string
+          session_count: number
+          slug: string
+          status: string
+        }[]
+      }
       read_run_export_page: {
         Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
         Returns: {
@@ -7333,6 +7610,59 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      restore_factory: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_membership: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_member_id: string
+          p_reason?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          factory_id: string
+          granted_at: string
+          granted_by_member_id: string | null
+          id: string
+          member_id: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          role: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rewrite_default_pipeline: {
         Args: {

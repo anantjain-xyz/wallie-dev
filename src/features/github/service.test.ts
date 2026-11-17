@@ -1,6 +1,7 @@
+import { createClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Tables } from "@/lib/supabase/database.types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
@@ -16,10 +17,16 @@ vi.mock("@/features/github/config", () => ({
 vi.mock("@octokit/app", () => ({
   App: class {
     octokit = { request: mocked.request };
+    async getInstallationOctokit() {
+      return this.octokit;
+    }
   },
 }));
 
-import { upsertGitHubInstallationForWorkspace } from "./service";
+import {
+  syncGitHubRepositoriesForWorkspace,
+  upsertGitHubInstallationForWorkspace,
+} from "./service";
 
 const workspaceA = "10000000-0000-4000-8000-000000000001";
 const workspaceB = "10000000-0000-4000-8000-000000000002";
@@ -279,5 +286,109 @@ describe("GitHub installation ownership", () => {
     expect(db.rows[0]!.installation_id).toBe(42);
     expect(db.deleted).not.toHaveBeenCalled();
     expect(db.updates).toHaveLength(0);
+  });
+});
+
+describe("GitHub repository sync", () => {
+  const installation = installationRow();
+  const retained = {
+    id: "30000000-0000-4000-8000-000000000001",
+    factory_id: "40000000-0000-4000-8000-000000000001",
+    repo_id: 1,
+    full_name: "fixture/old-name",
+  };
+  const removed = { ...retained, id: "30000000-0000-4000-8000-000000000002", repo_id: 2 };
+
+  function mockRepositorySync(upsertError: string) {
+    const requests: Array<{ url: URL; method: string; body: unknown }> = [];
+    let reads = 0;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/github_installations")) return Response.json(installation);
+      expect(url.pathname).toBe("/rest/v1/github_repositories");
+      const { method } = request;
+      const body: unknown = request.body ? await request.json() : undefined;
+      requests.push({ url, method, body });
+      switch (method) {
+        case "GET":
+          return Response.json(
+            reads++ === 0 ? [retained, removed] : [{ ...retained, full_name: "fixture/renamed" }],
+          );
+        case "POST":
+          return Response.json({ code: upsertError }, { status: 400 });
+        case "PATCH":
+        case "DELETE":
+          return new Response(null, { status: 204 });
+        default:
+          throw new Error(`Unexpected ${method} request`);
+      }
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(
+      createClient<Database>("http://localhost:54321", "fixture-key", {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { fetch },
+      }),
+    );
+    mocked.request.mockResolvedValue({
+      data: {
+        repositories: [
+          { id: 1, name: "renamed", full_name: "fixture/renamed" },
+          { id: 3, name: "new", full_name: "fixture/new" },
+        ].map((repo) => ({
+          ...repo,
+          html_url: `https://github.com/${repo.full_name}`,
+          private: true,
+          archived: false,
+        })),
+      },
+    });
+    return requests;
+  }
+
+  it("refreshes retained repos and removes disconnected repos when the default factory rejects new rows", async () => {
+    const requests = mockRepositorySync("P0011");
+
+    const result = await syncGitHubRepositoriesForWorkspace(
+      { installationId: installation.installation_id, workspaceId: workspaceA },
+      {},
+    );
+
+    expect(requests.map(({ method }) => method)).toEqual(["GET", "POST", "PATCH", "DELETE", "GET"]);
+    const upsert = requests[1]!.body;
+    expect(upsert).toMatchObject([{ repo_id: 1 }, { repo_id: 3 }]);
+    expect(upsert).not.toHaveProperty("0.id");
+    expect(upsert).not.toHaveProperty("0.factory_id");
+    const refresh = requests[2]!;
+    expect(Object.fromEntries(refresh.url.searchParams)).toEqual({
+      github_installation_id: `eq.${installation.id}`,
+      workspace_id: `eq.${workspaceA}`,
+      repo_id: "eq.1",
+    });
+    expect(refresh.body).toEqual({
+      default_branch: null,
+      default_programming_language: null,
+      description: null,
+      full_name: "fixture/renamed",
+      html_url: "https://github.com/fixture/renamed",
+      is_archived: false,
+      name: "renamed",
+      private: true,
+    });
+    expect(requests[3]!.url.searchParams.get("repo_id")).toBe("in.(2)");
+    expect(result.repositories).toMatchObject([{ id: retained.id, fullName: "fixture/renamed" }]);
+  });
+
+  it("propagates unrelated database errors before mutating existing inventory", async () => {
+    const requests = mockRepositorySync("42501");
+
+    await expect(
+      syncGitHubRepositoriesForWorkspace(
+        { installationId: installation.installation_id, workspaceId: workspaceA },
+        {},
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    expect(requests.map(({ method }) => method)).toEqual(["GET", "POST"]);
   });
 });

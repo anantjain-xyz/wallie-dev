@@ -62,6 +62,7 @@ function mapRepository(
 async function loadRepository(
   supabase: SupabaseLike,
   input: {
+    factoryId: string;
     repositoryId: string;
     workspaceId: string;
   },
@@ -71,6 +72,7 @@ async function loadRepository(
     .select(repositorySelect)
     .eq("id", input.repositoryId)
     .eq("workspace_id", input.workspaceId)
+    .eq("factory_id", input.factoryId)
     .maybeSingle();
 
   if (error) {
@@ -144,6 +146,7 @@ async function loadCandidateRepositoryIds(input: {
 }
 
 export async function resolveEffectiveSessionRepository(input: {
+  factoryId: string;
   pinnedRepositoryId?: string;
   sessionId: string;
   supabase: SupabaseLike;
@@ -153,6 +156,7 @@ export async function resolveEffectiveSessionRepository(input: {
   // or missing connection cannot redirect that work to another checkout.
   if (input.pinnedRepositoryId) {
     const repository = await loadRepository(input.supabase, {
+      factoryId: input.factoryId,
       repositoryId: input.pinnedRepositoryId,
       workspaceId: input.workspaceId,
     });
@@ -163,7 +167,6 @@ export async function resolveEffectiveSessionRepository(input: {
     };
   }
   const candidates = await loadCandidateRepositoryIds(input);
-  const firstConfiguredCandidate = candidates.find((candidate) => candidate.repositoryId);
 
   for (const candidate of candidates) {
     if (!candidate.repositoryId) {
@@ -171,6 +174,7 @@ export async function resolveEffectiveSessionRepository(input: {
     }
 
     const repository = await loadRepository(input.supabase, {
+      factoryId: input.factoryId,
       repositoryId: candidate.repositoryId,
       workspaceId: input.workspaceId,
     });
@@ -186,7 +190,7 @@ export async function resolveEffectiveSessionRepository(input: {
 
   return {
     repository: null,
-    repositoryId: firstConfiguredCandidate?.repositoryId ?? null,
-    source: firstConfiguredCandidate?.source ?? null,
+    repositoryId: null,
+    source: null,
   };
 }

@@ -429,6 +429,24 @@ export async function POST(request: Request) {
       { status: 201 },
     );
   } catch (error) {
+    if (getErrorCode(error) === "P0011") {
+      return NextResponse.json(
+        {
+          code: "factory_archived",
+          error: "Restore the archived factory before starting a session.",
+        },
+        { status: 409 },
+      );
+    }
+    if (getErrorCode(error) === "42501") {
+      return NextResponse.json(
+        {
+          code: "factory_access_denied",
+          error: "You cannot start a session with the selected factory resources.",
+        },
+        { status: 403 },
+      );
+    }
     if (getErrorCode(error) === "P0005") return creationRequestErrorResponse(error);
     if (getErrorCode(error) === "PT404") {
       return NextResponse.json({ error: "The session to restart was not found." }, { status: 404 });

@@ -7,6 +7,7 @@ import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./a
 import type { CompiledFactoryDefinition } from "./compiler";
 
 const workspaceId = "81b90000-0000-4000-8000-000000000001";
+const factoryId = "81b90000-0000-4000-8000-000000000003";
 const installationId = "81b90000-0000-4000-8000-000000000002";
 
 function fixtureClient() {
@@ -49,7 +50,7 @@ describe("factory activation authority inputs", () => {
   it("loads the scoped catalog without losing policy revisions beyond the first page", async () => {
     vi.stubEnv("WALLIE_ENABLED_SANDBOX_PROVIDERS", "e2b");
     const { admin, requests } = fixtureClient();
-    const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+    const catalog = await loadFactoryDefinitionCatalog(admin, { workspaceId, factoryId });
 
     expect(catalog).toMatchObject({
       pipelines: [{ id: "pipeline", workspaceId, aliases: ["Release"] }],
@@ -69,7 +70,10 @@ describe("factory activation authority inputs", () => {
     const repos = requests.find((url) => url.pathname.endsWith("/github_repositories"));
     const members = requests.find((url) => url.pathname.endsWith("/workspace_members"));
     expect(installation?.searchParams.get("suspended")).toBe("eq.false");
+    const pipelines = requests.find((url) => url.pathname.endsWith("/pipelines"));
     expect(repos?.searchParams.get("is_archived")).toBe("eq.false");
+    expect(repos?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(pipelines?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
     expect(members?.searchParams.get("kind")).toBe("eq.human");
     expect(members?.searchParams.get("is_active")).toBe("eq.true");
   });

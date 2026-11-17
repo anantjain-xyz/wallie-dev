@@ -10,7 +10,7 @@ import type {
   GitHubRepositorySummary,
 } from "@/features/github/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Tables } from "@/lib/supabase/database.types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 
 type GitHubRepository = {
   archived: boolean;
@@ -23,6 +23,7 @@ type GitHubRepository = {
   name: string;
   private: boolean;
 };
+type RepositoryInsert = Database["public"]["Tables"]["github_repositories"]["Insert"];
 
 const installationSelect =
   "id, app_id, installation_id, installation_url, permissions, suspended, target_name, target_type, updated_at, workspace_id";
@@ -303,40 +304,51 @@ export async function syncGitHubRepositoriesForWorkspace(
     throw existingReposError;
   }
 
-  const existingRepoIdByGitHubRepoId = new Map(
-    (existingRepos ?? []).map((repo) => [repo.repo_id, repo.id]),
-  );
+  const existingRepoIds = new Set((existingRepos ?? []).map((repo) => repo.repo_id));
   const currentRepoIds = new Set(repositories.map((repo) => repo.id));
 
   if (repositories.length > 0) {
-    const { error: upsertError } = await admin.from("github_repositories").upsert(
-      repositories.map((repo) => ({
-        default_branch: repo.default_branch ?? null,
-        default_programming_language: repo.language ?? null,
-        description: repo.description ?? null,
-        full_name: repo.full_name,
-        github_installation_id: installationRow.id,
-        html_url: repo.html_url,
-        id: existingRepoIdByGitHubRepoId.get(repo.id) ?? randomUUID(),
-        is_archived: repo.archived,
-        name: repo.name,
-        private: repo.private,
-        repo_id: repo.id,
-        workspace_id: values.workspaceId,
-      })),
-      {
+    // Postgres supplies both the ID and the current default factory on insert.
+    // Conflict updates leave those identities alone.
+    const repositoryRows = repositories.map((repo) => ({
+      default_branch: repo.default_branch ?? null,
+      default_programming_language: repo.language ?? null,
+      description: repo.description ?? null,
+      full_name: repo.full_name,
+      github_installation_id: installationRow.id,
+      html_url: repo.html_url,
+      is_archived: repo.archived,
+      name: repo.name,
+      private: repo.private,
+      repo_id: repo.id,
+      workspace_id: values.workspaceId,
+    })) satisfies Omit<RepositoryInsert, "factory_id">[];
+    const { error: upsertError } = await admin
+      .from("github_repositories")
+      .upsert(repositoryRows as RepositoryInsert[], {
         onConflict: "github_installation_id,repo_id",
-      },
-    );
+      });
 
-    if (upsertError) {
+    if (upsertError?.code === "P0011") {
+      // An archived default rejects new rows and rolls back the entire upsert.
+      // UPDATE refreshes known rows without recreating any that were removed
+      // after our read. Removals still run below.
+      for (const { github_installation_id, repo_id, workspace_id, ...metadata } of repositoryRows) {
+        if (!existingRepoIds.has(repo_id)) continue;
+        const { error } = await admin
+          .from("github_repositories")
+          .update(metadata)
+          .eq("github_installation_id", github_installation_id)
+          .eq("workspace_id", workspace_id)
+          .eq("repo_id", repo_id);
+        if (error) throw error;
+      }
+    } else if (upsertError) {
       throw upsertError;
     }
   }
 
-  const removedRepoIds = (existingRepos ?? [])
-    .map((repo) => repo.repo_id)
-    .filter((repoId) => !currentRepoIds.has(repoId));
+  const removedRepoIds = [...existingRepoIds].filter((repoId) => !currentRepoIds.has(repoId));
 
   if (removedRepoIds.length > 0) {
     const { error: deleteError } = await admin

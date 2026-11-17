@@ -115,6 +115,9 @@ DECLARE
   mem2_id   uuid := 'c1b2c3d4-0002-4000-8000-000000000002';
   memw_id   uuid := 'c1b2c3d4-0003-4000-8000-000000000003';
 
+  -- Default factory (the workspace-level anchor resources hang from)
+  default_factory_id uuid := 'e1b2c3d4-0001-4000-8000-000000000001';
+
   -- Pipeline (default 4-stage seed)
   default_pipeline_id uuid := 'd1b2c3d4-0001-4000-8000-000000000001';
   stage_plan_id   uuid;
@@ -237,6 +240,11 @@ BEGIN
   INSERT INTO public.workspaces (id, slug, name, created_by, created_at)
   VALUES (ws_id, 'acme-corp', 'Acme Corp', user1_id, now() - interval '14 days');
 
+  -- Triggers are disabled while seeding, so provision the default factory and
+  -- its inherited memberships explicitly.
+  INSERT INTO public.factories (id, workspace_id, name, slug, is_default, status)
+  VALUES (default_factory_id, ws_id, 'Default factory', 'default', true, 'active');
+
   -- -------------------------------------------------------------------------
   -- 4. Workspace members
   -- -------------------------------------------------------------------------
@@ -251,6 +259,12 @@ BEGIN
   VALUES
     (memw_id, ws_id, 'system', 'agent', 'wallie', 'Wallie', now() - interval '14 days');
 
+  INSERT INTO public.factory_members
+    (workspace_id, factory_id, member_id, role, granted_by_member_id)
+  VALUES
+    (ws_id, default_factory_id, mem1_id, 'manager', mem1_id),
+    (ws_id, default_factory_id, mem2_id, 'member', mem1_id);
+
   -- -------------------------------------------------------------------------
   -- 5a. Default pipeline + seeded stages.
   --
@@ -259,8 +273,8 @@ BEGIN
   -- customizes it with explicit Review and Land stages so the seeded board
   -- below can show every supported stage shape.
   -- -------------------------------------------------------------------------
-  INSERT INTO public.pipelines (id, workspace_id, name, is_default)
-  VALUES (default_pipeline_id, ws_id, 'Default', true);
+  INSERT INTO public.pipelines (id, workspace_id, factory_id, name, is_default)
+  VALUES (default_pipeline_id, ws_id, default_factory_id, 'Default', true);
 
   INSERT INTO public.pipeline_stages (
     pipeline_id, workspace_id, position, slug, name, description, prompt_template_md
@@ -310,15 +324,15 @@ BEGIN
      false, now() - interval '13 days');
 
   INSERT INTO public.github_repositories
-    (id, workspace_id, github_installation_id, repo_id, name, full_name,
+    (id, workspace_id, factory_id, github_installation_id, repo_id, name, full_name,
      private, html_url, description, default_programming_language, default_branch,
      is_archived, created_at)
   VALUES
-    (gh_repo1_id, ws_id, gh_inst_id, 100001, 'webapp', 'acme-corp/webapp',
+    (gh_repo1_id, ws_id, default_factory_id, gh_inst_id, 100001, 'webapp', 'acme-corp/webapp',
      true, 'https://github.com/acme-corp/webapp',
      'Main web application — Next.js + Supabase',
      'TypeScript', 'main', false, now() - interval '13 days'),
-    (gh_repo2_id, ws_id, gh_inst_id, 100002, 'api-service', 'acme-corp/api-service',
+    (gh_repo2_id, ws_id, default_factory_id, gh_inst_id, 100002, 'api-service', 'acme-corp/api-service',
      true, 'https://github.com/acme-corp/api-service',
      'Background jobs and API microservice',
      'Go', 'main', false, now() - interval '13 days');
@@ -411,11 +425,11 @@ BEGIN
 
   -- Session 1: plan / awaiting_review — agent just finished the plan
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess1_id, ws_id, 1,
+    (sess1_id, ws_id, default_factory_id, 1,
      'Add SSO login via Google Workspace',
      E'We need SSO for the Business plan — Google Workspace first, Okta later. IT asked for this on the call Monday.',
      mem1_id,
@@ -431,11 +445,11 @@ BEGIN
 
   -- Session 2: build / in_progress — plan approved, build agent running
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess2_id, ws_id, 2,
+    (sess2_id, ws_id, default_factory_id, 2,
      'Self-serve workspace creation flow',
      E'Onboarding is dropping off at workspace creation. Let''s build a proper guided flow.',
      mem1_id,
@@ -456,11 +470,11 @@ BEGIN
 
   -- Session 3: build / awaiting_review — plan approved, build ready for review
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess3_id, ws_id, 3,
+    (sess3_id, ws_id, default_factory_id, 3,
      'Real-time session updates via Supabase Realtime',
      E'The board feels stale when two people are triaging at once. Can we wire up realtime?',
      mem2_id,
@@ -484,11 +498,11 @@ BEGIN
 
   -- Session 4: review / in_progress — build approved, reviewing the PR
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess4_id, ws_id, 4,
+    (sess4_id, ws_id, default_factory_id, 4,
      'Rich-text editor for session prompts',
      E'The plain textarea is rough. Let''s replace it with Tiptap and support image paste.',
      mem1_id,
@@ -513,11 +527,11 @@ BEGIN
 
   -- Session 5: land / awaiting_review — approved, ready to merge
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess5_id, ws_id, 5,
+    (sess5_id, ws_id, default_factory_id, 5,
      'Keyboard shortcuts for session triage',
      E'Power users are asking for j/k navigation and hotkeys for status/priority.',
      mem2_id,
@@ -549,11 +563,11 @@ BEGIN
 
   -- Session 6: land / approved, archived — shipped
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      archived_at, created_at, updated_at)
   VALUES
-    (sess6_id, ws_id, 6,
+    (sess6_id, ws_id, default_factory_id, 6,
      'CI/CD pipeline with GitHub Actions',
      E'We need CI — tests + lint on PRs, staging deploy on merge, production gated.',
      mem1_id,
@@ -591,11 +605,11 @@ BEGIN
 
   -- Session 7: plan / awaiting_review
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess7_id, ws_id, 7,
+    (sess7_id, ws_id, default_factory_id, 7,
      'Dark mode and theme customization',
      E'Users keep asking for dark mode. Let''s add a theme toggle in settings with system preference detection.',
      mem2_id,
@@ -611,11 +625,11 @@ BEGIN
 
   -- Session 8: plan / in_progress (rejected once, re-generating)
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
-    (sess8_id, ws_id, 8,
+    (sess8_id, ws_id, default_factory_id, 8,
      'Weekly email digest of pipeline activity',
      E'We need a weekly email summarizing pipeline activity — sessions that moved, stuck items, and PRs awaiting review.',
      mem1_id,
@@ -624,11 +638,11 @@ BEGIN
 
   -- Session 9: plan / awaiting_review
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess9_id, ws_id, 9,
+    (sess9_id, ws_id, default_factory_id, 9,
      'Role-based access control for workspaces',
      E'We need granular permissions — viewer, editor, admin roles with controls over phase approvals and integrations.',
      mem1_id,
@@ -644,11 +658,11 @@ BEGIN
 
   -- Session 10: build / rejected
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
-    (sess10_id, ws_id, 10,
+    (sess10_id, ws_id, default_factory_id, 10,
      'Bulk session import from CSV and JSON',
      E'Teams migrating from Jira need bulk import. Accept CSV and JSON, validate, create sessions.',
      mem2_id,
@@ -672,11 +686,11 @@ BEGIN
 
   -- Session 11: build / in_progress
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess11_id, ws_id, 11,
+    (sess11_id, ws_id, default_factory_id, 11,
      'Webhook notifications for pipeline events',
      E'External systems need to react to phase transitions. Add webhook registration and signed POST delivery.',
      mem1_id,
@@ -697,11 +711,11 @@ BEGIN
 
   -- Session 12: review / awaiting_review
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess12_id, ws_id, 12,
+    (sess12_id, ws_id, default_factory_id, 12,
      'Two-factor authentication via TOTP',
      E'Security teams want TOTP 2FA. QR code setup, backup codes, and admin enforcement toggle.',
      mem2_id,
@@ -729,11 +743,11 @@ BEGIN
 
   -- Session 13: review / rejected (2 rejections)
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
-    (sess13_id, ws_id, 13,
+    (sess13_id, ws_id, default_factory_id, 13,
      'API rate limiting and usage dashboard',
      E'We need per-workspace rate limits and a usage dashboard showing request counts over time.',
      mem1_id,
@@ -761,11 +775,11 @@ BEGIN
 
   -- Session 14: land / in_progress
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess14_id, ws_id, 14,
+    (sess14_id, ws_id, default_factory_id, 14,
      'Email notification preferences',
      E'Users get too many emails. Add per-user preferences: immediate, daily digest, or off per event category.',
      mem2_id,
@@ -794,11 +808,11 @@ BEGIN
 
   -- Session 15: land / rejected (3 rejections)
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
-    (sess15_id, ws_id, 15,
+    (sess15_id, ws_id, default_factory_id, 15,
      'Audit log for workspace admin actions',
      E'Compliance needs a tamper-evident log of admin actions — invites, role changes, integration connects.',
      mem1_id,
@@ -830,11 +844,11 @@ BEGIN
 
   -- Session 16: land / awaiting_review
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess16_id, ws_id, 16,
+    (sess16_id, ws_id, default_factory_id, 16,
      'Search and filter across all sessions',
      E'With dozens of sessions it is hard to find things. Add full-text search and phase/status filters.',
      mem2_id,
@@ -866,11 +880,11 @@ BEGIN
 
   -- Session 17: land / in_progress
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
-    (sess17_id, ws_id, 17,
+    (sess17_id, ws_id, default_factory_id, 17,
      'GitHub PR auto-link from branch naming convention',
      E'When a branch matches wallie-{number}, auto-associate the PR with the session and show it on the card.',
      mem1_id,
@@ -899,11 +913,11 @@ BEGIN
 
   -- Session 18: land / awaiting_review (1 rejection)
   INSERT INTO public.sessions
-    (id, workspace_id, number, title, prompt_md, creator_member_id,
+    (id, workspace_id, factory_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
-    (sess18_id, ws_id, 18,
+    (sess18_id, ws_id, default_factory_id, 18,
      'Custom workspace branding and logo upload',
      E'Enterprise customers want their logo in the sidebar and on shared links. Upload to Storage, display in shell.',
      mem1_id,
@@ -1092,10 +1106,14 @@ $$;
 -- Re-enable triggers.
 SET session_replication_role = DEFAULT;
 
--- Workspace inserts above bypassed the default-factory provisioning trigger.
-INSERT INTO public.factories(workspace_id)
-SELECT id FROM public.workspaces WHERE id = 'b1b2c3d4-0001-4000-8000-000000000001'
-ON CONFLICT (workspace_id) WHERE is_default DO NOTHING;
+-- Keep any future seed rows anchored to the same default factory when triggers
+-- are disabled during seeding.
+UPDATE public.pipelines SET factory_id = 'e1b2c3d4-0001-4000-8000-000000000001'
+  WHERE workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' AND factory_id IS NULL;
+UPDATE public.github_repositories SET factory_id = 'e1b2c3d4-0001-4000-8000-000000000001'
+  WHERE workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' AND factory_id IS NULL;
+UPDATE public.sessions SET factory_id = 'e1b2c3d4-0001-4000-8000-000000000001'
+  WHERE workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' AND factory_id IS NULL;
 
 -- Drop the seeding helper so it doesn't linger in the database.
 DROP FUNCTION IF EXISTS internal.seed_agent_run(

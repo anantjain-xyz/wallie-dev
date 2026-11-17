@@ -179,7 +179,10 @@ export async function previewFactoryEditorDefinition(
     });
   }
 
-  const catalog = await loadFactoryDefinitionCatalog(client, workspaceId);
+  const catalog = await loadFactoryDefinitionCatalog(client, {
+    workspaceId,
+    factoryId: head.factoryId,
+  });
   const compiled = compileFactoryDefinition(
     request.source,
     head.draft ? catalogForStoredFactoryDefinition(catalog, head.draft) : catalog,
