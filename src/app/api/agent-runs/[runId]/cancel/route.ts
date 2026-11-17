@@ -56,6 +56,7 @@ export async function POST(request: Request, { params }: CancelAgentRunRouteProp
     const result = await cancelWallieRun({
       requestedByMemberId: access.context.currentMember.id,
       runId: parsedParams.data.runId,
+      supabase: access.context.supabase,
       workspace: access.context.workspace,
     });
 

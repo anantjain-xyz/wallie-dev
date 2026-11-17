@@ -93,6 +93,7 @@ type SessionForRun = Pick<
   | "current_stage_id"
   | "execute_pinned_definition"
   | "factory_definition_revision_id"
+  | "factory_id"
   | "id"
   | "number"
   | "phase_status"
@@ -104,7 +105,7 @@ type AgentRunRow = Tables<"agent_runs">;
 type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "workspace_id">;
 
 const sessionSelect =
-  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id";
+  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id, factory_id";
 const runSelect =
   "id, workspace_id, session_id, agent_job_id, attempt_count, branch_name, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, token_provenance, cost_provenance, usage_finalized_at, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 export class WallieActionError extends Error {
@@ -463,8 +464,8 @@ async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
   return data as AgentRunRow | null;
 }
 
-async function loadRunById(admin: AdminClient, runId: string) {
-  const { data, error } = await admin
+async function loadRunById(supabase: AdminClient, runId: string) {
+  const { data, error } = await supabase
     .from("agent_runs")
     .select(runSelect)
     .eq("id", runId)
@@ -513,6 +514,7 @@ async function validateQueuedRunRequest(input: {
   const runType = definition ? inferWallieRunMode(definition.repositoryId) : input.requestedRunType;
   const [repositoryResolution, vercelSandboxConnection] = await Promise.all([
     resolveEffectiveSessionRepository({
+      factoryId: session.factory_id,
       pinnedRepositoryId: definition?.repositoryId,
       sessionId: session.id,
       supabase: input.admin,
@@ -562,8 +564,11 @@ async function validateQueuedRunRequest(input: {
 async function inferSessionRunType(
   admin: AdminClient,
   session: Pick<SessionForEnqueue, "id" | "workspace_id">,
+  factoryId: string | undefined,
 ): Promise<WallieRunMode> {
+  if (!factoryId) return inferWallieRunMode(null);
   const resolution = await resolveEffectiveSessionRepository({
+    factoryId,
     sessionId: session.id,
     supabase: admin,
     workspaceId: session.workspace_id,
@@ -591,7 +596,7 @@ export async function resolveQueuedRunConfig(
 ): Promise<QueuedRunConfig> {
   const { data, error } = await admin
     .from("sessions")
-    .select("execute_pinned_definition, factory_definition_revision_id, workspace_id")
+    .select("execute_pinned_definition, factory_definition_revision_id, factory_id, workspace_id")
     .eq("id", session.id)
     .eq("workspace_id", session.workspace_id)
     .maybeSingle();
@@ -607,7 +612,7 @@ export async function resolveQueuedRunConfig(
   }
   const [agentConfig, resolvedRunType] = await Promise.all([
     loadWorkspaceAgentConfig(admin, session.workspace_id),
-    runType ?? inferSessionRunType(admin, session),
+    runType ?? inferSessionRunType(admin, session, data?.factory_id),
   ]);
   return {
     modelName: agentConfig.model,
@@ -682,7 +687,7 @@ export async function retryWallieRun(input: {
   workspace: WorkspaceAccessWorkspace;
 }) {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const existingRun = await loadRunById(admin, input.runId);
+  const existingRun = await loadRunById(input.supabase, input.runId);
 
   if (!existingRun || existingRun.workspace_id !== input.workspace.id) {
     throw new WallieActionError({
@@ -742,10 +747,11 @@ export async function cancelWallieRun(input: {
   admin?: AdminClient;
   requestedByMemberId: string;
   runId: string;
+  supabase?: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
 }) {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const existingRun = await loadRunById(admin, input.runId);
+  const existingRun = await loadRunById(input.supabase ?? admin, input.runId);
 
   if (!existingRun || existingRun.workspace_id !== input.workspace.id) {
     throw new WallieActionError({

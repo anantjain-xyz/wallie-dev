@@ -78,8 +78,15 @@ select is(
       where workspace_id = '55000000-0000-4000-8000-000000000001'
         and user_id = 'b1b2c3d4-0001-4000-8000-000000000001'
     )),
+  'member',
+  'default-factory inheritance creates only an ordinary grant for a workspace owner'
+);
+select is(
+  (select role from public.read_factory_scope(
+    '55000000-0000-4000-8000-000000000001', 'b1b2c3d4-0001-4000-8000-000000000001'
+  ) where is_default),
   'manager',
-  'workspace owners inherit factory manager access'
+  'the workspace owner receives effective factory manager authority from the workspace role'
 );
 
 select is(

@@ -754,6 +754,31 @@ describe("POST /api/sessions", () => {
     });
   });
 
+  it.each([
+    {
+      sqlState: "P0011",
+      status: 409,
+      code: "factory_archived",
+      error: "Restore the archived factory before starting a session.",
+    },
+    {
+      sqlState: "42501",
+      status: 403,
+      code: "factory_access_denied",
+      error: "You cannot start a session with the selected factory resources.",
+    },
+  ])("returns a $status for factory admission SQLSTATE $sqlState", async (outcome) => {
+    mocked.createSessionWithFirstJob.mockRejectedValueOnce({
+      code: outcome.sqlState,
+      message: "Internal admission details.",
+    });
+
+    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
+
+    expect(response.status).toBe(outcome.status);
+    await expect(response.json()).resolves.toEqual({ code: outcome.code, error: outcome.error });
+  });
+
   it("returns a refreshable conflict when selected stages changed", async () => {
     mocked.createSessionWithFirstJob.mockRejectedValueOnce({
       code: "P0003",

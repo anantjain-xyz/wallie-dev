@@ -204,11 +204,11 @@ create trigger preserve_factory_audit_events
   before update or delete on public.factory_audit_events
   for each row execute function internal.preserve_factory_audit_events();
 
--- Every existing active human member inherits the default factory. Workspace
--- managers become factory managers; ordinary members keep their existing reach.
+-- Every active human inherits member access to the default factory. Workspace
+-- operator authority comes from the live workspace role, so changing that role
+-- never leaves behind a delegated factory-manager grant.
 insert into public.factory_members(workspace_id, factory_id, member_id, role)
-select factory.workspace_id, factory.id, member.id,
-  case when member.role in ('owner', 'admin') then 'manager' else 'member' end
+select factory.workspace_id, factory.id, member.id, 'member'
 from public.factories factory
 join public.workspace_members member
   on member.workspace_id = factory.workspace_id
@@ -227,8 +227,7 @@ begin
   end if;
   for granted_factory in
     insert into public.factory_members(workspace_id, factory_id, member_id, role)
-    select factory.workspace_id, factory.id, new.id,
-      case when new.role in ('owner', 'admin') then 'manager' else 'member' end
+    select factory.workspace_id, factory.id, new.id, 'member'
     from public.factories factory
     where factory.workspace_id = new.workspace_id
       and factory.is_default
@@ -244,8 +243,7 @@ begin
       workspace_id, factory_id, action, subject_member_id, detail
     )
     select new.workspace_id, granted_factory, 'membership.granted', new.id,
-      jsonb_build_object('role', case when new.role in ('owner', 'admin') then 'manager' else 'member' end,
-        'source', 'default_factory_inheritance');
+      jsonb_build_object('role', 'member', 'source', 'default_factory_inheritance');
   end loop;
   return new;
 end;
@@ -267,10 +265,9 @@ begin
     return new;
   end if;
 
-  -- Serialize the manager check/promotion (and reactivation grant) with the
-  -- factory membership commands, which hold the factory row lock before they
-  -- mutate memberships. Lock in id order so concurrent deactivations touching
-  -- the same factories cannot deadlock with each other.
+  -- The caller owns the workspace member row. Factory commands use the same
+  -- member -> factory lock order. Lock every affected factory in id order,
+  -- even when the member's current grant is still an ordinary grant.
   perform 1
   from public.factories factory
   where factory.workspace_id = new.workspace_id
@@ -278,12 +275,11 @@ begin
       factory.is_default
       or exists (
         select 1
-        from public.factory_members manager
-        where manager.workspace_id = new.workspace_id
-          and manager.factory_id = factory.id
-          and manager.member_id = new.id
-          and manager.role = 'manager'
-          and manager.revoked_at is null
+        from public.factory_members membership
+        where membership.workspace_id = new.workspace_id
+          and membership.factory_id = factory.id
+          and membership.member_id = new.id
+          and membership.revoked_at is null
       )
     )
   order by factory.id
@@ -300,9 +296,9 @@ begin
   where member.member_id = new.id
     and member.revoked_at is null;
 
-  -- A workspace deactivation must not strand a factory without an active
-  -- manager. Promote the longest-standing active member; if none remains,
-  -- workspace owners/admins retain operator access.
+  -- Promote the longest-standing active ordinary member when a delegated
+  -- manager departs. Workspace operators already have live management authority
+  -- and do not need a persistent manager grant for fallback.
   if not new.is_active then
     for granted_factory in
       select manager.factory_id
@@ -339,8 +335,8 @@ begin
           and candidate.member_id <> new.id
           and candidate_member.is_active
           and candidate_member.kind = 'human'
-        order by (candidate_member.role in ('owner', 'admin')) asc,
-          candidate.granted_at, candidate.id
+          and candidate_member.role not in ('owner', 'admin')
+        order by candidate.granted_at, candidate.id
         limit 1
       ) promotion
       where membership.id = promotion.id
@@ -360,8 +356,7 @@ begin
   if new.is_active then
     for granted_factory in
       insert into public.factory_members(workspace_id, factory_id, member_id, role)
-      select factory.workspace_id, factory.id, new.id,
-        case when new.role in ('owner', 'admin') then 'manager' else 'member' end
+      select factory.workspace_id, factory.id, new.id, 'member'
       from public.factories factory
       where factory.workspace_id = new.workspace_id
         and factory.is_default
@@ -377,10 +372,7 @@ begin
         workspace_id, factory_id, action, subject_member_id, detail
       ) values (
         new.workspace_id, granted_factory, 'membership.granted', new.id,
-        jsonb_build_object(
-          'role', case when new.role in ('owner', 'admin') then 'manager' else 'member' end,
-          'source', 'default_factory_reactivation'
-        )
+        jsonb_build_object('role', 'member', 'source', 'default_factory_reactivation')
       );
     end loop;
   end if;
@@ -392,6 +384,49 @@ revoke all on function internal.audit_workspace_member_factory_suspension()
 create trigger workspace_members_audit_factory_suspension
   after update of is_active on public.workspace_members
   for each row execute function internal.audit_workspace_member_factory_suspension();
+
+-- These workspace commands acquire the same workspace fence as factory
+-- admission before changing member rows. This also serializes them with
+-- definition activation, which takes the workspace fence exclusively.
+alter function public.remove_workspace_member(uuid, uuid) set schema internal;
+revoke all on function internal.remove_workspace_member(uuid, uuid)
+  from public, anon, authenticated, service_role;
+create function public.remove_workspace_member(target_member_id uuid, expected_workspace_id uuid)
+returns table (id uuid, full_name text, email text, role public.member_role)
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform 1 from public.workspaces workspace
+  where workspace.id = expected_workspace_id for share;
+  return query select * from internal.remove_workspace_member(target_member_id, expected_workspace_id);
+end;
+$$;
+revoke all on function public.remove_workspace_member(uuid, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.remove_workspace_member(uuid, uuid) to service_role;
+
+alter function public.accept_workspace_invitation(text, uuid, text, text, text) set schema internal;
+revoke all on function internal.accept_workspace_invitation(text, uuid, text, text, text)
+  from public, anon, authenticated, service_role;
+create function public.accept_workspace_invitation(
+  invitation_token_hash text,
+  actor_user_id uuid,
+  actor_email text,
+  actor_full_name text default null,
+  actor_avatar_url text default null
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+begin
+  perform workspace.id from public.workspaces workspace
+  join public.workspace_invitations invitation on invitation.workspace_id = workspace.id
+  where invitation.token_hash = invitation_token_hash for share of workspace;
+  return internal.accept_workspace_invitation(
+    invitation_token_hash, actor_user_id, actor_email, actor_full_name, actor_avatar_url
+  );
+end;
+$$;
+revoke all on function public.accept_workspace_invitation(text, uuid, text, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.accept_workspace_invitation(text, uuid, text, text, text)
+  to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Resource scope
@@ -966,7 +1001,7 @@ create policy session_validation_asset_withholdings_read on public.session_valid
 -- ---------------------------------------------------------------------------
 
 create function internal.assert_factory_manager(
-  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid
+  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_subject_member_id uuid default null
 ) returns uuid language plpgsql security definer set search_path = '' as $$
 declare actor_member_id uuid;
 begin
@@ -981,16 +1016,27 @@ begin
   from public.workspace_members member
   where member.workspace_id = p_workspace_id
     and member.user_id = p_actor_user_id
-    and member.kind = 'human'
-    and member.is_active
-  for share;
+    and member.kind = 'human';
   if not found then
     raise exception 'Active workspace member required.' using errcode = '42501';
   end if;
 
-  -- Serialize the authority check with grant/revoke/demote commands. Without
-  -- this lock a concurrent revocation could commit between the check and the
-  -- caller's own factory lock, letting a stale manager finish a queued command.
+  -- Workspace removal owns the member row before it reaches the factory.
+  -- Take actor/subject locks in the same order before locking the factory.
+  perform member.id from public.workspace_members member
+  where member.workspace_id = p_workspace_id
+    and member.id in (actor_member_id, p_subject_member_id)
+  order by member.id
+  for share;
+  if not exists (
+    select 1 from public.workspace_members member
+    where member.workspace_id = p_workspace_id and member.id = actor_member_id
+      and member.user_id = p_actor_user_id and member.kind = 'human' and member.is_active
+  ) then
+    raise exception 'Active workspace member required.' using errcode = '42501';
+  end if;
+
+  -- Read the current explicit grant after the lock winner has committed.
   perform 1 from public.factories factory
   where factory.workspace_id = p_workspace_id and factory.id = p_factory_id
   for update;
@@ -1015,7 +1061,7 @@ begin
   return actor_member_id;
 end;
 $$;
-revoke all on function internal.assert_factory_manager(uuid, uuid, uuid)
+revoke all on function internal.assert_factory_manager(uuid, uuid, uuid, uuid)
   from public, anon, authenticated, service_role;
 
 create function public.create_factory(
@@ -1191,7 +1237,9 @@ declare
   granted public.factory_members;
   last_manager boolean;
 begin
-  actor_member_id := internal.assert_factory_manager(p_workspace_id, p_factory_id, p_actor_user_id);
+  actor_member_id := internal.assert_factory_manager(
+    p_workspace_id, p_factory_id, p_actor_user_id, p_member_id
+  );
   select factory.* into target_factory
   from public.factories factory
   where factory.workspace_id = p_workspace_id and factory.id = p_factory_id
@@ -1211,8 +1259,7 @@ begin
   where member.workspace_id = p_workspace_id
     and member.id = p_member_id
     and member.kind = 'human'
-    and member.is_active
-  for share;
+    and member.is_active;
   if not found then
     raise exception 'An active workspace member is required.' using errcode = 'P0002';
   end if;
@@ -1283,7 +1330,9 @@ declare
   last_manager boolean;
   normalized_reason text := nullif(btrim(coalesce(p_reason, '')), '');
 begin
-  actor_member_id := internal.assert_factory_manager(p_workspace_id, p_factory_id, p_actor_user_id);
+  actor_member_id := internal.assert_factory_manager(
+    p_workspace_id, p_factory_id, p_actor_user_id, p_member_id
+  );
   perform 1 from public.factories factory
   where factory.workspace_id = p_workspace_id and factory.id = p_factory_id
   for update;
@@ -1637,6 +1686,7 @@ begin
     join public.github_repositories repository
       on repository.id = spr.github_repository_id
      and repository.workspace_id = v_workspace_id
+     and repository.factory_id = v_session.factory_id
     where not v_session.execute_pinned_definition
       and internal.can_access_factory(repository.workspace_id, repository.factory_id)
     union all
@@ -1645,6 +1695,7 @@ begin
     join public.github_repositories repository
       on repository.id = wrp.github_repository_id
      and repository.workspace_id = v_workspace_id
+     and repository.factory_id = v_session.factory_id
     where wrp.workspace_id = v_workspace_id
       and wrp.is_primary
       and not v_session.execute_pinned_definition
@@ -1655,6 +1706,7 @@ begin
     join public.github_repositories repository
       on repository.id = wo.selected_github_repository_id
      and repository.workspace_id = v_workspace_id
+     and repository.factory_id = v_session.factory_id
     where wo.workspace_id = v_workspace_id
       and not v_session.execute_pinned_definition
       and internal.can_access_factory(repository.workspace_id, repository.factory_id)
@@ -1672,6 +1724,7 @@ begin
     join public.github_repositories gr
       on gr.id = ec.repository_id
      and gr.workspace_id = v_workspace_id
+     and gr.factory_id = v_session.factory_id
     where ec.repository_id is not null
     order by ec.priority
     limit 1

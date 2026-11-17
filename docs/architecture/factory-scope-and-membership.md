@@ -27,12 +27,14 @@ Row-level security uses the same helpers for factory lists, definition history,
 sessions, pipelines, repositories, pipeline stages, run and artifact evidence,
 review threads, git/PR/validation lineage and validation storage objects.
 Child rows inherit the session's factory fence through
-`internal.can_access_session(session_id)`.
+`internal.can_access_session(session_id)`. Repository profiles, onboarding
+status, and repository capability checks inherit access from their repository.
 
-New workspace members inherit the default factory. A member that is deactivated
-loses access immediately through the active workspace-member check and records a
-`membership.suspended` event; reactivation records `membership.reinstated`.
-Additional factories are granted explicitly through the audited command below.
+New workspace members inherit a `member` grant in the default factory. Owners
+and admins get operator access from their current workspace role. Demotion
+removes that access while preserving explicit factory grants. Deactivation
+removes factory access and records `membership.suspended`. Reactivation records
+`membership.reinstated`.
 
 ## Lifecycle and admission
 
@@ -41,14 +43,19 @@ first manager. Archive and restore are audited operator actions available to a
 workspace manager or a factory manager. An archived factory
 
 - rejects new session admission with `P0011` while keeping the factory, its
-  pinned sessions, artifacts and audit history readable by authorized people;
-- rejects new pipeline and repository creation (existing repository metadata can
-  still refresh through the GitHub sync);
+  pinned sessions, artifacts and audit history readable by authorized people
+- rejects new pipeline and repository creation while GitHub sync continues to
+  refresh existing repositories and remove disconnected ones
 - cannot receive new membership grants until restored.
 
 Existing sessions do not need to be rewritten or moved when a factory is
 archived. Restoring the factory reopens admission without changing any pinned
-session identity. A factory can never lose its last active manager.
+session identity. When workspace member removal would leave a factory without
+an explicit manager, the factory promotes an eligible member when one exists.
+Workspace operators can still manage factories with no explicit manager.
+
+Factory definitions can only reference pipelines and repositories in the same
+factory. Session repository lookup and Git pinning also enforce this scope.
 
 ## Commands
 

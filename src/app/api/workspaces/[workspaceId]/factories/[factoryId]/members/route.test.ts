@@ -103,6 +103,15 @@ describe("factory membership route", () => {
     expect(mocked.grantFactoryMembership).not.toHaveBeenCalled();
   });
 
+  it("reports a conflict when the factory must be restored before granting membership", async () => {
+    mocked.grantFactoryMembership.mockRejectedValue({ code: "P0011" });
+    const response = await POST(request("POST", { memberId }), context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Restore the archived factory before granting membership.",
+    });
+  });
+
   it("maps the last-manager guard to an unprocessable response", async () => {
     mocked.revokeFactoryMembership.mockRejectedValue({ code: "23514" });
     const response = await DELETE(request("DELETE", { memberId }), context);

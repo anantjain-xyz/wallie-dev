@@ -217,7 +217,7 @@ export async function startFactoryDefinitionSmokeTest({
     });
   }
 
-  const catalog = await loadFactoryDefinitionCatalog(admin, workspaceId);
+  const catalog = await loadFactoryDefinitionCatalog(admin, { workspaceId, factoryId: factory.id });
   const compiled = recompileStoredFactoryDefinition(
     stored.definition_json,
     stored.canonical_digest,

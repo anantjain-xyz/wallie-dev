@@ -207,6 +207,7 @@ export function factoryErrorStatus(code: string | undefined) {
     case "P0002":
       return 404;
     case "23505":
+    case "P0011":
     case "PT409":
       return 409;
     case "22023":
