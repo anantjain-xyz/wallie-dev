@@ -190,6 +190,17 @@ for (const viewport of viewports) {
       test("Settings preserves category links and resolves existing hashes", async ({
         page,
       }, info) => {
+        for (const [path, body] of [
+          ["factory-definition/settings", { snapshot: null }],
+          ["run-retention", { retention: { transcriptDays: null, evidenceDays: null } }],
+          ["run-exports", { exports: [] }],
+        ] as const) {
+          await page.route(
+            `**/api/workspaces/11111111-1111-4111-8111-111111111111/${path}`,
+            (route) =>
+              route.request().method() === "GET" ? route.fulfill({ json: body }) : route.fallback(),
+          );
+        }
         await page.route(
           /\/api\/workspaces\/11111111-1111-4111-8111-111111111111\/(delivery|execution)-policy(?:\?.*)?$/,
           (route) =>

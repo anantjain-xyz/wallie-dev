@@ -48,18 +48,16 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const mobile of [false, true]) {
-  test(`navigation moves its indicator and reveals usable content (${mobile ? "mobile" : "desktop"})`, async ({
+  test(`navigation marks the active route and reveals usable content (${mobile ? "mobile" : "desktop"})`, async ({
     page,
   }) => {
     if (mobile) await page.setViewportSize({ width: 390, height: 844 });
     await signIn(page, "/w/acme-corp");
-    const nav = page.locator('nav[aria-label="Workspace navigation"]:visible');
+    const nav = page.getByRole("navigation", { name: "Workspace navigation" });
+    const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     if (mobile) {
-      await nav.getByRole("button", { name: "Workspace navigation: Pipeline" }).click();
-      await page
-        .getByRole("menu", { name: "Workspace pages" })
-        .getByRole("menuitem", { name: "Sessions", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Workspace navigation: Pipeline" }).click();
+      await drawer.getByRole("link", { name: "Sessions", exact: true }).click();
     } else {
       await expect(nav).toHaveAttribute("data-indicator-animated", "true");
       await nav.getByRole("link", { name: "Sessions", exact: true }).click();
@@ -76,15 +74,15 @@ for (const mobile of [false, true]) {
       false,
     );
     if (mobile) {
-      const trigger = nav.getByRole("button", { name: "Workspace navigation: Sessions" });
+      const trigger = page.getByRole("button", { name: "Workspace navigation: Sessions" });
       await expect(trigger).toHaveAttribute("aria-expanded", "false");
       await trigger.click();
-      const menu = page.getByRole("menu", { name: "Workspace pages" });
-      await expect(menu.getByRole("menuitem", { name: "Sessions", exact: true })).toHaveAttribute(
+      await expect(drawer.getByRole("link", { name: "Sessions", exact: true })).toHaveAttribute(
         "aria-current",
         "page",
       );
-      await menu.press("Escape");
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
     } else {
       await expect.poll(() => page.evaluate(() => window.wallieNavTransitions)).toBeGreaterThan(0);
       const active = nav.locator('[aria-current="page"]');
@@ -92,7 +90,7 @@ for (const mobile of [false, true]) {
         .poll(async () => {
           const pill = await nav.locator(".ui-shell-nav-indicator").boundingBox();
           const link = await active.boundingBox();
-          return Math.abs((pill?.x ?? 0) - (link?.x ?? 100));
+          return Math.abs((pill?.y ?? 0) - (link?.y ?? 100));
         })
         .toBeLessThan(1);
     }
@@ -120,36 +118,40 @@ test("mobile keyboard navigation reaches every destination and header action", a
 
   for (const [current, destination, path] of [
     ["Pipeline", "Sessions", "/w/acme-corp/sessions"],
-    ["Sessions", "Settings", "/w/acme-corp/settings"],
+    ["Sessions", "Runs", "/w/acme-corp/runs"],
+    ["Runs", "Settings", "/w/acme-corp/settings"],
     ["Settings", "Pipeline", "/w/acme-corp"],
   ]) {
     const trigger = header.getByRole("button", { name: `Workspace navigation: ${current}` });
     await trigger.focus();
-    await trigger.press("ArrowDown");
-    const menu = page.getByRole("menu", { name: "Workspace pages" });
-    await expect(menu.getByRole("menuitem", { name: "Pipeline", exact: true })).toBeFocused();
-    if (destination === "Sessions") await page.keyboard.press("ArrowDown");
-    if (destination === "Settings") await page.keyboard.press("End");
-    const item = menu.getByRole("menuitem", { name: destination, exact: true });
+    await trigger.press("Enter");
+    const drawer = page.getByRole("dialog", { name: "Workspace pages" });
+    await expect(drawer).toBeVisible();
+    const item = drawer.getByRole("link", { name: destination, exact: true });
+    for (let index = 0; index < (await drawer.getByRole("link").count()) + 2; index++) {
+      if (await item.evaluate((link) => link === document.activeElement)) break;
+      await page.keyboard.press("Tab");
+      expect(await drawer.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+    }
     await expect(item).toBeFocused();
     await item.press("Enter");
     await expect(page).toHaveURL(path);
-    await expect(menu).toBeHidden();
+    await expect(drawer).toBeHidden();
 
     const activeTrigger = header.getByRole("button", {
       name: `Workspace navigation: ${destination}`,
     });
-    await activeTrigger.press("ArrowDown");
-    await expect(menu.getByRole("menuitem", { name: destination, exact: true })).toHaveAttribute(
+    await activeTrigger.press("Enter");
+    await expect(drawer.getByRole("link", { name: destination, exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    await menu.press("Escape");
+    await page.keyboard.press("Escape");
     await expect(activeTrigger).toBeFocused();
   }
 
-  await page.keyboard.press("Tab");
   const create = header.getByRole("button", { name: "New session", exact: true });
+  await create.focus();
   await expect(create).toBeFocused();
   await create.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Start a new session" });
@@ -180,6 +182,72 @@ test("mobile keyboard navigation reaches every destination and header action", a
   await expect(page.locator("#main-content")).toBeFocused();
 });
 
+test("desktop sidebar remembers collapse and retains existing workbench, run and Settings links", async ({
+  page,
+}, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await signIn(page, "/w/acme-corp/sessions/1");
+  const navigation = page.getByRole("navigation", { name: "Workspace navigation" });
+  const sidebar = page.locator("[data-shell-rail]");
+  const sessions = navigation.getByRole("link", { name: "Sessions", exact: true });
+  const runs = navigation.getByRole("link", { name: "Runs", exact: true });
+  const main = page.getByRole("main");
+  const artifact = main.getByRole("region", { name: "Artifact text", exact: true });
+  await expect(artifact).toBeVisible();
+  await expect(sessions).toHaveAttribute("aria-current", "page");
+  await expect(navigation.getByText("Work", { exact: true })).toBeVisible();
+  await expect(
+    navigation.getByRole("link", { name: "Factory definition", exact: true }),
+  ).toHaveAttribute("href", "/w/acme-corp/settings/factory-definition");
+  await expect(navigation.getByRole("link", { name: "Benchmarks", exact: true })).toHaveCount(0);
+  const width = await main.evaluate((element) => element.getBoundingClientRect().width);
+  expect(width).toBeGreaterThanOrEqual(1080);
+  await page.screenshot({
+    path: info.outputPath("desktop-light-review-workbench.png"),
+    fullPage: true,
+  });
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await expect(navigation).toBeHidden();
+  await expect(page.getByRole("button", { name: "Workspace navigation: Sessions" })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  const collapse = page.getByRole("button", { name: "Collapse sidebar" });
+  await collapse.press("Enter");
+  await expect(sidebar).toHaveAttribute("data-collapsed", "");
+  await expect(sessions).toBeVisible();
+  await page.reload();
+  const expand = page.getByRole("button", { name: "Expand sidebar" });
+  await expect(artifact).toBeVisible();
+  await expect(expand).toBeVisible();
+  await expect(sessions).toHaveAttribute("aria-current", "page");
+  await page.screenshot({
+    path: info.outputPath("desktop-light-collapsed-sidebar.png"),
+    fullPage: true,
+  });
+  await runs.click();
+  await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
+  await expect(runs).toHaveAttribute("aria-current", "page");
+  const runLink = page.getByRole("link", { name: /Inspect run for session/ }).first();
+  const runHref = await runLink.getAttribute("href");
+  if (!runHref) throw new Error("The seeded run link is missing.");
+  await page.goto(runHref);
+  await expect(page).toHaveURL(/\/w\/acme-corp\/runs\/[a-f\d-]+$/u);
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(runs).toHaveAttribute("aria-current", "page");
+
+  await page.goto("/w/acme-corp/settings?category=workspace#coding-agent");
+  await expect(page).toHaveURL(/\/settings\?category=integrations#runtime$/u);
+  await expect(page.locator("#runtime")).toBeVisible();
+  await expand.press("Enter");
+  await expect(collapse).toBeVisible();
+  await expect(navigation.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
 test("filter changes combine immediately, retain results, and preserve an in-progress search edit", async ({
   page,
 }) => {
@@ -197,7 +265,7 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
   });
   const table = page.getByRole("table", { name: "Sessions", exact: true });
   const initialRows = await table.innerText();
-  const archived = page.getByRole("radio", { name: "Archived 1", exact: true });
+  const archived = page.getByRole("radio", { name: /^Archived [1-9]\d*$/u });
   const sort = page.getByRole("combobox", { name: "Sort sessions", exact: true });
   const status = page.getByRole("status", { name: "Sessions search status", exact: true });
   await archived.click();

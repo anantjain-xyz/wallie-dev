@@ -6,6 +6,7 @@ import { workspaceSessionDetailPath } from "@/lib/routes";
 
 type SessionLedgerRowProps = {
   initialNow: string;
+  readOnly?: boolean;
   scope: SessionFilterKey;
   session: SessionListItem;
   workspaceSlug: string;
@@ -17,6 +18,7 @@ type SessionLedgerRowProps = {
  */
 export function SessionLedgerRow({
   initialNow,
+  readOnly,
   scope,
   session,
   workspaceSlug,
@@ -39,6 +41,7 @@ export function SessionLedgerRow({
         />
       }
       detailHref={detailHref}
+      readOnly={readOnly}
       repositoryLabel={repositoryLabel}
       scope={scope}
       session={{

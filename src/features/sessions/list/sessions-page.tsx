@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { withFactoryQuery } from "@/features/factories/factory-selection";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import { SessionsCommandBar } from "@/features/sessions/list/sessions-command-bar";
@@ -15,8 +16,11 @@ import {
 import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
 type SessionsPageProps = {
+  factoryQuery?: string;
   initialData: SessionListPageData;
   initialNow?: string;
+  readOnly?: boolean;
+  showCreationOnboarding?: boolean;
 };
 
 const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
@@ -34,7 +38,13 @@ function FilterEmptyState() {
  * Server Component Sessions ledger. Command bar and per-row action islands are
  * the only hydrated surfaces; row text/metadata/links render on the server.
  */
-export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
+export function SessionsPage({
+  factoryQuery,
+  initialData,
+  initialNow,
+  readOnly = false,
+  showCreationOnboarding = true,
+}: SessionsPageProps) {
   const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -45,7 +55,10 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
       <VisibleInteractionBoundary action="pipeline_to_sessions" />
       <PageHeader
         actions={
-          <Link className="ui-button" href={workspaceRunsPath(workspaceSlug)}>
+          <Link
+            className="ui-button"
+            href={withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)}
+          >
             Runs
           </Link>
         }
@@ -54,6 +67,8 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
       />
 
       <SessionsCommandBar
+        key={factoryQuery ?? ""}
+        factoryQuery={factoryQuery}
         queryState={initialData.queryState}
         scopeFacets={initialData.scopeFacets}
         stageFacets={initialData.stageFacets}
@@ -61,11 +76,14 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
       />
 
       {sessions.length === 0 ? (
-        !initialData.hasAnySession ? (
+        !initialData.hasAnySession && showCreationOnboarding ? (
           <SessionsZeroState
             onboarding={initialData.onboarding}
             workspaceSlug={workspaceSlug}
-            newSessionHref={workspaceSessionsPath(workspaceSlug, { create: 1 })}
+            newSessionHref={withFactoryQuery(
+              workspaceSessionsPath(workspaceSlug, { create: 1 }),
+              factoryQuery,
+            )}
           />
         ) : (
           <FilterEmptyState />
@@ -74,6 +92,7 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
         <SessionsLedgerVisibilityProvider
           emptyFallback={<FilterEmptyState />}
           key={[
+            factoryQuery ?? "",
             initialData.queryState.scope,
             initialData.queryState.stageSlug ?? "",
             initialData.queryState.query,
@@ -87,6 +106,7 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
               <SessionLedgerRow
                 key={session.id}
                 initialNow={renderNow}
+                readOnly={readOnly}
                 scope={initialData.queryState.scope}
                 session={session}
                 workspaceSlug={workspaceSlug}
@@ -100,10 +120,13 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
         <div className="mt-4 flex justify-center">
           <Link
             className="ui-button"
-            href={buildSessionsListHref(basePath, {
-              ...initialData.queryState,
-              cursor: initialData.nextCursor,
-            })}
+            href={withFactoryQuery(
+              buildSessionsListHref(basePath, {
+                ...initialData.queryState,
+                cursor: initialData.nextCursor,
+              }),
+              factoryQuery,
+            )}
           >
             {sessionsPaginationLabel(initialData.queryState.sort)}
           </Link>

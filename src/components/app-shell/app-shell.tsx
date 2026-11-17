@@ -6,7 +6,10 @@ import type { WorkspaceSummary } from "@/lib/auth";
 import { getWorkspaceNavItems } from "@/lib/routes";
 
 type AppShellProps = {
+  canManageFactoryDefinition?: boolean;
+  canStartDefaultFactorySession?: boolean;
   children: ReactNode;
+  factorySelector?: ReactNode;
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
@@ -18,7 +21,10 @@ type AppShellProps = {
 };
 
 export function AppShell({
+  canManageFactoryDefinition,
+  canStartDefaultFactorySession,
   children,
+  factorySelector,
   onboarding,
   pathnameOverride,
   viewerAvatarUrl,
@@ -27,11 +33,13 @@ export function AppShell({
   workspace,
   workspaceAvatarUrl,
 }: AppShellProps) {
-  const navItems = getWorkspaceNavItems(workspace.slug);
+  const navItems = getWorkspaceNavItems(workspace.slug, { canManageFactoryDefinition });
 
   return (
     <div className="min-h-[100svh] min-w-0 bg-canvas" data-app-shell="">
       <ShellHeader
+        canStartDefaultFactorySession={canStartDefaultFactorySession}
+        factorySelector={factorySelector}
         navItems={navItems}
         onboarding={onboarding}
         pathnameOverride={pathnameOverride}

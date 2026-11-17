@@ -1,3 +1,4 @@
+import { withFactoryQuery } from "@/features/factories/factory-selection";
 import {
   runCatalogQuerySchema,
   type RunCatalogQuery,
@@ -16,17 +17,27 @@ export function parseRunsListQuery(searchParams: RunsListSearchParams) {
   );
 }
 
-export function runsListPageHref(workspaceSlug: string, query: RunCatalogQuery, cursor?: string) {
-  return workspaceRunsPath(workspaceSlug, { ...query, cursor });
+export function runsListPageHref(
+  workspaceSlug: string,
+  query: RunCatalogQuery,
+  cursor?: string,
+  factoryQuery?: string,
+) {
+  return withFactoryQuery(workspaceRunsPath(workspaceSlug, { ...query, cursor }), factoryQuery);
 }
 
-export function runsListFilterHref(workspaceSlug: string, form: FormData, limit?: number) {
+export function runsListFilterHref(
+  workspaceSlug: string,
+  form: FormData,
+  limit?: number,
+  factoryQuery?: string,
+) {
   const query: Record<string, string | number | undefined> = { limit };
   for (const key of ["status", "provider", "sessionId", "stageId"]) {
     const value = form.get(key);
     if (typeof value === "string" && value) query[key] = value;
   }
-  return workspaceRunsPath(workspaceSlug, query);
+  return withFactoryQuery(workspaceRunsPath(workspaceSlug, query), factoryQuery);
 }
 
 export function runsListHasFilters(query: RunCatalogQuery) {

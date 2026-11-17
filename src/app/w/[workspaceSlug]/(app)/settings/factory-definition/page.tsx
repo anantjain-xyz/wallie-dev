@@ -2,7 +2,10 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { FactoryDefinitionEditor } from "@/features/factory-definition/definition-editor";
-import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import {
+  isWorkspaceOperator,
+  loadAuthenticatedWorkspaceContext,
+} from "@/features/workspaces/authenticated-context";
 
 const selectionSchema = z.union([
   z.object({ revision: z.string().uuid(), test: z.string().uuid().optional() }).strict(),
@@ -25,11 +28,7 @@ export default async function FactoryDefinitionPage({
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     searchParams,
   ]);
-  if (
-    currentMember.kind !== "human" ||
-    !currentMember.is_active ||
-    (currentMember.role !== "owner" && currentMember.role !== "admin")
-  ) {
+  if (!isWorkspaceOperator(currentMember)) {
     notFound();
   }
   const selection = selectionSchema.safeParse(query);

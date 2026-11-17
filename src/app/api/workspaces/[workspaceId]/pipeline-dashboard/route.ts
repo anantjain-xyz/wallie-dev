@@ -20,7 +20,14 @@ const requestSchema = z.object({
   stageId: z.string().uuid(),
 });
 
-export async function GET(_request: Request, context: RouteContext) {
+const factoryIdSchema = z.string().uuid().optional();
+
+function readFactoryId(request: Request) {
+  const params = new URL(request.url).searchParams.getAll("factory");
+  return factoryIdSchema.safeParse(params.length > 1 ? params : params[0]);
+}
+
+export async function GET(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
   const access = await requireWorkspaceAccessById(workspaceId);
   if (!access.ok) {
@@ -29,10 +36,13 @@ export async function GET(_request: Request, context: RouteContext) {
       { status: access.status },
     );
   }
+  const factoryId = readFactoryId(request);
+  if (!factoryId.success) return invalidFactory();
   try {
     const snapshot = await loadPipelineDashboardSnapshot({
       supabase: access.context.supabase,
       workspaceId,
+      ...(factoryId.data ? { factoryId: factoryId.data } : {}),
     });
     return NextResponse.json(snapshot, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
@@ -54,6 +64,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   const body = await request.json().catch(() => null);
   const parsed = requestSchema.safeParse(body);
+  const factoryId = readFactoryId(request);
+  if (!factoryId.success) return invalidFactory();
 
   if (!parsed.success) {
     return NextResponse.json({ error: "A valid lane cursor is required." }, { status: 400 });
@@ -70,6 +82,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const lane = await loadPipelineDashboardLanePage({
+      ...(factoryId.data ? { factoryId: factoryId.data } : {}),
       pipelineId: parsed.data.pipelineId,
       seenIds: parsed.data.seenIds,
       stageId: parsed.data.stageId,
@@ -89,6 +102,10 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 500 },
     );
   }
+}
+
+function invalidFactory() {
+  return NextResponse.json({ error: "A valid factory is required." }, { status: 400 });
 }
 
 function workspaceUnavailable() {

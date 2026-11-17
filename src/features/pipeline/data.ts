@@ -30,6 +30,7 @@ type PipelineDashboardCursor = {
 type PipelineDashboardRpcArgs = {
   cursor_seen_ids?: string[];
   page_limit: number;
+  target_factory_id?: string;
   target_pipeline_id?: string;
   target_stage_id?: string;
   target_workspace_id: string;
@@ -111,12 +112,14 @@ async function queryPipelineDashboard(
 }
 
 export async function loadPipelineDashboardLanePage({
+  factoryId,
   pipelineId,
   seenIds,
   stageId,
   supabase,
   workspaceId,
 }: {
+  factoryId?: string;
   pipelineId: string;
   seenIds: string[];
   stageId: string;
@@ -126,6 +129,7 @@ export async function loadPipelineDashboardLanePage({
   const { data, error } = await queryPipelineDashboard(supabase, {
     cursor_seen_ids: seenIds,
     page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
+    ...(factoryId ? { target_factory_id: factoryId } : {}),
     target_pipeline_id: pipelineId,
     target_stage_id: stageId,
     target_workspace_id: workspaceId,
@@ -148,12 +152,16 @@ export async function loadPipelineDashboardLanePage({
 
 /** The bounded authoritative board snapshot used by initial render and recovery. */
 export async function loadPipelineDashboardSnapshot({
+  factoryId,
   supabase,
   workspaceId,
 }: {
+  factoryId?: string;
   supabase: SupabaseServerClient;
   workspaceId: string;
 }): Promise<Pick<PipelineDashboardData, "lanes" | "hasAnySession" | "onboarding">> {
+  const sessions = supabase.from("sessions").select("id").eq("workspace_id", workspaceId);
+  const scopedSessions = factoryId ? sessions.eq("factory_id", factoryId) : sessions;
   const [onboardingResult, dashboard, archivedStages, anySessionResult] = await Promise.all([
     supabase
       .from("workspace_onboarding")
@@ -163,9 +171,10 @@ export async function loadPipelineDashboardSnapshot({
     queryPipelineDashboard(supabase, {
       page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
       target_workspace_id: workspaceId,
+      ...(factoryId ? { target_factory_id: factoryId } : {}),
     }),
     supabase.from("pipeline_stages").select("id, archived_at").eq("workspace_id", workspaceId),
-    supabase.from("sessions").select("id").eq("workspace_id", workspaceId).limit(1),
+    scopedSessions.limit(1),
   ]);
   if (dashboard.error) throw dashboard.error;
   if (dashboard.data === null) throw new PipelineWorkspaceUnavailableError();
@@ -188,6 +197,7 @@ export async function loadPipelineDashboardSnapshot({
 
 export async function loadPipelineDashboardData(
   workspaceSlug: string,
+  factoryId?: string,
 ): Promise<PipelineDashboardData> {
   return withServerTiming(
     "pipeline.dashboard",
@@ -201,7 +211,7 @@ export async function loadPipelineDashboardData(
 
       const snapshot = await timing.segment(
         "pipeline.snapshot",
-        () => loadPipelineDashboardSnapshot({ supabase, workspaceId: workspace.id }),
+        () => loadPipelineDashboardSnapshot({ factoryId, supabase, workspaceId: workspace.id }),
         (snapshot) => ({
           payloadBytes: approximatePayloadSizeBytes(snapshot),
           rows: snapshot.lanes.reduce((count, lane) => count + lane.cards.length, 0),
@@ -210,6 +220,7 @@ export async function loadPipelineDashboardData(
 
       const result: PipelineDashboardData = {
         ...snapshot,
+        ...(factoryId ? { factoryId } : {}),
         workspace: {
           id: workspace.id,
           name: workspace.name,

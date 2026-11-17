@@ -3,6 +3,7 @@ import Link from "next/link";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
+import { withFactoryQuery } from "@/features/factories/factory-selection";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type { RunsListData } from "@/features/wallie/runs-list-data";
 import { RunsListFilters, RunsListRefresh } from "@/features/wallie/runs-list-filters";
@@ -16,7 +17,15 @@ import {
 } from "@/features/wallie/runs-list-state";
 import { workspaceRunDetailPath, workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
-export function RunsList({ data, initialNow }: { data: RunsListData; initialNow: string }) {
+export function RunsList({
+  data,
+  initialNow,
+  factoryQuery,
+}: {
+  data: RunsListData;
+  initialNow: string;
+  factoryQuery?: string;
+}) {
   const { workspaceSlug, query, state } = data;
   const runs = state.kind === "ready" ? state.page.runs : [];
   const sessions = [
@@ -47,7 +56,8 @@ export function RunsList({ data, initialNow }: { data: RunsListData; initialNow:
       ),
     ).values(),
   ];
-  const latestHref = runsListPageHref(workspaceSlug, query);
+  const latestHref = runsListPageHref(workspaceSlug, query, undefined, factoryQuery);
+  const sessionsHref = withFactoryQuery(workspaceSessionsPath(workspaceSlug), factoryQuery);
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -55,7 +65,7 @@ export function RunsList({ data, initialNow }: { data: RunsListData; initialNow:
         actions={<RunsListRefresh />}
         description="Every execution attempt across your workspace. Open a run to inspect its activity and outcome."
         eyebrow={
-          <Link className="hover:text-foreground" href={workspaceSessionsPath(workspaceSlug)}>
+          <Link className="hover:text-foreground" href={sessionsHref}>
             ← Sessions
           </Link>
         }
@@ -63,7 +73,8 @@ export function RunsList({ data, initialNow }: { data: RunsListData; initialNow:
         title="Runs"
       />
       <RunsListFilters
-        key={JSON.stringify(query)}
+        key={JSON.stringify({ factoryQuery, query })}
+        factoryQuery={factoryQuery}
         query={query}
         sessions={sessions}
         stages={stages}
@@ -111,8 +122,8 @@ export function RunsList({ data, initialNow }: { data: RunsListData; initialNow:
               query.cursor
                 ? latestHref
                 : runsListHasFilters(query)
-                  ? workspaceRunsPath(workspaceSlug)
-                  : workspaceSessionsPath(workspaceSlug)
+                  ? withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)
+                  : sessionsHref
             }
           >
             {query.cursor
@@ -156,7 +167,7 @@ export function RunsList({ data, initialNow }: { data: RunsListData; initialNow:
             {state.page.nextCursor ? (
               <Link
                 className="ui-button"
-                href={runsListPageHref(workspaceSlug, query, state.page.nextCursor)}
+                href={runsListPageHref(workspaceSlug, query, state.page.nextCursor, factoryQuery)}
               >
                 Older runs →
               </Link>

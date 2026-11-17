@@ -73,6 +73,6 @@ select results_eq(
   $$ select s.id from sessions s join status_test_sessions t on t.session_id = s.id order by s.updated_at desc, s.id desc $$,
   'updated sort is preserved'
 );
-select ok(not has_function_privilege('anon', 'public.get_session_list_page(text,text,text,text,integer,timestamptz,uuid,text,integer)', 'EXECUTE'), 'anonymous callers remain denied');
+select ok(not has_function_privilege('anon', 'public.get_session_list_page(text,text,text,text,integer,timestamptz,uuid,text,integer,uuid)', 'EXECUTE'), 'anonymous callers remain denied');
 select * from finish();
 rollback;
