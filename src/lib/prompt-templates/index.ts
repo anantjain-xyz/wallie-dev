@@ -1,6 +1,7 @@
 import {
   trustedPromptValue,
   verifyPromptBoundary,
+  type PromptValue,
   type TrustedPromptValue,
   type UntrustedPromptValue,
 } from "@/lib/pipeline/prompt-safety";
@@ -9,7 +10,7 @@ import { renderTemplate, type TemplateVariables } from "./render";
 
 export { renderTemplate, type TemplateVariables } from "./render";
 
-export const STAGE_PROMPT_RENDERER_VERSION = 2;
+export const STAGE_PROMPT_RENDERER_VERSION = 3;
 
 const ARTIFACT_EVIDENCE_POLICY = trustedPromptValue(
   "wallie.artifactEvidencePolicy",
@@ -96,6 +97,7 @@ export function renderStagePrompt(
   input: {
     // Static instructions from the run's immutable agent prompt revision.
     agentPromptMd?: TrustedPromptValue;
+    skillInstructions?: readonly PromptValue[];
     sessionTitle: UntrustedPromptValue;
     sessionPrompt: UntrustedPromptValue;
     attemptNumber: number;
@@ -136,6 +138,7 @@ export function renderStagePrompt(
   const agentPrompt = input.agentPromptMd ? verifyPromptBoundary(input.agentPromptMd) : "";
   return [
     ...(agentPrompt.trim() ? [agentPrompt] : []),
+    ...(input.skillInstructions ?? []).map(verifyPromptBoundary),
     renderedPrompt,
     verifyPromptBoundary(ARTIFACT_EVIDENCE_POLICY),
     verifyPromptBoundary(GIT_PUBLICATION_POLICY),

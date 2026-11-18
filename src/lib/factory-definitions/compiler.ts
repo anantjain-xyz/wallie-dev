@@ -63,9 +63,14 @@ export function compileFactoryDefinition(
   return parsed.ok ? compileSerialDefinition(parsed.definition, catalog) : parsed;
 }
 
-export function factoryAgentPromptRevisionIdForSource(source: FactoryDefinitionSource) {
+export function factoryComponentRevisionsForSource(source: FactoryDefinitionSource) {
   const parsed = readFactoryDefinitionSource(source);
-  return parsed.ok ? parsed.definition.implementationAgent : undefined;
+  if (!parsed.ok) return {};
+
+  return {
+    agentPromptRevisionId: parsed.definition.implementationAgent,
+    skillRevisionIds: parsed.definition.skills,
+  };
 }
 
 function readFactoryDefinitionSource(
@@ -118,7 +123,9 @@ function compileSerialDefinition(
       message:
         result.code === "ambiguous_reference"
           ? `Reference "${reference}" matches multiple catalog entries. Use a unique stable ID or correct the catalog.`
-          : `Reference "${reference}" is unavailable in this workspace. Choose an available component.`,
+          : path[0] === "skills"
+            ? `Skill revision "${reference}" is unavailable in this factory. Choose an active revision.`
+            : `Reference "${reference}" is unavailable in this workspace. Choose an available component.`,
     });
     return null;
   }

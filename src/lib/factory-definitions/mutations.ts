@@ -7,7 +7,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./authority";
 import {
   compileFactoryDefinition,
-  factoryAgentPromptRevisionIdForSource,
+  factoryComponentRevisionsForSource,
   type FactoryDefinitionDiagnostic,
   type FactoryDefinitionSource,
 } from "./compiler";
@@ -105,7 +105,7 @@ export async function mutateFactoryDefinition({
       const catalog = await loadFactoryDefinitionCatalog(admin, {
         workspaceId,
         factoryId: factory.id,
-        agentPromptRevisionId: factoryAgentPromptRevisionIdForSource(command.source),
+        ...factoryComponentRevisionsForSource(command.source),
       });
       const compiled = compileFactoryDefinition(
         command.source,
@@ -171,11 +171,12 @@ export async function mutateFactoryDefinition({
     if (readError) return mutationError(readError);
     if (!stored) return mutationError({ code: "P0002" });
 
+    const bundle = readCompiledFactoryDefinition(stored.definition_json);
     const catalog = await loadFactoryDefinitionCatalog(admin, {
       workspaceId,
       factoryId: factory.id,
-      agentPromptRevisionId: readCompiledFactoryDefinition(stored.definition_json)
-        ?.implementationAgent?.promptRevisionId,
+      agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
+      skillRevisionIds: bundle?.skillIds,
     });
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,

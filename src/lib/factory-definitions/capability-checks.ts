@@ -68,11 +68,12 @@ export async function startFactoryDefinitionCapabilityCheck(
     const target = await loadStoredDefinition(scope);
     if (!target) return unavailableDefinition();
     const { stored } = target;
+    const bundle = readCompiledFactoryDefinition(stored.definition_json);
     const catalog = await loadFactoryDefinitionCatalog(admin, {
       workspaceId,
       factoryId: target.factoryId,
-      agentPromptRevisionId: readCompiledFactoryDefinition(stored.definition_json)
-        ?.implementationAgent?.promptRevisionId,
+      agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
+      skillRevisionIds: bundle?.skillIds,
     });
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,

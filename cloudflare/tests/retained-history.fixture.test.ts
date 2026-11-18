@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { loadRunTranscript } from "@/features/wallie/run-transcript";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
+import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   loadPinnedFactoryExecution,
   loadPinnedSessionPrompt,
@@ -63,6 +64,8 @@ const fixtureSchema = z.object({
   agentId: z.string().uuid(),
   agentPromptRevisionId: z.string().uuid(),
   agentPrompt: z.string(),
+  skillRevisionId: z.string().uuid(),
+  skillContent: z.string(),
 });
 
 async function checked<T>(request: PromiseLike<{ data: T; error: unknown }>): Promise<T> {
@@ -134,6 +137,12 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
         });
         expect(agentPrompt.agentId).toBe(fixture.agentId);
         expect(agentPrompt.promptRevisionId).toBe(fixture.agentPromptRevisionId);
+        expect(definition.skillIds).toEqual([fixture.skillRevisionId]);
+        const skillInstructions = await loadFactorySkillBundle(worker, {
+          workspaceId: session.workspace_id,
+          factoryId: session.factory_id,
+          skillRevisionIds: definition.skillIds,
+        });
         const prompt = renderStagePrompt(
           {
             promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
@@ -141,6 +150,7 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
           },
           {
             agentPromptMd: trustedPromptValue("agent.prompt", agentPrompt.promptMd),
+            skillInstructions,
             attemptFeedback: null,
             attemptNumber: 1,
             operatingRulesMd: trustedPromptValue(
@@ -155,6 +165,7 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
         expect(prompt).toContain("Native Workflow pinned replacement");
         expect(prompt).toContain("Published replacement operating rules");
         expect(prompt.startsWith(fixture.agentPrompt)).toBe(true);
+        expect(prompt).toContain(fixture.skillContent);
         const pinned = await checked(
           worker.rpc("pin_session_job_git_input", {
             p_job_id: job.id,

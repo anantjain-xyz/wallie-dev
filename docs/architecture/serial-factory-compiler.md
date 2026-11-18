@@ -41,6 +41,18 @@ revision ID, static instructions, and digest. Omission preserves the default
 implementation agent's initial empty instructions. Provider and model settings
 remain in `agent`.
 
+The `skills` array selects up to 20 immutable skill revision UUIDs from the
+same factory. The compiled serial definition binds those revisions to its
+implementation agent. Draft validation, publication, and new session admission
+require each revision to remain available and unrevoked.
+
+Execution loads the pinned revisions and verifies their SHA-256 digests before
+adding their literal text to the attempt prompt. Wallie onboarding skills and
+manager-authored instructions use the trusted prompt boundary. Repository
+snapshots retain their declared source and enter through the untrusted boundary.
+Retries use their original revision IDs after an edit or revocation. The run
+inspector reads the exact revisions from the execution manifest.
+
 ## Stage order and prompt references
 
 - Stage prompts can reference artifacts from earlier stages. Shared operating rules can reference any stage. A conditional such as `{{#if artifact.previousStages.design-review}}…{{/if}}` lets shared rules wait until the artifact exists.

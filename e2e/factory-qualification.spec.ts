@@ -28,6 +28,12 @@ const agentRevisionResponseSchema = z.object({
     prompt_md: z.string(),
   }),
 });
+const skillRevisionResponseSchema = z.object({
+  revision: z.object({
+    id: z.string().uuid(),
+    content_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+});
 
 function localUrl(value: string | undefined) {
   if (!value) throw new Error("Set the disposable local app and Supabase URLs.");
@@ -327,6 +333,111 @@ async function expectSessionPin(
   });
 }
 
+async function recordSkillPromptManifest(
+  admin: Admin,
+  workspaceId: string,
+  title: string,
+  skillBody: string,
+) {
+  const session = await checked(
+    admin
+      .from("sessions")
+      .select("id,current_stage_id,current_artifact_version,creator_member_id,github_repository_id")
+      .eq("workspace_id", workspaceId)
+      .eq("title", title)
+      .single(),
+  );
+  if (!session.current_stage_id || !session.github_repository_id)
+    throw new Error("The qualification session has no stage or repository.");
+  const [release] = await checked(admin.rpc("get_git_continuity_release_state"));
+  if (!release) throw new Error("The local release control is unavailable.");
+  const [enabled] = release.enabled
+    ? [release]
+    : await checked(
+        admin.rpc("set_git_continuity_release", {
+          p_enabled: true,
+          p_expected_revision: release.revision,
+          p_reason: "Local skill revision inspector qualification",
+        }),
+      );
+  if (!enabled?.enabled) throw new Error("The local release control did not enable dispatch.");
+
+  try {
+    const job = await checked(
+      admin
+        .from("agent_jobs")
+        .update({
+          status: "running",
+          attempt_count: 1,
+          git_continuity_release_revision: enabled.revision,
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("session_id", session.id)
+        .eq("status", "queued")
+        .select("id")
+        .single(),
+    );
+    const runId = await checked(
+      admin.rpc("start_session_job_attempt", {
+        p_job_id: job.id,
+        p_attempt_count: 1,
+        p_expected_stage_id: session.current_stage_id,
+        p_expected_artifact_version: session.current_artifact_version,
+        p_model_provider: "codex",
+        p_model_name: secondModel,
+        p_run_type: "code",
+        p_branch_name: "wallie/local-skill-inspector",
+      }),
+    );
+    if (!runId) throw new Error("The qualification attempt did not start.");
+    const checkoutSha = "a".repeat(40);
+    const [input] = await checked(
+      admin.rpc("pin_session_job_git_input", {
+        p_job_id: job.id,
+        p_attempt_count: 1,
+        p_run_id: runId,
+        p_repository_id: session.github_repository_id,
+        p_base_branch: "main",
+        p_observed_sha: checkoutSha,
+      }),
+    );
+    expect(input?.input_sha).toBe(checkoutSha);
+
+    // Browser proof uses the same durable RPC as a worker. Worker transport
+    // and actual prompt materialization are exercised by the continuity fixture.
+    const prompt = `Synthetic prompt supplied by the local qualification worker.\n\n${skillBody}`;
+    expect(
+      await checked(
+        admin.rpc("pin_session_attempt_manifest", {
+          p_job_id: job.id,
+          p_run_id: runId,
+          p_attempt_count: 1,
+          p_prompt_sha256: createHash("sha256").update(prompt).digest("hex"),
+          p_prompt_utf8_bytes: Buffer.byteLength(prompt),
+          p_renderer_version: 3,
+          p_checkout_sha: checkoutSha,
+          p_predecessors: [],
+          p_worker_runtime: "node",
+          ...(session.creator_member_id
+            ? { p_credential_owner_member_id: session.creator_member_id }
+            : {}),
+        }),
+      ),
+    ).toBe(true);
+    return runId;
+  } finally {
+    if (!release.enabled) {
+      await checked(
+        admin.rpc("set_git_continuity_release", {
+          p_enabled: false,
+          p_expected_revision: enabled.revision,
+          p_reason: "Restore local Git continuity release control",
+        }),
+      );
+    }
+  }
+}
+
 test("qualifies definition edit, test, publish, run admission and rollback", async ({
   page,
   baseURL,
@@ -380,6 +491,14 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       admin.from("factories").select("id").eq("workspace_id", workspace.id).single(),
     );
     const agentsPath = `/api/workspaces/${workspace.id}/factories/${factory.id}/agents`;
+    const skillName = "Check release evidence";
+    const skillBody = "Check the release notes against retained validation evidence.";
+    const createSkill = await page.request.post(
+      `/api/workspaces/${workspace.id}/factories/${factory.id}/skills`,
+      { data: { name: skillName, slug: "check-release-evidence", contentMd: skillBody } },
+    );
+    expect(createSkill.status(), await createSkill.text()).toBe(201);
+    const skillRevision = skillRevisionResponseSchema.parse(await createSkill.json()).revision;
     const createAgent = await page.request.post(agentsPath, {
       data: {
         name: "Implementation reviewer",
@@ -391,6 +510,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     const firstAgentPrompt = agentRevisionResponseSchema.parse(await createAgent.json()).revision;
     const promptInput = page.getByRole("textbox", { name: "Implementation agent prompt revision" });
     await promptInput.fill(firstAgentPrompt.id);
+    await page.getByRole("textbox", { name: "Skills", exact: true }).fill(skillRevision.id);
     await page.getByRole("button", { name: "Save draft" }).click();
     await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
     await expect(promptInput).toHaveValue(firstAgentPrompt.id);
@@ -510,6 +630,29 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     });
     await page.screenshot({
       path: testInfo.outputPath("04-rollback-admitted.png"),
+      fullPage: true,
+    });
+
+    const inspectedRun = await recordSkillPromptManifest(admin, workspace.id, title, skillBody);
+    await page.goto(`/w/${workspace.slug}/runs/${inspectedRun}`);
+    await expect(page.getByRole("heading", { name: "Skill revisions" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: skillName })).toBeVisible();
+    await expect(page.getByText("Revision 1 · Factory-authored", { exact: true })).toBeVisible();
+    await expect(page.getByText(skillRevision.id, { exact: true })).toBeVisible();
+    await expect(page.getByText(skillRevision.content_sha256, { exact: true })).toBeVisible();
+    await expect(page.getByText(skillBody, { exact: true })).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath("05-run-skill-revision-desktop-light.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    ).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath("06-run-skill-revision-mobile-dark.png"),
       fullPage: true,
     });
   } finally {

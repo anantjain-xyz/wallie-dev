@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
+import { factorySkillRevisionIdSchema } from "@/lib/factory-skills/contracts";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import { getEnabledSandboxProviders } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
@@ -33,10 +34,12 @@ export async function loadFactoryDefinitionCatalog(
     workspaceId,
     factoryId,
     agentPromptRevisionId,
+    skillRevisionIds,
   }: {
     workspaceId: string;
     factoryId: string;
     agentPromptRevisionId?: string;
+    skillRevisionIds?: readonly string[];
   },
 ): Promise<FactoryDefinitionCatalog> {
   const [
@@ -47,6 +50,7 @@ export async function loadFactoryDefinitionCatalog(
     deliveryPolicies,
     approvers,
     agentPrompts,
+    skillRevisions,
   ] = await Promise.all([
     collectCatalogRows((from, to) =>
       admin
@@ -100,6 +104,7 @@ export async function loadFactoryDefinitionCatalog(
         .range(from, to),
     ),
     loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
+    loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? []),
   ]);
   if (installation.error) throw installation.error;
 
@@ -126,12 +131,36 @@ export async function loadFactoryDefinitionCatalog(
         promptSha256: prompt_sha256,
       }),
     })),
-    // Setup receipts prove a repository owns a bundled onboarding snapshot.
-    // Factories gain individual skill and tool grants with the registry in M03.
-    skills: [],
+    skills: skillRevisions.map(({ id }) => ({ id, workspaceId })),
     tools: [],
     sandboxProviders: getEnabledSandboxProviders(),
   };
+}
+
+async function loadSelectedSkillRevisions(
+  admin: AdminClient,
+  workspaceId: string,
+  factoryId: string,
+  references: readonly string[],
+) {
+  const ids = [
+    ...new Set(
+      references.flatMap((reference) => {
+        const id = factorySkillRevisionIdSchema.safeParse(reference);
+        return id.success ? [id.data] : [];
+      }),
+    ),
+  ];
+  if (ids.length === 0) return [];
+  const { data, error } = await admin
+    .from("factory_skill_revisions")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .is("revoked_at", null)
+    .in("id", ids);
+  if (error) throw error;
+  return data;
 }
 
 async function loadSelectedAgentPromptRevision(

@@ -304,6 +304,7 @@ export async function mutateFactorySettings({
     workspaceId,
     factoryId: context.factoryId,
     agentPromptRevisionId: context.bundle.implementationAgent?.promptRevisionId,
+    skillRevisionIds: context.bundle.skillIds,
   });
   if (command.action === "save") {
     const edited = applySettingsPatch(context, command.patch);

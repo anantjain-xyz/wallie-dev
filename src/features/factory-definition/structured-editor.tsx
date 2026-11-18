@@ -268,7 +268,7 @@ export function StructuredFactoryDefinitionEditor({
             </p>
           </div>
           <ReferenceList
-            description="One skill ID or alias per line."
+            description="One skill revision ID per line."
             label="Skills"
             onChange={(next) => update("skills", next)}
             values={value.skills}

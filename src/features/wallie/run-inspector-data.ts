@@ -1,6 +1,7 @@
 import "server-only";
 
 import { notFound } from "next/navigation";
+import { z } from "zod";
 
 import {
   loadWorkspaceRunCatalogItem,
@@ -23,6 +24,43 @@ export type RunInspectorArtifact =
       href: string;
     }
   | { kind: "none" | "unrecorded" | "unavailable" };
+
+const runSkillRevisionsSchema = z.array(
+  z
+    .object({
+      skillId: z.string().uuid(),
+      revisionId: z.string().uuid(),
+      name: z.string().min(1),
+      version: z.number().int().positive(),
+      contentSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      sourceKind: z.enum(["wallie_builtin", "manual", "repository"]),
+    })
+    .strict(),
+);
+
+export type RunInspectorSkills =
+  | { kind: "recorded"; revisions: z.infer<typeof runSkillRevisionsSchema> }
+  | { kind: "unrecorded" }
+  | { kind: "unavailable" };
+
+export async function loadRunInspectorSkills(input: {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+  run: Pick<WorkspaceRunCatalogItem, "id" | "attemptCount">;
+}): Promise<RunInspectorSkills> {
+  const { supabase, workspaceId, run } = input;
+  if (run.attemptCount === null) return { kind: "unrecorded" };
+
+  const { data, error } = await supabase.rpc("get_run_skill_revisions", {
+    target_workspace_id: workspaceId,
+    target_run_id: run.id,
+    target_attempt_count: run.attemptCount,
+  });
+  if (error) return { kind: "unavailable" };
+  if (data === null) return { kind: "unrecorded" };
+  const parsed = runSkillRevisionsSchema.safeParse(data);
+  return parsed.success ? { kind: "recorded", revisions: parsed.data } : { kind: "unavailable" };
+}
 
 export async function loadRunInspectorArtifact(input: {
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -89,12 +127,16 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run = await loadRun();
     if (!run) notFound();
   }
-  const artifact = await loadRunInspectorArtifact({ ...context, run });
+  const [artifact, skills] = await Promise.all([
+    loadRunInspectorArtifact({ ...context, run }),
+    loadRunInspectorSkills({ ...context, run }),
+  ]);
   return {
     workspaceId: workspace.id,
     workspaceSlug: workspace.slug,
     run,
     artifact,
+    skills,
     transcript,
   };
 }

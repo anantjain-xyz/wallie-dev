@@ -6,7 +6,7 @@ import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { loadFactoryDefinitionCatalog } from "./authority";
-import { compileFactoryDefinition, factoryAgentPromptRevisionIdForSource } from "./compiler";
+import { compileFactoryDefinition, factoryComponentRevisionsForSource } from "./compiler";
 import type {
   FactoryEditorContent,
   FactoryEditorDocument,
@@ -183,7 +183,7 @@ export async function previewFactoryEditorDefinition(
   const catalog = await loadFactoryDefinitionCatalog(client, {
     workspaceId,
     factoryId: head.factoryId,
-    agentPromptRevisionId: factoryAgentPromptRevisionIdForSource(request.source),
+    ...factoryComponentRevisionsForSource(request.source),
   });
   const compiled = compileFactoryDefinition(
     request.source,

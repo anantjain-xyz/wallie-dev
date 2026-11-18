@@ -61,6 +61,8 @@ const originalAgentPrompt =
   "Frozen implementation-agent instructions. {{session.prompt}} stays literal.";
 const replacementAgentPrompt =
   "Candidate implementation-agent instructions. {{attempt.feedback}} stays literal.";
+const originalSkill = "Frozen skill instructions. Keep {{session.prompt}} literal.";
+const replacementSkill = "Replacement skill instructions for new sessions.";
 
 async function dueAt(value: string | null) {
   const milliseconds = value ? Math.max(0, Date.parse(value) - Date.now() + 25) : 0;
@@ -128,6 +130,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
           const stage = mode === "frozen-first" ? "frozen-first" : "frozen-next";
           expect(input.prompt).toContain(originalAgentPrompt);
           expect(input.prompt).not.toContain(replacementAgentPrompt);
+          expect(input.prompt).toContain(originalSkill);
+          expect(input.prompt).not.toContain(replacementSkill);
           expect(input.prompt).toContain("Frozen operating rules");
           expect(input.prompt).toContain("Original pinned session title");
           expect(input.prompt).toContain(`Pinned template ${stage}`);
@@ -594,7 +598,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       definition_provenance: "legacy",
       definition_revision_id: null,
       worker_runtime: "node",
-      renderer_version: 2,
+      renderer_version: 3,
       prompt_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       credential_owner_member_id: ids.memberId,
       predecessors: [
@@ -1143,6 +1147,19 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       admin.from("factories").select("id").eq("workspace_id", ids.workspaceId).single(),
     );
     assert(userId);
+    const skillScope = {
+      p_workspace_id: ids.workspaceId,
+      p_factory_id: factory.id,
+      p_actor_user_id: userId,
+    };
+    const frozenSkill = await checked(
+      admin.rpc("create_factory_skill", {
+        ...skillScope,
+        p_name: "Continuity instructions",
+        p_slug: "continuity-instructions",
+        p_content_md: originalSkill,
+      }),
+    );
     const frozenAgentPrompt = await checked(
       admin.rpc("save_factory_agent_prompt_revision", {
         p_workspace_id: ids.workspaceId,
@@ -1175,7 +1192,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       sandboxProvider: "e2b",
       executionPolicyRevisionId: null,
       deliveryPolicyRevisionId: null,
-      skillIds: [],
+      skillIds: [frozenSkill.id],
       toolIds: [],
       agent: {
         provider: "codex",
@@ -1387,8 +1404,17 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       agent_prompt_revision_id: frozenAgentPrompt.id,
     });
 
+    const candidateSkill = await checked(
+      admin.rpc("save_factory_skill_revision", {
+        ...skillScope,
+        p_skill_id: frozenSkill.skill_id,
+        p_expected_revision_number: frozenSkill.revision_number,
+        p_content_md: replacementSkill,
+      }),
+    );
     const replacementBundle = {
       ...originalBundle,
+      skillIds: [candidateSkill.id],
       implementationAgent: {
         agentId: implementationAgent.id,
         promptRevisionId: candidateAgentPrompt.id,
@@ -1500,7 +1526,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       model_name: "gpt-5.5",
       definition_revision_id: original.activation.revision_id,
       definition_digest: original.canonicalDigest,
-      definition_skill_ids: [],
+      definition_skill_ids: [frozenSkill.id],
       source_checkpoint_run_id: firstFrozen.runId,
       predecessors: [
         expect.objectContaining({
@@ -1632,6 +1658,8 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
             agentId: implementationAgent.id,
             agentPromptRevisionId: candidateAgentPrompt.id,
             agentPrompt: replacementAgentPrompt,
+            skillRevisionId: candidateSkill.id,
+            skillContent: replacementSkill,
           }),
         },
         timeout: 55_000,
@@ -1655,7 +1683,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       definition_revision_id: replacementActivation.activation.revision_id,
       definition_digest: replacementActivation.canonicalDigest,
       model_name: "gpt-5.6-sol",
-      definition_skill_ids: [],
+      definition_skill_ids: [candidateSkill.id],
       stage_id: nextStageId,
     });
     expect(
