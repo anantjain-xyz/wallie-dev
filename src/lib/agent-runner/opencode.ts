@@ -83,10 +83,14 @@ export class OpenCodeRunner implements AgentRunner {
 
     const root = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const dataHome = `${root}/data`;
+    const configHome = `${root}/config`;
+    const configDirectory = `${configHome}/opencode`;
+    const configFile = `${configDirectory}/opencode.json`;
     const authFile = `${dataHome}/opencode/auth.json`;
     const promptFile = `${root}/prompt.txt`;
 
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
+    await sandbox.writeFile(configFile, '{"mcp":{}}\n', { mode: 0o600 });
 
     input.signal?.throwIfAborted();
     const auth = this.options.loadAuth ? await this.options.loadAuth() : this.options;
@@ -109,10 +113,37 @@ export class OpenCodeRunner implements AgentRunner {
       cliArgs.push("--session", input.continueSessionId);
     }
 
-    const shellCmd = `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+    const shellCmd = [
+      "set -e",
+      `for managed_dir in /etc/opencode '/Library/Application Support/opencode' '/Library/Managed Preferences/ai.opencode.managed.plist' "/Library/Managed Preferences/$USER/ai.opencode.managed.plist"; do`,
+      '  if [ -e "$managed_dir" ] || [ -L "$managed_dir" ]; then',
+      "    printf '%s\\n' 'Wallie requires an isolated OpenCode MCP configuration.' >&2",
+      "    exit 1",
+      "  fi",
+      "done",
+      "for instructions in AGENTS.md CLAUDE.md; do",
+      '  if [ -f "$instructions" ] && [ ! -L "$instructions" ]; then',
+      `    cp -- "$instructions" ${shellQuote(`${configDirectory}/AGENTS.md`)}`,
+      "    break",
+      "  fi",
+      "done",
+      `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`,
+    ].join("\n");
     const options = {
       cwd: sandbox.repoPath,
-      env: { CI: "1", XDG_DATA_HOME: dataHome, ...WALLIE_GIT_IDENTITY_ENV },
+      env: {
+        CI: "1",
+        XDG_CONFIG_HOME: configHome,
+        XDG_DATA_HOME: dataHome,
+        XDG_STATE_HOME: `${root}/state`,
+        XDG_CACHE_HOME: `${root}/cache`,
+        OPENCODE_CONFIG: configFile,
+        OPENCODE_CONFIG_DIR: configDirectory,
+        OPENCODE_CONFIG_CONTENT: "{}",
+        OPENCODE_DISABLE_CLAUDE_CODE: "1",
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+        ...WALLIE_GIT_IDENTITY_ENV,
+      },
       signal: input.signal,
     };
     const proc = material

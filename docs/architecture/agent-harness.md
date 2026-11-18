@@ -163,6 +163,10 @@ Repository-local `AGENTS.md` files and installed skills are interpreted by the
 selected CLI. Wallie prepares those assets during repository onboarding, but
 the target repository remains their runtime semantic owner.
 
+[Factory MCP manifests](factory-mcp-manifests.md) pin reviewed server revisions and
+operations separately from runner credentials. Default launches use an isolated empty
+MCP configuration.
+
 ## Event, source, and artifact contract
 
 - Runner output redacts active credentials before events reach logs, artifacts,

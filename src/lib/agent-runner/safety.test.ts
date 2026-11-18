@@ -149,7 +149,16 @@ describe("runner credential boundary", () => {
       controller.abort(new Error("attempt expired"));
       finish();
       await rejected;
-      expect(sandbox.calls.filter((call) => call.cmd !== "mkdir")).toEqual([]);
+      expect(sandbox.calls.filter((call) => call.cmd !== "mkdir")).toEqual(
+        provider === "codex"
+          ? [
+              expect.objectContaining({
+                cmd: "sh",
+                args: ["-c", expect.any(String), "wallie-codex-config", "/etc/codex"],
+              }),
+            ]
+          : [],
+      );
     },
   );
   it.each(providers)("redacts %s output split at every transport boundary", async (provider) => {

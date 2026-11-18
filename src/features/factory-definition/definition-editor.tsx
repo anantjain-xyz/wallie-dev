@@ -16,6 +16,7 @@ import {
   type FactoryEditorHistory,
 } from "@/features/factory-definition/editor-requests";
 import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
+import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
@@ -182,6 +183,14 @@ export function FactoryDefinitionEditor({
         : undefined,
   });
   const capabilityTarget = selected ?? snapshot?.draft ?? snapshot?.published;
+  const manifestTarget = preview ?? capabilityTarget;
+  const manifestTargetLabel = preview
+    ? "Validated edit"
+    : capabilityTarget?.kind === "draft"
+      ? "Saved draft"
+      : selected
+        ? "Selected revision"
+        : "Published definition";
   const credentialScope = credentialScopeFrom(capabilityTarget);
   const workingTarget = snapshot?.draft ?? snapshot?.published;
   const canUseCredentialBinding =
@@ -708,6 +717,14 @@ export function FactoryDefinitionEditor({
                 </p>
               )}
             </PageSection>
+            <FactoryMcpManifestInspector
+              manifest={manifestTarget?.bundle.mcpManifest}
+              tagline={
+                manifestTarget
+                  ? `${manifestTargetLabel} · ${manifestTarget.digest.slice(0, 12)}`
+                  : undefined
+              }
+            />
             {capabilityTarget?.bundle.executionGrant && history ? (
               <PageSection anchorId="service-credentials" title="Service credentials">
                 {credentialScope ? (

@@ -99,6 +99,20 @@ describe("structured factory definition editor", () => {
     expect(current().implementationAgent).toBe(revisionId);
   });
 
+  it("preserves explicit MCP bindings when changing another structured setting", () => {
+    const mcpBindings = [
+      {
+        toolRevisionId: "00000000-0000-4000-8000-000000000005",
+        operations: ["read_item"],
+      },
+    ];
+    const { current } = renderEditor({ ...initialDefinition, mcpBindings });
+    fireEvent.change(screen.getByRole("textbox", { name: "Operating rules" }), {
+      target: { value: "Keep the approved bindings." },
+    });
+    expect(current().mcpBindings).toEqual(mcpBindings);
+  });
+
   it("emits editable compiler input for references, runtime, and operating rules", () => {
     const { current } = renderEditor();
     const skills = screen.getByRole("textbox", { name: "Skills" });
@@ -106,9 +120,6 @@ describe("structured factory definition editor", () => {
     fireEvent.change(skills, { target: { value: "issue-planning\n" } });
     expect(skills).toHaveValue("issue-planning\n");
     fireEvent.change(skills, { target: { value: "issue-planning\ncode-review" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Tools" }), {
-      target: { value: "terminal\n" },
-    });
     fireEvent.change(screen.getByRole("combobox", { name: "Default writable repository" }), {
       target: { value: repositories[1].id },
     });
@@ -133,7 +144,6 @@ describe("structured factory definition editor", () => {
       repository: repositories[1].id,
       deliveryPolicy: null,
       skills: ["issue-planning", "code-review"],
-      tools: ["terminal"],
       sandboxProvider: "e2b",
       operatingRulesMd: "Validate each change.",
       agent: {

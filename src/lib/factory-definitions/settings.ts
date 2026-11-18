@@ -10,7 +10,11 @@ import { mapStageRow } from "@/lib/pipeline/stages";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./authority";
-import { compileFactoryDefinition, type CompiledFactoryDefinition } from "./compiler";
+import {
+  compileFactoryDefinition,
+  factoryComponentRevisionsForBundle,
+  type CompiledFactoryDefinition,
+} from "./compiler";
 import {
   invalidDefinition,
   mutationError,
@@ -303,8 +307,7 @@ export async function mutateFactorySettings({
   const catalog = await loadFactoryDefinitionCatalog(client, {
     workspaceId,
     factoryId: context.factoryId,
-    agentPromptRevisionId: context.bundle.implementationAgent?.promptRevisionId,
-    skillRevisionIds: context.bundle.skillIds,
+    ...factoryComponentRevisionsForBundle(context.bundle),
   });
   if (command.action === "save") {
     const edited = applySettingsPatch(context, command.patch);

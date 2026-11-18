@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CodexCredential } from "@/lib/codex/contracts";
@@ -354,6 +358,7 @@ describe("CodexRunner", () => {
       expect(loadCredential).toHaveBeenCalledOnce();
       expect([...sandbox.files.keys()]).toEqual([harnessPath(sandbox, "prompt.txt")]);
       expect(runnerCalls(sandbox)).toEqual([
+        expect.objectContaining({ cmd: "sh" }),
         expect.objectContaining({ args: ["-lc", expect.stringMatching(/^mkdir -p /)] }),
       ]);
     },
@@ -445,6 +450,10 @@ describe("CodexRunner", () => {
       "mcp_servers={}",
       "-c",
       "apps.github.enabled=false",
+      "--disable",
+      "plugins",
+      "--disable",
+      "skill_mcp_dependency_install",
       "--ignore-user-config",
       CODEX_EXTERNAL_SANDBOX_FLAG,
       "--cd",
@@ -458,6 +467,64 @@ describe("CodexRunner", () => {
     expect(codexExecArgs("gpt-5.6-sol", "/vercel/sandbox", "max")).toContain(
       'model_reasoning_effort="max"',
     );
+  });
+
+  it.each([
+    ["checkout config", "project/nested/.codex/config.toml", true],
+    ["ancestor config", "project/.codex/config.toml", true],
+    ["machine config", "etc/codex/config.toml", true],
+    ["managed config", "etc/codex/managed_config.toml", true],
+    ["machine requirements", "etc/codex/requirements.toml", true],
+    ["project instructions", "project/nested/AGENTS.md", false],
+  ])("checks %s before loading credentials", async (_label, path, blocked) => {
+    const fixture = mkdtempSync(join(tmpdir(), "wallie-codex-config-"));
+    try {
+      const cwd = join(fixture, "project/nested");
+      const machineConfig = join(fixture, "etc/codex");
+      const file = join(fixture, path);
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(machineConfig, { recursive: true });
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, "# Fixture config or project instruction\n");
+
+      const sandbox = new FakeSandbox();
+      const exec = sandbox.exec.bind(sandbox);
+      vi.spyOn(sandbox, "exec").mockImplementation((command, args, options) => {
+        if (command === "sh") {
+          expect(options?.cwd).toBe(sandbox.repoPath);
+          expect(args.at(-1)).toBe("/etc/codex");
+          const result = spawnSync(command, [...args.slice(0, -1), machineConfig], {
+            cwd,
+            timeout: 5_000,
+          });
+          expect(result.error).toBeUndefined();
+          expect(result.status).toBe(blocked ? 1 : 0);
+          sandbox.scriptExec("sh", [], { exitCode: result.status ?? 1 });
+        }
+        return exec(command, args, options);
+      });
+      const loadCredential = vi.fn(async () => launchCredentials[0]!);
+      const runner = new CodexRunner({ loadCredential });
+      const run = (async () => {
+        for await (const event of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+          void event;
+        }
+      })();
+      if (blocked) {
+        await expect(run).rejects.toThrow(
+          "Codex cannot start with project or machine Codex configuration",
+        );
+        expect(loadCredential).not.toHaveBeenCalled();
+        expect(sandbox.calls.map(({ cmd }) => cmd)).toEqual(["sh"]);
+        expect(sandbox.files.size).toBe(0);
+      } else {
+        await run;
+        expect(loadCredential).toHaveBeenCalledOnce();
+        expectExternalSandboxMode(runnerCalls(sandbox).at(-1)?.args[1] ?? "");
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it("logs in with a Codex access token before running exec", async () => {
@@ -521,8 +588,9 @@ describe("CodexRunner", () => {
     expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Hello Codex");
 
     // CLI invocation uses bash -lc to log in, then redirect the prompt file as stdin.
-    expect(runnerCalls(sandbox)).toHaveLength(1);
-    const [call] = runnerCalls(sandbox);
+    expect(runnerCalls(sandbox)).toHaveLength(2);
+    const [check, call] = runnerCalls(sandbox);
+    expect(check.cmd).toBe("sh");
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
     expect(call.args[1]).toContain(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
@@ -559,8 +627,8 @@ describe("CodexRunner", () => {
       void _;
     }
 
-    expect(runnerCalls(sandbox)[0]?.args[1]).toBe(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
-    const execCall = runnerCalls(sandbox)[1]!;
+    expect(runnerCalls(sandbox)[1]?.args[1]).toBe(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
+    const execCall = runnerCalls(sandbox)[2]!;
     expectExternalSandboxMode(execCall.args[1]!);
     expect(execCall.opts.env).toMatchObject({
       CODEX_API_KEY: "sk-test",
@@ -595,7 +663,9 @@ describe("CodexRunner", () => {
     });
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
-      (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
+      (call) =>
+        call.cmd === "bash" &&
+        (call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false),
       [],
     );
     sandbox.scriptExec(
@@ -697,9 +767,9 @@ describe("CodexRunner", () => {
       previousCredentialVersion: 8,
       userId: "user-1",
     });
-    expect(runnerCalls(sandbox)[0]?.args[1]).toBe(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
-    expectExternalSandboxMode(runnerCalls(sandbox)[1]?.args[1] ?? "");
-    expect(runnerCalls(sandbox)[1]?.opts.env).toMatchObject({
+    expect(runnerCalls(sandbox)[1]?.args[1]).toBe(`mkdir -p '${harnessPath(sandbox, "codex")}'`);
+    expectExternalSandboxMode(runnerCalls(sandbox)[2]?.args[1] ?? "");
+    expect(runnerCalls(sandbox)[2]?.opts.env).toMatchObject({
       CI: "1",
       CODEX_HOME: harnessPath(sandbox, "codex"),
       GIT_AUTHOR_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
@@ -719,7 +789,9 @@ describe("CodexRunner", () => {
     });
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
-      (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
+      (call) =>
+        call.cmd === "bash" &&
+        (call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false),
       [],
     );
     sandbox.scriptExec(
@@ -787,7 +859,9 @@ describe("CodexRunner", () => {
       });
       const sandbox = new FakeSandbox();
       sandbox.scriptExec(
-        (call) => call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false,
+        (call) =>
+          call.cmd === "bash" &&
+          (call.args[1]?.includes(`mkdir -p '${harnessPath(sandbox, "codex")}'`) ?? false),
         [],
       );
       sandbox.scriptExec(

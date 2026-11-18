@@ -11,6 +11,12 @@ const factoryId = "81b90000-0000-4000-8000-000000000003";
 const skillRevisionId = "81b90000-0000-4000-8000-000000000006";
 const installationId = "81b90000-0000-4000-8000-000000000002";
 const promptRevisionId = "81b90000-0000-4000-8000-000000000004";
+const agentId = "81b90000-0000-4000-8000-000000000005";
+const toolRevisionId = "8ab90000-0000-4000-8000-000000000007";
+const toolServerId = "81b90000-0000-4000-8000-000000000008";
+const bindingId = "81b90000-0000-4000-8000-000000000009";
+const grantId = "81b90000-0000-4000-8000-000000000010";
+const principalId = "81b90000-0000-4000-8000-000000000011";
 
 function fixtureClient({ installationActive = true } = {}) {
   const requests: URL[] = [];
@@ -41,6 +47,34 @@ function fixtureClient({ installationActive = true } = {}) {
         },
       ],
       factory_skill_revisions: [{ id: skillRevisionId }],
+      factory_mcp_server_revisions: [
+        {
+          id: toolRevisionId,
+          server_id: toolServerId,
+          revision_number: 2,
+          endpoint: "https://reference.example.test/mcp",
+          operation_names: ["read"],
+          auth_kind: "bearer",
+          factory_mcp_servers: { slug: "reference" },
+        },
+      ],
+      factory_mcp_secret_bindings: [
+        {
+          id: bindingId,
+          execution_grant_id: grantId,
+          service_principal_id: principalId,
+          factory_agent_id: agentId,
+          tool_revision_id: toolRevisionId,
+        },
+      ],
+      factory_execution_grants: [
+        {
+          id: grantId,
+          version: 3,
+          service_principal_id: principalId,
+          tool_ids: [`${toolRevisionId}/read`],
+        },
+      ],
     };
     const record = table ? records[table] : undefined;
     if (table === "factory_agent_prompt_revisions") {
@@ -113,6 +147,67 @@ describe("factory activation authority inputs", () => {
     expect(request?.searchParams.get("revoked_at")).toBe("is.null");
     expect(request?.searchParams.get("id")).toBe(`in.(${skillRevisionId})`);
     expect(catalog.skills).toEqual([{ id: skillRevisionId, workspaceId }]);
+  });
+
+  it("loads only live, selected MCP revision, grant, and secret binding metadata", async () => {
+    const { admin, requests } = fixtureClient();
+    const catalog = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId,
+      mcpToolRevisionIds: [toolRevisionId.toUpperCase(), toolRevisionId, "invalid"],
+      mcpSecretBindingIds: [bindingId],
+      mcpExecutionGrantId: grantId,
+    });
+    const toolRequest = requests.find((url) =>
+      url.pathname.endsWith("/factory_mcp_server_revisions"),
+    );
+    const bindingRequest = requests.find((url) =>
+      url.pathname.endsWith("/factory_mcp_secret_bindings"),
+    );
+    const grantRequest = requests.find((url) => url.pathname.endsWith("/factory_execution_grants"));
+    for (const request of [toolRequest, bindingRequest, grantRequest]) {
+      expect(request?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+      expect(request?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+      expect(request?.searchParams.get("revoked_at")).toBe("is.null");
+    }
+    expect(toolRequest?.searchParams.get("id")).toBe(`in.(${toolRevisionId})`);
+    expect(grantRequest?.searchParams.get("id")).toBe(`eq.${grantId}`);
+    expect(grantRequest?.searchParams.get("expires_at")).toMatch(/^gt\./);
+    expect(bindingRequest?.searchParams.get("id")).toBe(`in.(${bindingId})`);
+    expect(bindingRequest?.searchParams.get("select")).toBe(
+      "id,execution_grant_id,service_principal_id,factory_agent_id,tool_revision_id",
+    );
+    expect(catalog).toMatchObject({
+      tools: [
+        {
+          id: toolRevisionId,
+          workspaceId,
+          serverId: toolServerId,
+          serverSlug: "reference",
+          revisionNumber: 2,
+          endpoint: "https://reference.example.test/mcp",
+          operations: ["read"],
+          authKind: "bearer",
+        },
+      ],
+      mcpSecretBindings: [
+        {
+          id: bindingId,
+          workspaceId,
+          grantId,
+          servicePrincipalId: principalId,
+          agentId,
+          toolRevisionId,
+        },
+      ],
+      mcpExecutionGrant: {
+        id: grantId,
+        workspaceId,
+        version: 3,
+        servicePrincipalId: principalId,
+        toolIds: [`${toolRevisionId}/read`],
+      },
+    });
   });
 
   it("excludes every repository binding when the installation becomes unavailable", async () => {

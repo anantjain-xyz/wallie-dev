@@ -462,7 +462,10 @@ describe("OpenCodeRunner", () => {
 
       await expect(running).rejects.toThrow("Session creator is no longer an active member");
       expect(loadAuth).toHaveBeenCalledOnce();
-      expect(write).toHaveBeenCalledTimes(1);
+      expect(write.mock.calls.map(([path]) => path)).toEqual([
+        harnessPath(sandbox, "prompt.txt"),
+        harnessPath(sandbox, "config/opencode/opencode.json"),
+      ]);
       expect(sandbox.files.has(harnessPath(sandbox, "data/opencode/auth.json"))).toBe(false);
       expect(runnerCalls(sandbox)).toHaveLength(0);
     },
@@ -610,13 +613,20 @@ describe("OpenCodeRunner", () => {
       "opencode 'run' '--format' 'json' '--model' 'opencode/gpt-5.6-sol'",
     );
     expect(call.args[1]).not.toContain("'--auto'");
+    expect(call.args[1]).toContain("for managed_dir in /etc/opencode");
     expect(call.args[1]).toContain("'--session' 'native-previous'");
     expect(call.args[1]).toContain(`< '${promptPath}'`);
     expect(call.args.join(" ")).not.toContain(credential.secret);
     expect(call.opts.env).toMatchObject({
       CI: "1",
       XDG_DATA_HOME: harnessPath(sandbox, "data"),
+      XDG_CONFIG_HOME: harnessPath(sandbox, "config"),
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      OPENCODE_CONFIG_CONTENT: "{}",
     });
+    expect(await sandbox.readFile(harnessPath(sandbox, "config/opencode/opencode.json"))).toBe(
+      '{"mcp":{}}\n',
+    );
     expect(JSON.stringify(call.opts)).not.toContain(credential.secret);
   });
 

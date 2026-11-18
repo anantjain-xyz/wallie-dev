@@ -287,12 +287,6 @@ export function StructuredFactoryDefinitionEditor({
             onChange={(next) => update("skills", next)}
             values={value.skills}
           />
-          <ReferenceList
-            description="One tool ID or alias per line."
-            label="Tools"
-            onChange={(next) => update("tools", next)}
-            values={value.tools}
-          />
         </div>
       </section>
 

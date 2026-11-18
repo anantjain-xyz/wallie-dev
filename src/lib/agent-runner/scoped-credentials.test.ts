@@ -44,7 +44,7 @@ describe("scoped agent credential delivery", () => {
         (call) =>
           call.cmd === "bash" &&
           (call.args.includes("wallie-credential") ||
-            call.args.some((arg) => arg.startsWith("opencode "))),
+            call.args.some((arg) => /^opencode /m.test(arg))),
         [{ stream: "stderr", data: `A provider failure included ${fixtureCredential}` }],
         { exitCode: 1 },
       );

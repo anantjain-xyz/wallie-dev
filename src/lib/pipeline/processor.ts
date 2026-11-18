@@ -71,6 +71,7 @@ import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
+import { runtimeMcpManifest } from "@/lib/factory-mcp/manifest";
 import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   formatSessionAttachmentPromptData,
@@ -126,6 +127,13 @@ class MissingReviewableOutputError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MissingReviewableOutputError";
+  }
+}
+
+class McpAdapterUnavailableError extends Error {
+  constructor() {
+    super("The selected agent adapter does not yet support the pinned MCP tool manifest.");
+    this.name = "McpAdapterUnavailableError";
   }
 }
 
@@ -383,6 +391,10 @@ async function runStage(input: {
         retry: false,
       });
       return { jobId: job.id, processed: true, result: "idle", runId: null };
+    }
+
+    if (runtimeMcpManifest(pinned?.mcpManifest).servers.length) {
+      throw new McpAdapterUnavailableError();
     }
 
     const scopedBindingId = pinned?.executionGrant ? pinned.credentialBindingId : undefined;
@@ -1052,6 +1064,7 @@ async function runStage(input: {
         !(error instanceof MissingReviewableOutputError) &&
         !(error instanceof SourcePreservationError) &&
         !(error instanceof ExecutionBudgetExhaustedError) &&
+        !(error instanceof McpAdapterUnavailableError) &&
         !unsafeCredentialCleanup &&
         !(error instanceof Error && error.name === "ScopedRunCredentialUnavailableError") &&
         !(

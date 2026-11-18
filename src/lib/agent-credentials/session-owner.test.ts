@@ -277,6 +277,10 @@ describe("Codex subscription auth reload", () => {
     ]);
     expect(sandbox.calls).toEqual([
       expect.objectContaining({
+        cmd: "sh",
+        args: ["-c", expect.any(String), "wallie-codex-config", "/etc/codex"],
+      }),
+      expect.objectContaining({
         cmd: "mkdir",
         args: ["-m", "700", expect.stringMatching(/^\/tmp\/wallie-codex-/)],
       }),

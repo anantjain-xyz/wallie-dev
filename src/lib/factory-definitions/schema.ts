@@ -4,6 +4,13 @@ import { agentConfigValueSchemas } from "@/lib/agent-config/contracts";
 import { MAX_FACTORY_SKILL_REVISIONS } from "@/lib/factory-skills/contracts";
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import {
+  factoryMcpManifestSchema,
+  MAX_MCP_BINDINGS,
+  MAX_MCP_OPERATIONS,
+  mcpBindingSourceSchema,
+  mcpManifestScopeIds,
+} from "@/lib/factory-mcp/manifest";
+import {
   pipelineApproversSchema,
   pipelineOperatingRulesSchema,
   pipelineStageFields,
@@ -103,6 +110,7 @@ export const serialFactoryDefinitionSchema = z
     deliveryPolicy: optionalReferenceSchema,
     skills: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS).default([]),
     tools: z.array(referenceSchema).default([]),
+    mcpBindings: z.array(mcpBindingSourceSchema).max(MAX_MCP_BINDINGS).optional(),
     operatingRulesMd: pipelineOperatingRulesSchema
       .default("")
       .refine(isFactoryDefinitionText, validText),
@@ -124,6 +132,7 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     deliveryPolicy: true,
     skills: true,
     tools: true,
+    mcpBindings: true,
     implementationAgent: true,
   })
   .extend({
@@ -135,7 +144,8 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     executionPolicyRevisionId: stableUuid.nullable(),
     deliveryPolicyRevisionId: stableUuid.nullable(),
     skillIds: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS),
-    toolIds: z.array(referenceSchema),
+    toolIds: z.array(referenceSchema).max(MAX_MCP_OPERATIONS),
+    mcpManifest: factoryMcpManifestSchema.optional(),
     operatingRuleStageIds: z.array(stableUuid),
     stages: z.array(stageSchema.extend({ previousStageIds: z.array(stableUuid) })).min(1),
   })
@@ -149,6 +159,8 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
         repositoryId,
         writableRepositoryIds,
         readContextRepositoryIds,
+        mcpManifest,
+        toolIds,
       },
       context,
     ) => {
@@ -166,6 +178,27 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
           path: ["credentialBindingId"],
           message:
             "A credential binding requires a service execution grant and an implementation agent revision.",
+        });
+      }
+      if (
+        mcpManifest &&
+        (!executionGrant || mcpManifest.agentId !== implementationAgent?.agentId)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["mcpManifest"],
+          message: "MCP bindings must use the pinned implementation agent and execution grant.",
+        });
+      }
+      const scopes = mcpManifestScopeIds(mcpManifest?.servers ?? []);
+      if (
+        toolIds.length !== scopes.length ||
+        toolIds.some((scope, index) => scope !== scopes[index])
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["toolIds"],
+          message: "MCP operation scopes must match the pinned manifest.",
         });
       }
       const seen = new Set([repositoryId.toLowerCase()]);

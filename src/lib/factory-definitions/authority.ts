@@ -9,6 +9,7 @@ import { getEnabledSandboxProviders } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 import type { CompiledFactoryDefinition } from "./compiler";
+import { loadFactoryMcpCatalog, type FactoryMcpCatalogSelection } from "./mcp-catalog";
 import type { FactoryDefinitionCatalog } from "./references";
 
 type AdminClient = SupabaseClient<Database>;
@@ -64,7 +65,8 @@ export async function loadFactoryDefinitionCatalog(
     factoryId,
     agentPromptRevisionId,
     skillRevisionIds,
-  }: {
+    ...mcpSelection
+  }: FactoryMcpCatalogSelection & {
     workspaceId: string;
     factoryId: string;
     agentPromptRevisionId?: string;
@@ -79,6 +81,7 @@ export async function loadFactoryDefinitionCatalog(
     approvers,
     agentPrompts,
     skillRevisions,
+    mcpCatalog,
   ] = await Promise.all([
     collectCatalogRows((from, to) =>
       admin
@@ -118,6 +121,7 @@ export async function loadFactoryDefinitionCatalog(
     ),
     loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
     loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? []),
+    loadFactoryMcpCatalog(admin, { workspaceId, factoryId, ...mcpSelection }),
   ]);
   return {
     workspaceId,
@@ -145,7 +149,7 @@ export async function loadFactoryDefinitionCatalog(
       }),
     })),
     skills: skillRevisions.map(({ id }) => ({ id, workspaceId })),
-    tools: [],
+    ...mcpCatalog,
     sandboxProviders: getEnabledSandboxProviders(),
   };
 }

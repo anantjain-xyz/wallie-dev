@@ -13,6 +13,7 @@ export default async function RunInspectorPage({
     <RunInspector
       artifact={data.artifact}
       credential={data.credential}
+      mcp={data.mcp}
       initialNow={new Date().toISOString()}
       run={data.run}
       skills={data.skills}

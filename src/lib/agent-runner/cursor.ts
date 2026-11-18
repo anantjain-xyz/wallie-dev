@@ -9,6 +9,33 @@ import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-crede
 import { ToolEventTracker } from "./tool-event-tracker";
 import { DEFAULT_CURSOR_MODEL } from "./types";
 
+export const cursorEmptyMcpCheck = `
+const { execFileSync } = require('node:child_process');
+const { existsSync, readFileSync } = require('node:fs');
+const { dirname, join } = require('node:path');
+try {
+  const files = new Set(execFileSync('git', [
+    'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ':(glob)**/.cursor/mcp.json',
+  ], { encoding: 'utf8' }).split('\\0').filter(Boolean));
+  for (let directory = process.cwd(); ; directory = dirname(directory)) {
+    files.add(join(directory, '.cursor', 'mcp.json'));
+    if (directory === dirname(directory)) break;
+  }
+  for (const file of files) {
+    if (existsSync(file)) {
+      const config = JSON.parse(readFileSync(file, 'utf8'));
+      const servers = config?.mcpServers;
+      if (!config || typeof config !== 'object' || Array.isArray(config) ||
+          Object.keys(config).some((key) => key !== 'mcpServers') ||
+          (servers !== undefined && (!servers || typeof servers !== 'object' ||
+            Array.isArray(servers) || Object.keys(servers).length > 0))) throw new Error();
+    }
+  }
+} catch {
+  process.stderr.write('Wallie requires an empty Cursor MCP configuration for this run.\\n');
+  process.exit(1);
+}`;
+
 export interface CursorRunnerOptions {
   /** Pre-resolved credentials; session callers use loadCredential. */
   credential?: CursorCredential;
@@ -58,8 +85,11 @@ export class CursorRunner implements AgentRunner {
     ];
     if (input.continueSessionId) args.push("--resume", input.continueSessionId);
     const command = [
+      "set -e",
+      `node -e ${shellQuote(cursorEmptyMcpCheck)}`,
       'cursor_bin="$(command -v cursor-agent || true)"',
       '[ -n "$cursor_bin" ] || cursor_bin="$HOME/.local/bin/cursor-agent"',
+      `export HOME=${shellQuote(directory)} CURSOR_CONFIG_DIR=${shellQuote(`${directory}/.cursor`)} XDG_CONFIG_HOME=${shellQuote(`${directory}/config`)} XDG_DATA_HOME=${shellQuote(`${directory}/data`)} XDG_CACHE_HOME=${shellQuote(`${directory}/cache`)}`,
       `"$cursor_bin" ${args.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`,
     ].join("\n");
 
