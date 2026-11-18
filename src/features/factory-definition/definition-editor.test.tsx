@@ -13,9 +13,11 @@ import type {
   FactoryEditorSnapshot,
 } from "@/lib/factory-definitions/editor-contracts";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import type { FactorySecretBindingResponse } from "@/lib/factory-secret-bindings/contracts";
 
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const endpoint = `/api/workspaces/${id(1)}/factory-definition`;
+const credentialsEndpoint = `/api/workspaces/${id(1)}/factories/${id(9)}/secret-bindings`;
 const createdAt = "2026-11-15T20:00:00Z";
 
 const source: SerialFactoryDefinition = {
@@ -62,6 +64,9 @@ function document(
     writableRepositories,
     readContextRepositories,
     executionPolicy,
+    executionGrant,
+    credentialBindingId,
+    implementationAgent,
     deliveryPolicy,
     skills,
     tools,
@@ -90,6 +95,18 @@ function document(
       ...(writableRepositories ? { writableRepositoryIds: writableRepositories } : {}),
       ...(readContextRepositories ? { readContextRepositoryIds: readContextRepositories } : {}),
       executionPolicyRevisionId: executionPolicy,
+      ...(executionGrant ? { executionGrant } : {}),
+      ...(credentialBindingId ? { credentialBindingId } : {}),
+      ...(implementationAgent
+        ? {
+            implementationAgent: {
+              agentId: id(30),
+              promptRevisionId: implementationAgent,
+              promptMd: "Build the approved task.",
+              promptSha256: "a".repeat(64),
+            },
+          }
+        : {}),
       deliveryPolicyRevisionId: deliveryPolicy,
       skillIds: skills,
       toolIds: tools,
@@ -145,11 +162,13 @@ function setup({
   initialDraftPasses = true,
   initialDraft = draft,
   repositories = [{ id: id(3), fullName: "acme/project", isArchived: false }],
+  credentials,
 }: {
   selection?: { draft: string; test: string } | null;
   initialDraftPasses?: boolean;
   initialDraft?: FactoryEditorDocument;
   repositories?: CapabilityRepository[];
+  credentials?: FactorySecretBindingResponse;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: 2,
@@ -164,6 +183,7 @@ function setup({
   );
   const reads: string[] = [];
   const capabilityReads: string[] = [];
+  const credentialReads: string[] = [];
   const tests = new Map<string, CandidateSmokeTest[]>([
     [initialDraft.id, initialDraftPasses ? [receipt(initialDraft, "passed", 41)] : []],
     [previous.id, [receipt(previous, "passed", 42)]],
@@ -171,6 +191,10 @@ function setup({
   let testCount = 50;
   vi.stubGlobal("fetch", async (url: string, options?: RequestInit) => {
     const { pathname, searchParams } = new URL(url, "http://localhost");
+    if (pathname === credentialsEndpoint) {
+      credentialReads.push(url);
+      return Response.json(credentials);
+    }
     if (pathname === `${endpoint}/capability-check`) {
       if (options?.method !== "POST") {
         capabilityReads.push(url);
@@ -284,6 +308,7 @@ function setup({
     requests,
     reads,
     capabilityReads,
+    credentialReads,
     completeTest(targetId: string, status: "passed" | "failed") {
       const list = tests.get(targetId);
       const doc = records.get(targetId);
@@ -309,6 +334,70 @@ function setup({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("shows credential rotation status and saves only the selected binding reference", async () => {
+  const bindingId = id(32);
+  const { requests } = setup({
+    initialDraft: document(6, "draft", {
+      ...source,
+      executionGrant: { id: id(28), version: 1 },
+      executionPolicy: id(29),
+      implementationAgent: id(31),
+    }),
+    credentials: {
+      binding: {
+        id: bindingId,
+        version: 1,
+        status: "ready",
+        materialRevision: 3,
+        rotatedAt: createdAt,
+        secretKey: "FIXTURE_SERVICE_API_KEY",
+      },
+      availableBinding: null,
+      grantMatches: true,
+      eligibleSecrets: [],
+    },
+  });
+  expect(await screen.findByText(/Material revision 3/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Use in working definition" }));
+  fireEvent.click(screen.getByRole("button", { name: "JSON source" }));
+  const json = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Definition JSON" });
+  expect(JSON.parse(json.value)).toEqual({
+    ...source,
+    executionGrant: { id: id(28), version: 1 },
+    executionPolicy: id(29),
+    implementationAgent: id(31),
+    credentialBindingId: bindingId,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Draft saved.");
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.body).toMatchObject({
+    action: "draft",
+    source: { kind: "json" },
+  });
+});
+
+it("uses the upstream provider from the saved OpenCode model for service credentials", async () => {
+  const { credentialReads } = setup({
+    initialDraft: document(6, "draft", {
+      ...source,
+      agent: {
+        ...source.agent,
+        provider: "opencode",
+        model: "openrouter/anthropic/claude-sonnet-4",
+      },
+      executionGrant: { id: id(28), version: 1 },
+      executionPolicy: id(29),
+      implementationAgent: id(31),
+    }),
+    credentials: { binding: null, availableBinding: null, grantMatches: true, eligibleSecrets: [] },
+  });
+  expect(await screen.findByText("openrouter", { exact: true })).toBeVisible();
+  await waitFor(() => expect(credentialReads).toHaveLength(1));
+  const query = new URL(credentialReads[0] ?? "/", "http://localhost").searchParams;
+  expect(query.get("openCodeProviderId")).toBe("openrouter");
 });
 
 it("round-trips source edits through the compiler and publishes the exact saved draft", async () => {

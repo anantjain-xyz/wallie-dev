@@ -5,6 +5,14 @@ import {
   sanitizeRunFailureDiagnostic,
 } from "./failure-diagnostic";
 import { redactRunSensitiveText } from "@/lib/agent-runner/redact-sensitive-text";
+import {
+  isScopedCredentialCleanupError,
+  ScopedCredentialCleanupError,
+} from "@/lib/agent-runner/scoped-credentials";
+import {
+  resolveScopedRunCredential,
+  ScopedRunCredentialUnavailableError,
+} from "@/lib/agent-credentials/scoped-run-credential";
 import { wakeWorker } from "@/lib/worker/wake";
 import { validateCheckpoint } from "@/lib/validation-evidence/service";
 import { prepareValidationPlan, validationPlanInstructions } from "@/lib/validation-evidence/plan";
@@ -37,6 +45,8 @@ import {
   AGENT_PROVIDERS,
   agentProviderSupportsEffort,
   normalizeAgentProviderName,
+  OPENCODE_ZEN_PROVIDER_ID,
+  parseOpenCodeModelId,
   type AgentEffort,
 } from "@/lib/agent-config/contracts";
 import {
@@ -50,6 +60,7 @@ import { createCodexChatGptAuthStore, getCodexCredentialForSession } from "@/lib
 import { getCursorCredentialForSession, markCursorReconnectRequired } from "@/lib/cursor/tokens";
 import { getOpenCodeAuthForSession } from "@/lib/opencode/tokens";
 import { resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
+import { redactSecrets } from "@/lib/sandbox/command";
 import { formatVercelSandboxError, isVercelSandboxApiError } from "@/lib/vercel-sandbox/errors";
 import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
@@ -115,13 +126,6 @@ class MissingReviewableOutputError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MissingReviewableOutputError";
-  }
-}
-
-class ServicePrincipalCredentialUnavailableError extends Error {
-  constructor() {
-    super("An approved service principal credential binding is required to start this run.");
-    this.name = "ServicePrincipalCredentialUnavailableError";
   }
 }
 
@@ -229,6 +233,8 @@ async function runStage(input: {
   let retryCheckpointTimer: ReturnType<typeof setTimeout> | undefined;
   let retryCheckpointController: AbortController | undefined;
   let retainSource = false;
+  let scopedCleanupFailed = false;
+  const checkpointSensitiveValues = new Set<string>();
   const stopSandbox = () => {
     if (!sandbox || retainSource) return;
     const handle = sandbox;
@@ -237,12 +243,32 @@ async function runStage(input: {
         await handle.stop();
       } catch (stopError) {
         console.error("Failed to stop stage sandbox", {
-          error: stopError instanceof Error ? stopError.message : String(stopError),
+          error: redactSecrets(getErrorMessage(stopError, "Sandbox could not be stopped."), [
+            ...checkpointSensitiveValues,
+          ]),
           sessionId: session.id,
         });
       }
     })();
     return sandboxStop;
+  };
+  const discardUnsafeScopedSandbox = async () => {
+    scopedCleanupFailed = true;
+    retainSource = false;
+    // A failed scratch removal overrides the recovery marker for this exact
+    // attempt. The reaper can finish disposal if the immediate stop fails.
+    await Promise.allSettled([
+      stopSandbox(),
+      runId &&
+        admin
+          .from("agent_runs")
+          .update({ source_recovery_required: false })
+          .eq("id", runId)
+          .eq("workspace_id", session.workspace_id)
+          .eq("attempt_count", job.attempt_count)
+          .eq("source_recovery_required", true)
+          .abortSignal(AbortSignal.timeout(5_000)),
+    ]);
   };
   // A hung log iterator may never reach finally. Cancellation initiates stop
   // immediately; the supervisor releases capacity even if stop itself hangs.
@@ -264,7 +290,6 @@ async function runStage(input: {
   let runFailureEventRecorded = false;
   let capture: RunEventCapture | undefined;
   let captureOpen = false;
-  const checkpointSensitiveValues = new Set<string>();
   try {
     const gitInputPromise = loadPinnedSessionJobGitInput({
       admin,
@@ -360,7 +385,10 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    if (pinned?.executionGrant) throw new ServicePrincipalCredentialUnavailableError();
+    const scopedBindingId = pinned?.executionGrant ? pinned.credentialBindingId : undefined;
+    if (pinned?.executionGrant && !scopedBindingId) {
+      throw new ScopedRunCredentialUnavailableError();
+    }
 
     const [agentPrompt, skillInstructions] = await Promise.all([
       loadRunAgentPrompt(admin, {
@@ -678,7 +706,7 @@ async function runStage(input: {
         prompt,
         checkoutSha,
         predecessors: predecessorInputs.predecessors,
-        credentialOwnerMemberId: session.creator_member_id,
+        credentialOwnerMemberId: scopedBindingId ? null : session.creator_member_id,
         workerRuntime: input.workerRuntime ?? "node",
         ...(agentProviderSupportsEffort(provider) ? { effort } : {}),
         maxTurns,
@@ -689,7 +717,8 @@ async function runStage(input: {
     }
     throwIfAborted(signal);
     // Runners load credentials after their own nonsecret remote setup, directly
-    // before delivering the secret. Construction never decrypts personal keys.
+    // before delivering the secret. Construction never decrypts credentials.
+    const credentialRunId = runId;
     const runner = createSessionAgentRunner({
       admin,
       effort,
@@ -697,6 +726,19 @@ async function runStage(input: {
       model: config.model,
       provider,
       session,
+      loadScopedCredential: scopedBindingId
+        ? () =>
+            resolveScopedRunCredential({
+              admin,
+              attemptCount: job.attempt_count,
+              bindingId: scopedBindingId,
+              jobId: job.id,
+              provider,
+              runId: credentialRunId,
+              signal,
+              workspaceId: session.workspace_id,
+            })
+        : undefined,
     });
     const sensitiveValues = () => [
       prompt,
@@ -722,6 +764,7 @@ async function runStage(input: {
               ...((await readCheckpointSensitiveValues?.(checkpointSignal)) ?? []),
               ...sensitiveValues(),
             ],
+            ...(scopedBindingId ? { scopedCredential: true } : {}),
             signal: checkpointSignal,
             workspaceId: session.workspace_id,
           })
@@ -734,7 +777,11 @@ async function runStage(input: {
                 messageMd: "Saved committed source for Retry.",
               });
             })
-            .catch(() => {
+            .catch(async (error: unknown) => {
+              if (isScopedCredentialCleanupError(error)) {
+                await discardUnsafeScopedSandbox();
+                return;
+              }
               if (!checkpointSignal.aborted) {
                 console.warn("Could not save committed source for Retry.", { jobId: job.id });
               }
@@ -755,6 +802,7 @@ async function runStage(input: {
       prompt,
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
+      ...(scopedBindingId ? { scopedCredential: true } : {}),
       secrets: installationToken ? [installationToken] : undefined,
       onCheckpointSensitiveValues: (read) => {
         readCheckpointSensitiveValues = read;
@@ -766,9 +814,11 @@ async function runStage(input: {
       signal,
       sessionId: session.id,
     })) {
+      if (scopedCleanupFailed) throw new ScopedCredentialCleanupError();
       const sourceRecoveryRequired =
         (event.type === "completion" && event.taskComplete) ||
-        (event.type === "usage" && event.sourceRecoveryRequired);
+        // Scoped runners verify credential cleanup before terminal success.
+        (event.type === "usage" && event.sourceRecoveryRequired && !scopedBindingId);
       if (sourceRecoveryRequired && !retainSource) {
         // Protect the only source copy synchronously, before usage persistence
         // or any other completion bookkeeping can fail or wait past the deadline.
@@ -781,6 +831,9 @@ async function runStage(input: {
           .eq("status", "running")
           .select("id")
           .abortSignal(AbortSignal.timeout(5_000));
+        // The retry scanner can fail while this write is in flight. The error
+        // path clears the exact marker again after the pending write settles.
+        if (scopedCleanupFailed) throw new ScopedCredentialCleanupError();
         // A DB outage must still permit capture into available private Storage.
         // The running-only guard serializes retention with terminal cleanup.
         if (!retentionError && !retained?.length) {
@@ -831,6 +884,7 @@ async function runStage(input: {
       }
     }
 
+    if (scopedCleanupFailed) throw new ScopedCredentialCleanupError();
     throwIfAborted(signal);
     await recordSessionRunUsage(admin, {
       attemptCount: job.attempt_count,
@@ -872,6 +926,7 @@ async function runStage(input: {
         baseSha: sourceBase,
         signal,
         sensitiveValues: sensitiveValues(),
+        ...(scopedBindingId ? { scopedCredential: true } : {}),
       });
       checkpoint = await validateCheckpoint({
         ...(pinned ? { pinnedDeliveryPolicyRevisionId: pinned.deliveryPolicyRevisionId } : {}),
@@ -882,6 +937,7 @@ async function runStage(input: {
         sandbox,
         checkpoint,
         secrets: sensitiveValues(),
+        ...(scopedBindingId ? { scopedCredential: true } : {}),
         signal,
       });
       const prepared = await prepareSourceDelivery({
@@ -908,7 +964,12 @@ async function runStage(input: {
       // Preparation clears the recovery marker in the same database transaction
       // that records the durable source, before any publication or cleanup.
     } catch (error) {
-      if (error instanceof ExecutionOwnershipLostError || signal?.aborted) throw error;
+      if (
+        error instanceof ExecutionOwnershipLostError ||
+        isScopedCredentialCleanupError(error) ||
+        signal?.aborted
+      )
+        throw error;
       throw new SourcePreservationError(
         !retainSource,
         error instanceof UnsafeRuntimeCheckpointError
@@ -922,6 +983,7 @@ async function runStage(input: {
                 : undefined,
       );
     }
+    if (scopedCleanupFailed) throw new ScopedCredentialCleanupError();
     throwIfAborted(signal);
 
     const published = await publishArtifact({
@@ -938,6 +1000,8 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
   } catch (error) {
+    const unsafeCredentialCleanup = isScopedCredentialCleanupError(error);
+    if (unsafeCredentialCleanup) await discardUnsafeScopedSandbox();
     if (
       capture &&
       captureOpen &&
@@ -973,34 +1037,38 @@ async function runStage(input: {
     if (error instanceof Error && error.name === "ExecutionOwnershipLostError") {
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
-    const result = await failPipelineJob(
-      admin,
-      job,
-      getErrorMessage(error, "Stage generation failed"),
-      {
-        maxRetries: pinned?.agent.maxRetries,
-        runId,
-        // Source+intent preparation may have committed despite a lost reply.
-        // The database guard serializes with that transaction before failing.
-        preservePublication: error instanceof SourcePreservationError,
-        retry:
-          !retainSource &&
-          !(error instanceof MissingReviewableOutputError) &&
-          !(error instanceof SourcePreservationError) &&
-          !(error instanceof ExecutionBudgetExhaustedError) &&
-          !(error instanceof ServicePrincipalCredentialUnavailableError) &&
-          !(
-            pinned?.executionGrant &&
-            error &&
-            typeof error === "object" &&
-            "code" in error &&
-            error.code === "42501"
-          ) &&
-          !isSandboxConnectionSetupError(error),
-      },
-    );
+    const failureMessage = redactSecrets(getErrorMessage(error, "Stage generation failed"), [
+      installationToken,
+      ...checkpointSensitiveValues,
+    ]);
+    const result = await failPipelineJob(admin, job, failureMessage, {
+      maxRetries: pinned?.agent.maxRetries,
+      runId,
+      // Source+intent preparation may have committed despite a lost reply.
+      // The database guard serializes with that transaction before failing.
+      preservePublication: error instanceof SourcePreservationError,
+      retry:
+        !retainSource &&
+        !(error instanceof MissingReviewableOutputError) &&
+        !(error instanceof SourcePreservationError) &&
+        !(error instanceof ExecutionBudgetExhaustedError) &&
+        !unsafeCredentialCleanup &&
+        !(error instanceof Error && error.name === "ScopedRunCredentialUnavailableError") &&
+        !(
+          pinned?.executionGrant &&
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === "42501"
+        ) &&
+        !isSandboxConnectionSetupError(error),
+    });
     if (result === "error" && runId && !runFailureEventRecorded) {
-      await persistRunFailureDiagnostic(admin, { error, runId, workspaceId: session.workspace_id });
+      await persistRunFailureDiagnostic(admin, {
+        error: failureMessage,
+        runId,
+        workspaceId: session.workspace_id,
+      });
     }
     return { jobId: job.id, processed: true, result, runId };
   } finally {
@@ -1315,13 +1383,25 @@ function createSessionAgentRunner(input: {
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
+  loadScopedCredential?: () => Promise<string>;
 }): AgentRunner {
+  const { loadScopedCredential } = input;
   switch (input.provider) {
     case "codex":
       return createAgentRunner("codex", {
         codex: {
-          chatGptAuthStore: createCodexChatGptAuthStore(input.admin, input.session),
-          loadCredential: () => getCodexCredentialForSession(input.admin, input.session),
+          ...(loadScopedCredential
+            ? {
+                loadCredential: async () => ({
+                  type: "platform_api_key" as const,
+                  expiresAt: null,
+                  secret: await loadScopedCredential(),
+                }),
+              }
+            : {
+                chatGptAuthStore: createCodexChatGptAuthStore(input.admin, input.session),
+                loadCredential: () => getCodexCredentialForSession(input.admin, input.session),
+              }),
           effort: input.effort,
           model: input.model,
         },
@@ -1329,7 +1409,9 @@ function createSessionAgentRunner(input: {
     case "claude-code":
       return createAgentRunner("claude-code", {
         claudeCode: {
-          loadCredential: () => getClaudeCodeCredentialForSession(input.admin, input.session),
+          loadCredential: loadScopedCredential
+            ? async () => ({ secret: await loadScopedCredential() })
+            : () => getClaudeCodeCredentialForSession(input.admin, input.session),
           effort: input.effort,
           maxTurns: input.maxTurns,
           model: input.model,
@@ -1338,26 +1420,46 @@ function createSessionAgentRunner(input: {
     case "cursor":
       return createAgentRunner("cursor", {
         cursor: {
-          loadCredential: () => getCursorCredentialForSession(input.admin, input.session),
           model: input.model,
-          onAuthenticationFailure: (reason, credential) =>
-            markCursorReconnectRequired(
-              input.admin,
-              credential.userId,
-              credential.generation,
-              reason,
-            ),
+          ...(loadScopedCredential
+            ? {
+                loadCredential: async () => ({
+                  scope: "factory" as const,
+                  secret: await loadScopedCredential(),
+                }),
+              }
+            : {
+                loadCredential: () => getCursorCredentialForSession(input.admin, input.session),
+                onAuthenticationFailure: (reason, credential) =>
+                  markCursorReconnectRequired(
+                    input.admin,
+                    credential.userId,
+                    credential.generation,
+                    reason,
+                  ),
+              }),
         },
       });
     case "opencode":
       return createAgentRunner("opencode", {
         openCode: {
-          loadAuth: () =>
-            getOpenCodeAuthForSession(
-              input.admin,
-              input.session,
-              input.model ?? DEFAULT_OPENCODE_MODEL,
-            ),
+          loadAuth: loadScopedCredential
+            ? async () => {
+                const providerId = parseOpenCodeModelId(
+                  input.model ?? DEFAULT_OPENCODE_MODEL,
+                )?.providerId;
+                if (!providerId) throw new ScopedRunCredentialUnavailableError();
+                const key = { secret: await loadScopedCredential() };
+                return providerId === OPENCODE_ZEN_PROVIDER_ID
+                  ? { credential: key }
+                  : { providerCredentials: { [providerId]: key } };
+              }
+            : () =>
+                getOpenCodeAuthForSession(
+                  input.admin,
+                  input.session,
+                  input.model ?? DEFAULT_OPENCODE_MODEL,
+                ),
           model: input.model,
         },
       });

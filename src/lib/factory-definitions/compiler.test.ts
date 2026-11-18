@@ -271,6 +271,51 @@ describe("compileFactoryDefinition", () => {
     ).toEqual(compiled);
   });
 
+  it("keeps only the opaque service binding reference in the canonical definition", () => {
+    const bindingId = "c5410000-0000-4000-8000-000000000018";
+    const promptMd = "Review the workspace task.";
+    const references = {
+      ...catalog,
+      agentPromptRevisions: [
+        {
+          id: promptRevisionId,
+          workspaceId,
+          agentId,
+          promptRevisionId,
+          promptMd,
+          promptSha256: createHash("sha256").update(promptMd, "utf8").digest("hex"),
+        },
+      ],
+    };
+    const source = {
+      ...candidate(),
+      implementationAgent: promptRevisionId,
+      executionGrant: { id: agentId, version: 1 },
+      credentialBindingId: bindingId.toUpperCase(),
+    };
+    const compiled = compile(source, references);
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    expect(compiled.bundle.credentialBindingId).toBe(bindingId);
+    expect(factoryDefinitionFromBundle(compiled.bundle).credentialBindingId).toBe(bindingId);
+    expect(
+      recompileStoredFactoryDefinition(
+        compiled.definitionJson,
+        compiled.canonicalDigest,
+        references,
+      ),
+    ).toEqual(compiled);
+    expect(compile({ ...source, credentialValue: "synthetic-secret" }, references)).toMatchObject({
+      ok: false,
+    });
+    expect(compile({ ...source, implementationAgent: undefined }, references)).toMatchObject({
+      ok: false,
+    });
+    expect(compile({ ...source, executionGrant: undefined }, references)).toMatchObject({
+      ok: false,
+    });
+  });
+
   it("rejects missing or foreign agent prompts and caller-supplied prompt authority", () => {
     const promptMd = "Trusted instructions";
     const foreign = {

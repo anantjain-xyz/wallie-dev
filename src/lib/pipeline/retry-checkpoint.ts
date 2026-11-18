@@ -28,6 +28,7 @@ export async function saveRetryCheckpoint(
   input: RetryCheckpointContext & {
     deadlineAt: string;
     sensitiveValues: () => Promise<readonly string[]>;
+    scopedCredential?: true;
     signal: AbortSignal;
     workspaceId: string;
   },
@@ -46,6 +47,7 @@ export async function saveRetryCheckpoint(
     baseSha,
     headSha,
     sensitiveValues,
+    scopedCredential: input.scopedCredential,
     signal,
   });
   if (checkpoint.kind !== "bundle") return false;

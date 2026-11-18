@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Tables } from "@/lib/supabase/database.types";
 import {
+  assertSessionFactoryCredentialReady,
   assertSessionFirstRunReady,
   cancelWallieRun,
   createSessionWithFirstJob,
@@ -12,6 +13,47 @@ import {
   retryWallieRun,
 } from "@/lib/wallie/service";
 import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
+
+describe("factory credential readiness", () => {
+  const context = { workspaceId: "workspace", factoryId: "factory" };
+  const definition = {
+    executionGrant: { id: "grant", version: 2 },
+    credentialBindingId: "binding",
+    implementationAgent: { agentId: "agent" },
+    agent: { provider: "codex", model: "gpt-5.5" },
+  } as Parameters<typeof assertSessionFactoryCredentialReady>[0]["definition"];
+
+  it("checks only the pinned tuple for a grant-backed run", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: "ready", error: null });
+    const admin = { rpc } as never;
+    await assertSessionFactoryCredentialReady({ ...context, admin, definition: null });
+    expect(rpc).not.toHaveBeenCalled();
+    await assertSessionFactoryCredentialReady({ ...context, admin, definition });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("check_factory_credential_binding", {
+      p_workspace_id: "workspace",
+      p_factory_id: "factory",
+      p_binding_id: "binding",
+      p_execution_grant_id: "grant",
+      p_execution_grant_version: 2,
+      p_factory_agent_id: "agent",
+      p_agent_provider: "codex",
+      p_agent_model: "gpt-5.5",
+    });
+  });
+
+  it.each(["missing", "revoked", "grant_unavailable"])(
+    "blocks when the binding is %s",
+    async (data) => {
+      const admin = { rpc: vi.fn().mockResolvedValue({ data, error: null }) } as never;
+      await expect(
+        assertSessionFactoryCredentialReady({ ...context, admin, definition }),
+      ).rejects.toMatchObject({
+        code: "factory_credential_unavailable",
+        statusCode: 422,
+      });
+    },
+  );
+});
 
 const mocks = vi.hoisted(() => ({
   assertCurrentSandboxCapabilityCheck: vi.fn(),

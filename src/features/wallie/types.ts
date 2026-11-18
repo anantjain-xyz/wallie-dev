@@ -21,6 +21,7 @@ export type WallieActionErrorCode =
   | "session_not_runnable"
   | "run_not_found"
   | "run_not_retryable"
+  | "factory_credential_unavailable"
   | "execution_budget_exhausted";
 
 export type WallieBlockingReason = {

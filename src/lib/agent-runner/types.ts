@@ -98,6 +98,8 @@ export interface AgentRunnerStartInput {
   continueSessionId?: string;
   /** Agent run row id, when the provider needs to associate work with a persisted run. */
   runId?: string;
+  /** Delivers a factory API key via private files with bounded cleanup. */
+  scopedCredential?: true;
   /**
    * Extra secret values to strip from streamed events before persistence.
    * The sandbox GitHub installation token (`GH_TOKEN`) belongs here so tool

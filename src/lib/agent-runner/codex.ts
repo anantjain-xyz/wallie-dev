@@ -13,6 +13,7 @@ import type { AgentEffort } from "@/lib/agent-config/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
 import { normalizeMeasuredUsage } from "./usage";
+import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
 
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
@@ -52,13 +53,15 @@ export class CodexRunner implements AgentRunner {
   }
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
-    const safety = new AgentOutputSafety(input.secrets, input.onSensitiveValue);
-    return safety.events(this.startUnsafe(input, safety), input.signal);
+    return withRunnerCredentials(input, (safety, material) =>
+      this.startUnsafe(input, safety, material),
+    );
   }
 
   private async *startUnsafe(
     input: AgentRunnerStartInput,
     safety: AgentOutputSafety,
+    material?: ScopedRunnerMaterial,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
@@ -87,6 +90,9 @@ export class CodexRunner implements AgentRunner {
     if (!credential?.secret) throw new Error("CodexRunner requires a Codex credential.");
     safety.addSecret(credential.secret);
     input.signal?.throwIfAborted();
+    if (material && credential.type !== "platform_api_key") {
+      throw new Error("A factory Codex binding requires a platform API key.");
+    }
     if (credential.type === "chatgpt_auth_json") {
       const store = this.options.chatGptAuthStore;
       if (!store) {
@@ -119,16 +125,25 @@ export class CodexRunner implements AgentRunner {
       finalOutputFile,
     );
 
-    const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
+    const credentialEnv = codexCredentialEnv(credential);
+    const options = {
       cwd: sandbox.repoPath,
       env: {
         CI: "1",
         CODEX_HOME: codexHome,
         ...WALLIE_GIT_IDENTITY_ENV,
-        ...codexCredentialEnv(credential),
       },
       signal: input.signal,
-    });
+    };
+    const proc = material
+      ? await material.exec("bash", ["-lc", shellCmd], options, {
+          path: `${directory}/credential.env`,
+          values: credentialEnv,
+        })
+      : await sandbox.exec("bash", ["-lc", shellCmd], {
+          ...options,
+          env: { ...options.env, ...credentialEnv },
+        });
 
     const errors: string[] = [];
     const tools = new ToolEventTracker();

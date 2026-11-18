@@ -14,6 +14,7 @@ import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-i
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type {
   RunInspectorArtifact,
+  RunInspectorCredential,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
@@ -22,6 +23,7 @@ import { workspaceRunsPath } from "@/lib/routes";
 export function RunInspector({
   run,
   artifact,
+  credential,
   skills,
   workspaceId,
   workspaceSlug,
@@ -30,6 +32,7 @@ export function RunInspector({
 }: {
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
+  credential?: RunInspectorCredential | null;
   skills: RunInspectorSkills;
   workspaceId: string;
   workspaceSlug: string;
@@ -84,6 +87,27 @@ export function RunInspector({
               label="Agent"
               value={`${RUN_PROVIDER_LABELS[run.modelProvider] ?? run.modelProvider} · ${run.modelName}`}
             />
+            {credential && (
+              <>
+                <MetadataItem
+                  label="Service credential binding"
+                  value={
+                    <span className="break-all">
+                      {credential.bindingId} · v{credential.bindingVersion}
+                    </span>
+                  }
+                />
+                <MetadataItem
+                  label="Credential owner"
+                  value={<span className="break-all">{credential.servicePrincipalId}</span>}
+                />
+                <MetadataItem label="Secret revision" value={credential.materialRevision} />
+                <MetadataItem
+                  label="Credential resolved"
+                  value={<TimeDisplay initialNow={initialNow} value={credential.resolvedAt} />}
+                />
+              </>
+            )}
             <MetadataItem
               label="Created"
               value={<TimeDisplay initialNow={initialNow} value={run.createdAt} />}
