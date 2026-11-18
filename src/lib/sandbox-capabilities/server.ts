@@ -42,6 +42,7 @@ type StartedSandboxCapabilityCheck = {
 
 export type FactoryCapabilityCandidate = {
   definitionDigest: string;
+  executionIdentity: "human" | "service-principal";
   sandboxProvider: SandboxProvider;
   agent: { provider: AgentProvider; model: string };
 };
@@ -350,14 +351,16 @@ export async function completeSandboxCapabilityCheck(input: {
       );
     }
     const installationToken = await mintInstallationToken(input.admin, input.repository);
-    if (provider === "codex") {
-      await getCodexCredentialForUser(input.admin, input.userId);
-    } else if (provider === "cursor") {
-      await getCursorCredentialForUser(input.admin, input.userId);
-    } else if (provider === "opencode") {
-      await getOpenCodeAuthForUser(input.admin, input.userId, model);
-    } else {
-      await getClaudeCodeCredentialForUser(input.admin, input.userId);
+    if (candidate?.executionIdentity !== "service-principal") {
+      if (provider === "codex") {
+        await getCodexCredentialForUser(input.admin, input.userId);
+      } else if (provider === "cursor") {
+        await getCursorCredentialForUser(input.admin, input.userId);
+      } else if (provider === "opencode") {
+        await getOpenCodeAuthForUser(input.admin, input.userId, model);
+      } else {
+        await getClaudeCodeCredentialForUser(input.admin, input.userId);
+      }
     }
 
     sandbox = await createWorkspaceSessionSandbox(input.admin, {

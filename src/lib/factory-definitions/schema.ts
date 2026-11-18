@@ -31,6 +31,15 @@ const referenceSchema = z
 const optionalReferenceSchema = referenceSchema
   .nullish()
   .transform((reference) => reference ?? null);
+const executionGrantSchema = z
+  .object({
+    id: z
+      .string()
+      .uuid()
+      .transform((id) => id.toLowerCase()),
+    version: z.number().int().positive().safe(),
+  })
+  .strict();
 const agentSchema = z
   .object({
     provider: agentConfigValueSchemas.agent_provider,
@@ -85,6 +94,7 @@ export const serialFactoryDefinitionSchema = z
       .transform((id) => id.toLowerCase())
       .optional(),
     executionPolicy: optionalReferenceSchema,
+    executionGrant: executionGrantSchema.optional(),
     deliveryPolicy: optionalReferenceSchema,
     skills: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS).default([]),
     tools: z.array(referenceSchema).default([]),
@@ -124,22 +134,41 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     operatingRuleStageIds: z.array(stableUuid),
     stages: z.array(stageSchema.extend({ previousStageIds: z.array(stableUuid) })).min(1),
   })
-  .superRefine(({ repositoryId, writableRepositoryIds, readContextRepositoryIds }, context) => {
-    const seen = new Set([repositoryId.toLowerCase()]);
-    for (const [field, ids] of [
-      ["writableRepositoryIds", writableRepositoryIds ?? []],
-      ["readContextRepositoryIds", readContextRepositoryIds ?? []],
-    ] as const) {
-      ids.forEach((id, index) => {
-        const normalizedId = id.toLowerCase();
-        if (seen.has(normalizedId)) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [field, index],
-            message: "Use each repository only once across the factory's repository bindings.",
-          });
-        }
-        seen.add(normalizedId);
-      });
-    }
-  });
+  .superRefine(
+    (
+      {
+        executionGrant,
+        executionPolicyRevisionId,
+        repositoryId,
+        writableRepositoryIds,
+        readContextRepositoryIds,
+      },
+      context,
+    ) => {
+      if (executionGrant && (!executionPolicyRevisionId || writableRepositoryIds?.length)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["executionGrant"],
+          message:
+            "A service execution grant requires one writable repository and an execution policy revision.",
+        });
+      }
+      const seen = new Set([repositoryId.toLowerCase()]);
+      for (const [field, ids] of [
+        ["writableRepositoryIds", writableRepositoryIds ?? []],
+        ["readContextRepositoryIds", readContextRepositoryIds ?? []],
+      ] as const) {
+        ids.forEach((id, index) => {
+          const normalizedId = id.toLowerCase();
+          if (seen.has(normalizedId)) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [field, index],
+              message: "Use each repository only once across the factory's repository bindings.",
+            });
+          }
+          seen.add(normalizedId);
+        });
+      }
+    },
+  );

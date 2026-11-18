@@ -77,6 +77,7 @@ const credentials = { projectId: "prj_123", teamId: "team_123", token: "vca_secr
 const candidate: FactoryCapabilityCandidate = {
   agent: { provider: "opencode", model: "opencode/gpt-5.6-sol" },
   definitionDigest: "a".repeat(64),
+  executionIdentity: "human",
   sandboxProvider: "e2b",
 };
 const repository = {
@@ -355,6 +356,48 @@ describe("completeSandboxCapabilityCheck", () => {
           ["agent_model", "opencode/gpt-5.6-sol"],
         ]),
       );
+    }
+  });
+
+  it("checks a service principal candidate's repository and sandbox without a personal credential", async () => {
+    const { admin, filters } = adminMock();
+    const result = await completeSandboxCapabilityCheck({
+      admin: admin as never,
+      checkId: "check-1",
+      repository,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      candidate: {
+        ...candidate,
+        executionIdentity: "service-principal",
+        sandboxProvider: "vercel",
+        connectionRevision: "revision-1",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(mocked.getCodexCredentialForUser).not.toHaveBeenCalled();
+    expect(mocked.getClaudeCodeCredentialForUser).not.toHaveBeenCalled();
+    expect(mocked.getCursorCredentialForUser).not.toHaveBeenCalled();
+    expect(mocked.getOpenCodeAuthForUser).not.toHaveBeenCalled();
+    expect(mocked.octokitRequest).toHaveBeenCalledWith(
+      "POST /app/installations/{installation_id}/access_tokens",
+      expect.objectContaining({ repositories: ["app"], permissions: { contents: "read" } }),
+    );
+    expect(mocked.loadRequiredWorkspaceSandboxConnection).toHaveBeenCalledWith(
+      admin,
+      "workspace-1",
+      "vercel",
+    );
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "opencode", repoFullName: repository.full_name }),
+    );
+    expect(mocked.probeSandboxCapabilities).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "opencode", sandboxProvider: "vercel" }),
+    );
+    expect(filters).toHaveLength(2);
+    for (const filter of filters) {
+      expect(filter.eq).toContainEqual(["factory_definition_digest", candidate.definitionDigest]);
     }
   });
 

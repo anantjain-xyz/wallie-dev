@@ -7,6 +7,7 @@ import {
   completeSandboxCapabilityCheck,
   getLatestSandboxCapabilityCheck,
   startSandboxCapabilityCheck,
+  type FactoryCapabilityCandidate,
 } from "@/lib/sandbox-capabilities/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -71,9 +72,10 @@ export async function startFactoryDefinitionCapabilityCheck(
     const { agent, sandboxProvider } = bundle;
     const repositoryId = selectCheckRepository(bundle, scope.repositoryId);
     if (!repositoryId) return unavailableRepository();
-    const candidate = {
+    const candidate: FactoryCapabilityCandidate = {
       agent: { provider: agent.provider, model: agent.model },
       definitionDigest: stored.canonical_digest,
+      executionIdentity: bundle.executionGrant ? "service-principal" : "human",
       sandboxProvider,
     };
     const { check, repository } = await startSandboxCapabilityCheck({

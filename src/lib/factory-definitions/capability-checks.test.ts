@@ -9,6 +9,7 @@ import {
 } from "./capability-checks";
 import { compileFactoryDefinition } from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
+import { serializeFactoryDefinition } from "./serialization";
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(),
@@ -116,6 +117,7 @@ describe("saved factory capability checks", () => {
     if (!result.ok) return;
     const candidate = {
       definitionDigest: compiled.canonicalDigest,
+      executionIdentity: "human",
       sandboxProvider: "daytona",
       agent,
     };
@@ -135,6 +137,50 @@ describe("saved factory capability checks", () => {
       repository,
       candidate: { ...candidate, connectionRevision: "reserved-connection" },
     });
+  });
+
+  it("derives service principal probe identity from the verified saved grant", async () => {
+    const grantBundle = {
+      ...compiled.bundle,
+      executionGrant: { id: "54200000-0003-4000-8000-000000000010", version: 2 },
+      executionPolicyRevisionId: "54200000-0003-4000-8000-000000000011",
+    };
+    delete grantBundle.writableRepositoryIds;
+    const grantDefinition = serializeFactoryDefinition(grantBundle);
+    const admin = testClient({
+      canonical_digest: grantDefinition.canonicalDigest,
+      definition_json: grantDefinition.definitionJson,
+    });
+    const check = { id: "check-1", sandboxConnectionRevision: "reserved-connection" };
+    mocks.start.mockResolvedValue({ check, repository: { id: repositoryId } });
+
+    const result = await startFactoryDefinitionCapabilityCheck({
+      admin,
+      workspaceId,
+      target,
+      actorUserId,
+    });
+    expect(result).toMatchObject({ ok: true, check });
+    if (!result.ok) return;
+    await result.complete();
+
+    expect(mocks.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidate: expect.objectContaining({
+          definitionDigest: grantDefinition.canonicalDigest,
+          executionIdentity: "service-principal",
+        }),
+      }),
+    );
+    expect(mocks.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidate: expect.objectContaining({
+          connectionRevision: "reserved-connection",
+          definitionDigest: grantDefinition.canonicalDigest,
+          executionIdentity: "service-principal",
+        }),
+      }),
+    );
   });
 
   it("isolates polling from the live receipt and other revisions", async () => {
@@ -169,6 +215,7 @@ describe("saved factory capability checks", () => {
         actorUserId,
         agent,
         definitionDigest: compiled.canonicalDigest,
+        executionIdentity: "human",
         sandboxProvider: "daytona",
       },
     });
@@ -239,6 +286,7 @@ describe("saved factory capability checks", () => {
           actorUserId,
           agent,
           definitionDigest: stored.canonical_digest,
+          executionIdentity: "human",
           sandboxProvider: "daytona",
         },
       });

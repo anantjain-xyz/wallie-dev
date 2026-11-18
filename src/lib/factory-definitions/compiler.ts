@@ -33,7 +33,7 @@ export type FactoryDefinitionDiagnostic = {
 
 export type CompiledFactoryDefinition = Pick<
   SerialFactoryDefinition,
-  "schemaVersion" | "kind" | "agent" | "sandboxProvider" | "operatingRulesMd"
+  "schemaVersion" | "kind" | "agent" | "sandboxProvider" | "operatingRulesMd" | "executionGrant"
 > & {
   implementationAgent?: FactoryAgentPromptSnapshot;
   pipelineId: string;
@@ -112,6 +112,17 @@ function compileSerialDefinition(
 ): FactoryDefinitionCompileResult {
   const diagnostics: FactoryDefinitionDiagnostic[] = [];
   const { schemaVersion, kind, agent, sandboxProvider, operatingRulesMd } = definition;
+  if (
+    definition.executionGrant &&
+    (!definition.executionPolicy || definition.writableRepositories?.length)
+  ) {
+    diagnostics.push({
+      path: ["executionGrant"],
+      code: "invalid_schema",
+      message:
+        "A service execution grant requires one writable repository and an execution policy revision.",
+    });
+  }
 
   function find<T extends FactoryReferenceEntry>(
     entries: readonly T[],
@@ -280,6 +291,7 @@ function compileSerialDefinition(
     repositoryId: normalizeFactoryId(repository.id),
     ...(writableRepositoryIds.length ? { writableRepositoryIds } : {}),
     ...(readContextRepositoryIds.length ? { readContextRepositoryIds } : {}),
+    ...(definition.executionGrant ? { executionGrant: definition.executionGrant } : {}),
     executionPolicyRevisionId: executionPolicy ? normalizeFactoryId(executionPolicy.id) : null,
     deliveryPolicyRevisionId: deliveryPolicy ? normalizeFactoryId(deliveryPolicy.id) : null,
     skillIds,

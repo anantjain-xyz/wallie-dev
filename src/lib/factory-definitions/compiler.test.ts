@@ -92,6 +92,40 @@ function compile(value: unknown, references: FactoryDefinitionCatalog = catalog)
 }
 
 describe("compileFactoryDefinition", () => {
+  it("pins the exact execution grant and preserves it when reopening a saved definition", () => {
+    const id = "c5410000-0000-4000-8000-000000000015";
+    const result = compile({
+      ...candidate(),
+      executionGrant: { id: id.toUpperCase(), version: 2 },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bundle.executionGrant).toEqual({ id, version: 2 });
+    expect(factoryDefinitionFromBundle(result.bundle).executionGrant).toEqual({ id, version: 2 });
+    expect(
+      recompileStoredFactoryDefinition(result.definitionJson, result.canonicalDigest, catalog),
+    ).toEqual(result);
+  });
+
+  it.each([
+    { executionPolicy: null },
+    { writableRepositories: ["wallie/demo"] },
+    { executionGrant: { id: repositoryId, version: 0 } },
+  ])("requires a versioned grant pin, an exact writer, and a budget revision (%j)", (overrides) => {
+    expect(
+      compile({
+        ...candidate(),
+        executionGrant: { id: repositoryId, version: 1 },
+        ...overrides,
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ path: expect.arrayContaining(["executionGrant"]) }),
+      ]),
+    });
+  });
+
   it("pins the default, alternate writable and read-context repository identities", () => {
     const references = {
       ...catalog,
