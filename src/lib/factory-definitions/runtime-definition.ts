@@ -1,14 +1,12 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
-import { compiledFactoryDefinitionSchema } from "./schema";
-import { parseFactoryDefinitionJson } from "./serialization";
+import { factoryWritableRepositoryIds } from "./repository-bindings";
 import { selectDefaultFactory } from "./storage";
+import { readVerifiedFactoryDefinition } from "./stored-definition";
 
 type DefinitionClient = Pick<SupabaseClient<Database>, "from">;
 type SessionPin = Pick<
@@ -40,7 +38,9 @@ export async function loadActiveFactoryExecution(client: DefinitionClient, works
     .limit(1)
     .maybeSingle();
   if (activationError) throw activationError;
-  return activation ? loadExecutionRevision(client, workspaceId, activation.revision_id) : null;
+  if (!activation) return null;
+  const execution = await loadExecutionRevision(client, workspaceId, activation.revision_id);
+  return { ...execution, factoryId: factory.id };
 }
 
 async function loadExecutionRevision(
@@ -57,18 +57,43 @@ async function loadExecutionRevision(
   if (error) throw error;
   if (!data) throw new Error("The factory revision is unavailable in this workspace.");
 
-  const digest = createHash("sha256").update(data.definition_json, "utf8").digest("hex");
-  const decoded = parseFactoryDefinitionJson(data.definition_json);
-  const definition = compiledFactoryDefinitionSchema.safeParse(decoded.ok ? decoded.value : null);
-  if (digest !== data.canonical_digest || !definition.success) {
+  const definition = readVerifiedFactoryDefinition(data.definition_json, data.canonical_digest);
+  if (!definition) {
     throw new Error("The factory revision failed validation. Review its published configuration.");
   }
-  return { ...definition.data, canonicalDigest: digest };
+  return { ...definition, canonicalDigest: data.canonical_digest };
 }
 
 export type PinnedFactoryExecution = NonNullable<
   Awaited<ReturnType<typeof loadPinnedFactoryExecution>>
 >;
+
+export async function loadPinnedFactoryRepositoryId(
+  client: DefinitionClient,
+  session: SessionPin & Pick<Tables<"sessions">, "id" | "factory_id" | "github_repository_id">,
+  definition: Pick<PinnedFactoryExecution, "repositoryId" | "writableRepositoryIds">,
+): Promise<string> {
+  const { data: admission, error } = await client
+    .from("session_factory_admission_inputs")
+    .select("github_repository_id, definition_revision_id")
+    .eq("workspace_id", session.workspace_id)
+    .eq("factory_id", session.factory_id)
+    .eq("session_id", session.id)
+    .maybeSingle();
+  if (error) throw error;
+
+  // The live FK can be cleared by GitHub disconnection. Preserve the identity
+  // in the original receipt so neither the live FK nor the default retargets it.
+  const repositoryId = admission ? admission.github_repository_id : session.github_repository_id;
+  if (
+    (admission && admission.definition_revision_id !== session.factory_definition_revision_id) ||
+    !repositoryId ||
+    !factoryWritableRepositoryIds(definition).includes(repositoryId)
+  ) {
+    throw new Error("The factory session's writable repository is unavailable.");
+  }
+  return repositoryId;
+}
 
 export async function loadPinnedSessionPrompt(
   client: DefinitionClient,

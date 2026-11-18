@@ -109,7 +109,7 @@ vi.mock("./source-delivery", async (importOriginal) => ({
 
 vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
-  STAGE_PROMPT_RENDERER_VERSION: 3,
+  STAGE_PROMPT_RENDERER_VERSION: 4,
 }));
 
 vi.mock("@/lib/factory-agents/runtime", () => ({
@@ -314,6 +314,7 @@ interface MockOptions {
     original_title: string;
     original_prompt_md: string;
     definition_revision_id: string;
+    github_repository_id?: string;
   };
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   agentConfigError?: { message: string };
@@ -1094,7 +1095,8 @@ describe("processPipelineJob (generic stage runner)", () => {
         schemaVersion: 1,
         kind: "serial",
         pipelineId,
-        repositoryId,
+        repositoryId: "7f5489ea-58a9-41d5-ba8d-890b08a0650c",
+        writableRepositoryIds: [repositoryId],
         sandboxProvider: "vercel",
         agent: {
           provider: "claude-code",
@@ -1141,6 +1143,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           original_title: "Initial title",
           original_prompt_md: "Initial user prompt",
           definition_revision_id: revisionId,
+          github_repository_id: repositoryId,
         },
         agentConfig: [{ key: "agent_provider", value_json: "codex" }],
         priorGitInput: { repository_id: repositoryId, base_branch: "original-main" },
@@ -1713,7 +1716,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       p_attempt_count: 1,
       p_prompt_sha256: createHash("sha256").update("rendered prompt", "utf8").digest("hex"),
       p_prompt_utf8_bytes: Buffer.byteLength("rendered prompt", "utf8"),
-      p_renderer_version: 3,
+      p_renderer_version: 4,
       p_checkout_sha: "a".repeat(40),
       p_predecessors: [predecessor],
       p_worker_runtime: "node",

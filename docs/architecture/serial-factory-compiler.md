@@ -12,6 +12,8 @@ This example uses `default` and `team/service` as aliases in the caller's catalo
   "kind": "serial",
   "pipeline": "default",
   "repository": "team/service",
+  "writableRepositories": ["team/worker"],
+  "readContextRepositories": ["team/engineering-docs"],
   "sandboxProvider": "vercel",
   "agent": {
     "provider": "codex",
@@ -34,6 +36,22 @@ This example uses `default` and `team/service` as aliases in the caller's catalo
 ```
 
 The caller supplies eligible pipelines, repositories, execution and delivery policy revisions, skills, tools, active human approvers, and sandbox providers. The compiler resolves an exact ID first, then a unique alias inside the workspace. It uses the existing pipeline, agent, and sandbox settings schemas and checks the chosen model, effort, and component support. A delivery policy revision must belong to the chosen pipeline.
+
+| Repository field          | Purpose                                  |
+| ------------------------- | ---------------------------------------- |
+| `repository`              | Default writable repository              |
+| `writableRepositories`    | Optional alternate writable repositories |
+| `readContextRepositories` | Optional read-only context repositories  |
+
+Each repository must belong to the factory and its active GitHub installation.
+The default is required. The compiler rejects duplicate references across the
+three fields after resolving aliases. It sorts both optional lists by stable ID
+and omits empty lists from the compiled bundle.
+
+Publication checks the default writable repository. To qualify an alternate,
+select it in **Sandbox capability** and run the check for the saved definition.
+Session creation and execution require a current capability check for the
+selected repository, sandbox connection, and agent configuration.
 
 The optional `implementationAgent` field selects an immutable prompt revision
 UUID from the factory's agent catalog. The compiler embeds its agent ID,

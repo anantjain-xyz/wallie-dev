@@ -5,6 +5,7 @@ import {
   normalizeCreateSessionPayload,
 } from "@/features/sessions/create";
 import type { WallieSessionRepository } from "@/features/wallie/types";
+import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/repository-bindings";
 import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
@@ -60,7 +61,7 @@ function sessionOptionsChangedResponse() {
   return NextResponse.json(
     {
       code: "session_options_changed",
-      error: "The workspace pipeline changed. Refresh the stage options and try again.",
+      error: "Session options changed. Refresh the repository and stages, then try again.",
     },
     { status: 409 },
   );
@@ -88,18 +89,28 @@ function mapWallieSessionRepository(row: {
 
 async function loadSessionRepositoryById(input: {
   admin: AdminClient;
+  factoryId?: string;
   repositoryId: string;
   requireActive?: boolean;
   workspaceId: string;
 }): Promise<WallieSessionRepository | null> {
-  let query = input.admin
-    .from("github_repositories")
-    .select(repositoryPreflightSelect)
+  const repositories = input.admin.from("github_repositories");
+  let query = (
+    input.factoryId
+      ? repositories.select(`${repositoryPreflightSelect}, github_installations!inner(id)`)
+      : repositories.select(repositoryPreflightSelect)
+  )
     .eq("id", input.repositoryId)
     .eq("workspace_id", input.workspaceId);
 
   if (input.requireActive) {
     query = query.eq("is_archived", false);
+  }
+  if (input.factoryId) {
+    query = query
+      .eq("factory_id", input.factoryId)
+      .eq("github_installations.workspace_id", input.workspaceId)
+      .eq("github_installations.suspended", false);
   }
 
   const { data, error } = await query.maybeSingle();
@@ -267,13 +278,43 @@ export async function POST(request: Request) {
     );
   }
   if (
-    (normalized.factoryDefinitionDigest &&
-      normalized.factoryDefinitionDigest !== pinned?.canonicalDigest) ||
-    (pinned &&
-      normalized.githubRepositoryId &&
-      normalized.githubRepositoryId !== pinned.repositoryId)
+    normalized.factoryDefinitionDigest &&
+    normalized.factoryDefinitionDigest !== pinned?.canonicalDigest
   ) {
     return sessionOptionsChangedResponse();
+  }
+
+  let requestedRepositoryId = normalized.githubRepositoryId?.toLowerCase() ?? null;
+  if (normalized.restartOfSessionId) {
+    const { data: source, error } = await access.context.supabase
+      .from("sessions")
+      .select("execute_pinned_definition")
+      .eq("workspace_id", normalized.workspaceId)
+      .eq("id", normalized.restartOfSessionId)
+      .maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!source) {
+      return NextResponse.json({ error: "The session to restart was not found." }, { status: 404 });
+    }
+    if (pinned && !requestedRepositoryId && source.execute_pinned_definition) {
+      const { data: admission, error: admissionError } = await admin
+        .from("session_factory_admission_inputs")
+        .select("github_repository_id")
+        .eq("workspace_id", normalized.workspaceId)
+        .eq("session_id", normalized.restartOfSessionId)
+        .maybeSingle();
+      if (admissionError) {
+        return NextResponse.json({ error: admissionError.message }, { status: 500 });
+      }
+      if (!admission?.github_repository_id) return sessionOptionsChangedResponse();
+      requestedRepositoryId = admission.github_repository_id;
+    }
+  }
+  if (pinned) {
+    requestedRepositoryId ??= pinned.repositoryId;
+    if (!factoryWritableRepositoryIds(pinned).includes(requestedRepositoryId)) {
+      return sessionOptionsChangedResponse();
+    }
   }
   const [onboardingResult, firstRunPrereqsResult, linearIssueResult] = await Promise.all([
     access.context.supabase
@@ -324,17 +365,18 @@ export async function POST(request: Request) {
 
   let githubRepositoryId: string | null = null;
   let repositoryForPreflight: WallieSessionRepository | null = null;
-  const requestedRepositoryId = pinned?.repositoryId ?? normalized.githubRepositoryId;
   try {
     if (requestedRepositoryId) {
       const repository = await loadSessionRepositoryById({
         admin,
+        ...(pinned ? { factoryId: pinned.factoryId } : {}),
         repositoryId: requestedRepositoryId,
         requireActive: true,
         workspaceId: normalized.workspaceId,
       });
 
       if (!repository) {
+        if (pinned) return sessionOptionsChangedResponse();
         return NextResponse.json(
           { error: "Repository is not available for this workspace." },
           { status: 400 },
@@ -403,9 +445,7 @@ export async function POST(request: Request) {
       attachmentIds: normalized.attachmentIds,
       ...(creationRequest ? { creationRequest } : {}),
       creatorMemberId: access.context.currentMember.id,
-      ...(normalized.factoryDefinitionDigest
-        ? { factoryDefinitionDigest: normalized.factoryDefinitionDigest }
-        : {}),
+      ...(pinned && creationRequest ? { factoryDefinitionDigest: pinned.canonicalDigest } : {}),
       githubRepositoryId,
       linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
       linearIssueUrl: linearIssue?.url ?? normalized.linearIssueUrl,

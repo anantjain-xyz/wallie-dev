@@ -1,7 +1,10 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
+import {
+  loadPinnedFactoryExecution,
+  loadPinnedFactoryRepositoryId,
+} from "@/lib/factory-definitions/runtime-definition";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import type { Tables } from "@/lib/supabase/database.types";
@@ -221,27 +224,33 @@ export async function loadWallieSessionData(input: {
     .eq("workspace_id", input.workspaceId);
   const executionSettings = input.supabase
     .from("sessions")
-    .select("execute_pinned_definition, factory_definition_revision_id, factory_id, workspace_id")
+    .select(
+      "id, execute_pinned_definition, factory_definition_revision_id, factory_id, github_repository_id, workspace_id",
+    )
     .eq("id", input.session.id)
     .eq("workspace_id", input.workspaceId)
     .maybeSingle()
     .then(async ({ data: sessionPin, error }) => {
       if (error) throw error;
       const pinned = sessionPin ? await loadPinnedFactoryExecution(admin, sessionPin) : null;
+      const pinnedRepositoryId =
+        pinned && sessionPin
+          ? await loadPinnedFactoryRepositoryId(admin, sessionPin, pinned)
+          : undefined;
       const [vercelSandboxConnection, stallTimeoutMs, repository] = await Promise.all([
         loadWallieVercelSandboxConnection(admin, input.workspaceId, pinned?.sandboxProvider),
         pinned?.agent.stallTimeoutMs ?? loadWallieStallTimeoutMs(admin, input.workspaceId),
-        pinned && sessionPin
+        pinnedRepositoryId && sessionPin
           ? resolveEffectiveSessionRepository({
               factoryId: sessionPin.factory_id,
-              pinnedRepositoryId: pinned.repositoryId,
+              pinnedRepositoryId,
               sessionId: input.session.id,
               supabase: input.supabase,
               workspaceId: input.workspaceId,
             }).then((resolution) => resolution.repository)
           : input.repository,
       ]);
-      return { pinned, vercelSandboxConnection, stallTimeoutMs, repository };
+      return { pinnedRepositoryId, vercelSandboxConnection, stallTimeoutMs, repository };
     });
   const [runPage, { data: memberRows, error: memberError }, settings] = await Promise.all([
     runPagePromise,
@@ -249,13 +258,13 @@ export async function loadWallieSessionData(input: {
     executionSettings,
   ]);
   if (memberError) throw memberError;
-  const { pinned, repository, stallTimeoutMs, vercelSandboxConnection } = settings;
+  const { pinnedRepositoryId, repository, stallTimeoutMs, vercelSandboxConnection } = settings;
 
   const members = ((memberRows ?? []) as WorkspaceMemberRow[]).map(mapWorkspaceMemberRow);
   const memberIndex = buildWorkspaceMemberIndex(members);
 
   const activity = buildWallieSessionData({
-    sessionGithubRepositoryId: pinned?.repositoryId ?? input.session.githubRepositoryId,
+    sessionGithubRepositoryId: pinnedRepositoryId ?? input.session.githubRepositoryId,
     loadedMessageRunIds: [],
     memberIndex,
     messages: [],
@@ -294,7 +303,7 @@ export async function loadWallieSessionData(input: {
     vercelSandboxConnection,
     workspaceMembers: members,
   });
-  return pinned ? { ...activity, factoryPinned: true } : activity;
+  return pinnedRepositoryId ? { ...activity, factoryPinned: true } : activity;
 }
 
 async function loadWallieVercelSandboxConnection(

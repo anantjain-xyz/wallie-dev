@@ -29,6 +29,7 @@ import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { RECOMMENDED_AGENT_EFFORT } from "@/lib/agent-config/contracts";
 import {
   loadPinnedFactoryExecution,
+  loadPinnedFactoryRepositoryId,
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
@@ -94,6 +95,7 @@ type SessionForRun = Pick<
   | "execute_pinned_definition"
   | "factory_definition_revision_id"
   | "factory_id"
+  | "github_repository_id"
   | "id"
   | "number"
   | "phase_status"
@@ -105,7 +107,7 @@ type AgentRunRow = Tables<"agent_runs">;
 type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "workspace_id">;
 
 const sessionSelect =
-  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id, factory_id";
+  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id, factory_id, github_repository_id";
 const runSelect =
   "id, workspace_id, session_id, agent_job_id, attempt_count, branch_name, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, token_provenance, cost_provenance, usage_finalized_at, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 export class WallieActionError extends Error {
@@ -511,11 +513,14 @@ async function validateQueuedRunRequest(input: {
   if (activeRun) return { activeRun, session, runType: input.requestedRunType };
 
   const definition = await loadPinnedFactoryExecution(input.admin, session);
-  const runType = definition ? inferWallieRunMode(definition.repositoryId) : input.requestedRunType;
+  const pinnedRepositoryId = definition
+    ? await loadPinnedFactoryRepositoryId(input.admin, session, definition)
+    : undefined;
+  const runType = definition ? inferWallieRunMode(pinnedRepositoryId) : input.requestedRunType;
   const [repositoryResolution, vercelSandboxConnection] = await Promise.all([
     resolveEffectiveSessionRepository({
       factoryId: session.factory_id,
-      pinnedRepositoryId: definition?.repositoryId,
+      pinnedRepositoryId,
       sessionId: session.id,
       supabase: input.admin,
       workspaceId: workspace.id,
@@ -606,7 +611,7 @@ export async function resolveQueuedRunConfig(
     return {
       modelName: definition.agent.model,
       modelProvider: definition.agent.provider,
-      runType: inferWallieRunMode(definition.repositoryId),
+      runType: "code",
       usesPinnedDefinition: true,
     };
   }

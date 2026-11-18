@@ -8,6 +8,7 @@ const adminOrdinalRows: Array<{
 }> = [];
 const adminRangeCalls: Array<{ from: number; to: number }> = [];
 const pinnedFactoryMock = vi.fn();
+const pinnedRepositoryMock = vi.fn();
 const sandboxOverviewMock = vi.fn();
 const createSupabaseAdminClientMock = vi.fn(() => ({
   from: () => ({
@@ -35,6 +36,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
   loadPinnedFactoryExecution: (...args: unknown[]) => pinnedFactoryMock(...args),
+  loadPinnedFactoryRepositoryId: (...args: unknown[]) => pinnedRepositoryMock(...args),
 }));
 
 vi.mock("@/lib/sandbox-connections/server", async (importOriginal) => ({
@@ -169,10 +171,11 @@ describe("loadWallieSessionData", () => {
       },
     };
     pinnedFactoryMock.mockResolvedValue({
-      repositoryId: uuid(2),
+      repositoryId: uuid(4),
       sandboxProvider: "e2b",
       agent: { stallTimeoutMs: 321_000 },
     });
+    pinnedRepositoryMock.mockResolvedValue(uuid(2));
     sandboxOverviewMock.mockResolvedValue({
       activeProvider: "vercel",
       connections: {

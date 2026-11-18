@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   compileFactoryDefinition,
   type CompiledFactoryDefinition,
@@ -35,6 +37,11 @@ export function readCompiledFactoryDefinition(definitionJson: string) {
   return parsed.success ? parsed.data : null;
 }
 
+export function readVerifiedFactoryDefinition(definitionJson: string, canonicalDigest: string) {
+  const digest = createHash("sha256").update(definitionJson, "utf8").digest("hex");
+  return digest === canonicalDigest ? readCompiledFactoryDefinition(definitionJson) : null;
+}
+
 export function factoryStageDefinition({
   id,
   slug,
@@ -59,6 +66,8 @@ export function factoryDefinitionFromBundle(
     operatingRulesMd,
     pipelineId,
     repositoryId,
+    writableRepositoryIds,
+    readContextRepositoryIds,
     executionPolicyRevisionId,
     deliveryPolicyRevisionId,
     skillIds,
@@ -74,6 +83,8 @@ export function factoryDefinitionFromBundle(
     operatingRulesMd,
     pipeline: pipelineId,
     repository: repositoryId,
+    ...(writableRepositoryIds ? { writableRepositories: writableRepositoryIds } : {}),
+    ...(readContextRepositoryIds ? { readContextRepositories: readContextRepositoryIds } : {}),
     executionPolicy: executionPolicyRevisionId,
     deliveryPolicy: deliveryPolicyRevisionId,
     skills: skillIds,

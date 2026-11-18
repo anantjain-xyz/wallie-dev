@@ -6,7 +6,8 @@ import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { compileFactoryDefinition, factoryComponentRevisionsForSource } from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
-import type { SerialFactoryDefinitionInput } from "./schema";
+import { compiledFactoryDefinitionSchema, type SerialFactoryDefinitionInput } from "./schema";
+import { factoryWritableRepositoryIds } from "./repository-bindings";
 import { factoryDefinitionFromBundle, recompileStoredFactoryDefinition } from "./stored-definition";
 
 const workspaceId = "c5410000-0000-4000-8000-000000000001";
@@ -22,6 +23,7 @@ const approverId = "c5410000-0000-4000-8000-000000000010";
 const otherApproverId = "c5410000-0000-4000-8000-000000000011";
 const agentId = "c5410000-0000-4000-8000-000000000012";
 const promptRevisionId = "c5410000-0000-4000-8000-000000000013";
+const docsRepositoryId = "c5410000-0000-4000-8000-000000000014";
 
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
@@ -90,6 +92,68 @@ function compile(value: unknown, references: FactoryDefinitionCatalog = catalog)
 }
 
 describe("compileFactoryDefinition", () => {
+  it("pins the default, alternate writable and read-context repository identities", () => {
+    const references = {
+      ...catalog,
+      repositories: [
+        ...catalog.repositories,
+        { id: otherRepositoryId, workspaceId, aliases: ["wallie/runtime"] },
+        { id: docsRepositoryId, workspaceId, aliases: ["wallie/docs"] },
+      ],
+    };
+    const result = compile(
+      {
+        ...candidate(),
+        writableRepositories: ["wallie/runtime"],
+        readContextRepositories: ["wallie/docs"],
+      },
+      references,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(factoryWritableRepositoryIds(result.bundle)).toEqual([repositoryId, otherRepositoryId]);
+    expect(result.bundle.readContextRepositoryIds).toEqual([docsRepositoryId]);
+    expect(
+      recompileStoredFactoryDefinition(result.definitionJson, result.canonicalDigest, references),
+    ).toEqual(result);
+    expect(
+      compiledFactoryDefinitionSchema.safeParse({
+        ...result.bundle,
+        readContextRepositoryIds: [otherRepositoryId],
+      }).success,
+    ).toBe(false);
+    expect(
+      compile({ ...candidate(), writableRepositories: [], readContextRepositories: [] }),
+    ).toEqual(compile(candidate()));
+  });
+
+  it("rejects cross-purpose duplicates and references outside the eligible catalog", () => {
+    const references = {
+      ...catalog,
+      repositories: [
+        ...catalog.repositories,
+        { id: otherRepositoryId, workspaceId: otherWorkspaceId },
+      ],
+    };
+    expect(
+      compile(
+        {
+          ...candidate(),
+          writableRepositories: ["wallie/demo"],
+          readContextRepositories: [repositoryId, otherRepositoryId],
+        },
+        references,
+      ),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        { path: ["writableRepositories", 0], code: "duplicate_repository_binding" },
+        { path: ["readContextRepositories", 0], code: "duplicate_repository_binding" },
+        { path: ["readContextRepositories", 1], code: "missing_reference" },
+      ],
+    });
+  });
+
   it("reads selected prompt and skill revisions only from valid structured or JSON sources", () => {
     const value = { ...candidate(), implementationAgent: promptRevisionId.toUpperCase() };
     const revisions = {

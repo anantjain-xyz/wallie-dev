@@ -29,6 +29,7 @@ import {
 } from "@/lib/agent-runner";
 import {
   loadPinnedFactoryExecution,
+  loadPinnedFactoryRepositoryId,
   loadPinnedSessionPrompt,
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
@@ -85,6 +86,7 @@ import {
 } from "./checkpoint-publication";
 import { prepareSourceDelivery, SourcePreservationError } from "./source-delivery";
 import { checkoutPinnedGitInput } from "./git-input";
+import { materializeFactoryRepositoryContext } from "./repository-context";
 import { restoreRetryInput, saveRetryCheckpoint } from "./retry-checkpoint";
 import {
   deferSessionJobForGitContinuityRelease,
@@ -263,6 +265,7 @@ async function runStage(input: {
       sessionId: session.id,
       workspaceId: session.workspace_id,
     });
+    const repositoryPin = pinned ? loadPinnedFactoryRepositoryId(admin, session, pinned) : null;
     const [
       config,
       predecessorInputs,
@@ -284,8 +287,8 @@ async function runStage(input: {
         sessionId: session.id,
         workspaceId: session.workspace_id,
       }),
-      gitInputPromise.then((gitInput) => {
-        const repositoryId = pinned?.repositoryId ?? gitInput?.repository_id;
+      Promise.all([gitInputPromise, repositoryPin]).then(([gitInput, selectedRepositoryId]) => {
+        const repositoryId = selectedRepositoryId ?? gitInput?.repository_id;
         return resolveEffectiveSessionRepository({
           factoryId: session.factory_id,
           pinnedRepositoryId: repositoryId,
@@ -300,10 +303,11 @@ async function runStage(input: {
     if (pinned && predecessorInputs.predecessors.some(({ status }) => status !== "approved")) {
       throw new Error("The factory session has a predecessor without an exact approval receipt.");
     }
+    const selectedRepositoryId = pinned ? repository.repositoryId : session.github_repository_id;
     if (
       priorGitInput &&
-      session.github_repository_id &&
-      session.github_repository_id !== priorGitInput.repository_id
+      selectedRepositoryId &&
+      selectedRepositoryId !== priorGitInput.repository_id
     ) {
       throw new Error(
         "The pinned Git input belongs to a different repository. Restore the original repository connection before retrying.",
@@ -552,6 +556,14 @@ async function runStage(input: {
       sandbox,
       sessionAttachments,
     );
+    const readContext = await materializeFactoryRepositoryContext({
+      admin,
+      factoryId: session.factory_id,
+      repositoryIds: pinned?.readContextRepositoryIds ?? [],
+      sandbox,
+      signal,
+      workspaceId: session.workspace_id,
+    });
     await prepareValidationPlan(sandbox, runId);
     throwIfAborted(signal);
     const workerDeadlineMs =
@@ -599,6 +611,9 @@ async function runStage(input: {
           "repo.defaultBranch",
           pinned ? gitInput.base_branch : (github.repo.default_branch ?? "main"),
         ),
+        readContext: readContext.length
+          ? untrustedPromptValue("repo.readContext", readContext.join("\n"))
+          : undefined,
         operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
         retryCheckpointInstructions: checkpointInstructions.length
           ? trustedPromptValue(
@@ -1355,6 +1370,7 @@ async function loadGitHubContext(
     .select("id, installation_id")
     .eq("id", repository.githubInstallationId)
     .eq("workspace_id", workspaceId)
+    .eq("suspended", false)
     .maybeSingle();
 
   if (!installation) return null;

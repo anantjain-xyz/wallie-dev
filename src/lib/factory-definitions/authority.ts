@@ -28,6 +28,35 @@ async function collectCatalogRows<T>(fetchPage: (from: number, to: number) => Ca
   }
 }
 
+export async function loadFactoryDefinitionRepositories(
+  client: Pick<AdminClient, "from">,
+  workspaceId: string,
+  factoryId: string,
+) {
+  const [repositories, installation] = await Promise.all([
+    collectCatalogRows((from, to) =>
+      client
+        .from("github_repositories")
+        .select("id, full_name, github_installation_id")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .eq("is_archived", false)
+        .order("id")
+        .range(from, to),
+    ),
+    client
+      .from("github_installations")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("suspended", false)
+      .maybeSingle(),
+  ]);
+  if (installation.error) throw installation.error;
+  return repositories.filter(
+    ({ github_installation_id }) => github_installation_id === installation.data?.id,
+  );
+}
+
 export async function loadFactoryDefinitionCatalog(
   admin: AdminClient,
   {
@@ -45,7 +74,6 @@ export async function loadFactoryDefinitionCatalog(
   const [
     pipelines,
     repositories,
-    installation,
     executionPolicies,
     deliveryPolicies,
     approvers,
@@ -61,22 +89,7 @@ export async function loadFactoryDefinitionCatalog(
         .order("id")
         .range(from, to),
     ),
-    collectCatalogRows((from, to) =>
-      admin
-        .from("github_repositories")
-        .select("id, full_name, github_installation_id")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
-        .eq("is_archived", false)
-        .order("id")
-        .range(from, to),
-    ),
-    admin
-      .from("github_installations")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("suspended", false)
-      .maybeSingle(),
+    loadFactoryDefinitionRepositories(admin, workspaceId, factoryId),
     collectCatalogRows((from, to) =>
       admin
         .from("execution_policy_revisions")
@@ -106,14 +119,14 @@ export async function loadFactoryDefinitionCatalog(
     loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
     loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? []),
   ]);
-  if (installation.error) throw installation.error;
-
   return {
     workspaceId,
     pipelines: pipelines.map(({ id, name }) => ({ id, workspaceId, aliases: [name] })),
-    repositories: repositories
-      .filter(({ github_installation_id }) => github_installation_id === installation.data?.id)
-      .map(({ id, full_name }) => ({ id, workspaceId, aliases: [full_name] })),
+    repositories: repositories.map(({ id, full_name }) => ({
+      id,
+      workspaceId,
+      aliases: [full_name],
+    })),
     executionPolicyRevisions: executionPolicies.map(({ id }) => ({ id, workspaceId })),
     deliveryPolicyRevisions: deliveryPolicies.map(({ id, pipeline_id }) => ({
       id,

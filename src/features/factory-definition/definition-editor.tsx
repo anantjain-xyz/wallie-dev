@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
+import { FactoryCapabilityProbe } from "@/features/factory-definition/capability-probe";
 import {
   draftSavedSchema,
   factoryEditorPost,
@@ -19,10 +20,7 @@ import { FactoryRevisionHistory } from "@/features/factory-definition/revision-h
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { StructuredFactoryDefinitionEditor } from "@/features/factory-definition/structured-editor";
 import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
-import {
-  SandboxCapabilitySection,
-  type CapabilityRepository,
-} from "@/features/settings/sandbox-capability-section";
+import type { CapabilityRepository } from "@/features/settings/sandbox-capability-section";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import {
@@ -561,6 +559,7 @@ export function FactoryDefinitionEditor({
                     {edit.input.kind === "structured" ? (
                       <StructuredFactoryDefinitionEditor
                         disabled={busy}
+                        repositories={repositories}
                         value={edit.input.value}
                         onChange={(value) => replaceInput({ kind: "structured", value })}
                       />
@@ -679,15 +678,10 @@ export function FactoryDefinitionEditor({
                 tagline={`Check the ${selected ? "selected" : "current"} ${capabilityTarget.kind} · ${capabilityTarget.digest.slice(0, 12)}`}
               >
                 <div className="ui-sheet p-4 sm:p-5">
-                  <SandboxCapabilitySection
+                  <FactoryCapabilityProbe
                     key={capabilityTarget.id}
                     canManage={!busy}
-                    definitionTarget={{
-                      id: capabilityTarget.id,
-                      kind: capabilityTarget.kind,
-                      repositoryId: capabilityTarget.bundle.repositoryId,
-                    }}
-                    initialCheck={null}
+                    target={capabilityTarget}
                     repositories={repositories}
                     sandboxConnected={snapshot.readySandboxProviders.includes(
                       capabilityTarget.bundle.sandboxProvider,

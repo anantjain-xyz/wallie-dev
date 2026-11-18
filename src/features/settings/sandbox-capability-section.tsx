@@ -27,6 +27,7 @@ type SandboxCapabilitySectionProps = {
   canManage: boolean;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
   onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
+  onDefinitionRepositoryChange?: (repositoryId: string) => void;
   preferredRepositoryId?: string | null;
   repositories: readonly CapabilityRepository[];
   sandboxConnected: boolean;
@@ -86,6 +87,7 @@ export function SandboxCapabilitySection({
   definitionTarget,
   initialCheck,
   onCheckChange,
+  onDefinitionRepositoryChange,
   preferredRepositoryId,
   repositories,
   sandboxConnected,
@@ -104,14 +106,20 @@ export function SandboxCapabilitySection({
       repositories,
     }),
   );
-  const [check, setCheck] = useState(initialCheck);
-  const [loading, setLoading] = useState(Boolean(definitionTarget));
+  const [loadedCheck, setCheck] = useState(initialCheck);
+  const [loadedTargetQuery, setLoadedTargetQuery] = useState<string | null>(null);
   const endpoint = `/api/workspaces/${workspaceId}/${definitionTarget ? "factory-definition/" : ""}${definitionTarget ? "capability-check" : "sandbox-capability-check"}`;
   const targetQuery = definitionTarget
     ? new URLSearchParams({
         [definitionTarget.kind === "draft" ? "draftId" : "revisionId"]: definitionTarget.id,
+        ...(onDefinitionRepositoryChange ? { repositoryId: definitionTarget.repositoryId } : {}),
       }).toString()
     : null;
+  const loading = targetQuery !== loadedTargetQuery;
+  const check =
+    !definitionTarget || loadedCheck?.githubRepositoryId === definitionTarget.repositoryId
+      ? loadedCheck
+      : null;
   const repository = selectableRepositories.find(({ id }) => id === definitionTarget?.repositoryId);
   const latestCheckRef = useRef(check);
   const repositoryIdsKey = selectableRepositories.map((repository) => repository.id).join("|");
@@ -147,7 +155,7 @@ export function SandboxCapabilitySection({
           setFlashMessage({ kind: "error", text: "Could not load the factory capability check." });
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) setLoadedTargetQuery(targetQuery);
       }
     })();
     return () => controller.abort();
@@ -158,7 +166,12 @@ export function SandboxCapabilitySection({
       fetch(endpoint, {
         body: JSON.stringify(
           definitionTarget
-            ? { target: { kind: definitionTarget.kind, id: definitionTarget.id } }
+            ? {
+                target: { kind: definitionTarget.kind, id: definitionTarget.id },
+                ...(onDefinitionRepositoryChange
+                  ? { repositoryId: definitionTarget.repositoryId }
+                  : {}),
+              }
             : { repositoryId: selectedRepositoryId || undefined },
         ),
         headers: { "Content-Type": "application/json" },
@@ -238,7 +251,7 @@ export function SandboxCapabilitySection({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3">
-        {definitionTarget ? (
+        {definitionTarget && !onDefinitionRepositoryChange ? (
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-muted">Repository</p>
             <p className="break-words text-sm text-foreground">
@@ -248,12 +261,18 @@ export function SandboxCapabilitySection({
         ) : (
           <SelectField
             className="min-w-64 flex-1"
-            disabled={!canManage || repositoryOptions.length === 0}
-            fallbackLabel="No repositories available"
+            disabled={
+              !canManage ||
+              repositoryOptions.length === 0 ||
+              Boolean(definitionTarget && runCheck.isBusy)
+            }
+            fallbackLabel={
+              definitionTarget ? "Repository unavailable" : "No repositories available"
+            }
             label="Repository"
-            onValueChange={setSelectedRepositoryId}
+            onValueChange={onDefinitionRepositoryChange ?? setSelectedRepositoryId}
             options={repositoryOptions}
-            value={selectedRepositoryId}
+            value={definitionTarget?.repositoryId ?? selectedRepositoryId}
           />
         )}
         <button

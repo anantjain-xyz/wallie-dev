@@ -7,6 +7,7 @@ import {
   AGENT_EFFORT_SELECT_OPTIONS,
   AGENT_PROVIDER_LABELS,
 } from "@/components/shared/agent-provider-options";
+import { FactoryRepositoryBindingsEditor } from "@/features/factory-definition/repository-bindings-editor";
 import {
   AGENT_CONFIG_LIMITS,
   AGENT_PROVIDERS,
@@ -30,7 +31,6 @@ const sandboxLabels = {
 
 const referenceFields = [
   { key: "pipeline", label: "Pipeline", placeholder: "Pipeline ID or name" },
-  { key: "repository", label: "Repository", placeholder: "Repository ID or owner/repo" },
   {
     key: "executionPolicy",
     label: "Execution policy revision",
@@ -150,10 +150,12 @@ function ReferenceList({
 export function StructuredFactoryDefinitionEditor({
   disabled,
   onChange,
+  repositories,
   value,
 }: {
   disabled?: boolean;
   onChange: (value: SerialFactoryDefinition) => void;
+  repositories: Parameters<typeof FactoryRepositoryBindingsEditor>[0]["repositories"];
   value: SerialFactoryDefinition;
 }) {
   const editorId = useId();
@@ -238,7 +240,21 @@ export function StructuredFactoryDefinitionEditor({
     <fieldset className="min-w-0 space-y-7" disabled={disabled}>
       <legend className="sr-only">Structured factory definition</legend>
 
-      <section aria-labelledby={`${editorId}-references`} className="min-w-0 space-y-4">
+      <section aria-labelledby={`${editorId}-repositories`} className="min-w-0 space-y-4">
+        <h3 className="type-section-title text-foreground" id={`${editorId}-repositories`}>
+          Repository bindings
+        </h3>
+        <FactoryRepositoryBindingsEditor
+          onChange={(patch) => onChange({ ...value, ...patch })}
+          repositories={repositories}
+          value={value}
+        />
+      </section>
+
+      <section
+        aria-labelledby={`${editorId}-references`}
+        className="min-w-0 space-y-4 border-t border-border pt-6"
+      >
         <h3 className="type-section-title text-foreground" id={`${editorId}-references`}>
           References
         </h3>
@@ -248,9 +264,7 @@ export function StructuredFactoryDefinitionEditor({
               key={key}
               label={label}
               onChange={(next) => {
-                if (key === "executionPolicy" || key === "deliveryPolicy")
-                  update(key, next || null);
-                else update(key, next);
+                update(key, key === "pipeline" ? next : next || null);
               }}
               placeholder={placeholder}
               value={value[key] ?? ""}

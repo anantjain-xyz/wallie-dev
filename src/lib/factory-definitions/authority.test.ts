@@ -12,7 +12,7 @@ const skillRevisionId = "81b90000-0000-4000-8000-000000000006";
 const installationId = "81b90000-0000-4000-8000-000000000002";
 const promptRevisionId = "81b90000-0000-4000-8000-000000000004";
 
-function fixtureClient() {
+function fixtureClient({ installationActive = true } = {}) {
   const requests: URL[] = [];
   const fetchCatalog: typeof fetch = async (input) => {
     const url = new URL(input instanceof Request ? input.url : input);
@@ -21,7 +21,7 @@ function fixtureClient() {
     const table = url.pathname.split("/").at(-1);
     const records: Record<string, unknown[]> = {
       pipelines: [{ id: "pipeline", name: "Release" }],
-      github_installations: [{ id: installationId }],
+      github_installations: installationActive ? [{ id: installationId }] : [],
       github_repositories: [
         { id: "repo", full_name: "team/product", github_installation_id: installationId },
         { id: "disconnected", full_name: "team/disconnected", github_installation_id: "old" },
@@ -113,6 +113,12 @@ describe("factory activation authority inputs", () => {
     expect(request?.searchParams.get("revoked_at")).toBe("is.null");
     expect(request?.searchParams.get("id")).toBe(`in.(${skillRevisionId})`);
     expect(catalog.skills).toEqual([{ id: skillRevisionId, workspaceId }]);
+  });
+
+  it("excludes every repository binding when the installation becomes unavailable", async () => {
+    const { admin } = fixtureClient({ installationActive: false });
+    const catalog = await loadFactoryDefinitionCatalog(admin, { workspaceId, factoryId });
+    expect(catalog.repositories).toEqual([]);
   });
 
   it("loads only the selected immutable prompt without scanning revision history", async () => {

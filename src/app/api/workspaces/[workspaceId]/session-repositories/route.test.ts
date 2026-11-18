@@ -114,54 +114,70 @@ describe("session repositories route", () => {
     });
   });
 
-  it.each([{ id: "repo-pinned", full_name: "acme/pinned" }, null])(
-    "projects only the active definition options for repository row %j",
-    async (repository) => {
-      const supabase = grantAccess();
-      const pinnedQuery = {
-        select: vi.fn(() => pinnedQuery),
-        eq: vi.fn(() => pinnedQuery),
-        maybeSingle: vi.fn(async () => ({ data: repository, error: null })),
-      };
-      supabase.from.mockReturnValue(pinnedQuery);
-      mocked.loadActiveFactoryExecution.mockResolvedValueOnce({
-        canonicalDigest: "a".repeat(64),
-        pipelineId: "compiled-pipeline",
-        repositoryId: "repo-pinned",
-        stages: [
-          { id: "stage-2", name: "Compile", description: "First compiled stage" },
-          { id: "stage-1", name: "Ship", description: "Second compiled stage" },
-        ],
-      });
+  it.each([
+    [
+      [
+        { id: "repo-alternate", full_name: "acme/alternate" },
+        { id: "repo-pinned", full_name: "acme/pinned" },
+      ],
+    ],
+    [[{ id: "repo-alternate", full_name: "acme/alternate" }]],
+    [[]],
+  ])("projects only the active writable repository rows %j", async (repositories) => {
+    const supabase = grantAccess();
+    const pinnedQuery = {
+      select: vi.fn(() => pinnedQuery),
+      eq: vi.fn(() => pinnedQuery),
+      in: vi.fn(() => pinnedQuery),
+      order: vi.fn(async () => ({ data: repositories, error: null })),
+    };
+    supabase.from.mockReturnValue(pinnedQuery);
+    mocked.loadActiveFactoryExecution.mockResolvedValueOnce({
+      canonicalDigest: "a".repeat(64),
+      factoryId: "factory-1",
+      pipelineId: "compiled-pipeline",
+      repositoryId: "repo-pinned",
+      writableRepositoryIds: ["repo-alternate"],
+      readContextRepositoryIds: ["repo-context"],
+      stages: [
+        { id: "stage-2", name: "Compile", description: "First compiled stage" },
+        { id: "stage-1", name: "Ship", description: "Second compiled stage" },
+      ],
+    });
 
-      const response = await GET(new Request("http://localhost"), routeContext());
+    const response = await GET(new Request("http://localhost"), routeContext());
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get("cache-control")).toBe("private, no-store");
-      await expect(response.json()).resolves.toEqual({
-        defaultGithubRepositoryId: "repo-pinned",
-        factoryDefinitionDigest: "a".repeat(64),
-        pipelineId: "compiled-pipeline",
-        repositoryOptions: repository ? [{ fullName: "acme/pinned", id: "repo-pinned" }] : [],
-        stageOptions: [
-          { id: "stage-2", name: "Compile", description: "First compiled stage", position: 1 },
-          { id: "stage-1", name: "Ship", description: "Second compiled stage", position: 2 },
-        ],
-      });
-      expect(mocked.loadActiveFactoryExecution).toHaveBeenCalledExactlyOnceWith(
-        supabase,
-        WORKSPACE_ID,
-      );
-      expect(mocked.loadSessionRepositoryOptionsWithPrimary).not.toHaveBeenCalled();
-      expect(mocked.loadDefaultPipelineForWorkspace).not.toHaveBeenCalled();
-      expect(supabase.from).toHaveBeenCalledExactlyOnceWith("github_repositories");
-      expect(pinnedQuery.eq.mock.calls).toEqual([
-        ["workspace_id", WORKSPACE_ID],
-        ["id", "repo-pinned"],
-        ["is_archived", false],
-      ]);
-    },
-  );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({
+      defaultGithubRepositoryId: "repo-pinned",
+      factoryDefinitionDigest: "a".repeat(64),
+      pipelineId: "compiled-pipeline",
+      repositoryOptions: repositories.map(({ id, full_name }) => ({ id, fullName: full_name })),
+      stageOptions: [
+        { id: "stage-2", name: "Compile", description: "First compiled stage", position: 1 },
+        { id: "stage-1", name: "Ship", description: "Second compiled stage", position: 2 },
+      ],
+    });
+    expect(mocked.loadActiveFactoryExecution).toHaveBeenCalledExactlyOnceWith(
+      supabase,
+      WORKSPACE_ID,
+    );
+    expect(mocked.loadSessionRepositoryOptionsWithPrimary).not.toHaveBeenCalled();
+    expect(mocked.loadDefaultPipelineForWorkspace).not.toHaveBeenCalled();
+    expect(supabase.from).toHaveBeenCalledExactlyOnceWith("github_repositories");
+    expect(pinnedQuery.eq.mock.calls).toEqual([
+      ["workspace_id", WORKSPACE_ID],
+      ["factory_id", "factory-1"],
+      ["is_archived", false],
+      ["github_installations.workspace_id", WORKSPACE_ID],
+      ["github_installations.suspended", false],
+    ]);
+    expect(pinnedQuery.select).toHaveBeenCalledWith(
+      "id, full_name, github_installations!inner(id)",
+    );
+    expect(pinnedQuery.in).toHaveBeenCalledWith("id", ["repo-pinned", "repo-alternate"]);
+  });
 
   it("returns the authorized empty option set", async () => {
     grantAccess(null);

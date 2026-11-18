@@ -5,6 +5,7 @@ import {
   resolveDefaultSessionRepositoryId,
 } from "@/features/sessions/repository-options";
 import type { SessionRepositoryOptionsResult } from "@/features/sessions/client";
+import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/repository-bindings";
 import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import { loadDefaultPipelineForWorkspace } from "@/lib/pipeline/stages";
 import { workspaceIdParamsSchema } from "@/lib/workspaces";
@@ -41,20 +42,23 @@ export async function GET(_request: Request, context: RouteContext) {
   const { supabase, workspace } = access.context;
   const pinned = await loadActiveFactoryExecution(supabase, workspace.id);
   if (pinned) {
-    const { data: repository, error } = await supabase
+    const { data: repositories, error } = await supabase
       .from("github_repositories")
-      .select("id, full_name")
+      .select("id, full_name, github_installations!inner(id)")
       .eq("workspace_id", workspace.id)
-      .eq("id", pinned.repositoryId)
+      .eq("factory_id", pinned.factoryId)
       .eq("is_archived", false)
-      .maybeSingle();
+      .eq("github_installations.workspace_id", workspace.id)
+      .eq("github_installations.suspended", false)
+      .in("id", factoryWritableRepositoryIds(pinned))
+      .order("full_name", { ascending: true });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     return sessionOptions({
       defaultGithubRepositoryId: pinned.repositoryId,
       factoryDefinitionDigest: pinned.canonicalDigest,
       pipelineId: pinned.pipelineId,
-      repositoryOptions: repository ? [{ id: repository.id, fullName: repository.full_name }] : [],
+      repositoryOptions: repositories.map(({ id, full_name }) => ({ id, fullName: full_name })),
       stageOptions: pinned.stages.map(({ description, id, name }, index) => ({
         description,
         id,

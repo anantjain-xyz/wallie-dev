@@ -25,6 +25,7 @@ export type FactoryDefinitionDiagnostic = {
     | "missing_reference"
     | "ambiguous_reference"
     | "unsupported_capability"
+    | "duplicate_repository_binding"
     | "duplicate_stage"
     | "unreachable_stage";
   message: string;
@@ -37,6 +38,8 @@ export type CompiledFactoryDefinition = Pick<
   implementationAgent?: FactoryAgentPromptSnapshot;
   pipelineId: string;
   repositoryId: string;
+  writableRepositoryIds?: string[];
+  readContextRepositoryIds?: string[];
   executionPolicyRevisionId: string | null;
   deliveryPolicyRevisionId: string | null;
   skillIds: string[];
@@ -137,6 +140,31 @@ function compileSerialDefinition(
       ])
     : null;
   const repository = find(catalog.repositories, definition.repository, ["repository"]);
+  const seenRepositoryIds = new Set(repository ? [normalizeFactoryId(repository.id)] : []);
+
+  function repositoryIds(kind: "writableRepositories" | "readContextRepositories") {
+    const ids: string[] = [];
+    definition[kind]?.forEach((reference, index) => {
+      const path = [kind, index];
+      const entry = find(catalog.repositories, reference, path);
+      if (!entry) return;
+      const id = normalizeFactoryId(entry.id);
+      if (seenRepositoryIds.has(id)) {
+        diagnostics.push({
+          path,
+          code: "duplicate_repository_binding",
+          message: `Use "${reference}" only once across the factory's repository bindings.`,
+        });
+        return;
+      }
+      seenRepositoryIds.add(id);
+      ids.push(id);
+    });
+    return ids.sort();
+  }
+
+  const writableRepositoryIds = repositoryIds("writableRepositories");
+  const readContextRepositoryIds = repositoryIds("readContextRepositories");
   const executionPolicy =
     definition.executionPolicy === null
       ? null
@@ -250,6 +278,8 @@ function compileSerialDefinition(
     sandboxProvider,
     pipelineId: normalizeFactoryId(pipeline.id),
     repositoryId: normalizeFactoryId(repository.id),
+    ...(writableRepositoryIds.length ? { writableRepositoryIds } : {}),
+    ...(readContextRepositoryIds.length ? { readContextRepositoryIds } : {}),
     executionPolicyRevisionId: executionPolicy ? normalizeFactoryId(executionPolicy.id) : null,
     deliveryPolicyRevisionId: deliveryPolicy ? normalizeFactoryId(deliveryPolicy.id) : null,
     skillIds,

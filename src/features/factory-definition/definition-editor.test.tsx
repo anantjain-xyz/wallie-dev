@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { PortalRootProvider } from "@/components/ui/portal-root";
 import { FactoryDefinitionEditor } from "@/features/factory-definition/definition-editor";
+import type { CapabilityRepository } from "@/features/settings/sandbox-capability-section";
 import type { CandidateSmokeTest } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import type {
   FactoryEditorDocument,
@@ -58,6 +59,8 @@ function document(
   const {
     pipeline,
     repository,
+    writableRepositories,
+    readContextRepositories,
     executionPolicy,
     deliveryPolicy,
     skills,
@@ -84,6 +87,8 @@ function document(
       kind: workflowKind,
       pipelineId: pipeline,
       repositoryId: repository,
+      ...(writableRepositories ? { writableRepositoryIds: writableRepositories } : {}),
+      ...(readContextRepositories ? { readContextRepositoryIds: readContextRepositories } : {}),
       executionPolicyRevisionId: executionPolicy,
       deliveryPolicyRevisionId: deliveryPolicy,
       skillIds: skills,
@@ -138,28 +143,50 @@ function receipt(
 function setup({
   selection = null,
   initialDraftPasses = true,
+  initialDraft = draft,
+  repositories = [{ id: id(3), fullName: "acme/project", isArchived: false }],
 }: {
   selection?: { draft: string; test: string } | null;
   initialDraftPasses?: boolean;
+  initialDraft?: FactoryEditorDocument;
+  repositories?: CapabilityRepository[];
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: 2,
     published,
-    draft,
+    draft: initialDraft,
     baseline: null,
     readySandboxProviders: ["vercel"],
   };
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
-  const records = new Map([published, previous, draft].map((document) => [document.id, document]));
+  const records = new Map(
+    [published, previous, initialDraft].map((document) => [document.id, document]),
+  );
   const reads: string[] = [];
+  const capabilityReads: string[] = [];
   const tests = new Map<string, CandidateSmokeTest[]>([
-    [draft.id, initialDraftPasses ? [receipt(draft, "passed", 41)] : []],
+    [initialDraft.id, initialDraftPasses ? [receipt(initialDraft, "passed", 41)] : []],
     [previous.id, [receipt(previous, "passed", 42)]],
   ]);
   let testCount = 50;
   vi.stubGlobal("fetch", async (url: string, options?: RequestInit) => {
     const { pathname, searchParams } = new URL(url, "http://localhost");
-    if (pathname === `${endpoint}/capability-check`) return Response.json({ check: null });
+    if (pathname === `${endpoint}/capability-check`) {
+      if (options?.method !== "POST") {
+        capabilityReads.push(url);
+        return Response.json({ check: null });
+      }
+      const body = JSON.parse(String(options.body));
+      requests.push({ path: pathname, body });
+      return Response.json({
+        check: {
+          checkedAt: createdAt,
+          capabilities: {},
+          githubRepositoryId: body.repositoryId,
+          status: "success",
+        },
+      });
+    }
     if (pathname.startsWith(`${endpoint}/candidate-tests`)) {
       if (options?.method === "POST") {
         const body = JSON.parse(String(options.body));
@@ -246,7 +273,7 @@ function setup({
 
   render(
     <FactoryDefinitionEditor
-      repositories={[{ id: id(3), fullName: "acme/project", isArchived: false }]}
+      repositories={repositories}
       selection={selection}
       workspaceId={id(1)}
       workspaceSlug="acme"
@@ -256,6 +283,7 @@ function setup({
   return {
     requests,
     reads,
+    capabilityReads,
     completeTest(targetId: string, status: "passed" | "failed") {
       const list = tests.get(targetId);
       const doc = records.get(targetId);
@@ -415,6 +443,39 @@ it("checks readiness for the selected revision's provider and refreshes it with 
   updateReadyProviders(["vercel", "e2b"]);
   fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
   await waitFor(() => expect(runCheck()).toBeEnabled());
+});
+
+it("checks the selected writable repository and excludes read-only context", async () => {
+  const { capabilityReads, requests } = setup({
+    initialDraft: document(6, "draft", {
+      ...source,
+      writableRepositories: [id(12)],
+      readContextRepositories: [id(13)],
+    }),
+    repositories: [
+      { id: id(3), fullName: "acme/project", isArchived: false },
+      { id: id(12), fullName: "acme/worker", isArchived: false },
+      { id: id(13), fullName: "acme/engineering-docs", isArchived: false },
+    ],
+  });
+
+  const selection = await screen.findByRole("combobox", { name: "Repository" });
+  expect(selection).toHaveTextContent("acme/project");
+  fireEvent.click(selection);
+  expect(screen.queryByRole("option", { name: "acme/engineering-docs" })).toBeNull();
+  fireEvent.click(screen.getByRole("option", { name: "acme/worker" }));
+  expect(selection).toHaveTextContent("acme/worker");
+  const run = screen.getByRole("button", { name: "Run capability check" });
+  await waitFor(() => expect(run).toBeEnabled());
+  expect(capabilityReads).toContain(
+    `${endpoint}/capability-check?draftId=${draft.id}&repositoryId=${id(12)}`,
+  );
+  fireEvent.click(run);
+  await screen.findByText("Sandbox capability check passed.");
+  expect(requests).toContainEqual({
+    path: `${endpoint}/capability-check`,
+    body: { target: { kind: "draft", id: draft.id }, repositoryId: id(12) },
+  });
 });
 
 it("defers exact receipt evidence and retains a failed attempt when a retest completes", async () => {

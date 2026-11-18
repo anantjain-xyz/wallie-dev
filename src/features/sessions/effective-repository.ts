@@ -66,14 +66,23 @@ async function loadRepository(
     repositoryId: string;
     workspaceId: string;
   },
+  requireConnected = false,
 ) {
-  const { data, error } = await supabase
-    .from("github_repositories")
-    .select(repositorySelect)
+  const repositories = supabase.from("github_repositories");
+  let query = (
+    requireConnected
+      ? repositories.select(`${repositorySelect}, github_installations!inner(id)`)
+      : repositories.select(repositorySelect)
+  )
     .eq("id", input.repositoryId)
     .eq("workspace_id", input.workspaceId)
-    .eq("factory_id", input.factoryId)
-    .maybeSingle();
+    .eq("factory_id", input.factoryId);
+  if (requireConnected) {
+    query = query
+      .eq("github_installations.workspace_id", input.workspaceId)
+      .eq("github_installations.suspended", false);
+  }
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw error;
@@ -155,11 +164,15 @@ export async function resolveEffectiveSessionRepository(input: {
   // A queued generation has already selected its repository. A changed default
   // or missing connection cannot redirect that work to another checkout.
   if (input.pinnedRepositoryId) {
-    const repository = await loadRepository(input.supabase, {
-      factoryId: input.factoryId,
-      repositoryId: input.pinnedRepositoryId,
-      workspaceId: input.workspaceId,
-    });
+    const repository = await loadRepository(
+      input.supabase,
+      {
+        factoryId: input.factoryId,
+        repositoryId: input.pinnedRepositoryId,
+        workspaceId: input.workspaceId,
+      },
+      true,
+    );
     return {
       repository,
       repositoryId: input.pinnedRepositoryId,

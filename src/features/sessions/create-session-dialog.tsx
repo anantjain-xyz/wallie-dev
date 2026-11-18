@@ -433,17 +433,22 @@ function CreateSessionDialogBody({
   const defaultRepositoryAvailable = repositoryOptions.some(
     (repository) => repository.id === defaultGithubRepositoryId,
   );
-  const factoryRepositoryUnavailable = Boolean(
-    factoryDefinitionDigest && !defaultRepositoryAvailable,
+  const explicitRepositoryAvailable = repositoryOptions.some(
+    (repository) => repository.id === githubRepositoryId,
   );
-  const fallbackRepositoryId = defaultRepositoryAvailable
-    ? (defaultGithubRepositoryId ?? "")
-    : (repositoryOptions[0]?.id ?? "");
-  const selectedGithubRepositoryId =
-    !factoryDefinitionDigest &&
-    repositoryOptions.some((repository) => repository.id === githubRepositoryId)
-      ? githubRepositoryId
-      : fallbackRepositoryId;
+  let selectedGithubRepositoryId = "";
+  if (explicitRepositoryAvailable) {
+    selectedGithubRepositoryId = githubRepositoryId;
+  } else if (!factoryDefinitionDigest || !githubRepositoryId) {
+    selectedGithubRepositoryId = defaultRepositoryAvailable
+      ? (defaultGithubRepositoryId ?? "")
+      : factoryDefinitionDigest
+        ? ""
+        : (repositoryOptions[0]?.id ?? "");
+  }
+  const factoryRepositorySelectionRequired = Boolean(
+    factoryDefinitionDigest && !selectedGithubRepositoryId,
+  );
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -469,8 +474,12 @@ function CreateSessionDialogBody({
       return;
     }
 
-    if (factoryRepositoryUnavailable) {
-      setErrorMessage("Reconnect the factory repository before starting a session.");
+    if (factoryRepositorySelectionRequired) {
+      setErrorMessage(
+        repositoryOptions.length
+          ? "Choose a writable factory repository."
+          : "Reconnect a writable factory repository before starting a session.",
+      );
       return;
     }
 
@@ -837,7 +846,7 @@ function CreateSessionDialogBody({
               <MultiSelectField
                 description={
                   factoryDefinitionDigest
-                    ? "The active factory sets the repository and stage order."
+                    ? "The active factory sets the stage order."
                     : "Choose the pipeline stages this session should run."
                 }
                 disabled={
@@ -921,7 +930,7 @@ function CreateSessionDialogBody({
                   ? isSubmitting
                   : isCreateSessionSubmitDisabled({
                       hasRepositoryResult:
-                        repositorySnapshot.data !== null && !factoryRepositoryUnavailable,
+                        repositorySnapshot.data !== null && !factoryRepositorySelectionRequired,
                       hasBlockingAttachments,
                       isRepositoryStale: repositorySnapshot.isStale,
                       isSubmitting,
@@ -1006,7 +1015,15 @@ export function RepositoryField({
     <div className="space-y-2">
       {options.length > 0 ? (
         <SelectField
-          disabled={disabled || Boolean(snapshot.data.factoryDefinitionDigest)}
+          disabled={
+            disabled ||
+            Boolean(
+              snapshot.data.factoryDefinitionDigest &&
+              options.length === 1 &&
+              selectedGithubRepositoryId,
+            )
+          }
+          fallbackLabel="Choose a repository"
           label="Repository"
           options={options}
           onValueChange={onValueChange}
@@ -1019,7 +1036,7 @@ export function RepositoryField({
           role="status"
         >
           {snapshot.data.factoryDefinitionDigest
-            ? "Reconnect the factory repository before starting a session."
+            ? "Reconnect a writable factory repository before starting a session."
             : "No repositories available. Starting without one."}
         </div>
       )}
