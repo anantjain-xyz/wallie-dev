@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type { RunCatalogRecovery } from "@/features/wallie/run-catalog-recovery";
 import { RunInspector } from "@/features/wallie/run-inspector";
-import type { RunInspectorArtifact } from "@/features/wallie/run-inspector-data";
+import type {
+  RunInspectorArtifact,
+  RunInspectorSkills,
+} from "@/features/wallie/run-inspector-data";
 import { parseRunFailure } from "@/lib/pipeline/run-failure";
 
 const now = "2026-11-14T20:00:00.000Z";
@@ -66,12 +69,14 @@ const run: WorkspaceRunCatalogItem = {
 function show(
   changes: Partial<WorkspaceRunCatalogItem> = {},
   artifact: RunInspectorArtifact = { kind: "none" },
+  skills: RunInspectorSkills = { kind: "unrecorded" },
 ) {
   return render(
     <RunInspector
       artifact={artifact}
       initialNow={now}
       run={{ ...run, ...changes }}
+      skills={skills}
       workspaceId={workspaceId}
       workspaceSlug="wallie"
       transcript={<p>Exact attempt activity</p>}
@@ -120,6 +125,33 @@ describe("RunInspector", () => {
       expect.anything(),
     );
     expect(screen.getByText("Exact attempt activity")).toBeTruthy();
+  });
+
+  it("identifies each retained skill revision and its content digest", () => {
+    const revisionId = "00000000-0000-4000-8000-000000000007";
+    const digest = "a".repeat(64);
+    show(
+      {},
+      { kind: "none" },
+      {
+        kind: "recorded",
+        revisions: [
+          {
+            skillId: "00000000-0000-4000-8000-000000000006",
+            name: "Check release evidence",
+            revisionId,
+            version: 2,
+            contentSha256: digest,
+            sourceKind: "repository",
+          },
+        ],
+      },
+    );
+    expect(screen.getByRole("heading", { name: "Skill revisions" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Check release evidence" })).toBeTruthy();
+    expect(screen.getByText("Revision 2 · Repository")).toBeTruthy();
+    expect(screen.getByText(revisionId)).toBeTruthy();
+    expect(screen.getByText(digest)).toBeTruthy();
   });
 
   it("keeps cancellation visible even when a newer attempt exists", () => {

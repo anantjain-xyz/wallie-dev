@@ -40,8 +40,9 @@ end;
 $$;
 create function pg_temp.pin_manifest(job_id uuid, run_id uuid, predecessors jsonb default '[]',
   prompt_digest text default repeat('b', 64), checkout_sha text default repeat('a', 40), attempt integer default 1,
-  member_id uuid default 'c1b2c3d4-0001-4000-8000-000000000001') returns boolean language sql as $$
-  select public.pin_session_attempt_manifest(job_id, run_id, attempt, prompt_digest, 24, 1,
+  member_id uuid default 'c1b2c3d4-0001-4000-8000-000000000001', renderer integer default 3)
+returns boolean language sql as $$
+  select public.pin_session_attempt_manifest(job_id, run_id, attempt, prompt_digest, 24, renderer,
     checkout_sha, predecessors, 'workerd', 7, 'high', member_id);
 $$;
 create temp table legacy as select * from pg_temp.manifest_fixture('Legacy manifest');
@@ -75,11 +76,19 @@ values ('54100000-0000-4000-8000-000000000001', 'b1b2c3d4-0001-4000-8000-0000000
   'd1b2c3d4-0001-4000-8000-000000000001', 54101,
   '{"version":1,"deliveryMode":"code","requireCodeOwnerReview":false,"requireResolvedThreads":false,"requireArtifactApprovalForDelivery":false,"minimumApprovals":0,"freshnessSeconds":60,"requiredChecks":[],"requiredEvidence":[]}',
   'c1b2c3d4-0001-4000-8000-000000000001');
+create temporary table manifest_skill as
+select revision.id
+from public.factory_skill_revisions revision
+join public.factory_skills skill on skill.id = revision.skill_id
+join public.factories factory on factory.id = revision.factory_id
+where factory.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001'
+  and factory.is_default and skill.slug = 'commit' and revision.revision_number = 1;
+
 with definition as (
   select f.workspace_id, f.id as factory_id, jsonb_build_object(
     'schemaVersion',1,'kind','serial','pipelineId',p.id,'repositoryId','12b2c3d4-0001-4000-8000-000000000001',
     'sandboxProvider','e2b','executionPolicyRevisionId',null,'deliveryPolicyRevisionId','54100000-0000-4000-8000-000000000001',
-    'skillIds',jsonb_build_array('skill-test'),'toolIds',jsonb_build_array('tool-test'),
+    'skillIds',jsonb_build_array((select id from manifest_skill)),'toolIds',jsonb_build_array('tool-test'),
     'operatingRulesMd','','operatingRuleStageIds','[]'::jsonb,
     'agent',jsonb_build_object('provider','codex','model','gpt-5.5','effort','high','maxTurns',7,
       'concurrencyLimit',1,'maxRetries',1,'stallTimeoutMs',720000),
@@ -143,6 +152,9 @@ update public.pipeline_stages set slug = 'plan-renamed'
 where id = (select (value #>> '{0,stageId}')::uuid from exact_input);
 select ok(pg_temp.pin_manifest(job_id,run_id,legacy_input.value), 'a legacy completion can keep the prompt key captured before a rename')
   from legacy_target cross join legacy_input;
+select throws_ok($$select pg_temp.pin_manifest(job_id,run_id,exact_input.value,renderer => 2)
+  from approval_target cross join exact_input$$, 'PT422', 'This worker cannot execute the pinned skill revisions.',
+  'an older renderer cannot start a pinned skill attempt');
 select ok(pg_temp.pin_manifest(job_id,run_id,exact_input.value), 'the exact approval is pinned with the actual attempt')
   from approval_target cross join exact_input;
 select is(m.predecessors, exact_input.value, 'the manifest freezes the reviewed artifact and pre-rename prompt key')
@@ -150,7 +162,7 @@ select is(m.predecessors, exact_input.value, 'the manifest freezes the reviewed 
 select is(m.definition_digest, revision.canonical_digest, 'the admitted definition digest is copied from the immutable revision')
   from public.session_attempt_manifests m join approval_target using (run_id)
   join public.factory_definition_revisions revision on revision.id = m.definition_revision_id;
-select is(m.definition_skill_ids, array['skill-test'], 'resolved skills are copied from the admitted definition')
+select is(m.definition_skill_ids, array[(select id::text from manifest_skill)], 'resolved skills are copied from the admitted definition')
   from public.session_attempt_manifests m join approval_target using (run_id);
 select is(m.definition_delivery_policy_revision_id, '54100000-0000-4000-8000-000000000001'::uuid,
   'the manifest preserves the delivery policy reference from the definition')
@@ -302,5 +314,56 @@ insert into public.factory_definition_activations(workspace_id,factory_id,revisi
 select workspace_id,factory_id,revision_id,3,created_by from confirmation_revisions where activation_number=1;
 select is(pg_temp.confirm_factory(2), (select session_id from confirmed),
   'an accepted confirmation replays under its original revision after another activation');
+
+create temp table inspector_skill_evidence as
+select target.run_id, revision.workspace_id, revision.factory_id, revision.skill_id, revision.id as revision_id,
+  jsonb_build_array(jsonb_build_object(
+    'skillId', skill.id, 'revisionId', revision.id, 'name', skill.name,
+    'version', revision.revision_number, 'contentSha256', revision.content_sha256,
+    'sourceKind', revision.source_kind
+  )) as expected
+from approval_target target
+join public.session_attempt_manifests manifest on manifest.run_id = target.run_id
+join public.factory_skill_revisions revision on revision.id::text = manifest.definition_skill_ids[1]
+join public.factory_skills skill on skill.id = revision.skill_id;
+select is((select count(*) from inspector_skill_evidence), 1::bigint,
+  'the inspector scope fixture has one recorded skill revision');
+grant select on inspector_skill_evidence to authenticated;
+select ok(not has_function_privilege('anon', 'public.get_run_skill_revisions(uuid,uuid,integer)', 'execute'),
+  'anonymous callers cannot request skill revision evidence');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = 'a1b2c3d4-0002-4000-8000-000000000002';
+select is(public.get_run_skill_revisions(workspace_id, run_id, 1), expected,
+  'a factory reader sees exact revision metadata without the prompt or credential binding')
+from inspector_skill_evidence;
+select is(public.get_run_skill_revisions(workspace_id, run_id, 2), null::jsonb,
+  'the inspector never substitutes evidence from another attempt')
+from inspector_skill_evidence;
+select is(public.get_run_skill_revisions(gen_random_uuid(), run_id, 1), null::jsonb,
+  'a different workspace cannot yield run evidence')
+from inspector_skill_evidence;
+reset role;
+
+set local request.jwt.claim.role = 'service_role';
+select public.revoke_factory_membership(
+  workspace_id, factory_id, 'a1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-0002-4000-8000-000000000002'
+) from inspector_skill_evidence;
+select public.revoke_factory_skill_revision(
+  workspace_id, factory_id, 'a1b2c3d4-0001-4000-8000-000000000001', skill_id, revision_id
+) from inspector_skill_evidence;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select is(public.get_run_skill_revisions(workspace_id, run_id, 1), null::jsonb,
+  'a workspace member loses visibility after their factory grant is revoked')
+from inspector_skill_evidence;
+set local request.jwt.claim.sub = 'a1b2c3d4-0001-4000-8000-000000000001';
+select is(public.get_run_skill_revisions(workspace_id, run_id, 1), expected,
+  'revoking future skill use preserves evidence of the recorded attempt')
+from inspector_skill_evidence;
+reset role;
+
 select * from finish();
 rollback;

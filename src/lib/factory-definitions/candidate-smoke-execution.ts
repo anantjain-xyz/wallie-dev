@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   trustedPromptValue,
   untrustedPromptValue,
+  type PromptValue,
   type UntrustedPromptValue,
 } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
@@ -76,7 +77,11 @@ export type CandidateSmokeExecutionResult = {
   };
 };
 
-async function renderPrompts(bundle: CompiledFactoryDefinition, signal: AbortSignal) {
+async function renderPrompts(
+  bundle: CompiledFactoryDefinition,
+  skillInstructions: readonly PromptValue[],
+  signal: AbortSignal,
+) {
   const stageSlugs = new Set<string>();
   const previousArtifacts = new Map<string, [slug: string, value: UntrustedPromptValue]>();
   const evidence: StageEvidence[] = [];
@@ -107,6 +112,7 @@ async function renderPrompts(bundle: CompiledFactoryDefinition, signal: AbortSig
         slug: trustedPromptValue("stage.slug", stage.slug),
       },
       {
+        skillInstructions,
         ...(bundle.implementationAgent
           ? {
               agentPromptMd: trustedPromptValue(
@@ -174,6 +180,7 @@ async function executeFixedCommand(
 /** Runs only the synthetic serial handoff. Candidate text remains on the server. */
 export async function runCandidateSmokeExecution(input: {
   bundle: CompiledFactoryDefinition;
+  skillInstructions?: readonly PromptValue[];
   profile: SandboxImplementation;
   acquire: (signal: AbortSignal) => Promise<CandidateSmokeUtility>;
   signal?: AbortSignal;
@@ -199,7 +206,7 @@ export async function runCandidateSmokeExecution(input: {
 
     try {
       if (!input.bundle.stages.length) throw new Error("No serial stage.");
-      stages = await renderPrompts(input.bundle, signal);
+      stages = await renderPrompts(input.bundle, input.skillInstructions ?? [], signal);
     } catch {
       return interrupted({ status: "blocked", reason: "invalid_prompt" });
     }

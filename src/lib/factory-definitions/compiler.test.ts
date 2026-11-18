@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { compileFactoryDefinition, factoryAgentPromptRevisionIdForSource } from "./compiler";
+import { compileFactoryDefinition, factoryComponentRevisionsForSource } from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
 import type { SerialFactoryDefinitionInput } from "./schema";
 import { factoryDefinitionFromBundle, recompileStoredFactoryDefinition } from "./stored-definition";
@@ -90,30 +90,44 @@ function compile(value: unknown, references: FactoryDefinitionCatalog = catalog)
 }
 
 describe("compileFactoryDefinition", () => {
-  it("reads a selected prompt revision only from valid structured or JSON sources", () => {
+  it("reads selected prompt and skill revisions only from valid structured or JSON sources", () => {
     const value = { ...candidate(), implementationAgent: promptRevisionId.toUpperCase() };
-    expect(factoryAgentPromptRevisionIdForSource({ kind: "structured", value })).toBe(
-      promptRevisionId,
-    );
+    const revisions = {
+      agentPromptRevisionId: promptRevisionId,
+      skillRevisionIds: value.skills,
+    };
+    expect(factoryComponentRevisionsForSource({ kind: "structured", value })).toEqual(revisions);
     expect(
-      factoryAgentPromptRevisionIdForSource({ kind: "json", text: JSON.stringify(value) }),
-    ).toBe(promptRevisionId);
+      factoryComponentRevisionsForSource({ kind: "json", text: JSON.stringify(value) }),
+    ).toEqual(revisions);
+    expect(factoryComponentRevisionsForSource({ kind: "structured", value: candidate() })).toEqual({
+      skillRevisionIds: value.skills,
+    });
     expect(
-      factoryAgentPromptRevisionIdForSource({ kind: "structured", value: candidate() }),
-    ).toBeUndefined();
-    expect(
-      factoryAgentPromptRevisionIdForSource({
+      factoryComponentRevisionsForSource({
         kind: "structured",
         value: { ...value, implementationAgent: "invalid-uuid" },
       }),
-    ).toBeUndefined();
-    expect(factoryAgentPromptRevisionIdForSource({ kind: "json", text: "{" })).toBeUndefined();
+    ).toEqual({});
+    expect(factoryComponentRevisionsForSource({ kind: "json", text: "{" })).toEqual({});
     expect(
-      factoryAgentPromptRevisionIdForSource({
+      factoryComponentRevisionsForSource({
         kind: "json",
         text: '{"implementationAgent":"one","implementationAgent":"two"}',
       }),
-    ).toBeUndefined();
+    ).toEqual({});
+  });
+
+  it("does not compile a skill binding that the current catalog does not offer", () => {
+    const revisionId = "81b90000-0000-4000-8000-000000000035";
+    const source = { ...candidate(), skills: [revisionId] };
+    const available = { ...catalog, skills: [{ id: revisionId, workspaceId }] };
+    const initial = compile(source, available);
+    expect(initial).toMatchObject({ ok: true, bundle: { skillIds: [revisionId] } });
+    expect(compile(source, { ...catalog, skills: [] })).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["skills", 0], code: "missing_reference" }],
+    });
   });
 
   it("pins named-agent prompt bytes and keeps template-looking instructions literal", () => {

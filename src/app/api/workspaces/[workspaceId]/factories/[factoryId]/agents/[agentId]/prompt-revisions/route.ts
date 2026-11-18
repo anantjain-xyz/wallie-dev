@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import { saveFactoryAgentPromptSchema } from "@/lib/factory-agents/contracts";
 import {
-  factoryAgentResponseHeaders as headers,
-  resolveFactoryAgentRouteContext,
-} from "@/lib/factory-agents/route-context";
+  factoryResponseHeaders as headers,
+  resolveFactoryRouteContext,
+} from "@/lib/factories/route-context";
 import {
   listFactoryAgentPromptRevisions,
   saveFactoryAgentPromptRevision,
@@ -24,7 +24,7 @@ const querySchema = z
   .strict();
 
 export async function GET(request: Request, { params }: RouteContext) {
-  const context = await resolveFactoryAgentRouteContext(params);
+  const context = await resolveFactoryRouteContext(params);
   if (!context.ok) return context.response;
   const agentId = uuid.safeParse((await params).agentId);
   const query = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
@@ -39,7 +39,7 @@ export async function GET(request: Request, { params }: RouteContext) {
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
-  const context = await resolveFactoryAgentRouteContext(params);
+  const context = await resolveFactoryRouteContext(params);
   if (!context.ok) return context.response;
   const agentId = uuid.safeParse((await params).agentId);
   const command = saveFactoryAgentPromptSchema.safeParse(await request.json().catch(() => null));

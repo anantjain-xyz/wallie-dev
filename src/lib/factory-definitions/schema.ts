@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { agentConfigValueSchemas } from "@/lib/agent-config/contracts";
+import { MAX_FACTORY_SKILL_REVISIONS } from "@/lib/factory-skills/contracts";
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import {
   pipelineApproversSchema,
@@ -83,7 +84,7 @@ export const serialFactoryDefinitionSchema = z
       .optional(),
     executionPolicy: optionalReferenceSchema,
     deliveryPolicy: optionalReferenceSchema,
-    skills: z.array(referenceSchema).default([]),
+    skills: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS).default([]),
     tools: z.array(referenceSchema).default([]),
     operatingRulesMd: pipelineOperatingRulesSchema
       .default("")
@@ -112,7 +113,7 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     repositoryId: stableUuid,
     executionPolicyRevisionId: stableUuid.nullable(),
     deliveryPolicyRevisionId: stableUuid.nullable(),
-    skillIds: z.array(referenceSchema),
+    skillIds: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS),
     toolIds: z.array(referenceSchema),
     operatingRuleStageIds: z.array(stableUuid),
     stages: z.array(stageSchema.extend({ previousStageIds: z.array(stableUuid) })).min(1),

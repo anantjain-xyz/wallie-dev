@@ -12,13 +12,17 @@ import {
 import { Status, agentRunStatusValue } from "@/components/ui/status";
 import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
-import type { RunInspectorArtifact } from "@/features/wallie/run-inspector-data";
+import type {
+  RunInspectorArtifact,
+  RunInspectorSkills,
+} from "@/features/wallie/run-inspector-data";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
 import { workspaceRunsPath } from "@/lib/routes";
 
 export function RunInspector({
   run,
   artifact,
+  skills,
   workspaceId,
   workspaceSlug,
   initialNow,
@@ -26,6 +30,7 @@ export function RunInspector({
 }: {
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
+  skills: RunInspectorSkills;
   workspaceId: string;
   workspaceSlug: string;
   initialNow: string;
@@ -180,6 +185,8 @@ export function RunInspector({
           </div>
         </PageSection>
 
+        <RunSkillRevisions skills={skills} />
+
         <ArtifactEvidenceInspector
           source={{
             kind: "run",
@@ -192,6 +199,55 @@ export function RunInspector({
         {transcript}
       </div>
     </PageContainer>
+  );
+}
+
+const skillSourceLabels = {
+  wallie_builtin: "Wallie built-in",
+  manual: "Factory-authored",
+  repository: "Repository",
+};
+
+function RunSkillRevisions({ skills }: { skills: RunInspectorSkills }) {
+  if (skills.kind === "unrecorded") return null;
+  if (skills.kind === "unavailable") {
+    return (
+      <PageSection title="Skill revisions">
+        <p className="ui-sheet px-4 py-5 text-sm text-muted sm:px-5">
+          Skill revision details could not be loaded.
+        </p>
+      </PageSection>
+    );
+  }
+  if (!skills.revisions.length) return null;
+
+  return (
+    <PageSection title="Skill revisions" tagline="Revisions included in this attempt’s prompt.">
+      <ul className="ui-sheet divide-y divide-border">
+        {skills.revisions.map((revision) => (
+          <li key={revision.revisionId} className="min-w-0 space-y-3 px-4 py-5 sm:px-5">
+            <div className="space-y-1">
+              <h3 className="break-words text-sm font-semibold text-foreground">{revision.name}</h3>
+              <p className="type-annotation text-muted">
+                Revision {revision.version} · {skillSourceLabels[revision.sourceKind]}
+              </p>
+            </div>
+            <MetadataList>
+              <MetadataItem
+                label="Revision ID"
+                monospace
+                value={<span className="[overflow-wrap:anywhere]">{revision.revisionId}</span>}
+              />
+              <MetadataItem
+                label="Content SHA-256"
+                monospace
+                value={<span className="[overflow-wrap:anywhere]">{revision.contentSha256}</span>}
+              />
+            </MetadataList>
+          </li>
+        ))}
+      </ul>
+    </PageSection>
   );
 }
 

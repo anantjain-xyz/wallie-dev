@@ -5,6 +5,7 @@ import { RunCatalogWorkspaceUnavailableError } from "@/features/wallie/run-catal
 import {
   loadRunInspectorArtifact,
   loadRunInspectorData,
+  loadRunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { RunTranscriptResetError } from "@/features/wallie/run-transcript";
 import type { Database } from "@/lib/supabase/database.types";
@@ -41,26 +42,43 @@ const artifactRow = {
   version: 2,
   created_at: "2026-11-14T20:00:00Z",
 };
+const skillRevision = {
+  skillId: "00000000-0000-4000-8000-000000000006",
+  revisionId: "00000000-0000-4000-8000-000000000007",
+  name: "Check release evidence",
+  version: 2,
+  contentSha256: "a".repeat(64),
+  sourceKind: "repository",
+};
 
 function fixture({
   checkpoint = true,
   artifact = true,
+  revisions = null,
   failure,
 }: {
   checkpoint?: boolean;
   artifact?: boolean;
+  revisions?: unknown;
   failure?: string;
 } = {}) {
   const requests: URL[] = [];
+  const skillRequests: unknown[] = [];
   const supabase = createClient<Database>("https://database.example.test", "test-key", {
     auth: { persistSession: false, autoRefreshToken: false },
     global: {
-      fetch: async (input) => {
+      fetch: async (input, init) => {
         const url = new URL(
           typeof input === "string" ? input : input instanceof URL ? input : input.url,
         );
         requests.push(url);
         const table = url.pathname.split("/").at(-1);
+        if (table === "get_run_skill_revisions") {
+          skillRequests.push(JSON.parse(String(init?.body)));
+          return table === failure
+            ? Response.json({ message: "private database error" }, { status: 403 })
+            : Response.json(revisions);
+        }
         const data =
           table === "session_git_checkpoints"
             ? checkpoint
@@ -79,10 +97,60 @@ function fixture({
       },
     },
   });
-  return { requests, input: { supabase, workspaceId, workspaceSlug: "wallie", run } };
+  return {
+    requests,
+    skillRequests,
+    input: { supabase, workspaceId, workspaceSlug: "wallie", run },
+  };
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("exact-attempt skill revisions", () => {
+  it("reads safe revision metadata for the exact run and attempt through the caller's client", async () => {
+    const { input, requests, skillRequests } = fixture({ revisions: [skillRevision] });
+    expect(await loadRunInspectorSkills(input)).toEqual({
+      kind: "recorded",
+      revisions: [skillRevision],
+    });
+    expect(requests.map((request) => request.pathname)).toEqual([
+      "/rest/v1/rpc/get_run_skill_revisions",
+    ]);
+    expect(skillRequests).toEqual([
+      {
+        target_workspace_id: workspaceId,
+        target_run_id: run.id,
+        target_attempt_count: run.attemptCount,
+      },
+    ]);
+  });
+
+  it("distinguishes no recorded manifest from a manifest with no selected revisions", async () => {
+    const withoutManifest = fixture();
+    expect(await loadRunInspectorSkills(withoutManifest.input)).toEqual({ kind: "unrecorded" });
+    const withoutSkills = fixture({ revisions: [] });
+    expect(await loadRunInspectorSkills(withoutSkills.input)).toEqual({
+      kind: "recorded",
+      revisions: [],
+    });
+  });
+
+  it("skips a run without an attempt and withholds malformed or failed reads", async () => {
+    const unclaimed = fixture();
+    expect(
+      await loadRunInspectorSkills({
+        ...unclaimed.input,
+        run: { ...run, attemptCount: null },
+      }),
+    ).toEqual({ kind: "unrecorded" });
+    expect(unclaimed.requests).toEqual([]);
+
+    const malformed = fixture({ revisions: [{ ...skillRevision, contentMd: "private body" }] });
+    expect(await loadRunInspectorSkills(malformed.input)).toEqual({ kind: "unavailable" });
+    const failed = fixture({ failure: "get_run_skill_revisions" });
+    expect(await loadRunInspectorSkills(failed.input)).toEqual({ kind: "unavailable" });
+  });
+});
 
 describe("exact-attempt accepted artifact", () => {
   it("reads only metadata through the caller's client and links the accepted stage/version", async () => {
@@ -141,7 +209,7 @@ describe("exact-attempt accepted artifact", () => {
 
 describe("run inspector composition", () => {
   function prepare() {
-    const { input } = fixture();
+    const { input } = fixture({ revisions: [skillRevision] });
     mocks.context.mockResolvedValue({
       supabase: input.supabase,
       workspace: { id: workspaceId, slug: "wallie" },
@@ -186,6 +254,7 @@ describe("run inspector composition", () => {
     const data = await loadRunInspectorData("wallie", run.id);
     expect(data.run.attemptCount).toBe(4);
     expect(data.artifact.kind).toBe("available");
+    expect(data.skills).toEqual({ kind: "recorded", revisions: [skillRevision] });
     expect(mocks.catalog).toHaveBeenCalledTimes(2);
   });
 

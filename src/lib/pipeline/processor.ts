@@ -59,6 +59,7 @@ import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
+import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   formatSessionAttachmentPromptData,
   loadSessionAttachmentInputs,
@@ -348,13 +349,21 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    const agentPrompt = await loadRunAgentPrompt(admin, {
-      workspaceId: session.workspace_id,
-      factoryId: session.factory_id,
-      sessionId: session.id,
-      runId,
-      expected: pinned?.implementationAgent,
-    });
+    const [agentPrompt, skillInstructions] = await Promise.all([
+      loadRunAgentPrompt(admin, {
+        workspaceId: session.workspace_id,
+        factoryId: session.factory_id,
+        sessionId: session.id,
+        runId,
+        expected: pinned?.implementationAgent,
+      }),
+      loadFactorySkillBundle(admin, {
+        workspaceId: session.workspace_id,
+        factoryId: session.factory_id,
+        skillRevisionIds: pinned?.skillIds ?? [],
+        signal,
+      }),
+    ]);
     throwIfAborted(signal);
 
     const runEvents = new RunEventCapture(
@@ -575,6 +584,7 @@ async function runStage(input: {
       },
       {
         agentPromptMd: trustedPromptValue("agent.prompt", agentPrompt.promptMd),
+        skillInstructions,
         attemptFeedback:
           attemptFeedback === null
             ? null

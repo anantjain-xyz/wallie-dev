@@ -7,6 +7,7 @@ export type TrustedPromptSource =
   | "pipeline.operatingRules"
   | "run.validationPlanInstructions"
   | "session.attachmentInstructions"
+  | "skill.approvedInstructions"
   | "stage.promptTemplate"
   | "stage.slug"
   | "wallie.titleInstructions"
@@ -22,6 +23,7 @@ export type UntrustedPromptSource =
   | "repo.name"
   | "session.prompt"
   | "session.attachments"
+  | `skill.repositoryRevision.${string}`
   | "session.title";
 
 type PromptTrust = "trusted" | "untrusted";

@@ -14,6 +14,7 @@ export default async function RunInspectorPage({
       artifact={data.artifact}
       initialNow={new Date().toISOString()}
       run={data.run}
+      skills={data.skills}
       workspaceId={data.workspaceId}
       workspaceSlug={data.workspaceSlug}
       transcript={

@@ -256,6 +256,8 @@ BEGIN
   INSERT INTO public.factories (id, workspace_id, name, slug, is_default, status)
   VALUES (default_factory_id, ws_id, 'Default factory', 'default', true, 'active');
 
+  PERFORM internal.provision_factory_builtin_skills(ws_id, default_factory_id);
+
   INSERT INTO public.factory_agents(id, workspace_id, factory_id, name, slug, is_default)
   VALUES ('f1b2c3d4-0001-4000-8000-000000000001', ws_id, default_factory_id,
     'Implementation agent', 'implementation', true);

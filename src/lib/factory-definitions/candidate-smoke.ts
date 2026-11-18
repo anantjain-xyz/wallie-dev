@@ -3,6 +3,7 @@ import "server-only";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   loadRequiredWorkspaceSandboxConnection,
   SandboxConnectionInvalidError,
@@ -217,11 +218,12 @@ export async function startFactoryDefinitionSmokeTest({
     });
   }
 
+  const bundle = readCompiledFactoryDefinition(stored.definition_json);
   const catalog = await loadFactoryDefinitionCatalog(admin, {
     workspaceId,
     factoryId: factory.id,
-    agentPromptRevisionId: readCompiledFactoryDefinition(stored.definition_json)
-      ?.implementationAgent?.promptRevisionId,
+    agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
+    skillRevisionIds: bundle?.skillIds,
   });
   const compiled = recompileStoredFactoryDefinition(
     stored.definition_json,
@@ -347,10 +349,17 @@ async function completeCandidateSmoke({
   try {
     if (!(await smokeTestIsRunning(scope, reserved.id, signal))) return;
     monitor = monitorSmokeTest(scope, reserved.id, lifecycle, done.signal);
+    const skillInstructions = await loadFactorySkillBundle(admin, {
+      workspaceId,
+      factoryId: reserved.factory_id,
+      skillRevisionIds: bundle.skillIds,
+      signal,
+    });
     const outcome = await runCandidateSmokeExecution({
       bundle,
       profile,
       signal,
+      skillInstructions,
       acquire: async (acquireSignal) => {
         let connection;
         try {

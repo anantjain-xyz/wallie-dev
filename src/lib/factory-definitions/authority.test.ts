@@ -8,6 +8,7 @@ import type { CompiledFactoryDefinition } from "./compiler";
 
 const workspaceId = "81b90000-0000-4000-8000-000000000001";
 const factoryId = "81b90000-0000-4000-8000-000000000003";
+const skillRevisionId = "81b90000-0000-4000-8000-000000000006";
 const installationId = "81b90000-0000-4000-8000-000000000002";
 const promptRevisionId = "81b90000-0000-4000-8000-000000000004";
 
@@ -39,6 +40,7 @@ function fixtureClient() {
           prompt_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         },
       ],
+      factory_skill_revisions: [{ id: skillRevisionId }],
     };
     const record = table ? records[table] : undefined;
     if (table === "factory_agent_prompt_revisions") {
@@ -92,8 +94,25 @@ describe("factory activation authority inputs", () => {
       false,
     );
     expect(catalog.agentPromptRevisions).toEqual([]);
+    expect(requests.some((url) => url.pathname.endsWith("/factory_skill_revisions"))).toBe(false);
     expect(members?.searchParams.get("kind")).toBe("eq.human");
     expect(members?.searchParams.get("is_active")).toBe("eq.true");
+  });
+
+  it("loads only eligible IDs from the selected skill revisions in the factory", async () => {
+    const { admin, requests } = fixtureClient();
+    const catalog = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId,
+      skillRevisionIds: [skillRevisionId.toUpperCase(), skillRevisionId, "bad revision"],
+    });
+    const request = requests.find((url) => url.pathname.endsWith("/factory_skill_revisions"));
+    expect(request?.searchParams.get("select")).toBe("id");
+    expect(request?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+    expect(request?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(request?.searchParams.get("revoked_at")).toBe("is.null");
+    expect(request?.searchParams.get("id")).toBe(`in.(${skillRevisionId})`);
+    expect(catalog.skills).toEqual([{ id: skillRevisionId, workspaceId }]);
   });
 
   it("loads only the selected immutable prompt without scanning revision history", async () => {

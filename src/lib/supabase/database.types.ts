@@ -1642,6 +1642,100 @@ export type Database = {
           },
         ]
       }
+      factory_skill_revisions: {
+        Row: {
+          content_md: string
+          content_sha256: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          skill_id: string
+          source_kind: string
+          source_ref: string | null
+          workspace_id: string
+        }
+        Insert: {
+          content_md: string
+          content_sha256: string
+          created_at?: string
+          created_by?: string | null
+          factory_id: string
+          id?: string
+          revision_number: number
+          revoked_at?: string | null
+          revoked_by?: string | null
+          skill_id: string
+          source_kind: string
+          source_ref?: string | null
+          workspace_id: string
+        }
+        Update: {
+          content_md?: string
+          content_sha256?: string
+          created_at?: string
+          created_by?: string | null
+          factory_id?: string
+          id?: string
+          revision_number?: number
+          revoked_at?: string | null
+          revoked_by?: string | null
+          skill_id?: string
+          source_kind?: string
+          source_ref?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_skill_revisions_workspace_id_factory_id_skill_id_fkey"
+            columns: ["workspace_id", "factory_id", "skill_id"]
+            isOneToOne: false
+            referencedRelation: "factory_skills"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_skills: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          factory_id: string
+          id?: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          factory_id?: string
+          id?: string
+          name?: string
+          slug?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_skills_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       github_install_flows: {
         Row: {
           created_at: string
@@ -6461,6 +6555,39 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_factory_skill: {
+        Args: {
+          p_actor_user_id: string
+          p_content_md: string
+          p_factory_id: string
+          p_name: string
+          p_slug: string
+          p_source_kind?: string
+          p_source_ref?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          content_md: string
+          content_sha256: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          skill_id: string
+          source_kind: string
+          source_ref: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_skill_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_session_once_with_first_job: {
         Args: {
           agent_model_name: string
@@ -6823,6 +6950,14 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      get_run_skill_revisions: {
+        Args: {
+          target_attempt_count: number
+          target_run_id: string
+          target_workspace_id: string
+        }
+        Returns: Json
       }
       get_session_detail_page: {
         Args: { target_session_number: number; target_workspace_slug: string }
@@ -7795,6 +7930,36 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      revoke_factory_skill_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_revision_id: string
+          p_skill_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          content_md: string
+          content_sha256: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          skill_id: string
+          source_kind: string
+          source_ref: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_skill_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rewrite_default_pipeline: {
         Args: {
           operating_rules_md?: string
@@ -7937,6 +8102,39 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_definition_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_skill_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_content_md: string
+          p_expected_revision_number: number
+          p_factory_id: string
+          p_skill_id: string
+          p_source_kind?: string
+          p_source_ref?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          content_md: string
+          content_sha256: string
+          created_at: string
+          created_by: string | null
+          factory_id: string
+          id: string
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          skill_id: string
+          source_kind: string
+          source_ref: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_skill_revisions"
           isOneToOne: true
           isSetofReturn: false
         }

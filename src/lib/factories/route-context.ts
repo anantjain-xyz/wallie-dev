@@ -3,16 +3,16 @@ import { z } from "zod";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 const scopeSchema = z.object({ workspaceId: z.string().uuid(), factoryId: z.string().uuid() });
-export const factoryAgentResponseHeaders = { "Cache-Control": "private, no-store" };
+export const factoryResponseHeaders = { "Cache-Control": "private, no-store" };
 
-export async function resolveFactoryAgentRouteContext(params: Promise<unknown>) {
+export async function resolveFactoryRouteContext(params: Promise<unknown>) {
   const scope = scopeSchema.safeParse(await params);
   if (!scope.success) {
     return {
       ok: false as const,
       response: Response.json(
         { error: "Provide a valid workspace and factory ID." },
-        { status: 400, headers: factoryAgentResponseHeaders },
+        { status: 400, headers: factoryResponseHeaders },
       ),
     };
   }
@@ -22,7 +22,7 @@ export async function resolveFactoryAgentRouteContext(params: Promise<unknown>) 
       ok: false as const,
       response: Response.json(
         { error: access.error },
-        { status: access.status, headers: factoryAgentResponseHeaders },
+        { status: access.status, headers: factoryResponseHeaders },
       ),
     };
   }
@@ -38,7 +38,7 @@ export async function resolveFactoryAgentRouteContext(params: Promise<unknown>) 
       ok: false as const,
       response: Response.json(
         { error: "Factory not found." },
-        { status: 404, headers: factoryAgentResponseHeaders },
+        { status: 404, headers: factoryResponseHeaders },
       ),
     };
   }
