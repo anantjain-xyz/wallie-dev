@@ -35,7 +35,12 @@ const definitionFields = [
   { label: "Schema version", read: (value) => value.schemaVersion },
   { label: "Workflow kind", read: (value) => value.kind },
   { label: "Pipeline", read: (value) => value.pipelineId },
-  { label: "Repository", read: (value) => value.repositoryId },
+  { label: "Default writable repository", read: (value) => value.repositoryId },
+  { label: "Other writable repositories", read: (value) => value.writableRepositoryIds ?? [] },
+  {
+    label: "Read-only context repositories",
+    read: (value) => value.readContextRepositoryIds ?? [],
+  },
   { label: "Implementation agent", read: (value) => value.implementationAgent?.agentId ?? null },
   {
     label: "Agent prompt revision",

@@ -17,8 +17,20 @@ A completion from before approval receipts is recorded as `legacy_unverified`. T
 New enrolled sessions execute their compiled revision. The stage order, names, prompts, operating rules, approval policy, agent, sandbox provider, and execution and delivery policies come from that revision. Existing stable stage IDs anchor artifacts and reviews even when the live stage is renamed, moved, or archived. Publish a new revision to change the defaults for new sessions.
 
 - Automatic retry and Retry keep the session's revision, Git lineage, and accepted predecessor. A credential revocation or disconnected repository or sandbox blocks further execution. Reconnecting the same provider requires a current capability check.
-- The creation form shows the active repository and stages. It confirms the displayed revision digest under the admission lock and refreshes its options on a conflict.
+- The creation form shows the writable repository choices and stages. It starts with the factory default and confirms the chosen repository and displayed revision digest under the admission lock. If the default is unavailable, choose another writable repository explicitly.
 - An explicit restart is a new `POST /api/sessions` request using `restartOfSessionId` and a fresh `requestId`. Send the desired input and attachments with the new request. It records the source session and starts fresh work under the current revision. When the request cites the same Linear issue, the source session retains its routing and the new session carries the issue link as context.
+
+## Repository bindings
+
+| Purpose                       | Execution behavior                                                                                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default writable repository   | Used when a new session leaves the selection empty.                                                                                                                                                       |
+| Alternate writable repository | Select one at creation. The admission receipt, Git checkpoint lineage, and canonical PR carry that same repository.                                                                                       |
+| Read-context repository       | The worker fetches the default branch's exact commit with a token restricted to that repository and `contents: read`. The attempt prompt records the snapshot SHA and path outside the writable checkout. |
+
+- Retry and stage transitions keep the admitted writable repository. Disconnecting that repository blocks execution while the original identity remains in the receipt.
+- Restart without a repository override keeps the original writable repository if the current definition still permits it. Selecting another writable repository explicitly starts new Git lineage.
+- Read-context snapshots contain tracked source files without Git credentials or repository metadata. A failed connection stops the run before the agent starts. Publication remains scoped to the admitted writable repository.
 
 ## Enrollment and compatibility
 

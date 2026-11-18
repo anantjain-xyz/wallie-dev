@@ -12,19 +12,27 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 type RouteContext = { params: Promise<{ workspaceId: string }> };
 const headers = { "Cache-Control": "private, no-store" };
 const idSchema = z.string().uuid();
+const repositoryIdSchema = idSchema.transform((id) => id.toLowerCase()).optional();
 const targetQuerySchema = z.union([
   z
-    .object({ draftId: idSchema })
+    .object({ draftId: idSchema, repositoryId: repositoryIdSchema })
     .strict()
-    .transform(({ draftId }) => ({ kind: "draft" as const, id: draftId })),
+    .transform(({ draftId, repositoryId }) => ({
+      target: { kind: "draft" as const, id: draftId },
+      ...(repositoryId ? { repositoryId } : {}),
+    })),
   z
-    .object({ revisionId: idSchema })
+    .object({ revisionId: idSchema, repositoryId: repositoryIdSchema })
     .strict()
-    .transform(({ revisionId }) => ({ kind: "revision" as const, id: revisionId })),
+    .transform(({ revisionId, repositoryId }) => ({
+      target: { kind: "revision" as const, id: revisionId },
+      ...(repositoryId ? { repositoryId } : {}),
+    })),
 ]);
 const requestSchema = z
   .object({
     target: z.object({ kind: z.enum(["draft", "revision"]), id: idSchema }).strict(),
+    repositoryId: repositoryIdSchema,
   })
   .strict();
 
@@ -42,13 +50,13 @@ export async function GET(request: Request, { params }: RouteContext) {
 
     const search = new URL(request.url).searchParams;
     const target = targetQuerySchema.safeParse(Object.fromEntries(search));
-    if (search.size !== 1 || !target.success) {
+    if (search.size !== new Set(search.keys()).size || !target.success) {
       return errorResponse("Specify one draftId or revisionId for the capability check.", 400);
     }
     const result = await readFactoryDefinitionCapabilityCheck({
       admin: createSupabaseAdminClient(),
       workspaceId: access.context.workspace.id,
-      target: target.data,
+      ...target.data,
     });
     if (!result.ok) {
       return Response.json(
@@ -80,7 +88,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       admin: createSupabaseAdminClient(),
       workspaceId: access.context.workspace.id,
       actorUserId: access.context.user.id,
-      target: parsed.data.target,
+      ...parsed.data,
     });
     if (!result.ok) {
       return Response.json(

@@ -113,9 +113,7 @@ describe("CreateSessionDialog accessibility", () => {
       );
 
       expect(await screen.findByRole("button", { name: "Stages Compile → Ship" })).toBeDisabled();
-      expect(
-        screen.getByText("The active factory sets the repository and stage order."),
-      ).toBeVisible();
+      expect(screen.getByText("The active factory sets the stage order.")).toBeVisible();
       await user.type(screen.getByLabelText("Prompt"), "Build this with the active factory");
       const start = screen.getByRole("button", { name: "Start session" });
       if (available) {
@@ -132,11 +130,71 @@ describe("CreateSessionDialog accessibility", () => {
         );
       } else {
         expect(
-          screen.getByText("Reconnect the factory repository before starting a session."),
+          screen.getByText("Reconnect a writable factory repository before starting a session."),
         ).toBeVisible();
         expect(start).toBeDisabled();
         expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
       }
+    },
+  );
+
+  it.each([true, false])(
+    "submits a chosen writable repository when the configured default is available %s",
+    async (defaultAvailable) => {
+      const user = userEvent.setup();
+      const defaultId = "00000000-0000-4000-8000-000000000022";
+      const alternateId = "00000000-0000-4000-8000-000000000023";
+      const factoryDefinitionDigest = "d".repeat(64);
+      const stageId = "00000000-0000-4000-8000-000000000012";
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        defaultGithubRepositoryId: defaultId,
+        factoryDefinitionDigest,
+        pipelineId: "00000000-0000-4000-8000-000000000010",
+        repositoryOptions: [
+          ...(defaultAvailable ? [{ fullName: "acme/default", id: defaultId }] : []),
+          { fullName: "acme/alternate", id: alternateId },
+        ],
+        stageOptions: [{ id: stageId, name: "Build", position: 1 }],
+      });
+      clientMocks.createSessionFromClient.mockResolvedValue({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
+
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId="00000000-0000-4000-8000-000000000001"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+
+      const repository = await screen.findByRole("combobox", { name: "Repository" });
+      await user.type(screen.getByLabelText("Prompt"), "Build with a writable binding");
+      const start = screen.getByRole("button", { name: "Start session" });
+      if (defaultAvailable) {
+        expect(repository).toHaveTextContent("acme/default");
+        expect(start).toBeEnabled();
+      } else {
+        expect(repository).toHaveTextContent("Choose a repository");
+        expect(start).toBeDisabled();
+      }
+
+      await user.click(repository);
+      await user.click(screen.getByRole("option", { name: "acme/alternate" }));
+      await user.click(start);
+
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          factoryDefinitionDigest,
+          githubRepositoryId: alternateId,
+          selectedStageIds: [stageId],
+        }),
+      );
     },
   );
 

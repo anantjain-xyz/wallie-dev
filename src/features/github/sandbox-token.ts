@@ -6,16 +6,17 @@ export async function mintSandboxRepositoryToken(input: {
   installationId: number;
   repositoryFullName: string;
   repositoryId?: number;
-  /** Agent checkout/probes are read-only; execution is reserved for trusted publication. */
-  purpose: "checkout" | "execution" | "capability-check";
+  /** Execution is reserved for trusted publication. */
+  purpose: "checkout" | "execution" | "capability-check" | "read-context";
 }): Promise<string> {
   const [owner, repository, extra] = input.repositoryFullName.split("/");
   if (!owner || !repository || extra !== undefined || /\s/.test(input.repositoryFullName)) {
     throw new Error("A sandbox token requires one owner/repository name.");
   }
   if (
-    input.repositoryId !== undefined &&
-    (!Number.isSafeInteger(input.repositoryId) || input.repositoryId <= 0)
+    (input.purpose === "read-context" && input.repositoryId === undefined) ||
+    (input.repositoryId !== undefined &&
+      (!Number.isSafeInteger(input.repositoryId) || input.repositoryId <= 0))
   )
     throw new Error("A sandbox token requires a valid numeric repository identity.");
 

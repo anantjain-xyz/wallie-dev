@@ -11,6 +11,12 @@ import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
 const planId = "00000000-0000-4000-8000-000000000001";
 const buildId = "00000000-0000-4000-8000-000000000002";
 const memberId = "00000000-0000-4000-8000-000000000003";
+const repositories = [
+  { id: "00000000-0000-4000-8000-000000000007", fullName: "wallie/notes", isArchived: false },
+  { id: "00000000-0000-4000-8000-000000000008", fullName: "wallie/runtime", isArchived: false },
+  { id: "00000000-0000-4000-8000-000000000009", fullName: "wallie/docs", isArchived: false },
+  { id: "00000000-0000-4000-8000-000000000010", fullName: "wallie/archive", isArchived: true },
+];
 
 const initialDefinition: SerialFactoryDefinition = {
   schemaVersion: 1,
@@ -65,6 +71,7 @@ function renderEditor(initial = initialDefinition) {
           onChange(next);
           setDefinition(next);
         }}
+        repositories={repositories}
         value={definition}
       />
     );
@@ -102,8 +109,8 @@ describe("structured factory definition editor", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Tools" }), {
       target: { value: "terminal\n" },
     });
-    fireEvent.change(screen.getByRole("textbox", { name: "Repository" }), {
-      target: { value: "wallie/runtime" },
+    fireEvent.change(screen.getByRole("combobox", { name: "Default writable repository" }), {
+      target: { value: repositories[1].id },
     });
     fireEvent.change(screen.getByRole("textbox", { name: "Delivery policy revision" }), {
       target: { value: "" },
@@ -123,7 +130,7 @@ describe("structured factory definition editor", () => {
 
     expect(current()).toMatchObject({
       ...initialDefinition,
-      repository: "wallie/runtime",
+      repository: repositories[1].id,
       deliveryPolicy: null,
       skills: ["issue-planning", "code-review"],
       tools: ["terminal"],
@@ -138,6 +145,31 @@ describe("structured factory definition editor", () => {
       },
     });
     expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeDisabled();
+  });
+
+  it("keeps writable and read-context assignments distinct while editing", () => {
+    const { current } = renderEditor();
+    const writable = screen.getByRole("combobox", { name: "Other writable repositories" });
+    const readContext = screen.getByRole("combobox", { name: "Read-only context repositories" });
+    expect(within(readContext).queryByRole("option", { name: "wallie/archive" })).toBeNull();
+    expect(within(readContext).queryByRole("option", { name: "wallie/notes" })).toBeNull();
+
+    fireEvent.change(writable, { target: { value: repositories[1].id } });
+    expect(within(readContext).queryByRole("option", { name: "wallie/runtime" })).toBeNull();
+    fireEvent.change(readContext, { target: { value: repositories[2].id } });
+    expect(current()).toMatchObject({
+      repository: "wallie/notes",
+      writableRepositories: [repositories[1].id],
+      readContextRepositories: [repositories[2].id],
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Remove wallie/docs from read-only context repositories",
+      }),
+    );
+    expect(current().readContextRepositories).toBeUndefined();
+    expect(within(writable).getByRole("option", { name: "wallie/docs" })).toBeInTheDocument();
   });
 
   it("moves stages with stable identities and keeps focus on edited stages", () => {

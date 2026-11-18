@@ -59,6 +59,9 @@ const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 const ARCHIVED_REPOSITORY_ID = "55555555-5555-4555-8555-555555555555";
+const ALTERNATE_REPOSITORY_ID = "defafafa-defa-4faf-8afa-defafafafafa";
+const READ_CONTEXT_REPOSITORY_ID = "66666666-6666-4666-8666-666666666666";
+const FACTORY_ID = "77777777-7777-4777-8777-777777777777";
 const STAGE_ID = "88888888-8888-4888-8888-888888888888";
 const ATTACHMENT_ID = "99999999-9999-4999-8999-999999999999";
 
@@ -97,9 +100,18 @@ function buildSupabaseMock(
     selected_github_repository_id: string | null;
     status: string;
   } | null = { selected_github_repository_id: null, status: "completed" },
+  sourceSession?: { execute_pinned_definition: boolean },
 ) {
   return {
     from(table: string) {
+      if (table === "sessions") {
+        const sourceQuery = {
+          eq: () => sourceQuery,
+          maybeSingle: async () => ({ data: sourceSession ?? null, error: null }),
+          select: () => sourceQuery,
+        };
+        return sourceQuery;
+      }
       if (table !== "workspace_onboarding") throw new Error(`unexpected table ${table}`);
       return {
         select: () => ({
@@ -112,6 +124,7 @@ function buildSupabaseMock(
 
 function buildAdminMock(
   opts: {
+    admittedRepositoryId?: string;
     firstRepository?: RepositoryRow | null;
     linearSecret?: string | null;
     primaryRepositoryId?: string | null;
@@ -124,6 +137,19 @@ function buildAdminMock(
 
   return {
     from(table: string) {
+      if (table === "session_factory_admission_inputs") {
+        const query = {
+          eq: () => query,
+          maybeSingle: async () => ({
+            data: opts.admittedRepositoryId
+              ? { github_repository_id: opts.admittedRepositoryId }
+              : null,
+            error: null,
+          }),
+          select: () => query,
+        };
+        return query;
+      }
       if (table === "workspace_secrets") {
         let matchesWorkspace = false;
         let matchesKey = false;
@@ -218,11 +244,11 @@ function buildAdminMock(
   };
 }
 
-function setupAccess(onboardingRow?: Parameters<typeof buildSupabaseMock>[0]) {
+function setupAccess(...args: Parameters<typeof buildSupabaseMock>) {
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     context: {
       currentMember: { id: MEMBER_ID, is_active: true, kind: "human", role: "owner" },
-      supabase: buildSupabaseMock(onboardingRow),
+      supabase: buildSupabaseMock(...args),
       user: { id: "user-1" },
       workspace: { id: WORKSPACE_ID, name: "Acme", slug: "acme" },
     },
@@ -312,8 +338,15 @@ describe("POST /api/sessions", () => {
   });
 
   it("preflights a deliberate restart against the current factory revision", async () => {
-    const pinned = { repositoryId: REPOSITORY_ID, canonicalDigest: "a".repeat(64) };
+    const pinned = {
+      repositoryId: REPOSITORY_ID,
+      canonicalDigest: "a".repeat(64),
+      factoryId: FACTORY_ID,
+    };
     mocked.loadActiveFactoryExecution.mockResolvedValue(pinned);
+    setupAccess(undefined, {
+      execute_pinned_definition: true,
+    });
 
     const response = await POST(
       makeRequest({
@@ -344,6 +377,142 @@ describe("POST /api/sessions", () => {
       }),
     );
   });
+
+  it("requires access to the source session even with an explicit restart repository", async () => {
+    mocked.loadActiveFactoryExecution.mockResolvedValue({
+      canonicalDigest: "a".repeat(64),
+      factoryId: FACTORY_ID,
+      repositoryId: REPOSITORY_ID,
+    });
+
+    const response = await POST(
+      makeRequest({
+        githubRepositoryId: REPOSITORY_ID,
+        promptMd: "Start fresh",
+        requestId: ATTACHMENT_ID,
+        restartOfSessionId: STAGE_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { selected: undefined, expected: REPOSITORY_ID },
+    { selected: ALTERNATE_REPOSITORY_ID.toUpperCase(), expected: ALTERNATE_REPOSITORY_ID },
+  ])(
+    "preflights and pins exactly the writable repository $expected",
+    async ({ selected, expected }) => {
+      const canonicalDigest = "a".repeat(64);
+      mocked.loadActiveFactoryExecution.mockResolvedValue({
+        canonicalDigest,
+        factoryId: FACTORY_ID,
+        repositoryId: REPOSITORY_ID,
+        writableRepositoryIds: [ALTERNATE_REPOSITORY_ID],
+        readContextRepositoryIds: [READ_CONTEXT_REPOSITORY_ID],
+      });
+      mocked.createSupabaseAdminClient.mockReturnValue(
+        buildAdminMock({
+          repositoriesById: {
+            [REPOSITORY_ID]: makeRepository(REPOSITORY_ID),
+            [ALTERNATE_REPOSITORY_ID]: makeRepository(ALTERNATE_REPOSITORY_ID),
+          },
+        }),
+      );
+
+      const response = await POST(
+        makeRequest({
+          githubRepositoryId: selected,
+          promptMd: "Build a factory task",
+          requestId: ATTACHMENT_ID,
+          workspaceId: WORKSPACE_ID,
+        }),
+      );
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ canonicalUrl: "/w/acme/sessions/7" });
+      expect(mocked.assertSessionSandboxCapabilityReady).toHaveBeenCalledWith(
+        expect.objectContaining({
+          definitionDigest: canonicalDigest,
+          repository: expect.objectContaining({ id: expected }),
+        }),
+      );
+      expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          factoryDefinitionDigest: canonicalDigest,
+          githubRepositoryId: expected,
+        }),
+      );
+    },
+  );
+
+  it("keeps the prior pinned repository when restarting without a new selection", async () => {
+    mocked.loadActiveFactoryExecution.mockResolvedValue({
+      canonicalDigest: "a".repeat(64),
+      factoryId: FACTORY_ID,
+      repositoryId: REPOSITORY_ID,
+      writableRepositoryIds: [ALTERNATE_REPOSITORY_ID],
+    });
+    setupAccess(undefined, { execute_pinned_definition: true });
+    mocked.createSupabaseAdminClient.mockReturnValue(
+      buildAdminMock({
+        admittedRepositoryId: ALTERNATE_REPOSITORY_ID,
+        repositoriesById: { [ALTERNATE_REPOSITORY_ID]: makeRepository(ALTERNATE_REPOSITORY_ID) },
+      }),
+    );
+
+    const response = await POST(
+      makeRequest({
+        promptMd: "Restart a factory task",
+        requestId: ATTACHMENT_ID,
+        restartOfSessionId: STAGE_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        githubRepositoryId: ALTERNATE_REPOSITORY_ID,
+        restartOfSessionId: STAGE_ID,
+      }),
+    );
+  });
+
+  it.each([READ_CONTEXT_REPOSITORY_ID, STAGE_ID, ARCHIVED_REPOSITORY_ID])(
+    "rejects unavailable writable selection %s before provisioning",
+    async (repositoryId) => {
+      mocked.loadActiveFactoryExecution.mockResolvedValue({
+        canonicalDigest: "a".repeat(64),
+        factoryId: FACTORY_ID,
+        repositoryId: REPOSITORY_ID,
+        readContextRepositoryIds: [READ_CONTEXT_REPOSITORY_ID],
+        writableRepositoryIds: [ARCHIVED_REPOSITORY_ID],
+      });
+      mocked.createSupabaseAdminClient.mockReturnValue(
+        buildAdminMock({
+          repositoriesById: {
+            [ARCHIVED_REPOSITORY_ID]: makeRepository(ARCHIVED_REPOSITORY_ID, true),
+          },
+        }),
+      );
+
+      const response = await POST(
+        makeRequest({
+          githubRepositoryId: repositoryId,
+          promptMd: "Build a factory task",
+          workspaceId: WORKSPACE_ID,
+        }),
+      );
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "session_options_changed" });
+      expect(mocked.assertSessionSandboxCapabilityReady).not.toHaveBeenCalled();
+      expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+    },
+  );
 
   it("refreshes the create dialog when the confirmed factory changed", async () => {
     mocked.loadActiveFactoryExecution.mockResolvedValue({
@@ -792,7 +961,7 @@ describe("POST /api/sessions", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
       code: "session_options_changed",
-      error: "The workspace pipeline changed. Refresh the stage options and try again.",
+      error: "Session options changed. Refresh the repository and stages, then try again.",
     });
   });
 });

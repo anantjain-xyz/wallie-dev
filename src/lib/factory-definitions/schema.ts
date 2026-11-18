@@ -75,6 +75,8 @@ export const serialFactoryDefinitionSchema = z
     }),
     pipeline: referenceSchema,
     repository: referenceSchema,
+    writableRepositories: z.array(referenceSchema).optional(),
+    readContextRepositories: z.array(referenceSchema).optional(),
     sandboxProvider: sandboxProviderSchema,
     agent: agentSchema,
     implementationAgent: z
@@ -101,6 +103,8 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
   .omit({
     pipeline: true,
     repository: true,
+    writableRepositories: true,
+    readContextRepositories: true,
     executionPolicy: true,
     deliveryPolicy: true,
     skills: true,
@@ -111,10 +115,31 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     pipelineId: stableUuid,
     implementationAgent: factoryAgentPromptSnapshotSchema.optional(),
     repositoryId: stableUuid,
+    writableRepositoryIds: z.array(stableUuid).min(1).optional(),
+    readContextRepositoryIds: z.array(stableUuid).min(1).optional(),
     executionPolicyRevisionId: stableUuid.nullable(),
     deliveryPolicyRevisionId: stableUuid.nullable(),
     skillIds: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS),
     toolIds: z.array(referenceSchema),
     operatingRuleStageIds: z.array(stableUuid),
     stages: z.array(stageSchema.extend({ previousStageIds: z.array(stableUuid) })).min(1),
+  })
+  .superRefine(({ repositoryId, writableRepositoryIds, readContextRepositoryIds }, context) => {
+    const seen = new Set([repositoryId.toLowerCase()]);
+    for (const [field, ids] of [
+      ["writableRepositoryIds", writableRepositoryIds ?? []],
+      ["readContextRepositoryIds", readContextRepositoryIds ?? []],
+    ] as const) {
+      ids.forEach((id, index) => {
+        const normalizedId = id.toLowerCase();
+        if (seen.has(normalizedId)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field, index],
+            message: "Use each repository only once across the factory's repository bindings.",
+          });
+        }
+        seen.add(normalizedId);
+      });
+    }
   });

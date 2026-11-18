@@ -11,7 +11,8 @@ import {
 import type { Database } from "@/lib/supabase/database.types";
 
 import { loadFactoryDefinitionCatalog } from "./authority";
-import type { FactoryDefinitionDiagnostic } from "./compiler";
+import type { CompiledFactoryDefinition, FactoryDefinitionDiagnostic } from "./compiler";
+import { factoryWritableRepositoryIds } from "./repository-bindings";
 import { catalogForStoredFactoryDefinition } from "./settings-persistence";
 import {
   selectDefaultFactory,
@@ -27,6 +28,7 @@ type CheckScope = {
   admin: SupabaseClient<Database>;
   workspaceId: string;
   target: FactoryDefinitionTarget;
+  repositoryId?: string;
 };
 type CheckFailure = {
   ok: false;
@@ -44,12 +46,14 @@ export async function readFactoryDefinitionCapabilityCheck(
     const { stored } = target;
     const bundle = readCompiledFactoryDefinition(stored.definition_json);
     if (!bundle) return invalidDefinition();
+    const repositoryId = selectCheckRepository(bundle, scope.repositoryId);
+    if (!repositoryId) return unavailableRepository();
     return {
       ok: true,
       check: await getLatestSandboxCapabilityCheck({
         admin: scope.admin,
         workspaceId: scope.workspaceId,
-        repositoryId: bundle.repositoryId,
+        repositoryId,
         definitionDigest: stored.canonical_digest,
       }),
     };
@@ -81,7 +85,9 @@ export async function startFactoryDefinitionCapabilityCheck(
       catalogForStoredFactoryDefinition(catalog, stored),
     );
     if (!compiled.ok) return invalidDefinition(compiled.diagnostics);
-    const { agent, repositoryId, sandboxProvider } = compiled.bundle;
+    const { agent, sandboxProvider } = compiled.bundle;
+    const repositoryId = selectCheckRepository(compiled.bundle, scope.repositoryId);
+    if (!repositoryId) return unavailableRepository();
     const candidate = {
       agent: { provider: agent.provider, model: agent.model },
       definitionDigest: compiled.canonicalDigest,
@@ -109,6 +115,19 @@ export async function startFactoryDefinitionCapabilityCheck(
   } catch (error) {
     return checkFailure(error);
   }
+}
+
+function selectCheckRepository(bundle: CompiledFactoryDefinition, requestedId?: string) {
+  const id = requestedId ?? bundle.repositoryId;
+  return factoryWritableRepositoryIds(bundle).includes(id) ? id : null;
+}
+
+function unavailableRepository(): CheckFailure {
+  return {
+    ok: false,
+    status: 422,
+    error: "Choose a writable repository from this factory definition.",
+  };
 }
 
 async function loadStoredDefinition({ admin, workspaceId, target }: CheckScope) {

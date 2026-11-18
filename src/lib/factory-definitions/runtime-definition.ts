@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
+import { factoryWritableRepositoryIds } from "./repository-bindings";
 import { compiledFactoryDefinitionSchema } from "./schema";
 import { parseFactoryDefinitionJson } from "./serialization";
 import { selectDefaultFactory } from "./storage";
@@ -40,7 +41,9 @@ export async function loadActiveFactoryExecution(client: DefinitionClient, works
     .limit(1)
     .maybeSingle();
   if (activationError) throw activationError;
-  return activation ? loadExecutionRevision(client, workspaceId, activation.revision_id) : null;
+  if (!activation) return null;
+  const execution = await loadExecutionRevision(client, workspaceId, activation.revision_id);
+  return { ...execution, factoryId: factory.id };
 }
 
 async function loadExecutionRevision(
@@ -69,6 +72,33 @@ async function loadExecutionRevision(
 export type PinnedFactoryExecution = NonNullable<
   Awaited<ReturnType<typeof loadPinnedFactoryExecution>>
 >;
+
+export async function loadPinnedFactoryRepositoryId(
+  client: DefinitionClient,
+  session: SessionPin & Pick<Tables<"sessions">, "id" | "factory_id" | "github_repository_id">,
+  definition: Pick<PinnedFactoryExecution, "repositoryId" | "writableRepositoryIds">,
+): Promise<string> {
+  const { data: admission, error } = await client
+    .from("session_factory_admission_inputs")
+    .select("github_repository_id, definition_revision_id")
+    .eq("workspace_id", session.workspace_id)
+    .eq("factory_id", session.factory_id)
+    .eq("session_id", session.id)
+    .maybeSingle();
+  if (error) throw error;
+
+  // The live FK can be cleared by GitHub disconnection. Preserve the identity
+  // in the original receipt so neither the live FK nor the default retargets it.
+  const repositoryId = admission ? admission.github_repository_id : session.github_repository_id;
+  if (
+    (admission && admission.definition_revision_id !== session.factory_definition_revision_id) ||
+    !repositoryId ||
+    !factoryWritableRepositoryIds(definition).includes(repositoryId)
+  ) {
+    throw new Error("The factory session's writable repository is unavailable.");
+  }
+  return repositoryId;
+}
 
 export async function loadPinnedSessionPrompt(
   client: DefinitionClient,

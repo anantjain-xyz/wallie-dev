@@ -97,12 +97,45 @@ describe("GET saved factory definition capability check", () => {
     `?draftId=${targetId}&revisionId=${targetId}`,
     `?revisionId=${targetId}&revisionId=${targetId}`,
     `?revisionId=${targetId}&sandboxProvider=vercel`,
+    `?revisionId=${targetId}&repositoryId=${check.githubRepositoryId}&repositoryId=${check.githubRepositoryId}`,
   ])("accepts exactly one typed target (%s)", async (query) => {
     authorize();
     const response = await GET(new Request(`${url}${query}`), context());
     expect(response.status).toBe(400);
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
     expect(mocked.readFactoryDefinitionCapabilityCheck).not.toHaveBeenCalled();
+  });
+
+  it("normalizes the requested repository for the capability check", async () => {
+    const admin = authorize();
+    mocked.readFactoryDefinitionCapabilityCheck.mockResolvedValue({ ok: true, check });
+    mocked.startFactoryDefinitionCapabilityCheck.mockResolvedValue({
+      ok: true,
+      check,
+      complete: vi.fn(),
+    });
+    const target = { kind: "revision", id: targetId };
+    const repositoryId = check.githubRepositoryId;
+
+    const response = await GET(
+      new Request(`${url}?revisionId=${targetId}&repositoryId=${repositoryId.toUpperCase()}`),
+      context(),
+    );
+    expect(response.status).toBe(200);
+    expect(mocked.readFactoryDefinitionCapabilityCheck).toHaveBeenCalledWith({
+      admin,
+      workspaceId,
+      target,
+      repositoryId,
+    });
+    expect((await post({ target, repositoryId: repositoryId.toUpperCase() })).status).toBe(202);
+    expect(mocked.startFactoryDefinitionCapabilityCheck).toHaveBeenCalledWith({
+      admin,
+      workspaceId,
+      actorUserId,
+      target,
+      repositoryId,
+    });
   });
 
   it("requires manager access to read capability results", async () => {

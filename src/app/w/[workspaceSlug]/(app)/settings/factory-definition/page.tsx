@@ -6,6 +6,8 @@ import {
   isWorkspaceOperator,
   loadAuthenticatedWorkspaceContext,
 } from "@/features/workspaces/authenticated-context";
+import { loadFactoryDefinitionRepositories } from "@/lib/factory-definitions/authority";
+import { selectDefaultFactory } from "@/lib/factory-definitions/storage";
 
 const selectionSchema = z.union([
   z.object({ revision: z.string().uuid(), test: z.string().uuid().optional() }).strict(),
@@ -32,20 +34,17 @@ export default async function FactoryDefinitionPage({
     notFound();
   }
   const selection = selectionSchema.safeParse(query);
-  const { data: repositories, error } = await supabase
-    .from("github_repositories")
-    .select("id,full_name,is_archived")
-    .eq("workspace_id", workspace.id)
-    .order("id");
+  const { data: factory, error } = await selectDefaultFactory(supabase, workspace.id);
   if (error) throw error;
+  const repositories = factory
+    ? await loadFactoryDefinitionRepositories(supabase, workspace.id, factory.id)
+    : [];
 
   return (
     <FactoryDefinitionEditor
-      repositories={repositories.map((repository) => ({
-        id: repository.id,
-        fullName: repository.full_name,
-        isArchived: repository.is_archived,
-      }))}
+      repositories={repositories
+        .map(({ id, full_name }) => ({ id, fullName: full_name, isArchived: false }))
+        .sort((left, right) => left.fullName.localeCompare(right.fullName))}
       selection={selection.success ? selection.data : null}
       workspaceId={workspace.id}
       workspaceSlug={workspace.slug}

@@ -16,12 +16,14 @@ import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/rea
 const mocks = vi.hoisted(() => ({
   assertCurrentSandboxCapabilityCheck: vi.fn(),
   loadPinnedFactoryExecution: vi.fn(),
+  loadPinnedFactoryRepositoryId: vi.fn(),
   loadWorkspaceSandboxOverview: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
 }));
 
 vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
   loadPinnedFactoryExecution: mocks.loadPinnedFactoryExecution,
+  loadPinnedFactoryRepositoryId: mocks.loadPinnedFactoryRepositoryId,
 }));
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
@@ -47,6 +49,7 @@ beforeEach(() => {
   mocks.assertCurrentSandboxCapabilityCheck.mockReset();
   mocks.assertCurrentSandboxCapabilityCheck.mockResolvedValue(undefined);
   mocks.loadPinnedFactoryExecution.mockReset().mockResolvedValue(null);
+  mocks.loadPinnedFactoryRepositoryId.mockReset();
   mocks.loadWorkspaceSandboxOverview.mockReset();
   mocks.resolveSandboxImplementation.mockReset();
   mocks.resolveSandboxImplementation.mockReturnValue("vercel");
@@ -750,9 +753,10 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
     mocks.loadPinnedFactoryExecution.mockResolvedValue({
       agent: { provider: "codex", model: "gpt-5.5" },
       canonicalDigest: digest,
-      repositoryId: "repo-pinned",
+      repositoryId: "repo-default",
       sandboxProvider: "e2b",
     });
+    mocks.loadPinnedFactoryRepositoryId.mockResolvedValue("repo-pinned");
     const enqueueCalls: Array<Record<string, unknown>> = [];
     const { admin, rpc, supabase } = buildSupabaseMocks({
       agentConfig: [{ key: "agent_provider", value_json: "live-provider-unavailable" }],

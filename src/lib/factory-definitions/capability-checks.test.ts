@@ -27,11 +27,16 @@ const pipelineId = "54200000-0003-4000-8000-000000000002";
 const repositoryId = "54200000-0003-4000-8000-000000000003";
 const factoryId = "54200000-0003-4000-8000-000000000004";
 const actorUserId = "54200000-0003-4000-8000-000000000005";
+const writableRepositoryId = "54200000-0003-4000-8000-000000000008";
+const readContextRepositoryId = "54200000-0003-4000-8000-000000000009";
 const target = { kind: "revision", id: "54200000-0003-4000-8000-000000000006" } as const;
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
   pipelines: [{ id: pipelineId, workspaceId }],
-  repositories: [{ id: repositoryId, workspaceId }],
+  repositories: [repositoryId, writableRepositoryId, readContextRepositoryId].map((id) => ({
+    id,
+    workspaceId,
+  })),
   executionPolicyRevisions: [],
   deliveryPolicyRevisions: [],
   approvers: [],
@@ -48,6 +53,8 @@ const compiled = compileFactoryDefinition(
       kind: "serial",
       pipeline: pipelineId,
       repository: repositoryId,
+      writableRepositories: [writableRepositoryId],
+      readContextRepositories: [readContextRepositoryId],
       sandboxProvider: "daytona",
       agent: { ...agent, concurrencyLimit: 1, stallTimeoutMs: 60_000, maxRetries: 1, maxTurns: 5 },
       stages: [
@@ -142,5 +149,52 @@ describe("saved factory capability checks", () => {
       repositoryId,
       definitionDigest: compiled.canonicalDigest,
     });
+  });
+
+  it("reserves and reads an alternate writer's own pinned runtime check", async () => {
+    const admin = testClient();
+    const scope = { admin, workspaceId, target, repositoryId: writableRepositoryId };
+    const check = { status: "running", githubRepositoryId: writableRepositoryId };
+    mocks.start.mockResolvedValue({ check, repository: { id: writableRepositoryId } });
+    mocks.latest.mockResolvedValue(check);
+    await expect(
+      startFactoryDefinitionCapabilityCheck({ ...scope, actorUserId }),
+    ).resolves.toMatchObject({ ok: true, check });
+    await expect(readFactoryDefinitionCapabilityCheck(scope)).resolves.toEqual({ ok: true, check });
+    expect(mocks.start).toHaveBeenCalledWith({
+      admin,
+      workspaceId,
+      repositoryId: writableRepositoryId,
+      candidate: {
+        actorUserId,
+        agent,
+        definitionDigest: compiled.canonicalDigest,
+        sandboxProvider: "daytona",
+      },
+    });
+    expect(mocks.latest).toHaveBeenCalledWith({
+      admin,
+      workspaceId,
+      repositoryId: writableRepositoryId,
+      definitionDigest: compiled.canonicalDigest,
+    });
+  });
+
+  it("rejects both starting and reading a check for read-only context", async () => {
+    const scope = {
+      admin: testClient(),
+      workspaceId,
+      target,
+      repositoryId: readContextRepositoryId,
+    };
+    await expect(
+      startFactoryDefinitionCapabilityCheck({ ...scope, actorUserId }),
+    ).resolves.toMatchObject({ ok: false, status: 422 });
+    await expect(readFactoryDefinitionCapabilityCheck(scope)).resolves.toMatchObject({
+      ok: false,
+      status: 422,
+    });
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.latest).not.toHaveBeenCalled();
   });
 });
