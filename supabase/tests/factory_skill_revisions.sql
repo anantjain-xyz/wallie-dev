@@ -157,6 +157,15 @@ select throws_ok($sql$select pg_temp.save_skill_candidate(jsonb_build_array(
   (select id from skill_fixture where key = 'manual')))$sql$,
   'PT422', 'A selected skill revision is missing, revoked, or unavailable in this factory.',
   'a revoked revision cannot enter a new draft');
+select is(public.read_factory_candidate_activation_eligibility(
+  draft.workspace_id, draft.factory_id, '55300000-0000-4000-8000-000000000001',
+  'draft', draft.id, draft.canonical_digest, array['e2b'], '{}'::text[]
+), jsonb_build_object(
+  'eligible', false, 'reason', 'A selected skill revision is missing, revoked, or unavailable in this factory.',
+  'activationNumber', 0, 'testId', null, 'canTest', false
+), 'revocation removes testing and publication eligibility from a previously saved candidate')
+from public.factory_definition_drafts draft
+where draft.factory_id = (select id from skill_fixture where key = 'factory');
 select lives_ok($sql$select pg_temp.save_skill_candidate(jsonb_build_array(
   (select id from skill_fixture where key = 'newer')))$sql$,
   'an unrevoked newer revision remains eligible for future activation');
